@@ -36,7 +36,7 @@ jobs:
 
       - name: Set up Go
         if: steps.skip-check.outputs.skip != 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.25"
           cache: true
@@ -162,7 +162,7 @@ jobs:
 
       - name: Upload screenshots as artifact
         if: steps.skip-check.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: e2e-screenshots
           path: tests/e2e/screenshots/*.png

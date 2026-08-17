@@ -29,7 +29,7 @@ jobs:
 
       # Set up Go
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.25"
           cache: true
@@ -39,7 +39,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: 'npm'
+          cache: "npm"
           cache-dependency-path: web/package-lock.json
 
       # Cache Go tool binaries, golangci-lint results, and Playwright browsers
@@ -78,4 +78,4 @@ jobs:
           echo "golangci-lint: $(golangci-lint --version)"
           echo "=== Build Test ==="
           just build
-          echo "=== Ready for Copilot ===" 
+          echo "=== Ready for Copilot ==="
