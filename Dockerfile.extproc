@@ -2,7 +2,7 @@
 # Builds from the project root go.mod (unlike Dockerfile.mock which builds
 # from sub-module directories under mocks/).
 ARG BASE_IMAGE=default
-FROM container-registry.zalando.net/library/alpine-3:latest AS default
+FROM alpine:3 AS default
 
 # Builder stage
 FROM golang:1.25-alpine AS builder
@@ -29,9 +29,9 @@ FROM ${BASE_IMAGE}
 ARG VERSION
 
 # Image metadata labels
+LABEL maintainer="Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>"
 LABEL org.opencontainers.image.title="Agentic Identity Broker - ExtProc Token Exchange"
 LABEL org.opencontainers.image.description="Envoy External Processing service for transparent Bearer token exchange"
-LABEL org.opencontainers.image.version=$VERSION
 LABEL org.opencontainers.image.vendor="Zalando SE"
 
 # Create non-root user for security (uid=1000, gid=1000)

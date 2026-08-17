@@ -1,7 +1,7 @@
 # Agentic Identity Broker - Production Docker Image
 # This Dockerfile packages pre-built backend and frontend artifacts
 ARG BASE_IMAGE=default
-FROM container-registry.zalando.net/library/alpine-3:latest AS default
+FROM alpine:3 AS default
 FROM ${BASE_IMAGE}
 
 # Build arguments for multi-architecture support via docker buildx
@@ -12,14 +12,10 @@ ARG TARGETARCH
 ARG VERSION
 
 # Image metadata labels
+LABEL maintainer="Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>"
 LABEL org.opencontainers.image.title="Agentic Identity Broker"
 LABEL org.opencontainers.image.description="Identity broker for AI agents with OAuth2 delegation and consent management"
-LABEL org.opencontainers.image.version=$VERSION
 LABEL org.opencontainers.image.vendor="Zalando SE"
-# LABEL org.opencontainers.image.maintainer="Agentic Identity Broker Contributors" # Uncomment and set maintainer once repo is public
-# LABEL org.opencontainers.image.source="<repository-url>"  # Uncomment and set repository URL once repo is public
-# LABEL org.opencontainers.image.url="<repository-url>"  # Uncomment and set repository URL once repo is public
-# LABEL org.opencontainers.image.license="<license>"  # Uncomment and set license once repo is public
 
 # Create non-root user for security (uid=1000, gid=1000)
 RUN addgroup -g 1000 appuser && \
