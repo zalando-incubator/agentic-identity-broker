@@ -3,6 +3,7 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -15,6 +16,11 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      IS_RELEASE: ${{ github.event_name == 'release' }}
+      IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+
+    # Artifact builds avoid shared caches to prevent cache poisoning.
 
     steps:
       - name: Checkout release
@@ -26,11 +32,13 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version: "1.25"
+          cache: false
 
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: "24"
+          package-manager-cache: false
 
       - name: Install just
         uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780
@@ -47,7 +55,8 @@ jobs:
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # noqa: E501
+        uses: >-
+          docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
@@ -62,8 +71,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},enable=${{ env.IS_RELEASE }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ env.IS_RELEASE }}
+            type=sha,prefix=test-,enable=${{ env.IS_MANUAL }}
 
       - name: Extract migrate metadata
         id: migrate-meta
@@ -71,8 +81,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-migrate
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},enable=${{ env.IS_RELEASE }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ env.IS_RELEASE }}
+            type=sha,prefix=test-,enable=${{ env.IS_MANUAL }}
 
       - name: Extract ExtProc metadata
         id: extproc-meta
@@ -80,8 +91,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-extproc
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},enable=${{ env.IS_RELEASE }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ env.IS_RELEASE }}
+            type=sha,prefix=test-,enable=${{ env.IS_MANUAL }}
 
       - name: Build and push broker image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
@@ -92,8 +104,6 @@ jobs:
           build-args: VERSION=${{ steps.broker-meta.outputs.version }}
           tags: ${{ steps.broker-meta.outputs.tags }}
           labels: ${{ steps.broker-meta.outputs.labels }}
-          cache-from: type=gha,scope=broker
-          cache-to: type=gha,mode=max,scope=broker
 
       - name: Build and push migrate image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
@@ -105,8 +115,6 @@ jobs:
           build-args: VERSION=${{ steps.migrate-meta.outputs.version }}
           tags: ${{ steps.migrate-meta.outputs.tags }}
           labels: ${{ steps.migrate-meta.outputs.labels }}
-          cache-from: type=gha,scope=migrate
-          cache-to: type=gha,mode=max,scope=migrate
 
       - name: Build and push ExtProc image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
@@ -118,5 +126,3 @@ jobs:
           build-args: VERSION=${{ steps.extproc-meta.outputs.version }}
           tags: ${{ steps.extproc-meta.outputs.tags }}
           labels: ${{ steps.extproc-meta.outputs.labels }}
-          cache-from: type=gha,scope=extproc
-          cache-to: type=gha,mode=max,scope=extproc
