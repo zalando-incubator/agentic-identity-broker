@@ -3,25 +3,20 @@ name: Release
 on:
   release:
     types: [published]
-  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  packages: write
-
 jobs:
   publish:
     runs-on: ubuntu-latest
-    env:
-      IS_RELEASE: ${{ github.event_name == 'release' }}
-      IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: read
+      packages: write
 
-    # Artifact builds avoid shared caches to prevent cache poisoning.
-
+    # Because this workflow builds and publishes release artifacts, we
+    # intentionally disable caching to prevent cache poisoning during builds.
     steps:
       - name: Checkout release
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -71,9 +66,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}},enable=${{ env.IS_RELEASE }}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ env.IS_RELEASE }}
-            type=sha,prefix=test-,enable=${{ env.IS_MANUAL }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
       - name: Extract migrate metadata
         id: migrate-meta
@@ -81,9 +75,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-migrate
           tags: |
-            type=semver,pattern={{version}},enable=${{ env.IS_RELEASE }}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ env.IS_RELEASE }}
-            type=sha,prefix=test-,enable=${{ env.IS_MANUAL }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
       - name: Extract ExtProc metadata
         id: extproc-meta
@@ -91,9 +84,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-extproc
           tags: |
-            type=semver,pattern={{version}},enable=${{ env.IS_RELEASE }}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ env.IS_RELEASE }}
-            type=sha,prefix=test-,enable=${{ env.IS_MANUAL }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push broker image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
