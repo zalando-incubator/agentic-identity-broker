@@ -6,6 +6,7 @@ FROM alpine:3 AS default
 
 FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine AS development-builder
 
+ARG TARGETOS
 ARG TARGETARCH
 
 WORKDIR /app
@@ -17,7 +18,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w" \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" \
     -o /tmp/extproc-token-exchange \
     ./cmd/extproc-token-exchange
 
