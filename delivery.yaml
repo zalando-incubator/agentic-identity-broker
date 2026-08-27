@@ -1,4 +1,5 @@
 version: "2017-09-20"
+allow_concurrent_pipelines: false
 
 tags:
   application: agentic-identity-broker
@@ -6,21 +7,21 @@ tags:
 pipeline:
   - id: test
     type: script
+    when:
+      - event: pull_request
+      - branch:
+          - main
+          - dev
+        event: push
     vm_config:
       type: linux
       size: large
       image: cdp-runtime/go-1.25
     cache:
       paths:
-        # Go module download cache (stable — only changes when go.mod/go.sum change)
         - /go/pkg/mod
-        # npm package cache (stable — only changes when package-lock.json changes)
         - ~/.npm
-        # Playwright browser binaries (stable — only changes when playwright version is bumped)
         - ~/.cache/ms-playwright
-        # NOTE: ~/.cache/go-build and ~/.cache/golangci-lint are intentionally excluded.
-        # They change on every source commit, causing a full cache re-upload (~7min) that
-        # negates any compilation speedup they provide.
       size_limit_megabytes: 4096
     commands:
       - desc: "Install pre-requisites"
@@ -36,48 +37,64 @@ pipeline:
           just check
       - desc: "Run verification suite"
         cmd: |
-          GINKGO_BACKEND_PROCS=4 GINKGO_EXTPROC_PROCS=4 GINKGO_FRONTEND_PROCS=2 E2E_CAPTURE_SCREENSHOTS=false \
-            cdp-wrap-cmd "just verify-junit" "cdp-tool upload-test-results -t junit $(pwd)/test-results/all-tests-junit.xml"
+          GINKGO_BACKEND_PROCS=4 GINKGO_EXTPROC_PROCS=4 \
+            GINKGO_FRONTEND_PROCS=2 E2E_CAPTURE_SCREENSHOTS=false \
+            cdp-wrap-cmd "just verify-junit" \
+              "cdp-tool upload-test-results -t junit \
+                $(pwd)/test-results/all-tests-junit.xml"
       - desc: "Run artifacts build test"
         cmd: |
           just build-all
           test -f web/dist/consent/index.html
 
   - id: release
+    depends_on: [test]
     type: script
     when:
-      - event: push
-        branch: main
+      branch:
+        - main
+        - dev
+      event: push
     vm_config:
       type: linux
       image: cdp-runtime/go-1.25
     cache:
       paths:
-        # Go module download cache (stable — only changes when go.mod/go.sum change)
         - /go/pkg/mod
-        # npm package cache (stable — only changes when package-lock.json changes)
         - ~/.npm
       size_limit_megabytes: 2048
     commands:
-      - desc: "Build and push Docker images (broker + migrate + extproc)"
+      - desc: "Publish internal release images and tag"
         cmd: |
+          set -eu
           apt-get update
           apt-get --yes install just curl ca-certificates
           curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
           apt-get --yes install nodejs
           just install-tools
           just web-ci
+          docker buildx create --config /etc/cdp-buildkitd.toml \
+            --driver-opt network=host --bootstrap --use
+
+          LATEST_VERSION="$(git describe --tags --always | \
+            awk -F- '{print $1}')"
+          CURRENT_MINOR="$(printf '%s' "${LATEST_VERSION}" | cut -d. -f1,2)"
+          VERSION_PART="$(tr -d '[:space:]' < VERSION)"
+          PATCH="$(printf '%s' "${LATEST_VERSION}" | cut -d. -f3)"
+          if [ "${CURRENT_MINOR}" = "${VERSION_PART}" ]; then
+            RELEASE_VERSION="${VERSION_PART}.$((PATCH + 1))"
+          else
+            RELEASE_VERSION="${VERSION_PART}.0"
+          fi
 
           IMAGE_NAME="${CDP_REGISTRY}/infosec/agentic-identity-broker"
-
-          if [ -z "$CDP_PULL_REQUEST_NUMBER" ]; then
-            just VERSION="${CDP_BUILD_VERSION}" IMAGE_NAME="${IMAGE_NAME}" docker-push
-            just VERSION="${CDP_BUILD_VERSION}" IMAGE_NAME="${IMAGE_NAME}" docker-promote
+          if [ -z "${CDP_PULL_REQUEST_NUMBER:-}" ]; then
+            VERSION="${RELEASE_VERSION}" IMAGE_NAME="${IMAGE_NAME}" \
+              just docker-push
+            VERSION="${RELEASE_VERSION}" IMAGE_NAME="${IMAGE_NAME}" \
+              just docker-promote
+            git gh-tag "${RELEASE_VERSION}"
           else
-            just VERSION="${CDP_BUILD_VERSION}" IMAGE_NAME="${IMAGE_NAME}" docker-build-all
-          fi
-      - desc: git-tag
-        cmd: |
-          if [ -z "$CDP_PULL_REQUEST_NUMBER" ]; then
-            git gh-tag "${CDP_BUILD_VERSION}"
+            VERSION="${RELEASE_VERSION}" IMAGE_NAME="${IMAGE_NAME}" \
+              just docker-build-all
           fi

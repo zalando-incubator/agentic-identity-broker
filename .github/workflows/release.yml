@@ -1,8 +1,8 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*.*.*"]
 
 concurrency:
   group: release-${{ github.ref }}
@@ -68,18 +68,20 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
           labels: |
             maintainer=Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>
             org.opencontainers.image.title=Agentic Identity Broker
             org.opencontainers.image.description=Identity broker for AI agents with OAuth2 delegation and consent management
             org.opencontainers.image.vendor=Zalando SE
+            org.opencontainers.image.version=${{ github.ref_name }}
           annotations: |
             maintainer=Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>
             org.opencontainers.image.title=Agentic Identity Broker
             org.opencontainers.image.description=Identity broker for AI agents with OAuth2 delegation and consent management
             org.opencontainers.image.vendor=Zalando SE
+            org.opencontainers.image.version=${{ github.ref_name }}
 
       - name: Extract migrate metadata
         id: migrate-meta
@@ -89,18 +91,20 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-migrate
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
           labels: |
             maintainer=Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>
             org.opencontainers.image.title=Agentic Identity Broker - Migrations
             org.opencontainers.image.description=Database migration tool for Agentic Identity Broker (golang-migrate)
             org.opencontainers.image.vendor=Zalando SE
+            org.opencontainers.image.version=${{ github.ref_name }}
           annotations: |
             maintainer=Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>
             org.opencontainers.image.title=Agentic Identity Broker - Migrations
             org.opencontainers.image.description=Database migration tool for Agentic Identity Broker (golang-migrate)
             org.opencontainers.image.vendor=Zalando SE
+            org.opencontainers.image.version=${{ github.ref_name }}
 
       - name: Extract ExtProc metadata
         id: extproc-meta
@@ -110,18 +114,20 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-extproc
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
           labels: |
             maintainer=Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>
             org.opencontainers.image.title=Agentic Identity Broker - ExtProc Token Exchange
             org.opencontainers.image.description=Envoy External Processing service for transparent Bearer token exchange
             org.opencontainers.image.vendor=Zalando SE
+            org.opencontainers.image.version=${{ github.ref_name }}
           annotations: |
             maintainer=Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>
             org.opencontainers.image.title=Agentic Identity Broker - ExtProc Token Exchange
             org.opencontainers.image.description=Envoy External Processing service for transparent Bearer token exchange
             org.opencontainers.image.vendor=Zalando SE
+            org.opencontainers.image.version=${{ github.ref_name }}
 
       - name: Build and push broker image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
@@ -129,7 +135,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ steps.broker-meta.outputs.version }}
+          build-args: VERSION=${{ github.ref_name }}
           tags: ${{ steps.broker-meta.outputs.tags }}
           labels: ${{ steps.broker-meta.outputs.labels }}
           annotations: ${{ steps.broker-meta.outputs.annotations }}
@@ -141,7 +147,7 @@ jobs:
           file: Dockerfile.migrate
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ steps.migrate-meta.outputs.version }}
+          build-args: VERSION=${{ github.ref_name }}
           tags: ${{ steps.migrate-meta.outputs.tags }}
           labels: ${{ steps.migrate-meta.outputs.labels }}
           annotations: ${{ steps.migrate-meta.outputs.annotations }}
@@ -153,7 +159,7 @@ jobs:
           file: Dockerfile.extproc
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ steps.extproc-meta.outputs.version }}
+          build-args: VERSION=${{ github.ref_name }}
           tags: ${{ steps.extproc-meta.outputs.tags }}
           labels: ${{ steps.extproc-meta.outputs.labels }}
           annotations: ${{ steps.extproc-meta.outputs.annotations }}
