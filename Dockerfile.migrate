@@ -11,6 +11,20 @@ FROM ${BASE_IMAGE}
 ARG TARGETARCH
 
 ARG VERSION
+ARG REVISION
+ARG CREATED
+
+LABEL org.opencontainers.image.created="${CREATED}" \
+      org.opencontainers.image.title="Agentic Identity Broker - Migrations" \
+      org.opencontainers.image.description="Database migration tool for Agentic Identity Broker (golang-migrate)" \
+      org.opencontainers.image.vendor="Zalando SE" \
+      org.opencontainers.image.authors="Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>" \
+      org.opencontainers.image.url="https://github.com/zalando-incubator/agentic-identity-broker" \
+      org.opencontainers.image.documentation="https://github.com/zalando-incubator/agentic-identity-broker#readme" \
+      org.opencontainers.image.source="https://github.com/zalando-incubator/agentic-identity-broker" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
 
 # golang-migrate version for database migrations
 ARG MIGRATE_VERSION=v4.17.0

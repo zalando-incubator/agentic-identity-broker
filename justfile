@@ -5,7 +5,9 @@ GINKGO_PROCS := env_var_or_default("GINKGO_PROCS", "4")
 GINKGO_BACKEND_PROCS := env_var_or_default("GINKGO_BACKEND_PROCS", GINKGO_PROCS)
 GINKGO_EXTPROC_PROCS := env_var_or_default("GINKGO_EXTPROC_PROCS", GINKGO_PROCS)
 NUM_CPUS := num_cpus()
-VERSION := `git describe --tags --always 2>/dev/null || echo "latest"`
+VERSION := env_var_or_default("VERSION", `git describe --tags --always 2>/dev/null || echo "latest"`)
+REVISION := env_var_or_default("REVISION", `git rev-parse HEAD 2>/dev/null || echo "unknown"`)
+CREATED := env_var_or_default("CREATED", `git show -s --format=%cI HEAD 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ"`)
 GO_FAST_TEST_PACKAGES := `go list -e ./... | grep -Ev '(/assets/docusaurus/build/|/specs/|/web/node_modules/|/tests/e2e$|/tests/e2e/frontend$|/tests/e2e/extproc$|/tests/integration($|/))' | tr '\n' ' '`
 INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/infra/... ./tests/integration/migrations/... ./tests/integration/storage/infra/... ./internal/adapters/storage/postgres/..."
 INTEGRATION_INFRA_PACKAGE_PROCS := env_var_or_default("INTEGRATION_INFRA_PACKAGE_PROCS", "2")
@@ -14,8 +16,8 @@ E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false"
 # JWX v4 requires jsonv2 only on Go 1.26; Go 1.27 includes it by default.
 export GOEXPERIMENT := `case "$(go env GOVERSION)" in go1.26.*) printf 'jsonv2' ;; esac`
 
-# Determine Docker Compose command (docker-compose or docker compose)
-COMPOSE_CMD := `if [ -n "${COMPOSE_CMD:-}" ]; then echo "$COMPOSE_CMD"; elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi`
+# Use Docker Compose v1 when installed, otherwise Docker Compose v2.
+COMPOSE_CMD := `if command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi`
 COMPOSE_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml"
 
 
@@ -595,40 +597,12 @@ build-all: build web-build
 # Docker Targets
 # =============================================================================
 
-# Create and push multi-architecture Docker images to registry
-# Builds broker, migrate, and extproc images for linux/amd64 and linux/arm64 using docker buildx or podman build
+# Create and push multi-architecture Docker images to registry.
+# Builds broker, migrate, and extproc images for linux/amd64 and linux/arm64.
 docker-push: build-linux-amd64 build-linux-arm64 web-build
-    @echo "Building and pushing multi-architecture images using {{CONTAINER_RUNTIME}}..."
-    @if [ "{{CONTAINER_RUNTIME}}" = "docker" ]; then \
-        echo "Building broker image: {{IMAGE_NAME}}:{{VERSION}}..."; \
-        docker buildx build --rm -t "{{IMAGE_NAME}}:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --platform linux/amd64,linux/arm64 --push .; \
-        echo "Building migrate image: {{IMAGE_NAME}}-migrate:{{VERSION}}..."; \
-        docker buildx build --rm -t "{{IMAGE_NAME}}-migrate:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --platform linux/amd64,linux/arm64 --file Dockerfile.migrate --push .; \
-        echo "Building extproc image: {{IMAGE_NAME}}-extproc:{{VERSION}}..."; \
-        docker buildx build --rm -t "{{IMAGE_NAME}}-extproc:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --platform linux/amd64,linux/arm64 --file Dockerfile.extproc --push .; \
-    else \
-        echo "Building broker image: {{IMAGE_NAME}}:{{VERSION}}..."; \
-        podman rmi "{{IMAGE_NAME}}:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest rm "{{IMAGE_NAME}}:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest create "{{IMAGE_NAME}}:{{VERSION}}"; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/amd64 --manifest "{{IMAGE_NAME}}:{{VERSION}}" .; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/arm64 --manifest "{{IMAGE_NAME}}:{{VERSION}}" .; \
-        podman manifest push --all "{{IMAGE_NAME}}:{{VERSION}}" "docker://{{IMAGE_NAME}}:{{VERSION}}"; \
-        echo "Building migrate image: {{IMAGE_NAME}}-migrate:{{VERSION}}..."; \
-        podman rmi "{{IMAGE_NAME}}-migrate:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest rm "{{IMAGE_NAME}}-migrate:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest create "{{IMAGE_NAME}}-migrate:{{VERSION}}"; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/amd64 --manifest "{{IMAGE_NAME}}-migrate:{{VERSION}}" --file Dockerfile.migrate .; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/arm64 --manifest "{{IMAGE_NAME}}-migrate:{{VERSION}}" --file Dockerfile.migrate .; \
-        podman manifest push --all "{{IMAGE_NAME}}-migrate:{{VERSION}}" "docker://{{IMAGE_NAME}}-migrate:{{VERSION}}"; \
-        echo "Building extproc image: {{IMAGE_NAME}}-extproc:{{VERSION}}..."; \
-        podman rmi "{{IMAGE_NAME}}-extproc:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest rm "{{IMAGE_NAME}}-extproc:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest create "{{IMAGE_NAME}}-extproc:{{VERSION}}"; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/amd64 --manifest "{{IMAGE_NAME}}-extproc:{{VERSION}}" --file Dockerfile.extproc .; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/arm64 --manifest "{{IMAGE_NAME}}-extproc:{{VERSION}}" --file Dockerfile.extproc .; \
-        podman manifest push --all "{{IMAGE_NAME}}-extproc:{{VERSION}}" "docker://{{IMAGE_NAME}}-extproc:{{VERSION}}"; \
-    fi
+    docker buildx build --rm -t "{{IMAGE_NAME}}:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --push .
+    docker buildx build --rm -t "{{IMAGE_NAME}}-migrate:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.migrate --push .
+    docker buildx build --rm -t "{{IMAGE_NAME}}-extproc:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.extproc --push .
     @echo "✓ Multi-architecture images pushed:"
     @echo "  - {{IMAGE_NAME}}:{{VERSION}}"
     @echo "  - {{IMAGE_NAME}}-migrate:{{VERSION}}"
@@ -641,46 +615,22 @@ docker-promote:
     cdp-promote-image {{IMAGE_NAME}}-migrate:{{VERSION}}
     cdp-promote-image {{IMAGE_NAME}}-extproc:{{VERSION}}
 
-# Build multi-architecture migrate Docker image (validates both platforms, no output)
+# Build multi-architecture migrate Docker image (validates both platforms, no output).
 docker-build-migrate:
-    @echo "Building migrate image: {{IMAGE_NAME}}-migrate:{{VERSION}} using {{CONTAINER_RUNTIME}}..."
-    @if [ "{{CONTAINER_RUNTIME}}" = "docker" ]; then \
-        docker buildx build --rm -t "{{IMAGE_NAME}}-migrate:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --platform linux/amd64,linux/arm64 --file Dockerfile.migrate .; \
-    else \
-        podman rmi "{{IMAGE_NAME}}-migrate:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest rm "{{IMAGE_NAME}}-migrate:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest create "{{IMAGE_NAME}}-migrate:{{VERSION}}"; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/amd64 --manifest "{{IMAGE_NAME}}-migrate:{{VERSION}}" --file Dockerfile.migrate .; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/arm64 --manifest "{{IMAGE_NAME}}-migrate:{{VERSION}}" --file Dockerfile.migrate .; \
-    fi
+    @echo "Building migrate image: {{IMAGE_NAME}}-migrate:{{VERSION}}..."
+    docker buildx build --rm -t "{{IMAGE_NAME}}-migrate:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.migrate .
     @echo "✓ Migrate image validated: {{IMAGE_NAME}}-migrate:{{VERSION}}"
 
-# Build multi-architecture broker Docker image (validates both platforms, no output)
+# Build multi-architecture broker Docker image (validates both platforms, no output).
 docker-build-broker: build-linux-amd64 build-linux-arm64 web-build
-    @echo "Building broker image: {{IMAGE_NAME}}:{{VERSION}} using {{CONTAINER_RUNTIME}}..."
-    @if [ "{{CONTAINER_RUNTIME}}" = "docker" ]; then \
-        docker buildx build --rm -t "{{IMAGE_NAME}}:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --platform linux/amd64,linux/arm64 .; \
-    else \
-        podman rmi "{{IMAGE_NAME}}:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest rm "{{IMAGE_NAME}}:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest create "{{IMAGE_NAME}}:{{VERSION}}"; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/amd64 --manifest "{{IMAGE_NAME}}:{{VERSION}}" .; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/arm64 --manifest "{{IMAGE_NAME}}:{{VERSION}}" .; \
-    fi
+    @echo "Building broker image: {{IMAGE_NAME}}:{{VERSION}}..."
+    docker buildx build --rm -t "{{IMAGE_NAME}}:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 .
     @echo "✓ Broker image validated: {{IMAGE_NAME}}:{{VERSION}}"
 
-# Build multi-architecture extproc Docker image (validates both platforms, no output)
+# Build multi-architecture extproc Docker image (validates both platforms, no output).
 docker-build-extproc:
-    @echo "Building extproc image: {{IMAGE_NAME}}-extproc:{{VERSION}} using {{CONTAINER_RUNTIME}}..."
-    @if [ "{{CONTAINER_RUNTIME}}" = "docker" ]; then \
-        docker buildx build --rm -t "{{IMAGE_NAME}}-extproc:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --platform linux/amd64,linux/arm64 --file Dockerfile.extproc .; \
-    else \
-        podman rmi "{{IMAGE_NAME}}-extproc:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest rm "{{IMAGE_NAME}}-extproc:{{VERSION}}" 2>/dev/null || true; \
-        podman manifest create "{{IMAGE_NAME}}-extproc:{{VERSION}}"; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/amd64 --manifest "{{IMAGE_NAME}}-extproc:{{VERSION}}" --file Dockerfile.extproc .; \
-        podman build --rm --build-arg VERSION="{{VERSION}}" --platform linux/arm64 --manifest "{{IMAGE_NAME}}-extproc:{{VERSION}}" --file Dockerfile.extproc .; \
-    fi
+    @echo "Building extproc image: {{IMAGE_NAME}}-extproc:{{VERSION}}..."
+    docker buildx build --rm -t "{{IMAGE_NAME}}-extproc:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.extproc .
     @echo "✓ ExtProc image validated: {{IMAGE_NAME}}-extproc:{{VERSION}}"
 
 # Build broker and migrate multi-architecture images and smoke-test ExtProc's native release image

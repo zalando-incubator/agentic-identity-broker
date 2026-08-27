@@ -10,6 +10,20 @@ FROM ${BASE_IMAGE}
 ARG TARGETARCH
 
 ARG VERSION
+ARG REVISION
+ARG CREATED
+
+LABEL org.opencontainers.image.created="${CREATED}" \
+      org.opencontainers.image.title="Agentic Identity Broker" \
+      org.opencontainers.image.description="Identity broker for AI agents with OAuth2 delegation and consent management" \
+      org.opencontainers.image.vendor="Zalando SE" \
+      org.opencontainers.image.authors="Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>" \
+      org.opencontainers.image.url="https://github.com/zalando-incubator/agentic-identity-broker" \
+      org.opencontainers.image.documentation="https://github.com/zalando-incubator/agentic-identity-broker#readme" \
+      org.opencontainers.image.source="https://github.com/zalando-incubator/agentic-identity-broker" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
 
 # Create non-root user for security (uid=1000, gid=1000)
 RUN addgroup -g 1000 appuser && \

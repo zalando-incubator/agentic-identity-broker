@@ -25,6 +25,20 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" \
 FROM ${BASE_IMAGE} AS runtime
 
 ARG VERSION
+ARG REVISION
+ARG CREATED
+
+LABEL org.opencontainers.image.created="${CREATED}" \
+      org.opencontainers.image.title="Agentic Identity Broker - ExtProc Token Exchange" \
+      org.opencontainers.image.description="Envoy External Processing service for transparent Bearer token exchange" \
+      org.opencontainers.image.vendor="Zalando SE" \
+      org.opencontainers.image.authors="Magnus Jungsbluth <magnus.jungsbluth@zalando.de>, Jan Brennenstuhl <jan.brennenstuhl@zalando.de>" \
+      org.opencontainers.image.url="https://github.com/zalando-incubator/agentic-identity-broker" \
+      org.opencontainers.image.documentation="https://github.com/zalando-incubator/agentic-identity-broker#readme" \
+      org.opencontainers.image.source="https://github.com/zalando-incubator/agentic-identity-broker" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
 
 # Create non-root user for security (uid=1000, gid=1000)
 RUN addgroup -g 1000 appuser && \
