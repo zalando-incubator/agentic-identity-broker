@@ -2,24 +2,5 @@
 
 ## Core Maintainers
 
-- **Magnus Jungsbluth** - magnus.jungsbluth@zalando.de
-- **Jan Brennenstuhl** - jan.brennenstuhl@zalando.de
-
-## PR Approval Process
-
-- All PRs require review from at least one maintainer
-- Major architectural changes require approval from both maintainers
-- Security-related PRs require approval from both maintainers
-
-## Contact
-
-For maintainer attention:
-- **Bug Reports**: Open a GitHub issue with reproduction steps
-- **Security Issues**: Email maintainers directly (do not open public issues)
-- **Architecture Questions**: Create a GitHub discussion or contact maintainers
-
-## See Also
-
-- [CONTRIBUTING.md](CONTRIBUTING.md) - How to contribute
-- [CODEOWNERS](.github/CODEOWNERS) - Code ownership
-- [Constitution v1.4.0](.specify/memory/constitution.md) - Project governance
+- **Magnus Jungsbluth** @mjungsbluth magnus.jungsbluth@zalando.de
+- **Jan Brennenstuhl** @jbspeakr jan.brennenstuhl@zalando.de

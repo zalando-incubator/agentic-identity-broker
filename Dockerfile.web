@@ -2,7 +2,7 @@
 # Enables Hot Module Replacement (HMR) during development
 # Built for use with docker-compose volume mounts
 
-FROM node:22-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 

@@ -2,7 +2,7 @@
 # Docker Compose builds the development stage from source. Release builds package
 # the precompiled target-specific artifact.
 ARG BASE_IMAGE=default
-FROM container-registry.zalando.net/library/alpine-3:latest AS default
+FROM alpine:3 AS default
 
 FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine AS development-builder
 
@@ -25,11 +25,7 @@ FROM ${BASE_IMAGE} AS runtime
 
 ARG VERSION
 
-LABEL org.opencontainers.image.title="Agentic Identity Broker - ExtProc Token Exchange"
-LABEL org.opencontainers.image.description="Envoy External Processing service for transparent Bearer token exchange"
-LABEL org.opencontainers.image.version=$VERSION
-LABEL org.opencontainers.image.vendor="Zalando SE"
-
+# Create non-root user for security (uid=1000, gid=1000)
 RUN addgroup -g 1000 appuser && \
     adduser -D -u 1000 -G appuser appuser
 
