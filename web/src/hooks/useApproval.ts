@@ -12,7 +12,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { approvalApi } from '@services/api/approvals';
 import type {
   ToolApprovalDetail,
-  ApprovalPersistence,
   ApprovalErrorCode,
   ApproveResponseData,
   DenyResponseData,
@@ -52,6 +51,7 @@ function mapHttpStatusToErrorCode(
   if (status === 403) return 'FORBIDDEN';
   if (status === 404) return 'NOT_FOUND';
   if (!status || status === 0) return 'NETWORK_ERROR';
+  if (code === 'invalid_pattern' || status === 422) return 'INVALID_PATTERN';
   return 'SERVER_ERROR';
 }
 

@@ -50,6 +50,37 @@ describe('ApprovalReviewPage', () => {
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
+  it('keeps the scope editable after the server rejects the pattern', async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ApprovalReviewPage
+        approval={approval}
+        submitting={false}
+        errorCode="INVALID_PATTERN"
+        errorMessage={null}
+        approveResult={null}
+        denyResult={null}
+        onApprove={onApprove}
+        onDeny={vi.fn()}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Scope Not Accepted');
+
+    await user.click(screen.getByRole('radio', { name: /for this session/i }));
+    expect(screen.getByRole('button', { name: /approval scope/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^approve$/i }));
+    expect(onApprove).toHaveBeenCalledWith({
+      persistence: 'session',
+      tool_pattern: 'read_file',
+      params_pattern: { path: '/tmp/example' },
+    });
+  });
+
   it('approves permanently after selecting Always allow', async () => {
     const user = userEvent.setup();
     const onApprove = vi.fn().mockResolvedValue(undefined);

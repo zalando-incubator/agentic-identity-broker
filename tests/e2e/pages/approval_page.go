@@ -270,22 +270,42 @@ func (ap *ApprovalPage) ClickDeny(ctx context.Context) error {
 	return nil
 }
 
-// SetPatternField fills a labelled tool or parameter pattern input.
-func (ap *ApprovalPage) SetPatternField(ctx context.Context, label, value string) error {
-	input := ap.pwPage().GetByLabel(label)
-	if count, err := input.Count(); err != nil || count == 0 {
-		return fmt.Errorf("pattern field %q not found: %w", label, err)
+// ExpandApprovalScope opens the "Approval scope" disclosure when it is collapsed.
+func (ap *ApprovalPage) ExpandApprovalScope(ctx context.Context) error {
+	toggle := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Approval scope"})
+	expanded, err := toggle.GetAttribute("aria-expanded")
+	if err != nil {
+		return fmt.Errorf("read approval scope state: %w", err)
 	}
-	if err := input.Fill(value); err != nil {
-		return fmt.Errorf("fill pattern field %q: %w", label, err)
+	if expanded == "true" {
+		return nil
+	}
+	if err := toggle.Click(); err != nil {
+		return fmt.Errorf("expand approval scope: %w", err)
 	}
 	return nil
 }
 
-// ClickAllowAnyParameters clears all parameter constraints.
-func (ap *ApprovalPage) ClickAllowAnyParameters(ctx context.Context) error {
-	if err := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Allow any parameters"}).Click(); err != nil {
-		return fmt.Errorf("click Allow any parameters: %w", err)
+// parameterScope locates the scope block of a single request parameter.
+func (ap *ApprovalPage) parameterScope(key string) playwright.Locator {
+	return ap.pwPage().Locator(fmt.Sprintf("[data-testid='approval-scope-param-%s']", key))
+}
+
+// SetParameterMode selects a per-parameter mode.
+// Valid modes: "This value", "Any value", "Custom match".
+func (ap *ApprovalPage) SetParameterMode(ctx context.Context, key, mode string) error {
+	radio := ap.parameterScope(key).GetByRole("radio", playwright.LocatorGetByRoleOptions{Name: mode})
+	if err := radio.Click(); err != nil {
+		return fmt.Errorf("select mode %q for parameter %q: %w", mode, key, err)
+	}
+	return nil
+}
+
+// SetParameterCustomPattern fills the custom match input of a single parameter.
+func (ap *ApprovalPage) SetParameterCustomPattern(ctx context.Context, key, value string) error {
+	input := ap.parameterScope(key).GetByRole("textbox")
+	if err := input.Fill(value); err != nil {
+		return fmt.Errorf("fill custom pattern for parameter %q: %w", key, err)
 	}
 	return nil
 }

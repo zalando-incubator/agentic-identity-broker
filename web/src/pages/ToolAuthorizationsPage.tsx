@@ -16,7 +16,7 @@ import { Card } from '@design-system/components/data-display/Card';
 import { approvalApi } from '@services/api/approvals';
 import { ApprovalRequestSummary } from '@components/approvals/ApprovalRequestSummary';
 import { PersistenceSelector } from '@components/approvals/PersistenceSelector';
-import { PatternEditor } from '@components/approvals/PatternEditor';
+import { ApprovalScopeEditor, hasScopeIssues, resolveScopeIssues } from '@components/approvals/ApprovalScopeEditor';
 import type { ToolApprovalDetail, ApprovalPersistence } from '../types/approval';
 
 
@@ -88,16 +88,19 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
     setParamsPattern(approval.params_pattern ?? {});
   };
   const [submitting, setSubmitting] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
 
 
   const handleApprove = async () => {
     setSubmitting(true);
+    setErrorText(null);
     try {
       await approvalApi.approveApproval(approval.id, persistence === 'once'
         ? { persistence }
         : { persistence, tool_pattern: toolPattern, params_pattern: paramsPattern });
       onResolved(approval.id, persistence === 'permanent');
     } catch {
+      setErrorText('Could not approve this request. Check the approval scope and try again.');
       setSubmitting(false);
     }
   };
@@ -115,9 +118,13 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
   const cancel = () => {
     setAction(null);
     setPersistence('once');
+    setErrorText(null);
     setToolPattern(approval.tool_pattern ?? approval.tool_name);
     setParamsPattern(approval.params_pattern ?? {});
   };
+
+  const scopeIssues = resolveScopeIssues(approval, toolPattern, paramsPattern);
+  const scopeBlocked = persistence !== 'once' && hasScopeIssues(scopeIssues);
 
   return (
     <Card padding="default">
@@ -132,7 +139,7 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
               disabled={submitting}
               name={`pending-approval-${approval.id}`}
             />
-            <PatternEditor
+            <ApprovalScopeEditor
               approval={approval}
               toolPattern={toolPattern}
               onToolPatternChange={setToolPattern}
@@ -141,13 +148,16 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
               persistence={persistence}
               disabled={submitting}
             />
+            {errorText && (
+              <InlineError error={errorText} onRetry={() => void handleApprove()} retryLabel="Try approving again" />
+            )}
             <div className="flex items-center gap-2">
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={handleApprove}
                 isLoading={submitting}
-                disabled={submitting}
+                disabled={submitting || scopeBlocked}
               >
                 Confirm Approve
               </Button>

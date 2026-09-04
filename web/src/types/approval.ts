@@ -91,4 +91,5 @@ export type ApprovalErrorCode =
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'NETWORK_ERROR'
-  | 'SERVER_ERROR';
+  | 'SERVER_ERROR'
+  | 'INVALID_PATTERN';
