@@ -24,6 +24,8 @@ The configuration schema is defined exclusively by:
 - `internal/extproc/config/loader.go` — Viper loader with `EXTPROC_` prefix
 - `examples/config/extproc-token-exchange.yaml` — Reference example for operators
 
+The broker Helm chart is not an ExtProc configuration surface because it deploys the broker binary only. ExtProc settings MUST NOT be added to that chart's broker ConfigMap or Deployment. A chart that later deploys ExtProc MUST provide a distinct workload and configuration path for `EXTPROC_*` settings.
+
 ---
 
 ## Rationale
@@ -70,6 +72,7 @@ Rejected. This would grow `internal/config/schema.go` with ExtProc-specific fiel
 - **Independent deployment**: The ExtProc binary can be deployed, scaled, and restarted independently without any coupling to identity broker configuration files.
 - **Smaller identity broker footprint**: The identity broker schema stays focused on its own concerns and does not accumulate fields from unrelated services.
 - **Pattern consistency**: Both binaries use Viper/Cobra with env prefixes, YAML files, env expansion, and fail-fast validation — a consistent infrastructure approach across all binaries in the repository.
+- **Correct deployment ownership**: ExtProc configuration is kept out of the broker chart unless that chart adds an ExtProc workload with its own configuration path.
 
 ### Negative
 
@@ -84,6 +87,7 @@ A deviation from Principle VII is formally accepted for standalone multi-binary 
 2. Uses a distinct, non-colliding env prefix that identifies the service (e.g., `EXTPROC_`).
 3. Applies the same security patterns: env expansion for secrets, sensitive field redaction in logs, and fail-fast validation at startup.
 4. Documents the deviation in an ADR.
+5. Keeps its settings out of a Helm chart that does not deploy that binary; any chart that does deploy it must provide its own workload configuration path.
 
 ---
 

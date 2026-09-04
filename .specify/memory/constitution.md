@@ -1,33 +1,37 @@
 <!--
 Sync Impact Report
 ==================
-Version Change: 1.9.0 → 1.9.1
+Version Change: 1.9.1 → 2.0.0
 Rationale:
-  1.9.0 → 1.9.1 (PATCH): Principle I now names the accepted, bounded exception
-    established by ADR 031 for unsigned unverified-subject JWTs in local-mode OAuth2
-    impersonation. The exception is limited to the unverified subject role
-    (`verification: none`) and retains all six compensating controls from ADR 031.
+  1.9.1 → 2.0.0 (MAJOR): Principle VII now scopes Helm changes to configuration
+    of workloads deployed by charts/agentic-identity-broker. Standalone binaries
+    governed by an accepted ADR must retain their own configuration delivery path
+    and MUST NOT receive configuration through the broker chart.
 
 Modified Principles:
-  - Principle I: added ADR 031 bounded exception
+  - Principle VII: scoped Helm deployment-contract requirements and defined the
+    standalone-binary configuration boundary.
 
 Added Sections: None
 
 Removed Sections: None
 
 Templates Status:
-- ✅ No template changes required
+- ✅ `.specify/templates/tasks-template.md` updated with the deployment-contract rule.
+- ✅ `.specify/templates/overrides/tasks-template.md` and `.specify/templates/overrides/plan-template.md` updated with the scoped Helm rule.
+- ✅ `.specify/templates/plan-template.md` and `.specify/templates/spec-template.md` reviewed; no change required.
+- ✅ `.specify/templates/commands/` is not present; no command templates to update.
 
 Follow-up TODOs: None
 
 Previous Version History:
+- 1.9.0 → 1.9.1: Clarified the bounded ADR 031 exception in Principle I (PATCH)
 - 1.8.0 → 1.8.1: Clarified red phase rules in Principles VIII and XIII (PATCH)
-- 1.7.1 → 1.8.0: Added Helm chart requirement (Principle VII) + frontend Playwright E2E (Principle XIII) (MINOR)
+- 1.7.1 → 1.8.0: Added Helm chart requirement (Principle VII) + frontend Playwright E2E (MINOR)
 - 1.7.0 → 1.7.1: Clarified red phase requirements in Principle VIII (PATCH)
 - 1.6.0 → 1.7.0: Added Principle XIII (E2E Acceptance Testing) + expanded Principle VIII (MINOR)
 - 1.5.1 → 1.6.0: Added Principle XII (Dependency Injection & Component Wiring) (MINOR)
 - 1.5.0 → 1.5.1: Clarified testing requirements in tasks-template.md (PATCH)
-- 1.4.0 → 1.5.0: Added Governance > Task List Requirements section (MINOR)
 -->
 
 # Agentic Identity Broker Constitution
@@ -150,31 +154,22 @@ Backend architecture MUST use hexagonal architecture with clear port/adapter sep
 
 ### VII. Configuration-Driven Design
 
-All runtime configuration MUST use the unified configuration system; ad-hoc configuration is forbidden.
+All runtime configuration MUST use the configuration system owned by the deployable application; ad-hoc configuration is forbidden.
 
 **Rules**:
-- Features MUST NOT implement custom configuration loading; they MUST use the system-wide configuration port defined in [internal/ports/config.go](internal/ports/config.go)
-- All configuration settings MUST support multiple sources (files, environment variables, CLI flags) with clear precedence
-- Configuration structure MUST be defined in [internal/config/schema.go](internal/config/schema.go) with validation rules enforced at startup
-- End-user documentation for feature-specific configuration MUST be added to [docs/configuration.md](docs/configuration.md)
-- Feature-specific configuration examples MUST be added to [examples/config/](examples/config/) directory
-- Configuration guide [examples/config/README.md](examples/config/README.md) MUST be referenced and updated as new features add configuration options
-- See [Flexible Configuration Feature Documentation](docs/configuration.md) for complete usage guidance
-- Implementation reference: [Feature 002 - Flexible Configuration](specs/002-flexible-configuration/)
-- **When configuration parameters are added, changed, or removed, the Helm chart in
-  `charts/agentic-identity-broker/` MUST be updated**:
-  - `values.yaml`: add new parameters with default values and `--` doc comments matching the existing style
-  - ConfigMap/Secret templates under `charts/agentic-identity-broker/templates/` MUST be updated to
-    pass the new config values to pods (environment variables or mounted config files)
-  - `charts/agentic-identity-broker/README.md` (if present): update configuration reference table
-    with new parameters, their types, defaults, and descriptions
+- The identity broker MUST use the system-wide configuration port in [internal/ports/config.go](internal/ports/config.go).
+- A standalone binary MAY use a separate configuration schema and environment prefix only when an accepted ADR documents the boundary and its rationale.
+- All configuration settings MUST support files, environment variables, and CLI flags with clear precedence.
+- Configuration structures MUST have startup validation in the configuration system that owns the deployable application.
+- End-user documentation for feature-specific configuration MUST be added to [docs/configuration.md](docs/configuration.md).
+- Feature-specific configuration examples MUST be added to [examples/config/](examples/config/) and referenced from [examples/config/README.md](examples/config/README.md).
+- **When configuration parameters of a workload deployed by `charts/agentic-identity-broker/` are added, changed, or removed, the Helm chart MUST be updated**:
+  - `values.yaml` MUST add parameters with defaults and `--` documentation comments matching the existing style.
+  - ConfigMap/Secret templates under `charts/agentic-identity-broker/templates/` MUST pass the values to the workload.
+  - `charts/agentic-identity-broker/README.md` (if present) MUST document parameter types, defaults, and descriptions.
+- Parameters owned exclusively by a standalone binary that this chart does not deploy MUST NOT be inserted into the broker ConfigMap or Deployment. Their owning deployment artifact MUST provide them through that binary's documented configuration path.
 
-**Rationale**: Unified configuration prevents duplication, ensures consistent precedence rules across
-the system, reduces operational confusion, and simplifies deployment across development/staging/production
-environments. The 002-flexible-configuration feature established this system; all features MUST integrate
-with it rather than bypassing it. Keeping the Helm chart in sync with configuration changes is essential
-for Kubernetes deployments: untracked config parameters cause silent runtime failures or require manual
-operator intervention to discover. The Helm chart is the deployment contract for production operators.
+**Rationale**: A deployable application needs one clear configuration contract. The broker chart is authoritative only for broker workloads it deploys; placing standalone-binary settings in it configures the wrong process and risks invalid startup configuration. Accepted ADRs document the independent configuration and deployment boundaries required for standalone binaries.
 
 ### VIII. Test-Driven Development & Automated Testing
 
@@ -487,8 +482,7 @@ documentation of UI states, making regressions immediately visible during review
 - [ ] Domain concepts added to [ARCHITECTURE.md](ARCHITECTURE.md) Glossary section
 - [ ] Configuration requirements designed: example YAML snippets showing all new config options
 - [ ] Configuration examples committed to [examples/config/](examples/config/) for reference
-- [ ] **Helm chart updated if config parameters changed: `charts/agentic-identity-broker/values.yaml`,
-      templates, and README updated (Principle VII)**
+- [ ] **Helm deployment contract updated when configuration parameters of a chart-managed workload change; otherwise the standalone deployment owner and its accepted ADR boundary are documented (Principle VII)**
 - [ ] APIs designed and documented in OpenAPI format (confirm with user/stakeholder per Principle X)
 - [ ] Database schema designed (migration files and SQL documented, or confirm no DB changes)
 - [ ] Frontend components designed: review [web/src/design-system/docs/INDEX.md](../web/src/design-system/docs/INDEX.md) and ensure design system can be used
@@ -507,8 +501,8 @@ documentation of UI states, making regressions immediately visible during review
 - [ ] Code follows patterns established in accepted ADRs (especially ADR 004 for persistence)
 - [ ] APIs implemented exactly as documented in OpenAPI specification
 - [ ] End-user API documentation in [docs/api/](docs/api/) with examples (if applicable)
-- [ ] Configuration implementation uses unified system port, not custom loading
-- [ ] **Helm chart updated to reflect any new or changed configuration parameters (Principle VII)**
+- [ ] Configuration implementation uses the configuration system owned by its deployable application; a standalone configuration path requires an accepted ADR
+- [ ] **Helm chart updated for configuration changes to chart-managed workloads, or the standalone deployment boundary verified and documented (Principle VII)**
 - [ ] Domain logic uses ports (interfaces) and adapters are separated
 - [ ] No custom cryptography; security features use vetted libraries
 - [ ] Structured logging present for security-critical operations
@@ -644,7 +638,7 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 - Reviewers MUST verify E2E tests exist for all spec scenarios and changed minimally during implementation (Principle XIII)
 - Reviewers MUST verify E2E tests failed semantically in red phase: detailed expectations present and
   failing, not trivial always-fail placeholders (Principle XIII)
-- Reviewers MUST verify Helm chart updated when configuration parameters changed (Principle VII)
+- Reviewers MUST verify Helm updates for chart-managed workload configuration, or the accepted ADR and documented standalone deployment boundary for separately deployed binaries (Principle VII)
 - Reviewers MUST verify frontend UI changes have Playwright E2E tests in `tests/e2e/frontend/` and
   screenshots in `tests/e2e/screenshots/` (Principle XIII)
 - Template files in [.specify/templates/](.specify/templates/) provide execution workflows that enforce these principles
@@ -656,7 +650,7 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 **MANDATORY SECTIONS** (cannot be omitted):
 1. **Phase 2: Design Preconditions** - Constitution PRECONDITIONS implementation
    - Phase 2a: Domain Model & Glossary (Principles II, V)
-   - Phase 2b: Configuration Design (Principle VII) — includes Helm chart update task
+   - Phase 2b: Configuration Design (Principle VII) — includes a Helm task for chart-managed workloads or standalone deployment-boundary verification
    - Phase 2c: API Design (Principles IV, X)
    - Phase 2d: Database Design (Principle IX)
    - Phase 2e: Frontend/Design System Review (Principle XI, if applicable)
@@ -687,4 +681,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - The tasks-template.md uses 🔒 emoji and [MANDATORY] markers to clearly distinguish mandatory from customizable sections
 - Omitting mandatory sections violates this constitution and blocks feature completion
 
-**Version**: 1.9.1 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-08-27
+**Version**: 2.0.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-09-04

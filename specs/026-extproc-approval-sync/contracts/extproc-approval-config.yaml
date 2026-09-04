@@ -1,0 +1,119 @@
+# Configuration contract: ExtProc approval sync (feature 026)
+#
+# Two new top-level sections on the ExtProc config root (internal/extproc/config/config.go).
+# Loaded by the existing LoadWithCommand pipeline: EXTPROC_ env prefix with dots mapped to
+# underscores, optional YAML at EXTPROC_CONFIG_PATH, Cobra flags at highest precedence,
+# ${VAR} expansion, then Validate().
+#
+# See specs/026-extproc-approval-sync/research.md R-010 for the rationale behind each rule.
+
+# ---------------------------------------------------------------------------
+# Complete working example
+# ---------------------------------------------------------------------------
+
+tool_approvals:
+  # Master switch. Default false — an unset section leaves today's behavior byte-for-byte
+  # unchanged, including OPA's current treatment of approval_required.
+  # Env: EXTPROC_TOOL_APPROVALS_ENABLED
+  enabled: true
+
+  # Identity broker base URL. ExtProc appends /api/approvals to this value.
+  # Required when enabled. Absolute HTTP(S) URI with a host, no query, no fragment.
+  # Plain http:// is accepted only when oauth2.tls.allow_http is true (development).
+  # Env: EXTPROC_TOOL_APPROVALS_URL
+  url: "https://broker.example.com"
+
+  # Value sent as X-Long-Poll-Timeout on the background sync request.
+  # Range [1, 120]. The broker clamps anything above 120 (sync_handler.go:19-22),
+  # so larger values are rejected at startup rather than silently truncated.
+  # Env: EXTPROC_TOOL_APPROVALS_LONG_POLL_TIMEOUT_SECONDS
+  long_poll_timeout_seconds: 30
+
+  # A (principal, agent_id) cache pair with no requests for this long is evicted (FR-010).
+  # Dropping a pair also drops any session-scoped approvals it held (FR-009).
+  # Must be > 0.
+  # Env: EXTPROC_TOOL_APPROVALS_APPROVAL_CACHE_IDLE_TTL
+  approval_cache_idle_ttl: 5m
+
+  # Timeout for the synchronous broker calls on the request path: the FR-005 targeted read,
+  # POST /api/approvals, and POST /api/approvals/{id}/consume.
+  # It does NOT govern the long-poll request, which derives its own deadline from
+  # long_poll_timeout_seconds plus a fixed margin.
+  # Must be > 0. Keep well inside SC-001's 500 ms ExtProc-side budget.
+  # Env: EXTPROC_TOOL_APPROVALS_REQUEST_TIMEOUT
+  request_timeout: 5s
+
+sessions:
+  extraction:
+    # HTTP request header whose value identifies the agent session used to scope
+    # session-persistence approvals. Surfaced to policy as input.context.agent_session_id
+    # and sent to the broker as metadata.agent_session_id at approval creation.
+    #
+    # This is NOT input.mcp.session_id: that field remains the MCP protocol session read
+    # from the fixed Mcp-Session-Id header and is left unchanged (feature 020 contract).
+    # The two coincide under the default and diverge when an operator maps another header.
+    #
+    # Must be a non-empty valid HTTP token.
+    # Env: EXTPROC_SESSIONS_EXTRACTION_HTTP_HEADER
+    http_header: "Mcp-Session-Id"
+
+# ---------------------------------------------------------------------------
+# Minimal example — approval gating enabled with all defaults
+# ---------------------------------------------------------------------------
+#
+# authorization:
+#   enabled: true
+#   policy:
+#     path: /etc/opa/policies
+# tool_approvals:
+#   enabled: true
+#   url: "https://broker.example.com"
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+#
+# | Key                                        | Default           | Required            |
+# |--------------------------------------------|-------------------|---------------------|
+# | tool_approvals.enabled                      | false             | no                  |
+# | tool_approvals.url                          | ""                | yes, when enabled   |
+# | tool_approvals.long_poll_timeout_seconds    | 30                | no                  |
+# | tool_approvals.approval_cache_idle_ttl      | 5m                | no                  |
+# | tool_approvals.request_timeout              | 5s                | no                  |
+# | sessions.extraction.http_header             | "Mcp-Session-Id"  | no                  |
+
+# ---------------------------------------------------------------------------
+# Startup validation rules (fail-fast, joining Validate()'s numbered rules
+# in internal/extproc/config/validate.go; all errors collected, not first-wins)
+# ---------------------------------------------------------------------------
+#
+# V1. tool_approvals.enabled requires authorization.enabled.
+#     Approval gating is driven by an OPA approval_required decision; without OPA there is
+#     nothing to gate. Error: "tool_approvals.enabled requires authorization.enabled".
+#
+# V2. tool_approvals.url is required when enabled, and must parse as an absolute HTTP(S)
+#     URI with a non-empty host and no query or fragment. A trailing slash is normalized away.
+#
+# V3. A plain http:// tool_approvals.url is rejected unless oauth2.tls.allow_http is true.
+#     Client assertions and subject tokens travel on these calls; this mirrors the existing
+#     development-only escape hatch rather than introducing a second one.
+#
+# V4. tool_approvals.long_poll_timeout_seconds must be in [1, 120].
+#
+# V5. tool_approvals.approval_cache_idle_ttl must be > 0.
+#
+# V6. tool_approvals.request_timeout must be > 0.
+#
+# V7. sessions.extraction.http_header must be non-empty and a valid HTTP field name
+#     (RFC 9110 token). It is validated whenever set, independently of tool_approvals.enabled,
+#     because it also feeds input.context.agent_session_id for policy authors.
+
+# ---------------------------------------------------------------------------
+# Non-goals
+# ---------------------------------------------------------------------------
+#
+# - No Helm chart changes. charts/agentic-identity-broker/ contains zero ExtProc references;
+#   ExtProc ships from Dockerfile.extproc and is configured through EXTPROC_* env or
+#   EXTPROC_CONFIG_PATH. (Constitution Principle VII Helm clause is not applicable here.)
+# - No broker-side configuration changes. The broker's approval endpoints, CEL client-assertion
+#   authorization, and sync coalesce window are all pre-existing feature-024 configuration.

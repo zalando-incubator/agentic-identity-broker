@@ -41,7 +41,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 - [ ] **Entity IDs**: For each new domain entity with a UUID primary key, will a typed ID (`type XxxID uuid.UUID`) be added to `internal/domain/id/` via `gen_ids.go` and documented in `internal/domain/id/AGENTS.md`? (ADR 013)
 - [ ] **Configuration Design**: Have all config requirements been identified with YAML examples?
 - [ ] **Config Examples**: Will example YAML snippets be added to examples/config/?
-- [ ] **Helm Chart**: If configuration parameters are added/changed/removed, will `charts/agentic-identity-broker/` be updated (values.yaml, templates, README)?
+- [ ] **Helm Deployment Contract**: If configuration changes affect a workload deployed by `charts/agentic-identity-broker/`, will its values, templates, and README be updated? Otherwise, is the standalone binary's accepted ADR boundary documented and kept out of the broker chart?
 - [ ] **API Design First**: Will APIs be designed (OpenAPI spec) and confirmed BEFORE implementation?
 - [ ] **API Documentation**: Will OpenAPI specs be created in `/api/enduser/` or `/api/admin/` as applicable?
 - [ ] **API Changes**: Are all API changes confirmed by user/stakeholder (document in PR)?

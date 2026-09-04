@@ -908,6 +908,8 @@ The gates compose as fail-closed AND: ExtProc OPA can only further restrict a re
 
 **Configuration Subsystem**: Separate from broker config, uses `EXTPROC_` environment prefix.
 
+**Deployment Boundary**: ExtProc is independently deployed and is not a workload of `charts/agentic-identity-broker/`. Its `EXTPROC_*` settings and YAML file MUST NOT be added to the broker chart's ConfigMap or Deployment. Any chart that later deploys ExtProc must give it a distinct workload and configuration path, as required by ADR 011 and Constitution Principle VII.
+
 **Config Structure**:
 
 - **GRPCConfig**: `bind`, `port`, `max_concurrent_streams`

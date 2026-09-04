@@ -1,0 +1,224 @@
+# Broker API changes required by feature 026
+#
+# BROKER-SIDE API CHANGES — CONFIRMED AND IN SCOPE for feature 026.
+#
+# Constitution Principle X confirmation is recorded in the spec's 2026-09-04 Clarifications
+# session; both changes are binding spec requirements FR-017 and FR-018, with acceptance
+# scenarios under User Story 5. This artifact is their normative schema.
+#
+# They correct a spec Assumption which previously stated that broker endpoints are
+# "consumed as-is" and that "no broker-side work is required" — that assumption was false
+# and has been rewritten.
+#
+# Both changes are additive and optional-valued: no existing consumer is affected and no
+# version bump is required. Each projects a value the broker has already computed, so
+# neither adds extraction logic, configuration, storage, or a migration.
+#
+#   Change 1 — POST /oauth2/token response: `principal` + `agent_id`   (FR-017, research R-000)
+#   Change 2 — GET /api/approvals summary:  `approved_at`              (FR-018, research R-014)
+
+openapi: 3.0.3
+info:
+  title: Feature 026 — Broker API Changes
+  version: "1.0.0"
+
+components:
+  schemas:
+
+    # =======================================================================
+    # Change 1 — Token-exchange response identity extension
+    # =======================================================================
+    #
+    # Rationale (research.md R-000): ExtProc's approval cache is keyed by
+    # (principal, agent_id) and its authoritative broker read is
+    # GET /api/approvals?principal=…. ExtProc today has no way to obtain either value:
+    # it holds only the opaque caller bearer token, has no JWKS client, and has no claim
+    # extraction configuration. The broker already computes both from the
+    # SIGNATURE-VERIFIED subject token during the very exchange it is authorizing;
+    # this extension returns them.
+    #
+    # Rejected alternatives: parsing the caller-supplied subject token without verifying
+    # its signature (Constitution Principle I violation — a forged claim would select
+    # another user's cached approval); parsing the exchanged access token (RFC 8693
+    # permits an opaque token, and broker local-token claims are CEL-policy owned, so
+    # `sub` is not contractually the principal); a separate identity endpoint (an extra
+    # hot-path round trip for data the exchange already computed).
+    #
+    # Merged into api/enduser/openapi.yaml under the POST /oauth2/token response schema
+    # for the RFC 8693 token-exchange grant.
+
+    TokenExchangeResponse:
+      type: object
+      description: >
+        RFC 8693 token-exchange response. `granted_permission_sets` is the pre-existing
+        broker extension added by feature 020; `principal` and `agent_id` are added by
+        feature 026 and follow the same additive, omitempty convention.
+      required:
+        - access_token
+        - token_type
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          format: int32
+        granted_permission_sets:
+          type: object
+          description: Feature 020 extension. Permission-set ID to granted service IDs.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            3f2a9c1e-0b44-4a1e-9c2f-77f2b1d0a911: ["svc-github"]
+        principal:
+          type: string
+          description: >
+            NEW (feature 026). The principal the broker extracted from the verified subject
+            token for this exchange. Omitted when the broker cannot determine one.
+
+            Consumers MUST treat this as the sole source of the request's principal and MUST
+            NOT infer a principal by parsing either the subject token or the issued access
+            token. When absent, a consumer that requires a principal MUST fail closed rather
+            than substituting an inferred value.
+          example: alice@example.com
+        agent_id:
+          type: string
+          format: uuid
+          description: >
+            NEW (feature 026). The agent UUID the broker extracted from the verified subject
+            token for this exchange. Omitted when the broker cannot determine one. Same
+            fail-closed consumer obligation as `principal`.
+          example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+
+    # =======================================================================
+    # Change 2 — Approval sync summary decision timestamp
+    # =======================================================================
+    #
+    # Rationale (research.md R-014): spec FR-015 requires that when several cached approval
+    # records match one invocation, ties after specificity ranking are "broken by later
+    # decision time". The shared matcher implements exactly that —
+    # toolpattern.SelectBest breaks equal-rank ties by later Candidate.DecidedAt, then by
+    # lexicographically smaller Candidate.ID (internal/toolpattern/toolpattern.go:266-283).
+    #
+    # The current sync summary carries NO timestamp of any kind
+    # (internal/adapters/http/handlers/approval/sync_handler.go:40-50). `toSummary` projects
+    # id, tool_name, arguments_hash, tool_pattern, params_pattern, status, persistence,
+    # consumed, and agent_session_id — and drops CreatedAt, ApprovedAt, DeniedAt, and
+    # ConsumedAt (sync_handler.go:52-73).
+    #
+    # Without a timestamp every ExtProc candidate would carry a zero DecidedAt, so ties would
+    # silently fall through to the ID tie-breaker. That is deterministic but arbitrary: it
+    # would pick a lexicographically smaller approval id over a more recent user decision,
+    # violating FR-015 and diverging from the broker's own reading of the same records.
+    #
+    # The value already exists on the aggregate as ToolApproval.ApprovedAt
+    # (internal/domain/storage/tool_approval.go:70-94, column added by migration 024).
+    # This change only projects it into the summary DTO.
+    #
+    # Merged into api/enduser/openapi.yaml under the ToolApprovalSummary schema.
+
+    ToolApprovalSummary:
+      type: object
+      description: >
+        One approval as delivered by GET /api/approvals. `approved_at` is added by feature 026.
+      required:
+        - id
+        - tool_name
+        - arguments_hash
+        - tool_pattern
+        - params_pattern
+        - status
+        - consumed
+      properties:
+        id:
+          type: string
+          format: uuid
+        tool_name:
+          type: string
+        arguments_hash:
+          type: string
+        tool_pattern:
+          type: string
+        params_pattern:
+          type: object
+          additionalProperties:
+            type: string
+        status:
+          type: string
+          enum: [pending, approved, denied]
+        persistence:
+          type: string
+          enum: [once, session, permanent]
+          description: Absent while the approval is pending.
+        consumed:
+          type: boolean
+        agent_session_id:
+          type: string
+          description: Absent unless the approval was created within an agent session.
+        approved_at:
+          type: string
+          format: date-time
+          description: >
+            NEW (feature 026). RFC 3339 timestamp at which the user approved this record,
+            projected from ToolApproval.ApprovedAt. Absent while the approval is pending or
+            when it was denied.
+
+            Consumers ranking several matching approvals MUST use this value as the
+            decision-time tie-breaker after specificity ranking. Because only `approved`
+            records are matchable, every ranking candidate carries a value; a consumer that
+            encounters a matchable record without one MUST treat the ordering as undefined
+            rather than substituting the zero time.
+          example: "2026-09-04T10:11:12Z"
+
+# ---------------------------------------------------------------------------
+# Compatibility
+# ---------------------------------------------------------------------------
+#
+# - Both changes are purely additive with optional/omitempty values. Every existing consumer
+#   of either response is unaffected and no version bump is required.
+# - Neither introduces new extraction logic, configuration, storage, or a migration: both
+#   values already exist inside the broker (claim extraction for change 1;
+#   ToolApproval.ApprovedAt, column present since migration 024, for change 2).
+# - No new endpoint, no new authentication boundary, no additional round trip.
+#
+# ---------------------------------------------------------------------------
+# Broker implementation surface (informative)
+# ---------------------------------------------------------------------------
+#
+# Change 1:
+#   internal/domain/tokenexchange/   — surface the already-extracted principal + agent id
+#   the token-exchange response assembly — serialize both fields, omitempty
+#   api/enduser/openapi.yaml         — POST /oauth2/token response schema
+#
+# Change 2:
+#   internal/adapters/http/handlers/approval/sync_handler.go
+#     toolApprovalSummary — add `ApprovedAt *time.Time \`json:"approved_at,omitempty"\``
+#     toSummary           — project a.ApprovedAt
+#   api/enduser/openapi.yaml         — ToolApprovalSummary schema
+#   tests/e2e/helpers/approval_types.go — add ApprovedAt to ApprovalSummary so broker E2E
+#                                          and ExtProc tests share one wire type
+#
+# ---------------------------------------------------------------------------
+# ExtProc consumption (informative)
+# ---------------------------------------------------------------------------
+#
+# Change 1 — internal/extproc/server/exchanger.go, tokenExchangeResponse gains:
+#     Principal string `json:"principal,omitempty"`
+#     AgentID   string `json:"agent_id,omitempty"`
+#   server.ExchangeResult gains the matching fields, carried into requestState alongside
+#   grantedPermissionSets and cached on the same TTL window as the token.
+#
+#   Fail-closed rule: when either field is empty, ExtProc constructs no cache key, performs
+#   no ?principal= read, creates no approval, and returns a deny tool-result error with the
+#   reason "approval identity unavailable". It never substitutes a value parsed from a token.
+#
+# Change 2 — internal/extproc/approval/cache.go maps approved_at into
+#   ApprovalRecord.DecidedAt, which becomes toolpattern.Candidate.DecidedAt in SelectBest.
+#
+#   Fail-closed rule: a record with status "approved" but no approved_at is treated as
+#   unmatchable and logged as a broker-contract warning, rather than being ranked with a zero
+#   timestamp. Silently ranking it would let an older approval win a tie against a newer one.
