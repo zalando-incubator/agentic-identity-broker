@@ -10,56 +10,68 @@
 
 ### Session 2026-04-10
 
-- Q: When OPA signals `approval_required`, should ExtProc fall back to a synchronous approval check against the broker if the local cache has no match, or create a new pending approval immediately? → A: Per the design (Section 5.1), ExtProc creates a new pending approval synchronously via `POST /api/approvals`, then returns a `URLElicitationRequiredError`. A targeted `GET /api/approvals/{id}` is used on the agent retry to resolve freshly created approvals before the long-poll cycle catches up.
-- Q: Should this feature include risk-based auto-approval (Section 4.6 of the design), or limit scope to the core cache sync and OPA approval-gating flow? → A: Limit scope to the core four-valued OPA decision flow (allow / approval_required / ciba_required / deny) and the approval cache sync. Risk scoring is out of scope for this feature.
-- Q: Should CIBA (Tier 3) approval handling be included? → A: The OPA `ciba_required` decision path is included in the four-valued decision model, but broker-side CIBA relay and elevated CIBA token storage are out of scope. ExtProc must handle `ciba_required` with the same `URLElicitationRequiredError` response pattern as `approval_required`, delegating CIBA orchestration entirely to the broker.
+- Q: When OPA signals `approval_required`, should ExtProc fall back to a synchronous approval check against the broker if the local cache has no match, or create a new pending approval immediately? → A: Per the design (Section 5.1), ExtProc creates a new pending approval synchronously via `POST /api/approvals`, then returns a `URLElicitationRequiredError`. A targeted read on the agent retry resolves freshly created approvals before the long-poll cycle catches up. **[Superseded 2026-09-03: that targeted read uses the client-assertion `GET /api/approvals?principal=…&agent_session_id=…`, not `GET /api/approvals/{id}`.]**
+- Q: Should this feature include risk-based auto-approval (Section 4.6 of the design), or limit scope to the core cache sync and OPA approval-gating flow? → A: Limit scope to the core OPA decision flow and the approval cache sync. Risk scoring is out of scope for this feature. **[Superseded 2026-09-03: this feature actively handles `allow` / `deny` / `approval_required` only; `ciba_required` is recognized but treated as deny (deferred) — see Q33.]**
+- Q: Should CIBA (Tier 3) approval handling be included? → A: The OPA `ciba_required` decision path is included in the four-valued decision model, but broker-side CIBA relay and elevated CIBA token storage are out of scope. ExtProc must handle `ciba_required` with the same `URLElicitationRequiredError` response pattern as `approval_required`, delegating CIBA orchestration entirely to the broker. **[Superseded 2026-09-03: `ciba_required` is deferred — this feature implements `approval_required` only and treats `ciba_required` as deny (020 FR-016).]**
 - Q: How should tool call parameters be matched against a cached `params_pattern`? → A: Glob/wildcard patterns — `tool_pattern` and `params_pattern` support glob syntax (e.g. `create_*`, `{"repo":"*"}`) for flexible matching. Wildcard parameter pattern matching is in scope for this feature (Section 4.8 of the design).
 - Q: When multiple ExtProc replicas are deployed, how should long-poll connections be coordinated? → A: Each replica maintains its own independent long-poll connection; no coordination mechanism. The broker must support N concurrent waiters. ExtProc replicas are stateless with respect to each other's approval caches.
-- Q: Is `GET /api/approvals/{id}` confirmed available in feature 024, or must this feature implement it? → A: Confirmed in feature 024 — verified present in `internal/adapters/http/routing/enduser.go` line 68 and `internal/adapters/http/handlers/approval/get_handler.go`. This feature consumes it without additional broker-side work.
+- Q: Is `GET /api/approvals/{id}` confirmed available in feature 024, or must this feature implement it? → A: Confirmed present in `internal/adapters/http/routing/enduser.go` and `internal/adapters/http/handlers/approval/get_handler.go`. **[Superseded 2026-09-03: `GET /api/approvals/{id}` is browser-only (`X-Remote-User` principal) and is NOT machine-callable by ExtProc; ExtProc reads approval state via the client-assertion `GET /api/approvals?principal=…&agent_session_id=…` instead. No broker-side work is required either way.]**
 - Q: Should `X-Long-Poll-Timeout: 30` be a fixed constant or configurable? → A: Configurable — added to the `tool_approvals.*` config section as `tool_approvals.long_poll_timeout_seconds` with a default of 30.
 - Q: What observability is required beyond the two explicit log events (FR-003 startup warning, FR-012 undefined OPA decision warning)? → A: Structured logs only. No Prometheus metrics or OpenTelemetry traces are required for this feature.
+
+### Session 2026-09-03
+
+- Q: Does OPA's Tier-1 permission-set input come from the approval cache or the token-exchange response? → A: From the token-exchange response snapshot. ExtProc reuses the `granted_permission_sets` already produced by the RFC 8693 exchange (feature 020); the approval cache carries approval records only, not permission sets. The `granted_permission_sets` placeholder returned by `GET /api/approvals` is not consumed by OPA in this feature.
+- Q: Which OPA input field and shape represent granted permission sets? → A: Keep the shipped feature-020 contract — `input.context.granted_permission_sets` (a map of permission-set-ID → [service-IDs]) plus `input.context.granted_permission_sets_available` (bool). The `granted_permission_set_ids` list is not introduced; when the availability flag is false OPA fails closed (deny).
+- Q: What is the ordering invariant between OPA evaluation and token exchange, given permission sets come from the exchange response? → A: Permit exchange-before-OPA **for body-bearing `tools/call` requests** (the only requests this feature gates): ExtProc performs the RFC 8693 exchange first, then OPA evaluates Tier-1/Tier-2 from the exchange snapshot. The design's "no token exchange on a Tier-1 deny" premise is revised for these requests: on deny the exchanged token (already scope-bounded to the user's consent) is simply never forwarded to the MCP server. A Tier-1 deny still creates no approval (SC-003 preserved). Header-only `mcp_headers_only` requests (SSE stream setup) retain feature 020's OPA-before-exchange ordering with `granted_permission_sets_available = false` and are not approval-gated.
+- Q: Should the consume flow add a 409-Conflict or session_id-body extension to feature 024? → A: No. Align to feature 024's implemented and intended contract: `POST /api/approvals/{id}/consume` is subject-token-only, takes no request body, returns idempotent `200 OK` when already consumed, and `422` for non-`once` approvals. Session-scoped approvals are keyed by the stable `agent_session_id` captured at creation, not the MCP session header. Cross-replica at-most-once is explicitly relaxed: local per-instance CAS is best-effort and the create-time unique index dedups pending creation (not concurrent consume), so a brief cross-replica double-use window is accepted (design §4.7).
+- Q: How should `ciba_required` create an approval, given no CIBA type exists and broker CIBA relay is out of scope? → A: ExtProc creates an ordinary approval via the standard `POST /api/approvals` — identical to an `approval_required` creation, with no `type` discriminator. Feature 024's create request has no `persistence` field: persistence (`once`/`session`/`permanent`) is chosen by the user at approve time, so ExtProc cannot and does not force single-use at creation. **[Superseded 2026-09-03: `ciba_required` handling is deferred entirely; ExtProc treats it as deny and creates no CIBA approval in this feature.]**
+- Q: Can ExtProc use `GET /api/approvals/{id}` on retry to resolve a freshly-created approval (superseding the 2026-04-10 answers)? → A: No. Per feature 024 (API-004 / routing `requirePrincipal`), `GET /api/approvals/{id}` is authenticated by the browser `X-Remote-User` principal and is not callable with ExtProc's subject token or client assertion. This supersedes the 2026-04-10 clarifications on the targeted GET: the freshly-created-approval fast path instead uses the machine-authenticated, client-assertion `GET /api/approvals?principal={principal}` (the same endpoint as FR-005 cache-miss augmentation), which returns the approval's current status without waiting for the long-poll cycle. No browser-auth path or broker-side extension is required.
+- Q: How do session-persistence approvals reach ExtProc's cache, given the sync endpoint re-delivers them only when a matching `agent_session_id` is supplied? → A: Every ExtProc read of `GET /api/approvals` (long-poll FR-004, augmentation FR-005, freshly-created fall-through FR-007) MUST include the currently-active `agent_session_id` query parameter(s) — the endpoint accepts repeatable `agent_session_id` values (`sync_handler.go`). Feature 024 returns session-scoped approvals only for supplied `agent_session_id`s; permanent-persistence approvals are returned unconditionally. Bootstrap (FR-003) precedes any active session, so session approvals populate the cache later via augmentation/polling once a session is active.
+- Q: How is the exchanged token scoped to the right permission set, given exchange-before-OPA and that `OPADecision` exposes no matched set/service? → A: Scope narrowing is broker-owned. The RFC 8693 exchange is scoped to the request-derived resource URI (`buildResourceURI(:scheme, :authority, :path)`); the broker narrows the token to the union of the user's granted permission sets for that resource. ExtProc passes no permission-set context to the exchange and there is no OPA→exchange coupling; OPA independently enforces the per-tool boundary from `granted_permission_sets`. This is broker-owned and needs no dedicated feature-026 user story — no new OPA output contract or per-tool service selection is introduced.
+- Q: Should the session identifier for approval scoping live under `mcp` (like 020's `mcp.session_id`) or under `context`? → A: Add a distinct `input.context.agent_session_id` (from the configurable `sessions.extraction.http_header`) for approval scoping, and leave feature 020's `input.mcp.session_id` (MCP protocol session, fixed `Mcp-Session-Id`) unchanged. Folding 020's field into `context` was considered for tidiness but rejected: `input.mcp.session_id` is already asserted by shipped ExtProc code and tests (`input_builder_test.go`) plus 020's contract/tasks, so moving it would create a spec-vs-code contradiction for no functional gain. The MCP protocol session is semantically an `mcp.*` attribute; the agent session is an authorization-context attribute — keeping each in its natural namespace is both consistent and lower-risk.
+- Q: Should this feature implement both `approval_required` and `ciba_required`? → A: Start small — implement `approval_required` (Tier 2) only. `ciba_required` (Tier 3) is deferred to a later feature: ExtProc recognizes the action but treats it as `deny` (fail-closed) and logs it, retaining feature 020 FR-016's behavior for that action. This feature activates only `approval_required`, superseding 020 FR-016 for that single action. This supersedes the 2026-04-10 CIBA-inclusion clarification and the 2026-09-03 `ciba_required`-create clarification; CIBA is out of scope accordingly (no dedicated user story in this feature).
+- Q: How do batched JSON-RPC `tools/call` requests interact with approval? → A: Elicitation is a single-tool-call interaction, so ExtProc does not create approvals or return `URLElicitationRequiredError` inside a batch. Per feature 020 FR-023 (independent per-message evaluation, deny-wins), if any message in a batch evaluates to `approval_required`, ExtProc denies the entire batch with a reason instructing the agent to re-issue that specific tool call as a standalone (non-batch) request to obtain the approval URL. Elicitation is returned only for standalone `tools/call` requests.
 
 ## Overview
 
 This feature wires the OPA authorization engine (introduced in feature 020) to the identity broker's approval service (built in feature 024), completing the Tier 2 runtime authorization loop described in the overarching tool authorization design.
 
-Today, the OPA pipeline in ExtProc evaluates policies against a fixed `context.granted_permission_sets` (currently an empty placeholder) and produces binary allow/deny decisions. This feature:
+Today, the OPA pipeline in ExtProc already receives `context.granted_permission_sets` from the token-exchange response (feature 020) but produces only binary allow/deny decisions and has no approval data. This feature:
 
-1. **Populates OPA's input with live approval and permission set data** from the broker via a long-poll cache backed by `GET /api/approvals`.
-2. **Extends OPA to a four-valued decision model** (`allow`, `approval_required`, `ciba_required`, `deny`), teaching ExtProc to act on each outcome: auto-allow, create a pending approval and return a `URLElicitationRequiredError`, or hard-deny.
+1. **Populates OPA's input with granted permission sets** from the RFC 8693 token-exchange response snapshot (feature 020's existing `granted_permission_sets`). Approval records are **not** passed into OPA — the local approval cache (synced from `GET /api/approvals`) is matched by ExtProc *outside* the policy (glob `tool_pattern`/`params_pattern`, per the OPA Decision Flow and design §4.7–4.8), so policies stay approval-agnostic and only decide the *requirement* (`allow` / `deny` / `approval_required`).
+2. **Activates the `approval_required` decision** in the OPA model (`allow` / `deny` / `approval_required`), teaching ExtProc to act on each: forward the exchanged token on `allow`, create a pending approval and return a `URLElicitationRequiredError` on `approval_required`, or hard-deny. `ciba_required` (Tier 3) is recognized but treated as `deny` in this feature and deferred (see Clarifications).
 3. **Keeps the approval cache current** via a background long-poll goroutine with ETag-based incremental updates, so that when a user approves a tool call in the broker UI, the agent's next retry succeeds without a broker round-trip.
 
 Together, these changes mean that MCP server users can: (a) have tool calls evaluated against their actual consent-granted permission sets, (b) be prompted via a URL when a tool requires explicit approval, and (c) resume their agentic session immediately after granting approval — without restarting the session or manually re-issuing the tool call.
 
 ## Activity Diagrams
 
-### Four-Valued OPA Decision Flow
+### OPA Decision Flow
 
 ```mermaid
 flowchart TD
     A["Tool call arrives<br/>(MCP tools/call)"] --> B["Parse JSON-RPC body<br/>Extract tool name + params"]
-    B --> C["Look up permission sets + approvals<br/>from local approval cache"]
-    C --> D["Build OPA input with<br/>granted_permission_set_ids + approvals"]
+    B --> X["RFC 8693 token exchange<br/>obtain access token + granted_permission_sets snapshot"]
+    X --> D["Build OPA input with<br/>granted_permission_sets (map) + granted_permission_sets_available"]
     D --> E["OPA evaluation<br/>(tier 1: permission boundary,<br/>tier 2: approval requirement)"]
 
-    E -->|"deny"| F["Return 403<br/>tool result error to agent"]
-    E -->|"allow"| G["Proceed to token exchange<br/>(RFC 8693)"]
+    E -->|"deny"| F["Discard exchanged token<br/>Return 403 tool result error<br/>(token never forwarded)"]
+    E -->|"allow"| G["Forward exchanged token<br/>to MCP server"]
 
     E -->|"approval_required"| H{"Local cache hit?<br/>(permanent / session / once)"}
     H -->|"permanent match"| G
     H -->|"session match"| G
-    H -->|"once match — consume"| I["Mark consumed in local cache<br/>(atomic CAS — at-most-once)"]
+    H -->|"once match"| I["Reserve via CAS<br/>(at-most-once within instance)"]
     I --> I_sync["POST /api/approvals/:id/consume<br/>(sync — before request proceeds)"]
-    I_sync --> G
-    H -->|"no match"| J["POST /api/approvals<br/>Authorization: Bearer subject_token"]
+    I_sync -->|"200 OK"| G
+    I_sync -->|"consume fails"| F
+    H -->|"no match"| M2["Targeted GET /api/approvals?principal<br/>(FR-005 authoritative broker read)"]
+    M2 -->|"match — re-evaluate"| H
+    M2 -->|"still no match"| J["POST /api/approvals<br/>subject_token + X-Client-Assertion"]
     J --> K["Return URLElicitationRequiredError<br/>(-32042) with approval_url to agent"]
 
-    E -->|"ciba_required"| L{"CIBA cache hit?"}
-    L -->|"approved + unconsumed"| C2["Mark consumed in local cache<br/>(atomic CAS — at-most-once)"]
-    C2 --> C2_sync["POST /api/approvals/:id/consume<br/>(sync — before request proceeds)"]
-    C2_sync --> G
-    L -->|"no match"| M["POST /api/approvals<br/>(type: ciba)"]
-    M --> K
+    E -->|"ciba_required"| F
 
     style F fill:#ffcdd2,stroke:#c62828
     style K fill:#fff9c4,stroke:#f9a825
@@ -91,6 +103,8 @@ flowchart TD
 ```
 
 ### Agent Retry After User Approval
+
+> **Ordering note**: For readability this sequence shows the RFC 8693 token exchange after the approval match. Per the exchange-before-OPA clarification (Session 2026-09-03), for body-bearing `tools/call` requests the exchange actually precedes OPA evaluation on every attempt; on an elicitation or deny the exchanged token is discarded and never forwarded. (Header-only `mcp_headers_only` requests keep feature 020's OPA-before-exchange ordering and are not approval-gated.)
 
 ```mermaid
 sequenceDiagram
@@ -137,33 +151,33 @@ An agent calls a medium-risk tool that requires human approval. ExtProc detects 
 
 **Acceptance Scenarios**:
 
-1. **Given** OPA policy classifies `create_pull_request` as `approval_required` and no matching approval exists in the cache, **When** ExtProc processes a `tools/call: create_pull_request`, **Then** ExtProc calls `POST /api/approvals` with the subject token and tool details, and returns a `URLElicitationRequiredError` (MCP error code `-32042`) containing the `approval_url` from the broker response.
+1. **Given** OPA policy classifies `create_pull_request` as `approval_required` and no matching approval exists in the cache, **When** ExtProc processes a `tools/call: create_pull_request`, **Then** ExtProc calls `POST /api/approvals` with dual auth (subject token in `Authorization: Bearer` + client assertion in `X-Client-Assertion`) and the tool details, and returns a `URLElicitationRequiredError` (MCP error code `-32042`) containing the `approval_url` from the broker response.
 
-2. **Given** a pending approval was just created and the background long-poll goroutine has not yet delivered the state change, **When** the agent retries the same `tools/call` before the cache has been updated, **Then** ExtProc performs a targeted `GET /api/approvals/{approval_id}` to check the specific approval and finds it approved, allowing the tool call to proceed without waiting for the next long-poll cycle.
+2. **Given** a pending approval was just created and the background long-poll goroutine has not yet delivered the state change, **When** the agent retries the same `tools/call` before the cache has been updated, **Then** ExtProc performs a targeted client-assertion `GET /api/approvals?principal={principal}&agent_session_id={agent_session_id}` and matches the retried concrete `(tool_name, arguments)` invocation against the returned records (FR-015); finding the just-created approval now approved, it proceeds without waiting for the next long-poll cycle.
 
-3. **Given** the background long-poll goroutine has synced a session-scoped approval for `(principal, agent, create_pull_request)`, **When** the agent calls `create_pull_request` a second time in the same session, **Then** ExtProc finds the session approval in its local cache and proceeds directly to token exchange — no broker call for approval is made.
+3. **Given** the background long-poll goroutine has synced a session-scoped approval for `(principal, agent, create_pull_request)`, **When** the agent calls `create_pull_request` a second time in the same session, **Then** ExtProc finds the session approval in its local cache and forwards the (already-exchanged) token to the MCP server — no broker call for approval is made.
 
 4. **Given** a permanent approval exists in the cache for `(principal, agent, create_pull_request)`, **When** the agent calls `create_pull_request` in any session (sessions identified by the value of `sessions.extraction.http_header`, default `Mcp-Session-Id`), **Then** the tool call proceeds without any approval creation or broker round-trip.
 
-5. **Given** a one-time (`once`) approval exists in the cache, **When** the agent calls the matching tool, **Then** ExtProc atomically marks the approval consumed in the local cache via compare-and-swap (at-most-once within this instance), calls `POST /api/approvals/:id/consume` on the broker synchronously with the subject token in the `Authorization` header and the current session ID in the request body (the broker verifies the consuming principal and session match the approval's owner, and marks it consumed), then allows the request to continue. In a multi-replica deployment, if the broker returns "already consumed" (e.g. 409), ExtProc invalidates the local cache entry and falls through to approval creation — the agent that lost the race receives a new `URLElicitationRequiredError` rather than proceeding with a consumed approval. On the agent's next call for the same tool, the consumed approval is not matched, and a new approval request is issued.
+5. **Given** a one-time (`once`) approval exists in the cache, **When** the agent calls the matching tool, **Then** ExtProc reserves the approval in the local cache via compare-and-swap (best-effort at-most-once within this instance), calls `POST /api/approvals/:id/consume` synchronously with the subject token in the `Authorization` header and no request body, and forwards the token **only** after a confirmed `200 OK` (the broker verifies the consuming principal matches the approval owner and marks it consumed idempotently). On the agent's next call for the same tool, the consumed approval is not matched and a new approval request is issued. In a multi-replica deployment the consume is idempotent (`200 OK`); cross-replica at-most-once is not guaranteed, and a failed consume is not forwarded (FR-008).
 
-6. **Given** a `session`-scoped approval has been granted for `create_pull_request` in session `sess-abc`, **When** the MCP session `sess-abc` ends, **Then** ExtProc evicts the session-scoped approval from its local cache and the next `create_pull_request` call in a new session requires fresh approval.
+6. **Given** a `session`-scoped approval has been granted for `create_pull_request` in agent session `sess-abc`, **When** that agent session (its `agent_session_id`) ends, **Then** ExtProc evicts the session-scoped approval from its local cache and the next `create_pull_request` call in a new session requires fresh approval.
 
 ---
 
-### User Story 2 — Permission Set Boundary Enforced Before Approval Check (Priority: P1)
+### User Story 2 — No Spurious Approval When the Policy Denies (Priority: P1)
 
-A tool call is blocked at the Tier 1 permission set boundary (the user never granted the required permission set), without ever creating a pending approval. This ensures that approval requests only reach users for tools they've actually consented to at the grant level.
+When OPA denies a tool call — for example because the user never granted the permission set the policy requires — ExtProc MUST return a hard deny **without** creating a pending approval. The permission-set boundary itself is enforced by the OPA policy (feature 020); what is net-new in this feature is the **ordering guarantee**: a `deny` decision never reaches the approval-creation path, so users are never prompted to approve a tool they are not even permitted to invoke.
 
-**Why this priority**: Without this ordering, a denied tool at the permission set level would generate spurious approval requests visible to users, creating confusion and approval fatigue.
+**Why this priority**: Without this guarantee, a tool denied at the policy level could still generate a pending approval, producing confusing, unactionable prompts and approval fatigue. This story does not re-verify OPA's permission-set evaluation (owned by feature 020) — it verifies that `deny` suppresses approval creation.
 
-**Independent Test**: Can be fully tested by configuring OPA policy mapping a tool to a permission set that the test principal has not granted, sending the tool call, and verifying ExtProc returns a hard deny (403) without calling `POST /api/approvals`.
+**Independent Test**: Configure the policy to `deny` a tool (e.g. map it to a permission set the test principal has not granted), send the tool call, and verify ExtProc returns a hard deny (403) and makes **no** `POST /api/approvals` call.
 
 **Acceptance Scenarios**:
 
 1. **Given** the user has not granted `github-full` permission set and OPA policy requires it for `delete_repository`, **When** the agent calls `tools/call: delete_repository`, **Then** OPA returns `deny` (insufficient permission set) and ExtProc returns a tool result error without calling `POST /api/approvals`.
 
-2. **Given** the user has granted `github-readonly` permission set and OPA classifies `list_repositories` as `allow` for that set at low risk, **When** the agent calls `tools/call: list_repositories`, **Then** the tool call proceeds directly to token exchange without any approval check or broker call.
+2. **Given** the user has granted `github-readonly` permission set and OPA classifies `list_repositories` as `allow` for that set at low risk, **When** the agent calls `tools/call: list_repositories`, **Then** the tool call is forwarded with the exchanged token without any approval check or broker approval call.
 
 3. **Given** OPA policy requires `github-issues` permission set for `create_issue` and the user has granted that set, **When** the agent calls `tools/call: create_issue` and the tool is classified as `approval_required` (medium risk), **Then** the permission boundary passes (Tier 1 allow) and the approval check proceeds (Tier 2).
 
@@ -171,15 +185,15 @@ A tool call is blocked at the Tier 1 permission set boundary (the user never gra
 
 ### User Story 3 — Approval Cache Bootstraps on ExtProc Startup (Priority: P1)
 
-When ExtProc starts, it performs a non-conditional `GET /api/approvals` using its client assertion. The broker determines what data to return — the response may be empty, partial, or full depending on the broker's implementation; ExtProc accepts whatever is provided and populates its local approval cache accordingly. Subsequent requests are served from cache. The long-poll background goroutine keeps the cache current for the lifetime of the process.
+When ExtProc starts, it performs a non-conditional `GET /api/approvals` using its client assertion. The broker determines what data to return — the response may be empty, partial, or full depending on the broker's implementation; ExtProc accepts whatever is provided and populates its local approval cache accordingly. The cache is therefore **pre-warmed**, never guaranteed complete: subsequent requests are served from it where a matching entry exists, and cache misses are augmented on demand (FR-005). The long-poll background goroutine keeps the cache current for the lifetime of the process.
 
-**Why this priority**: Without bootstrap, the first tool call from every user would miss the cache and generate spurious approval requests even for tools the user has already permanently approved.
+**Why this priority**: Bootstrap *pre-warms* the cache with whatever the broker returns up front, then long-poll and cache-miss augmentation keep it current. Without any bootstrap, the first tool call for a tool the user has already permanently approved would still miss the cache and generate a spurious approval request; pre-warming avoids that for the pre-approved records the broker delivers at startup.
 
 **Independent Test**: Can be fully tested by configuring ExtProc with broker credentials, seeding permanent approvals in the broker before startup, starting ExtProc, and verifying that the first tool call for a pre-approved tool proceeds without creating a new approval.
 
 **Acceptance Scenarios**:
 
-1. **Given** the broker contains a permanent approval for `(alice@example.com, code-assistant, create_issue)`, **When** ExtProc starts and bootstraps its cache, **Then** the first `tools/call: create_issue` from `alice` proceeds directly to token exchange without any approval creation.
+1. **Given** the broker contains a permanent approval for `(alice@example.com, code-assistant, create_issue)`, **When** ExtProc starts and bootstraps its cache, **Then** the first `tools/call: create_issue` from `alice` is forwarded with the exchanged token without any approval creation.
 
 2. **Given** the broker is unreachable at ExtProc startup, **When** the bootstrap request fails, **Then** ExtProc starts successfully (approval cache is empty); for each subsequent approval-required tool call, ExtProc first attempts a targeted `GET /api/approvals?principal={principal}` to augment the cache (FR-005) — if that also fails (broker still unreachable), only then does ExtProc create a new pending approval — rather than refusing to start. A startup warning is logged indicating that the cache could not be pre-populated.
 
@@ -209,66 +223,33 @@ The background long-poll goroutine maintains a single persistent `GET /api/appro
 
 ---
 
-### User Story 5 — CIBA-Required Tool Returns Elicitation URL (Priority: P2)
-
-When OPA classifies a tool as `ciba_required`, ExtProc creates a CIBA-type approval in the broker and returns a `URLElicitationRequiredError` to the agent — identical in shape to a Tier 2 approval. The agent presents the URL to the user; the broker handles CIBA orchestration internally. When the CIBA flow completes (broker side), the approval cache sync delivers the approved state to ExtProc, and the agent's retry succeeds.
-
-**Why this priority**: The agent-facing behavior for CIBA must be uniform with Tier 2 approval. Without this story, `ciba_required` decisions in OPA would cause unhandled states in ExtProc.
-
-**Independent Test**: Can be fully tested by configuring OPA policy to return `ciba_required` for a specific tool, sending the tool call, verifying a `URLElicitationRequiredError` is returned with a URL, manually approving the CIBA approval in the broker, and verifying the retry succeeds.
-
-**Acceptance Scenarios**:
-
-1. **Given** OPA policy classifies `delete_repository` as `ciba_required` and no CIBA approval exists in the cache, **When** the agent calls `tools/call: delete_repository`, **Then** ExtProc calls `POST /api/approvals` with `type: ciba` in the metadata, and returns a `URLElicitationRequiredError` containing the approval URL.
-
-2. **Given** a CIBA approval has been approved by the broker (user completed device authentication), **When** the long-poll goroutine syncs the approved state and the agent retries `delete_repository`, **Then** ExtProc finds the approved CIBA approval in its local cache and proceeds to token exchange.
-
-3. **Given** a CIBA approval was used once, **When** the agent calls `delete_repository` a second time, **Then** the consumed CIBA approval is not matched and a new CIBA approval flow is triggered — CIBA approvals are always single-use.
-
----
-
-### User Story 6 — Token Exchange Receives Correct Scope from Permission Set Context (Priority: P2)
-
-After OPA allows a tool call (Tier 1 + Tier 2 pass), ExtProc proceeds to the RFC 8693 token exchange. The token exchange request must identify the correct service and scope context derived from the permission set that covered the tool, ensuring the narrowed access token returned is appropriate for the tool being executed.
-
-**Why this priority**: Without passing permission set context to the token exchange, the broker cannot issue a narrowed-scope token matched to what the user actually consented to for this specific tool.
-
-**Independent Test**: Can be fully tested by configuring a tool → permission set → service mapping in OPA, triggering a tool call that passes the approval check, and verifying the token exchange request to the broker includes the correct service identifier and scopes that correspond to the matched permission set.
-
-**Acceptance Scenarios**:
-
-1. **Given** OPA policy maps `create_issue` to the `github-issues` permission set (service: `github`, scopes: `repo:read`, `issues:write`), **When** the tool call is allowed and ExtProc initiates token exchange, **Then** the RFC 8693 request includes the `github` resource URI and the broker issues a token scoped to `repo:read issues:write`.
-
-2. **Given** the user has been granted both `github-readonly` and `github-issues` permission sets, **When** OPA determines that `create_issue` is covered by `github-issues` (the first matching set), **Then** ExtProc uses the `github` service from the matched permission set for token exchange, not an unrelated service.
-
----
-
 ### Edge Cases
 
-- **Broker unavailable during approval creation**: When `POST /api/approvals` fails (broker unreachable), ExtProc returns a `URLElicitationRequiredError` with a synthetic "broker unavailable" error message rather than an unrelated 503, so the agent can surface the degraded state to the user.
+- **Broker unavailable during approval creation**: When `POST /api/approvals` fails (broker unreachable), ExtProc cannot obtain an `approval_url`, so it MUST NOT fabricate a `URLElicitationRequiredError` (which requires a real URL). It fails closed, returning a tool-result error whose message states that approval could not be initiated because the broker is unavailable, so the agent surfaces the degraded state and can retry later.
 - **Duplicate approval creation (stale cache)**: When ExtProc's cache is stale and calls `POST /api/approvals` for a tool+params combination that already has a pending approval in the broker, the broker returns the existing approval's URL (idempotent). ExtProc uses the returned URL in the `URLElicitationRequiredError` without creating a duplicate.
 - **OPA returns undefined decision**: When OPA evaluation returns an undefined `decision` (policy author forgot the default rule), ExtProc treats it as `deny` — fail closed. This is logged as a policy misconfiguration warning to distinguish from an intentional deny.
 - **Subject token missing or invalid for approval creation**: When ExtProc cannot extract a valid subject token from the request context, the approval creation call to the broker will return 401, and ExtProc logs the error and returns a hard deny to the agent.
-- **Cache eviction and re-augmentation**: When a `(principal, agent)` pair is evicted from the cache after the idle timeout, the next request triggers a targeted `GET /api/approvals?principal={p}` augmentation before the OPA check proceeds — not a full cache rebuild.
+- **Cache eviction and re-augmentation**: When a `(principal, agent)` pair is evicted from the cache after the idle timeout, the next `approval_required` match-miss for that pair triggers a targeted `GET /api/approvals?principal={p}` (FR-005) before any approval creation — not a full cache rebuild.
 - **Concurrent one-time approval consumption (same instance)**: When two concurrent requests on the same ExtProc instance match the same `once` approval, the local CAS guarantees only one proceeds. The other falls through to approval creation.
-- **Concurrent one-time approval consumption (multiple replicas)**: When two ExtProc replicas independently match the same `once` approval before the broker's long-poll stream delivers the consumed state, both call `POST /api/approvals/:id/consume`. The first caller receives `200 OK`; the second caller receives `409 Conflict` (already consumed). The race-loser ExtProc invalidates its local cache entry and falls through to approval creation, issuing a new `URLElicitationRequiredError` to its agent. **Requires feature 024 extension**: the consume endpoint must return `409 Conflict` instead of idempotent `200 OK` when already consumed.
+- **Concurrent one-time approval consumption (multiple replicas)**: When two ExtProc replicas independently match the same `once` approval before the broker's long-poll stream delivers the consumed state, both call `POST /api/approvals/:id/consume` and both receive idempotent `200 OK`. Feature 024's consume endpoint is idempotent, and its create-time unique index dedups pending *creation*, not concurrent *consume*. Cross-replica at-most-once is therefore **not** guaranteed and this brief double-use window is accepted (design §4.7). This feature adds **no** `409 Conflict` extension to feature 024.
 
 ## Functional Requirements
 
-### FR-001: OPA Input Populated with Approval Cache Data
+### FR-001: OPA Input Populated with Exchange-Snapshot Permission Sets
 When OPA evaluates a `tools/call`, the input document MUST include:
-- `input.context.granted_permission_set_ids`: The list of permission set IDs granted to `(principal, agent)` from the local cache.
-- `input.context.approvals`: The list of cached approval records for `(principal, agent)`, including `tool_pattern`, `persistence`, `status`, `consumed`, and `session_id`.
+- `input.context.granted_permission_sets`: The map of permission-set-ID → [service-IDs] for the current token-exchange context, sourced from the RFC 8693 exchange response (feature 020), together with `input.context.granted_permission_sets_available` (bool). These come from the token-exchange snapshot, **not** the approval cache. When the availability flag is false, OPA MUST fail closed (deny).
 
-### FR-002: Four-Valued OPA Decision Handling
-ExtProc MUST handle all four OPA `result.action` values:
-- `"allow"`: Proceed to token exchange.
+Approval records MUST NOT be placed in the OPA input. Per the design's ExtProc check order (§4.7) and the OPA Decision Flow, the local approval cache is matched by ExtProc *outside* the policy after OPA returns `approval_required` (see FR-002 and FR-015); OPA decides only the approval *requirement* from the permission-set boundary, keeping policies approval-agnostic.
+
+### FR-002: OPA Decision Handling
+ExtProc MUST handle the OPA `result.action` values as follows:
+- `"allow"`: Forward the already-exchanged token to the MCP server (for body-bearing `tools/call`, the RFC 8693 exchange precedes OPA — see Clarifications).
 - `"deny"`: Return tool result error. No approval is created.
 - `"approval_required"`: Check local cache; if no match, create a pending approval in the broker and return `URLElicitationRequiredError` (-32042).
-- `"ciba_required"`: Check local cache for CIBA approval; if no match, create CIBA-type pending approval and return `URLElicitationRequiredError` (-32042).
+- `"ciba_required"`: Recognized but treated as `deny` (fail-closed) and logged; active Tier 3 handling is deferred (retains feature 020 FR-016 behavior — see Clarifications). No approval is created.
 
 ### FR-003: Approval Cache Bootstrap on Startup
-On startup, ExtProc MUST call `GET /api/approvals` with the configured client assertion (no `If-None-Match`) to pre-populate the local approval cache. The bootstrap call MUST complete before ExtProc accepts requests, OR ExtProc accepts requests with an empty cache and treats every approval-required call as a cache miss.
+On startup, ExtProc MUST call `GET /api/approvals` with the configured client assertion (no `If-None-Match`) to pre-populate the local approval cache. The bootstrap call MUST complete before ExtProc accepts requests, OR ExtProc accepts requests with an empty cache and treats every approval-required call as a cache miss. Session-persistence approvals are not returned by the bootstrap (no active `agent_session_id` exists yet); they populate the cache later via FR-005 augmentation and FR-004 polling once sessions are active.
 
 ### FR-004: Background Long-Poll Goroutine
 ExtProc MUST run exactly one background goroutine that continuously polls `GET /api/approvals` using the client assertion. It MUST:
@@ -277,29 +258,35 @@ ExtProc MUST run exactly one background goroutine that continuously polls `GET /
 - On `200 OK`: atomically update all changed `(principal, agent)` pairs and store the new ETag.
 - On `304 Not Modified`: immediately re-poll with the same ETag.
 - On error: apply exponential back-off (initial 1s, max 60s) before retrying.
+- Include the currently-active `agent_session_id` query parameter(s) so the broker re-delivers session-persistence approvals for live sessions; permanent approvals are returned unconditionally (feature 024 returns session-scoped approvals only when their `agent_session_id` is supplied).
 
-### FR-005: Cache Miss Augmentation
-When a `(principal, agent)` pair is not found in the local cache (cache miss or eviction), ExtProc MUST call `GET /api/approvals?principal={principal}` synchronously before completing OPA evaluation for that request. The augmentation response MUST update the cache for the principal before the OPA check.
+### FR-005: Authoritative Broker Read on an Approval Match-Miss
+When OPA returns `approval_required` and no cached approval matches the invocation — whether the `(principal, agent)` pair is **absent** from the cache OR **present but stale** (the pair is cached but no record matches the concrete `(tool_name, arguments)`) — ExtProc MUST perform a synchronous, client-assertion `GET /api/approvals?principal={principal}` (including the active `agent_session_id` query parameter(s)) and re-run the FR-015 match against the refreshed records **before** deciding to create. This makes every match-miss reflect current broker state rather than a stale local view — covering the case where the user's approval (or another replica's create) has not yet arrived via long-poll. Only a match-miss that survives this read proceeds to FR-006.
 
-### FR-006: Approval Creation on Cache Miss
-When OPA returns `approval_required` or `ciba_required` and no matching approval exists in the local cache, ExtProc MUST:
-1. Call `POST /api/approvals` with the subject token in the `Authorization` header and the tool name, arguments, agent session ID, and MCP session ID in the request body.
+### FR-006: Approval Creation on a Confirmed Miss
+When OPA returns `approval_required` and, after the FR-005 authoritative broker read, still no matching approval exists, ExtProc MUST:
+1. Call `POST /api/approvals` with **both** credentials required by feature 024's dual-auth create contract — the subject token in the `Authorization: Bearer` header and the ExtProc client assertion in the `X-Client-Assertion` header — plus the tool name, arguments, `agent_session_id`, and `mcp_session_id` in the request body metadata.
 2. Return a `URLElicitationRequiredError` (MCP error code `-32042`) to the agent containing the `approval_url` from the broker response.
 
+The create is idempotent (feature 024 dedups pending records by `(principal, agent_id, tool_name, arguments_hash)`): if a matching pending approval was created concurrently between the FR-005 read and this call, the broker returns it without duplicating — a safe final backstop for the residual create race.
+
 ### FR-007: Freshly-Created Approval Fall-Through
-After creating a pending approval via `POST /api/approvals`, ExtProc MUST store the returned `approval_id` in the per-request context. On the agent's next retry, if the long-poll cache does not yet have the approval, ExtProc MUST perform a targeted `GET /api/approvals/{approval_id}` to check its status before falling through to a new approval creation.
+The agent's retry is a **separate** request, so ExtProc keeps no per-request state across attempts. On the retry, ExtProc matches the concrete `(tool_name, arguments)` invocation against its synced approval records (FR-015). If the long-poll cache has not yet delivered the freshly-created approval, ExtProc MUST perform a targeted, client-assertion-authenticated `GET /api/approvals?principal={principal}` — including the current `agent_session_id` query parameter so a session-approved record is re-delivered — and re-run the FR-015 match against the returned records before falling through to a new approval creation. ExtProc MUST NOT call `GET /api/approvals/{id}`, which feature 024 authenticates via the browser `X-Remote-User` principal and is therefore not machine-callable.
 
 ### FR-008: One-Time Approval Consumption
 When a `once`-persistence approval is matched:
-1. The approval MUST be marked consumed in the local cache via compare-and-swap before the request continues (preventing concurrent double-use within this instance).
-2. `POST /api/approvals/:id/consume` MUST be called synchronously before the request proceeds, with the per-request subject token in the `Authorization` header and the current session ID (extracted via `sessions.extraction.http_header`) in the request body. The broker validates that the subject token's principal matches the approval's owner and rejects with 403 if not. **Note**: the session ID body field requires a corresponding extension to feature 024's consume endpoint.
-3. The broker's consume endpoint MUST return `409 Conflict` when the approval has already been consumed, so ExtProc can distinguish first-consumer from race-loser. Within a single instance the local CAS prevents double-use; across replicas, if the broker returns `409 Conflict`, ExtProc invalidates the local cache entry and falls through to approval creation — the agent that lost the race receives a new `URLElicitationRequiredError` rather than proceeding with a consumed approval. **Requires feature 024 extension**: the consume endpoint currently returns `200 OK` idempotently; it must be changed to return `409 Conflict` with an `already_consumed` indicator when the approval was previously consumed.
+1. The approval MUST be reserved in the local cache via compare-and-swap before the consume call, giving best-effort at-most-once **within a single ExtProc instance** (a concurrent same-instance request cannot also reserve it). The reservation is confirmed as consumed on a successful consume (item 4) and released on consume failure so a later retry can re-attempt it.
+2. `POST /api/approvals/:id/consume` MUST be called synchronously before the request proceeds, authenticated with the per-request subject token in the `Authorization` header and **no request body** (feature 024's contract). The broker verifies the subject token's principal matches the approval owner (rejecting otherwise) and marks the approval consumed. Consuming an already-consumed approval returns idempotent `200 OK`; consuming a non-`once` approval returns `422`.
+3. Cross-replica at-most-once is **not** guaranteed: the consume endpoint is idempotent (`200 OK`), and feature 024's create-time unique index dedups pending *creation*, not concurrent *consume*. Two replicas that each obtain a **successful** `200 OK` consume before the consumed state syncs may both proceed. This brief double-use window is bounded to that concurrent-success case and accepted (design §4.7: a one-time approval used twice in a race is acceptable because the underlying action was already authorized). This feature adds **no** `409 Conflict` extension to feature 024's consume endpoint.
+4. **Fail closed on consume failure**: the request MAY proceed **only** after a confirmed `200 OK` from `POST /api/approvals/:id/consume`. If the consume call fails (broker unreachable, timeout, or non-2xx), ExtProc MUST NOT forward the token; it returns a deny tool-result error (the diagram's `consume fails → discard token / 403` path) and MUST NOT mark the approval consumed — it releases the reservation so a later retry can re-attempt the consume once the broker recovers. A broker that never records the consume keeps the `once` approval `approved` and re-delivers it to every replica indefinitely, which would turn a one-time grant into unbounded fleet-wide reuse — a fail-closed violation (Constitution Principle I). **Availability tradeoff**: while the broker's consume path is unavailable, one-time-approved calls are blocked (deny) rather than allowed to reuse a single grant — a deliberate fail-closed choice.
+
+**Why idempotent `200 OK` (not `409 Conflict`)**: feature 024's consume endpoint is idempotent by contract (024 US5/AS2), and this feature deliberately introduces no broker-side change to it. True cross-replica at-most-once would require a broker-side *atomic* consume (approved→consumed) returning a distinct conflict signal (e.g. `409 Conflict`) to the losing replica so it re-elicits; that broker extension is **not** adopted here. The residual double-use window is therefore bounded to two replicas each obtaining a **successful** consume concurrently before the consumed state syncs, and is accepted because the underlying action was already user-authorized (design §4.7). A *failed* consume never forwards (item 4) — only a confirmed success proceeds.
 
 ### FR-009: Session-Scoped Approval Expiry
-When an MCP session ends (session close event or session timeout), all `session`-scoped approvals keyed to that session MUST be removed from the local cache.
+When an agent session ends, all `session`-scoped approvals keyed by that session's `agent_session_id` MUST be removed from the local cache. Session scoping uses the stable `agent_session_id` captured at approval creation (per feature 024), not the MCP-protocol `Mcp-Session-Id` header, which is unstable across reconnects. ExtProc has no explicit session-close callback from agentgateway: when a close signal is available it evicts within SC-008's window; otherwise a session's `session`-scoped approvals are evicted once its `agent_session_id` is absent from live request traffic for the FR-010 idle-timeout window.
 
 ### FR-010: Approval Cache Idle Eviction
-Cache entries for `(principal, agent)` pairs that have had no requests for longer than the configured idle timeout (default: 5 minutes) MUST be evicted. The next request for the pair triggers FR-005 augmentation.
+Cache entries for `(principal, agent)` pairs that have had no requests for longer than the configured idle timeout (default: 5 minutes) MUST be evicted. The next `approval_required` match-miss for the pair re-populates it via the FR-005 authoritative broker read before any approval creation.
 
 ### FR-011: Long-Poll Authentication
 The long-poll `GET /api/approvals` request MUST authenticate using the ExtProc client assertion (configured credential), not a per-user subject token.
@@ -307,34 +294,39 @@ The long-poll `GET /api/approvals` request MUST authenticate using the ExtProc c
 ### FR-012: Fail-Closed on Undefined OPA Result
 When OPA evaluation returns an undefined `decision` (no rule matched), ExtProc MUST treat it as `deny`. This event MUST be logged as a warning distinguishing it from an intentional `deny`.
 
-### FR-013: Per-Request OPA Input Includes Session Context
-The OPA input MUST include the `session_id` extracted from the configured session header (config key: `sessions.extraction.http_header`, default: `Mcp-Session-Id`) so that policies can reason about session-scoped approvals. The header name is configurable because the `Mcp-Session-Id` header identifies an MCP protocol session, which may not correspond 1:1 with an agent session — operators may need to map a different header to scope session approvals appropriately.
+### FR-013: Per-Request OPA Input Includes Agent-Session Context
+The OPA input MUST include, under `context`, the agent-session identifier `input.context.agent_session_id` extracted from the configured session header (config key: `sessions.extraction.http_header`, default: `Mcp-Session-Id`) so that policies can reason about session-scoped approvals. This is the value ExtProc also sends to the broker as `agent_session_id` at approval creation (FR-006) and uses to scope session approvals (FR-009). It is distinct from feature 020's `input.mcp.session_id` (the MCP protocol session, always from the `Mcp-Session-Id` header, left unchanged): the two coincide by default but diverge when an operator maps a different header, because the MCP protocol session may not correspond 1:1 with an agent session.
 
-### FR-014: No Approval Created for Permission Set Deny
-When OPA returns `deny` due to an insufficient permission set (Tier 1), ExtProc MUST NOT call `POST /api/approvals`. The hard deny is returned immediately.
+### FR-014: No Approval Created on a Policy Deny
+ExtProc MUST NOT call `POST /api/approvals` when OPA returns `action: "deny"`. ExtProc does **not** inspect *why* the policy denied: a Tier-1 permission-set boundary violation surfaces as an ordinary `deny` (the policy maps an ungranted permission set to `deny`, per feature 020) and is indistinguishable at the ExtProc layer from any other `deny`. Detection is therefore purely `action == "deny"` → return the hard deny immediately and create nothing. Only `approval_required` reaches the approval-creation path.
 
 ### FR-015: Glob/Wildcard Approval Matching
-When matching an incoming tool call against cached approval records, ExtProc MUST evaluate `tool_pattern` and `params_pattern` as glob expressions. An approval record matches a tool call when:
-1. The tool name matches `tool_pattern` (glob evaluation), AND
-2. The request params match `params_pattern` (glob evaluation against the canonicalized JSON params).
-An exact string with no wildcard characters (e.g. `create_issue`) matches only itself. Approval records with the most specific (least wildcard) pattern take precedence when multiple records match.
+When matching an incoming tool call against cached approval records, ExtProc MUST evaluate each record's `tool_pattern` (string) and `params_pattern` (map of param name → canonical glob) using the **shared `internal/toolpattern` package** (ADR 035) — which ExtProc imports directly, the one sanctioned exception to ExtProc's broker-package isolation, so the broker and ExtProc cannot interpret a decision differently. An approval record matches a tool call when:
+1. `tool_name` matches `tool_pattern` (`*` glob with `\*` as a literal asterisk; e.g. `create_pull_request`, `issues.*`, `*`), AND
+2. every constrained key in `params_pattern` glob-matches the canonicalized argument value (`toolpattern.Canonical`); unconstrained params are implicitly `*`.
+When several records match, the most specific wins (exact tool > wildcard tool; then more constrained params; then fewer wildcards; ties broken by later decision time) via `toolpattern.SelectBest`. Matching, canonicalization, and precedence are pinned by the embedded `internal/toolpattern/vectors.json`, which both broker and ExtProc tests consume, so the two implementations cannot drift.
+
+> **Broker dependency**: glob matching consumes the `tool_pattern` + `params_pattern` fields added to the `GET /api/approvals` sync summary by the `approval-glob-patterns` branch (broker feature 024): ADR 035 (shared matcher), `specs/024-approval-api-ui/glob-approval-matching.md`, migration `030_add_approval_patterns`, and the `internal/toolpattern` package (imported by ExtProc). Until those ship, `params_pattern` is the exact canonical arguments and matching degrades to exact `tool_name` + arguments.
+
+### FR-016: Batch Request Approval Handling
+Elicitation is a single-tool-call interaction; ExtProc MUST NOT create approvals or return `URLElicitationRequiredError` inside a batched (JSON array) request. Per feature 020 FR-023 (each message evaluated independently, deny-wins), if any message in a batch evaluates to `approval_required` (or `ciba_required`, which is treated as `deny`), ExtProc MUST deny the entire batch with a 403 whose reasons instruct the agent to re-issue that specific tool call as a standalone (non-batch) request to obtain the approval URL.
 
 ## Key Entities
 
-- **Approval Cache**: In-memory per-ExtProc-process store keyed by `(principal, agent_id)` pairs. Contains: granted permission set IDs per service, and approval records with `(tool_pattern, params_pattern, persistence, status, consumed, session_id)`. Both `tool_pattern` and `params_pattern` are glob expressions (e.g. `create_*`, `{"repo":"*","branch":"main"}`); an exact string with no wildcard characters matches only itself.
+- **Approval Cache**: In-memory per-ExtProc-process store keyed by `(principal, agent_id)` pairs. Contains approval records `(tool_pattern, params_pattern, persistence, status, consumed, agent_session_id)` as delivered by `GET /api/approvals`. Granted permission sets are **not** cached here — they are read from the token-exchange response snapshot (feature 020). `tool_pattern` is a string glob (e.g. `create_pull_request`, `issues.*`, `*`) and `params_pattern` is a `map[string]string` of param → canonical glob (e.g. `{"repo":"acme/*"}`); an approval with a fully-constrained `params_pattern` matches only its exact arguments. Matching uses the shared `internal/toolpattern` package (ADR 035).
 - **Long-Poll Goroutine**: Single background goroutine per ExtProc process that maintains one persistent HTTP connection to `GET /api/approvals`. Carries the broker's `ETag` across calls. Updates the approval cache atomically on change delivery.
-- **Four-Valued OPA Decision**: The `result.action` field in the OPA output document: `allow` | `deny` | `approval_required` | `ciba_required`. Paired with optional `approval_context` (tool description, risk level, default persistence) and `reasons` (for deny).
-- **Subject Token**: The per-request Bearer token from the request's `Authorization` header, bound to both the principal (user) and agent. Used for approval creation calls so the broker can extract both identities without explicit parameters.
-- **Client Assertion**: The ExtProc's own credential, validated by the broker via a CEL expression (same mechanism as token exchange). Used for the long-poll goroutine's authentication.
+- **OPA Decision**: The `result.action` field: `allow` | `deny` | `approval_required` (Tier 2, active in this feature) | `ciba_required` (Tier 3, recognized but treated as `deny` — deferred). Paired with optional `approval_context` (tool description, risk level, default persistence) and `reasons` (for deny).
+- **Subject Token**: The per-request Bearer token from the request's `Authorization` header, bound to both the principal (user) and agent. Sent in `Authorization: Bearer` on both approval creation and consume so the broker can extract both identities without explicit parameters.
+- **Client Assertion**: The ExtProc's own gateway credential, validated by the broker via a CEL expression (same mechanism as token exchange). Sent in `Authorization: Bearer` on the long-poll sync request, and additionally in the `X-Client-Assertion` header (alongside the subject token) on approval creation — feature 024 requires **both** credentials to create. It is not used for consume.
 - **URLElicitationRequiredError**: MCP error code `-32042` with `data.elicitations[0].mode: "url"` and `data.elicitations[0].url: "{approval_url}"`. The standard elicitation mechanism per the MCP Elicitation specification (2025-11-25).
 
 ## Assumptions
 
-- The broker's `GET /api/approvals`, `POST /api/approvals`, `GET /api/approvals/{id}`, and `POST /api/approvals/{id}/consume` endpoints are implemented as specified in feature 024 (`024-approval-api-ui`), and those changes are available on the `024-approval-api-ui` branch. `GET /api/approvals/{id}` is confirmed present in `internal/adapters/http/routing/enduser.go` and `internal/adapters/http/handlers/approval/get_handler.go`.
-- The OPA policy used in this feature follows the four-valued decision model described in Section 4.2 of the design (`result.action` = allow / deny / approval_required / ciba_required). The OPA evaluation pipeline from feature 020 is present and operational.
-- The `context.granted_permission_sets` placeholder in the OPA input (currently an empty object, added in feature 020) is replaced in this feature with live data from the approval cache.
+- The broker's `GET /api/approvals`, `POST /api/approvals`, and `POST /api/approvals/{id}/consume` endpoints are implemented as specified in feature 024 (`024-approval-api-ui`) and consumed by ExtProc as-is. `POST /api/approvals` requires dual auth (subject token in `Authorization: Bearer` + client assertion in `X-Client-Assertion`); `GET /api/approvals` (optionally `?principal={p}`) provides ETag long-poll and immediate reads with client-assertion (CEL) authentication and exposes each approval's `tool_pattern` + `params_pattern`; `POST /api/approvals/{id}/consume` is subject-token-only, takes no body, and returns idempotent `200 OK` (and `422` for non-`once`). `GET /api/approvals/{id}` is browser-only (`X-Remote-User` principal) and is NOT consumed by ExtProc. This feature adds no broker-side change to the create, consume, or single-get endpoints (no `409` on consume, no consume-body session field); the approval **pattern** fields, shared matcher, and migration are provided by the `approval-glob-patterns` broker work (ADR 035, `specs/024-approval-api-ui/glob-approval-matching.md`, migration `030_add_approval_patterns`, `internal/toolpattern`) and are treated as a prerequisite, not implemented here.
+- The OPA policy used in this feature emits `allow` / `deny` / `approval_required`; `ciba_required` MAY appear but is treated as `deny` (deferred). The OPA evaluation pipeline from feature 020 is present and operational.
+- The source of granted permission sets for OPA evaluation is feature 020's `input.context.granted_permission_sets` (populated from the RFC 8693 token-exchange response, with `granted_permission_sets_available`). The approval cache is consulted by ExtProc **outside** OPA (after an `approval_required` decision — FR-002/FR-015); approval records are **not** placed in the OPA input. The `granted_permission_sets` placeholder returned by `GET /api/approvals` is not consumed by OPA.
 - Permission sets are identified by stable UUIDs in both the broker database and OPA policy data. No permission set name-to-ID resolution is required at the ExtProc layer.
-- The broker-side CIBA relay (initiating backchannel authentication with an upstream IdP) is out of scope. ExtProc creates CIBA-type approvals and returns elicitation URLs; the broker handles CIBA orchestration internally and the approval cache sync delivers the result when CIBA completes.
+- Tier 3 / CIBA is out of scope for this feature: ExtProc treats `ciba_required` as `deny` (deferred) and creates no CIBA approval. Broker-side CIBA relay (backchannel authentication with an upstream IdP) also remains out of scope.
 - This feature introduces two new ExtProc config sections. `tool_approvals.*`: `tool_approvals.url` (required — the identity broker base URL), `tool_approvals.long_poll_timeout_seconds` (int, default: 30), `tool_approvals.approval_cache_idle_ttl` (duration, default: `5m`). The `tool_approvals` name was chosen over `broker` to avoid confusion with the broker service already referenced implicitly via the token endpoint config. `sessions.extraction.*`: `sessions.extraction.http_header` (string, default: `"Mcp-Session-Id"`) — the HTTP request header whose value is used as the session identifier for scoping session-scoped approvals. The `sessions.extraction` namespace is designed to accommodate future extraction strategies (e.g. JWT claim, cookie) without breaking the config schema.
 - When ExtProc is deployed with multiple replicas, each instance independently maintains its own approval cache and long-poll connection. The broker must support N concurrent long-poll waiters. Replicas do not share cache state or coordinate approval decisions.
 - Tool-to-permission-set mapping is defined in OPA Rego data (the `tool_permissions` map), not in the broker database. ExtProc does not query the broker for this mapping.
@@ -352,13 +344,14 @@ An exact string with no wildcard characters (e.g. `create_issue`) matches only i
 - **SC-005**: ExtProc startup with a reachable broker completes cache bootstrap and is ready to serve requests within 5 seconds.
 - **SC-006**: A one-time (`once`) approval is consumed after a single use — the second call for the same tool by the same agent triggers a new approval prompt.
 - **SC-007**: The long-poll goroutine reconnects automatically within 5 seconds of a broker restart or network interruption, with no manual intervention or ExtProc restart required.
-- **SC-008**: Session-scoped approvals are evicted from the cache within 1 second of the MCP session closing, ensuring they cannot be matched by a new session.
+- **SC-008**: When an explicit session-close signal is available, session-scoped approvals are evicted from the cache within 1 second of the MCP session closing, ensuring they cannot be matched by a new session; absent an explicit signal, eviction occurs within the configured idle-timeout window (FR-010).
 
 ## Out of Scope
 
 - Risk-based automatic approval (Section 4.6 of the design) — risk signals, scoring functions, and auto-approve thresholds.
 - Broker-side CIBA relay — the broker's internal interaction with the upstream IdP's backchannel authentication endpoint.
 - CIBA elevated token handling in the token exchange path — ExtProc using a CIBA-returned elevated token instead of the standard RFC 8693 exchange is deferred.
+- Active `ciba_required` (Tier 3) handling in ExtProc — recognized but treated as `deny` in this feature; approval creation and elicitation for `ciba_required` are deferred to a later feature.
 - Permission set management, CRUD APIs, and consent UI updates for permission sets (feature 019 territory).
 - The MCP server endpoint on the broker (`/mcp`) for programmatic approval status polling by agents (Section 5.3 of the design).
 - A2A protocol approval gating — A2A requests remain `type: unknown` and bypass the approval flow.
