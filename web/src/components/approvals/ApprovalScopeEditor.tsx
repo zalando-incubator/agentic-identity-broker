@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { Accordion } from '@design-system/components/advanced/Accordion';
 import { Badge } from '@design-system/components/primitives/Badge';
-import { Radio } from '@design-system/components/inputs/Radio';
+import { Select, type SelectOption } from '@design-system/components/inputs/Select';
 import { TextInput } from '@design-system/components/inputs/TextInput';
 import { Button } from '@components/ui/Button';
 import {
@@ -41,9 +41,29 @@ export interface ScopeIssues {
 }
 
 type ParameterMode = 'exact' | 'any' | 'custom';
+type ToolMode = 'exact' | 'custom';
+
+const TOOL_MODE_OPTIONS: SelectOption[] = [
+  { value: 'exact', label: 'Exactly this tool' },
+  { value: 'custom', label: 'Custom match' },
+];
+
+const PARAMETER_MODE_OPTIONS: SelectOption[] = [
+  { value: 'exact', label: 'This value' },
+  { value: 'any', label: 'Any value' },
+  { value: 'custom', label: 'Custom match' },
+];
 
 const NOT_COVERING = 'This pattern does not match the current value.';
 const VALUE_PREVIEW_LIMIT = 120;
+
+function isParameterMode(value: string | number | (string | number)[] | null): value is ParameterMode {
+  return value === 'exact' || value === 'any' || value === 'custom';
+}
+
+function isToolMode(value: string | number | (string | number)[] | null): value is ToolMode {
+  return value === 'exact' || value === 'custom';
+}
 
 function exactToolPattern(approval: ToolApprovalDetail): string {
   return approval.tool_pattern || approval.tool_name;
@@ -120,8 +140,7 @@ export function ApprovalScopeEditor({
   const constraints = paramsPattern ?? {};
   const issues = resolveScopeIssues(approval, toolPattern, constraints);
 
-  const toolMode: 'exact' | 'custom' =
-    toolCustom || toolPattern !== exactTool ? 'custom' : 'exact';
+  const toolMode: ToolMode = toolCustom || toolPattern !== exactTool ? 'custom' : 'exact';
 
   const modeOf = (key: string): ParameterMode => {
     const value = constraints[key];
@@ -152,6 +171,11 @@ export function ApprovalScopeEditor({
     if (mode === 'any') setParamPattern(key, undefined);
     else if (mode === 'exact') setParamPattern(key, exactParamPattern(approval, key));
     else setParamPattern(key, `${exactParamPattern(approval, key)}*`);
+  };
+
+  const selectToolMode = (mode: ToolMode) => {
+    setToolCustom(mode === 'custom');
+    onToolPatternChange(mode === 'exact' ? exactTool : `${exactTool}*`);
   };
 
   const toggleExpanded = (key: string) => {
@@ -191,57 +215,49 @@ export function ApprovalScopeEditor({
       ? 'Future calls must match this tool.'
       : `Future calls must match this tool and all ${keys.length} values from this request.`;
 
-  const toolGroupName = `approval-${approval.id}-tool`;
+  const toolControlId = `approval-${approval.id}-tool-mode`;
   const toolLabel = humanizeParameterKey(approval.tool_name);
 
   const content = (
-    <div className="space-y-4">
-      <p className="text-sm text-neutral-700">
+    <div className="space-y-6">
+      <p className="border-l-2 border-trust/20 pl-3 text-sm text-secondary">
         Future calls must match this tool and these values. Change only what should be allowed
         to differ.
       </p>
 
-      <div className="space-y-2 rounded-lg border border-neutral-200 p-3">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <span className="text-sm font-medium text-neutral-900">Tool</span>
-          <span className="text-sm text-neutral-700">{toolLabel}</span>
-          {toolLabel !== approval.tool_name && (
-            <code className="font-mono text-xs text-neutral-500 break-all">
-              {approval.tool_name}
-            </code>
-          )}
+      <div className="space-y-3 border-b border-neutral-200 pb-5">
+        <div className="grid gap-x-3 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(12rem,0.8fr)] sm:items-center">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-trust">Tool</span>
+              <span className="text-sm font-medium text-neutral-900">{toolLabel}</span>
+              {toolLabel !== approval.tool_name && (
+                <code className="font-mono text-xs text-neutral-500 break-all">
+                  {approval.tool_name}
+                </code>
+              )}
+            </div>
+          </div>
+          <span className="text-sm text-secondary">matches</span>
+          <div>
+            <Select
+              id={toolControlId}
+              aria-label="Tool matching rule"
+              size="sm"
+              options={TOOL_MODE_OPTIONS}
+              value={toolMode}
+              disabled={disabled}
+              className="[&>div:last-child]:hidden"
+              onChange={(value) => {
+                if (isToolMode(value)) selectToolMode(value);
+              }}
+            />
+          </div>
         </div>
-
-        <fieldset className="space-y-2" disabled={disabled}>
-          <legend className="sr-only">Allowed tools</legend>
-          <Radio
-            id={`${toolGroupName}-exact`}
-            name={toolGroupName}
-            label="Exactly this tool"
-            checked={toolMode === 'exact'}
-            disabled={disabled}
-            onChange={() => {
-              setToolCustom(false);
-              onToolPatternChange(exactTool);
-            }}
-          />
-          <Radio
-            id={`${toolGroupName}-custom`}
-            name={toolGroupName}
-            label="Custom match"
-            description="Allow tool names that match a pattern you define."
-            checked={toolMode === 'custom'}
-            disabled={disabled}
-            onChange={() => {
-              setToolCustom(true);
-              onToolPatternChange(`${exactTool}*`);
-            }}
-          />
-        </fieldset>
 
         {toolMode === 'custom' && (
           <TextInput
-            id={`${toolGroupName}-pattern`}
+            id={`${toolControlId}-pattern`}
             size="sm"
             label="Custom match"
             value={toolPattern}
@@ -257,13 +273,13 @@ export function ApprovalScopeEditor({
       </div>
 
       {keys.length > 0 && (
-        <div className="space-y-3">
-          <p className="text-sm font-semibold text-neutral-900">Request details</p>
+        <div className="space-y-0">
+          <p className="pb-2 text-xs font-semibold uppercase tracking-wide text-trust">Request details</p>
           {keys.map((key) => {
             const mode = modeOf(key);
             const label = humanizeParameterKey(key);
             const currentValue = unescapeGlobLiteral(exactParamPattern(approval, key));
-            const groupName = `approval-${approval.id}-param-${key}`;
+            const modeControlId = `approval-${approval.id}-param-${key}-mode`;
             const issue = issues.params[key];
             const truncatable = currentValue.length > VALUE_PREVIEW_LIMIT;
             const expanded = expandedValues.has(key);
@@ -272,77 +288,64 @@ export function ApprovalScopeEditor({
               <div
                 key={key}
                 data-testid={`approval-scope-param-${key}`}
-                className="space-y-2 rounded-lg border border-neutral-200 p-3"
+                className="space-y-3 border-b border-neutral-200 py-5 first:pt-3 last:border-b-0 last:pb-0"
               >
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="text-sm font-medium text-neutral-900">{label}</span>
-                  {label !== key && (
-                    <code className="font-mono text-xs text-neutral-500 break-all">{key}</code>
-                  )}
-                </div>
-
-                <div className="space-y-1">
-                  <p className="text-xs text-neutral-500">Current value</p>
-                  {currentValue === '' ? (
-                    <p className="text-xs italic text-neutral-500">(empty)</p>
-                  ) : (
-                    <p
-                      className={
-                        truncatable && expanded
-                          ? 'font-mono text-xs text-neutral-800 whitespace-pre-wrap break-all max-h-40 overflow-auto'
-                          : 'font-mono text-xs text-neutral-800 break-all'
-                      }
-                    >
-                      {truncatable && !expanded
-                        ? `${currentValue.slice(0, VALUE_PREVIEW_LIMIT)}…`
-                        : currentValue}
+                <div className="grid gap-x-3 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(12rem,0.8fr)] sm:items-center">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span className="text-sm font-semibold text-trust">{label}</span>
+                      {label !== key && (
+                        <code className="font-mono text-xs text-neutral-500 break-all">{key}</code>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-tertiary">
+                      Current value{' '}
+                      {currentValue === '' ? (
+                        <span className="italic">(empty)</span>
+                      ) : (
+                        <span
+                          className={
+                            truncatable && expanded
+                              ? 'block font-mono text-neutral-800 whitespace-pre-wrap break-all max-h-40 overflow-auto'
+                              : 'font-mono text-neutral-800 break-all'
+                          }
+                        >
+                          {truncatable && !expanded
+                            ? `${currentValue.slice(0, VALUE_PREVIEW_LIMIT)}…`
+                            : currentValue}
+                        </span>
+                      )}
                     </p>
-                  )}
-                  {truncatable && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => toggleExpanded(key)}
-                    >
-                      {expanded ? 'Hide full value' : 'Show full value'}
-                    </Button>
-                  )}
+                  </div>
+                  <span className="text-sm text-secondary">matches</span>
+                  <Select
+                    id={modeControlId}
+                    aria-label={`${label} match mode`}
+                    size="sm"
+                    options={PARAMETER_MODE_OPTIONS}
+                    value={mode}
+                    disabled={disabled}
+                    className="[&>div:last-child]:hidden"
+                    onChange={(value) => {
+                      if (isParameterMode(value)) selectMode(key, value);
+                    }}
+                  />
                 </div>
 
-                <fieldset className="space-y-2" disabled={disabled}>
-                  <legend className="sr-only">{`Allowed values for ${label}`}</legend>
-                  <Radio
-                    id={`${groupName}-exact`}
-                    name={groupName}
-                    label="This value"
-                    checked={mode === 'exact'}
-                    disabled={disabled}
-                    onChange={() => selectMode(key, 'exact')}
-                  />
-                  <Radio
-                    id={`${groupName}-any`}
-                    name={groupName}
-                    label="Any value"
-                    description="The agent may use a different value here."
-                    checked={mode === 'any'}
-                    disabled={disabled}
-                    onChange={() => selectMode(key, 'any')}
-                  />
-                  <Radio
-                    id={`${groupName}-custom`}
-                    name={groupName}
-                    label="Custom match"
-                    description="Allow values that match a pattern you define."
-                    checked={mode === 'custom'}
-                    disabled={disabled}
-                    onChange={() => selectMode(key, 'custom')}
-                  />
-                </fieldset>
+                {truncatable && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => toggleExpanded(key)}
+                  >
+                    {expanded ? 'Hide full value' : 'Show full value'}
+                  </Button>
+                )}
 
                 {mode === 'custom' && (
                   <TextInput
-                    id={`${groupName}-pattern`}
+                    id={`${modeControlId}-pattern`}
                     size="sm"
                     label="Custom match"
                     value={constraints[key] ?? ''}
@@ -366,8 +369,8 @@ export function ApprovalScopeEditor({
         Reset to this request
       </Button>
 
-      <div className="space-y-1">
-        <p className="text-sm font-semibold text-neutral-900">Applies to</p>
+      <div className="space-y-2 border-t border-neutral-200 pt-5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-trust">Applies to</p>
         <ul className="list-disc space-y-1 pl-5 text-sm text-neutral-700 break-words">
           <li>
             {toolMode === 'custom'
@@ -390,8 +393,8 @@ export function ApprovalScopeEditor({
         </ul>
       </div>
 
-      <div className="space-y-1" aria-label="Approval pattern preview">
-        <p className="text-sm font-semibold text-neutral-900">Technical rule</p>
+      <div className="space-y-2 border-t border-neutral-200 pt-5" aria-label="Approval pattern preview">
+        <p className="text-xs font-semibold uppercase tracking-wide text-trust">Technical rule</p>
         <code className="font-mono text-xs text-neutral-500 break-words">
           {formatToolPattern(toolPattern, constraints)}
         </code>

@@ -291,11 +291,16 @@ func (ap *ApprovalPage) parameterScope(key string) playwright.Locator {
 	return ap.pwPage().Locator(fmt.Sprintf("[data-testid='approval-scope-param-%s']", key))
 }
 
-// SetParameterMode selects a per-parameter mode.
+// SetParameterMode selects a per-parameter mode from its match dropdown.
 // Valid modes: "This value", "Any value", "Custom match".
 func (ap *ApprovalPage) SetParameterMode(ctx context.Context, key, mode string) error {
-	radio := ap.parameterScope(key).GetByRole("radio", playwright.LocatorGetByRoleOptions{Name: mode})
-	if err := radio.Click(); err != nil {
+	scope := ap.parameterScope(key)
+	trigger := scope.Locator("button[id$='-mode']")
+	if err := trigger.Click(); err != nil {
+		return fmt.Errorf("open mode dropdown for parameter %q: %w", key, err)
+	}
+	option := ap.pwPage().GetByRole("option", playwright.PageGetByRoleOptions{Name: mode})
+	if err := option.Click(); err != nil {
 		return fmt.Errorf("select mode %q for parameter %q: %w", mode, key, err)
 	}
 	return nil

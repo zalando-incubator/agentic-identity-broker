@@ -126,9 +126,10 @@ describe('ApprovalScopeEditor', () => {
 
     await user.click(screen.getByRole('button', { name: /approval scope/i }));
     const titleBlock = screen.getByTestId('approval-scope-param-title');
-    expect(within(titleBlock).getByRole('radio', { name: 'This value' })).toBeChecked();
+    expect(within(titleBlock).getByRole('button', { name: 'Title match mode' })).toHaveTextContent('This value');
 
-    await user.click(within(titleBlock).getByRole('radio', { name: 'Any value' }));
+    await user.click(within(titleBlock).getByRole('button', { name: 'Title match mode' }));
+    await user.click(screen.getByRole('option', { name: 'Any value' }));
 
     expect(onParamsPatternChange).toHaveBeenCalledWith({ repo: 'acme/app' });
   });
@@ -139,7 +140,8 @@ describe('ApprovalScopeEditor', () => {
 
     await user.click(screen.getByRole('button', { name: /approval scope/i }));
     const repoBlock = screen.getByTestId('approval-scope-param-repo');
-    await user.click(within(repoBlock).getByRole('radio', { name: 'Custom match' }));
+    await user.click(within(repoBlock).getByRole('button', { name: 'Repo match mode' }));
+    await user.click(screen.getByRole('option', { name: 'Custom match' }));
 
     expect(within(repoBlock).getByRole('textbox')).toHaveValue('acme/app*');
     expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
@@ -193,7 +195,8 @@ describe('ApprovalScopeEditor', () => {
 
     await user.click(screen.getByRole('button', { name: /approval scope/i }));
     const repoBlock = screen.getByTestId('approval-scope-param-repo');
-    await user.click(within(repoBlock).getByRole('radio', { name: 'Custom match' }));
+    await user.click(within(repoBlock).getByRole('button', { name: 'Repo match mode' }));
+    await user.click(screen.getByRole('option', { name: 'Custom match' }));
     await user.clear(within(repoBlock).getByRole('textbox'));
     await user.type(within(repoBlock).getByRole('textbox'), 'acme/*');
 
@@ -203,7 +206,7 @@ describe('ApprovalScopeEditor', () => {
 
     expect(screen.getByText('Exact request')).toBeInTheDocument();
     const restored = screen.getByTestId('approval-scope-param-repo');
-    expect(within(restored).getByRole('radio', { name: 'This value' })).toBeChecked();
+    expect(within(restored).getByRole('button', { name: 'Repo match mode' })).toHaveTextContent('This value');
     expect(within(restored).queryByRole('textbox')).not.toBeInTheDocument();
   });
 });

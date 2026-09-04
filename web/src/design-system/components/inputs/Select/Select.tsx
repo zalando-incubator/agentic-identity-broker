@@ -171,6 +171,7 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
       renderLabel,
       id,
       className,
+      'aria-label': ariaLabel,
       ...props
     },
     ref,
@@ -277,6 +278,8 @@ export const Select = React.forwardRef<HTMLDivElement, SelectProps>(
             className="relative"
           >
             <Listbox.Button
+              id={id}
+              aria-label={ariaLabel}
               className={selectButtonVariants({ size, variant, open: isOpen })}
               onClick={() => setIsOpen(!isOpen)}
               onFocus={() => searchable && setIsOpen(true)}
