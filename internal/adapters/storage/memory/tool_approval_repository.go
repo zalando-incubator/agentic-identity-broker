@@ -40,6 +40,9 @@ func (r *ToolApprovalRepository) Create(_ context.Context, approval *storage.Too
 	if approval.ToolPattern == "" {
 		return nil, storage.NewStorageError("Create", storage.ErrorKindValidation, storage.ErrApprovalPatternMissing, "approval tool pattern is required")
 	}
+	if approval.ParamsPattern == nil {
+		approval.ParamsPattern = map[string]string{}
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()

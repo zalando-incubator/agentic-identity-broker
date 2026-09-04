@@ -46,12 +46,19 @@ LANGUAGE sql IMMUTABLE AS $fn$
     SELECT replace(replace(t, '\', '\\'), '*', '\*')
 $fn$;
 
+ALTER TABLE tool_approvals DISABLE TRIGGER trigger_tool_approvals_sync;
+
 UPDATE tool_approvals
 SET tool_pattern = tool_name,
     params_pattern = COALESCE((
         SELECT jsonb_object_agg(e.key, aib_glob_escape(aib_canonical_value(e.value)))
         FROM jsonb_each(arguments) AS e
     ), '{}'::jsonb);
+
+ALTER TABLE tool_approvals ENABLE TRIGGER trigger_tool_approvals_sync;
+
+UPDATE approval_sync_state SET version = version + 1 WHERE id = 1;
+SELECT pg_notify('approval_sync', '');
 
 DROP FUNCTION aib_glob_escape(text);
 DROP FUNCTION aib_canonical_value(jsonb);
