@@ -4,9 +4,11 @@
 package migrations_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/toolpattern"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -225,6 +227,69 @@ func TestMigration029CanonicalIDs(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, exists)
 	}
+}
+
+func TestMigration030ApprovalPatterns(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+	require.NoError(t, f.Up(t, 29))
+	exists, err := f.ColumnExists(t, "tool_approvals", "tool_pattern")
+	require.NoError(t, err)
+	assert.False(t, exists)
+	require.NoError(t, f.ExecuteSQL(t, `
+		INSERT INTO agents (id, display_name, description) VALUES ('30000000-0000-0000-0000-000000000001', 'pattern agent', 'test');
+		INSERT INTO tool_approvals (id, principal, agent_id, gateway_client_id, tool_name, arguments, arguments_hash, approval_url, expires_at) VALUES
+		('40000000-0000-0000-0000-000000000001', 'pattern@example.com', '30000000-0000-0000-0000-000000000001', 'gateway', 'scalar_tool', '{"repo":"acme/app","count":2,"ratio":1.5,"draft":false,"note":null,"pattern":"a*b","path":"c\\d"}', 'hash-1', 'https://broker.example/approval', NOW() + interval '1 hour'),
+		('40000000-0000-0000-0000-000000000002', 'pattern@example.com', '30000000-0000-0000-0000-000000000001', 'gateway', 'composite_tool', '{"reviewers":["b","a"],"meta":{"b":1,"a":"x"},"empty":{},"list":[]}', 'hash-2', 'https://broker.example/approval', NOW() + interval '1 hour'),
+		('40000000-0000-0000-0000-000000000003', 'pattern@example.com', '30000000-0000-0000-0000-000000000001', 'gateway', 'escape_tool', '{"html":"a<b&c>d","ctl":"a\tb","quote":"say \"hi\""}', 'hash-3', 'https://broker.example/approval', NOW() + interval '1 hour');
+	`))
+	require.NoError(t, f.UpAll(t))
+	for _, column := range []string{"tool_pattern", "params_pattern"} {
+		exists, err := f.ColumnExists(t, "tool_approvals", column)
+		require.NoError(t, err)
+		assert.True(t, exists)
+	}
+	toolType, err := f.GetColumnType(t, "tool_approvals", "tool_pattern")
+	require.NoError(t, err)
+	assert.Equal(t, "character varying", toolType)
+	paramsType, err := f.GetColumnType(t, "tool_approvals", "params_pattern")
+	require.NoError(t, err)
+	assert.Equal(t, "jsonb", paramsType)
+	nullability, err := f.QuerySQL(t, `SELECT string_agg(column_name || ':' || is_nullable, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_name = 'tool_approvals' AND column_name IN ('tool_pattern', 'params_pattern')`)
+	require.NoError(t, err)
+	assert.Equal(t, "params_pattern:NO,tool_pattern:NO", strings.TrimSpace(nullability))
+
+	rowsJSON, err := f.QuerySQL(t, `SELECT json_agg(json_build_object('id', id, 'tool_pattern', tool_pattern, 'params_pattern', params_pattern) ORDER BY id)::text FROM tool_approvals`)
+	require.NoError(t, err)
+	var rows []struct {
+		ID            string            `json:"id"`
+		ToolPattern   string            `json:"tool_pattern"`
+		ParamsPattern map[string]string `json:"params_pattern"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(rowsJSON), &rows))
+	expected := map[string]map[string]any{
+		"40000000-0000-0000-0000-000000000001": {"repo": "acme/app", "count": 2, "ratio": 1.5, "draft": false, "note": nil, "pattern": "a*b", "path": `c\d`},
+		"40000000-0000-0000-0000-000000000002": {"reviewers": []any{"b", "a"}, "meta": map[string]any{"b": 1, "a": "x"}, "empty": map[string]any{}, "list": []any{}},
+		"40000000-0000-0000-0000-000000000003": {"html": "a<b&c>d", "ctl": "a\tb", "quote": `say "hi"`},
+	}
+	require.Len(t, rows, len(expected))
+	for _, row := range rows {
+		args := expected[row.ID]
+		require.NotNil(t, args)
+		assert.Equal(t, toolpattern.ExactParams(args), row.ParamsPattern)
+		assert.Equal(t, map[string]string{"40000000-0000-0000-0000-000000000001": "scalar_tool", "40000000-0000-0000-0000-000000000002": "composite_tool", "40000000-0000-0000-0000-000000000003": "escape_tool"}[row.ID], row.ToolPattern)
+		assert.True(t, toolpattern.Matches(row.ToolPattern, row.ParamsPattern, row.ToolPattern, args))
+	}
+	require.NoError(t, f.Down(t, 29))
+	for _, column := range []string{"tool_pattern", "params_pattern"} {
+		exists, err := f.ColumnExists(t, "tool_approvals", column)
+		require.NoError(t, err)
+		assert.False(t, exists)
+	}
+	count, err := f.CountRows(t, "tool_approvals")
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), count)
+	require.NoError(t, f.UpAll(t))
 }
 
 func TestMigration031(t *testing.T) {

@@ -10,6 +10,8 @@ const approval = {
   agent_display_name: 'Research Assistant',
   tool_name: 'read_file',
   arguments: { path: '/tmp/example' },
+  tool_pattern: 'read_file',
+  params_pattern: { path: '/tmp/example' },
   status: 'pending' as const,
   approval_url: 'https://broker.example.com/approvals/approval-1',
   created_at: '2026-03-29T00:00:00Z',
@@ -42,7 +44,7 @@ describe('ApprovalReviewPage', () => {
     expect(screen.getByRole('button', { name: /^deny$/i })).toBeEnabled();
 
     await user.click(screen.getByRole('button', { name: /^approve$/i }));
-    expect(onApprove).toHaveBeenCalledWith('once');
+    expect(onApprove).toHaveBeenCalledWith({ persistence: 'once' });
 
     await user.click(screen.getByRole('button', { name: /try again/i }));
     expect(onRetry).toHaveBeenCalledOnce();
@@ -69,7 +71,7 @@ describe('ApprovalReviewPage', () => {
     await user.click(screen.getByRole('radio', { name: /always allow/i }));
     await user.click(screen.getByRole('button', { name: /^approve$/i }));
 
-    expect(onApprove).toHaveBeenCalledWith('permanent');
+    expect(onApprove).toHaveBeenCalledWith({ persistence: 'permanent', tool_pattern: 'read_file', params_pattern: { path: '/tmp/example' } });
   });
 
   it('shows a read-only recorded decision for an already approved once-only request', () => {

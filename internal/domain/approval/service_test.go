@@ -2,8 +2,10 @@ package approval
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 
@@ -18,7 +20,7 @@ import (
 // mockApprovalRepo implements ports.ToolApprovalRepository for testing.
 type mockApprovalRepo struct {
 	approvals   map[id.ApprovalID]*storage.ToolApproval
-	approveFunc func(context.Context, id.ApprovalID, storage.ApprovalPersistence, time.Time) (*storage.ToolApproval, error)
+	approveFunc func(context.Context, id.ApprovalID, storage.ApprovalDecision, time.Time) (*storage.ToolApproval, error)
 	denyFunc    func(context.Context, id.ApprovalID, *storage.ApprovalPersistence, time.Time) (*storage.ToolApproval, error)
 	consumeFunc func(context.Context, id.ApprovalID, time.Time) (*storage.ToolApproval, error)
 }
@@ -55,16 +57,18 @@ func (m *mockApprovalRepo) Get(_ context.Context, approvalID id.ApprovalID) (*st
 	return &copy, nil
 }
 
-func (m *mockApprovalRepo) Approve(_ context.Context, approvalID id.ApprovalID, persistence storage.ApprovalPersistence, approvedAt time.Time) (*storage.ToolApproval, error) {
+func (m *mockApprovalRepo) Approve(_ context.Context, approvalID id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error) {
 	if m.approveFunc != nil {
-		return m.approveFunc(context.Background(), approvalID, persistence, approvedAt)
+		return m.approveFunc(context.Background(), approvalID, decision, approvedAt)
 	}
 	a, ok := m.approvals[approvalID]
 	if !ok {
 		return nil, storage.NewStorageError("Approve", storage.ErrorKindNotFound, nil, "approval not found")
 	}
 	a.Status = storage.ApprovalStatusApproved
-	a.Persistence = &persistence
+	a.Persistence = &decision.Persistence
+	a.ToolPattern = decision.ToolPattern
+	a.ParamsPattern = decision.ParamsPattern
 	a.ApprovedAt = &approvedAt
 	copy := *a
 	return &copy, nil
@@ -172,7 +176,7 @@ func newTestService(repo *mockApprovalRepo) *Service {
 }
 
 func makePendingApproval(principal id.Principal, agentID id.AgentID) *storage.ToolApproval {
-	return &storage.ToolApproval{
+	approval := &storage.ToolApproval{
 		ID:            id.NewApprovalID(),
 		Principal:     principal,
 		AgentID:       agentID,
@@ -183,6 +187,8 @@ func makePendingApproval(principal id.Principal, agentID id.AgentID) *storage.To
 		CreatedAt:     time.Now(),
 		ExpiresAt:     time.Now().Add(10 * time.Minute),
 	}
+	approval.ApplyExactPatterns()
+	return approval
 }
 
 func TestService_GetApproval(t *testing.T) {
@@ -291,7 +297,7 @@ func TestService_ApproveApproval(t *testing.T) {
 		a := makePendingApproval(principal, agentID)
 		repo.approvals[a.ID] = a
 
-		result, err := svc.ApproveApproval(context.Background(), a.ID, principal, storage.ApprovalPersistenceOnce)
+		result, err := svc.ApproveApproval(context.Background(), a.ID, principal, ApproveRequest{Persistence: storage.ApprovalPersistenceOnce})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -310,7 +316,7 @@ func TestService_ApproveApproval(t *testing.T) {
 		a := makePendingApproval(principal, agentID)
 		repo.approvals[a.ID] = a
 
-		result, err := svc.ApproveApproval(context.Background(), a.ID, principal, storage.ApprovalPersistenceSession)
+		result, err := svc.ApproveApproval(context.Background(), a.ID, principal, ApproveRequest{Persistence: storage.ApprovalPersistenceSession})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -326,7 +332,7 @@ func TestService_ApproveApproval(t *testing.T) {
 		a := makePendingApproval(principal, agentID)
 		repo.approvals[a.ID] = a
 
-		result, err := svc.ApproveApproval(context.Background(), a.ID, principal, storage.ApprovalPersistencePermanent)
+		result, err := svc.ApproveApproval(context.Background(), a.ID, principal, ApproveRequest{Persistence: storage.ApprovalPersistencePermanent})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -339,7 +345,7 @@ func TestService_ApproveApproval(t *testing.T) {
 		repo := newMockApprovalRepo()
 		svc := newTestService(repo)
 
-		_, err := svc.ApproveApproval(context.Background(), id.NewApprovalID(), principal, storage.ApprovalPersistenceOnce)
+		_, err := svc.ApproveApproval(context.Background(), id.NewApprovalID(), principal, ApproveRequest{Persistence: storage.ApprovalPersistenceOnce})
 		if err != ErrApprovalNotFound {
 			t.Fatalf("expected ErrApprovalNotFound, got %v", err)
 		}
@@ -352,7 +358,7 @@ func TestService_ApproveApproval(t *testing.T) {
 		a := makePendingApproval(principal, agentID)
 		repo.approvals[a.ID] = a
 
-		_, err := svc.ApproveApproval(context.Background(), a.ID, id.Principal("other@example.com"), storage.ApprovalPersistenceOnce)
+		_, err := svc.ApproveApproval(context.Background(), a.ID, id.Principal("other@example.com"), ApproveRequest{Persistence: storage.ApprovalPersistenceOnce})
 		if err != ErrApprovalForbidden {
 			t.Fatalf("expected ErrApprovalForbidden, got %v", err)
 		}
@@ -366,7 +372,7 @@ func TestService_ApproveApproval(t *testing.T) {
 		a.ExpiresAt = time.Now().Add(-1 * time.Minute)
 		repo.approvals[a.ID] = a
 
-		_, err := svc.ApproveApproval(context.Background(), a.ID, principal, storage.ApprovalPersistenceOnce)
+		_, err := svc.ApproveApproval(context.Background(), a.ID, principal, ApproveRequest{Persistence: storage.ApprovalPersistenceOnce})
 		if err != ErrApprovalGone {
 			t.Fatalf("expected ErrApprovalGone, got %v", err)
 		}
@@ -377,12 +383,12 @@ func TestService_ApproveApproval(t *testing.T) {
 		svc := newTestService(repo)
 		a := makePendingApproval(principal, agentID)
 		repo.approvals[a.ID] = a
-		repo.approveFunc = func(_ context.Context, _ id.ApprovalID, _ storage.ApprovalPersistence, _ time.Time) (*storage.ToolApproval, error) {
+		repo.approveFunc = func(_ context.Context, _ id.ApprovalID, _ storage.ApprovalDecision, _ time.Time) (*storage.ToolApproval, error) {
 			a.ExpiresAt = time.Now().Add(-time.Minute)
 			return nil, storage.NewStorageError("Approve", storage.ErrorKindNotFound, ports.ErrNotFound, "approval no longer actionable")
 		}
 
-		_, err := svc.ApproveApproval(context.Background(), a.ID, principal, storage.ApprovalPersistenceOnce)
+		_, err := svc.ApproveApproval(context.Background(), a.ID, principal, ApproveRequest{Persistence: storage.ApprovalPersistenceOnce})
 		if err != ErrApprovalGone {
 			t.Fatalf("expected ErrApprovalGone, got %v", err)
 		}
@@ -396,7 +402,7 @@ func TestService_ApproveApproval(t *testing.T) {
 		a := makePendingApproval(principal, agentID)
 		repo.approvals[a.ID] = a
 
-		_, err := svc.ApproveApproval(context.Background(), a.ID, principal, storage.ApprovalPersistenceOnce)
+		_, err := svc.ApproveApproval(context.Background(), a.ID, principal, ApproveRequest{Persistence: storage.ApprovalPersistenceOnce})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -404,6 +410,34 @@ func TestService_ApproveApproval(t *testing.T) {
 			t.Fatalf("expected sync version 1, got %d", syncRepo.version)
 		}
 	})
+}
+
+func TestService_ResolveApprovalDecision(t *testing.T) {
+	approval := makePendingApproval(id.Principal("user@example.com"), id.NewAgentID())
+	for _, test := range []struct {
+		name   string
+		req    ApproveRequest
+		tool   string
+		params map[string]string
+	}{
+		{"exact defaults", ApproveRequest{Persistence: storage.ApprovalPersistenceOnce}, "test-tool", map[string]string{"key": "value"}},
+		{"unconstrained params", ApproveRequest{Persistence: storage.ApprovalPersistenceSession, ParamsPattern: map[string]string{}}, "test-tool", map[string]string{}},
+		{"edited params", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ParamsPattern: map[string]string{"key": "val*"}}, "test-tool", map[string]string{"key": "val*"}},
+		{"tool family", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: "test-*"}, "test-*", map[string]string{"key": "value"}},
+		{"all", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: "*", ParamsPattern: map[string]string{}}, "*", map[string]string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			decision, err := resolveApprovalDecision(approval, test.req)
+			if err != nil || decision.ToolPattern != test.tool || !reflect.DeepEqual(decision.ParamsPattern, test.params) {
+				t.Fatalf("decision=%#v err=%v", decision, err)
+			}
+		})
+	}
+	for _, req := range []ApproveRequest{{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: "bad?"}, {Persistence: storage.ApprovalPersistencePermanent, ToolPattern: "delete_repository"}, {Persistence: storage.ApprovalPersistencePermanent, ParamsPattern: map[string]string{"branch": "main"}}} {
+		if _, err := resolveApprovalDecision(approval, req); !errors.Is(err, ErrApprovalInvalidPattern) {
+			t.Fatalf("expected invalid pattern, got %v", err)
+		}
+	}
 }
 
 func TestService_DenyApproval(t *testing.T) {
@@ -923,7 +957,7 @@ func TestService_ApprovalLifecycleSpansLinkToStoredTraceparent(t *testing.T) {
 	if _, err := svc.GetApproval(context.Background(), created.Approval.ID, principal); err != nil {
 		t.Fatalf("get approval: %v", err)
 	}
-	if _, err := svc.ApproveApproval(context.Background(), created.Approval.ID, principal, storage.ApprovalPersistenceOnce); err != nil {
+	if _, err := svc.ApproveApproval(context.Background(), created.Approval.ID, principal, ApproveRequest{Persistence: storage.ApprovalPersistenceOnce}); err != nil {
 		t.Fatalf("approve approval: %v", err)
 	}
 

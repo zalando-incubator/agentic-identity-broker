@@ -67,6 +67,8 @@ header contains the current version.
 **Query Parameters**:
 - `principal` (optional): Filter results for one principal.
 
+Each approval summary includes `tool_pattern` and `params_pattern`. The tool pattern is a glob over the tool name; the params pattern maps constrained argument names to globs. Missing argument names are unconstrained.
+
 ### Get Approval Detail
 
 ```
@@ -87,6 +89,8 @@ Changes a pending approval to approved. The request requires a `persistence` fie
 - `once`: One use. The caller must consume the approval after tool use.
 - `session`: Valid for the agent session duration.
 - `permanent`: Persists until a user revokes it. The consent interface manages it.
+
+The request can also include optional `tool_pattern` and `params_pattern` fields. Omit both for exact coverage of the reviewed call. Omit `params_pattern` to retain exact argument coverage, or send `{}` to allow any arguments for the selected tool pattern. Malformed patterns and patterns that do not cover the reviewed call return `422 invalid_pattern`.
 
 ### Deny
 
@@ -152,6 +156,7 @@ All error responses use the `ApprovalError` schema:
 | `rate_limit_exceeded` | 429 | Rate limit exceeded |
 | `not_consumable` | 422 | Approval cannot be consumed |
 | `not_revocable` | 422 | Approval cannot be revoked |
+| `invalid_pattern` | 422 | Pattern is malformed or does not cover the reviewed tool call |
 | `internal_error` | 500 | Unexpected server error |
 
 ## OpenAPI Specification

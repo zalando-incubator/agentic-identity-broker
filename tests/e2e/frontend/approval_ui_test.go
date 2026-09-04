@@ -16,20 +16,22 @@ package e2e_test
 
 import (
 	"context"
-	"time"
-
+	"encoding/json"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/pages"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"net/http"
+	"time"
 )
 
 // newPendingApproval creates a pending tool approval record for seeding test storage.
 func newPendingApproval(principal id.Principal, agentID id.AgentID, toolName string, expiresAt time.Time) *storage.ToolApproval {
-	return &storage.ToolApproval{
+	approval := &storage.ToolApproval{
 		ID:              id.NewApprovalID(),
 		Principal:       principal,
 		AgentID:         agentID,
@@ -44,6 +46,8 @@ func newPendingApproval(principal id.Principal, agentID id.AgentID, toolName str
 		CreatedAt:       time.Now(),
 		ExpiresAt:       expiresAt,
 	}
+	approval.ApplyExactPatterns()
+	return approval
 }
 
 func stringPtr(value string) *string {
@@ -381,7 +385,7 @@ var _ = Describe("Approval UI", func() {
 		err = approvalPage.WaitForReviewPage(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		_, err = GetTestStorage().ToolApprovals().Approve(ctx, approval.ID, storage.ApprovalPersistenceOnce, time.Now())
+		_, err = GetTestStorage().ToolApprovals().Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolPattern, ParamsPattern: approval.ParamsPattern}, time.Now())
 		Expect(err).NotTo(HaveOccurred())
 
 		err = approvalPage.ClickApprove(ctx)
@@ -401,5 +405,29 @@ var _ = Describe("Approval UI", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		GetLogger().Info("Test passed: Error banner shown for already-actioned approval")
+	})
+	It("edits and persists a permanent approval pattern", func() {
+		principal := fixtures.DefaultPrincipal()
+		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "create_pull_request", time.Now().Add(10*time.Minute))
+		approval.Arguments = map[string]any{"repo": "acme/app", "title": "Fix bug"}
+		approval.ApplyExactPatterns()
+		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(approvalPage.NavigateToApproval(ctx, approval.ID.String())).To(Succeed())
+		Expect(approvalPage.WaitForReviewPage(ctx)).To(Succeed())
+		Expect(approvalPage.SelectPersistence(ctx, "Always allow")).To(Succeed())
+		Expect(approvalPage.SetPatternField(ctx, "repo", "acme/*")).To(Succeed())
+		preview, err := approvalPage.GetPatternPreview(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(preview).To(Equal("create_pull_request(repo=acme/*,title=Fix bug)"))
+		Expect(approvalPage.ClickApprove(ctx)).To(Succeed())
+		Expect(approvalPage.WaitForApprovedConfirmation(ctx)).To(Succeed())
+		resp, err := GetTestServer().AuthenticatedGET("/api/approvals/"+approval.ID.String(), principal.Email)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		defer func() { Expect(resp.Body.Close()).To(Succeed()) }()
+		var detail helpers.ApprovalDetailResponse
+		Expect(json.NewDecoder(resp.Body).Decode(&detail)).To(Succeed())
+		Expect(detail.Data.ParamsPattern).To(Equal(map[string]string{"repo": "acme/*", "title": "Fix bug"}))
 	})
 })

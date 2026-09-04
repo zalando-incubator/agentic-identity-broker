@@ -18,6 +18,8 @@
 | `tool_name` | `string` | No | — | VARCHAR(255) | MCP tool name — programmatic identifier |
 | `arguments` | `map[string]interface{}` | No | — | JSONB | Actual argument values passed to the tool call |
 | `arguments_hash` | `string` | No | — | VARCHAR(64) | SHA-256 hex of canonical JSON arguments |
+| `tool_pattern` | `string` | No | Exact tool name | VARCHAR(255) | Glob over the tool name covered by this approval |
+| `params_pattern` | `map[string]string` | No | `{}` | JSONB | Constrained argument names mapped to globs; absent names are unconstrained |
 | `description` | `string` | Yes | `""` | TEXT | Caller-provided human-readable action description (primary UI text) |
 | `risk_level` | `string` | Yes | `""` | VARCHAR(50) | Risk classification (low/medium/critical) |
 | `mcp_session_id` | `string` | Yes | `nil` | VARCHAR(255) | MCP session identifier (stored for observability; not used for session scoping) |
@@ -97,12 +99,17 @@ func (a *ToolApproval) Validate() error {
 }
 ```
 
+Pattern validation: a tool pattern is non-empty, at most 255 bytes, permits only unescaped `*` or `[A-Za-z0-9_.:/-]`, and has no trailing lone `\`. A params pattern has at most 64 entries; keys are non-empty and at most 255 bytes; values are at most 1024 bytes and have no trailing lone `\`. A resolved pattern must match the approval's reviewed tool name and arguments; a constrained key absent from the reviewed arguments fails validation.
+
 ### Domain Methods
 
 ```go
-// Approve transitions a pending approval to approved state.
+// Approve transitions a pending approval to approved state with the persisted decision.
 // Returns error if not pending, expired, or principal mismatch.
-func (a *ToolApproval) Approve(actingPrincipal id.Principal, persistence ApprovalPersistence, now time.Time) error
+func (a *ToolApproval) Approve(actingPrincipal id.Principal, decision ApprovalDecision, now time.Time) error
+
+// ApplyExactPatterns sets exact coverage for the approval's own tool name and arguments.
+func (a *ToolApproval) ApplyExactPatterns()
 
 // Deny transitions a pending approval to denied state.
 // Returns error if not pending, expired, or principal mismatch.
@@ -162,6 +169,28 @@ func (p ApprovalPersistence) IsValid() bool {
     return false
 }
 ```
+
+---
+
+## Value Object: ApprovalDecision
+
+```go
+type ApprovalDecision struct {
+    Persistence   ApprovalPersistence
+    ToolPattern   string
+    ParamsPattern map[string]string
+}
+```
+
+The resolved decision defaults to the reviewed tool name and exact argument patterns. An omitted or `null` `params_pattern` stores exact coverage; an explicit `{}` leaves all arguments unconstrained. A supplied `tool_pattern` and/or `params_pattern` must be valid and must match the reviewed call.
+
+| Request beyond `persistence` | Resolved `tool_pattern` | Resolved `params_pattern` |
+|---|---|---|
+| nothing | approval tool name | exact reviewed arguments |
+| `params_pattern: {}` | approval tool name | `{}` |
+| `params_pattern: {"repo":"acme/*"}` | approval tool name | as supplied |
+| `tool_pattern: "issues.*"` | `issues.*` | exact reviewed arguments |
+| `tool_pattern: "*", params_pattern: {}` | `*` | `{}` |
 
 ---
 
@@ -233,7 +262,7 @@ type ToolApprovalRepository interface {
     // Approve transitions a pending approval to approved status.
     // Sets persistence, approved_at. Returns updated record.
     // Returns StorageError{Kind: NotFound} if not found or not pending.
-    Approve(ctx context.Context, id id.ApprovalID, persistence storage.ApprovalPersistence, approvedAt time.Time) (*storage.ToolApproval, error)
+    Approve(ctx context.Context, id id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error)
 
     // Deny transitions a pending approval to denied status.
     // Sets persistence (optional), denied_at. Returns updated record.
@@ -378,6 +407,11 @@ DROP TABLE IF EXISTS approval_sync_state;
 ```
 
 ---
+
+### Migration 030: approval patterns
+
+`030_add_approval_patterns.up.sql` adds `tool_pattern VARCHAR(255) NOT NULL` and `params_pattern JSONB NOT NULL DEFAULT '{}'` to `tool_approvals`. It backfills each row with `tool_pattern = tool_name` and an exact, escaped params pattern using the same canonical rendering as `internal/toolpattern.ExactParams`; no index is added because matching is client-side in ExtProc. The down migration drops both columns.
+
 
 ## Relationships
 

@@ -20,6 +20,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/toolpattern"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
@@ -307,7 +308,7 @@ var _ = Describe("Tool Approval API", func() {
 			approvalIDVal := id.NewApprovalID()
 			repo := testStorage.ToolApprovals()
 			pastExpiry := time.Now().UTC().Add(-1 * time.Minute)
-			_, err := repo.Create(context.Background(), &storage.ToolApproval{
+			approval := &storage.ToolApproval{
 				ID:            approvalIDVal,
 				Principal:     id.Principal(alicePrincipal),
 				AgentID:       agentID,
@@ -318,7 +319,9 @@ var _ = Describe("Tool Approval API", func() {
 				ApprovalURL:   "https://localhost/approvals/" + approvalIDVal.String(),
 				CreatedAt:     pastExpiry.Add(-10 * time.Minute),
 				ExpiresAt:     pastExpiry,
-			})
+			}
+			approval.ApplyExactPatterns()
+			_, err := repo.Create(context.Background(), approval)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, httpErr := server.AuthenticatedGET(fmt.Sprintf("/api/approvals/%s", approvalIDVal.String()), alicePrincipal)
@@ -752,6 +755,35 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			revokeResp := decodeJSON[helpers.DenyResponse](resp)
 			Expect(revokeResp.Data.Status).To(Equal("denied"))
+		})
+	})
+
+	Describe("Glob approval patterns", func() {
+		It("delivers an edited pattern through sync and matches it", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{
+				"persistence": "permanent", "tool_pattern": "create_pull_request", "params_pattern": map[string]string{"repo": "acme/*"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			_ = decodeJSON[helpers.ApproveResponse](resp)
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals?principal="+alicePrincipal, "", helpers.ApprovalSyncHeaders(machineAuth.ClientAssertion), nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			sync := decodeJSON[helpers.ApprovalSyncResponse](resp)
+			var found *helpers.ApprovalSummary
+			for i := range sync.Data.Pairs {
+				for j := range sync.Data.Pairs[i].Approvals {
+					if sync.Data.Pairs[i].Approvals[j].ID == create.Data.ID {
+						found = &sync.Data.Pairs[i].Approvals[j]
+					}
+				}
+			}
+			Expect(found).NotTo(BeNil())
+			Expect(found.ToolPattern).To(Equal("create_pull_request"))
+			Expect(found.ParamsPattern).To(Equal(map[string]string{"repo": "acme/*"}))
+			Expect(toolpattern.Matches(found.ToolPattern, found.ParamsPattern, "create_pull_request", map[string]any{"repo": "acme/app"})).To(BeTrue())
+			Expect(toolpattern.Matches(found.ToolPattern, found.ParamsPattern, "create_pull_request", map[string]any{"repo": "other/app"})).To(BeFalse())
 		})
 	})
 })

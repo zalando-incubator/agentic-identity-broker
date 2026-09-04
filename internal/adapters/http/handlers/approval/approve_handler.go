@@ -2,6 +2,7 @@ package approval
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
@@ -12,7 +13,9 @@ import (
 )
 
 type approveRequest struct {
-	Persistence string `json:"persistence"`
+	Persistence   string            `json:"persistence"`
+	ToolPattern   string            `json:"tool_pattern"`
+	ParamsPattern map[string]string `json:"params_pattern"`
 }
 
 type approveResponse struct {
@@ -62,8 +65,12 @@ func (h *ApproveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.service.ApproveApproval(r.Context(), approvalID, id.Principal(principalValue), persistence)
+	result, err := h.service.ApproveApproval(r.Context(), approvalID, id.Principal(principalValue), domainapproval.ApproveRequest{Persistence: persistence, ToolPattern: req.ToolPattern, ParamsPattern: req.ParamsPattern})
 	if err != nil {
+		if errors.Is(err, domainapproval.ErrApprovalInvalidPattern) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_pattern", err.Error())
+			return
+		}
 		mapDomainError(w, err)
 		return
 	}

@@ -87,7 +87,7 @@ func TestToolApproval_Approve(t *testing.T) {
 			Status:    ApprovalStatusPending,
 			ExpiresAt: now.Add(10 * time.Minute),
 		}
-		err := a.Approve(principal, ApprovalPersistenceOnce, now)
+		err := a.Approve(principal, ApprovalDecision{Persistence: ApprovalPersistenceOnce, ToolPattern: "create_pull_request", ParamsPattern: map[string]string{"repo": "acme/app"}}, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -108,7 +108,7 @@ func TestToolApproval_Approve(t *testing.T) {
 			Status:    ApprovalStatusPending,
 			ExpiresAt: now.Add(10 * time.Minute),
 		}
-		err := a.Approve(id.Principal("other@example.com"), ApprovalPersistenceOnce, now)
+		err := a.Approve(id.Principal("other@example.com"), ApprovalDecision{Persistence: ApprovalPersistenceOnce}, now)
 		if err != ErrApprovalPrincipalMismatch {
 			t.Fatalf("expected ErrApprovalPrincipalMismatch, got %v", err)
 		}
@@ -120,7 +120,7 @@ func TestToolApproval_Approve(t *testing.T) {
 			Status:    ApprovalStatusApproved,
 			ExpiresAt: now.Add(10 * time.Minute),
 		}
-		err := a.Approve(principal, ApprovalPersistenceOnce, now)
+		err := a.Approve(principal, ApprovalDecision{Persistence: ApprovalPersistenceOnce}, now)
 		if err != ErrApprovalNotPending {
 			t.Fatalf("expected ErrApprovalNotPending, got %v", err)
 		}
@@ -132,7 +132,7 @@ func TestToolApproval_Approve(t *testing.T) {
 			Status:    ApprovalStatusPending,
 			ExpiresAt: now.Add(-1 * time.Minute),
 		}
-		err := a.Approve(principal, ApprovalPersistenceOnce, now)
+		err := a.Approve(principal, ApprovalDecision{Persistence: ApprovalPersistenceOnce}, now)
 		if err != ErrApprovalExpired {
 			t.Fatalf("expected ErrApprovalExpired, got %v", err)
 		}
@@ -144,7 +144,7 @@ func TestToolApproval_Approve(t *testing.T) {
 			Status:    ApprovalStatusPending,
 			ExpiresAt: now.Add(10 * time.Minute),
 		}
-		err := a.Approve(principal, ApprovalPersistencePermanent, now)
+		err := a.Approve(principal, ApprovalDecision{Persistence: ApprovalPersistencePermanent, ToolPattern: "*", ParamsPattern: map[string]string{}}, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -159,7 +159,7 @@ func TestToolApproval_Approve(t *testing.T) {
 			Status:    ApprovalStatusPending,
 			ExpiresAt: now.Add(10 * time.Minute),
 		}
-		err := a.Approve(principal, ApprovalPersistenceSession, now)
+		err := a.Approve(principal, ApprovalDecision{Persistence: ApprovalPersistenceSession, ToolPattern: "create_pull_request", ParamsPattern: map[string]string{}}, now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -351,6 +351,36 @@ func TestComputeArgumentsHash(t *testing.T) {
 		hash2 := ComputeArgumentsHash(nil)
 		if hash1 != hash2 {
 			t.Fatal("expected consistent hash for nil args")
+		}
+	})
+}
+
+func TestToolApprovalPatterns(t *testing.T) {
+	t.Run("approve records the complete decision", func(t *testing.T) {
+		now := time.Now()
+		approval := &ToolApproval{Principal: id.Principal("user@example.com"), Status: ApprovalStatusPending, ExpiresAt: now.Add(time.Minute)}
+		decision := ApprovalDecision{Persistence: ApprovalPersistencePermanent, ToolPattern: "issues.*", ParamsPattern: map[string]string{"repo": "acme/*"}}
+		if err := approval.Approve(approval.Principal, decision, now); err != nil {
+			t.Fatal(err)
+		}
+		if approval.ToolPattern != decision.ToolPattern || approval.ParamsPattern["repo"] != "acme/*" {
+			t.Fatalf("approval did not retain decision: %#v", approval)
+		}
+	})
+
+	t.Run("initializes escaped exact patterns", func(t *testing.T) {
+		approval := &ToolApproval{ToolName: "create_pull_request", Arguments: map[string]any{"repo": "a*b", "meta": map[string]any{"b": 1, "a": []any{"x"}}}}
+		approval.ApplyExactPatterns()
+		if approval.ToolPattern != "create_pull_request" || approval.ParamsPattern["repo"] != "a\\*b" || approval.ParamsPattern["meta"] != `{"a":["x"],"b":1}` {
+			t.Fatalf("unexpected exact patterns: %#v", approval)
+		}
+	})
+
+	t.Run("initializes non-nil empty patterns for nil arguments", func(t *testing.T) {
+		approval := &ToolApproval{ToolName: "create_pull_request"}
+		approval.ApplyExactPatterns()
+		if approval.ParamsPattern == nil || len(approval.ParamsPattern) != 0 {
+			t.Fatalf("expected non-nil empty params pattern, got %#v", approval.ParamsPattern)
 		}
 	})
 }

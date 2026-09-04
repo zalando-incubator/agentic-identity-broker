@@ -285,8 +285,8 @@ type ToolApprovalRepository interface {
 	// Returns StorageError{Kind: NotFound} if not found.
 	Get(ctx context.Context, id id.ApprovalID) (*storage.ToolApproval, error)
 
-	// Approve transitions a pending approval to approved status.
-	Approve(ctx context.Context, id id.ApprovalID, persistence storage.ApprovalPersistence, approvedAt time.Time) (*storage.ToolApproval, error)
+	// Approve transitions a pending approval to approved status with the user decision.
+	Approve(ctx context.Context, id id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error)
 
 	// Deny transitions a pending approval to denied status.
 	Deny(ctx context.Context, id id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (*storage.ToolApproval, error)

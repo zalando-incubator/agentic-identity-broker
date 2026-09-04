@@ -212,7 +212,7 @@ flowchart TD
 - **FR-002**: The `POST /api/approvals` response MUST include an `approval_url` pointing to the Approval UI page for that record.
 - **FR-003**: The system MUST implement idempotent approval creation: a second `POST /api/approvals` for an existing pending record with the same `(principal, agent_id, tool_name, arguments_hash)` MUST return the existing record without creating a duplicate. Deduplication is enforced at the database level by DB-003 and applies to pending records only; approved, consumed, and denied records are not deduplicated.
 - **FR-003a**: The system MUST enforce a rate limit on `POST /api/approvals` per `(principal, agent_id)` pair: a configurable maximum number of pending approvals per pair (default 50) and a configurable creation-rate cap (default 10 requests per minute per pair). Exceeding either limit MUST return `429 Too Many Requests`.
-- **FR-004**: The system MUST expose `POST /api/approvals/{id}/approve` to transition a pending approval to `approved`, accepting a `persistence` field (`once`, `session`, or `permanent`).
+- **FR-004**: The system MUST expose `POST /api/approvals/{id}/approve` to transition a pending approval to `approved`, accepting a `persistence` field (`once`, `session`, or `permanent`) and optional `tool_pattern` and `params_pattern` fields.
 - **FR-005**: The system MUST expose `POST /api/approvals/{id}/deny` to transition a pending approval to `denied`, optionally accepting `persistence: "permanent"`. A permanent denial blocks the tool for that agent indefinitely and is visible and revocable from the consent management UI alongside permanent approvals.
 - **FR-006**: The system MUST expose `POST /api/approvals/{id}/consume` to mark an approved `once`-persistence approval as consumed.
 - **FR-007**: The system MUST expose `GET /api/approvals/{id}` to retrieve a single approval record.
@@ -222,20 +222,26 @@ flowchart TD
 - **FR-011**: `POST /api/approvals` MUST be authenticated via both the user's `Authorization: Bearer {subject_token}` (principal derivation) and the gateway's client assertion (validated via CEL expression, same mechanism as token exchange). Both MUST be valid; either failure returns `401 Unauthorized`. Dual auth is REQUIRED here because approval creation establishes user-visible security state and must bind both the trusted gateway caller and the user-scoped subject context.
 - **FR-012**: The long-poll `GET /api/approvals` endpoint MUST be authenticated via a client assertion validated through the existing CEL expression mechanism (same trust path as token exchange). No subject token is required because this is a gateway control-plane sync channel rather than a user-facing operation.
 - **FR-013**: Browser-facing approval endpoints (`GET /api/approvals/{id}`, `POST /api/approvals/{id}/approve`, `POST /api/approvals/{id}/deny`, `POST /api/approvals/{id}/revoke`, `GET /api/approvals/permanent`, `GET /api/approvals/pending`) MUST be authenticated via the acting user's authenticated principal as propagated by the browser auth layer (for example `X-Remote-User` in pre-auth deployments), and the broker MUST verify the acting user matches the approval's stored principal. `POST /api/approvals/{id}/consume` is authenticated via the user's subject token only because it is a per-approval, principal-scoped machine mutation and does not expose cross-user state.
-- **FR-014**: The system MUST serve an Approval UI page at `/consent/approvals/{id}` within the existing React SPA, showing: tool name, all parameters with their values, a human-readable action description, agent name, risk level, and the three persistence choices.
-- **FR-015**: The Approval UI MUST allow the user to approve with persistence `once`, `session`, or `permanent`, or to deny the request.
+- **FR-014**: The system MUST serve an Approval UI page at `/consent/approvals/{id}` within the existing React SPA, showing: tool name, all parameters with their values, a human-readable action description, agent name, risk level, and the three persistence choices. When the user selects `session` or `permanent`, the page MUST let them edit the stored pattern and show a live preview; `once` keeps the exact display.
+- **FR-015**: The Approval UI MUST allow the user to approve with persistence `once`, `session`, or `permanent`, or to deny the request. `session` and `permanent` decisions expose the pattern editor while `once` keeps exact coverage.
 - **FR-016**: The Approval UI MUST display an unambiguous warning when the user selects `permanent`, explaining that this authorizes future invocations and can be revoked.
 - **FR-017**: Permanent approvals and permanent denials MUST appear in the consent management UI alongside grants, each with a revocation action (reverting to the default non-permanent state).
 - **FR-018**: Pending approvals MUST have a configurable TTL (default 10 minutes) after which they are expired and no longer actionable.
 - **FR-019**: The `GET /api/approvals` response MUST be grouped by `(principal, agent)` pair and include both `approvals` and `granted_permission_sets` per pair.
 - **FR-020**: The `GET /api/approvals` endpoint MUST support optional filtering via `?principal={p}` to limit the response to a specific principal.
 - **FR-021**: The system MUST maintain a global monotonically increasing version counter incremented on every approval or permission-set mutation, used to generate ETags for the long-poll protocol.
+- **FR-022**: Every approval record MUST carry a `tool_pattern` (a glob over the tool name) and a `params_pattern` (an object mapping argument names to globs). Argument names absent from `params_pattern` are unconstrained. `*` is the only metacharacter; `\` escapes it.
+- **FR-023**: A concrete invocation `(tool_name, arguments)` matches a stored approval when the tool name matches `tool_pattern` and every constrained argument matches its glob. When several approvals match, the most specific wins, ranked by exact tool name over wildcard, then more constrained arguments, then fewer wildcards, then most recently decided.
+- **FR-024**: `POST /api/approvals/{id}/approve` MUST accept optional `tool_pattern` and `params_pattern` fields alongside `persistence`. Omitting `tool_pattern` stores the approval's own tool name; omitting `params_pattern` stores the exact coverage of the reviewed arguments; an explicit empty `params_pattern` leaves all arguments unconstrained. The resolved pattern MUST cover the reviewed tool call; a malformed or non-covering pattern MUST be rejected with `422`.
+- **FR-025**: `POST /api/approvals` MUST store the exact coverage of the reviewed call (`tool_pattern = tool_name`, every argument constrained to its literal value). Pending-record deduplication is unchanged and remains keyed on `(principal, agent_id, tool_name, arguments_hash)`.
+- **FR-026**: `GET /api/approvals`, `GET /api/approvals/{id}`, `GET /api/approvals/pending`, and `GET /api/approvals/permanent` MUST expose `tool_pattern` and `params_pattern`. `arguments_hash` is retained on the sync summary.
+- **FR-027**: Pattern grammar, canonicalization, matching, and precedence MUST have exactly one implementation, shared by the broker and ExtProc, pinned by a language-neutral vector fixture consumed by both test suites.
 
 ### Domain Model
 
 **Entities**:
 
-- **ToolApproval**: An authorization record for a specific tool invocation by an agent on behalf of a principal. Lifecycle: `pending` → `approved` or `denied`; approved `once` records may additionally be `consumed`. Key attributes: id (UUID), principal, agent_id, tool_name, arguments (structured), arguments_hash, description, risk_level, status, persistence (nullable until approved), session_id (optional), approval_url, created_at, approved_at, denied_at, consumed_at, expires_at.
+- **ToolApproval**: An authorization record for a specific tool invocation by an agent on behalf of a principal, with a pattern describing which future invocations the decision covers. Lifecycle: `pending` → `approved` or `denied`; approved `once` records may additionally be `consumed`. Key attributes: id (UUID), principal, agent_id, tool_name, arguments (structured), arguments_hash, tool_pattern, params_pattern, description, risk_level, status, persistence (nullable until approved), session_id (optional), approval_url, created_at, approved_at, denied_at, consumed_at, expires_at.
 - **ApprovalSyncState**: A single shared row in the database holding a monotonically increasing `version` counter. Incremented atomically (via database-level atomic update) on any approval or permission-set mutation. Stored in the database rather than per-instance memory so that all broker instances in a multi-instance deployment see a consistent version, enabling correct ETag generation regardless of which instance handled the mutation.
 
 **Aggregates**:
@@ -285,7 +291,7 @@ approvals:
 - **API-002**: APIs MUST follow Zalando RESTful API and Event Guidelines.
 - **API-003**: `POST /api/approvals` — create pending approval. Auth: `Authorization: Bearer {subject_token}` (user context) + client assertion (gateway, CEL-validated). The gateway identity and the subject context are both required because this endpoint creates user-visible approval state. Optional header: W3C `traceparent`. Request body: `{metadata: {mcp_session_id, agent_session_id, tool_invocation_id, description}, tool_name, arguments}`. Response: `{id, status: "pending", approval_url, created_at}`.
 - **API-004**: `GET /api/approvals/{id}` — retrieve single approval. Auth: acting user principal from the browser auth layer (for example `X-Remote-User` in pre-auth deployments). Response: full approval record.
-- **API-005**: `POST /api/approvals/{id}/approve` — approve pending approval. Auth: acting user principal from the browser auth layer. Request: `{persistence: "once"|"session"|"permanent"}`. Response: `{id, status: "approved", persistence, approved_at}`.
+- **API-005**: `POST /api/approvals/{id}/approve` — approve pending approval. Auth: acting user principal from the browser auth layer. Request: `{persistence: "once"|"session"|"permanent", tool_pattern?, params_pattern?}`. Response: `{id, status: "approved", persistence, approved_at}`.
 - **API-006**: `POST /api/approvals/{id}/deny` — deny pending approval. Auth: acting user principal from the browser auth layer. Optional request body: `{persistence: "permanent"}`. Response: `{id, status: "denied", persistence?, denied_at}`.
 - **API-007**: `POST /api/approvals/{id}/consume` — consume a one-time approval. Auth: `Authorization: Bearer {subject_token}` only. Response: `{id, consumed: true, consumed_at}`.
 - **API-008**: `GET /api/approvals` — sync/long-poll endpoint. Auth: client assertion only (`Authorization: Bearer {client_assertion}`, CEL-validated). Optional `?principal={p}`. Long-poll activated by `If-None-Match` + `X-Long-Poll-Timeout` headers. Response: `{pairs: {...}}` with `ETag`. Returns `304 Not Modified` when no changes occur within timeout.
@@ -349,7 +355,7 @@ approvals:
 
 ### Key Entities
 
-- **ToolApproval**: Represents a user's authorization decision (or pending request) for a specific tool invocation by an agent. Has a unique identity, lifecycle state, persistence scope, and expiry time.
+- **ToolApproval**: Represents a user's authorization decision (or pending request) for a specific tool invocation by an agent. Has a unique identity, lifecycle state, persistence scope, expiry time, and a pattern describing which future invocations the decision covers.
 - **ApprovalSyncState**: The broker's global monotonically increasing version counter used by the long-poll ETag protocol to enable efficient cache invalidation across gateway instances.
 
 ## Success Criteria *(mandatory)*
@@ -364,6 +370,7 @@ approvals:
 - **SC-006**: The Approval UI page is fully operable via keyboard alone (no mouse) for the complete approve/deny flow.
 - **SC-007**: Principal isolation is enforced with 100% reliability: attempts to approve, deny, or view another user's approval result in `403 Forbidden`.
 - **SC-008**: The long-poll endpoint supports at least 100 concurrent gateway connections without degrading broker response times for other API calls.
+- **SC-009**: A user approving `create_pull_request` with `permanent` and an edited `repo` pattern of `acme/*` produces a stored approval whose `GET /api/approvals` summary carries `tool_pattern="create_pull_request"` and `params_pattern={"repo":"acme/*"}`, and a later `create_pull_request(repo=acme/app, …)` matches it.
 
 ## Assumptions
 
@@ -384,6 +391,13 @@ approvals:
 - Q: Which observability signals should the approval service emit? → A: RED metrics per endpoint + `approvals_pending_total` gauge (labelled by agent_id) + `long_poll_connections_active` gauge.
 - Q: How should the Approval UI handle loading and error states? → A: Inline states — skeleton loader while fetching; inline error banner with specific reason (expired, already actioned, forbidden, not found, network error) on failure; no full-page redirect.
 - Q: FR-004a and FR-005 both defined `POST /api/approvals/{id}/deny` — which is authoritative? → A: Remove FR-004a; consolidate into FR-005 with the optional `persistence: "permanent"` field.
+
+### Session 2026-09-04
+
+- The pattern is carried as a decomposed `(tool_pattern, params_pattern)` pair rather than the combined grammar string.
+- There is no coverage-mode enum. The user edits the pattern directly and the API takes only the two pattern fields.
+- An omitted `params_pattern` means exact coverage while an explicit `{}` means no constrained arguments.
+- Permanent denials are unchanged.
 
 ## Dependencies
 

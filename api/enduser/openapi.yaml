@@ -1882,6 +1882,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
+        "422":
+          description: Requested pattern is malformed or does not cover the reviewed tool call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
         "410":
           description: Approval expired or already actioned
           content:
@@ -3643,6 +3649,8 @@ components:
         - agent_id
         - tool_name
         - arguments
+        - tool_pattern
+        - params_pattern
         - status
         - approval_url
         - created_at
@@ -3672,6 +3680,16 @@ components:
         arguments:
           type: object
           additionalProperties: true
+        tool_pattern:
+          type: string
+          description: Glob over the tool name that this approval covers.
+        params_pattern:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Constrained argument names mapped to globs. Argument names absent from this
+            object are unconstrained. An empty object matches any arguments.
         description:
           type: string
         risk_level:
@@ -3716,6 +3734,18 @@ components:
         persistence:
           type: string
           enum: [once, session, permanent]
+        tool_pattern:
+          type: string
+          description: >-
+            Glob over the tool name. Omit to cover only the reviewed tool.
+        params_pattern:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Constrained argument names mapped to globs. Omit the field entirely to cover only
+            the reviewed argument values; send an empty object to leave every argument
+            unconstrained. The resulting pattern must still cover the reviewed call.
 
     ApproveResponse:
       type: object
@@ -3841,6 +3871,8 @@ components:
         - arguments_hash
         - status
         - consumed
+        - tool_pattern
+        - params_pattern
       properties:
         id:
           type: string
@@ -3849,6 +3881,16 @@ components:
           type: string
         arguments_hash:
           type: string
+        tool_pattern:
+          type: string
+          description: Glob over the tool name that this approval covers.
+        params_pattern:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Constrained argument names mapped to globs. Argument names absent from this
+            object are unconstrained. An empty object matches any arguments.
         status:
           type: string
           enum: [pending, approved, denied]

@@ -1,0 +1,34 @@
+{
+  "matches": [
+    {"name":"exact tool unconstrained","tool_pattern":"create_pull_request","params_pattern":{},"tool_name":"create_pull_request","arguments":{"repo":"acme/app"},"match":true},
+    {"name":"exact constrained repository","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/app"},"tool_name":"create_pull_request","arguments":{"repo":"acme/app","title":"Fix bug"},"match":true},
+    {"name":"repository wildcard","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/*"},"tool_name":"create_pull_request","arguments":{"repo":"acme/app","title":"Fix bug"},"match":true},
+    {"name":"tool family wildcard","tool_pattern":"issues.*","params_pattern":{},"tool_name":"issues.create","arguments":{},"match":true},
+    {"name":"all tools wildcard","tool_pattern":"*","params_pattern":{},"tool_name":"create_pull_request","arguments":{"repo":"acme/app"},"match":true},
+    {"name":"repository wildcard rejects other organization","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/*"},"tool_name":"create_pull_request","arguments":{"repo":"other/app"},"match":false},
+    {"name":"exact tool rejects unrelated tool","tool_pattern":"create_pull_request","params_pattern":{},"tool_name":"delete_repository","arguments":{},"match":false},
+    {"name":"unconstrained arguments ignored","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/*"},"tool_name":"create_pull_request","arguments":{"repo":"acme/app","title":"Fix bug"},"match":true},
+    {"name":"missing constrained argument rejects","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/*"},"tool_name":"create_pull_request","arguments":{"title":"Fix bug"},"match":false},
+    {"name":"escaped asterisk is literal","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/\\*"},"tool_name":"create_pull_request","arguments":{"repo":"acme/*"},"match":true},
+    {"name":"asterisk matches literal asterisk","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/*"},"tool_name":"create_pull_request","arguments":{"repo":"acme/*"},"match":true}
+  ],
+  "canonical": [
+    {"name":"string","value":"abc","canonical":"abc"},
+    {"name":"integer","value":42,"canonical":"42"},
+    {"name":"decimal","value":1.5,"canonical":"1.5"},
+    {"name":"large exponent","value":1e21,"canonical":"1000000000000000000000"},
+    {"name":"boolean","value":true,"canonical":"true"},
+    {"name":"null","value":null,"canonical":"null"},
+    {"name":"sorted composite","value":{"b":1,"a":[1,"x"]},"canonical":"{\"a\":[1,\"x\"],\"b\":1}"},
+    {"name":"html remains literal","value":{"html":"a<b&c>d"},"canonical":"{\"html\":\"a<b&c>d\"}"},
+    {"name":"control escaped","value":{"ctl":"a\tb"},"canonical":"{\"ctl\":\"a\\tb\"}"},
+    {"name":"literal asterisk","value":"a*b","canonical":"a*b"},
+    {"name":"literal backslash","value":"a\\b","canonical":"a\\b"}
+  ],
+  "precedence": [
+    {"name":"exact tool wins","candidates":[{"id":"wild","tool_pattern":"*","params_pattern":{},"decided_at":"2026-01-01T00:00:00Z"},{"id":"exact","tool_pattern":"create_pull_request","params_pattern":{},"decided_at":"2026-01-01T00:00:00Z"}],"tool_name":"create_pull_request","arguments":{},"winner_id":"exact"},
+    {"name":"more constrained parameters win","candidates":[{"id":"one","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/*"},"decided_at":"2026-01-01T00:00:00Z"},{"id":"two","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/*","title":"Fix"},"decided_at":"2026-01-01T00:00:00Z"}],"tool_name":"create_pull_request","arguments":{"repo":"acme/app","title":"Fix"},"winner_id":"two"},
+    {"name":"fewer wildcards win","candidates":[{"id":"many","tool_pattern":"*pull*request","params_pattern":{},"decided_at":"2026-01-01T00:00:00Z"},{"id":"few","tool_pattern":"create_pull_*","params_pattern":{},"decided_at":"2026-01-01T00:00:00Z"}],"tool_name":"create_pull_request","arguments":{},"winner_id":"few"},
+    {"name":"later decision wins rank tie","candidates":[{"id":"old","tool_pattern":"create_pull_request","params_pattern":{},"decided_at":"2026-01-01T00:00:00Z"},{"id":"new","tool_pattern":"create_pull_request","params_pattern":{},"decided_at":"2026-01-02T00:00:00Z"}],"tool_name":"create_pull_request","arguments":{},"winner_id":"new"}
+  ]
+}

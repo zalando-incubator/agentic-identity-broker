@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/toolpattern"
 )
 
 // ApprovalStatus represents the lifecycle state of a tool approval.
@@ -46,6 +47,13 @@ func (p ApprovalPersistence) IsValid() bool {
 	return false
 }
 
+// ApprovalDecision is the persisted outcome of a user approving a tool call.
+type ApprovalDecision struct {
+	Persistence   ApprovalPersistence
+	ToolPattern   string
+	ParamsPattern map[string]string
+}
+
 // Approval domain errors.
 var (
 	ErrApprovalNotPending        = errors.New("approval is not in pending state")
@@ -54,6 +62,7 @@ var (
 	ErrApprovalNotApproved       = errors.New("approval is not in approved state")
 	ErrApprovalNotOnce           = errors.New("only once-persistence approvals can be consumed")
 	ErrApprovalAlreadyConsumed   = errors.New("approval has already been consumed")
+	ErrApprovalPatternMissing    = errors.New("approval is missing its tool pattern")
 )
 
 // ToolApproval represents a pending or resolved human-in-the-loop tool call approval.
@@ -66,6 +75,8 @@ type ToolApproval struct {
 	ToolName                 string               `db:"tool_name" json:"tool_name"`
 	Arguments                map[string]any       `db:"arguments" json:"arguments"`
 	ArgumentsHash            string               `db:"arguments_hash" json:"-"`
+	ToolPattern              string               `db:"tool_pattern" json:"-"`
+	ParamsPattern            map[string]string    `db:"params_pattern" json:"-"`
 	Description              string               `db:"description" json:"description"`
 	RiskLevel                string               `db:"risk_level" json:"risk_level"`
 	MCPSessionID             *string              `db:"mcp_session_id" json:"-"`
@@ -95,7 +106,7 @@ func (a *ToolApproval) IsActionable(now time.Time) bool {
 
 // Approve transitions a pending approval to approved state.
 // Returns error if not pending, expired, or principal mismatch.
-func (a *ToolApproval) Approve(actingPrincipal id.Principal, persistence ApprovalPersistence, now time.Time) error {
+func (a *ToolApproval) Approve(actingPrincipal id.Principal, decision ApprovalDecision, now time.Time) error {
 	if a.Principal != actingPrincipal {
 		return ErrApprovalPrincipalMismatch
 	}
@@ -107,9 +118,18 @@ func (a *ToolApproval) Approve(actingPrincipal id.Principal, persistence Approva
 	}
 
 	a.Status = ApprovalStatusApproved
-	a.Persistence = &persistence
+	a.Persistence = &decision.Persistence
+	a.ToolPattern = decision.ToolPattern
+	a.ParamsPattern = decision.ParamsPattern
 	a.ApprovedAt = &now
 	return nil
+}
+
+// ApplyExactPatterns sets the pattern fields to the exact coverage of this approval's own tool
+// name and arguments.
+func (a *ToolApproval) ApplyExactPatterns() {
+	a.ToolPattern = a.ToolName
+	a.ParamsPattern = toolpattern.ExactParams(a.Arguments)
 }
 
 // Deny transitions a pending approval to denied state.

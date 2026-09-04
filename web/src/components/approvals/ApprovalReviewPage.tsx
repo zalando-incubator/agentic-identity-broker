@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { Button } from '@components/ui/Button';
 import { ToolCallCard } from './ToolCallCard';
 import { PersistenceSelector } from './PersistenceSelector';
+import { PatternEditor } from './PatternEditor';
 import { ApprovalConfirmation } from './ApprovalConfirmation';
 import { ApprovalErrorBanner } from './ApprovalErrorBanner';
 import type {
@@ -17,6 +18,7 @@ import type {
   ApprovalErrorCode,
   ApproveResponseData,
   DenyResponseData,
+  ApproveRequest,
 } from '../../types/approval';
 
 interface ApprovalReviewPageProps {
@@ -26,7 +28,7 @@ interface ApprovalReviewPageProps {
   errorMessage: string | null;
   approveResult: ApproveResponseData | null;
   denyResult: DenyResponseData | null;
-  onApprove: (persistence: ApprovalPersistence) => Promise<void>;
+  onApprove: (request: ApproveRequest) => Promise<void>;
   onDeny: (permanent?: boolean) => Promise<void>;
   onRetry?: () => void;
 }
@@ -43,6 +45,14 @@ export function ApprovalReviewPage({
   onRetry,
 }: ApprovalReviewPageProps) {
   const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
+  const [toolPattern, setToolPattern] = useState(approval.tool_pattern ?? approval.tool_name);
+  const [paramsPattern, setParamsPattern] = useState(approval.params_pattern ?? {});
+
+  const handlePersistenceChange = (value: ApprovalPersistence) => {
+    setPersistence(value);
+    setToolPattern(approval.tool_pattern ?? approval.tool_name);
+    setParamsPattern(approval.params_pattern ?? {});
+  };
 
   if (approveResult || approval.status === 'approved') {
     return (
@@ -81,7 +91,9 @@ export function ApprovalReviewPage({
   }
 
   const handleApprove = async () => {
-    await onApprove(persistence);
+    await onApprove(persistence === 'once'
+      ? { persistence }
+      : { persistence, tool_pattern: toolPattern, params_pattern: paramsPattern });
   };
 
   const handleDeny = async () => {
@@ -115,10 +127,18 @@ export function ApprovalReviewPage({
         />
       )}
 
-      {/* Persistence selector */}
       <PersistenceSelector
         value={persistence}
-        onChange={setPersistence}
+        onChange={handlePersistenceChange}
+        disabled={submitting}
+      />
+      <PatternEditor
+        approval={approval}
+        toolPattern={toolPattern}
+        onToolPatternChange={setToolPattern}
+        paramsPattern={paramsPattern}
+        onParamsPatternChange={setParamsPattern}
+        persistence={persistence}
         disabled={submitting}
       />
 

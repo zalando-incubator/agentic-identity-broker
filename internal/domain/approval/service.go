@@ -19,16 +19,18 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/toolpattern"
 )
 
 // Domain errors for the approval service layer.
 var (
-	ErrApprovalNotFound      = errors.New("approval not found")
-	ErrApprovalForbidden     = errors.New("acting principal does not own this approval")
-	ErrApprovalGone          = errors.New("approval has expired")
-	ErrApprovalNotPending    = errors.New("approval is not in pending state")
-	ErrApprovalRateLimit     = errors.New("rate limit exceeded for this principal/agent pair")
-	ErrApprovalNotConsumable = errors.New("only once-persistence approved approvals can be consumed")
+	ErrApprovalNotFound       = errors.New("approval not found")
+	ErrApprovalForbidden      = errors.New("acting principal does not own this approval")
+	ErrApprovalGone           = errors.New("approval has expired")
+	ErrApprovalNotPending     = errors.New("approval is not in pending state")
+	ErrApprovalRateLimit      = errors.New("rate limit exceeded for this principal/agent pair")
+	ErrApprovalNotConsumable  = errors.New("only once-persistence approved approvals can be consumed")
+	ErrApprovalInvalidPattern = errors.New("requested approval pattern is invalid")
 )
 
 // CreateApprovalRequest contains the parameters for creating a pending approval.
@@ -44,6 +46,14 @@ type CreateApprovalRequest struct {
 	AgentSessionID           *string
 	ToolInvocationID         *string
 	OpenTelemetryTraceparent *string
+}
+
+// ApproveRequest carries the user's approval decision. A nil ParamsPattern means the approval
+// covers only the reviewed argument values; a non-nil empty map leaves every argument unconstrained.
+type ApproveRequest struct {
+	Persistence   storage.ApprovalPersistence
+	ToolPattern   string
+	ParamsPattern map[string]string
 }
 
 // CreateApprovalResult contains the result of creating a pending approval.
@@ -209,10 +219,9 @@ func (s *Service) GetApproval(ctx context.Context, approvalID id.ApprovalID, act
 }
 
 // ApproveApproval transitions a pending approval to approved state.
-// Enforces principal ownership, expiry check, and state machine invariants.
+// Enforces principal ownership, pattern authority, expiry check, and state machine invariants.
 // Increments sync version and broadcasts change to long-poll subscribers.
-func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal, persistence storage.ApprovalPersistence) (*storage.ToolApproval, error) {
-
+func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal, req ApproveRequest) (*storage.ToolApproval, error) {
 	approval, err := s.approvals.Get(ctx, approvalID)
 	if err != nil {
 		var storageErr *storage.StorageError
@@ -221,22 +230,26 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 		}
 		return nil, fmt.Errorf("get approval for approve: %w", err)
 	}
-
 	if approval.Principal != actingPrincipal {
 		return nil, ErrApprovalForbidden
 	}
 
+	decision, err := resolveApprovalDecision(approval, req)
+	if err != nil {
+		return nil, err
+	}
 	ctx, span := startLifecycleSpan(ctx, "approval.approve", approval.OpenTelemetryTraceparent,
 		trace.WithAttributes(
 			attribute.String("approval.id", approvalID.String()),
 			attribute.String("approval.principal", string(actingPrincipal)),
-			attribute.String("approval.persistence", string(persistence)),
+			attribute.String("approval.persistence", string(decision.Persistence)),
+			attribute.String("approval.tool_pattern", decision.ToolPattern),
 		),
 	)
 	defer span.End()
 
 	now := time.Now()
-	if err := approval.Approve(actingPrincipal, persistence, now); err != nil {
+	if err := approval.Approve(actingPrincipal, decision, now); err != nil {
 		if errors.Is(err, storage.ErrApprovalExpired) {
 			return nil, ErrApprovalGone
 		}
@@ -245,34 +258,37 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 		}
 		return nil, fmt.Errorf("approve domain validation: %w", err)
 	}
-
-	result, err := s.approvals.Approve(ctx, approvalID, persistence, now)
+	result, err := s.approvals.Approve(ctx, approvalID, decision, now)
 	if err != nil {
 		return nil, s.resolveApprovalMutationError(ctx, approvalID, err)
 	}
-
-	// Track pending approval resolution
-	s.pendingGauge.Add(ctx, -1, metric.WithAttributes(
-		attribute.String("agent_id", result.AgentID.String()),
-	))
-
+	s.pendingGauge.Add(ctx, -1, metric.WithAttributes(attribute.String("agent_id", result.AgentID.String())))
 	if err := s.syncApprovalMutation(ctx); err != nil {
 		return nil, err
 	}
-
-	span.SetAttributes(attribute.String("approval.tool_name", result.ToolName))
-
-	s.logger.Info("approval approved",
-		"approval_id", approvalID,
-		"principal", actingPrincipal,
-		"agent_id", result.AgentID,
-		"tool_name", result.ToolName,
-		"persistence", persistence,
-		"action", "approved",
-		"timestamp", now,
-	)
-
+	s.logger.Info("approval approved", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", result.AgentID, "tool_name", result.ToolName, "persistence", decision.Persistence, "action", "approved", "timestamp", now)
 	return result, nil
+}
+
+func resolveApprovalDecision(approval *storage.ToolApproval, req ApproveRequest) (storage.ApprovalDecision, error) {
+	toolPattern := approval.ToolName
+	if req.ToolPattern != "" {
+		toolPattern = req.ToolPattern
+	}
+	paramsPattern := req.ParamsPattern
+	if paramsPattern == nil {
+		paramsPattern = toolpattern.ExactParams(approval.Arguments)
+	}
+	if err := toolpattern.ValidateToolPattern(toolPattern); err != nil {
+		return storage.ApprovalDecision{}, fmt.Errorf("%w: malformed tool glob: %v", ErrApprovalInvalidPattern, err)
+	}
+	if err := toolpattern.ValidateParamsPattern(paramsPattern); err != nil {
+		return storage.ApprovalDecision{}, fmt.Errorf("%w: malformed argument glob: %v", ErrApprovalInvalidPattern, err)
+	}
+	if !toolpattern.Matches(toolPattern, paramsPattern, approval.ToolName, approval.Arguments) {
+		return storage.ApprovalDecision{}, fmt.Errorf("%w: pattern does not cover the reviewed tool call", ErrApprovalInvalidPattern)
+	}
+	return storage.ApprovalDecision{Persistence: req.Persistence, ToolPattern: toolPattern, ParamsPattern: paramsPattern}, nil
 }
 
 // DenyApproval transitions a pending approval to denied state.
@@ -427,6 +443,7 @@ func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalR
 		CreatedAt:                now,
 		ExpiresAt:                expiresAt,
 	}
+	newApproval.ApplyExactPatterns()
 
 	// Create (idempotent — repo returns existing if duplicate pending found)
 	result, err := s.approvals.Create(ctx, newApproval)
@@ -661,6 +678,8 @@ type ApprovalDetail struct {
 	ToolInvocationID *string                      `json:"tool_invocation_id,omitempty"`
 	ToolName         string                       `json:"tool_name"`
 	Arguments        map[string]any               `json:"arguments"`
+	ToolPattern      string                       `json:"tool_pattern"`
+	ParamsPattern    map[string]string            `json:"params_pattern"`
 	Description      string                       `json:"description"`
 	RiskLevel        string                       `json:"risk_level"`
 	Status           storage.ApprovalStatus       `json:"status"`
@@ -689,6 +708,8 @@ func newApprovalDetail(approval *storage.ToolApproval, agentDisplayName string) 
 		ToolInvocationID: approval.ToolInvocationID,
 		ToolName:         approval.ToolName,
 		Arguments:        approval.Arguments,
+		ToolPattern:      approval.ToolPattern,
+		ParamsPattern:    approval.ParamsPattern,
 		Description:      approval.Description,
 		RiskLevel:        approval.RiskLevel,
 		Status:           approval.Status,

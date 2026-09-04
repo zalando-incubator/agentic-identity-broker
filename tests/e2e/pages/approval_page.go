@@ -270,6 +270,36 @@ func (ap *ApprovalPage) ClickDeny(ctx context.Context) error {
 	return nil
 }
 
+// SetPatternField fills a labelled tool or parameter pattern input.
+func (ap *ApprovalPage) SetPatternField(ctx context.Context, label, value string) error {
+	input := ap.pwPage().GetByLabel(label)
+	if count, err := input.Count(); err != nil || count == 0 {
+		return fmt.Errorf("pattern field %q not found: %w", label, err)
+	}
+	if err := input.Fill(value); err != nil {
+		return fmt.Errorf("fill pattern field %q: %w", label, err)
+	}
+	return nil
+}
+
+// ClickAllowAnyParameters clears all parameter constraints.
+func (ap *ApprovalPage) ClickAllowAnyParameters(ctx context.Context) error {
+	if err := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Allow any parameters"}).Click(); err != nil {
+		return fmt.Errorf("click Allow any parameters: %w", err)
+	}
+	return nil
+}
+
+// GetPatternPreview returns the displayed combined approval pattern.
+func (ap *ApprovalPage) GetPatternPreview(ctx context.Context) (string, error) {
+	preview := ap.pwPage().GetByLabel("Approval pattern preview").Locator("code")
+	text, err := preview.TextContent()
+	if err != nil {
+		return "", fmt.Errorf("get pattern preview: %w", err)
+	}
+	return text, nil
+}
+
 // --- Confirmation state ---
 
 // WaitForApprovedConfirmation waits for the "Approved" heading.

@@ -459,3 +459,23 @@ With multiple developers or agents:
    - **US1+US2**: golang-pro (backend) + react-specialist (frontend) in parallel
    - **US3**: golang-pro (after US1+US2 backend done)
    - **US4**: golang-pro (can start in parallel with US3)
+
+---
+
+## Phase 8: Extension — Glob Pattern Approval Matching
+
+### Tests for Glob Pattern Approval Matching [MANDATORY - Principle VIII] ⚠️
+
+- [ ] T145 [P] Add vector-driven unit tests for `internal/toolpattern` covering matching, canonicalization, validation, formatting, and precedence.
+- [ ] T146 [P] Add aggregate and approval-service tests for exact-pattern creation, decision resolution, and invalid-pattern rejection.
+- [ ] T147 [P] Add storage, handler, and sync tests for persisted and exposed approval patterns.
+- [ ] T148 [P] Add backend E2E acceptance coverage for edited, unconstrained, exact, and rejected patterns.
+- [ ] T149 [P] Add frontend component and Playwright acceptance tests for the pattern editor and preview.
+- [ ] T150 [P] Add migration integration coverage for apply, rollback, re-apply, and exact-pattern backfill.
+
+### Implementation for Glob Pattern Approval Matching
+
+- [ ] T151 Update the OpenAPI contracts, specification artifacts, and rendered approval API documentation for decomposed approval patterns.
+- [ ] T152 Implement the shared `internal/toolpattern` package and record the ADR 035 shared-dependency boundary.
+- [ ] T153 Extend the approval aggregate, repository port, in-memory and PostgreSQL adapters, and migration 030 with non-null pattern fields.
+- [ ] T154 Resolve approval patterns in the domain service, expose them through HTTP read and sync endpoints, and add the React pattern editor.

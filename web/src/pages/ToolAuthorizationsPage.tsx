@@ -16,6 +16,7 @@ import { Card } from '@design-system/components/data-display/Card';
 import { approvalApi } from '@services/api/approvals';
 import { ApprovalRequestSummary } from '@components/approvals/ApprovalRequestSummary';
 import { PersistenceSelector } from '@components/approvals/PersistenceSelector';
+import { PatternEditor } from '@components/approvals/PatternEditor';
 import type { ToolApprovalDetail, ApprovalPersistence } from '../types/approval';
 
 
@@ -78,13 +79,23 @@ type ActionState = null | 'approve' | 'deny';
 function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps) {
   const [action, setAction] = useState<ActionState>(null);
   const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
+  const [toolPattern, setToolPattern] = useState(approval.tool_pattern ?? approval.tool_name);
+  const [paramsPattern, setParamsPattern] = useState(approval.params_pattern ?? {});
+
+  const handlePersistenceChange = (value: ApprovalPersistence) => {
+    setPersistence(value);
+    setToolPattern(approval.tool_pattern ?? approval.tool_name);
+    setParamsPattern(approval.params_pattern ?? {});
+  };
   const [submitting, setSubmitting] = useState(false);
 
 
   const handleApprove = async () => {
     setSubmitting(true);
     try {
-      await approvalApi.approveApproval(approval.id, { persistence });
+      await approvalApi.approveApproval(approval.id, persistence === 'once'
+        ? { persistence }
+        : { persistence, tool_pattern: toolPattern, params_pattern: paramsPattern });
       onResolved(approval.id, persistence === 'permanent');
     } catch {
       setSubmitting(false);
@@ -104,6 +115,8 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
   const cancel = () => {
     setAction(null);
     setPersistence('once');
+    setToolPattern(approval.tool_pattern ?? approval.tool_name);
+    setParamsPattern(approval.params_pattern ?? {});
   };
 
   return (
@@ -115,9 +128,18 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
           <div className="space-y-3 border-t border-neutral-100 pt-3">
             <PersistenceSelector
               value={persistence}
-              onChange={setPersistence}
+              onChange={handlePersistenceChange}
               disabled={submitting}
               name={`pending-approval-${approval.id}`}
+            />
+            <PatternEditor
+              approval={approval}
+              toolPattern={toolPattern}
+              onToolPatternChange={setToolPattern}
+              paramsPattern={paramsPattern}
+              onParamsPatternChange={setParamsPattern}
+              persistence={persistence}
+              disabled={submitting}
             />
             <div className="flex items-center gap-2">
               <Button

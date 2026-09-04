@@ -82,7 +82,7 @@ func (m *testApprovalRepo) Get(_ context.Context, _ id.ApprovalID) (*storage.Too
 	return nil, nil
 }
 
-func (m *testApprovalRepo) Approve(_ context.Context, _ id.ApprovalID, _ storage.ApprovalPersistence, _ time.Time) (*storage.ToolApproval, error) {
+func (m *testApprovalRepo) Approve(_ context.Context, _ id.ApprovalID, _ storage.ApprovalDecision, _ time.Time) (*storage.ToolApproval, error) {
 	return nil, nil
 }
 
@@ -331,4 +331,17 @@ func TestSyncHandler_ClientDisconnect(t *testing.T) {
 
 		handler.ServeHTTP(rec, req)
 	})
+}
+
+func TestToSummaryIncludesApprovalPatterns(t *testing.T) {
+	approval := &storage.ToolApproval{ToolName: "create_pull_request", ToolPattern: "issues.*", ParamsPattern: map[string]string{"repo": "acme/*"}}
+	summary := toSummary(approval)
+	if summary.ToolPattern != "issues.*" || summary.ParamsPattern["repo"] != "acme/*" {
+		t.Fatalf("summary omitted pattern: %#v", summary)
+	}
+
+	summary = toSummary(&storage.ToolApproval{ToolName: "create_pull_request", ToolPattern: "create_pull_request"})
+	if summary.ParamsPattern == nil || len(summary.ParamsPattern) != 0 {
+		t.Fatalf("nil pattern must serialize as empty object: %#v", summary.ParamsPattern)
+	}
 }
