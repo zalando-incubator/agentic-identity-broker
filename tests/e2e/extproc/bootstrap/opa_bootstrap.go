@@ -39,7 +39,10 @@ func (e *TestEnvironment) StartWithAuthorizer(auth authorization.Authorizer) {
 
 	exchanger, err := extprocserver.NewTokenExchanger(e.Config, e.logger)
 	Expect(err).NotTo(HaveOccurred(), "failed to create token exchanger")
+	e.exchanger = exchanger
 
 	svc := extprocserver.NewServerWithAuthorizer(e.Config, exchanger, auth, e.logger)
+	e.configureApprovalGate(svc, exchanger)
 	e.startGRPCServer(svc)
+	e.startApprovalSync()
 }

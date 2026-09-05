@@ -13,6 +13,8 @@ type Config struct {
 	Log            LogConfig            `mapstructure:"log"`
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
 	Authorization  AuthorizationConfig  `mapstructure:"authorization"`
+	ToolApprovals  ToolApprovalsConfig  `mapstructure:"tool_approvals"`
+	Sessions       SessionsConfig       `mapstructure:"sessions"`
 	Telemetry      TelemetryConfig      `mapstructure:"telemetry"`
 }
 
@@ -81,6 +83,22 @@ type PolicyConfig struct {
 	ConfigFile string `mapstructure:"config_file"` // Filesystem path to OPA configuration file
 	Package    string `mapstructure:"package"`     // OPA package name (default: aib.extproc.authz)
 	Decision   string `mapstructure:"decision"`    // Decision document name (default: result)
+}
+
+type ToolApprovalsConfig struct {
+	Enabled                bool          `mapstructure:"enabled"`
+	URL                    string        `mapstructure:"url"`
+	LongPollTimeoutSeconds int           `mapstructure:"long_poll_timeout_seconds"`
+	ApprovalCacheIdleTTL   time.Duration `mapstructure:"approval_cache_idle_ttl"`
+	RequestTimeout         time.Duration `mapstructure:"request_timeout"`
+}
+
+type SessionsConfig struct {
+	Extraction SessionExtractionConfig `mapstructure:"extraction"`
+}
+
+type SessionExtractionConfig struct {
+	HTTPHeader string `mapstructure:"http_header"`
 }
 
 // TelemetryConfig contains OpenTelemetry observability configuration.

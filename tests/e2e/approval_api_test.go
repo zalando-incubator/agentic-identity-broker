@@ -854,4 +854,63 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(detail.Data.Status).To(Equal("pending"))
 		})
 	})
+
+	// US5-S3 and US5-S4 from specs/026-extproc-approval-sync/spec.md
+	DescribeTable("projects approved_at only for approved sync records", func(status string, wantApprovedAt bool) {
+		created := createPendingApproval(server, machineAuth, alicePrincipal, "decision_time_tool", map[string]any{})
+		var expectedApprovedAt *time.Time
+
+		switch status {
+		case "approved":
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", created.Data.ID), alicePrincipal, helpers.ApproveRequest{Persistence: "once"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			_ = decodeJSON[helpers.ApproveResponse](resp)
+
+			detailResp, err := server.AuthenticatedGET(fmt.Sprintf("/api/approvals/%s", created.Data.ID), alicePrincipal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(detailResp.StatusCode).To(Equal(http.StatusOK))
+			detail := decodeJSON[helpers.ApprovalDetailResponse](detailResp)
+			expectedApprovedAt = detail.Data.ApprovedAt
+		case "denied":
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", created.Data.ID), alicePrincipal, helpers.ApproveRequest{Persistence: "permanent"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			_ = decodeJSON[helpers.ApproveResponse](resp)
+
+			resp, err = postJSON(server, fmt.Sprintf("/api/approvals/%s/revoke", created.Data.ID), alicePrincipal, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			_ = decodeJSON[helpers.DenyResponse](resp)
+		}
+
+		resp, err := server.DirectRequest(http.MethodGet, "/api/approvals?principal="+alicePrincipal, "", helpers.ApprovalSyncHeaders(machineAuth.ClientAssertion), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		sync := decodeJSON[helpers.ApprovalSyncResponse](resp)
+
+		var summary *helpers.ApprovalSummary
+		for i := range sync.Data.Pairs {
+			for j := range sync.Data.Pairs[i].Approvals {
+				if sync.Data.Pairs[i].Approvals[j].ID == created.Data.ID {
+					summary = &sync.Data.Pairs[i].Approvals[j]
+				}
+			}
+		}
+		Expect(summary).NotTo(BeNil())
+		Expect(summary.Status).To(Equal(status))
+
+		if !wantApprovedAt {
+			Expect(summary.ApprovedAt).To(BeNil())
+			return
+		}
+
+		Expect(expectedApprovedAt).NotTo(BeNil())
+		Expect(summary.ApprovedAt).NotTo(BeNil())
+		Expect(summary.ApprovedAt.Equal(*expectedApprovedAt)).To(BeTrue())
+	},
+		Entry("for an approved record", "approved", true),
+		Entry("for a pending record", "pending", false),
+		Entry("for a denied record", "denied", false),
+	)
 })

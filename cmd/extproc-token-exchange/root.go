@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
@@ -42,11 +44,42 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
-const grpcShutdownTimeout = 5 * time.Second
+const (
+	grpcShutdownTimeout      = 5 * time.Second
+	approvalBootstrapTimeout = 5 * time.Second
+)
 
 type grpcServerStopper interface {
 	GracefulStop()
 	Stop()
+}
+
+type approvalSyncer interface {
+	Bootstrap(context.Context)
+	Run(context.Context)
+}
+
+func startApprovalSyncer(parent context.Context, syncer approvalSyncer) func() {
+	syncCtx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		bootstrapCtx, cancelBootstrap := context.WithTimeout(syncCtx, approvalBootstrapTimeout)
+		syncer.Bootstrap(bootstrapCtx)
+		cancelBootstrap()
+		if syncCtx.Err() != nil {
+			return
+		}
+		syncer.Run(syncCtx)
+	}()
+
+	var stopOnce sync.Once
+	return func() {
+		stopOnce.Do(func() {
+			cancel()
+			<-done
+		})
+	}
 }
 
 func stopGRPCServerWithTimeout(grpcSrv grpcServerStopper, timeout time.Duration, logger *slog.Logger) {
@@ -161,6 +194,18 @@ func run(cmd *cobra.Command, _ []string) error {
 	} else {
 		svc = extprocserver.NewServer(cfg, exchanger, logger)
 	}
+	var stopApprovalSyncer func()
+	if cfg.ToolApprovals.Enabled {
+		client, err := approval.NewClient(cfg.ToolApprovals.URL, cfg.ToolApprovals.RequestTimeout, exchanger)
+		if err != nil {
+			return fmt.Errorf("failed to initialize approval client: %w", err)
+		}
+		cache := approval.NewCache(cfg.ToolApprovals.ApprovalCacheIdleTTL)
+		svc.SetApprovalGate(approval.NewGate(cache, client))
+		syncer := approval.NewSyncer(cache, client, time.Duration(cfg.ToolApprovals.LongPollTimeoutSeconds)*time.Second, logger)
+		stopApprovalSyncer = startApprovalSyncer(sigCtx, syncer)
+		defer stopApprovalSyncer()
+	}
 
 	// 7. Create gRPC server with max_concurrent_streams.
 	grpcOpts := []grpc.ServerOption{
@@ -196,6 +241,9 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	// 11. Graceful shutdown with a bounded fallback for long-lived streams.
 	stopGRPCServerWithTimeout(grpcSrv, grpcShutdownTimeout, logger)
+	if stopApprovalSyncer != nil {
+		stopApprovalSyncer()
+	}
 	logger.Info("gRPC server stopped")
 
 	logger.Info("ExtProc Token Exchange Service stopped")

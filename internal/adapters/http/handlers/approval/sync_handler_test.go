@@ -345,3 +345,58 @@ func TestToSummaryIncludesApprovalPatterns(t *testing.T) {
 		t.Fatalf("nil pattern must serialize as empty object: %#v", summary.ParamsPattern)
 	}
 }
+
+func TestToSummaryProjectsApprovedAt(t *testing.T) {
+	approvedAt := time.Date(2026, time.September, 4, 10, 11, 12, 345678900, time.UTC)
+	tests := []struct {
+		name       string
+		status     storage.ApprovalStatus
+		approvalAt *time.Time
+		want       bool
+	}{
+		{name: "approved timestamp", status: storage.ApprovalStatusApproved, approvalAt: &approvedAt, want: true},
+		{name: "approved record without timestamp", status: storage.ApprovalStatusApproved, want: false},
+		{name: "pending omits timestamp", status: storage.ApprovalStatusPending, approvalAt: &approvedAt, want: false},
+		{name: "denied omits timestamp", status: storage.ApprovalStatusDenied, approvalAt: &approvedAt, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			summary := toSummary(&storage.ToolApproval{Status: tt.status, ApprovedAt: tt.approvalAt})
+			body, err := json.Marshal(summary)
+			if err != nil {
+				t.Fatalf("marshal summary: %v", err)
+			}
+
+			var decoded map[string]json.RawMessage
+			if err := json.Unmarshal(body, &decoded); err != nil {
+				t.Fatalf("unmarshal summary: %v", err)
+			}
+			encodedApprovedAt, present := decoded["approved_at"]
+
+			if !tt.want {
+				if summary.ApprovedAt != nil {
+					t.Fatalf("unexpected approved_at: %v", summary.ApprovedAt)
+				}
+				if present {
+					t.Fatalf("approved_at must be omitted, got %s", encodedApprovedAt)
+				}
+				return
+			}
+
+			if summary.ApprovedAt == nil || !summary.ApprovedAt.Equal(*tt.approvalAt) {
+				t.Fatalf("approved_at = %v, want %v", summary.ApprovedAt, tt.approvalAt)
+			}
+			if !present {
+				t.Fatal("approved_at must be serialized")
+			}
+			var decodedApprovedAt time.Time
+			if err := json.Unmarshal(encodedApprovedAt, &decodedApprovedAt); err != nil {
+				t.Fatalf("decode approved_at: %v", err)
+			}
+			if !decodedApprovedAt.Equal(*tt.approvalAt) {
+				t.Fatalf("serialized approved_at = %v, want %v", decodedApprovedAt, tt.approvalAt)
+			}
+		})
+	}
+}

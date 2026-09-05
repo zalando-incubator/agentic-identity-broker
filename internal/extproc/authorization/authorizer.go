@@ -184,9 +184,10 @@ func (a *OPAAuthorizer) evaluateQuery(ctx context.Context, input OPAInput) (*OPA
 
 	// Empty ResultSet means the rule is undefined — deny unconditionally to fail closed.
 	if len(rs) == 0 || len(rs[0].Expressions) == 0 || rs[0].Expressions[0].Value == nil {
-		traceDecision(ctx, input, "deny", "undefined", durationMS)
-		a.logAudit(ctx, "deny", nil, durationMS, input, "undefined")
-		return &OPADecision{Action: "deny", Reasons: []string{"policy result is undefined"}}, nil
+		traceDecision(ctx, input, ActionDeny, "undefined", durationMS)
+		a.logAudit(ctx, ActionDeny, nil, durationMS, input, "undefined")
+		a.logger.WarnContext(ctx, "OPA policy result is undefined — treating as deny", "duration_ms", durationMS)
+		return &OPADecision{Action: ActionDeny, Reasons: []string{"policy result is undefined"}}, nil
 	}
 
 	resultMap, _ := rs[0].Expressions[0].Value.(map[string]any)
@@ -221,14 +222,15 @@ func (a *OPAAuthorizer) evaluateSDK(ctx context.Context, input OPAInput) (*OPADe
 
 	if err != nil {
 		if opasdk.IsUndefinedErr(err) {
-			traceDecision(ctx, input, "deny", "undefined", durationMS)
-			a.logAudit(ctx, "deny", nil, durationMS, input, "undefined")
-			return &OPADecision{Action: "deny", Reasons: []string{"policy result is undefined"}}, nil
+			traceDecision(ctx, input, ActionDeny, "undefined", durationMS)
+			a.logAudit(ctx, ActionDeny, nil, durationMS, input, "undefined")
+			a.logger.WarnContext(ctx, "OPA policy result is undefined — treating as deny", "duration_ms", durationMS)
+			return &OPADecision{Action: ActionDeny, Reasons: []string{"policy result is undefined"}}, nil
 		}
-		traceDecision(ctx, input, "deny", "error", durationMS)
-		a.logAudit(ctx, "deny", nil, durationMS, input, "error")
+		traceDecision(ctx, input, ActionDeny, "error", durationMS)
+		a.logAudit(ctx, ActionDeny, nil, durationMS, input, "error")
 		a.logger.ErrorContext(ctx, "opa sdk evaluation error — denying", "error", err, "duration_ms", durationMS)
-		return &OPADecision{Action: "deny", Reasons: []string{"policy evaluation error"}}, nil
+		return &OPADecision{Action: ActionDeny, Reasons: []string{"policy evaluation error"}}, nil
 	}
 
 	resultMap, _ := dr.Result.(map[string]any)
@@ -239,17 +241,19 @@ func (a *OPAAuthorizer) evaluateSDK(ctx context.Context, input OPAInput) (*OPADe
 // emits the audit log, and returns the effective enforcement decision.
 func (a *OPAAuthorizer) finalizeDecision(ctx context.Context, resultMap map[string]any, durationMS int64, input OPAInput) (*OPADecision, error) {
 	decision := ParseDecision(resultMap)
-
 	auditAction := decision.Action
 	resultCode := "ok"
 	rawAction, _ := resultMap["action"].(string)
-	if rawAction == "approval_required" || rawAction == "ciba_required" {
+	switch rawAction {
+	case ActionAllow, ActionDeny, ActionApprovalRequired:
+	case ActionCIBARequired:
 		auditAction = rawAction
 		resultCode = "unsupported_action"
-		a.logger.WarnContext(ctx, "unsupported OPA action — treating as deny",
-			"action", rawAction, "duration_ms", durationMS)
+		a.logger.WarnContext(ctx, "unsupported OPA action — treating as deny", "action", rawAction, "duration_ms", durationMS)
+	default:
+		resultCode = "undefined_action"
+		a.logger.WarnContext(ctx, "undefined OPA action — treating as deny", "action", rawAction, "duration_ms", durationMS)
 	}
-
 	traceDecision(ctx, input, auditAction, resultCode, durationMS)
 	a.logAudit(ctx, auditAction, decision.Reasons, durationMS, input, resultCode)
 	return decision, nil

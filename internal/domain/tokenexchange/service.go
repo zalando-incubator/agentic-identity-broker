@@ -398,6 +398,8 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		}
 		response.GrantedPermissionSets = psMap
 	}
+	response.Principal = principal
+	response.AgentID = agent.ID.String()
 
 	return response, nil
 }

@@ -31,30 +31,15 @@ import (
 // is never set for other protocols.
 //
 // The returned OPAInput (map[string]any) is safe for direct use as the OPA input document.
-func BuildOPAInput(protocol string, body []byte, headers map[string]string, targetServerName string, grantedPermissionSets map[string][]string) (OPAInput, error) {
-	// Build an ext_authz v3 CheckRequest from the ExtProc data so we can delegate
-	// the base input construction to the opa-envoy-plugin library.
+func BuildOPAInput(protocol string, body []byte, headers map[string]string, targetServerName string, contextInput ContextInput) (OPAInput, error) {
 	checkReq := buildCheckRequest(headers, body)
-
-	// Use the opa-envoy-plugin's RequestToInput to produce the envoy-compatible base layer.
-	// skipRequestBodyParse=true because we handle body parsing ourselves (MCP-aware).
 	input, err := envoyauth.RequestToInput(checkReq, nopLogger{}, nil, true)
 	if err != nil {
 		return nil, fmt.Errorf("input builder: envoyauth.RequestToInput failed: %w", err)
 	}
-
-	// Parse the body ourselves for parsed_body (MCP-aware JSON parsing).
 	input["parsed_body"] = parseJSONBody(body)
 	input["truncated_body"] = false
-
-	// Add ExtProc-specific extensions on top of the envoy-compatible base.
-	contextInput := ContextInput{}
-	if grantedPermissionSets != nil {
-		contextInput.GrantedPermissionSetsAvailable = true
-		contextInput.GrantedPermissionSets = grantedPermissionSets
-	}
 	input["context"] = contextInput
-
 	switch protocol {
 	case "mcp":
 		return buildMCPInput(input, body, headers, targetServerName)
@@ -112,7 +97,7 @@ func BuildOPAInputHeadersOnly(protocol string, headers map[string]string, target
 	}
 	input["parsed_body"] = nil
 	input["truncated_body"] = false
-	input["context"] = ContextInput{GrantedPermissionSetsAvailable: false}
+	input["context"] = ContextInput{GrantedPermissionSetsAvailable: false, AgentSessionID: extractSessionID(headers)}
 
 	if protocol == "mcp" {
 		input["type"] = "mcp_headers_only"

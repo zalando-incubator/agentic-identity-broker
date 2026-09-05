@@ -1,0 +1,34 @@
+grpc:
+  bind: "0.0.0.0"
+  port: 50051
+
+oauth2:
+  token_endpoint: "https://identity-broker.example.com/oauth2/token"
+  issuer: "https://upstream-oauth2.example.com"
+  client_id: "extproc-gateway"
+  client_secret: "${EXTPROC_OAUTH2_CLIENT_SECRET}"
+  client_assertion_type: "id_token"
+  exchange_timeout: 5s
+  tls:
+    allow_http: false
+
+authorization:
+  enabled: true
+  policy:
+    path: "/etc/extproc/policy.rego"
+    package: "aib.extproc.authz"
+    decision: "result"
+  default_decision: "deny"
+  evaluation_timeout: 100ms
+  max_body_size: 1048576
+
+tool_approvals:
+  enabled: true
+  url: "https://identity-broker.example.com"
+  long_poll_timeout_seconds: 30
+  approval_cache_idle_ttl: 5m
+  request_timeout: 5s
+
+sessions:
+  extraction:
+    http_header: "Mcp-Session-Id"

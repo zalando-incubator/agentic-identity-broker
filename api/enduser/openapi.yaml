@@ -3608,6 +3608,15 @@ components:
             Map of granted permission sets associated with the token exchange.
             Keys are permission set UUIDs, values are arrays of service UUIDs.
             Only present when the token exchange is scoped to specific permission sets.
+        principal:
+          type: string
+          description: Verified subject-token principal; omitted when unresolved.
+          example: alice@example.com
+        agent_id:
+          type: string
+          format: uuid
+          description: Resolved canonical agent ID from the verified subject token; omitted when unresolved.
+          example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
     OAuth2Error:
       type: object
       required:
@@ -3957,6 +3966,10 @@ components:
         agent_session_id:
           type: string
           nullable: true
+        approved_at:
+          type: string
+          format: date-time
+          description: Time at which the approval was granted; absent for pending and denied records.
   responses:
     Unauthorized:
       description: |

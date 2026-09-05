@@ -867,6 +867,12 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **TokenCacheKey**: Struct used as Go map key: `{subjectToken, resourceURI}`. Using struct keys prevents separator-injection attacks compared to string concatenation.
 
+**Approval Cache**: An ExtProc-local `sync.RWMutex` cache of broker approval summaries. It is keyed by the verified `(principal, agent_id)` pair. It uses `internal/toolpattern` for matching and precedence. The cache stores no permission sets.
+
+**Approval Gate**: The request-path component that handles standalone `approval_required` MCP tool calls. It matches the cache, performs a targeted broker read on a miss, and creates an approval only after that read succeeds. It denies on every broker or identity error.
+
+**Long-Poll Syncer**: One background ExtProc goroutine that receives broker approval snapshots. It uses ETags, replaces returned pair state, and retries with bounded backoff.
+
 **Two policy gates on one request chain**:
 
 | Gate | Service / Boundary | Question Answered | Inputs | Config Surface | Default |
@@ -921,6 +927,8 @@ The gates compose as fail-closed AND: ExtProc OPA can only further restrict a re
 - **MetricsConfig**: `enabled`, `export_interval`
 - **LogsConfig**: `enabled`
 - **TelemetryConfig**: `enabled`, `service_name`, `resource_attributes`, `traces` (enabled, sampling_rate, propagators), `metrics` (enabled, export_interval), `logs` (enabled), `exporter` (protocol, endpoint, insecure, headers, timeout, compression)
+- **ToolApprovalsConfig**: `enabled`, `url`, `long_poll_timeout_seconds`, `approval_cache_idle_ttl`, and `request_timeout`
+- **SessionsConfig**: `sessions.extraction.http_header` sets the agent-session header.
 
 **Validation Rules** (19 rules, fail-fast at startup):
 
@@ -1036,7 +1044,7 @@ The gates compose as fail-closed AND: ExtProc OPA can only further restrict a re
 ```
 cmd/extproc-token-exchange/
 ├── main.go                    # Entry point
-└── root.go                    # Cobra root command, gRPC server lifecycle
+├── server/
 
 internal/extproc/
 ├── config/
@@ -1049,6 +1057,11 @@ internal/extproc/
     ├── exchanger.go           # TokenExchanger with cache & singleflight
     ├── server_test.go         # Server unit tests
     └── exchanger_test.go      # Exchange unit tests
+├── approval/
+│   ├── cache.go              # Approval cache, scope filtering, reservation, eviction
+│   ├── client.go             # Broker API client
+│   ├── gate.go               # Request-path approval gate
+│   └── syncer.go             # ETag long-poll lifecycle
 
 tests/e2e/extproc/
 ├── extproc_suite_test.go      # Ginkgo suite runner
@@ -1421,6 +1434,14 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **Client Assertion**: JWT containing privileged client credentials (API gateway or reverse proxy) used to authenticate the token exchange request to the identity broker. Generated via client_credentials grant at ExtProc startup. Automatically refreshed in background goroutine within 30 seconds of expiry.
 
 **MCP Streamable HTTP**: Model Context Protocol transport mode allowing JSON-RPC communication over HTTP with streaming capabilities. Used by ExtProc to forward tool calls to MCP servers while maintaining transparent token exchange for authentication.
+
+**Approval Identity**: The verified `principal` and canonical `agent_id` returned by the broker token-exchange response. ExtProc uses it as the only approval-cache key source.
+
+**Approval Cache**: Per-process approval records returned by the broker. Records are matchable only when approved, in scope, unconsumed, and timestamped with `approved_at`.
+
+**Long-Poll Syncer**: The ExtProc worker that refreshes approval records with the broker ETag protocol.
+
+**Approval Gate**: The ExtProc component that applies cached approvals after OPA returns `approval_required`.
 
 ### OAuth2 Server Mode
 
