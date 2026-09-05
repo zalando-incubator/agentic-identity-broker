@@ -373,6 +373,8 @@ func TestToolApprovalRepository_MutationsAdvanceSyncVersion(t *testing.T) {
 	ctx := context.Background()
 	repo := NewToolApprovalRepository(adapter)
 	syncRepo := NewApprovalSyncStateRepository(adapter)
+	baselineVersion, err := syncRepo.GetVersion(ctx)
+	require.NoError(t, err)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	agentID := id.NewAgentID()
 	seedAgent(t, adapter, agentID)
@@ -389,17 +391,17 @@ func TestToolApprovalRepository_MutationsAdvanceSyncVersion(t *testing.T) {
 		ExpiresAt:       now.Add(time.Minute),
 	}
 
-	_, err := createPatternedApproval(ctx, repo, approval)
+	_, err = createPatternedApproval(ctx, repo, approval)
 	require.NoError(t, err)
 	version, err := syncRepo.GetVersion(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), version)
+	assert.Equal(t, baselineVersion+1, version)
 
 	_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(approval)}, now)
 	require.NoError(t, err)
 	version, err = syncRepo.GetVersion(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), version)
+	assert.Equal(t, baselineVersion+2, version)
 }
 
 func TestApprovalSyncStateRepository(t *testing.T) {
@@ -409,10 +411,10 @@ func TestApprovalSyncStateRepository(t *testing.T) {
 	repo := NewApprovalSyncStateRepository(adapter)
 	ctx := context.Background()
 
-	t.Run("GetVersion returns initial version", func(t *testing.T) {
+	t.Run("GetVersion reflects all applied approval migrations", func(t *testing.T) {
 		version, err := repo.GetVersion(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, int64(0), version)
+		assert.Equal(t, int64(1), version)
 	})
 
 	t.Run("IncrementVersion increments and returns new version", func(t *testing.T) {
