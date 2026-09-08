@@ -429,10 +429,9 @@ func TestApprovalSyncStateRepository(t *testing.T) {
 	})
 }
 
-func storageExactParams(approval *storage.ToolApproval) map[string]string {
-	if err := domainapproval.ApplyExactPatterns(approval); err != nil {
-		panic(err)
-	}
+func storageExactParams(t *testing.T, approval *storage.ToolApproval) map[string]string {
+	t.Helper()
+	require.NoError(t, domainapproval.ApplyExactPatterns(approval))
 	return approval.ParamsPattern
 }
 
