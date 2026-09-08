@@ -173,7 +173,7 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 		require.NoError(t, err)
 
 		approvedAt := now.Add(30 * time.Second)
-		result, err := repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(approval)}, approvedAt)
+		result, err := repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(t, approval)}, approvedAt)
 		require.NoError(t, err)
 		assert.Equal(t, storage.ApprovalStatusApproved, result.Status)
 		assert.NotNil(t, result.Persistence)
@@ -235,7 +235,7 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 		_, err := createPatternedApproval(ctx, repo, approval)
 		require.NoError(t, err)
 
-		_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(approval)}, now)
+		_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(t, approval)}, now)
 		require.ErrorIs(t, err, ports.ErrNotFound)
 
 		_, err = repo.Deny(ctx, approval.ID, nil, now)
@@ -263,7 +263,7 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 		require.NoError(t, err)
 
 		// First approve it
-		_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(approval)}, now.Add(10*time.Second))
+		_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(t, approval)}, now.Add(10*time.Second))
 		require.NoError(t, err)
 
 		// Then consume it
@@ -324,7 +324,7 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 		}
 		_, err := createPatternedApproval(ctx, repo, approval)
 		require.NoError(t, err)
-		_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceSession, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(approval)}, now)
+		_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceSession, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(t, approval)}, now)
 		require.NoError(t, err)
 
 		inactive, err := repo.ListAllActive(ctx, &principal, nil)
@@ -358,7 +358,7 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 		_, err := createPatternedApproval(ctx, repo, approval)
 		require.NoError(t, err)
 
-		_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(approval)}, now.Add(10*time.Second))
+		_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(t, approval)}, now.Add(10*time.Second))
 		require.NoError(t, err)
 
 		results, err := repo.ListPermanentByPrincipal(ctx, principal)
@@ -398,7 +398,7 @@ func TestToolApprovalRepository_MutationsAdvanceSyncVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, baselineVersion+1, version)
 
-	_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(approval)}, now)
+	_, err = repo.Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName, ParamsPattern: storageExactParams(t, approval)}, now)
 	require.NoError(t, err)
 	version, err = syncRepo.GetVersion(ctx)
 	require.NoError(t, err)
