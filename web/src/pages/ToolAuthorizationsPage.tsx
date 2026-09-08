@@ -16,7 +16,7 @@ import { Card } from '@design-system/components/data-display/Card';
 import { approvalApi } from '@services/api/approvals';
 import { ApprovalRequestSummary } from '@components/approvals/ApprovalRequestSummary';
 import { PersistenceSelector } from '@components/approvals/PersistenceSelector';
-import { ApprovalScopeEditor, hasScopeIssues, resolveScopeIssues } from '@components/approvals/ApprovalScopeEditor';
+import { ApprovalScopeEditor } from '@components/approvals/ApprovalScopeEditor';
 import type { ToolApprovalDetail, ApprovalPersistence } from '../types/approval';
 
 
@@ -81,6 +81,7 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
   const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
   const [toolPattern, setToolPattern] = useState(approval.tool_pattern ?? approval.tool_name);
   const [paramsPattern, setParamsPattern] = useState(approval.params_pattern ?? {});
+  const [scopeValid, setScopeValid] = useState(false);
 
   const handlePersistenceChange = (value: ApprovalPersistence) => {
     setPersistence(value);
@@ -123,8 +124,7 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
     setParamsPattern(approval.params_pattern ?? {});
   };
 
-  const scopeIssues = resolveScopeIssues(approval, toolPattern, paramsPattern);
-  const scopeBlocked = persistence !== 'once' && hasScopeIssues(scopeIssues);
+  const scopeBlocked = persistence !== 'once' && !scopeValid;
 
   return (
     <Card padding="default">
@@ -147,6 +147,7 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
               onParamsPatternChange={setParamsPattern}
               persistence={persistence}
               disabled={submitting}
+              onScopeValidationChange={setScopeValid}
             />
             {errorText && (
               <InlineError error={errorText} onRetry={() => void handleApprove()} retryLabel="Try approving again" />

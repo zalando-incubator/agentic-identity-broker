@@ -187,7 +187,9 @@ func makePendingApproval(principal id.Principal, agentID id.AgentID) *storage.To
 		CreatedAt:     time.Now(),
 		ExpiresAt:     time.Now().Add(10 * time.Minute),
 	}
-	approval.ApplyExactPatterns()
+	if err := ApplyExactPatterns(approval); err != nil {
+		panic(err)
+	}
 	return approval
 }
 
@@ -423,8 +425,8 @@ func TestService_ResolveApprovalDecision(t *testing.T) {
 		{"exact defaults", ApproveRequest{Persistence: storage.ApprovalPersistenceOnce}, "test-tool", map[string]string{"key": "value"}},
 		{"unconstrained params", ApproveRequest{Persistence: storage.ApprovalPersistenceSession, ParamsPattern: map[string]string{}}, "test-tool", map[string]string{}},
 		{"edited params", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ParamsPattern: map[string]string{"key": "val*"}}, "test-tool", map[string]string{"key": "val*"}},
-		{"tool family", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: "test-*"}, "test-*", map[string]string{"key": "value"}},
-		{"all", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: "*", ParamsPattern: map[string]string{}}, "*", map[string]string{}},
+		{"tool family", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: stringPtr("test-*")}, "test-*", map[string]string{"key": "value"}},
+		{"all", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: stringPtr("*"), ParamsPattern: map[string]string{}}, "*", map[string]string{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			decision, err := resolveApprovalDecision(approval, test.req)
@@ -433,11 +435,15 @@ func TestService_ResolveApprovalDecision(t *testing.T) {
 			}
 		})
 	}
-	for _, req := range []ApproveRequest{{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: "bad?"}, {Persistence: storage.ApprovalPersistencePermanent, ToolPattern: "delete_repository"}, {Persistence: storage.ApprovalPersistencePermanent, ParamsPattern: map[string]string{"branch": "main"}}} {
+	for _, req := range []ApproveRequest{{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: stringPtr("bad?")}, {Persistence: storage.ApprovalPersistencePermanent, ToolPattern: stringPtr("delete_repository")}, {Persistence: storage.ApprovalPersistencePermanent, ParamsPattern: map[string]string{"branch": "main"}}} {
 		if _, err := resolveApprovalDecision(approval, req); !errors.Is(err, ErrApprovalInvalidPattern) {
 			t.Fatalf("expected invalid pattern, got %v", err)
 		}
 	}
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
 
 func TestService_DenyApproval(t *testing.T) {

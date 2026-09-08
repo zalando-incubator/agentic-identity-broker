@@ -145,7 +145,7 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | 030 | `adrs/030-vendor-neutral-oidc-trust.md` | Vendor-neutral CDK OIDC trust configuration |
 | 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
-| 035 | `adrs/035-shared-tool-pattern-matching.md` | Shared neutral tool pattern matching package |
+| 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
 
 ## Domain Glossary
 

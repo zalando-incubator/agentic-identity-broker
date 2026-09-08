@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/toolpattern"
 )
 
 // ApprovalStatus represents the lifecycle state of a tool approval.
@@ -104,9 +103,8 @@ func (a *ToolApproval) IsActionable(now time.Time) bool {
 	return a.Status == ApprovalStatusPending && !a.IsExpired(now)
 }
 
-// Approve transitions a pending approval to approved state.
-// Returns error if not pending, expired, or principal mismatch.
-func (a *ToolApproval) Approve(actingPrincipal id.Principal, decision ApprovalDecision, now time.Time) error {
+// EnsureApprovable reports whether this approval can be approved by actingPrincipal at now.
+func (a *ToolApproval) EnsureApprovable(actingPrincipal id.Principal, now time.Time) error {
 	if a.Principal != actingPrincipal {
 		return ErrApprovalPrincipalMismatch
 	}
@@ -116,20 +114,21 @@ func (a *ToolApproval) Approve(actingPrincipal id.Principal, decision ApprovalDe
 	if a.IsExpired(now) {
 		return ErrApprovalExpired
 	}
+	return nil
+}
 
+// Approve transitions a pending approval to approved state.
+// Returns error if not pending, expired, or principal mismatch.
+func (a *ToolApproval) Approve(actingPrincipal id.Principal, decision ApprovalDecision, now time.Time) error {
+	if err := a.EnsureApprovable(actingPrincipal, now); err != nil {
+		return err
+	}
 	a.Status = ApprovalStatusApproved
 	a.Persistence = &decision.Persistence
 	a.ToolPattern = decision.ToolPattern
 	a.ParamsPattern = decision.ParamsPattern
 	a.ApprovedAt = &now
 	return nil
-}
-
-// ApplyExactPatterns sets the pattern fields to the exact coverage of this approval's own tool
-// name and arguments.
-func (a *ToolApproval) ApplyExactPatterns() {
-	a.ToolPattern = a.ToolName
-	a.ParamsPattern = toolpattern.ExactParams(a.Arguments)
 }
 
 // Deny transitions a pending approval to denied state.

@@ -2,8 +2,7 @@
 --
 -- tool_pattern/params_pattern record which future invocations an approval decision covers.
 -- Both are NOT NULL, so existing rows are backfilled to the exact coverage of the call they
--- were created for. The backfill fires trigger_tool_approvals_sync once per row; this is
--- expected and causes ExtProc to re-synchronize once.
+-- were created for. The row-level approval sync trigger processes updated rows.
 
 ALTER TABLE tool_approvals ADD COLUMN tool_pattern VARCHAR(255) NOT NULL DEFAULT '';
 ALTER TABLE tool_approvals ADD COLUMN params_pattern JSONB NOT NULL DEFAULT '{}';
@@ -46,19 +45,13 @@ LANGUAGE sql IMMUTABLE AS $fn$
     SELECT replace(replace(t, '\', '\\'), '*', '\*')
 $fn$;
 
-ALTER TABLE tool_approvals DISABLE TRIGGER trigger_tool_approvals_sync;
-
 UPDATE tool_approvals
-SET tool_pattern = tool_name,
+SET tool_pattern = aib_glob_escape(tool_name),
     params_pattern = COALESCE((
         SELECT jsonb_object_agg(e.key, aib_glob_escape(aib_canonical_value(e.value)))
         FROM jsonb_each(arguments) AS e
     ), '{}'::jsonb);
 
-ALTER TABLE tool_approvals ENABLE TRIGGER trigger_tool_approvals_sync;
-
-UPDATE approval_sync_state SET version = version + 1 WHERE id = 1;
-SELECT pg_notify('approval_sync', '');
 
 DROP FUNCTION aib_glob_escape(text);
 DROP FUNCTION aib_canonical_value(jsonb);

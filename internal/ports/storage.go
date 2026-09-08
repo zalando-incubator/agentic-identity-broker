@@ -273,7 +273,7 @@ type PermissionSetCanonicalIDRepository interface {
 }
 
 // ToolApprovalRepository defines core CRUD operations for tool approval entities.
-// Follows ISP: max 6 methods.
+// Follows ISP: max 6 methods. Implementations return approvals with a non-nil ParamsPattern.
 type ToolApprovalRepository interface {
 	// Create creates a new pending tool approval.
 	// Uses partial unique index for deduplication (principal, agent_id, tool_name, arguments_hash)

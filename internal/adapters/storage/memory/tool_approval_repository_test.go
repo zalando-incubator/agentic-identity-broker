@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"testing"
 	"time"
 
@@ -140,7 +141,7 @@ func TestToolApprovalRepositoryPatterns(t *testing.T) {
 	_, err := repo.Create(context.Background(), approval)
 	require.ErrorIs(t, err, storage.ErrApprovalPatternMissing)
 
-	approval.ApplyExactPatterns()
+	require.NoError(t, domainapproval.ApplyExactPatterns(approval))
 	approval.ExpiresAt = time.Now().Add(time.Minute)
 	created, err := repo.Create(context.Background(), approval)
 	require.NoError(t, err)

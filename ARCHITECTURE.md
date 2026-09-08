@@ -1526,7 +1526,9 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **ToolPattern**: A glob over a tool name for an approval decision. It uses `*` as its only metacharacter; `\` escapes the next character. Together with ParamsPattern it describes the future invocations covered by the decision.
 
-**ParamsPattern**: A map from top-level argument names to glob strings for an approval decision. Argument names absent from the map are unconstrained; a present key must match the canonical rendering of that argument value.
+**ParamsPattern**: A map from top-level argument names to glob strings for an approval decision. Argument names absent from the map are unconstrained; a present key must match the canonical rendering of that argument value. An empty map leaves every argument unconstrained.
+
+**Approval pattern authority**: `arguments_hash` is the exact identity used to de-duplicate pending approvals. `ToolPattern`/`ParamsPattern` define coverage and are consumed by ExtProc's approval matcher. `ComputeArgumentsHash` and `toolpattern.Canonical` intentionally serve different purposes and must not be unified.
 
 **ApprovalSyncState**: Single-row entity tracking a monotonically increasing version counter. Incremented on every approval mutation. Used as the ETag source for the long-poll sync endpoint. Located in `migrations/009_create_approval_sync_state.up.sql`.
 

@@ -12,6 +12,7 @@ package e2e_test
 
 import (
 	"context"
+	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -39,7 +40,7 @@ func newTestApproval(principal id.Principal, agentID id.AgentID, toolName, descr
 		CreatedAt:       time.Now(),
 		ExpiresAt:       time.Now().Add(10 * time.Minute),
 	}
-	approval.ApplyExactPatterns()
+	Expect(domainapproval.ApplyExactPatterns(approval)).To(Succeed())
 	return approval
 }
 

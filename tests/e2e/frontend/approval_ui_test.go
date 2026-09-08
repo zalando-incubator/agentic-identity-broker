@@ -17,6 +17,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
@@ -46,7 +47,7 @@ func newPendingApproval(principal id.Principal, agentID id.AgentID, toolName str
 		CreatedAt:       time.Now(),
 		ExpiresAt:       expiresAt,
 	}
-	approval.ApplyExactPatterns()
+	Expect(domainapproval.ApplyExactPatterns(approval)).To(Succeed())
 	return approval
 }
 
@@ -406,11 +407,12 @@ var _ = Describe("Approval UI", func() {
 
 		GetLogger().Info("Test passed: Error banner shown for already-actioned approval")
 	})
-	It("edits and persists a permanent approval pattern", func() {
+	// US7-S2 from specs/024-approval-api-ui/spec.md
+	It("should edit and persist a permanent approval pattern", func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "create_pull_request", time.Now().Add(10*time.Minute))
 		approval.Arguments = map[string]any{"repo": "acme/app", "title": "Fix bug"}
-		approval.ApplyExactPatterns()
+		Expect(domainapproval.ApplyExactPatterns(approval)).To(Succeed())
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(approvalPage.NavigateToApproval(ctx, approval.ID.String())).To(Succeed())
@@ -433,11 +435,12 @@ var _ = Describe("Approval UI", func() {
 		Expect(detail.Data.ParamsPattern).To(Equal(map[string]string{"repo": "acme/*", "title": "Fix bug"}))
 	})
 
-	It("unconstrains a single parameter with Any value", func() {
+	// US7-S3 from specs/024-approval-api-ui/spec.md
+	It("should unconstrain a single parameter with any value", func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "create_pull_request", time.Now().Add(10*time.Minute))
 		approval.Arguments = map[string]any{"repo": "acme/app", "title": "Fix bug"}
-		approval.ApplyExactPatterns()
+		Expect(domainapproval.ApplyExactPatterns(approval)).To(Succeed())
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(approvalPage.NavigateToApproval(ctx, approval.ID.String())).To(Succeed())

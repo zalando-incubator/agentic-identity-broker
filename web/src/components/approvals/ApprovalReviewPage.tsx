@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { Button } from '@components/ui/Button';
 import { ToolCallCard } from './ToolCallCard';
 import { PersistenceSelector } from './PersistenceSelector';
-import { ApprovalScopeEditor, hasScopeIssues, resolveScopeIssues } from './ApprovalScopeEditor';
+import { ApprovalScopeEditor } from './ApprovalScopeEditor';
 import { ApprovalConfirmation } from './ApprovalConfirmation';
 import { ApprovalErrorBanner } from './ApprovalErrorBanner';
 import type {
@@ -49,6 +49,7 @@ export function ApprovalReviewPage({
   const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
   const [toolPattern, setToolPattern] = useState(approval.tool_pattern ?? approval.tool_name);
   const [paramsPattern, setParamsPattern] = useState(approval.params_pattern ?? {});
+  const [scopeValid, setScopeValid] = useState(false);
 
   const handlePersistenceChange = (value: ApprovalPersistence) => {
     setPersistence(value);
@@ -106,8 +107,7 @@ export function ApprovalReviewPage({
     await onDeny(true);
   };
 
-  const scopeIssues = resolveScopeIssues(approval, toolPattern, paramsPattern);
-  const scopeBlocked = persistence !== 'once' && hasScopeIssues(scopeIssues);
+  const scopeBlocked = persistence !== 'once' && !scopeValid;
 
   return (
     <div className="max-w-2xl mx-auto px-6 pt-4 pb-28 space-y-4">
@@ -145,6 +145,7 @@ export function ApprovalReviewPage({
           onParamsPatternChange={setParamsPattern}
           persistence={persistence}
           disabled={submitting}
+          onScopeValidationChange={setScopeValid}
         />
       </div>
 

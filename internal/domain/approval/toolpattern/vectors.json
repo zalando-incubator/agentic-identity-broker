@@ -24,11 +24,5 @@
     {"name":"control escaped","value":{"ctl":"a\tb"},"canonical":"{\"ctl\":\"a\\tb\"}"},
     {"name":"literal asterisk","value":"a*b","canonical":"a*b"},
     {"name":"literal backslash","value":"a\\b","canonical":"a\\b"}
-  ],
-  "precedence": [
-    {"name":"exact tool wins","candidates":[{"id":"wild","tool_pattern":"*","params_pattern":{},"decided_at":"2026-01-01T00:00:00Z"},{"id":"exact","tool_pattern":"create_pull_request","params_pattern":{},"decided_at":"2026-01-01T00:00:00Z"}],"tool_name":"create_pull_request","arguments":{},"winner_id":"exact"},
-    {"name":"more constrained parameters win","candidates":[{"id":"one","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/*"},"decided_at":"2026-01-01T00:00:00Z"},{"id":"two","tool_pattern":"create_pull_request","params_pattern":{"repo":"acme/*","title":"Fix"},"decided_at":"2026-01-01T00:00:00Z"}],"tool_name":"create_pull_request","arguments":{"repo":"acme/app","title":"Fix"},"winner_id":"two"},
-    {"name":"fewer wildcards win","candidates":[{"id":"many","tool_pattern":"*pull*request","params_pattern":{},"decided_at":"2026-01-01T00:00:00Z"},{"id":"few","tool_pattern":"create_pull_*","params_pattern":{},"decided_at":"2026-01-01T00:00:00Z"}],"tool_name":"create_pull_request","arguments":{},"winner_id":"few"},
-    {"name":"later decision wins rank tie","candidates":[{"id":"old","tool_pattern":"create_pull_request","params_pattern":{},"decided_at":"2026-01-01T00:00:00Z"},{"id":"new","tool_pattern":"create_pull_request","params_pattern":{},"decided_at":"2026-01-02T00:00:00Z"}],"tool_name":"create_pull_request","arguments":{},"winner_id":"new"}
   ]
 }

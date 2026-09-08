@@ -1,5 +1,4 @@
-// Package toolpattern provides the single shared implementation of approval-pattern
-// grammar, canonicalization, matching, and precedence for the broker and ExtProc.
+// Package toolpattern provides shared approval-pattern grammar, canonicalization, matching, and rendering.
 package toolpattern
 
 import (
@@ -10,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 var (
@@ -18,9 +16,9 @@ var (
 	ErrInvalidParamsPattern = errors.New("invalid params pattern")
 )
 
-// Match reports whether glob matches s. '*' matches any run of characters, possibly empty.
+// match reports whether glob matches s. '*' matches any run of characters, possibly empty.
 // '\' escapes the next character. Every other character is a literal.
-func Match(glob, s string) bool {
+func match(glob, s string) bool {
 	globIndex, stringIndex := 0, 0
 	star, retryIndex := -1, 0
 
@@ -60,7 +58,7 @@ func Match(glob, s string) bool {
 	return globIndex == len(glob)
 }
 
-// EscapeLiteral escapes '\' and '*' so that Match(EscapeLiteral(s), s) is true and no other
+// EscapeLiteral escapes '\' and '*' so that match(EscapeLiteral(s), s) is true and no other
 // string matches.
 func EscapeLiteral(s string) string {
 	return strings.NewReplacer("\\", "\\\\", "*", "\\*").Replace(s)
@@ -169,12 +167,12 @@ func hasEscapedTrailingBackslash(s string) bool {
 
 // Matches reports whether the concrete invocation satisfies the pattern.
 func Matches(toolPattern string, paramsPattern map[string]string, toolName string, args map[string]any) bool {
-	if !Match(toolPattern, toolName) {
+	if !match(toolPattern, toolName) {
 		return false
 	}
 	for key, pattern := range paramsPattern {
 		value, ok := args[key]
-		if !ok || !Match(pattern, Canonical(value)) {
+		if !ok || !match(pattern, Canonical(value)) {
 			return false
 		}
 	}
@@ -197,89 +195,6 @@ func Format(toolPattern string, paramsPattern map[string]string) string {
 		parts = append(parts, key+"="+paramsPattern[key])
 	}
 	return toolPattern + "(" + strings.Join(parts, ",") + ")"
-}
-
-// Rank orders candidate patterns from most to least specific.
-type Rank struct {
-	ExactTool         bool
-	ConstrainedParams int
-	Wildcards         int
-}
-
-// Specificity computes the rank of a pattern.
-func Specificity(toolPattern string, paramsPattern map[string]string) Rank {
-	rank := Rank{ExactTool: countWildcards(toolPattern) == 0, Wildcards: countWildcards(toolPattern)}
-	for _, pattern := range paramsPattern {
-		if pattern != "*" {
-			rank.ConstrainedParams++
-		}
-		rank.Wildcards += countWildcards(pattern)
-	}
-	return rank
-}
-
-func countWildcards(pattern string) int {
-	count := 0
-	for i := 0; i < len(pattern); i++ {
-		if pattern[i] == '\\' && i+1 < len(pattern) {
-			i++
-			continue
-		}
-		if pattern[i] == '*' {
-			count++
-		}
-	}
-	return count
-}
-
-// Compare returns +1 when a is more specific than b, -1 when b is more specific, 0 when equal.
-func Compare(a, b Rank) int {
-	if a.ExactTool != b.ExactTool {
-		if a.ExactTool {
-			return 1
-		}
-		return -1
-	}
-	if a.ConstrainedParams != b.ConstrainedParams {
-		if a.ConstrainedParams > b.ConstrainedParams {
-			return 1
-		}
-		return -1
-	}
-	if a.Wildcards != b.Wildcards {
-		if a.Wildcards < b.Wildcards {
-			return 1
-		}
-		return -1
-	}
-	return 0
-}
-
-// Candidate is one stored approval considered during selection.
-type Candidate struct {
-	ID            string
-	ToolPattern   string
-	ParamsPattern map[string]string
-	DecidedAt     time.Time
-}
-
-// SelectBest returns the index of the most specific matching candidate, or -1 when none match.
-func SelectBest(candidates []Candidate, toolName string, args map[string]any) int {
-	best := -1
-	for i, candidate := range candidates {
-		if !Matches(candidate.ToolPattern, candidate.ParamsPattern, toolName, args) {
-			continue
-		}
-		if best == -1 {
-			best = i
-			continue
-		}
-		comparison := Compare(Specificity(candidate.ToolPattern, candidate.ParamsPattern), Specificity(candidates[best].ToolPattern, candidates[best].ParamsPattern))
-		if comparison > 0 || (comparison == 0 && (candidate.DecidedAt.After(candidates[best].DecidedAt) || (candidate.DecidedAt.Equal(candidates[best].DecidedAt) && candidate.ID < candidates[best].ID))) {
-			best = i
-		}
-	}
-	return best
 }
 
 func canonicalJSON(v any) string {

@@ -24,7 +24,9 @@ func newApprovePatternHandler(t *testing.T) (*ApproveHandler, *memory.ToolApprov
 	repo := memory.NewToolApprovalRepository()
 	svc := domainapproval.NewService(repo, repo, repo, memory.NewApprovalSyncStateRepository(), nil, domainapproval.NewApprovalRateLimiter(50, 10), domainapproval.NewApprovalSyncBroadcaster(0), time.Minute, "https://broker.example", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	approval := &storage.ToolApproval{ID: id.NewApprovalID(), Principal: id.Principal("user@example.com"), AgentID: id.NewAgentID(), ToolName: "create_pull_request", Arguments: map[string]any{"repo": "acme/app", "title": "Fix bug"}, ArgumentsHash: "hash", Status: storage.ApprovalStatusPending, ApprovalURL: "https://broker.example/approval", ExpiresAt: time.Now().Add(time.Minute)}
-	approval.ApplyExactPatterns()
+	if err := domainapproval.ApplyExactPatterns(approval); err != nil {
+		t.Fatal(err)
+	}
 	_, err := repo.Create(context.Background(), approval)
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +46,9 @@ func TestApproveHandlerPatterns(t *testing.T) {
 		{"edited pattern persists", `{"persistence":"permanent","params_pattern":{"repo":"acme/*"}}`, http.StatusOK, map[string]string{"repo": "acme/*"}, ""},
 		{"retarget rejects", `{"persistence":"permanent","tool_pattern":"delete_repository"}`, http.StatusUnprocessableEntity, nil, "invalid_pattern"},
 		{"malformed rejects", `{"persistence":"permanent","tool_pattern":"bad?"}`, http.StatusUnprocessableEntity, nil, "invalid_pattern"},
+		{"explicit null rejects", `{"persistence":"permanent","params_pattern":null}`, http.StatusUnprocessableEntity, nil, "invalid_pattern"},
+		{"explicit empty tool rejects", `{"persistence":"permanent","tool_pattern":""}`, http.StatusUnprocessableEntity, nil, "invalid_pattern"},
+		{"non-object params reject", `{"persistence":"permanent","params_pattern":"*"}`, http.StatusBadRequest, nil, "invalid_request"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			handler, repo, approval := newApprovePatternHandler(t)

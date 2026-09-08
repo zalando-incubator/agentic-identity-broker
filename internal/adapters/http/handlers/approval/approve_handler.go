@@ -1,6 +1,7 @@
 package approval
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,10 +13,12 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+var errNullParamsPattern = errors.New("params_pattern must be an object")
+
 type approveRequest struct {
-	Persistence   string            `json:"persistence"`
-	ToolPattern   string            `json:"tool_pattern"`
-	ParamsPattern map[string]string `json:"params_pattern"`
+	Persistence   string          `json:"persistence"`
+	ToolPattern   *string         `json:"tool_pattern"`
+	ParamsPattern json.RawMessage `json:"params_pattern"`
 }
 
 type approveResponse struct {
@@ -65,7 +68,17 @@ func (h *ApproveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.service.ApproveApproval(r.Context(), approvalID, id.Principal(principalValue), domainapproval.ApproveRequest{Persistence: persistence, ToolPattern: req.ToolPattern, ParamsPattern: req.ParamsPattern})
+	toolPattern, paramsPattern, err := decodePatternFields(req.ToolPattern, req.ParamsPattern)
+	if err != nil {
+		if errors.Is(err, errNullParamsPattern) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_pattern", err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		}
+		return
+	}
+
+	result, err := h.service.ApproveApproval(r.Context(), approvalID, id.Principal(principalValue), domainapproval.ApproveRequest{Persistence: persistence, ToolPattern: toolPattern, ParamsPattern: paramsPattern})
 	if err != nil {
 		if errors.Is(err, domainapproval.ErrApprovalInvalidPattern) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_pattern", err.Error())
@@ -89,4 +102,19 @@ func (h *ApproveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func decodePatternFields(toolPattern *string, rawParamsPattern json.RawMessage) (*string, map[string]string, error) {
+	if len(rawParamsPattern) == 0 {
+		return toolPattern, nil, nil
+	}
+	rawParamsPattern = bytes.TrimSpace(rawParamsPattern)
+	if bytes.Equal(rawParamsPattern, []byte("null")) {
+		return nil, nil, errNullParamsPattern
+	}
+	paramsPattern := make(map[string]string)
+	if err := json.Unmarshal(rawParamsPattern, &paramsPattern); err != nil {
+		return nil, nil, errors.New("params_pattern must be an object")
+	}
+	return toolPattern, paramsPattern, nil
 }

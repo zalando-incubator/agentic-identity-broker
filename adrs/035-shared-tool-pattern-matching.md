@@ -8,28 +8,39 @@
 
 ## Context
 
-The broker records user decisions for tool calls, and ExtProc consumes those decisions while matching later calls. Both processes must interpret tool-name globs, parameter globs, canonical argument values, and specificity identically. Separate implementations would permit a broker-approved decision to be interpreted differently by ExtProc.
+The broker records user decisions for tool calls, and the stacked ExtProc approval-sync branch consumes
+those decisions while matching later calls. Both processes must interpret tool-name globs, parameter
+globs, canonical argument values, and single-pattern coverage identically.
 
 ## Decision
 
-`internal/toolpattern` is a neutral, dependency-free leaf package that both `internal/domain/*` and `internal/extproc/*` may import. It owns the approval-pattern grammar, canonicalization, matching, formatting, precedence, and embedded language-neutral test vectors.
+`internal/domain/approval/toolpattern` is a standard-library-only leaf owned by the approval bounded
+context. Both `internal/domain/*` and `internal/extproc/*` may import this exact package; ExtProc may
+not import any other `internal/domain/*` package. It owns grammar, canonicalization, validation,
+single-pattern matching, formatting, and embedded match/canonicalization vectors.
 
-The package must not import `internal/domain`, `internal/ports`, `internal/adapters`, or `internal/extproc` packages.
+Precedence selection belongs in `internal/extproc/approval`, beside its only consumer
+(`Cache.Match`): it owns rank, comparison, candidate selection, and precedence vectors.
+
+The shared package must not import `internal/ports`, `internal/adapters`, or `internal/extproc`.
 
 ## Rationale
 
-A single implementation removes semantic drift from a security-sensitive authorization decision. Keeping the package under `internal/` preserves repository-local ownership while allowing the standalone ExtProc process to use the exact broker behavior. Standard-library-only implementation keeps the grammar small and auditable.
+The original top-level `internal/toolpattern` location sat outside every hexagonal ring while being
+imported by domain code. Locating the pure package in the approval domain conforms to the domain
+import rules while retaining one explicit, narrowly-scoped ExtProc exception. Keeping selection beside
+the enforcing cache avoids prematurely exporting policy that no broker production caller uses.
 
 ## Consequences
 
 **Positive**:
-- Broker and ExtProc share one tested matching and ranking implementation.
-- Embedded vectors define the cross-service contract without working-directory-dependent fixtures.
-- The dependency remains inward-neutral: neither service imports the other's domain or adapters.
+- Broker and ExtProc share one tested grammar, canonicalization, validation, and single-pattern matcher.
+- `internal/domain/approval/toolpattern/vectors.json` supplies the shared match and canonicalization contract.
+- ExtProc keeps candidate ranking and selection beside its enforcing cache.
 
 **Negative**:
 - `internal/extproc/*` has one explicit exception to its broker-internal import prohibition.
-- Changes to tool-pattern semantics require coordinated review because they affect both processes.
+- Changes to shared pattern semantics require coordinated review because they affect both processes.
 
 ## Alternatives Considered
 
@@ -39,4 +50,7 @@ A single implementation removes semantic drift from a security-sensitive authori
 
 ## Implementation Notes
 
-`internal/toolpattern` exposes `Canonical`, `ExactParams`, `Matches`, `Format`, `Specificity`, `Compare`, and `SelectBest`. Its `vectors.json` is embedded and exposed through typed accessors so both broker and ExtProc tests consume the same fixture.
+`internal/domain/approval/toolpattern` exposes `Canonical`, `EscapeLiteral`, `ExactParams`,
+`ValidateToolPattern`, `ValidateParamsPattern`, `Matches`, and `Format`. Its `vectors.json` is
+embedded and exposes match and canonicalization vectors. ExtProc owns precedence vectors and
+selection inside `internal/extproc/approval`.

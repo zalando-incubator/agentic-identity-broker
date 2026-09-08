@@ -270,7 +270,7 @@ func copyApproval(a *storage.ToolApproval) *storage.ToolApproval {
 
 func copyParamsPattern(params map[string]string) map[string]string {
 	if params == nil {
-		return nil
+		return map[string]string{}
 	}
 	cp := make(map[string]string, len(params))
 	for key, value := range params {

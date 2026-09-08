@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,7 +21,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/toolpattern"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
@@ -320,7 +320,7 @@ var _ = Describe("Tool Approval API", func() {
 				CreatedAt:     pastExpiry.Add(-10 * time.Minute),
 				ExpiresAt:     pastExpiry,
 			}
-			approval.ApplyExactPatterns()
+			Expect(domainapproval.ApplyExactPatterns(approval)).To(Succeed())
 			_, err := repo.Create(context.Background(), approval)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -758,8 +758,9 @@ var _ = Describe("Tool Approval API", func() {
 		})
 	})
 
-	Describe("Glob approval patterns", func() {
-		It("delivers an edited pattern through sync and matches it", func() {
+	Describe("when a user scopes an approval decision", func() {
+		// US7-S2 from specs/024-approval-api-ui/spec.md
+		It("should persist an edited parameter glob and expose it through sync", func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{
 				"persistence": "permanent", "tool_pattern": "create_pull_request", "params_pattern": map[string]string{"repo": "acme/*"},
@@ -782,8 +783,44 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(found).NotTo(BeNil())
 			Expect(found.ToolPattern).To(Equal("create_pull_request"))
 			Expect(found.ParamsPattern).To(Equal(map[string]string{"repo": "acme/*"}))
-			Expect(toolpattern.Matches(found.ToolPattern, found.ParamsPattern, "create_pull_request", map[string]any{"repo": "acme/app"})).To(BeTrue())
-			Expect(toolpattern.Matches(found.ToolPattern, found.ParamsPattern, "create_pull_request", map[string]any{"repo": "other/app"})).To(BeFalse())
+		})
+
+		// US7-S1 from specs/024-approval-api-ui/spec.md
+		It("should store exact coverage when pattern fields are omitted", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.ToolPattern).To(Equal("create_pull_request"))
+			Expect(detail.Data.ParamsPattern).To(Equal(map[string]string{"repo": "acme/app"}))
+		})
+
+		// US7-S3 from specs/024-approval-api-ui/spec.md
+		It("should store unconstrained coverage for an explicit empty params pattern", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "params_pattern": map[string]string{}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.ParamsPattern).To(BeEmpty())
+		})
+
+		// US7-S4 from specs/024-approval-api-ui/spec.md
+		It("should reject a non-covering pattern and leave the approval pending", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "tool_pattern": "delete_repository"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusUnprocessableEntity))
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.Status).To(Equal("pending"))
 		})
 	})
 })

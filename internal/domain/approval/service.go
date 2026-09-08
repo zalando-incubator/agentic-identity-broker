@@ -16,10 +16,10 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval/toolpattern"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/toolpattern"
 )
 
 // Domain errors for the approval service layer.
@@ -48,11 +48,11 @@ type CreateApprovalRequest struct {
 	OpenTelemetryTraceparent *string
 }
 
-// ApproveRequest carries the user's approval decision. A nil ParamsPattern means the approval
-// covers only the reviewed argument values; a non-nil empty map leaves every argument unconstrained.
+// ApproveRequest carries the user's approval decision. A nil ToolPattern or ParamsPattern means
+// the corresponding pattern is omitted; a non-nil empty ParamsPattern leaves all arguments unconstrained.
 type ApproveRequest struct {
 	Persistence   storage.ApprovalPersistence
-	ToolPattern   string
+	ToolPattern   *string
 	ParamsPattern map[string]string
 }
 
@@ -233,29 +233,33 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 	if approval.Principal != actingPrincipal {
 		return nil, ErrApprovalForbidden
 	}
-
-	decision, err := resolveApprovalDecision(approval, req)
-	if err != nil {
-		return nil, err
-	}
 	ctx, span := startLifecycleSpan(ctx, "approval.approve", approval.OpenTelemetryTraceparent,
 		trace.WithAttributes(
 			attribute.String("approval.id", approvalID.String()),
 			attribute.String("approval.principal", string(actingPrincipal)),
-			attribute.String("approval.persistence", string(decision.Persistence)),
-			attribute.String("approval.tool_pattern", decision.ToolPattern),
+			attribute.String("approval.tool_name", approval.ToolName),
+			attribute.String("approval.persistence", string(req.Persistence)),
 		),
 	)
 	defer span.End()
 
 	now := time.Now()
-	if err := approval.Approve(actingPrincipal, decision, now); err != nil {
+	if err := approval.EnsureApprovable(actingPrincipal, now); err != nil {
 		if errors.Is(err, storage.ErrApprovalExpired) {
 			return nil, ErrApprovalGone
 		}
 		if errors.Is(err, storage.ErrApprovalNotPending) {
 			return nil, ErrApprovalNotPending
 		}
+		return nil, fmt.Errorf("approve domain validation: %w", err)
+	}
+	decision, err := resolveApprovalDecision(approval, req)
+	if err != nil {
+		s.logger.Warn("approval pattern rejected", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", approval.AgentID, "tool_name", approval.ToolName, "action", "pattern_rejected", "error", err)
+		return nil, err
+	}
+	span.SetAttributes(attribute.String("approval.tool_pattern", decision.ToolPattern))
+	if err := approval.Approve(actingPrincipal, decision, now); err != nil {
 		return nil, fmt.Errorf("approve domain validation: %w", err)
 	}
 	result, err := s.approvals.Approve(ctx, approvalID, decision, now)
@@ -271,24 +275,49 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 }
 
 func resolveApprovalDecision(approval *storage.ToolApproval, req ApproveRequest) (storage.ApprovalDecision, error) {
-	toolPattern := approval.ToolName
-	if req.ToolPattern != "" {
-		toolPattern = req.ToolPattern
+	toolPattern := toolpattern.EscapeLiteral(approval.ToolName)
+	if req.ToolPattern != nil {
+		toolPattern = *req.ToolPattern
 	}
 	paramsPattern := req.ParamsPattern
 	if paramsPattern == nil {
 		paramsPattern = toolpattern.ExactParams(approval.Arguments)
 	}
 	if err := toolpattern.ValidateToolPattern(toolPattern); err != nil {
-		return storage.ApprovalDecision{}, fmt.Errorf("%w: malformed tool glob: %v", ErrApprovalInvalidPattern, err)
+		return storage.ApprovalDecision{}, fmt.Errorf("%w: malformed tool glob: %w", ErrApprovalInvalidPattern, err)
 	}
 	if err := toolpattern.ValidateParamsPattern(paramsPattern); err != nil {
-		return storage.ApprovalDecision{}, fmt.Errorf("%w: malformed argument glob: %v", ErrApprovalInvalidPattern, err)
+		return storage.ApprovalDecision{}, fmt.Errorf("%w: malformed argument glob: %w", ErrApprovalInvalidPattern, err)
 	}
 	if !toolpattern.Matches(toolPattern, paramsPattern, approval.ToolName, approval.Arguments) {
 		return storage.ApprovalDecision{}, fmt.Errorf("%w: pattern does not cover the reviewed tool call", ErrApprovalInvalidPattern)
 	}
 	return storage.ApprovalDecision{Persistence: req.Persistence, ToolPattern: toolPattern, ParamsPattern: paramsPattern}, nil
+}
+
+type ScopePreview struct {
+	ToolPattern   string            `json:"tool_pattern"`
+	ParamsPattern map[string]string `json:"params_pattern"`
+	Preview       string            `json:"preview"`
+}
+
+func (s *Service) PreviewApprovalScope(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal, req ApproveRequest) (*ScopePreview, error) {
+	approval, err := s.approvals.Get(ctx, approvalID)
+	if err != nil {
+		var storageErr *storage.StorageError
+		if errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindNotFound {
+			return nil, ErrApprovalNotFound
+		}
+		return nil, fmt.Errorf("get approval for scope preview: %w", err)
+	}
+	if approval.Principal != actingPrincipal {
+		return nil, ErrApprovalForbidden
+	}
+	decision, err := resolveApprovalDecision(approval, req)
+	if err != nil {
+		return nil, err
+	}
+	return &ScopePreview{ToolPattern: decision.ToolPattern, ParamsPattern: decision.ParamsPattern, Preview: toolpattern.Format(decision.ToolPattern, decision.ParamsPattern)}, nil
 }
 
 // DenyApproval transitions a pending approval to denied state.
@@ -443,7 +472,9 @@ func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalR
 		CreatedAt:                now,
 		ExpiresAt:                expiresAt,
 	}
-	newApproval.ApplyExactPatterns()
+	if err := ApplyExactPatterns(newApproval); err != nil {
+		return nil, err
+	}
 
 	// Create (idempotent — repo returns existing if duplicate pending found)
 	result, err := s.approvals.Create(ctx, newApproval)
@@ -680,6 +711,7 @@ type ApprovalDetail struct {
 	Arguments        map[string]any               `json:"arguments"`
 	ToolPattern      string                       `json:"tool_pattern"`
 	ParamsPattern    map[string]string            `json:"params_pattern"`
+	PatternPreview   string                       `json:"pattern_preview"`
 	Description      string                       `json:"description"`
 	RiskLevel        string                       `json:"risk_level"`
 	Status           storage.ApprovalStatus       `json:"status"`
@@ -710,6 +742,7 @@ func newApprovalDetail(approval *storage.ToolApproval, agentDisplayName string) 
 		Arguments:        approval.Arguments,
 		ToolPattern:      approval.ToolPattern,
 		ParamsPattern:    approval.ParamsPattern,
+		PatternPreview:   toolpattern.Format(approval.ToolPattern, approval.ParamsPattern),
 		Description:      approval.Description,
 		RiskLevel:        approval.RiskLevel,
 		Status:           approval.Status,

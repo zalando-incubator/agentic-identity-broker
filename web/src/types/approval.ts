@@ -28,6 +28,7 @@ export interface ToolApprovalDetail {
   arguments: Record<string, unknown>;
   tool_pattern: string;
   params_pattern: Record<string, string>;
+  pattern_preview: string;
   description?: string;
   risk_level?: RiskLevel;
   status: ApprovalStatus;
@@ -51,6 +52,19 @@ export interface ApproveRequest {
   persistence: ApprovalPersistence;
   tool_pattern?: string;
   params_pattern?: Record<string, string>;
+}
+
+/** Request body for POST /api/approvals/:id/scope-preview */
+export interface ScopePreviewRequest {
+  tool_pattern?: string;
+  params_pattern?: Record<string, string>;
+}
+
+/** Server-resolved approval scope preview. */
+export interface ScopePreview {
+  tool_pattern: string;
+  params_pattern: Record<string, string>;
+  preview: string;
 }
 
 /** Response data for POST /api/approvals/:id/approve */

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestMatchesVectors(t *testing.T) {
@@ -27,34 +26,9 @@ func TestCanonicalVectors(t *testing.T) {
 	}
 }
 
-func TestPrecedenceVectors(t *testing.T) {
-	for _, vector := range PrecedenceVectors() {
-		t.Run(vector.Name, func(t *testing.T) {
-			candidates := make([]Candidate, len(vector.Candidates))
-			for i, candidate := range vector.Candidates {
-				decidedAt, err := time.Parse(time.RFC3339, candidate.DecidedAt)
-				if err != nil {
-					t.Fatal(err)
-				}
-				candidates[i] = Candidate{ID: candidate.ID, ToolPattern: candidate.ToolPattern, ParamsPattern: candidate.ParamsPattern, DecidedAt: decidedAt}
-			}
-			index := SelectBest(candidates, vector.ToolName, vector.Arguments)
-			if vector.WinnerID == "" {
-				if index != -1 {
-					t.Fatalf("SelectBest() = %d, want -1", index)
-				}
-				return
-			}
-			if index < 0 || candidates[index].ID != vector.WinnerID {
-				t.Fatalf("SelectBest() = %d (%v), want %q", index, candidates, vector.WinnerID)
-			}
-		})
-	}
-}
-
 func TestEscapeLiteralRoundTrip(t *testing.T) {
 	value := `a*b\\c`
-	if !Match(EscapeLiteral(value), value) || Match(EscapeLiteral(value), value+"x") {
+	if !match(EscapeLiteral(value), value) || match(EscapeLiteral(value), value+"x") {
 		t.Fatal("escaped literal must match only its original value")
 	}
 }

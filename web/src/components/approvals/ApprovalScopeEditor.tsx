@@ -7,22 +7,14 @@
  * pattern stays visible as the technical rule.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Accordion } from '@design-system/components/advanced/Accordion';
 import { Badge } from '@design-system/components/primitives/Badge';
 import { Select, type SelectOption } from '@design-system/components/inputs/Select';
 import { TextInput } from '@design-system/components/inputs/TextInput';
 import { Button } from '@components/ui/Button';
-import {
-  canonicalArgumentValue,
-  escapeGlobLiteral,
-  formatToolPattern,
-  humanizeParameterKey,
-  matchesGlob,
-  unescapeGlobLiteral,
-  validateParamGlob,
-  validateToolGlob,
-} from '@utils/toolPattern';
+import { approvalApi } from '@services/api/approvals';
+import { humanizeParameterKey } from '@utils/humanize';
 import type { ApprovalPersistence, ToolApprovalDetail } from '../../types/approval';
 
 interface ApprovalScopeEditorProps {
@@ -33,11 +25,7 @@ interface ApprovalScopeEditorProps {
   onParamsPatternChange: (value: Record<string, string>) => void;
   persistence: ApprovalPersistence;
   disabled?: boolean;
-}
-
-export interface ScopeIssues {
-  tool: string | null;
-  params: Record<string, string>;
+  onScopeValidationChange?: (valid: boolean) => void;
 }
 
 type ParameterMode = 'exact' | 'any' | 'custom';
@@ -54,7 +42,6 @@ const PARAMETER_MODE_OPTIONS: SelectOption[] = [
   { value: 'custom', label: 'Custom match' },
 ];
 
-const NOT_COVERING = 'This pattern does not match the current value.';
 const VALUE_PREVIEW_LIMIT = 120;
 
 function isParameterMode(value: string | number | (string | number)[] | null): value is ParameterMode {
@@ -64,16 +51,12 @@ function isParameterMode(value: string | number | (string | number)[] | null): v
 function isToolMode(value: string | number | (string | number)[] | null): value is ToolMode {
   return value === 'exact' || value === 'custom';
 }
-
 function exactToolPattern(approval: ToolApprovalDetail): string {
   return approval.tool_pattern || approval.tool_name;
 }
 
 function exactParamPattern(approval: ToolApprovalDetail, key: string): string {
-  return (
-    approval.params_pattern?.[key] ??
-    escapeGlobLiteral(canonicalArgumentValue(approval.arguments?.[key]))
-  );
+  return approval.params_pattern?.[key] ?? '';
 }
 
 function parameterKeys(approval: ToolApprovalDetail): string[] {
@@ -84,31 +67,6 @@ function parameterKeys(approval: ToolApprovalDetail): string[] {
   return Array.from(keys).sort();
 }
 
-export function resolveScopeIssues(
-  approval: ToolApprovalDetail,
-  toolPattern: string,
-  paramsPattern: Record<string, string>,
-): ScopeIssues {
-  const tool =
-    validateToolGlob(toolPattern) ??
-    (matchesGlob(toolPattern, approval.tool_name) ? null : NOT_COVERING);
-
-  const params: Record<string, string> = {};
-  const constraints = paramsPattern ?? {};
-  for (const key of Object.keys(constraints)) {
-    const pattern = constraints[key];
-    const currentValue = unescapeGlobLiteral(exactParamPattern(approval, key));
-    const issue =
-      validateParamGlob(pattern) ?? (matchesGlob(pattern, currentValue) ? null : NOT_COVERING);
-    if (issue) params[key] = issue;
-  }
-
-  return { tool, params };
-}
-
-export function hasScopeIssues(issues: ScopeIssues): boolean {
-  return issues.tool !== null || Object.keys(issues.params).length > 0;
-}
 
 export function ApprovalScopeEditor({
   approval,
@@ -118,11 +76,14 @@ export function ApprovalScopeEditor({
   onParamsPatternChange,
   persistence,
   disabled = false,
+  onScopeValidationChange,
 }: ApprovalScopeEditorProps) {
   const [customKeys, setCustomKeys] = useState<Set<string>>(new Set());
   const [toolCustom, setToolCustom] = useState(false);
   const [expandedValues, setExpandedValues] = useState<Set<string>>(new Set());
   const [lastPersistence, setLastPersistence] = useState(persistence);
+  const validationRequest = useRef(0);
+  const [serverPreview, setServerPreview] = useState(approval.pattern_preview);
 
   // Call sites restore the exact patterns whenever persistence changes, so the sticky
   // custom-mode flags must drop with them.
@@ -133,12 +94,35 @@ export function ApprovalScopeEditor({
     setExpandedValues(new Set());
   }
 
-  if (persistence === 'once') return null;
 
   const exactTool = exactToolPattern(approval);
   const keys = parameterKeys(approval);
   const constraints = paramsPattern ?? {};
-  const issues = resolveScopeIssues(approval, toolPattern, constraints);
+
+  useEffect(() => {
+    if (persistence === 'once') return;
+    const request = ++validationRequest.current;
+    onScopeValidationChange?.(false);
+    const timer = window.setTimeout(() => {
+      void approvalApi
+        .previewApprovalScope(approval.id, {
+          tool_pattern: toolPattern,
+          params_pattern: constraints,
+        })
+        .then((response) => {
+          if (validationRequest.current === request) {
+            setServerPreview(response.preview);
+            onScopeValidationChange?.(true);
+          }
+        })
+        .catch(() => {
+          if (validationRequest.current === request) onScopeValidationChange?.(false);
+        });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [approval.id, constraints, onScopeValidationChange, persistence, toolPattern]);
+
+  if (persistence === 'once') return null;
 
   const toolMode: ToolMode = toolCustom || toolPattern !== exactTool ? 'custom' : 'exact';
 
@@ -259,7 +243,7 @@ export function ApprovalScopeEditor({
           <TextInput
             id={`${toolControlId}-pattern`}
             size="sm"
-            label="Custom match"
+            label={`${toolLabel} custom match`}
             value={toolPattern}
             disabled={disabled}
             onChange={(event) => {
@@ -267,7 +251,6 @@ export function ApprovalScopeEditor({
               onToolPatternChange(event.target.value);
             }}
             helperText="Use * for any characters. Example: create_* matches tool names that start with create_."
-            errorMessage={issues.tool ?? undefined}
           />
         )}
       </div>
@@ -278,9 +261,10 @@ export function ApprovalScopeEditor({
           {keys.map((key) => {
             const mode = modeOf(key);
             const label = humanizeParameterKey(key);
-            const currentValue = unescapeGlobLiteral(exactParamPattern(approval, key));
+            const currentValue = (typeof approval.arguments?.[key] === 'string'
+              ? approval.arguments[key]
+              : JSON.stringify(approval.arguments?.[key])) ?? '';
             const modeControlId = `approval-${approval.id}-param-${key}-mode`;
-            const issue = issues.params[key];
             const truncatable = currentValue.length > VALUE_PREVIEW_LIMIT;
             const expanded = expandedValues.has(key);
 
@@ -347,7 +331,7 @@ export function ApprovalScopeEditor({
                   <TextInput
                     id={`${modeControlId}-pattern`}
                     size="sm"
-                    label="Custom match"
+                    label={`${label} custom match`}
                     value={constraints[key] ?? ''}
                     disabled={disabled}
                     onChange={(event) => {
@@ -355,8 +339,7 @@ export function ApprovalScopeEditor({
                       setParamPattern(key, event.target.value);
                     }}
                     helperText="Use * for any characters. Example: acme/* matches values that start with acme/."
-                    errorMessage={issue}
-                    successMessage={issue ? undefined : 'Includes the current value.'}
+                    successMessage="Validated by the broker."
                   />
                 )}
               </div>
@@ -385,9 +368,7 @@ export function ApprovalScopeEditor({
               return <li key={key}>{`${label}: values matching ${constraints[key] ?? ''}`}</li>;
             }
             return (
-              <li key={key}>
-                {`${label}: exactly ${unescapeGlobLiteral(exactParamPattern(approval, key))}`}
-              </li>
+              <li key={key}>{`${label}: exactly ${String(approval.arguments?.[key] ?? '')}`}</li>
             );
           })}
         </ul>
@@ -396,7 +377,7 @@ export function ApprovalScopeEditor({
       <div className="space-y-2 border-t border-neutral-200 pt-5" aria-label="Approval pattern preview">
         <p className="text-xs font-semibold uppercase tracking-wide text-trust">Technical rule</p>
         <code className="font-mono text-xs text-neutral-500 break-words">
-          {formatToolPattern(toolPattern, constraints)}
+          {serverPreview}
         </code>
       </div>
     </div>

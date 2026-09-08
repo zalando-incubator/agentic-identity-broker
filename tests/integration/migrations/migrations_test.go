@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/toolpattern"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval/toolpattern"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
