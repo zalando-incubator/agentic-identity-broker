@@ -436,14 +436,8 @@ func storageExactParams(t *testing.T, approval *storage.ToolApproval) map[string
 }
 
 func createPatternedApproval(ctx context.Context, repo *ToolApprovalRepository, approval *storage.ToolApproval) (*storage.ToolApproval, error) {
-<<<<<<< HEAD
-	domainapproval.ApplyExactPatterns(approval)
-||||||| parent of 20c21a0d (refactor: keep approval precedence in extproc)
-	approval.ApplyExactPatterns()
-=======
 	if err := domainapproval.ApplyExactPatterns(approval); err != nil {
 		return nil, err
 	}
->>>>>>> 20c21a0d (refactor: keep approval precedence in extproc)
 	return repo.Create(ctx, approval)
 }
