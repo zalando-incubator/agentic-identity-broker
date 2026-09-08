@@ -45,13 +45,24 @@ LANGUAGE sql IMMUTABLE AS $fn$
     SELECT replace(replace(t, '\', '\\'), '*', '\*')
 $fn$;
 
-UPDATE tool_approvals
-SET tool_pattern = aib_glob_escape(tool_name),
-    params_pattern = COALESCE((
-        SELECT jsonb_object_agg(e.key, aib_glob_escape(aib_canonical_value(e.value)))
-        FROM jsonb_each(arguments) AS e
-    ), '{}'::jsonb);
+DO $fn$
+DECLARE
+    updated_rows bigint;
+BEGIN
+    UPDATE tool_approvals
+    SET tool_pattern = aib_glob_escape(tool_name),
+        params_pattern = COALESCE((
+            SELECT jsonb_object_agg(e.key, aib_glob_escape(aib_canonical_value(e.value)))
+            FROM jsonb_each(arguments) AS e
+        ), '{}'::jsonb);
 
+    GET DIAGNOSTICS updated_rows = ROW_COUNT;
+    IF updated_rows = 0 THEN
+        UPDATE approval_sync_state SET version = version + 1 WHERE id = 1;
+        PERFORM pg_notify('approval_sync', '');
+    END IF;
+END;
+$fn$;
 
 DROP FUNCTION aib_glob_escape(text);
 DROP FUNCTION aib_canonical_value(jsonb);
