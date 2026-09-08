@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout PR branch
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
@@ -36,7 +36,7 @@ jobs:
 
       - name: Set up Go
         if: steps.skip-check.outputs.skip != 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
           cache: true
@@ -57,7 +57,7 @@ jobs:
 
       - name: Cache Playwright browsers
         if: steps.skip-check.outputs.skip != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('go.sum') }}
@@ -172,7 +172,7 @@ jobs:
 
       - name: Upload screenshots as artifact
         if: steps.skip-check.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: e2e-screenshots
           path: tests/e2e/screenshots/*.png
@@ -180,7 +180,7 @@ jobs:
 
       - name: Update PR description with screenshots
         if: steps.skip-check.outputs.skip != 'true' && steps.sync-screenshots.outputs.has_changes == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         with:
           script: |
             const pr = context.payload.pull_request;

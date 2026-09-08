@@ -25,11 +25,11 @@ jobs:
     steps:
       # Checkout repository
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       # Set up Go
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: go.mod
           cache: true
@@ -44,7 +44,7 @@ jobs:
 
       # Cache Go tool binaries, golangci-lint results, and Playwright browsers
       - name: Cache dev tools
-        uses: actions/cache@v4
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8
         with:
           path: |
             ~/go/bin
@@ -78,4 +78,4 @@ jobs:
           echo "golangci-lint: $(golangci-lint --version)"
           echo "=== Build Test ==="
           just build
-          echo "=== Ready for Copilot ===" 
+          echo "=== Ready for Copilot ==="
