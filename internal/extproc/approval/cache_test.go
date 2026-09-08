@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/toolpattern"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval/toolpattern"
 )
 
 func approvedRecord(id, toolPattern string, params map[string]string, persistence string, decidedAt time.Time) Record {
@@ -71,9 +71,9 @@ func TestCacheMatchesSharedVectors(t *testing.T) {
 	}
 }
 
-func TestCacheUsesSharedPrecedenceVectors(t *testing.T) {
+func TestCacheUsesPrecedenceVectors(t *testing.T) {
 	identity := Identity{Principal: "alice", AgentID: "agent"}
-	for _, vector := range toolpattern.PrecedenceVectors() {
+	for _, vector := range precedenceVectors() {
 		t.Run(vector.Name, func(t *testing.T) {
 			records := make([]Record, 0, len(vector.Candidates))
 			for _, candidate := range vector.Candidates {
@@ -83,7 +83,6 @@ func TestCacheUsesSharedPrecedenceVectors(t *testing.T) {
 			}
 			cache := NewCache(time.Minute)
 			cache.Replace([]Pair{{Identity: identity, Approvals: records}}, `"v1"`)
-
 			record, matched := cache.Match(identity, "", vector.ToolName, vector.Arguments)
 			require.True(t, matched)
 			assert.Equal(t, vector.WinnerID, record.ID)

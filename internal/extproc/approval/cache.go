@@ -5,8 +5,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/toolpattern"
 )
 
 type Identity struct {
@@ -221,23 +219,23 @@ func (c *Cache) Match(identity Identity, sessionID, tool string, arguments map[s
 	}
 	entry.lastSeen = now
 
-	candidates := make([]toolpattern.Candidate, 0, len(entry.records))
+	candidates := make([]candidate, 0, len(entry.records))
 	indices := make([]int, 0, len(entry.records))
 	for i := range entry.records {
 		record := &entry.records[i]
 		if !record.matchable(sessionID) {
 			continue
 		}
-		candidates = append(candidates, toolpattern.Candidate{
-			ID:            record.ID,
-			ToolPattern:   record.ToolPattern,
-			ParamsPattern: record.ParamsPattern,
-			DecidedAt:     *record.ApprovedAt,
+		candidates = append(candidates, candidate{
+			id:            record.ID,
+			toolPattern:   record.ToolPattern,
+			paramsPattern: record.ParamsPattern,
+			decidedAt:     *record.ApprovedAt,
 		})
 		indices = append(indices, i)
 	}
 
-	best := toolpattern.SelectBest(candidates, tool, arguments)
+	best := selectBest(candidates, tool, arguments)
 	if best < 0 {
 		return Record{}, false
 	}
