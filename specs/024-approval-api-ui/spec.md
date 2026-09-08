@@ -135,6 +135,28 @@ A user who has granted permanent approval for a tool invocation can view it alon
 
 ---
 
+### User Story 7 — User Scopes an Approval Decision (Priority: P2)
+
+When approving for a session or permanently, a user can narrow or widen the future calls covered by
+the decision. The broker validates and renders the scope so the UI cannot diverge from enforcement.
+
+**Acceptance Scenarios**:
+
+1. **Given** a pending approval for `create_pull_request` with repository `acme/app`, **When** the
+user approves without pattern fields, **Then** the stored patterns cover exactly that tool and the
+reviewed arguments.
+2. **Given** that pending approval, **When** the user submits `params_pattern: {repo: "acme/*"}`,
+**Then** the pattern is persisted and returned in the approval sync response.
+3. **Given** that pending approval, **When** the user submits an explicit empty `params_pattern`,
+**Then** every argument is unconstrained.
+4. **Given** that pending approval, **When** the user submits a malformed or non-covering pattern,
+**Then** the API returns `422 invalid_pattern` and the approval remains pending.
+5. **Given** a session or permanent scope editor, **When** the user edits a pattern, **Then** the
+broker validates it and the UI displays the latest server-rendered technical rule; approval remains
+disabled until the current pattern validates successfully.
+
+---
+
 ### Approval Flow Overview
 
 ```mermaid

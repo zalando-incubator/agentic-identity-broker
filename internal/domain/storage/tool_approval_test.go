@@ -368,19 +368,4 @@ func TestToolApprovalPatterns(t *testing.T) {
 		}
 	})
 
-	t.Run("initializes escaped exact patterns", func(t *testing.T) {
-		approval := &ToolApproval{ToolName: "create_pull_request", Arguments: map[string]any{"repo": "a*b", "meta": map[string]any{"b": 1, "a": []any{"x"}}}}
-		approval.ApplyExactPatterns()
-		if approval.ToolPattern != "create_pull_request" || approval.ParamsPattern["repo"] != "a\\*b" || approval.ParamsPattern["meta"] != `{"a":["x"],"b":1}` {
-			t.Fatalf("unexpected exact patterns: %#v", approval)
-		}
-	})
-
-	t.Run("initializes non-nil empty patterns for nil arguments", func(t *testing.T) {
-		approval := &ToolApproval{ToolName: "create_pull_request"}
-		approval.ApplyExactPatterns()
-		if approval.ParamsPattern == nil || len(approval.ParamsPattern) != 0 {
-			t.Fatalf("expected non-nil empty params pattern, got %#v", approval.ParamsPattern)
-		}
-	})
 }

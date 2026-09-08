@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"testing"
 	"time"
 
@@ -429,11 +430,11 @@ func TestApprovalSyncStateRepository(t *testing.T) {
 }
 
 func storageExactParams(approval *storage.ToolApproval) map[string]string {
-	approval.ApplyExactPatterns()
+	domainapproval.ApplyExactPatterns(approval)
 	return approval.ParamsPattern
 }
 
 func createPatternedApproval(ctx context.Context, repo *ToolApprovalRepository, approval *storage.ToolApproval) (*storage.ToolApproval, error) {
-	approval.ApplyExactPatterns()
+	domainapproval.ApplyExactPatterns(approval)
 	return repo.Create(ctx, approval)
 }

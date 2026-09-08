@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApprovalReviewPage } from './ApprovalReviewPage';
+
+vi.mock('@services/api/approvals', () => ({
+  approvalApi: {
+    previewApprovalScope: vi.fn().mockResolvedValue({
+      tool_pattern: 'read_file',
+      params_pattern: { path: '/tmp/example' },
+      preview: 'read_file(path=/tmp/example)',
+    }),
+  },
+}));
 
 const approval = {
   id: 'approval-1',
@@ -70,10 +80,11 @@ describe('ApprovalReviewPage', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('Scope Not Accepted');
 
-    await user.click(screen.getByRole('radio', { name: /for this session/i }));
-    expect(screen.getByRole('button', { name: /approval scope/i })).toBeInTheDocument();
+	    await user.click(screen.getByRole('radio', { name: /for this session/i }));
+	    expect(screen.getByRole('button', { name: /approval scope/i })).toBeInTheDocument();
+	    await waitFor(() => expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled());
 
-    await user.click(screen.getByRole('button', { name: /^approve$/i }));
+	    await user.click(screen.getByRole('button', { name: /^approve$/i }));
     expect(onApprove).toHaveBeenCalledWith({
       persistence: 'session',
       tool_pattern: 'read_file',
@@ -99,8 +110,9 @@ describe('ApprovalReviewPage', () => {
       />,
     );
 
-    await user.click(screen.getByRole('radio', { name: /always allow/i }));
-    await user.click(screen.getByRole('button', { name: /^approve$/i }));
+	    await user.click(screen.getByRole('radio', { name: /always allow/i }));
+	    await waitFor(() => expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled());
+	    await user.click(screen.getByRole('button', { name: /^approve$/i }));
 
     expect(onApprove).toHaveBeenCalledWith({ persistence: 'permanent', tool_pattern: 'read_file', params_pattern: { path: '/tmp/example' } });
   });
