@@ -23,9 +23,29 @@ func approvedRecord(id, toolPattern string, params map[string]string, persistenc
 	}
 }
 
+func TestCacheStopsMatchingAfterMaxStaleness(t *testing.T) {
+	identity := Identity{Principal: "alice", AgentID: "agent"}
+	cache := NewCache(time.Minute, 50*time.Millisecond)
+	cache.Replace([]Pair{{
+		Identity:  identity,
+		Approvals: []Record{approvedRecord("permanent", "tool", map[string]string{}, "permanent", time.Now().UTC())},
+	}}, `"v1"`)
+
+	_, matched := cache.Match(identity, "", "tool", map[string]any{})
+	require.True(t, matched)
+
+	time.Sleep(80 * time.Millisecond)
+	_, matched = cache.Match(identity, "", "tool", map[string]any{})
+	assert.False(t, matched)
+
+	cache.MarkSynced()
+	_, matched = cache.Match(identity, "", "tool", map[string]any{})
+	assert.True(t, matched)
+}
+
 func TestCacheMatchFiltersScopeAndMissingDecisionTime(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute)
+	cache := NewCache(time.Minute, time.Minute)
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	otherIdentity := Identity{Principal: "bob", AgentID: "agent"}
 	cache.Replace([]Pair{
@@ -59,7 +79,7 @@ func TestCacheMatchesSharedVectors(t *testing.T) {
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	for _, vector := range toolpattern.MatchVectors() {
 		t.Run(vector.Name, func(t *testing.T) {
-			cache := NewCache(time.Minute)
+			cache := NewCache(time.Minute, time.Minute)
 			cache.Replace([]Pair{{
 				Identity:  identity,
 				Approvals: []Record{approvedRecord("vector", vector.ToolPattern, vector.ParamsPattern, "permanent", now)},
@@ -81,7 +101,7 @@ func TestCacheUsesPrecedenceVectors(t *testing.T) {
 				require.NoError(t, err)
 				records = append(records, approvedRecord(candidate.ID, candidate.ToolPattern, candidate.ParamsPattern, "permanent", decidedAt))
 			}
-			cache := NewCache(time.Minute)
+			cache := NewCache(time.Minute, time.Minute)
 			cache.Replace([]Pair{{Identity: identity, Approvals: records}}, `"v1"`)
 			record, matched := cache.Match(identity, "", vector.ToolName, vector.Arguments)
 			require.True(t, matched)
@@ -92,7 +112,7 @@ func TestCacheUsesPrecedenceVectors(t *testing.T) {
 
 func TestCacheReservesOnceApprovalExactlyOnce(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute)
+	cache := NewCache(time.Minute, time.Minute)
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	cache.Replace([]Pair{{Identity: identity, Approvals: []Record{approvedRecord("once", "tool", map[string]string{}, "once", now)}}}, `"v1"`)
 
@@ -111,7 +131,7 @@ func TestCacheReservesOnceApprovalExactlyOnce(t *testing.T) {
 }
 
 func TestCacheReservationIsCompareAndSwap(t *testing.T) {
-	cache := NewCache(time.Minute)
+	cache := NewCache(time.Minute, time.Minute)
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	cache.Replace([]Pair{{Identity: identity, Approvals: []Record{approvedRecord("once", "tool", map[string]string{}, "once", time.Now().UTC())}}}, `"v1"`)
 
@@ -135,7 +155,7 @@ func TestCacheReservationIsCompareAndSwap(t *testing.T) {
 
 func TestCacheReplacesGlobalAndTargetedSnapshots(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute)
+	cache := NewCache(time.Minute, time.Minute)
 	alice := Identity{Principal: "alice", AgentID: "agent-a"}
 	bob := Identity{Principal: "bob", AgentID: "agent-b"}
 	cache.Replace([]Pair{
@@ -154,7 +174,7 @@ func TestCacheReplacesGlobalAndTargetedSnapshots(t *testing.T) {
 		{Identity: alice, Approvals: []Record{approvedRecord("alice-current", "tool", map[string]string{}, "permanent", now)}},
 		{Identity: bob, Approvals: []Record{approvedRecord("bob-current", "tool", map[string]string{}, "permanent", now)}},
 	}, `"v3"`)
-	cache.ReplaceForPrincipal("alice", nil)
+	assert.True(t, cache.ReplaceForPrincipal("alice", nil, `"v3"`))
 	_, matched = cache.Match(alice, "", "tool", map[string]any{})
 	assert.False(t, matched, "a targeted empty snapshot must remove the principal's pairs")
 	record, matched = cache.Match(bob, "", "tool", map[string]any{})
@@ -163,10 +183,59 @@ func TestCacheReplacesGlobalAndTargetedSnapshots(t *testing.T) {
 	assert.Equal(t, `"v3"`, cache.ETag(), "targeted reads must not advance the global sync ETag")
 }
 
+func TestReplaceForPrincipalRejectsOlderVersion(t *testing.T) {
+	now := time.Now().UTC()
+	cache := NewCache(time.Minute, time.Minute)
+	identity := Identity{Principal: "alice", AgentID: "agent"}
+	cache.Replace([]Pair{{
+		Identity:  identity,
+		Approvals: []Record{approvedRecord("current", "tool", map[string]string{}, "permanent", now)},
+	}}, `"v7"`)
+
+	applied := cache.ReplaceForPrincipal("alice", []Pair{{
+		Identity:  identity,
+		Approvals: []Record{approvedRecord("outdated", "tool", map[string]string{}, "permanent", now)},
+	}}, `"v5"`)
+	assert.False(t, applied)
+	record, matched := cache.Match(identity, "", "tool", map[string]any{})
+	require.True(t, matched)
+	assert.Equal(t, "current", record.ID)
+
+	applied = cache.ReplaceForPrincipal("alice", []Pair{{
+		Identity:  identity,
+		Approvals: []Record{approvedRecord("latest", "tool", map[string]string{}, "permanent", now)},
+	}}, `"v9"`)
+	require.True(t, applied)
+	record, matched = cache.Match(identity, "", "tool", map[string]any{})
+	require.True(t, matched)
+	assert.Equal(t, "latest", record.ID)
+}
+
+func TestParseSyncVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		etag    string
+		version int64
+		valid   bool
+	}{
+		{name: "strong quoted version", etag: ` "v7" `, version: 7, valid: true},
+		{name: "weak quoted version", etag: `W/"v8"`, version: 8, valid: true},
+		{name: "unprefixed version", etag: `"9"`, version: 9, valid: true},
+		{name: "invalid version", etag: `"vno"`, valid: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			version, valid := parseSyncVersion(test.etag)
+			assert.Equal(t, test.valid, valid)
+			assert.Equal(t, test.version, version)
+		})
+	}
+}
+
 func TestCacheEvictsInactiveSessionsAndIdlePairs(t *testing.T) {
 	idleTTL := time.Minute
 	now := time.Now().UTC()
-	cache := NewCache(idleTTL)
+	cache := NewCache(idleTTL, time.Minute)
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	cache.RecordSession("expired-session")
 	cache.Replace([]Pair{{Identity: identity, Approvals: []Record{
@@ -190,5 +259,30 @@ func TestCacheEvictsInactiveSessionsAndIdlePairs(t *testing.T) {
 	cache.mu.Unlock()
 	cache.EvictIdle()
 	_, matched = cache.Match(identity, "", "permanent-tool", map[string]any{})
+	assert.False(t, matched)
+}
+
+func TestCacheEvictsExpiredSessionBeforeRecordingRequest(t *testing.T) {
+	const sessionID = "session-a"
+	idleTTL := 10 * time.Millisecond
+	cache := NewCache(idleTTL, time.Minute)
+	identity := Identity{Principal: "alice", AgentID: "agent"}
+	key := pairKey{principal: identity.Principal, agentID: identity.AgentID}
+
+	cache.RecordSession(sessionID)
+	cache.Replace([]Pair{{Identity: identity, Approvals: []Record{
+		approvedRecord("session", "session-tool", map[string]string{}, "session", time.Now().UTC()),
+	}}}, `"v1"`)
+	cache.pairs[key].records[0].AgentSessionID = new(sessionID)
+	_, matched := cache.Match(identity, sessionID, "session-tool", map[string]any{})
+	require.True(t, matched)
+
+	time.Sleep(2 * idleTTL)
+	cache.mu.Lock()
+	cache.pairs[key].lastSeen = time.Now()
+	cache.mu.Unlock()
+
+	cache.RecordSession(sessionID)
+	_, matched = cache.Match(identity, sessionID, "session-tool", map[string]any{})
 	assert.False(t, matched)
 }

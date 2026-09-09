@@ -23,7 +23,19 @@ type Client struct {
 	requestTimeout time.Duration
 }
 
-func NewClient(baseURL string, timeout time.Duration, assertion AssertionProvider) (*Client, error) {
+type StatusError struct {
+	Operation  string
+	StatusCode int
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("approval %s returned HTTP %d", e.Operation, e.StatusCode)
+}
+
+func NewClient(baseURL string, timeout time.Duration, assertion AssertionProvider, httpClient *http.Client) (*Client, error) {
+	if httpClient == nil {
+		return nil, fmt.Errorf("approval HTTP client must not be nil")
+	}
 	if assertion == nil {
 		return nil, fmt.Errorf("approval assertion provider must not be nil")
 	}
@@ -35,7 +47,7 @@ func NewClient(baseURL string, timeout time.Duration, assertion AssertionProvide
 	parsed.RawPath = ""
 	return &Client{
 		baseURL:        parsed.String(),
-		http:           &http.Client{},
+		http:           httpClient,
 		assertion:      assertion,
 		requestTimeout: timeout,
 	}, nil
@@ -64,7 +76,7 @@ func (c *Client) Read(ctx context.Context, principal string, sessionIDs []string
 		return nil, "", err
 	}
 	if unchanged {
-		return nil, "", fmt.Errorf("approval targeted read returned unexpected HTTP %d", http.StatusNotModified)
+		return nil, "", &StatusError{Operation: "sync", StatusCode: http.StatusNotModified}
 	}
 	return pairs, etag, nil
 }
@@ -114,12 +126,12 @@ func (c *Client) read(ctx context.Context, principal string, sessionIDs []string
 
 	if resp.StatusCode == http.StatusNotModified {
 		if etag == "" {
-			return nil, "", false, fmt.Errorf("approval sync returned unexpected HTTP %d without If-None-Match", resp.StatusCode)
+			return nil, "", false, &StatusError{Operation: "sync", StatusCode: resp.StatusCode}
 		}
 		return nil, "", true, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", false, fmt.Errorf("approval sync returned HTTP %d", resp.StatusCode)
+		return nil, "", false, &StatusError{Operation: "sync", StatusCode: resp.StatusCode}
 	}
 	responseETag := resp.Header.Get("ETag")
 	if responseETag == "" {
@@ -208,7 +220,7 @@ func (c *Client) Create(ctx context.Context, subjectToken string, request Create
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("approval create returned HTTP %d", response.StatusCode)
+		return "", &StatusError{Operation: "create", StatusCode: response.StatusCode}
 	}
 
 	var decoded struct {
@@ -246,7 +258,7 @@ func (c *Client) Consume(ctx context.Context, subjectToken, approvalID string) e
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("approval consume returned HTTP %d", response.StatusCode)
+		return &StatusError{Operation: "consume", StatusCode: response.StatusCode}
 	}
 	return nil
 }

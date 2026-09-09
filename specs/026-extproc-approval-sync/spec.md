@@ -39,6 +39,11 @@
 - Q: Planning also found that FR-015's "ties broken by later decision time" has no data source — the `GET /api/approvals` summary carries no timestamp, so every candidate would rank with a zero `DecidedAt` and ties would silently fall through to approval-ID ordering. How is decision time obtained? → A: The broker projects the existing `ToolApproval.ApprovedAt` into the sync summary as an additive optional `approved_at` (RFC 3339), absent for pending and denied records. ExtProc treats an `approved` record without it as unmatchable rather than ranking it with a zero timestamp. This is in scope for this feature (FR-018).
 - Q: Should these two broker changes be deferred to a separate feature, or implemented alongside the ExtProc work? → A: Implemented with this feature. Both are additive projections of values the broker already computes, neither needs a migration or new configuration, and deferring them would leave feature 026 unimplementable. Stakeholder confirmation for the API change is recorded here per Constitution Principle X.
 
+### Session 2026-09-09
+
+- Q: What observability does approval gating require? → A: ExtProc increments `extproc.approval.gate.decisions` for every gate outcome. The counter has an `outcome` attribute. ExtProc creates an `extproc.approval.gate` span for every gate evaluation and records the same outcome. The `extproc.approval.sync_age` gauge reports elapsed seconds since the last successful approval synchronization. These signals supersede the structured-logs-only answer from 2026-04-10.
+
+
 ## Overview
 
 This feature wires the OPA authorization engine (introduced in feature 020) to the identity broker's approval service (built in feature 024), completing the Tier 2 runtime authorization loop described in the overarching tool authorization design.
@@ -47,7 +52,7 @@ Today, the OPA pipeline in ExtProc already receives `context.granted_permission_
 
 1. **Populates OPA's input with granted permission sets** from the RFC 8693 token-exchange response snapshot (feature 020's existing `granted_permission_sets`). Approval records are **not** passed into OPA — the local approval cache (synced from `GET /api/approvals`) is matched by ExtProc *outside* the policy (glob `tool_pattern`/`params_pattern`, per the OPA Decision Flow and design §4.7–4.8), so policies stay approval-agnostic and only decide the *requirement* (`allow` / `deny` / `approval_required`).
 2. **Activates the `approval_required` decision** in the OPA model (`allow` / `deny` / `approval_required`), teaching ExtProc to act on each: forward the exchanged token on `allow`, create a pending approval and return a `URLElicitationRequiredError` on `approval_required`, or hard-deny. `ciba_required` (Tier 3) is recognized but treated as `deny` in this feature and deferred (see Clarifications).
-3. **Keeps the approval cache current** via a background long-poll goroutine with ETag-based incremental updates, so that when a user approves a tool call in the broker UI, the agent's next retry succeeds without a broker round-trip.
+3. **Keeps the approval cache current** via a background long-poll goroutine with ETag-based incremental updates. ExtProc authorizes cached approvals only while their state is fresh (FR-019).
 
 Together, these changes mean that MCP server users can: (a) have tool calls evaluated against their actual consent-granted permission sets, (b) be prompted via a URL when a tool requires explicit approval, and (c) resume their agentic session immediately after granting approval — without restarting the session or manually re-issuing the tool call.
 
@@ -65,14 +70,14 @@ flowchart TD
     E -->|"deny"| F["Discard exchanged token<br/>Return 403 tool result error<br/>(token never forwarded)"]
     E -->|"allow"| G["Forward exchanged token<br/>to MCP server"]
 
-    E -->|"approval_required"| H{"Local cache hit?<br/>(permanent / session / once)"}
-    H -->|"permanent match"| G
-    H -->|"session match"| G
-    H -->|"once match"| I["Reserve via CAS<br/>(at-most-once within instance)"]
+    E -->|"approval_required"| H{"Fresh cache match?<br/>(permanent / session / once)"}
+    H -->|"fresh permanent match"| G
+    H -->|"fresh session match"| G
+    H -->|"fresh once match"| I["Reserve via CAS<br/>(at-most-once within instance)"]
     I --> I_sync["POST /api/approvals/:id/consume<br/>(sync — before request proceeds)"]
     I_sync -->|"200 OK"| G
     I_sync -->|"consume fails"| F
-    H -->|"no match"| M2["Targeted GET /api/approvals?principal<br/>(FR-005 authoritative broker read)"]
+    H -->|"no fresh match"| M2["Targeted GET /api/approvals?principal<br/>(FR-005 authoritative broker read)"]
     M2 -->|"match — re-evaluate"| H
     M2 -->|"still no match"| J["POST /api/approvals<br/>subject_token + X-Client-Assertion"]
     J --> K["Return URLElicitationRequiredError<br/>(-32042) with approval_url to agent"]
@@ -163,7 +168,7 @@ An agent calls a medium-risk tool that requires human approval. ExtProc detects 
 
 3. **Given** the background long-poll goroutine has synced a session-scoped approval for `(principal, agent, create_pull_request)`, **When** the agent calls `create_pull_request` a second time in the same session, **Then** ExtProc finds the session approval in its local cache and forwards the (already-exchanged) token to the MCP server — no broker call for approval is made.
 
-4. **Given** a permanent approval exists in the cache for `(principal, agent, create_pull_request)`, **When** the agent calls `create_pull_request` in any session (sessions identified by the value of `sessions.extraction.http_header`, default `Mcp-Session-Id`), **Then** the tool call proceeds without any approval creation or broker round-trip.
+4. **Given** a permanent approval for `(principal, agent, create_pull_request)` was synchronized within `tool_approvals.max_staleness`, **When** the agent calls `create_pull_request` in any session, **Then** the tool call proceeds without approval creation or a broker round-trip.
 
 5. **Given** a one-time (`once`) approval exists in the cache, **When** the agent calls the matching tool, **Then** ExtProc reserves the approval in the local cache via compare-and-swap (best-effort at-most-once within this instance), calls `POST /api/approvals/:id/consume` synchronously with the subject token in the `Authorization` header and no request body, and forwards the token **only** after a confirmed `200 OK` (the broker verifies the consuming principal matches the approval owner and marks it consumed idempotently). On the agent's next call for the same tool, the consumed approval is not matched and a new approval request is issued. In a multi-replica deployment the consume is idempotent (`200 OK`); cross-replica at-most-once is not guaranteed, and a failed consume is not forwarded (FR-008).
 
@@ -227,6 +232,9 @@ The background long-poll goroutine maintains a single persistent `GET /api/appro
 
 4. **Given** the broker restarts and loses in-memory ETag state, **When** ExtProc reconnects with a stale ETag, **Then** the broker returns the full current state (treating the ETag as unknown) and ExtProc refreshes the full cache.
 
+5. **Given** a permanent approval authorized a matching call and the last successful cache synchronization occurred at time `T`, **When** the broker revokes that approval and ExtProc receives no newer accepted snapshot, **Then** a call after `T + tool_approvals.max_staleness` does not authorize from cache. ExtProc performs FR-005. A confirmed miss elicits approval. A failed read or an older targeted ETag returns a hard deny.
+
+
 ---
 
 ### User Story 5 — Broker Publishes Approval-Scoping Identity and Decision Time (Priority: P1)
@@ -288,13 +296,13 @@ ExtProc MUST initiate a non-conditional `GET /api/approvals` with the configured
 ExtProc MUST run exactly one background goroutine that continuously polls `GET /api/approvals` using the client assertion. It MUST:
 - Use the last-known ETag in `If-None-Match` on each poll.
 - Pass `X-Long-Poll-Timeout: {tool_approvals.long_poll_timeout_seconds}` (default: 30) to enable server-side hold.
-- On `200 OK`: atomically update all changed `(principal, agent)` pairs and store the new ETag.
-- On `304 Not Modified`: immediately re-poll with the same ETag.
+- On `200 OK`: atomically replace the complete response scope, store the new ETag, and record the synchronization time for each returned pair.
+- On `304 Not Modified`: refresh `lastSync`. Then immediately re-poll with the same ETag.
 - On error: apply exponential back-off (initial 1s, max 60s) before retrying.
 - Include the currently-active `agent_session_id` query parameter(s) so the broker re-delivers session-persistence approvals for live sessions; permanent approvals are returned unconditionally (feature 024 returns session-scoped approvals only when their `agent_session_id` is supplied).
 
 ### FR-005: Authoritative Broker Read on an Approval Match-Miss
-When OPA returns `approval_required` and no cached approval matches the invocation — whether the `(principal, agent)` pair is **absent** from the cache OR **present but stale** (the pair is cached but no record matches the concrete `(tool_name, arguments)`) — ExtProc MUST perform a synchronous, client-assertion `GET /api/approvals?principal={principal}` (including the active `agent_session_id` query parameter(s)) and re-run the FR-015 match against the refreshed records **before** deciding to create. A failed or malformed read is a hard deny: ExtProc MUST NOT create an approval from an unconfirmed miss. Only a successful read that contains no match proceeds to FR-006.
+When OPA returns `approval_required` and no fresh cached approval matches the invocation — because the `(principal, agent)` pair is absent, no record matches the concrete `(tool_name, arguments)`, or its state is stale under FR-019 — ExtProc MUST perform a synchronous, client-assertion `GET /api/approvals?principal={principal}`. It includes active `agent_session_id` query parameters and re-runs FR-015 before creation. A failed, malformed, or older-ETag read is a hard deny. ExtProc MUST NOT create an approval from an unconfirmed miss. Only a successful current read without a match proceeds to FR-006.
 
 ### FR-006: Approval Creation on a Confirmed Miss
 When OPA returns `approval_required` and, after the FR-005 authoritative broker read, still no matching approval exists, ExtProc MUST:
@@ -334,12 +342,13 @@ The OPA input MUST include, under `context`, the agent-session identifier `input
 ExtProc MUST NOT call `POST /api/approvals` when OPA returns `action: "deny"`. ExtProc does **not** inspect *why* the policy denied: a Tier-1 permission-set boundary violation surfaces as an ordinary `deny` (the policy maps an ungranted permission set to `deny`, per feature 020) and is indistinguishable at the ExtProc layer from any other `deny`. Detection is therefore purely `action == "deny"` → return the hard deny immediately and create nothing. Only `approval_required` reaches the approval-creation path.
 
 ### FR-015: Glob/Wildcard Approval Matching
-When matching an incoming tool call against cached approval records, ExtProc MUST evaluate each record's `tool_pattern` (string) and `params_pattern` (map of param name → canonical glob) using the **shared `internal/toolpattern` package** (ADR 035) — which ExtProc imports directly, the one sanctioned exception to ExtProc's broker-package isolation, so the broker and ExtProc cannot interpret a decision differently. An approval record matches a tool call when:
+When matching an incoming tool call against cached approval records, ExtProc MUST use the shared `internal/domain/approval/toolpattern` package for `tool_pattern` and `params_pattern` matching. ADR 035 permits this precise domain import. An approval record matches a tool call when:
 1. `tool_name` matches `tool_pattern` (`*` glob with `\*` as a literal asterisk; e.g. `create_pull_request`, `issues.*`, `*`), AND
 2. every constrained key in `params_pattern` glob-matches the canonicalized argument value (`toolpattern.Canonical`); unconstrained params are implicitly `*`.
-When several records match, the most specific wins (exact tool > wildcard tool; then more constrained params; then fewer wildcards; ties broken by later decision time) via `toolpattern.SelectBest`. Matching, canonicalization, and precedence are pinned by the embedded `internal/toolpattern/vectors.json`, which both broker and ExtProc tests consume, so the two implementations cannot drift.
 
-> **Broker dependency**: glob matching consumes the `tool_pattern` + `params_pattern` fields added to the `GET /api/approvals` sync summary by the `approval-glob-patterns` branch (broker feature 024): ADR 035 (shared matcher), `specs/024-approval-api-ui/glob-approval-matching.md`, migration `030_add_approval_patterns`, and the `internal/toolpattern` package (imported by ExtProc). Until those ship, `params_pattern` is the exact canonical arguments and matching degrades to exact `tool_name` + arguments.
+`Cache.Match` owns candidate ranking and selection in `internal/extproc/approval`. It uses the ExtProc-local `selectBest` ranker after the shared package performs individual pattern matches. The ranker selects the most specific record (exact tool, more constrained parameters, fewer wildcards, then later decision time). Shared match and canonicalization vectors are in `internal/domain/approval/toolpattern/vectors.json`. ExtProc maintains its precedence vectors beside `Cache.Match`.
+
+> **Broker dependency**: Glob matching consumes `tool_pattern` and `params_pattern` from the `GET /api/approvals` summary. The `approval-glob-patterns` branch adds these fields. Its dependencies are ADR 035, `specs/024-approval-api-ui/glob-approval-matching.md`, migration `030_add_approval_patterns`, and `internal/domain/approval/toolpattern`. Until that branch ships, `params_pattern` contains exact canonical arguments and matching is exact by tool name and arguments.
 
 ### FR-016: Batch Request Approval Handling
 Elicitation is a single-tool-call interaction; ExtProc MUST NOT create approvals or return `URLElicitationRequiredError` inside a batched (JSON array) request. Per feature 020 FR-023 (each message evaluated independently, deny-wins), if any message in a batch evaluates to `approval_required` (or `ciba_required`, which is treated as `deny`), ExtProc MUST deny the entire batch with a 403 whose reasons instruct the agent to re-issue that specific tool call as a standalone (non-batch) request to obtain the approval URL.
@@ -366,9 +375,19 @@ record delivered without `approved_at` as **unmatchable** and log it as a broker
 it MUST NOT rank such a record with a zero timestamp, which would silently resolve ties by approval
 ID ordering instead of user intent.
 
+### FR-019: Bounded Approval Cache Freshness
+ExtProc MUST authorize a cached approval only when the more recent of `lastSync` and the `(principal, agent)` pair's `syncedAt` is nonzero and within `tool_approvals.max_staleness`. The cache or pair is stale when this value is zero or older than this duration.
+
+When the cache or pair is stale, ExtProc MUST perform the FR-005 authoritative read before it authorizes or creates an approval. If that read fails or is malformed, ExtProc MUST deny and MUST NOT create an approval.
+
+ExtProc MUST reject a targeted-read ETag that is older than the cache's known ETag. It leaves the cache unchanged and returns a hard deny. It MUST NOT create an approval from that response.
+
+For every gate outcome, ExtProc MUST increment `extproc.approval.gate.decisions` with an `outcome` attribute and create an `extproc.approval.gate` span with the same attribute. ExtProc MUST publish the `extproc.approval.sync_age` gauge as elapsed seconds from `Cache.lastSync`.
+
+
 ## Key Entities
 
-- **Approval Cache**: In-memory per-ExtProc-process store keyed by `(principal, agent_id)` pairs. Contains approval records `(tool_pattern, params_pattern, persistence, status, consumed, agent_session_id)` as delivered by `GET /api/approvals`. Granted permission sets are **not** cached here — they are read from the token-exchange response snapshot (feature 020). `tool_pattern` is a string glob (e.g. `create_pull_request`, `issues.*`, `*`) and `params_pattern` is a `map[string]string` of param → canonical glob (e.g. `{"repo":"acme/*"}`); an approval with a fully-constrained `params_pattern` matches only its exact arguments. Matching uses the shared `internal/toolpattern` package (ADR 035).
+- **Approval Cache**: In-memory per-ExtProc-process store keyed by `(principal, agent_id)` pairs. It stores records and their per-pair synchronization times. ExtProc authorizes records only when the pair is fresh under `tool_approvals.max_staleness` (FR-019). Granted permission sets are not cached. The shared `internal/domain/approval/toolpattern` package performs single-pattern matching. `Cache.Match` in `internal/extproc/approval` owns candidate selection (ADR 035).
 - **Long-Poll Goroutine**: Single background goroutine per ExtProc process that maintains one persistent HTTP connection to `GET /api/approvals`. Carries the broker's `ETag` across calls. Updates the approval cache atomically on change delivery.
 - **OPA Decision**: The `result.action` field: `allow` | `deny` | `approval_required` (Tier 2, active in this feature) | `ciba_required` (Tier 3, recognized but treated as `deny` — deferred). Paired with optional `approval_context` (tool description, risk level, default persistence) and `reasons` (for deny).
 - **Subject Token**: The per-request Bearer token from the request's `Authorization` header, bound to both the principal (user) and agent. Sent in `Authorization: Bearer` on both approval creation and consume so the broker can extract both identities without explicit parameters.
@@ -383,7 +402,7 @@ ID ordering instead of user intent.
 - The source of granted permission sets for OPA evaluation is feature 020's `input.context.granted_permission_sets` (populated from the RFC 8693 token-exchange response, with `granted_permission_sets_available`). The approval cache is consulted by ExtProc **outside** OPA (after an `approval_required` decision — FR-002/FR-015); approval records are **not** placed in the OPA input. The `granted_permission_sets` placeholder returned by `GET /api/approvals` is not consumed by OPA.
 - Permission sets are identified by stable UUIDs in both the broker database and OPA policy data. No permission set name-to-ID resolution is required at the ExtProc layer.
 - Tier 3 / CIBA is out of scope for this feature: ExtProc treats `ciba_required` as `deny` (deferred) and creates no CIBA approval. Broker-side CIBA relay (backchannel authentication with an upstream IdP) also remains out of scope.
-- This feature introduces two new ExtProc config sections. `tool_approvals.*`: `tool_approvals.url` (required — the identity broker base URL), `tool_approvals.long_poll_timeout_seconds` (int, default: 30), `tool_approvals.approval_cache_idle_ttl` (duration, default: `5m`). The `tool_approvals` name was chosen over `broker` to avoid confusion with the broker service already referenced implicitly via the token endpoint config. `sessions.extraction.*`: `sessions.extraction.http_header` (string, default: `"Mcp-Session-Id"`) — the HTTP request header whose value is used as the session identifier for scoping session-scoped approvals. The `sessions.extraction` namespace is designed to accommodate future extraction strategies (e.g. JWT claim, cookie) without breaking the config schema.
+- This feature introduces two new ExtProc config sections. `tool_approvals.*` contains `enabled`, `url`, `long_poll_timeout_seconds` (default: 30), `max_staleness` (default: `60s`), `approval_cache_idle_ttl` (default: `5m`), and `request_timeout` (default: `5s`). The `max_staleness` value must cover the long-poll timeout plus the request timeout. `sessions.extraction.http_header` defaults to `Mcp-Session-Id` and identifies agent sessions. The configuration contract defines all fields and validation.
 - When ExtProc is deployed with multiple replicas, each instance independently maintains its own approval cache and long-poll connection. The broker must support N concurrent long-poll waiters. Replicas do not share cache state or coordinate approval decisions.
 - Tool-to-permission-set mapping is defined in OPA Rego data (the `tool_permissions` map), not in the broker database. ExtProc does not query the broker for this mapping.
 - Risk scoring and auto-approval based on behavioral signals (Section 4.6 of the design) are out of scope. OPA policy data alone determines the approval requirement level.
@@ -396,13 +415,14 @@ ID ordering instead of user intent.
 - **SC-001**: In a deterministic gate test using a controllable broker client, the measured ExtProc processing interval — request receipt to response minus the client call's recorded duration — returns a `URLElicitationRequiredError` (-32042) containing a valid approval URL within 500ms.
 - **SC-002**: After a user approves a pending tool call in the broker UI, the agent's retry succeeds without a new approval prompt within 2 seconds of the user clicking Approve (measured from approval write in broker to cache sync propagation to ExtProc).
 - **SC-003**: 100% of tool calls for which OPA returns `deny` (Tier 1 or Tier 2) result in no approval record being created in the broker.
-- **SC-004**: A permanently approved tool call for `(principal, agent, tool_pattern)` never generates a broker round-trip on the hot path — it is served entirely from the local cache after the initial bootstrap.
+- **SC-004**: A permanently approved tool call for `(principal, agent, tool_pattern)` generates no broker round-trip while its cache pair remains fresh within `tool_approvals.max_staleness`.
 - **SC-005**: ExtProc startup with a reachable broker completes cache bootstrap and is ready to serve requests within 5 seconds.
 - **SC-006**: A one-time (`once`) approval is consumed after a single use — the second call for the same tool by the same agent triggers a new approval prompt.
 - **SC-007**: The long-poll goroutine reconnects automatically within 5 seconds of a broker restart or network interruption, with no manual intervention or ExtProc restart required.
 - **SC-008**: When an explicit session-close signal is available, session-scoped approvals are evicted from the cache within 1 second of the MCP session closing, ensuring they cannot be matched by a new session; absent an explicit signal, eviction occurs within the configured idle-timeout window (FR-010).
 - **SC-009**: 100% of successful RFC 8693 token exchanges that resolve a principal and agent return both `principal` and `agent_id`, matching the values the broker used internally for grant lookup; 100% of `approval_required` decisions reached without them are denied without a cache lookup or approval creation.
 - **SC-010**: 100% of `approved` records returned by `GET /api/approvals` carry `approved_at`, and when two equally-specific records match one tool call the later-approved record wins regardless of approval-ID ordering.
+- **SC-011**: If a permanent approval is revoked after the last successful synchronization, ExtProc stops authorizing it no later than `tool_approvals.max_staleness` after that synchronization.
 
 ## Out of Scope
 

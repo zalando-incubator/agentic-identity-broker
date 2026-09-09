@@ -35,7 +35,9 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
 
@@ -60,6 +62,7 @@ type TestEnvironment struct {
 	grpcAddress            string
 	exchanger              *extprocserver.TokenExchanger
 	approvalCache          *approval.Cache
+	approvalClient         *approval.Client
 	approvalSyncCancel     context.CancelFunc
 	approvalSyncDone       chan struct{}
 	ownsMockApprovalBroker bool
@@ -97,15 +100,33 @@ func (e *TestEnvironment) Start() {
 	Expect(err).NotTo(HaveOccurred(), "failed to create token exchanger")
 	e.exchanger = exchanger
 
-	var svc *extprocserver.Server
+	var authorizer authorization.Authorizer
 	if e.Config.Authorization.Enabled {
-		authorizer, authErr := NewOPAAuthorizer(e.Config, e.logger)
+		var authErr error
+		authorizer, authErr = NewOPAAuthorizer(e.Config, e.logger)
 		Expect(authErr).NotTo(HaveOccurred(), "failed to create OPA authorizer")
+	}
+
+	var approvalGate extprocserver.ApprovalGate
+	if e.Config.ToolApprovals.Enabled {
+		approvalHTTPClient, err := httpclient.New(e.Config, 0)
+		Expect(err).NotTo(HaveOccurred(), "failed to create approval HTTP client")
+		client, err := approval.NewClient(e.Config.ToolApprovals.URL, e.Config.ToolApprovals.RequestTimeout, exchanger, approvalHTTPClient)
+		Expect(err).NotTo(HaveOccurred(), "failed to create approval client")
+		e.approvalClient = client
+		e.approvalCache = approval.NewCache(e.Config.ToolApprovals.ApprovalCacheIdleTTL, e.Config.ToolApprovals.MaxStaleness)
+		approvalGate = approval.NewGate(e.approvalCache, client)
+	}
+
+	var svc *extprocserver.Server
+	switch {
+	case e.Config.ToolApprovals.Enabled:
+		svc = extprocserver.NewServerWithApprovalGate(e.Config, exchanger, authorizer, approvalGate, e.logger)
+	case authorizer != nil:
 		svc = extprocserver.NewServerWithAuthorizer(e.Config, exchanger, authorizer, e.logger)
-	} else {
+	default:
 		svc = extprocserver.NewServer(e.Config, exchanger, e.logger)
 	}
-	e.configureApprovalGate(svc, exchanger)
 	e.startGRPCServer(svc)
 	e.startApprovalSync()
 }
@@ -133,27 +154,13 @@ func (e *TestEnvironment) startMockServers() {
 	e.Config.OAuth2.TLS.AllowHTTP = true
 }
 
-// configureApprovalGate composes the ExtProc approval client and cache exactly as
-// the standalone command does, while retaining the test-owned lifecycle controls.
-func (e *TestEnvironment) configureApprovalGate(svc *extprocserver.Server, exchanger *extprocserver.TokenExchanger) {
-	if !e.Config.ToolApprovals.Enabled {
-		return
-	}
-	client, err := approval.NewClient(e.Config.ToolApprovals.URL, e.Config.ToolApprovals.RequestTimeout, exchanger)
-	Expect(err).NotTo(HaveOccurred(), "failed to create approval client")
-	e.approvalCache = approval.NewCache(e.Config.ToolApprovals.ApprovalCacheIdleTTL)
-	svc.SetApprovalGate(approval.NewGate(e.approvalCache, client))
-}
-
 // startApprovalSync begins the production sync lifecycle after the gRPC listener
 // is ready, so a slow bootstrap can never delay test service availability.
 func (e *TestEnvironment) startApprovalSync() {
 	if !e.Config.ToolApprovals.Enabled {
 		return
 	}
-	client, err := approval.NewClient(e.Config.ToolApprovals.URL, e.Config.ToolApprovals.RequestTimeout, e.exchanger)
-	Expect(err).NotTo(HaveOccurred(), "failed to create approval sync client")
-	syncer := approval.NewSyncer(e.approvalCache, client, time.Duration(e.Config.ToolApprovals.LongPollTimeoutSeconds)*time.Second, e.logger)
+	syncer := approval.NewSyncer(e.approvalCache, e.approvalClient, time.Duration(e.Config.ToolApprovals.LongPollTimeoutSeconds)*time.Second, e.logger)
 	e.approvalSyncDone = make(chan struct{})
 	syncContext, cancel := context.WithCancel(context.Background())
 	e.approvalSyncCancel = cancel

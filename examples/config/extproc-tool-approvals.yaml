@@ -28,6 +28,8 @@ tool_approvals:
   long_poll_timeout_seconds: 30
   approval_cache_idle_ttl: 5m
   request_timeout: 5s
+  # Must cover the long-poll timeout plus the request timeout.
+  max_staleness: 60s
 
 sessions:
   extraction:

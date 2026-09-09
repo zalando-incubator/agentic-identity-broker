@@ -91,6 +91,7 @@ type ToolApprovalsConfig struct {
 	LongPollTimeoutSeconds int           `mapstructure:"long_poll_timeout_seconds"`
 	ApprovalCacheIdleTTL   time.Duration `mapstructure:"approval_cache_idle_ttl"`
 	RequestTimeout         time.Duration `mapstructure:"request_timeout"`
+	MaxStaleness           time.Duration `mapstructure:"max_staleness"`
 }
 
 type SessionsConfig struct {

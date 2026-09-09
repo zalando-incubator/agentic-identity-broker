@@ -87,6 +87,7 @@ func RegisterFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("tool_approvals.long_poll_timeout_seconds", 0, "approval long-poll timeout in seconds (default: 30)")
 	cmd.Flags().Duration("tool_approvals.approval_cache_idle_ttl", 0, "approval cache idle TTL (default: 5m)")
 	cmd.Flags().Duration("tool_approvals.request_timeout", 0, "approval request timeout (default: 5s)")
+	cmd.Flags().Duration("tool_approvals.max_staleness", 0, "maximum tolerated approval-cache staleness before cached approvals stop authorizing (default: 60s)")
 	cmd.Flags().String("sessions.extraction.http_header", "", "agent session HTTP header (default: Mcp-Session-Id)")
 	// Telemetry flags
 	cmd.Flags().Bool("telemetry.enabled", false, "enable OpenTelemetry (default: false)")
@@ -289,6 +290,10 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 			func() interface{} { d, _ := cmd.Flags().GetDuration("tool_approvals.request_timeout"); return d },
 		},
 		{
+			"tool_approvals.max_staleness", "tool_approvals.max_staleness",
+			func() interface{} { d, _ := cmd.Flags().GetDuration("tool_approvals.max_staleness"); return d },
+		},
+		{
 			"sessions.extraction.http_header", "sessions.extraction.http_header",
 			func() interface{} { s, _ := cmd.Flags().GetString("sessions.extraction.http_header"); return s },
 		},
@@ -369,6 +374,7 @@ func applyDefaults(v *viper.Viper) {
 	v.SetDefault("tool_approvals.long_poll_timeout_seconds", 30)
 	v.SetDefault("tool_approvals.approval_cache_idle_ttl", "5m")
 	v.SetDefault("tool_approvals.request_timeout", "5s")
+	v.SetDefault("tool_approvals.max_staleness", "60s")
 	v.SetDefault("sessions.extraction.http_header", "Mcp-Session-Id")
 	applyTelemetryDefaults(v)
 }

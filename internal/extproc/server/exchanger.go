@@ -5,8 +5,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,11 +22,11 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/sony/gobreaker/v2"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 )
 
 // tokenCacheKey uniquely identifies a cached token by subject + resource.
@@ -169,7 +166,7 @@ func NewTokenExchanger(cfg *extprocconfig.Config, logger *slog.Logger) (*TokenEx
 		return nil, fmt.Errorf("config must not be nil")
 	}
 
-	httpClient, err := buildHTTPClient(cfg)
+	httpClient, err := httpclient.New(cfg, cfg.OAuth2.ExchangeTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("building HTTP client: %w", err)
 	}
@@ -601,40 +598,3 @@ func clientCredentialsScopes(configured []string) []string {
 	return filtered
 }
 
-// buildHTTPClient constructs an http.Client respecting the TLS configuration.
-// Supports InsecureSkipVerify and CaBundlePath from the TLS config block.
-// Returns an error if CaBundlePath is set but the file cannot be read or parsed.
-func buildHTTPClient(cfg *extprocconfig.Config) (*http.Client, error) {
-	tlsCfg := &tls.Config{
-		InsecureSkipVerify: cfg.OAuth2.TLS.InsecureSkipVerify, // #nosec G402 -- TLS verification is disabled only by explicit operator configuration; the default is false.
-	}
-
-	if cfg.OAuth2.TLS.CaBundlePath != "" {
-		pemData, err := os.ReadFile(cfg.OAuth2.TLS.CaBundlePath)
-		if err != nil {
-			return nil, fmt.Errorf("reading ca_bundle_path %q: %w", cfg.OAuth2.TLS.CaBundlePath, err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pemData) {
-			return nil, fmt.Errorf("ca_bundle_path %q contains no valid PEM certificates", cfg.OAuth2.TLS.CaBundlePath)
-		}
-		tlsCfg.RootCAs = pool
-	}
-
-	transport := &http.Transport{
-		TLSClientConfig: tlsCfg,
-	}
-
-	// Wrap with otelhttp for automatic span creation on outbound requests.
-	// otelhttp resolves the TracerProvider lazily (from otel.GetTracerProvider() at
-	// request time, not construction time), so this transport correctly picks up
-	// provider changes made after construction — including E2E test global swaps.
-	tracedTransport := otelhttp.NewTransport(transport)
-
-	// http.Client.Timeout is the hard deadline for the entire request lifecycle.
-	// doExchange also applies context.WithTimeout per call; both use ExchangeTimeout.
-	return &http.Client{
-		Timeout:   cfg.OAuth2.ExchangeTimeout,
-		Transport: tracedTransport,
-	}, nil
-}

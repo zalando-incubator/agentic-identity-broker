@@ -482,6 +482,7 @@ func startApprovalEnvironmentWithSessionHeader(broker *bootstrap.MockApprovalBro
 		Enabled:                true,
 		LongPollTimeoutSeconds: 30,
 		ApprovalCacheIdleTTL:   idleTTL,
+		MaxStaleness:           time.Minute,
 		RequestTimeout:         time.Second,
 	}
 	cfg.Sessions.Extraction.HTTPHeader = sessionHeader

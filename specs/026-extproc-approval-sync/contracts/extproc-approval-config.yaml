@@ -29,6 +29,11 @@ tool_approvals:
   # Env: EXTPROC_TOOL_APPROVALS_LONG_POLL_TIMEOUT_SECONDS
   long_poll_timeout_seconds: 30
 
+  # Maximum age of cached approval state that can authorize a tool call (FR-019).
+  # It must be positive and at least the long-poll timeout plus the request timeout.
+  # Env: EXTPROC_TOOL_APPROVALS_MAX_STALENESS
+  max_staleness: 60s
+
   # A (principal, agent_id) cache pair with no requests for this long is evicted (FR-010).
   # Dropping a pair also drops any session-scoped approvals it held (FR-009).
   # Must be > 0.
@@ -78,6 +83,7 @@ sessions:
 # | tool_approvals.enabled                      | false             | no                  |
 # | tool_approvals.url                          | ""                | yes, when enabled   |
 # | tool_approvals.long_poll_timeout_seconds    | 30                | no                  |
+# | tool_approvals.max_staleness                | 60s               | no                  |
 # | tool_approvals.approval_cache_idle_ttl      | 5m                | no                  |
 # | tool_approvals.request_timeout              | 5s                | no                  |
 # | sessions.extraction.http_header             | "Mcp-Session-Id"  | no                  |
@@ -100,11 +106,14 @@ sessions:
 #
 # V4. tool_approvals.long_poll_timeout_seconds must be in [1, 120].
 #
-# V5. tool_approvals.approval_cache_idle_ttl must be > 0.
+# V5. tool_approvals.max_staleness must be positive and at least
+#     `tool_approvals.long_poll_timeout_seconds * time.Second + tool_approvals.request_timeout`.
 #
-# V6. tool_approvals.request_timeout must be > 0.
+# V6. tool_approvals.approval_cache_idle_ttl must be > 0.
 #
-# V7. sessions.extraction.http_header must be non-empty and a valid HTTP field name
+# V7. tool_approvals.request_timeout must be > 0.
+#
+# V8. sessions.extraction.http_header must be non-empty and a valid HTTP field name
 #     (RFC 9110 token). It is validated whenever set, independently of tool_approvals.enabled,
 #     because it also feeds input.context.agent_session_id for policy authors.
 

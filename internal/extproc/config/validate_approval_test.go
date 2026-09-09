@@ -19,7 +19,7 @@ result := {"action": "deny"}`), 0o600))
 	valid := func() *config.Config {
 		cfg := validConfig()
 		cfg.Authorization = config.AuthorizationConfig{Enabled: true, Policy: config.PolicyConfig{Path: policyPath, Package: "aib.extproc.authz", Decision: "result"}, DefaultDecision: "deny", EvaluationTimeout: time.Second, MaxBodySize: 1}
-		cfg.ToolApprovals = config.ToolApprovalsConfig{Enabled: true, URL: "https://broker.example.com/", LongPollTimeoutSeconds: 30, ApprovalCacheIdleTTL: time.Minute, RequestTimeout: time.Second}
+		cfg.ToolApprovals = config.ToolApprovalsConfig{Enabled: true, URL: "https://broker.example.com/", LongPollTimeoutSeconds: 30, ApprovalCacheIdleTTL: time.Minute, RequestTimeout: time.Second, MaxStaleness: time.Minute}
 		cfg.Sessions.Extraction.HTTPHeader = "Mcp-Session-Id"
 		return cfg
 	}
@@ -35,6 +35,9 @@ result := {"action": "deny"}`), 0o600))
 		{"bounds poll timeout", func(c *config.Config) { c.ToolApprovals.LongPollTimeoutSeconds = 121 }, "long_poll_timeout_seconds"},
 		{"requires idle TTL", func(c *config.Config) { c.ToolApprovals.ApprovalCacheIdleTTL = 0 }, "approval_cache_idle_ttl"},
 		{"requires request timeout", func(c *config.Config) { c.ToolApprovals.RequestTimeout = 0 }, "request_timeout"},
+		{"requires positive max staleness", func(c *config.Config) { c.ToolApprovals.MaxStaleness = 0 }, "tool_approvals.max_staleness must be a positive duration"},
+		{"requires max staleness to cover a long poll", func(c *config.Config) { c.ToolApprovals.MaxStaleness = 30 * time.Second }, "tool_approvals.max_staleness must be at least tool_approvals.long_poll_timeout_seconds plus tool_approvals.request_timeout"},
+		{"requires non-empty session header", func(c *config.Config) { c.Sessions.Extraction.HTTPHeader = "" }, "sessions.extraction.http_header must be a non-empty valid HTTP field name"},
 		{"validates session header", func(c *config.Config) { c.Sessions.Extraction.HTTPHeader = "bad header" }, "http_header"},
 	}
 	for _, tt := range tests {

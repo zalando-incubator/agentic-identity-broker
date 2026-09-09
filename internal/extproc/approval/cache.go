@@ -3,6 +3,8 @@ package approval
 import (
 	"log/slog"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,30 +39,47 @@ type pairKey struct {
 type pairEntry struct {
 	records  []Record
 	lastSeen time.Time
+	syncedAt time.Time
 }
 
 type Cache struct {
-	mu       sync.RWMutex
-	pairs    map[pairKey]*pairEntry
-	sessions map[string]time.Time
-	etag     string
-	idleTTL  time.Duration
+	mu           sync.RWMutex
+	pairs        map[pairKey]*pairEntry
+	sessions     map[string]time.Time
+	etag         string
+	lastSync     time.Time
+	createdAt    time.Time
+	idleTTL      time.Duration
+	maxStaleness time.Duration
 }
 
-func NewCache(idleTTL time.Duration) *Cache {
+func NewCache(idleTTL, maxStaleness time.Duration) *Cache {
+	now := time.Now()
 	return &Cache{
-		pairs:    make(map[pairKey]*pairEntry),
-		sessions: make(map[string]time.Time),
-		idleTTL:  idleTTL,
+		pairs:        make(map[pairKey]*pairEntry),
+		sessions:     make(map[string]time.Time),
+		createdAt:    now,
+		idleTTL:      idleTTL,
+		maxStaleness: maxStaleness,
 	}
+}
+
+func (c *Cache) freshLocked(entry *pairEntry, now time.Time) bool {
+	freshest := c.lastSync
+	if entry.syncedAt.After(freshest) {
+		freshest = entry.syncedAt
+	}
+	return !freshest.IsZero() && now.Sub(freshest) <= c.maxStaleness
 }
 
 func (c *Cache) RecordSession(sessionID string) {
 	if sessionID == "" {
 		return
 	}
+	now := time.Now()
 	c.mu.Lock()
-	c.sessions[sessionID] = time.Now()
+	c.evictIdleLocked(now)
+	c.sessions[sessionID] = now
 	c.mu.Unlock()
 }
 
@@ -80,6 +99,23 @@ func (c *Cache) ETag() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.etag
+}
+
+func (c *Cache) MarkSynced() {
+	c.mu.Lock()
+	c.lastSync = time.Now()
+	c.mu.Unlock()
+}
+
+func (c *Cache) SyncAgeSeconds() int64 {
+	c.mu.RLock()
+	lastSync := c.lastSync
+	createdAt := c.createdAt
+	c.mu.RUnlock()
+	if lastSync.IsZero() {
+		lastSync = createdAt
+	}
+	return int64(time.Since(lastSync) / time.Second)
 }
 
 type Pair struct {
@@ -105,20 +141,27 @@ func (c *Cache) Replace(pairs []Pair, etag string) {
 	}
 	c.pairs = replacement
 	c.etag = etag
+	c.lastSync = now
 }
 
 // ReplaceForPrincipal atomically installs the snapshot returned from a
-// principal-filtered authoritative read. It leaves every other principal's
-// state and the global long-poll ETag unchanged.
-func (c *Cache) ReplaceForPrincipal(principal string, pairs []Pair) {
-	if principal == "" {
-		return
-	}
-
-	now := time.Now()
+// principal-filtered authoritative read. It refreshes sync times only for
+// returned entries and leaves every other principal's state, global last sync,
+// and long-poll ETag unchanged.
+func (c *Cache) ReplaceForPrincipal(principal string, pairs []Pair, etag string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if responseVersion, responseValid := parseSyncVersion(etag); responseValid {
+		if cacheVersion, cacheValid := parseSyncVersion(c.etag); cacheValid && responseVersion < cacheVersion {
+			return false
+		}
+	}
+	if principal == "" {
+		return true
+	}
+
+	now := time.Now()
 	replacement := make(map[pairKey]*pairEntry, len(pairs))
 	for _, pair := range pairs {
 		if !pair.Identity.Valid() || pair.Identity.Principal != principal {
@@ -135,6 +178,18 @@ func (c *Cache) ReplaceForPrincipal(principal string, pairs []Pair) {
 	for key, entry := range replacement {
 		c.pairs[key] = entry
 	}
+	return true
+}
+
+func parseSyncVersion(etag string) (int64, bool) {
+	etag = strings.TrimSpace(etag)
+	if strings.HasPrefix(etag, "W/") {
+		etag = strings.TrimSpace(strings.TrimPrefix(etag, "W/"))
+	}
+	etag = strings.Trim(strings.TrimSpace(etag), `"`)
+	etag = strings.TrimPrefix(etag, "v")
+	version, err := strconv.ParseInt(etag, 10, 64)
+	return version, err == nil
 }
 
 func snapshotEntry(records []Record, current *pairEntry, now time.Time) *pairEntry {
@@ -147,7 +202,7 @@ func snapshotEntry(records []Record, current *pairEntry, now time.Time) *pairEnt
 	if lastSeen.IsZero() {
 		lastSeen = now
 	}
-	return &pairEntry{records: snapshotRecords(records, previous), lastSeen: lastSeen}
+	return &pairEntry{records: snapshotRecords(records, previous), lastSeen: lastSeen, syncedAt: now}
 }
 
 func snapshotRecords(records, previous []Record) []Record {
@@ -215,6 +270,10 @@ func (c *Cache) Match(identity Identity, sessionID, tool string, arguments map[s
 
 	entry := c.pairs[key]
 	if entry == nil {
+		return Record{}, false
+	}
+	if !c.freshLocked(entry, now) {
+		entry.lastSeen = now
 		return Record{}, false
 	}
 	entry.lastSeen = now

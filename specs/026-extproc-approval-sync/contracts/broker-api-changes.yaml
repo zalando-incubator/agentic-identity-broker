@@ -100,9 +100,13 @@ components:
     #
     # Rationale (research.md R-014): spec FR-015 requires that when several cached approval
     # records match one invocation, ties after specificity ranking are "broken by later
-    # decision time". The shared matcher implements exactly that —
-    # toolpattern.SelectBest breaks equal-rank ties by later Candidate.DecidedAt, then by
-    # lexicographically smaller Candidate.ID (internal/toolpattern/toolpattern.go:266-283).
+    # decision time". `selectBest` in `internal/extproc/approval/precedence.go` breaks
+    # equal-rank ties by later `candidate.decidedAt`, then by lexicographically smaller
+    # `candidate.id`.
+    #
+    # ADR 035 confines candidate ranking and selection to ExtProc. The domain package
+    # `internal/domain/approval/toolpattern` owns grammar, canonicalization, validation, and
+    # single-pattern matching only.
     #
     # The current sync summary carries NO timestamp of any kind
     # (internal/adapters/http/handlers/approval/sync_handler.go:40-50). `toSummary` projects
@@ -110,7 +114,7 @@ components:
     # consumed, and agent_session_id — and drops CreatedAt, ApprovedAt, DeniedAt, and
     # ConsumedAt (sync_handler.go:52-73).
     #
-    # Without a timestamp every ExtProc candidate would carry a zero DecidedAt, so ties would
+    # Without a timestamp every ExtProc candidate would carry a zero decision time, so ties
     # silently fall through to the ID tie-breaker. That is deterministic but arbitrary: it
     # would pick a lexicographically smaller approval id over a more recent user decision,
     # violating FR-015 and diverging from the broker's own reading of the same records.
@@ -216,8 +220,8 @@ components:
 #   no ?principal= read, creates no approval, and returns a deny tool-result error with the
 #   reason "approval identity unavailable". It never substitutes a value parsed from a token.
 #
-# Change 2 — internal/extproc/approval/cache.go maps approved_at into
-#   ApprovalRecord.DecidedAt, which becomes toolpattern.Candidate.DecidedAt in SelectBest.
+# Change 2 — `internal/extproc/approval/cache.go` maps `approved_at` to `Record.ApprovedAt`.
+# `selectBest` in `internal/extproc/approval/precedence.go` uses this decision time to rank matching records.
 #
 #   Fail-closed rule: a record with status "approved" but no approved_at is treated as
 #   unmatchable and logged as a broker-contract warning, rather than being ranked with a zero

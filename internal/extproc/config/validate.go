@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Validate checks the Config for required fields and constraint violations.
@@ -216,9 +217,14 @@ func Validate(cfg *Config) error {
 		if cfg.ToolApprovals.RequestTimeout <= 0 {
 			errs = append(errs, "tool_approvals.request_timeout must be a positive duration")
 		}
+		if cfg.ToolApprovals.MaxStaleness <= 0 {
+			errs = append(errs, "tool_approvals.max_staleness must be a positive duration")
+		} else if cfg.ToolApprovals.MaxStaleness < time.Duration(cfg.ToolApprovals.LongPollTimeoutSeconds)*time.Second+cfg.ToolApprovals.RequestTimeout {
+			errs = append(errs, "tool_approvals.max_staleness must be at least tool_approvals.long_poll_timeout_seconds plus tool_approvals.request_timeout")
+		}
 	}
-	if cfg.Sessions.Extraction.HTTPHeader != "" && !isHTTPFieldName(cfg.Sessions.Extraction.HTTPHeader) {
-		errs = append(errs, "sessions.extraction.http_header must be a valid HTTP field name")
+	if !isHTTPFieldName(cfg.Sessions.Extraction.HTTPHeader) {
+		errs = append(errs, "sessions.extraction.http_header must be a non-empty valid HTTP field name")
 	}
 	// Telemetry validation only runs when telemetry.enabled is true
 	if cfg.Telemetry.Enabled {

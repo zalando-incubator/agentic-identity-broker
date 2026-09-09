@@ -25,6 +25,7 @@ The configuration schema is defined exclusively by:
 - `examples/config/extproc-token-exchange.yaml` — Reference example for operators
 
 The broker Helm chart is not an ExtProc configuration surface because it deploys the broker binary only. ExtProc settings MUST NOT be added to that chart's broker ConfigMap or Deployment. A chart that later deploys ExtProc MUST provide a distinct workload and configuration path for `EXTPROC_*` settings.
+This Constitution amendment reconciles accepted practice rather than making a feature exemption.
 
 ---
 

@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 )
 
 type assertionStub struct {
@@ -60,7 +64,7 @@ func TestClientUsesEndpointSpecificCredentialsAndTargetedReadScope(t *testing.T)
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL+"/", time.Second, assertionStub{value: "assertion"})
+	client, err := NewClient(server.URL+"/", time.Second, assertionStub{value: "assertion"}, &http.Client{})
 	require.NoError(t, err)
 	pairs, etag, err := client.Read(context.Background(), "alice", []string{"session-a", "session-b"})
 	require.NoError(t, err)
@@ -80,7 +84,11 @@ func TestClientUsesEndpointSpecificCredentialsAndTargetedReadScope(t *testing.T)
 	require.NoError(t, client.Consume(context.Background(), "subject", "id"))
 }
 
-func TestClientPollUsesLongPollHeadersAndPreservesETagOn304(t *testing.T) {
+func TestClientPollOutlivesRequestTimeout(t *testing.T) {
+	const requestTimeout = 10 * time.Millisecond
+
+	started := make(chan struct{})
+	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodGet, r.Method)
 		require.Equal(t, "Bearer assertion", r.Header.Get("Authorization"))
@@ -88,18 +96,37 @@ func TestClientPollUsesLongPollHeadersAndPreservesETagOn304(t *testing.T) {
 		require.Equal(t, []string{"session-a"}, r.URL.Query()["agent_session_id"])
 		require.Equal(t, `"v1"`, r.Header.Get("If-None-Match"))
 		require.Equal(t, "30", r.Header.Get("X-Long-Poll-Timeout"))
-		time.Sleep(20 * time.Millisecond)
+		close(started)
+		<-release
 		w.WriteHeader(http.StatusNotModified)
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL, time.Nanosecond, assertionStub{value: "assertion"})
+	httpClient, err := httpclient.New(&extprocconfig.Config{}, 0)
 	require.NoError(t, err)
-	pairs, etag, unchanged, err := client.Poll(context.Background(), []string{"session-a"}, `"v1"`, 30*time.Second)
+	client, err := NewClient(server.URL, requestTimeout, assertionStub{value: "assertion"}, httpClient)
 	require.NoError(t, err)
-	assert.Nil(t, pairs)
-	assert.Empty(t, etag)
-	assert.True(t, unchanged)
+
+	type result struct {
+		pairs     []Pair
+		etag      string
+		unchanged bool
+		err       error
+	}
+	completed := make(chan result, 1)
+	go func() {
+		pairs, etag, unchanged, pollErr := client.Poll(context.Background(), []string{"session-a"}, `"v1"`, 30*time.Second)
+		completed <- result{pairs: pairs, etag: etag, unchanged: unchanged, err: pollErr}
+	}()
+
+	<-started
+	time.Sleep(2 * requestTimeout)
+	close(release)
+	pollResult := <-completed
+	require.NoError(t, pollResult.err)
+	assert.Nil(t, pollResult.pairs)
+	assert.Empty(t, pollResult.etag)
+	assert.True(t, pollResult.unchanged)
 }
 
 func TestClientStatusHandling(t *testing.T) {
@@ -143,7 +170,7 @@ func TestClientStatusHandling(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, err := NewClient(server.URL, time.Second, assertionStub{value: "assertion"})
+			client, err := NewClient(server.URL, time.Second, assertionStub{value: "assertion"}, &http.Client{})
 			require.NoError(t, err)
 			switch test.path {
 			case "/api/approvals":
@@ -166,14 +193,16 @@ func TestClientStatusHandling(t *testing.T) {
 }
 
 func TestClientRejectsMalformedResponsesAndUnavailableCredentials(t *testing.T) {
-	t.Run("constructor rejects unusable base URL or assertion provider", func(t *testing.T) {
-		_, err := NewClient("", time.Second, assertionStub{value: "assertion"})
+	t.Run("constructor rejects unusable base URL, HTTP client, or assertion provider", func(t *testing.T) {
+		_, err := NewClient("", time.Second, assertionStub{value: "assertion"}, &http.Client{})
 		require.Error(t, err)
-		_, err = NewClient("/relative", time.Second, assertionStub{value: "assertion"})
+		_, err = NewClient("/relative", time.Second, assertionStub{value: "assertion"}, &http.Client{})
 		require.Error(t, err)
-		_, err = NewClient("https://broker.example?query=forbidden", time.Second, assertionStub{value: "assertion"})
+		_, err = NewClient("https://broker.example?query=forbidden", time.Second, assertionStub{value: "assertion"}, &http.Client{})
 		require.Error(t, err)
-		_, err = NewClient("https://broker.example", time.Second, nil)
+		_, err = NewClient("https://broker.example", time.Second, assertionStub{value: "assertion"}, nil)
+		require.Error(t, err)
+		_, err = NewClient("https://broker.example", time.Second, nil, &http.Client{})
 		require.Error(t, err)
 	})
 
@@ -183,7 +212,7 @@ func TestClientRejectsMalformedResponsesAndUnavailableCredentials(t *testing.T) 
 			_, _ = w.Write([]byte(`{"data":{}}`))
 		}))
 		defer server.Close()
-		client, err := NewClient(server.URL, time.Second, assertionStub{value: "assertion"})
+		client, err := NewClient(server.URL, time.Second, assertionStub{value: "assertion"}, &http.Client{})
 		require.NoError(t, err)
 		_, _, err = client.Read(context.Background(), "alice", nil)
 		require.Error(t, err)
@@ -196,7 +225,7 @@ func TestClientRejectsMalformedResponsesAndUnavailableCredentials(t *testing.T) 
 			_, _ = w.Write([]byte(`{"data":{}}`))
 		}))
 		defer server.Close()
-		client, err := NewClient(server.URL, time.Second, assertionStub{value: "assertion"})
+		client, err := NewClient(server.URL, time.Second, assertionStub{value: "assertion"}, &http.Client{})
 		require.NoError(t, err)
 		_, err = client.Create(context.Background(), "subject", CreateRequest{ToolName: "tool", Arguments: map[string]any{}})
 		require.Error(t, err)
@@ -204,10 +233,37 @@ func TestClientRejectsMalformedResponsesAndUnavailableCredentials(t *testing.T) 
 	})
 
 	t.Run("does not send requests without a usable assertion", func(t *testing.T) {
-		client, err := NewClient("https://broker.example", time.Second, assertionStub{err: errors.New("expired")})
+		client, err := NewClient("https://broker.example", time.Second, assertionStub{err: errors.New("expired")}, &http.Client{})
 		require.NoError(t, err)
 		_, _, err = client.Read(context.Background(), "alice", nil)
 		require.Error(t, err)
 		assert.True(t, strings.Contains(err.Error(), "client assertion"))
 	})
+}
+
+func TestClientRejectsRedirects(t *testing.T) {
+	var redirectRequests atomic.Int32
+	var redirectSawAssertion atomic.Bool
+	redirect := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		redirectRequests.Add(1)
+		redirectSawAssertion.Store(r.Header.Get("X-Client-Assertion") != "")
+	}))
+	defer redirect.Close()
+
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirect.URL, http.StatusFound)
+	}))
+	defer broker.Close()
+
+	httpClient, err := httpclient.New(&extprocconfig.Config{
+		OAuth2: extprocconfig.OAuth2Config{TLS: extprocconfig.TLSConfig{AllowHTTP: true}},
+	}, time.Second)
+	require.NoError(t, err)
+	client, err := NewClient(broker.URL, time.Second, assertionStub{value: "assertion"}, httpClient)
+	require.NoError(t, err)
+
+	_, err = client.Create(context.Background(), "subject", CreateRequest{ToolName: "tool", Arguments: map[string]any{}})
+	require.Error(t, err)
+	assert.Zero(t, redirectRequests.Load())
+	assert.False(t, redirectSawAssertion.Load())
 }

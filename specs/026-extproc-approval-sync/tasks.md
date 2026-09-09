@@ -233,4 +233,33 @@ T017 follows both tasks and adds the complete red E2E suite before production im
 
 ### Format Validation
 
-Every executable task above uses `- [ ]`, a unique stable `T###` ID, an optional `[P]` only for independent work, a `[US#]` label only in user-story phases, and one or more exact file paths.
+Each uncompleted remediation task below uses `- [ ]`, a unique stable `T###` ID, an optional `[P]` only for independent work, a `[US#]` label only in a user-story phase, and one or more exact file paths.
+
+---
+
+## Phase 9: Approved Approval-Cache Remediation
+
+**Purpose**: Bound cached authorization state, preserve broker response integrity, and make every gate outcome observable.
+
+- [X] T063 Use the shared nonredirecting traced HTTP client for approval calls in `internal/extproc/httpclient/httpclient.go`, `internal/extproc/server/exchanger.go`, `internal/extproc/approval/client.go`, `cmd/extproc-token-exchange/root.go`, and `tests/e2e/extproc/bootstrap/bootstrap.go`; cover redirects and unbounded poll duration in `internal/extproc/httpclient/httpclient_test.go`, `internal/extproc/approval/client_test.go`, and `internal/extproc/server/exchanger_test.go`
+- [X] T064 Return typed `StatusError` values and map broker `429` responses to retry guidance in `internal/extproc/approval/client.go`, `internal/extproc/approval/gate.go`, and `internal/extproc/approval/gate_test.go`
+- [X] T065 Evict idle cache state before recording a live session in `internal/extproc/approval/cache.go` and `internal/extproc/approval/cache_test.go`
+- [X] T066 Complete bounded syncer retry backoff when idle eviction occurs in `internal/extproc/approval/syncer.go` and `internal/extproc/approval/syncer_test.go`
+- [X] T067 Add configured session-header and `max_staleness` support in `internal/extproc/config/config.go`, `internal/extproc/config/loader.go`, `internal/extproc/config/validate.go`, `internal/extproc/config/validate_approval_test.go`, `examples/config/extproc-tool-approvals.yaml`, and `docs/configuration.md`
+- [X] T068 Enforce `max(lastSync, pairEntry.syncedAt)` freshness before cache authorization in `internal/extproc/approval/cache.go`, `internal/extproc/approval/syncer.go`, `internal/extproc/approval/cache_test.go`, `internal/extproc/approval/gate_test.go`, `internal/extproc/approval/syncer_test.go`, `internal/extproc/server/server_test.go`, `cmd/extproc-token-exchange/root.go`, `tests/e2e/extproc/bootstrap/bootstrap.go`, and `tests/e2e/extproc/approval_sync_test.go`
+- [X] T069 Reject targeted reads with older ETags in `internal/extproc/approval/cache.go`, `internal/extproc/approval/gate.go`, and `internal/extproc/approval/cache_test.go`
+- [X] T070 Preserve semantic JSON-RPC ids for broker metadata and elicitation responses in `internal/extproc/server/server.go` and `internal/extproc/server/server_test.go`
+- [X] T071 Inject the approval gate through the server constructor and migrate composition in `internal/extproc/server/server.go`, `internal/extproc/server/server_test.go`, `cmd/extproc-token-exchange/root.go`, and `tests/e2e/extproc/bootstrap/bootstrap.go`
+- [X] T072 Emit gate-decision counter and span telemetry and the approval sync-age gauge in `internal/extproc/approval/gate.go`, `internal/extproc/approval/syncer.go`, `internal/extproc/approval/gate_test.go`, and `internal/extproc/approval/syncer_test.go`
+- [X] T073 Record the cache and gate decision in `adrs/036-extproc-approval-cache-and-gate.md`
+- [X] T074 Update remediation documentation in `ARCHITECTURE.md`, `docs/configuration.md`, `internal/extproc/AGENTS.md`, `specs/026-extproc-approval-sync/contracts/broker-api-changes.yaml`, and `specs/026-extproc-approval-sync/quickstart.md`
+- [X] T075 Reconcile standalone configuration governance evidence in `.specify/memory/constitution.md` and `adrs/011-extproc-standalone-binary.md`
+- [X] T076 Add the real-broker approval journey for creation, approval, retry, and revocation in `tests/e2e/extproc_approval_journey_test.go` and `tests/e2e/bootstrap/extproc.go`
+- [X] T077 Update the remediation specification artifacts in `specs/026-extproc-approval-sync/spec.md`, `specs/026-extproc-approval-sync/data-model.md`, `specs/026-extproc-approval-sync/contracts/extproc-approval-config.yaml`, `specs/026-extproc-approval-sync/contracts/broker-approval-client.md`, and `specs/026-extproc-approval-sync/tasks.md`
+- [X] T078 Run static formatting, vetting, and linting for the remediation with `just check`
+- [X] T079 Run race-enabled ExtProc unit coverage for `internal/extproc/httpclient/`, `internal/extproc/approval/`, `internal/extproc/config/`, and `internal/extproc/server/` with `just extproc-test`
+- [X] T080 Run the repository unit suite with `just test`
+- [X] T081 Run the ExtProc E2E suite with `just test-e2e-extproc`
+- [X] T082 Run the real-broker approval journey with `ginkgo -v --procs=1 --focus="ExtProc Approval Journey" ./tests/e2e/` and `just test-e2e-backend` using `tests/e2e/extproc_approval_journey_test.go` and `tests/e2e/bootstrap/extproc.go`
+- [X] T083 Run the repository verification gate with `just verify` after T063 through T082 are complete
+- [X] T084 Respond to architectural findings 1, 4, 6, and 7 at https://github.com/zalando-infosec/agentic-identity-broker/pull/492#issuecomment-5603732601 with linked evidence at https://github.com/zalando-infosec/agentic-identity-broker/pull/492#issuecomment-5603792596

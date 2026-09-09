@@ -23,16 +23,17 @@ The per-process store of approval records synced from the broker.
 | `pairs` | `map[pairKey]*pairEntry` | Keyed by the verified identity pair |
 | `sessions` | `map[string]time.Time` | Active `agent_session_id` → last-seen; drives FR-004 query params and FR-009 eviction |
 | `etag` | `string` | Last ETag returned by the broker; `""` before bootstrap |
+| `lastSync` | `time.Time` | Most recent successful broker synchronization (`200` or `304`); zero before the first success. Source for `extproc.approval.sync_age` |
+| `maxStaleness` | `time.Duration` | `tool_approvals.max_staleness`; maximum age of a cache entry that can authorize (FR-019) |
 | `idleTTL` | `time.Duration` | `tool_approvals.approval_cache_idle_ttl` |
 
 **Invariants**
 
-- A `200` sync response **replaces** the full state of every pair it returns; it is never merged
-  (research R-005 — the broker sends snapshots, not deltas).
-- A pair absent from a filtered (`?principal=`) response is left untouched: the response scope is the
-  filter, not the whole cache.
-- `lastSeen` is updated on every request that consults the pair, not on sync delivery — otherwise
-  background polling would keep idle pairs alive forever and defeat FR-010.
+- A `200` sync response **replaces** the full state of every pair in its scope; it is never merged (research R-005 — the broker sends snapshots, not deltas).
+- A filtered (`?principal=`) response leaves entries for other principals untouched. An absent pair for the requested principal is removed.
+- `lastSync` is set after every accepted broker synchronization, including a `304`. It remains unchanged after an error, malformed response, or rejected targeted ETag.
+- `syncedAt` is set only when an accepted snapshot installs a pair. `Cache.Match` uses the more recent of `lastSync` and the pair timestamp. It returns no record when this value is zero or older than `maxStaleness`.
+- `lastSeen` is updated on every request that consults the pair, not on sync delivery. This prevents polling from defeating FR-010 idle eviction.
 
 ### 1.2 `pairKey` (value object)
 
@@ -55,6 +56,7 @@ no `pairKey` is constructed and the request fails closed.
 | Field | Type | Notes |
 |---|---|---|
 | `records` | `[]ApprovalRecord` | All active approvals for this pair, as delivered by the broker |
+| `syncedAt` | `time.Time` | Time when an accepted broker snapshot installed this pair. It can remain older than `lastSync` after a `304` (FR-019) |
 | `lastSeen` | `time.Time` | FR-010 idle eviction |
 
 ### 1.4 `ApprovalRecord`
@@ -63,7 +65,7 @@ One approval as delivered by `GET /api/approvals`, plus one local-only field.
 
 | Field | Type | Source | Notes |
 |---|---|---|---|
-| `ID` | `string` | `id` | Broker approval UUID; used for consume and as `toolpattern.Candidate.ID` |
+| `ID` | `string` | `id` | Broker approval UUID; used for consume and by the ExtProc-local candidate ranker |
 | `ToolName` | `string` | `tool_name` | Concrete tool of the originating invocation |
 | `ToolPattern` | `string` | `tool_pattern` | Glob; matched via `toolpattern.Matches` |
 | `ParamsPattern` | `map[string]string` | `params_pattern` | Param → canonical glob; absent keys unconstrained |
@@ -71,7 +73,7 @@ One approval as delivered by `GET /api/approvals`, plus one local-only field.
 | `Persistence` | `*string` | `persistence` | `once` \| `session` \| `permanent`; nil while pending |
 | `Consumed` | `bool` | `consumed` | Broker-reported |
 | `AgentSessionID` | `*string` | `agent_session_id` | Scope key for `session` persistence |
-| `DecidedAt` | `time.Time` | `approved_at` | **Requires broker change 2** — see [contracts/broker-api-changes.yaml](contracts/broker-api-changes.yaml). Becomes `toolpattern.Candidate.DecidedAt` for FR-015 tie-breaks |
+| `DecidedAt` | `time.Time` | `approved_at` | **Requires broker change 2** — see [contracts/broker-api-changes.yaml](contracts/broker-api-changes.yaml). Used by ExtProc-local candidate selection for FR-015 tie-breaks |
 | `reserved` | `bool` | **local only** | FR-008 compare-and-swap reservation; never serialized |
 
 **Matchability rule** — a record is a matching candidate only when **all** hold:
@@ -82,7 +84,7 @@ One approval as delivered by `GET /api/approvals`, plus one local-only field.
    the request's active agent session id; `once` only when unreserved and unconsumed;
 4. `toolpattern.Matches(ToolPattern, ParamsPattern, toolName, arguments)` is true.
 
-Candidates surviving (1)–(4) are ranked by `toolpattern.SelectBest`; the winner is used.
+Candidates surviving (1)–(4) are ranked by `Cache.Match` in `internal/extproc/approval`. Its ExtProc-local ranker selects the winner. ADR 035 assigns only single-pattern matching to `internal/domain/approval/toolpattern`.
 A `pending` or `denied` record never matches — a `denied` record does **not** short-circuit to a hard
 deny either, because OPA owns the deny decision (FR-002/FR-014).
 
@@ -264,6 +266,7 @@ type ToolApprovalsConfig struct {
 	Enabled                bool          `mapstructure:"enabled"`
 	URL                    string        `mapstructure:"url"`
 	LongPollTimeoutSeconds int           `mapstructure:"long_poll_timeout_seconds"`
+	MaxStaleness           time.Duration `mapstructure:"max_staleness"`
 	ApprovalCacheIdleTTL   time.Duration `mapstructure:"approval_cache_idle_ttl"`
 	RequestTimeout         time.Duration `mapstructure:"request_timeout"`
 }
@@ -322,9 +325,7 @@ is stateless and shared. The `Server` holds only the `Gate` and never touches th
 
 - **No new persisted entity, table, or migration.** Migrations 024–026 and 030 already provide
   everything the broker side needs.
-- **No new typed entity ID.** ADR 013 requires typed IDs for UUID primary keys of broker domain
-  entities. ExtProc holds approval ids as opaque strings and cannot import `internal/domain/id`
-  (ADR 035 permits `internal/toolpattern` only).
+- **No new typed entity ID.** ADR 013 requires typed IDs for UUID primary keys of broker domain entities. ExtProc holds approval ids as opaque strings and cannot import `internal/domain/id` (ADR 035 permits only `internal/domain/approval/toolpattern`).
 - **No approval data in the OPA input.** FR-001 forbids it; approval matching happens outside the
   policy.
 - **No permission-set cache.** Permission sets ride the token-exchange snapshot on the token's own TTL.

@@ -7,6 +7,11 @@ Rationale:
     of workloads deployed by charts/agentic-identity-broker. Standalone binaries
     governed by an accepted ADR must retain their own configuration delivery path
     and MUST NOT receive configuration through the broker chart.
+  2. Standing evidence:
+    - The broker Helm chart files in `charts/agentic-identity-broker/`, including `templates/`, contain no ExtProc references.
+    - ADR 011 (2026-02-23) predates feature 026. It established `EXTPROC_` and independent ExtProc deployment.
+    - Features 015, 020, and 027 added `EXTPROC_` parameters. They added no ExtProc workload or configuration to the broker chart. Feature 020 changed only a broker telemetry propagator.
+  3. This Constitution amendment reconciles accepted practice rather than making a feature exemption.
 
 Modified Principles:
   - Principle VII: scoped Helm deployment-contract requirements and defined the

@@ -179,17 +179,18 @@ it, revoke it broker-side, force a resync, and confirm the record is gone from t
 
 ## 5. Glob matching parity
 
-Broker and ExtProc must never interpret a pattern differently. Both consume the embedded vectors from
-`internal/toolpattern`:
+Broker and ExtProc use vectors to keep one pattern dialect. The shared match and canonicalization
+vectors are in `internal/domain/approval/toolpattern/vectors.json`. ExtProc-owned precedence vectors
+are in `internal/extproc/approval/precedence_vectors.json`.
 
 ```bash
-go test -run 'TestMatchesVectors|TestCanonicalVectors|TestPrecedenceVectors' ./internal/toolpattern/
+go test -run 'TestMatchesVectors|TestCanonicalVectors' ./internal/domain/approval/toolpattern/
 go test -race -run 'Vectors' ./internal/extproc/approval/
 ```
 
-The ExtProc cache tests drive `toolpattern.MatchVectors()` and `toolpattern.PrecedenceVectors()`
-through the real cache-matching entry point, so a divergence between `Matches`/`SelectBest` usage and
-the pinned fixture fails the build.
+The ExtProc cache tests exercise `toolpattern.Matches` through the cache-matching entry point.
+`selectBest` in `internal/extproc/approval/precedence.go` evaluates the ExtProc precedence vectors.
+A divergence in matching or precedence fails the relevant vector test.
 
 Manual spot check of the precedence rule (exact tool > wildcard tool; then more constrained params;
 then fewer wildcards; ties by later decision time, then smaller id):

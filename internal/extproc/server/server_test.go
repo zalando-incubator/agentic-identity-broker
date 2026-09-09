@@ -1143,7 +1143,7 @@ func startTestServerWithAuthorizerConfig(t *testing.T, cfg *extprocconfig.Config
 	return startTestServerWithAuthorizerConfigAndGate(t, cfg, exchanger, auth, nil)
 }
 
-func startTestServerWithAuthorizerConfigAndGate(t *testing.T, cfg *extprocconfig.Config, exchanger server.Exchanger, auth authorization.Authorizer, gate *approval.Gate) (extprocv3.ExternalProcessorClient, func()) {
+func startTestServerWithAuthorizerConfigAndGate(t *testing.T, cfg *extprocconfig.Config, exchanger server.Exchanger, auth authorization.Authorizer, gate server.ApprovalGate) (extprocv3.ExternalProcessorClient, func()) {
 	t.Helper()
 
 	if !cfg.Authorization.Enabled {
@@ -1164,9 +1164,11 @@ func startTestServerWithAuthorizerConfigAndGate(t *testing.T, cfg *extprocconfig
 	if cfg.Authorization.MaxBodySize == 0 {
 		cfg.Authorization.MaxBodySize = 1048576
 	}
-	svc := server.NewServerWithAuthorizer(cfg, exchanger, auth, testLogger())
+	var svc *server.Server
 	if gate != nil {
-		svc.SetApprovalGate(gate)
+		svc = server.NewServerWithApprovalGate(cfg, exchanger, auth, gate, testLogger())
+	} else {
+		svc = server.NewServerWithAuthorizer(cfg, exchanger, auth, testLogger())
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -2134,13 +2136,14 @@ func TestServer_OPA_BatchBodyPhase_Deny_AggregatesReasons(t *testing.T) {
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "denied tool: drop_db")
 }
 
-func TestServer_OPA_ApprovalRequired_ElicitsWithOriginalJSONRPCIDAndRequestState(t *testing.T) {
+func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		id   json.RawMessage
+		name         string
+		id           json.RawMessage
+		invocationID string
 	}{
-		{name: "numeric id", id: json.RawMessage(`42`)},
-		{name: "string id", id: json.RawMessage(`"call-42"`)},
+		{name: "numeric id", id: json.RawMessage(`42`), invocationID: "42"},
+		{name: "string id", id: json.RawMessage(`"call-42"`), invocationID: "call-42"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -2188,7 +2191,7 @@ func TestServer_OPA_ApprovalRequired_ElicitsWithOriginalJSONRPCIDAndRequestState
 			}
 			cfg := testConfig()
 			cfg.Sessions.Extraction.HTTPHeader = "X-Agent-Session"
-			gate := approval.NewGate(approval.NewCache(time.Minute), broker)
+			gate := approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker)
 			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, cfg, exchanger, auth, gate)
 			defer cleanup()
 
@@ -2237,6 +2240,7 @@ func TestServer_OPA_ApprovalRequired_ElicitsWithOriginalJSONRPCIDAndRequestState
 			assert.Equal(t, map[string]any{"environment": "production"}, gotCreate.Arguments)
 			assert.Equal(t, "mcp-session", gotCreate.Metadata.MCPSessionID)
 			assert.Equal(t, "agent-session", gotCreate.Metadata.AgentSessionID)
+			assert.Equal(t, tc.invocationID, gotCreate.Metadata.InvocationID)
 			assert.Equal(t, "Review deployment", gotCreate.Metadata.Description)
 			assert.Equal(t, "medium", gotCreate.RiskLevel)
 			assert.Equal(t, "agent-session", gotAgentSession)
@@ -2248,7 +2252,7 @@ func TestServer_OPA_ApprovalRequired_ElicitsWithOriginalJSONRPCIDAndRequestState
 func TestServer_OPA_ApprovalRequired_UsesBrokerAuthoritativeIdentityForCacheKey(t *testing.T) {
 	permanent := "permanent"
 	approvedAt := time.Now()
-	cache := approval.NewCache(time.Minute)
+	cache := approval.NewCache(time.Minute, time.Minute)
 	cache.Replace([]approval.Pair{{
 		Identity: approval.Identity{Principal: "verified@example.com", AgentID: "canonical-agent-id"},
 		Approvals: []approval.Record{{
@@ -2373,7 +2377,7 @@ func TestServer_OPA_ApprovalGateIsolatedFromNonApprovalActionsAndBatches(t *test
 			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 				return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
 			}}
-			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute), broker))
+			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
 			defer cleanup()
 
 			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
@@ -2429,7 +2433,7 @@ func TestServer_OPA_ApprovalGateOnlyHandlesStandaloneMCPToolCalls(t *testing.T) 
 			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 				return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
 			}}
-			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute), broker))
+			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
 			defer cleanup()
 
 			_, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
@@ -2474,7 +2478,7 @@ func TestServer_OPA_ApprovalGateDoesNotHandleHeaderOnlyRequests(t *testing.T) {
 	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 		return server.ExchangeResult{Token: "exchanged-token"}, nil
 	}}
-	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute), broker))
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
 	defer cleanup()
 
 	response, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{

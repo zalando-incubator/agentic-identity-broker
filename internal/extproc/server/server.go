@@ -66,6 +66,11 @@ type Exchanger interface {
 	Shutdown()
 }
 
+// ApprovalGate evaluates whether an approval-required MCP tool invocation may proceed.
+type ApprovalGate interface {
+	Evaluate(context.Context, approval.Invocation) approval.Outcome
+}
+
 // Server implements the Envoy ExternalProcessorServer gRPC interface.
 // It intercepts request headers, performs token exchange, and replaces
 // the Authorization header before the request reaches the upstream.
@@ -76,7 +81,7 @@ type Server struct {
 	cfg             *extprocconfig.Config
 	exchanger       Exchanger
 	authorizer      authorization.Authorizer
-	approvalGate    *approval.Gate
+	approvalGate    ApprovalGate
 	logger          *slog.Logger
 	requestCounter  metric.Int64Counter
 	requestDuration metric.Float64Histogram
@@ -150,9 +155,11 @@ func NewServerWithAuthorizer(cfg *extprocconfig.Config, exchanger Exchanger, aut
 	return srv
 }
 
-// SetApprovalGate enables approval-required handling for standalone MCP tool calls.
-func (s *Server) SetApprovalGate(gate *approval.Gate) {
-	s.approvalGate = gate
+// NewServerWithApprovalGate creates a new ExtProc Server with OPA authorization and approval handling enabled.
+func NewServerWithApprovalGate(cfg *extprocconfig.Config, exchanger Exchanger, authorizer authorization.Authorizer, gate ApprovalGate, logger *slog.Logger) *Server {
+	srv := NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)
+	srv.approvalGate = gate
+	return srv
 }
 
 func (s *Server) extractTraceContext(ctx context.Context, headers *extprocv3.HttpHeaders) context.Context {
@@ -597,7 +604,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 			logger.WarnContext(ctx, "OPA approval-required action is not an MCP tool call", "protocol", state.protocol, "resource", sanitizedURI)
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
-		invocation, invocationErr := approvalInvocation(bodyBytes, state, decision)
+		invocation, rawID, invocationErr := approvalInvocation(bodyBytes, state, decision)
 		if invocationErr != nil {
 			logger.WarnContext(ctx, "OPA approval-required request is not a standalone tool call", "error", invocationErr)
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
@@ -607,10 +614,6 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 			return echoRequestBody(body)
 		}
 		if outcome.URL != "" {
-			rawID := json.RawMessage(invocation.RequestID)
-			if len(rawID) == 0 {
-				rawID = nil
-			}
 			return urlElicitationResponse(outcome.URL, "approval required", rawID)
 		}
 		return accessDeniedResponse([]string{outcome.Reason})
@@ -1210,7 +1213,7 @@ func configuredHeader(headers map[string]string, name string) string {
 	return ""
 }
 
-func approvalInvocation(body []byte, state *requestState, decision *authorization.OPADecision) (approval.Invocation, error) {
+func approvalInvocation(body []byte, state *requestState, decision *authorization.OPADecision) (approval.Invocation, json.RawMessage, error) {
 	var request struct {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
@@ -1220,24 +1223,35 @@ func approvalInvocation(body []byte, state *requestState, decision *authorizatio
 		} `json:"params"`
 	}
 	if err := json.Unmarshal(body, &request); err != nil {
-		return approval.Invocation{}, err
+		return approval.Invocation{}, nil, err
 	}
 	if request.Method != "tools/call" || request.Params.Name == "" {
-		return approval.Invocation{}, errors.New("request is not an MCP tools/call")
+		return approval.Invocation{}, nil, errors.New("request is not an MCP tools/call")
 	}
 	if request.Params.Arguments == nil {
 		request.Params.Arguments = map[string]any{}
 	}
-	requestID := request.ID
-	if len(requestID) == 0 {
-		requestID = nil
-	}
-	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: request.Params.Name, Arguments: request.Params.Arguments, AgentSessionID: state.agentSessionID, MCPSessionID: configuredHeader(state.headers, "Mcp-Session-Id"), RequestID: string(requestID), SubjectToken: state.bearerToken}
+	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: request.Params.Name, Arguments: request.Params.Arguments, AgentSessionID: state.agentSessionID, MCPSessionID: configuredHeader(state.headers, "Mcp-Session-Id"), RequestID: semanticRequestID(request.ID), SubjectToken: state.bearerToken}
 	if decision.ApprovalContext != nil {
 		invocation.Description = decision.ApprovalContext.Description
 		invocation.RiskLevel = decision.ApprovalContext.RiskLevel
 	}
-	return invocation, nil
+	return invocation, request.ID, nil
+}
+
+func semanticRequestID(rawID json.RawMessage) string {
+	trimmedID := bytes.TrimSpace(rawID)
+	if len(trimmedID) == 0 || bytes.Equal(trimmedID, []byte("null")) {
+		return ""
+	}
+	if trimmedID[0] != '"' {
+		return string(rawID)
+	}
+	var stringID string
+	if json.Unmarshal(trimmedID, &stringID) != nil {
+		return string(rawID)
+	}
+	return stringID
 }
 
 // passThrough builds a ProcessingResponse_RequestHeaders with no mutations,

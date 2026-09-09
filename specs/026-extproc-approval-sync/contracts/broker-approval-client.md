@@ -8,6 +8,14 @@ without re-deriving the contract from broker source.
 
 Base URL is `tool_approvals.url`; every path below is appended to it.
 
+## HTTP safety and status errors
+
+The approval HTTP client MUST set `CheckRedirect` to return `http.ErrUseLastResponse`. It MUST NOT follow a redirect for any approval request.
+
+Every 3xx response is a broker error. The client returns a `StatusError` for it and makes no request to the redirect target. The syncer backs off after this error. A request-path operation returns a hard deny.
+
+The client returns a `StatusError` for every HTTP response that the call site does not accept. The error exposes the response status so the gate can give a retry-suggesting denial for `429`.
+
 `GET /api/approvals/{id}` is **not** part of this contract. It is browser-authenticated via
 `requirePrincipal` (`internal/adapters/http/routing/enduser.go:98`) and is not callable with either
 ExtProc credential. ExtProc MUST NOT call it (spec FR-007).
@@ -63,16 +71,19 @@ targeted read synchronous and the bootstrap non-blocking.
 
 | Status | ExtProc action |
 |---|---|
-| `200` | Body is a **full snapshot of the requested scope**, never a delta. Replace the state of every returned pair; store the `ETag` header verbatim; reset backoff. |
+| `200` | Body is a **full snapshot of the requested scope**, never a delta. Replace the state of every returned pair; store the `ETag`; reset backoff. |
 | `304` | No body, no ETag. Re-poll immediately with the same ETag. Long-poll only. |
-| `401` | Assertion rejected. Log at warn, back off. Never fall back to an unauthenticated retry. |
-| any other / transport error | Back off (1s → 60s, doubling) and retry. Cache retains its last good state. |
+| `401` | `StatusError`. Log at warn and back off. Never retry without authentication. |
+| `3xx` | `StatusError`. Do not follow the redirect. Back off for long-poll calls. Deny request-path calls. |
+| any other status / transport error | A status response returns `StatusError`. The syncer backs off. The cache retains its last good state. |
 
 **Critical**: there is no delta protocol and no stale-ETag retention window. The broker parses
 `If-None-Match` as an optionally quoted, optionally `v`-prefixed `int64`; any value that is not exactly
 the current version — older, newer, or unparseable — returns an immediate `200` with complete current
 state (`sync_handler.go:105-118, 130-195`). Merging responses instead of replacing them would resurrect
 revoked approvals.
+
+**Targeted-read ETag ordering**: A targeted `200` response must include an ETag. ExtProc compares its version with the cache's known ETag. If the targeted version is older, ExtProc rejects the response, does not replace cache state, and returns a hard deny. It must not create an approval from that response (FR-019).
 
 **Response body** — mirrors `syncResponse` (`sync_handler.go:24-50`):
 
@@ -113,11 +124,10 @@ pending. `params_pattern` is normalized to `{}` rather than `null` by `toSummary
 
 `approved_at` is **added by this feature** — broker change 2, see
 [broker-api-changes.yaml](broker-api-changes.yaml). Today's summary carries no timestamp of any kind
-(`sync_handler.go:40-73`), leaving FR-015's decision-time tie-break with no data source. ExtProc maps
-it to `ApprovalRecord.DecidedAt` and thence to `toolpattern.Candidate.DecidedAt`. A record with
-`status: "approved"` and no `approved_at` is treated as **unmatchable** and logged as a
-broker-contract warning — never ranked with a zero timestamp, which would let an older approval win a
-tie against a newer one.
+(`sync_handler.go:40-73), leaving FR-015's decision-time tie-break with no data source. ExtProc uses
+it for ExtProc-local candidate selection in `Cache.Match`. A record with `status: "approved"` and no
+`approved_at` is treated as **unmatchable** and logged as a broker-contract warning. ExtProc never
+ranks it with a zero timestamp because an older approval could win a tie against a newer one.
 
 ---
 
@@ -158,10 +168,10 @@ when present and omits the field otherwise.
 |---|---|
 | `201` | New pending approval. Use `data.approval_url` in the elicitation. |
 | `200` | An equivalent pending approval already existed (broker dedup). **Identical handling** — use the returned `approval_url`. |
-| `400` | Malformed request — an ExtProc bug. Log at error, deny. |
-| `401` | Credential rejected. Log at warn, deny. |
-| `429` | Rate limited. Deny with a retry-suggesting reason. |
-| any other / transport error | Deny (spec Edge Cases). |
+| `400` | `StatusError`. Log at error and deny. |
+| `401` | `StatusError`. Log at warn and deny. |
+| `429` | `StatusError`. Return a hard deny that tells the agent to retry later. |
+| any other status / transport error | A status response returns `StatusError`. Deny (spec Edge Cases). |
 
 **Never fabricate an elicitation.** Without a broker-supplied `approval_url` there is no URL to give
 the agent, so a failed create returns a deny tool-result error stating that approval could not be
@@ -187,10 +197,10 @@ between the FR-005 read and this call.
 | Status | Meaning | ExtProc action |
 |---|---|---|
 | `200` | Consumed, or already consumed (idempotent) | Confirm the reservation → mark `Consumed`; **only now** proceed |
-| `403` | Consuming principal is not the owner | Release reservation, deny |
-| `404` | Unknown approval — cache is stale | Release reservation, deny |
-| `422` | Not a consumable `once` approval | Release reservation, deny; log as a matching bug |
-| any other / transport error | Unknown | Release reservation, deny |
+| `403` | Consuming principal is not the owner | `StatusError`. Release reservation and deny |
+| `404` | Unknown approval — cache is stale | `StatusError`. Release reservation and deny |
+| `422` | Not a consumable `once` approval | `StatusError`. Release reservation, deny, and log a matching bug |
+| any other status / transport error | Unknown | A status response returns `StatusError`. Release reservation and deny |
 
 **Fail closed (FR-008 item 4)**: the request proceeds **only** after a confirmed `200`. A broker that
 never records the consume would keep the approval `approved` and re-deliver it to every replica
@@ -224,6 +234,8 @@ Releasing the reservation on failure preserves retryability once the broker reco
 | OPA `deny` / `ciba_required` / undefined | 403 `access_denied` — no approval created (FR-002/FR-012/FR-014) |
 | `approval_required`, no match, create succeeded | 200 JSON-RPC `-32042` with `approval_url` |
 | `approval_required`, create failed | 403 `access_denied` — "approval could not be initiated" |
+| `approval_required`, stale or never-synced cache, authoritative read failed, malformed, or returned an older ETag | 403 `access_denied` — no approval created (FR-019) |
+| `approval_required`, create returned `429` | 403 `access_denied` — retry later |
 | `approval_required` inside a batch | 403 `access_denied` for the whole batch, with a reason instructing a standalone re-issue (FR-016) |
 | `once` match, consume failed | 403 `access_denied` (FR-008 item 4) |
 | Approval identity unavailable from the exchange | 403 `access_denied` — "approval identity unavailable" (research R-000) |

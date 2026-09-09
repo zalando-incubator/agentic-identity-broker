@@ -11,6 +11,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 type pollCall struct {
@@ -44,7 +47,7 @@ func discardLogger() *slog.Logger {
 
 func TestSyncerBootstrapStoresFullSnapshotAndETag(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute)
+	cache := NewCache(time.Minute, time.Minute)
 	cache.Replace([]Pair{{
 		Identity:  Identity{Principal: "stale", AgentID: "agent"},
 		Approvals: []Record{approvedRecord("stale", "tool", map[string]string{}, "permanent", now)},
@@ -70,7 +73,7 @@ func TestSyncerBootstrapStoresFullSnapshotAndETag(t *testing.T) {
 
 func TestSyncerBootstrapHonorsContextAndRetainsCacheOnFailure(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute)
+	cache := NewCache(time.Minute, time.Minute)
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	cache.Replace([]Pair{{Identity: identity, Approvals: []Record{approvedRecord("cached", "tool", map[string]string{}, "permanent", now)}}}, `"v1"`)
 	deadlineObserved := make(chan struct{})
@@ -98,7 +101,7 @@ func TestSyncerBootstrapHonorsContextAndRetainsCacheOnFailure(t *testing.T) {
 
 func TestSyncerRunRepollsAfter304AndReplacesSnapshot(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute)
+	cache := NewCache(time.Minute, time.Minute)
 	stale := Identity{Principal: "stale", AgentID: "agent"}
 	fresh := Identity{Principal: "alice", AgentID: "agent"}
 	cache.Replace([]Pair{{Identity: stale, Approvals: []Record{approvedRecord("stale", "tool", map[string]string{}, "permanent", now)}}}, `"v1"`)
@@ -137,7 +140,7 @@ func TestSyncerRunRepollsAfter304AndReplacesSnapshot(t *testing.T) {
 }
 
 func TestSyncerRetriesWithBoundedExponentialBackoff(t *testing.T) {
-	cache := NewCache(time.Minute)
+	cache := NewCache(time.Minute, time.Minute)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var starts []time.Time
@@ -160,8 +163,69 @@ func TestSyncerRetriesWithBoundedExponentialBackoff(t *testing.T) {
 	assert.GreaterOrEqual(t, starts[2].Sub(starts[1]), 18*time.Millisecond)
 }
 
+func TestSyncerCompletesBackoffWhenEvictionTickerFires(t *testing.T) {
+	const (
+		idleTTL = 2 * time.Millisecond
+		backoff = 50 * time.Millisecond
+	)
+
+	cache := NewCache(idleTTL, time.Minute)
+	cache.RecordSession("idle-session")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	firstAttempt := make(chan struct{})
+	releaseFirstAttempt := make(chan struct{})
+	secondAttempt := make(chan struct{}, 1)
+	calls := 0
+	poller := &pollerStub{poll: func(_ context.Context, _ []string, _ string, _ time.Duration) ([]Pair, string, bool, error) {
+		calls++
+		if calls == 1 {
+			close(firstAttempt)
+			<-releaseFirstAttempt
+		} else {
+			select {
+			case secondAttempt <- struct{}{}:
+			default:
+			}
+		}
+		return nil, "", false, errors.New("broker unavailable")
+	}}
+	syncer := NewSyncer(cache, poller, time.Second, discardLogger())
+	syncer.initialBackoff = backoff
+	syncer.maximumBackoff = backoff
+
+	done := make(chan struct{})
+	go func() {
+		syncer.Run(ctx)
+		close(done)
+	}()
+	<-firstAttempt
+
+	backoffWindow := time.NewTimer(backoff)
+	defer backoffWindow.Stop()
+	close(releaseFirstAttempt)
+	require.Eventually(t, func() bool {
+		return len(cache.ActiveSessions()) == 0
+	}, backoff/2, time.Millisecond, "eviction ticker did not fire during retry backoff")
+
+	select {
+	case <-secondAttempt:
+		t.Fatal("syncer retried before the retry backoff elapsed")
+	case <-backoffWindow.C:
+	}
+	assert.Len(t, poller.recordedCalls(), 1, "eviction must not end the retry backoff")
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("syncer did not stop after cancellation")
+	}
+}
+
 func TestSyncerStopsImmediatelyWhenCancelledDuringBackoff(t *testing.T) {
-	cache := NewCache(time.Minute)
+	cache := NewCache(time.Minute, time.Minute)
 	ctx, cancel := context.WithCancel(context.Background())
 	firstAttempt := make(chan struct{})
 	poller := &pollerStub{poll: func(_ context.Context, _ []string, _ string, _ time.Duration) ([]Pair, string, bool, error) {
@@ -184,4 +248,38 @@ func TestSyncerStopsImmediatelyWhenCancelledDuringBackoff(t *testing.T) {
 		t.Fatal("syncer did not stop while waiting for retry backoff")
 	}
 	assert.Len(t, poller.recordedCalls(), 1)
+}
+
+func TestSyncerPublishesApprovalSyncAgeGauge(t *testing.T) {
+	metricReader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
+	previousMeterProvider := otel.GetMeterProvider()
+	otel.SetMeterProvider(meterProvider)
+	t.Cleanup(func() {
+		otel.SetMeterProvider(previousMeterProvider)
+		_ = meterProvider.Shutdown(context.Background())
+	})
+
+	cache := NewCache(time.Minute, time.Minute)
+	expectedAge := cache.SyncAgeSeconds()
+	NewSyncer(cache, &pollerStub{}, time.Second, discardLogger())
+
+	var resourceMetrics metricdata.ResourceMetrics
+	require.NoError(t, metricReader.Collect(context.Background(), &resourceMetrics))
+	var found bool
+	for _, scopeMetrics := range resourceMetrics.ScopeMetrics {
+		for _, metric := range scopeMetrics.Metrics {
+			if metric.Name != "extproc.approval.sync_age" {
+				continue
+			}
+			found = true
+			assert.Equal(t, "s", metric.Unit)
+			assert.Equal(t, "Seconds since the last successful approval sync", metric.Description)
+			gauge, ok := metric.Data.(metricdata.Gauge[int64])
+			require.True(t, ok, "approval sync age must be an Int64 observable gauge")
+			require.Len(t, gauge.DataPoints, 1)
+			assert.Equal(t, expectedAge, gauge.DataPoints[0].Value)
+		}
+	}
+	assert.True(t, found, "approval sync-age gauge must be exported with its exact name")
 }
