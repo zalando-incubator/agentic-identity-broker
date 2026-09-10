@@ -131,7 +131,7 @@ sequenceDiagram
     Cache-->>EP: No match
     EP->>Broker: POST /api/approvals + subject_token
     Broker-->>EP: id=abc123, status=pending, approval_url
-    EP-->>Agent: URLElicitationRequiredError (-32042)<br/>url: /consent/approvals/abc123
+    EP-->>Agent: URLElicitationRequiredError (-32042)<br/>url: /approvals/abc123
 
     Agent->>User: "Please review: [link]"
     User->>Broker: POST /api/approvals/abc123/approve persistence=session

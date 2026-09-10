@@ -16,7 +16,7 @@ const approval: ToolApprovalDetail = {
   params_pattern: { repo: 'acme/app', title: 'Fix bug' },
   pattern_preview: 'create_pull_request(repo=acme/app,title=Fix bug)',
   status: 'pending',
-  approval_url: 'https://broker.example.com/consent/approvals/approval-1',
+  approval_url: 'https://broker.example.com/approvals/approval-1',
   created_at: '2026-03-29T00:00:00Z',
   expires_at: '2026-03-29T00:10:00Z',
 };
