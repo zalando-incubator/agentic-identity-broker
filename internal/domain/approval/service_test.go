@@ -1283,6 +1283,42 @@ func TestService_ListPermanentApprovals(t *testing.T) {
 
 }
 
+func TestService_ListPendingApprovals(t *testing.T) {
+	principal := id.Principal("user@example.com")
+	agentID := id.NewAgentID()
+
+	t.Run("returns pending approvals sorted by created_at descending", func(t *testing.T) {
+		base := time.Now()
+
+		older := makePendingApproval(principal, agentID)
+		older.CreatedAt = base.Add(-2 * time.Minute)
+
+		approved := makePendingApproval(principal, agentID)
+		approved.Status = storage.ApprovalStatusApproved
+		approved.CreatedAt = base.Add(-time.Minute)
+
+		newer := makePendingApproval(principal, agentID)
+		newer.CreatedAt = base
+
+		queries := &mockQueryRepo{approvals: []*storage.ToolApproval{older, approved, newer}}
+		svc := newTestServiceWithQueries(newMockApprovalRepo(), queries, &mockSyncStateRepo{})
+
+		result, err := svc.ListPendingApprovals(context.Background(), principal)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(result) != 2 {
+			t.Fatalf("expected 2 pending approvals, got %d", len(result))
+		}
+		if result[0].ID != newer.ID {
+			t.Fatalf("expected newest approval first, got %s", result[0].ID)
+		}
+		if result[1].ID != older.ID {
+			t.Fatalf("expected oldest approval last, got %s", result[1].ID)
+		}
+	})
+}
+
 func TestService_RevokePermanentApproval(t *testing.T) {
 	principal := id.Principal("user@example.com")
 	agentID := id.NewAgentID()

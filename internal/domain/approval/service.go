@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -760,6 +761,9 @@ func (s *Service) ListPendingApprovals(ctx context.Context, principal id.Princip
 			pending = append(pending, a)
 		}
 	}
+	sort.SliceStable(pending, func(i, j int) bool {
+		return pending[i].CreatedAt.After(pending[j].CreatedAt)
+	})
 
 	span.SetAttributes(attribute.Int("approval.count", len(pending)))
 	return s.enrichApprovals(ctx, pending), nil
