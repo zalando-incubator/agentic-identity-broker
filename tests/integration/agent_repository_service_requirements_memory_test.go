@@ -30,6 +30,11 @@ func TestAgentRepositoryServiceRequirements_Memory(t *testing.T) {
 	adapter, err := storageadapter.NewAdapter(config)
 	require.NoError(t, err)
 
+	permissionSets := []domainStorage.AgentPermissionSetEntry{{
+		PermissionSetID: id.NewPermissionSetID(),
+		RequirementType: domainStorage.RequirementTypeMandatory,
+	}}
+
 	t.Run("create agent with service requirements", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -38,12 +43,13 @@ func TestAgentRepositoryServiceRequirements_Memory(t *testing.T) {
 		serviceID := id.MustParseServiceID("c1234567-0001-0001-0001-000000000001")
 
 		agent := &domainStorage.Agent{
-			ID:          agentID,
-			ClientID:    ptr.To(id.ClientID("client-sr-1")),
-			DisplayName: "Service Requirements Agent",
-			Description: "Agent with service requirements",
-			CreatedAt:   time.Now().UTC(),
-			UpdatedAt:   time.Now().UTC(),
+			ID:             agentID,
+			ClientID:       ptr.To(id.ClientID("client-sr-1")),
+			DisplayName:    "Service Requirements Agent",
+			Description:    "Agent with service requirements",
+			PermissionSets: permissionSets,
+			CreatedAt:      time.Now().UTC(),
+			UpdatedAt:      time.Now().UTC(),
 			ServiceRequirements: []domainStorage.ServiceRequirement{
 				{
 					ServiceID:       serviceID,
@@ -75,12 +81,13 @@ func TestAgentRepositoryServiceRequirements_Memory(t *testing.T) {
 		serviceID2 := id.MustParseServiceID("c1234567-0002-0002-0002-000000000002")
 
 		agent := &domainStorage.Agent{
-			ID:          agentID,
-			ClientID:    ptr.To(id.ClientID("client-sr-2")),
-			DisplayName: "Update Test Agent",
-			Description: "Agent for update testing",
-			CreatedAt:   time.Now().UTC(),
-			UpdatedAt:   time.Now().UTC(),
+			ID:             agentID,
+			ClientID:       ptr.To(id.ClientID("client-sr-2")),
+			DisplayName:    "Update Test Agent",
+			Description:    "Agent for update testing",
+			PermissionSets: permissionSets,
+			CreatedAt:      time.Now().UTC(),
+			UpdatedAt:      time.Now().UTC(),
 			ServiceRequirements: []domainStorage.ServiceRequirement{
 				{
 					ServiceID:       serviceID1,
@@ -117,12 +124,13 @@ func TestAgentRepositoryServiceRequirements_Memory(t *testing.T) {
 		defer cancel()
 
 		agent := &domainStorage.Agent{
-			ID:          id.MustParseAgentID("a1234567-0003-0003-0003-000000000003"),
-			ClientID:    ptr.To(id.ClientID("client-sr-3")),
-			DisplayName: "Legacy Agent",
-			Description: "Agent without service requirements",
-			CreatedAt:   time.Now().UTC(),
-			UpdatedAt:   time.Now().UTC(),
+			ID:             id.MustParseAgentID("a1234567-0003-0003-0003-000000000003"),
+			ClientID:       ptr.To(id.ClientID("client-sr-3")),
+			DisplayName:    "Legacy Agent",
+			Description:    "Agent without service requirements",
+			PermissionSets: permissionSets,
+			CreatedAt:      time.Now().UTC(),
+			UpdatedAt:      time.Now().UTC(),
 		}
 
 		err := adapter.Agents().Create(ctx, agent)
@@ -142,6 +150,7 @@ func TestAgentRepositoryServiceRequirements_Memory(t *testing.T) {
 			ClientID:            ptr.To(id.ClientID("client-sr-4")),
 			DisplayName:         "Empty Requirements Agent",
 			Description:         "Agent with empty requirements array",
+			PermissionSets:      permissionSets,
 			CreatedAt:           time.Now().UTC(),
 			UpdatedAt:           time.Now().UTC(),
 			ServiceRequirements: []domainStorage.ServiceRequirement{},
@@ -165,12 +174,13 @@ func TestAgentRepositoryServiceRequirements_Memory(t *testing.T) {
 		slackSvcID := id.MustParseServiceID("c1234567-3333-3333-3333-333333333333")
 
 		agent := &domainStorage.Agent{
-			ID:          id.MustParseAgentID("a1234567-0005-0005-0005-000000000005"),
-			ClientID:    ptr.To(id.ClientID("client-sr-5")),
-			DisplayName: "Multi Service Agent",
-			Description: "Agent with multiple service requirements",
-			CreatedAt:   time.Now().UTC(),
-			UpdatedAt:   time.Now().UTC(),
+			ID:             id.MustParseAgentID("a1234567-0005-0005-0005-000000000005"),
+			ClientID:       ptr.To(id.ClientID("client-sr-5")),
+			DisplayName:    "Multi Service Agent",
+			Description:    "Agent with multiple service requirements",
+			PermissionSets: permissionSets,
+			CreatedAt:      time.Now().UTC(),
+			UpdatedAt:      time.Now().UTC(),
 			ServiceRequirements: []domainStorage.ServiceRequirement{
 				{
 					ServiceID:       githubSvcID,

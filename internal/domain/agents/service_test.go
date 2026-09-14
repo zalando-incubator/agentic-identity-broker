@@ -129,6 +129,13 @@ func newTestService(repo ports.AgentRepository, multiAgent bool) *Service {
 	return NewService(repo, &mockServiceReqValidator{}, slog.Default(), multiAgent)
 }
 
+func testPermissionSets() []storage.AgentPermissionSetEntry {
+	return []storage.AgentPermissionSetEntry{{
+		PermissionSetID: id.NewPermissionSetID(),
+		RequirementType: storage.RequirementTypeOptional,
+	}}
+}
+
 // --- Create tests ---
 
 func TestCreate_NilClientIDRemainsNil(t *testing.T) {
@@ -138,6 +145,10 @@ func TestCreate_NilClientIDRemainsNil(t *testing.T) {
 	agent := &storage.Agent{
 		DisplayName: "Test Agent",
 		Description: "A test agent",
+		PermissionSets: []storage.AgentPermissionSetEntry{{
+			PermissionSetID: id.NewPermissionSetID(),
+			RequirementType: storage.RequirementTypeOptional,
+		}},
 	}
 
 	err := svc.Create(context.Background(), agent)
@@ -152,9 +163,10 @@ func TestCreate_UsesProvidedClientID(t *testing.T) {
 	svc := newTestService(repo, false)
 
 	agent := &storage.Agent{
-		ClientID:    ptr.To(id.ClientID("my-custom-client")),
-		DisplayName: "Test Agent",
-		Description: "A test agent",
+		ClientID:       ptr.To(id.ClientID("my-custom-client")),
+		DisplayName:    "Test Agent",
+		Description:    "A test agent",
+		PermissionSets: testPermissionSets(),
 	}
 
 	err := svc.Create(context.Background(), agent)
@@ -175,9 +187,10 @@ func TestCreate_EnforcesUniquenessWhenMultiAgentDisabled(t *testing.T) {
 	repo.agents[existing.ID] = existing
 
 	agent := &storage.Agent{
-		ClientID:    ptr.To(id.ClientID("taken-client")),
-		DisplayName: "New Agent",
-		Description: "Wants same client_id",
+		ClientID:       ptr.To(id.ClientID("taken-client")),
+		DisplayName:    "New Agent",
+		Description:    "Wants same client_id",
+		PermissionSets: testPermissionSets(),
 	}
 
 	err := svc.Create(context.Background(), agent)
@@ -194,8 +207,9 @@ func TestCreate_SkipsUniquenessWhenClientIDIsOmitted(t *testing.T) {
 
 	// No client_id provided → client_id remains nil → uniqueness check skipped
 	agent := &storage.Agent{
-		DisplayName: "Agent Without Client ID",
-		Description: "Nil client_id",
+		DisplayName:    "Agent Without Client ID",
+		Description:    "Nil client_id",
+		PermissionSets: testPermissionSets(),
 	}
 
 	err := svc.Create(context.Background(), agent)
@@ -215,9 +229,10 @@ func TestCreate_AllowsDuplicatesWhenMultiAgentEnabled(t *testing.T) {
 	repo.agents[existing.ID] = existing
 
 	agent := &storage.Agent{
-		ClientID:    ptr.To(id.ClientID("shared-client")),
-		DisplayName: "Agent B",
-		Description: "Second agent, same client_id",
+		ClientID:       ptr.To(id.ClientID("shared-client")),
+		DisplayName:    "Agent B",
+		Description:    "Second agent, same client_id",
+		PermissionSets: testPermissionSets(),
 	}
 
 	err := svc.Create(context.Background(), agent)
@@ -243,9 +258,10 @@ func TestUpdate_PreservesExistingClientID(t *testing.T) {
 
 	update := &storage.Agent{
 		// ClientID intentionally empty → should preserve "original-client"
-		DisplayName: "Updated",
-		Description: "Updated desc",
-		UpdatedAt:   time.Now().UTC(),
+		DisplayName:    "Updated",
+		Description:    "Updated desc",
+		PermissionSets: testPermissionSets(),
+		UpdatedAt:      time.Now().UTC(),
 	}
 
 	err := svc.Update(context.Background(), agentID, update, false)
@@ -271,6 +287,7 @@ func TestUpdate_ClearsCanonicalID(t *testing.T) {
 		ClearCanonicalID: true,
 		DisplayName:      "Updated",
 		Description:      "Updated description",
+		PermissionSets:   testPermissionSets(),
 		UpdatedAt:        time.Now().UTC(),
 	}
 
@@ -302,10 +319,11 @@ func TestUpdate_EnforcesUniquenessOnClientIDChange(t *testing.T) {
 	repo.agents[agentB.ID] = agentB
 
 	update := &storage.Agent{
-		ClientID:    ptr.To(id.ClientID("client-a")), // conflicts with agentA
-		DisplayName: "Agent B Updated",
-		Description: "desc",
-		UpdatedAt:   time.Now().UTC(),
+		ClientID:       ptr.To(id.ClientID("client-a")), // conflicts with agentA
+		DisplayName:    "Agent B Updated",
+		Description:    "desc",
+		PermissionSets: testPermissionSets(),
+		UpdatedAt:      time.Now().UTC(),
 	}
 
 	err := svc.Update(context.Background(), agentB.ID, update, false)

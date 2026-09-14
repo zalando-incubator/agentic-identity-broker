@@ -26,16 +26,17 @@ import (
 
 var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 	var (
-		logger         *slog.Logger
-		storageFactory *bootstrap.StorageFactory
-		mockUpstream   *helpers.MockUpstreamOAuth2Server
-		testStorage    *storageadapter.Adapter
-		adminServer    *bootstrap.TestServer
-		enduserServer  *bootstrap.TestServer
-		principal      string
-		agent          *domainstorage.Agent
-		clientSecret   string
-		tokenFixtures  *TokenFixtures
+		logger          *slog.Logger
+		storageFactory  *bootstrap.StorageFactory
+		mockUpstream    *helpers.MockUpstreamOAuth2Server
+		testStorage     *storageadapter.Adapter
+		adminServer     *bootstrap.TestServer
+		enduserServer   *bootstrap.TestServer
+		principal       string
+		agent           *domainstorage.Agent
+		clientSecret    string
+		tokenFixtures   *TokenFixtures
+		githubServiceID string
 	)
 
 	const localAgentRedirectURI = "http://localhost:9999/callback"
@@ -55,12 +56,13 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 		Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
 		ctx := context.Background()
-		Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage)).To(Succeed())
 
 		githubService := fixtures.GitHubService()
 		githubService.Endpoints.TokenEndpoint = mockUpstream.URL() + "/oauth/token"
 		githubService.Endpoints.AuthorizeEndpoint = mockUpstream.URL() + "/oauth/authorize"
 		Expect(testStorage.Services().Create(ctx, githubService)).To(Succeed())
+		githubServiceID = githubService.ID.String()
+		Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage, githubService.ID)).To(Succeed())
 
 		grant := fixtures.ActiveGrant(principal, agent.ID.String(), githubService.ID.String(), []string{"repo", "user"})
 		Expect(testStorage.UserGrants().Create(ctx, grant)).To(Succeed())
@@ -160,7 +162,11 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 			sessionToken := consentURL.Query().Get("session_token")
 			Expect(sessionToken).ToNot(BeEmpty())
 
-			grantBody, err := json.Marshal(map[string]any{"granted_permission_sets": map[string]any{}})
+			grantBody, err := json.Marshal(map[string]any{
+				"granted_permission_sets": map[string][]string{
+					fixtures.PlaceholderPermissionSetID.String(): {githubServiceID},
+				},
+			})
 			Expect(err).ToNot(HaveOccurred())
 
 			grantResp, err := enduserServer.AuthenticatedPOST(
@@ -305,12 +311,12 @@ var _ = Describe("Token Exchange Client-Assertion JWKS Override", func() {
 		Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
 		ctx := context.Background()
-		Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage)).To(Succeed())
 
 		githubService := fixtures.GitHubService()
 		githubService.Endpoints.TokenEndpoint = mockUpstream.URL() + "/oauth/token"
 		githubService.Endpoints.AuthorizeEndpoint = mockUpstream.URL() + "/oauth/authorize"
 		Expect(testStorage.Services().Create(ctx, githubService)).To(Succeed())
+		Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage, githubService.ID)).To(Succeed())
 
 		grant := fixtures.ActiveGrant(principal, agent.ID.String(), githubService.ID.String(), []string{"repo", "user"})
 		Expect(testStorage.UserGrants().Create(ctx, grant)).To(Succeed())

@@ -112,6 +112,13 @@ func newAgentsHandlerForTestWithMultiAgent(mockRepo *MockAgentRepository, mockSe
 	return NewAgentsHandler(agentSvc, providerSvc, nil, logger)
 }
 
+func validPermissionSetRequests() []PermissionSetRequest {
+	return []PermissionSetRequest{{
+		PermissionSetID: id.NewPermissionSetID().String(),
+		RequirementType: "optional",
+	}}
+}
+
 func TestAgentsHandler_CreateAgent(t *testing.T) {
 	logger := slog.Default()
 
@@ -121,9 +128,10 @@ func TestAgentsHandler_CreateAgent(t *testing.T) {
 		handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger)
 
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("test-client"),
-			DisplayName: "Test Agent",
-			Description: "Test agent description",
+			ClientID:       ptr.To("test-client"),
+			DisplayName:    "Test Agent",
+			Description:    "Test agent description",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -159,11 +167,12 @@ func TestAgentsHandler_CreateAgent(t *testing.T) {
 		externalID := "ext-123"
 		govURL := "https://example.com/gov"
 		reqBody := AgentRequest{
-			ClientID:      ptr.To("test-client-2"),
-			ExternalID:    &externalID,
-			DisplayName:   "Test Agent 2",
-			Description:   "Test description",
-			GovernanceURL: &govURL,
+			ClientID:       ptr.To("test-client-2"),
+			ExternalID:     &externalID,
+			DisplayName:    "Test Agent 2",
+			Description:    "Test description",
+			GovernanceURL:  &govURL,
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -211,8 +220,9 @@ func TestAgentsHandler_CreateAgent(t *testing.T) {
 		handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger)
 
 		reqBody := AgentRequest{
-			DisplayName: "Test Agent",
-			Description: "Test description",
+			DisplayName:    "Test Agent",
+			Description:    "Test description",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -243,9 +253,10 @@ func TestAgentsHandler_CreateAgent(t *testing.T) {
 
 		emptyClientID := ""
 		reqBody := AgentRequest{
-			ClientID:    &emptyClientID,
-			DisplayName: "Test Agent",
-			Description: "Test description",
+			ClientID:       &emptyClientID,
+			DisplayName:    "Test Agent",
+			Description:    "Test description",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -268,9 +279,10 @@ func TestAgentsHandler_CreateAgent(t *testing.T) {
 		handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger)
 
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("duplicate-client"),
-			DisplayName: "Test Agent",
-			Description: "Test description",
+			ClientID:       ptr.To("duplicate-client"),
+			DisplayName:    "Test Agent",
+			Description:    "Test description",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -315,6 +327,7 @@ func TestAgentsHandler_CreateAgent(t *testing.T) {
 				RequirementType:  "mandatory",
 				RequireAllScopes: true,
 			}},
+			PermissionSets: validPermissionSetRequests(),
 		})
 		require.NoError(t, err)
 
@@ -345,6 +358,7 @@ func TestAgentsHandler_CreateAgent(t *testing.T) {
 				RequiredScopes:   []string{"x"},
 				RequireAllScopes: true,
 			}},
+			PermissionSets: validPermissionSetRequests(),
 		})
 		require.NoError(t, err)
 
@@ -473,9 +487,10 @@ func TestAgentsHandler_UpdateAgent(t *testing.T) {
 		}
 
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("test-client"),
-			DisplayName: "Updated Name",
-			Description: "Updated description",
+			ClientID:       ptr.To("test-client"),
+			DisplayName:    "Updated Name",
+			Description:    "Updated description",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -523,8 +538,9 @@ func TestAgentsHandler_UpdateAgent(t *testing.T) {
 
 		reqBody := AgentRequest{
 			// ClientID intentionally omitted — should preserve "existing-client-id"
-			DisplayName: "Updated Name",
-			Description: "Updated description",
+			DisplayName:    "Updated Name",
+			Description:    "Updated description",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -572,7 +588,7 @@ func TestAgentsHandler_UpdateAgent(t *testing.T) {
 			UpdatedAt:   now,
 		}
 
-		bodyBytes := []byte(`{"client_id": null, "display_name": "Updated Name", "description": "Updated description"}`)
+		bodyBytes := []byte(`{"client_id": null, "display_name": "Updated Name", "description": "Updated description", "permission_sets": [{"permission_set_id": "00000000-0000-0000-0000-000000000001", "requirement_type": "optional"}]}`)
 
 		mockRepo.On("Get", mock.Anything, agentID).Return(existingAgent, nil)
 		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(a *storage.Agent) bool {
@@ -603,9 +619,10 @@ func TestAgentsHandler_UpdateAgent(t *testing.T) {
 
 		notFoundID := id.NewAgentID()
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("test-client"),
-			DisplayName: "Test Agent",
-			Description: "Test description",
+			ClientID:       ptr.To("test-client"),
+			DisplayName:    "Test Agent",
+			Description:    "Test description",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -667,9 +684,10 @@ func TestAgentsHandler_UpdateAgent(t *testing.T) {
 
 		emptyClientID := ""
 		reqBody := AgentRequest{
-			ClientID:    &emptyClientID,
-			DisplayName: "Updated Name",
-			Description: "Updated description",
+			ClientID:       &emptyClientID,
+			DisplayName:    "Updated Name",
+			Description:    "Updated description",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -708,9 +726,10 @@ func TestAgentsHandler_UpdateAgent(t *testing.T) {
 		}
 
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("https://agent.example.com/client"),
-			DisplayName: "Updated Name",
-			Description: "Updated description",
+			ClientID:       ptr.To("https://agent.example.com/client"),
+			DisplayName:    "Updated Name",
+			Description:    "Updated description",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -880,9 +899,10 @@ func TestAgentsHandler_ClientIDUniqueness(t *testing.T) {
 		mockRepo.On("ExistsOtherWithClientID", mock.Anything, id.ClientID("shared-client"), (*id.AgentID)(nil)).Return(true, nil)
 
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("shared-client"),
-			DisplayName: "New Agent",
-			Description: "Duplicate client_id",
+			ClientID:       ptr.To("shared-client"),
+			DisplayName:    "New Agent",
+			Description:    "Duplicate client_id",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -905,9 +925,10 @@ func TestAgentsHandler_ClientIDUniqueness(t *testing.T) {
 		mockRepo.On("Create", mock.Anything, mock.Anything).Return(nil)
 
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("shared-client"),
-			DisplayName: "New Agent",
-			Description: "Allowed duplicate",
+			ClientID:       ptr.To("shared-client"),
+			DisplayName:    "New Agent",
+			Description:    "Allowed duplicate",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -940,9 +961,10 @@ func TestAgentsHandler_ClientIDUniqueness(t *testing.T) {
 		mockRepo.On("ExistsOtherWithClientID", mock.Anything, id.ClientID("shared-client"), &targetAgentID).Return(true, nil)
 
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("shared-client"),
-			DisplayName: "Target Agent Updated",
-			Description: "Trying to steal client_id",
+			ClientID:       ptr.To("shared-client"),
+			DisplayName:    "Target Agent Updated",
+			Description:    "Trying to steal client_id",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -979,9 +1001,10 @@ func TestAgentsHandler_ClientIDUniqueness(t *testing.T) {
 		mockRepo.On("Update", mock.Anything, mock.Anything).Return(nil)
 
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("my-client"),
-			DisplayName: "Target Agent Updated",
-			Description: "Self-update allowed",
+			ClientID:       ptr.To("my-client"),
+			DisplayName:    "Target Agent Updated",
+			Description:    "Self-update allowed",
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -1011,10 +1034,11 @@ func TestAgentsHandler_ClientURIsValidation(t *testing.T) {
 		handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger)
 
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("cimd-client"),
-			DisplayName: "CIMD Agent",
-			Description: "Test description",
-			ClientURIs:  []string{"not-a-valid-url"},
+			ClientID:       ptr.To("cimd-client"),
+			DisplayName:    "CIMD Agent",
+			Description:    "Test description",
+			ClientURIs:     []string{"not-a-valid-url"},
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -1041,9 +1065,10 @@ func TestAgentsHandler_ClientURIsValidation(t *testing.T) {
 		)
 
 		reqBody := AgentRequest{
-			DisplayName: "CIMD Agent",
-			Description: "Test description",
-			ClientURIs:  []string{"https://example.com/taken"},
+			DisplayName:    "CIMD Agent",
+			Description:    "Test description",
+			ClientURIs:     []string{"https://example.com/taken"},
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -1068,10 +1093,11 @@ func TestAgentsHandler_ClientURIsValidation(t *testing.T) {
 		agentID := id.NewAgentID()
 
 		reqBody := AgentRequest{
-			ClientID:    ptr.To("cimd-update-client"),
-			DisplayName: "CIMD Agent",
-			Description: "Updated description",
-			ClientURIs:  []string{"http://bad-scheme.example.com"},
+			ClientID:       ptr.To("cimd-update-client"),
+			DisplayName:    "CIMD Agent",
+			Description:    "Updated description",
+			ClientURIs:     []string{"http://bad-scheme.example.com"},
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -1108,9 +1134,10 @@ func TestAgentsHandler_ClientURIsValidation(t *testing.T) {
 		)
 
 		reqBody := AgentRequest{
-			DisplayName: "CIMD Agent",
-			Description: "Updated description",
-			ClientURIs:  []string{"https://example.com/already-taken"},
+			DisplayName:    "CIMD Agent",
+			Description:    "Updated description",
+			ClientURIs:     []string{"https://example.com/already-taken"},
+			PermissionSets: validPermissionSetRequests(),
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -1559,7 +1586,7 @@ func TestAgentsHandler_CanonicalCreateValidationAndReferenceResolution(t *testin
 		agentRepo.On("Create", mock.Anything, mock.MatchedBy(func(agent *storage.Agent) bool {
 			return agent.CanonicalID != nil && *agent.CanonicalID == canonicalID && len(agent.ServiceRequirements) == 1 && agent.ServiceRequirements[0].ServiceID == serviceID
 		})).Return(nil)
-		body, err := json.Marshal(AgentRequest{CanonicalID: &canonicalID, ClientID: ptr.To("canonical-agent-client"), DisplayName: "Canonical Agent", Description: "Agent", ServiceRequirements: []ServiceRequirementRequest{{ServiceID: serviceCanonicalID, RequirementType: "mandatory"}}})
+		body, err := json.Marshal(AgentRequest{CanonicalID: &canonicalID, ClientID: ptr.To("canonical-agent-client"), DisplayName: "Canonical Agent", Description: "Agent", ServiceRequirements: []ServiceRequirementRequest{{ServiceID: serviceCanonicalID, RequirementType: "mandatory"}}, PermissionSets: validPermissionSetRequests()})
 		require.NoError(t, err)
 		w := httptest.NewRecorder()
 		handler.CreateAgent(w, httptest.NewRequest(http.MethodPost, "/api/agents", bytes.NewReader(body)))
@@ -1577,7 +1604,7 @@ func TestAgentsHandler_CanonicalCreateValidationAndReferenceResolution(t *testin
 		agentRepo := new(MockAgentRepository)
 		handler := newAgentsHandlerForTest(agentRepo, new(MockProviderRepository), logger)
 		invalidCanonicalID := id.NewAgentID().String()
-		body, err := json.Marshal(AgentRequest{CanonicalID: &invalidCanonicalID, ClientID: ptr.To("invalid-canonical-client"), DisplayName: "Invalid", Description: "Agent"})
+		body, err := json.Marshal(AgentRequest{CanonicalID: &invalidCanonicalID, ClientID: ptr.To("invalid-canonical-client"), DisplayName: "Invalid", Description: "Agent", PermissionSets: validPermissionSetRequests()})
 		require.NoError(t, err)
 		w := httptest.NewRecorder()
 		handler.CreateAgent(w, httptest.NewRequest(http.MethodPost, "/api/agents", bytes.NewReader(body)))
@@ -1717,7 +1744,7 @@ func TestAgentsHandler_ResolvesCanonicalReferencesBeforeCreate(t *testing.T) {
 		serviceRepo := new(MockProviderRepository)
 		handler := newAgentsHandlerForTest(agentRepo, serviceRepo, slog.Default())
 		serviceRepo.On("GetByCanonicalID", mock.Anything, "permission-set-id").Return(nil, storage.NewStorageError("GetByCanonicalID", storage.ErrorKindNotFound, nil, "service not found"))
-		body, err := json.Marshal(AgentRequest{ClientID: ptr.To("invalid-reference-agent"), DisplayName: "Invalid Reference Agent", Description: "Rejects references", ServiceRequirements: []ServiceRequirementRequest{{ServiceID: "permission-set-id", RequirementType: "mandatory"}}})
+		body, err := json.Marshal(AgentRequest{ClientID: ptr.To("invalid-reference-agent"), DisplayName: "Invalid Reference Agent", Description: "Rejects references", ServiceRequirements: []ServiceRequirementRequest{{ServiceID: "permission-set-id", RequirementType: "mandatory"}}, PermissionSets: validPermissionSetRequests()})
 		require.NoError(t, err)
 		writer := httptest.NewRecorder()
 		handler.CreateAgent(writer, httptest.NewRequest(http.MethodPost, "/api/agents", bytes.NewReader(body)))

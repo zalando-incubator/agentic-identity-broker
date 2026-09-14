@@ -53,12 +53,13 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 	newAgent := func(name string, clientURIs []string) *storage.Agent {
 		now := time.Now()
 		return &storage.Agent{
-			ID:          id.NewAgentID(),
-			ClientURIs:  clientURIs,
-			DisplayName: name,
-			Description: "E2E test agent for CIMD wildcard client URI registration",
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:             id.NewAgentID(),
+			ClientURIs:     clientURIs,
+			DisplayName:    name,
+			Description:    "E2E test agent for CIMD wildcard client URI registration",
+			PermissionSets: fixtures.DefaultPermissionSets(),
+			CreatedAt:      now,
+			UpdatedAt:      now,
 		}
 	}
 

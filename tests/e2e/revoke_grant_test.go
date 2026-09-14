@@ -84,6 +84,8 @@ var _ = Describe("Revoke Agent Grant", func() {
 		service := fixtures.GitHubService()
 		err = testStorage.Services().Create(ctx, service)
 		Expect(err).ToNot(HaveOccurred(), "Failed to create test service")
+		err = fixtures.SeedPlaceholderGrantData(ctx, testStorage, service.ID)
+		Expect(err).ToNot(HaveOccurred(), "Failed to seed permission set coverage")
 
 		// Create an active grant for (principal, agent) — the grant to be revoked
 		grant := fixtures.ActiveGrant(principal, agent.ID.String(), service.ID.String(), []string{"repo", "user"})

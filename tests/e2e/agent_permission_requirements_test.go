@@ -1230,6 +1230,10 @@ var _ = Describe("Agent Permission Requirements", func() {
 			Expect(err).ToNot(HaveOccurred(), "Failed to create test permission set")
 
 			agent = fixtures.ValidAgent()
+			agent.PermissionSets = []storage.AgentPermissionSetEntry{{
+				PermissionSetID: testPermissionSetID,
+				RequirementType: storage.RequirementTypeMandatory,
+			}}
 			err = testStorage.Agents().Create(context.Background(), agent)
 			Expect(err).ToNot(HaveOccurred(), "Failed to create test agent")
 

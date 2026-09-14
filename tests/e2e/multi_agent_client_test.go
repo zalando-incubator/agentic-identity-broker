@@ -439,6 +439,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				githubService := fixtures.GitHubService()
 				githubService.Endpoints.TokenEndpoint = mockUpstream.URL() + "/oauth/token"
 				Expect(testStorage.Services().Create(ctx, githubService)).ToNot(HaveOccurred())
+				Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage, githubService.ID)).To(Succeed())
 
 				// Grant alpha agent access to GitHub service (required by token exchange flow).
 				grant := fixtures.ActiveGrant(
@@ -611,6 +612,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 				githubService := fixtures.GitHubService()
 				githubService.Endpoints.TokenEndpoint = mockUpstream.URL() + "/oauth/token"
 				Expect(testStorage.Services().Create(ctx, githubService)).ToNot(HaveOccurred())
+				Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage, githubService.ID)).To(Succeed())
 
 				// Grant alpha agent access to GitHub service.
 				grant := fixtures.ActiveGrant(

@@ -177,6 +177,11 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 			h.writeError(w, http.StatusNotFound, "not found", "agent not found")
 			return
 		}
+		if errors.Is(err, consent.ErrMissingMandatoryPS) {
+			h.logger.Warn("agent permission-set configuration is missing", "agent_id", agentID, "error", err)
+			h.writeError(w, http.StatusBadRequest, "missing mandatory permission set", err.Error())
+			return
+		}
 		h.logger.Error("failed to get agent consent detail", "agent_id", agentID, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return

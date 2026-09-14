@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -158,30 +159,57 @@ func TestToServiceRequirementForUser_SerializesDisclosedScopes(t *testing.T) {
 		{Name: "write", Description: "Write access"},
 	}, result[0].RequiredScopes)
 }
-func TestGetAgentDetail_AgentNotFound(t *testing.T) {
-	mockService := &mockAgentDetailService{
-		getAgentConsentDetailFunc: func(_ context.Context, _ id.AgentID, _ id.Principal) (*consent.AgentConsentDetail, error) {
-			return nil, consent.ErrAgentNotFound
+func TestGetAgentDetail_DomainErrors(t *testing.T) {
+	agentID := id.NewAgentID()
+	tests := []struct {
+		name            string
+		serviceError    error
+		expectedStatus  int
+		expectedError   string
+		expectedMessage string
+	}{
+		{
+			name:            "agent not found",
+			serviceError:    consent.ErrAgentNotFound,
+			expectedStatus:  http.StatusNotFound,
+			expectedError:   "not found",
+			expectedMessage: "agent not found",
+		},
+		{
+			name:            "missing permission sets",
+			serviceError:    fmt.Errorf("%w: agent must declare at least one permission set", consent.ErrMissingMandatoryPS),
+			expectedStatus:  http.StatusBadRequest,
+			expectedError:   "missing mandatory permission set",
+			expectedMessage: "missing mandatory permission set: agent must declare at least one permission set",
 		},
 	}
 
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := &mockAgentDetailService{
+				getAgentConsentDetailFunc: func(_ context.Context, _ id.AgentID, _ id.Principal) (*consent.AgentConsentDetail, error) {
+					return nil, tt.serviceError
+				},
+			}
+			handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
 
-	nonexistentID := id.NewAgentID()
-	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+nonexistentID.String(), nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("agent-id", nonexistentID.String())
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	req = req.WithContext(principal.WithPrincipal(req.Context(), "user@example.com"))
+			req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String(), nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("agent-id", agentID.String())
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req = req.WithContext(principal.WithPrincipal(req.Context(), "user@example.com"))
 
-	rr := httptest.NewRecorder()
-	handler.GetAgentDetail(rr, req)
+			rr := httptest.NewRecorder()
+			handler.GetAgentDetail(rr, req)
 
-	require.Equal(t, http.StatusNotFound, rr.Code)
+			require.Equal(t, tt.expectedStatus, rr.Code)
 
-	var response ErrorResponse
-	require.NoError(t, json.NewDecoder(rr.Body).Decode(&response))
-	assert.Equal(t, "not found", response.Error)
+			var response ErrorResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&response))
+			assert.Equal(t, tt.expectedError, response.Error)
+			assert.Equal(t, tt.expectedMessage, response.Message)
+		})
+	}
 }
 
 func TestGetAgentDetail_MissingAgentID(t *testing.T) {

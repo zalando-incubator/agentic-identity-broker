@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
@@ -259,7 +260,7 @@ var _ = Describe("Protected Resource Subresources", func() {
 				agent := fixtures.ValidAgent()
 				ctx := context.Background()
 				Expect(testStorage.Agents().Create(ctx, agent)).To(Succeed())
-				Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage)).To(Succeed())
+				Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage, id.MustParseServiceID(serviceID))).To(Succeed())
 				Expect(testStorage.UserGrants().Create(ctx, fixtures.ActiveGrant(principal, agent.ID.String(), serviceID, []string{"repo", "user"}))).To(Succeed())
 				Expect(testStorage.UserSessions().Create(ctx, fixtures.GitHubSessionForPrincipal(principal))).To(Succeed())
 

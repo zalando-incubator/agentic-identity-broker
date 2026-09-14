@@ -18,13 +18,13 @@ func TestCanonicalIndexesInMemoryRepositories(t *testing.T) {
 	t.Run("agents replace remove and release canonical IDs", func(t *testing.T) {
 		repo := NewAgentRepository()
 		canonicalID := "research-agent"
-		agent := &storage.Agent{ID: id.NewAgentID(), CanonicalID: &canonicalID, DisplayName: "Research", Description: "Research agent"}
+		agent := &storage.Agent{ID: id.NewAgentID(), CanonicalID: &canonicalID, DisplayName: "Research", Description: "Research agent", PermissionSets: testPermissionSets()}
 		require.NoError(t, repo.Create(ctx, agent))
 		resolved, err := repo.GetByCanonicalID(ctx, canonicalID)
 		require.NoError(t, err)
 		assert.Equal(t, agent.ID, resolved.ID)
 
-		duplicate := &storage.Agent{ID: id.NewAgentID(), CanonicalID: &canonicalID, DisplayName: "Duplicate", Description: "Duplicate agent"}
+		duplicate := &storage.Agent{ID: id.NewAgentID(), CanonicalID: &canonicalID, DisplayName: "Duplicate", Description: "Duplicate agent", PermissionSets: testPermissionSets()}
 		err = repo.Create(ctx, duplicate)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "canonical_id")

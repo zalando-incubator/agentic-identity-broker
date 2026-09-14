@@ -25,6 +25,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -426,4 +427,19 @@ func seedPermissionSet(t *testing.T, adapter *Adapter, psID id.PermissionSetID) 
 		psID.String(), "test-ps-"+psID.String()[:8],
 	)
 	require.NoError(t, err, "failed to seed permission set %s", psID)
+}
+
+// attachTestPermissionSet gives an agent the persisted permission-set reference required by repository validation.
+func attachTestPermissionSet(t *testing.T, adapter *Adapter, agent *storage.Agent) {
+	t.Helper()
+	if len(agent.PermissionSets) > 0 {
+		return
+	}
+
+	permissionSetID := id.NewPermissionSetID()
+	seedPermissionSet(t, adapter, permissionSetID)
+	agent.PermissionSets = []storage.AgentPermissionSetEntry{{
+		PermissionSetID: permissionSetID,
+		RequirementType: storage.RequirementTypeOptional,
+	}}
 }

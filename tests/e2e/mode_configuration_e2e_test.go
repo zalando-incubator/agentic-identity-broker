@@ -102,13 +102,14 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 		It("redirects authorization to consent page (proxy mode)", func() {
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:           id.NewAgentID(),
-				ClientID:     ptr.To(id.ClientID("test-proxy-agent")),
-				DisplayName:  "Proxy Agent",
-				Description:  "Test agent for proxy mode",
-				RedirectURIs: []string{"https://example.com/cb"},
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             id.NewAgentID(),
+				ClientID:       ptr.To(id.ClientID("test-proxy-agent")),
+				DisplayName:    "Proxy Agent",
+				Description:    "Test agent for proxy mode",
+				RedirectURIs:   []string{"https://example.com/cb"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
@@ -200,12 +201,13 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 		It("redirects authorization to local consent page", func() {
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:           id.NewAgentID(),
-				DisplayName:  "Local Agent",
-				Description:  "Test agent for local mode",
-				RedirectURIs: []string{"https://example.com/cb"},
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Local Agent",
+				Description:    "Test agent for local mode",
+				RedirectURIs:   []string{"https://example.com/cb"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
@@ -307,12 +309,13 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 		It("resolves URL-format client_id via CIMD fetch", func() {
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:          id.NewAgentID(),
-				ClientURIs:  []string{clientURL},
-				DisplayName: "CIMD Agent",
-				Description: "Agent with URL client_id",
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				ClientURIs:     []string{clientURL},
+				DisplayName:    "CIMD Agent",
+				Description:    "Agent with URL client_id",
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
@@ -335,12 +338,13 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 		It("still resolves plain string client_id for registered agents", func() {
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:           id.NewAgentID(),
-				DisplayName:  "Plain Agent",
-				Description:  "Local-mode agent in CIMD mode, resolved by UUID",
-				RedirectURIs: []string{"https://example.com/cb"},
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Plain Agent",
+				Description:    "Local-mode agent in CIMD mode, resolved by UUID",
+				RedirectURIs:   []string{"https://example.com/cb"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 

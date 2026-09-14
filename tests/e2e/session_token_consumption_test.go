@@ -96,21 +96,25 @@ var _ = Describe("Session Token Grant Submission", func() {
 	createAgent := func() *domstorage.Agent {
 		now := time.Now()
 		agent := &domstorage.Agent{
-			ID:           id.NewAgentID(),
-			ClientID:     ptr.To(id.NewClientID("test-client")),
-			DisplayName:  "Session Consumption Agent",
-			Description:  "E2E test agent for session consumption",
-			RedirectURIs: []string{"https://agent.example.com/callback"},
-			CreatedAt:    now,
-			UpdatedAt:    now,
+			ID:             id.NewAgentID(),
+			ClientID:       ptr.To(id.NewClientID("test-client")),
+			DisplayName:    "Session Consumption Agent",
+			Description:    "E2E test agent for session consumption",
+			RedirectURIs:   []string{"https://agent.example.com/callback"},
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
+		Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(principalStr))).To(Succeed())
 		return agent
 	}
 
-	emptyGrantBody := func() *bytes.Reader {
+	grantBody := func() *bytes.Reader {
 		body, _ := json.Marshal(map[string]interface{}{
-			"delegated_oauth2_tokens": []map[string]interface{}{},
+			"granted_permission_sets": map[string][]string{
+				fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()},
+			},
 		})
 		return bytes.NewReader(body)
 	}
@@ -123,7 +127,7 @@ var _ = Describe("Session Token Grant Submission", func() {
 			token := buildToken(agent.ID, principalStr, originalURL)
 
 			path := fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", agent.ID, token)
-			resp, err := server.AuthenticatedPOST(path, principalStr, "application/json", emptyGrantBody())
+			resp, err := server.AuthenticatedPOST(path, principalStr, "application/json", grantBody())
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
@@ -145,7 +149,7 @@ var _ = Describe("Session Token Grant Submission", func() {
 			token := buildExpiredToken(agent.ID, principalStr)
 
 			path := fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", agent.ID, token)
-			resp, err := server.AuthenticatedPOST(path, principalStr, "application/json", emptyGrantBody())
+			resp, err := server.AuthenticatedPOST(path, principalStr, "application/json", grantBody())
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
@@ -159,7 +163,7 @@ var _ = Describe("Session Token Grant Submission", func() {
 			agent := createAgent()
 
 			path := fmt.Sprintf("/api/consent/agents/%s/grants?session_token=not-a-valid-jwe", agent.ID)
-			resp, err := server.AuthenticatedPOST(path, principalStr, "application/json", emptyGrantBody())
+			resp, err := server.AuthenticatedPOST(path, principalStr, "application/json", grantBody())
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
@@ -176,7 +180,7 @@ var _ = Describe("Session Token Grant Submission", func() {
 			)
 
 			path := fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", agent.ID, token)
-			resp, err := server.AuthenticatedPOST(path, principalStr, "application/json", emptyGrantBody())
+			resp, err := server.AuthenticatedPOST(path, principalStr, "application/json", grantBody())
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
@@ -194,7 +198,7 @@ var _ = Describe("Session Token Grant Submission", func() {
 			)
 
 			path := fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", agent.ID, token)
-			resp, err := server.AuthenticatedPOST(path, principalStr, "application/json", emptyGrantBody())
+			resp, err := server.AuthenticatedPOST(path, principalStr, "application/json", grantBody())
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 

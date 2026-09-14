@@ -30,6 +30,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -1811,6 +1812,8 @@ func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.S
 		false,
 		nil,
 	)
+	permissionSetService := permissionset.NewPermissionSetService(nil, nil, slog.Default())
+	t.Cleanup(permissionSetService.Close)
 
 	service, err := tokenexchange.NewTokenExchangeService(
 		validator,
@@ -1818,7 +1821,7 @@ func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.S
 		providerService,
 		&oauth2session.OAuth2SessionService{},
 		&consent.Service{},
-		nil,
+		permissionSetService,
 		newStubAgentRepo(id.NewAgentID(), "upstream-client-id"),
 		&ports.TokenExchangeConfig{
 			ClaimExtraction: ports.ClaimExtractionConfig{

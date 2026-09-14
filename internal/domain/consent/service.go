@@ -243,7 +243,7 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 
 func (s *Service) resolvePermissionSets(ctx context.Context, agent *storage.Agent) ([]ResolvedPermissionSetEntry, error) {
 	if len(agent.PermissionSets) == 0 {
-		return []ResolvedPermissionSetEntry{}, nil
+		return nil, fmt.Errorf("%w: agent must declare at least one permission set", ErrMissingMandatoryPS)
 	}
 
 	psIDs := make([]id.PermissionSetID, len(agent.PermissionSets))
@@ -440,9 +440,7 @@ func (s *Service) ValidateSubmission(ctx context.Context, agent *storage.Agent, 
 // 3. For each PS entry, included_service_ids is a subset of PS ServiceScope ∩ agent SR
 func (s *Service) validateGrantStructureWithResolved(_ context.Context, agent *storage.Agent, entries []storage.GrantedPermissionSetEntry, resolvedSets []*storage.PermissionSet) error {
 	if len(agent.PermissionSets) == 0 {
-		// Agents without permission set declarations skip mandatory PS validation.
-		// Grant entries are still validated at the domain level (ValidateForCreate).
-		return nil
+		return fmt.Errorf("%w: agent must declare at least one permission set", ErrMissingMandatoryPS)
 	}
 
 	// FR-014: empty granted_permission_sets is never valid for PS-using agents

@@ -12,15 +12,23 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 )
 
+func testPermissionSets() []storage.AgentPermissionSetEntry {
+	return []storage.AgentPermissionSetEntry{{
+		PermissionSetID: id.NewPermissionSetID(),
+		RequirementType: storage.RequirementTypeOptional,
+	}}
+}
+
 func TestAgentRepository_Create(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("success with generated ID", func(t *testing.T) {
 		repo := NewAgentRepository()
 		agent := &storage.Agent{
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "Test Agent",
-			Description: "A test agent",
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "Test Agent",
+			Description:    "A test agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent)
@@ -37,10 +45,11 @@ func TestAgentRepository_Create(t *testing.T) {
 		repo := NewAgentRepository()
 		customID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a01")
 		agent := &storage.Agent{
-			ID:          customID,
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "Test Agent",
-			Description: "A test agent",
+			ID:             customID,
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "Test Agent",
+			Description:    "A test agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent)
@@ -52,16 +61,18 @@ func TestAgentRepository_Create(t *testing.T) {
 		repo := NewAgentRepository()
 		dupID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a02")
 		agent1 := &storage.Agent{
-			ID:          dupID,
-			ClientID:    ptr.To(id.ClientID("client-1")),
-			DisplayName: "Agent 1",
-			Description: "First agent",
+			ID:             dupID,
+			ClientID:       ptr.To(id.ClientID("client-1")),
+			DisplayName:    "Agent 1",
+			Description:    "First agent",
+			PermissionSets: testPermissionSets(),
 		}
 		agent2 := &storage.Agent{
-			ID:          dupID,
-			ClientID:    ptr.To(id.ClientID("client-2")),
-			DisplayName: "Agent 2",
-			Description: "Second agent",
+			ID:             dupID,
+			ClientID:       ptr.To(id.ClientID("client-2")),
+			DisplayName:    "Agent 2",
+			Description:    "Second agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent1)
@@ -75,14 +86,16 @@ func TestAgentRepository_Create(t *testing.T) {
 	t.Run("duplicate client_id allowed (Feature 021: multiple agents share one upstream client_id)", func(t *testing.T) {
 		repo := NewAgentRepository()
 		agent1 := &storage.Agent{
-			ClientID:    ptr.To(id.ClientID("shared-upstream-client")),
-			DisplayName: "Agent 1",
-			Description: "First agent",
+			ClientID:       ptr.To(id.ClientID("shared-upstream-client")),
+			DisplayName:    "Agent 1",
+			Description:    "First agent",
+			PermissionSets: testPermissionSets(),
 		}
 		agent2 := &storage.Agent{
-			ClientID:    ptr.To(id.ClientID("shared-upstream-client")),
-			DisplayName: "Agent 2",
-			Description: "Second agent",
+			ClientID:       ptr.To(id.ClientID("shared-upstream-client")),
+			DisplayName:    "Agent 2",
+			Description:    "Second agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent1)
@@ -114,10 +127,11 @@ func TestAgentRepository_Get(t *testing.T) {
 		repo := NewAgentRepository()
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
-			ID:          testAgentID,
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "Test Agent",
-			Description: "A test agent",
+			ID:             testAgentID,
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "Test Agent",
+			Description:    "A test agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent)
@@ -142,10 +156,11 @@ func TestAgentRepository_Get(t *testing.T) {
 		repo := NewAgentRepository()
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
-			ID:          testAgentID,
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "Original Name",
-			Description: "A test agent",
+			ID:             testAgentID,
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "Original Name",
+			Description:    "A test agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent)
@@ -170,10 +185,11 @@ func TestAgentRepository_Update(t *testing.T) {
 		repo := NewAgentRepository()
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
-			ID:          testAgentID,
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "Original Name",
-			Description: "Original description",
+			ID:             testAgentID,
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "Original Name",
+			Description:    "Original description",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent)
@@ -195,10 +211,11 @@ func TestAgentRepository_Update(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		repo := NewAgentRepository()
 		agent := &storage.Agent{
-			ID:          id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a99"),
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "Test Agent",
-			Description: "A test agent",
+			ID:             id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a99"),
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "Test Agent",
+			Description:    "A test agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Update(ctx, agent)
@@ -213,16 +230,18 @@ func TestAgentRepository_Update(t *testing.T) {
 		repo := NewAgentRepository()
 
 		agent1 := &storage.Agent{
-			ID:          id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a21"),
-			ClientID:    ptr.To(id.ClientID("client-1")),
-			DisplayName: "Agent 1",
-			Description: "First agent",
+			ID:             id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a21"),
+			ClientID:       ptr.To(id.ClientID("client-1")),
+			DisplayName:    "Agent 1",
+			Description:    "First agent",
+			PermissionSets: testPermissionSets(),
 		}
 		agent2 := &storage.Agent{
-			ID:          id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22"),
-			ClientID:    ptr.To(id.ClientID("client-2")),
-			DisplayName: "Agent 2",
-			Description: "Second agent",
+			ID:             id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22"),
+			ClientID:       ptr.To(id.ClientID("client-2")),
+			DisplayName:    "Agent 2",
+			Description:    "Second agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent1)
@@ -245,10 +264,11 @@ func TestAgentRepository_Update(t *testing.T) {
 		repo := NewAgentRepository()
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
-			ID:          testAgentID,
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "Test Agent",
-			Description: "A test agent",
+			ID:             testAgentID,
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "Test Agent",
+			Description:    "A test agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent)
@@ -269,10 +289,11 @@ func TestAgentRepository_Delete(t *testing.T) {
 		repo := NewAgentRepository()
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
-			ID:          testAgentID,
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "Test Agent",
-			Description: "A test agent",
+			ID:             testAgentID,
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "Test Agent",
+			Description:    "A test agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent)
@@ -297,10 +318,11 @@ func TestAgentRepository_Delete(t *testing.T) {
 		repo := NewAgentRepository()
 		testAgentID := id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a10")
 		agent := &storage.Agent{
-			ID:          testAgentID,
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "Test Agent",
-			Description: "A test agent",
+			ID:             testAgentID,
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "Test Agent",
+			Description:    "A test agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent)
@@ -311,9 +333,10 @@ func TestAgentRepository_Delete(t *testing.T) {
 
 		// Should be able to reuse client_id
 		newAgent := &storage.Agent{
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "New Agent",
-			Description: "A new agent",
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "New Agent",
+			Description:    "A new agent",
+			PermissionSets: testPermissionSets(),
 		}
 		err = repo.Create(ctx, newAgent)
 		require.NoError(t, err)
@@ -331,14 +354,16 @@ func TestAgentRepository_MultipleAgentsShareClientID(t *testing.T) {
 		repo := NewAgentRepository()
 
 		alpha := &storage.Agent{
-			ClientID:    ptr.To(id.ClientID("shared-client")),
-			DisplayName: "Alpha Agent",
-			Description: "First agent sharing a client_id",
+			ClientID:       ptr.To(id.ClientID("shared-client")),
+			DisplayName:    "Alpha Agent",
+			Description:    "First agent sharing a client_id",
+			PermissionSets: testPermissionSets(),
 		}
 		beta := &storage.Agent{
-			ClientID:    ptr.To(id.ClientID("shared-client")),
-			DisplayName: "Beta Agent",
-			Description: "Second agent sharing a client_id",
+			ClientID:       ptr.To(id.ClientID("shared-client")),
+			DisplayName:    "Beta Agent",
+			Description:    "Second agent sharing a client_id",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, alpha)
@@ -369,14 +394,16 @@ func TestAgentRepository_List(t *testing.T) {
 		repo := NewAgentRepository()
 
 		agent1 := &storage.Agent{
-			ClientID:    ptr.To(id.ClientID("client-1")),
-			DisplayName: "Agent 1",
-			Description: "First agent",
+			ClientID:       ptr.To(id.ClientID("client-1")),
+			DisplayName:    "Agent 1",
+			Description:    "First agent",
+			PermissionSets: testPermissionSets(),
 		}
 		agent2 := &storage.Agent{
-			ClientID:    ptr.To(id.ClientID("client-2")),
-			DisplayName: "Agent 2",
-			Description: "Second agent",
+			ClientID:       ptr.To(id.ClientID("client-2")),
+			DisplayName:    "Agent 2",
+			Description:    "Second agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent1)
@@ -401,9 +428,10 @@ func TestAgentRepository_List(t *testing.T) {
 	t.Run("returns copies prevent external mutation", func(t *testing.T) {
 		repo := NewAgentRepository()
 		agent := &storage.Agent{
-			ClientID:    ptr.To(id.ClientID("test-client")),
-			DisplayName: "Original Name",
-			Description: "A test agent",
+			ClientID:       ptr.To(id.ClientID("test-client")),
+			DisplayName:    "Original Name",
+			Description:    "A test agent",
+			PermissionSets: testPermissionSets(),
 		}
 
 		err := repo.Create(ctx, agent)
@@ -451,9 +479,10 @@ func TestAgentRepository_Update_MutualExclusivity(t *testing.T) {
 
 	// Create a valid proxy agent first
 	agent := &storage.Agent{
-		ClientID:    &clientID,
-		DisplayName: "Proxy Agent",
-		Description: "Valid proxy agent",
+		ClientID:       &clientID,
+		DisplayName:    "Proxy Agent",
+		Description:    "Valid proxy agent",
+		PermissionSets: testPermissionSets(),
 	}
 	require.NoError(t, repo.Create(ctx, agent))
 
@@ -471,7 +500,7 @@ func TestAgentRepository_GetByClientURIPattern(t *testing.T) {
 	ctx := context.Background()
 	repo := NewAgentRepository()
 	newAgent := func(name, uri string) *storage.Agent {
-		return &storage.Agent{DisplayName: name, Description: "CIMD pattern lookup test", ClientURIs: []string{uri}}
+		return &storage.Agent{DisplayName: name, Description: "CIMD pattern lookup test", ClientURIs: []string{uri}, PermissionSets: testPermissionSets()}
 	}
 
 	t.Run("resolves a concrete URL through a pattern", func(t *testing.T) {

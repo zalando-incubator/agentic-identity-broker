@@ -96,12 +96,14 @@ func TestCanonicalIDsPostgresRepositories(t *testing.T) {
 	agents := NewAgentRepository(adapter)
 	agentCanonicalID := "shared"
 	agent := &storage.Agent{ID: id.NewAgentID(), CanonicalID: &agentCanonicalID, DisplayName: "Canonical Agent", Description: "Canonical agent", CreatedAt: now, UpdatedAt: now}
+	attachTestPermissionSet(t, adapter, agent)
 	require.NoError(t, agents.Create(ctx, agent))
 	resolvedAgent, err := agents.GetByCanonicalID(ctx, agentCanonicalID)
 	require.NoError(t, err)
 	assert.Equal(t, agent.ID, resolvedAgent.ID)
 
 	duplicate := &storage.Agent{ID: id.NewAgentID(), CanonicalID: &agentCanonicalID, DisplayName: "Duplicate", Description: "Duplicate agent", CreatedAt: now, UpdatedAt: now}
+	attachTestPermissionSet(t, adapter, duplicate)
 	err = agents.Create(ctx, duplicate)
 	require.Error(t, err)
 	var agentStorageErr *storage.StorageError
@@ -118,5 +120,6 @@ func TestCanonicalIDsPostgresRepositories(t *testing.T) {
 
 	reusedCanonicalID := agentCanonicalID
 	reused := &storage.Agent{ID: id.NewAgentID(), CanonicalID: &reusedCanonicalID, DisplayName: "Reused Canonical Agent", Description: "Reuses released canonical ID", CreatedAt: now, UpdatedAt: now}
+	attachTestPermissionSet(t, adapter, reused)
 	require.NoError(t, agents.Create(ctx, reused))
 }

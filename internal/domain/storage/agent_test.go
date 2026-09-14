@@ -30,6 +30,10 @@ func TestAgent_Validate(t *testing.T) {
 				GovernanceURL:        &validGovernanceURL,
 				UserDocumentationURL: &validUserDocURL,
 				AgentInterfaceURL:    &validAgentURL,
+				PermissionSets: []AgentPermissionSetEntry{{
+					PermissionSetID: id.NewPermissionSetID(),
+					RequirementType: RequirementTypeOptional,
+				}},
 			},
 			wantErr: "",
 		},
@@ -40,6 +44,10 @@ func TestAgent_Validate(t *testing.T) {
 				ClientID:    ptr.To(id.ClientID("test-client")),
 				DisplayName: "Test Agent",
 				Description: "A test agent",
+				PermissionSets: []AgentPermissionSetEntry{{
+					PermissionSetID: id.NewPermissionSetID(),
+					RequirementType: RequirementTypeOptional,
+				}},
 			},
 			wantErr: "",
 		},
@@ -58,6 +66,10 @@ func TestAgent_Validate(t *testing.T) {
 				ID:          id.MustParseAgentID("550e8400-e29b-41d4-a716-446655440000"),
 				DisplayName: "Test Agent",
 				Description: "A test agent",
+				PermissionSets: []AgentPermissionSetEntry{{
+					PermissionSetID: id.NewPermissionSetID(),
+					RequirementType: RequirementTypeOptional,
+				}},
 			},
 			wantErr: "",
 		},
@@ -158,6 +170,12 @@ func TestAgent_Validate(t *testing.T) {
 	}
 }
 
+func TestAgent_ValidatePermissionSets_RejectsEmpty(t *testing.T) {
+	err := (&Agent{}).ValidatePermissionSets()
+	require.Error(t, err)
+	assert.EqualError(t, err, "at least one permission set entry is required")
+}
+
 func TestAgent_ValidateForCreate(t *testing.T) {
 	validGovernanceURL := "https://governance.example.com"
 
@@ -173,6 +191,10 @@ func TestAgent_ValidateForCreate(t *testing.T) {
 				DisplayName:   "Test Agent",
 				Description:   "A test agent",
 				GovernanceURL: &validGovernanceURL,
+				PermissionSets: []AgentPermissionSetEntry{{
+					PermissionSetID: id.NewPermissionSetID(),
+					RequirementType: RequirementTypeOptional,
+				}},
 			},
 			wantErr: "",
 		},
@@ -181,6 +203,10 @@ func TestAgent_ValidateForCreate(t *testing.T) {
 			agent: &Agent{
 				DisplayName: "Test Agent",
 				Description: "A test agent",
+				PermissionSets: []AgentPermissionSetEntry{{
+					PermissionSetID: id.NewPermissionSetID(),
+					RequirementType: RequirementTypeOptional,
+				}},
 			},
 			wantErr: "",
 		},
@@ -428,6 +454,10 @@ func TestAgent_ValidateServiceRequirements_IntegrationWithValidate(t *testing.T)
 				RequirementType: RequirementTypeMandatory,
 				RequiredScopes:  []string{},
 			}},
+			PermissionSets: []AgentPermissionSetEntry{{
+				PermissionSetID: id.NewPermissionSetID(),
+				RequirementType: RequirementTypeOptional,
+			}},
 		}
 
 		require.NoError(t, agent.Validate())
@@ -552,7 +582,16 @@ func TestValidateClientURIsForWrite(t *testing.T) {
 
 func TestAgentCanonicalIDValidationAndCopy(t *testing.T) {
 	canonicalID := "research-agent"
-	agent := &Agent{ID: id.NewAgentID(), CanonicalID: &canonicalID, DisplayName: "Research", Description: "Research agent"}
+	agent := &Agent{
+		ID:          id.NewAgentID(),
+		CanonicalID: &canonicalID,
+		DisplayName: "Research",
+		Description: "Research agent",
+		PermissionSets: []AgentPermissionSetEntry{{
+			PermissionSetID: id.NewPermissionSetID(),
+			RequirementType: RequirementTypeOptional,
+		}},
+	}
 	require.NoError(t, agent.Validate())
 
 	copy := agent.Copy()

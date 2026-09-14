@@ -347,8 +347,9 @@ func (m *MockGrantRepository) CountGrantsReferencingPermissionSet(_ context.Cont
 }
 
 type MockSessionRepository struct {
-	session *storagedomain.UserSession
-	err     error
+	session                        *storagedomain.UserSession
+	err                            error
+	findByPrincipalAndServiceCalls int
 }
 
 type MockEncryption struct {
@@ -364,6 +365,7 @@ func (m *MockEncryption) Decrypt(ctx context.Context, ciphertext []byte, context
 }
 
 func (m *MockSessionRepository) FindByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storagedomain.UserSession, error) {
+	m.findByPrincipalAndServiceCalls++
 	return m.session, m.err
 }
 
@@ -549,6 +551,25 @@ func TestNewTokenExchangeServiceForTest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewTokenExchangeService_RequiresPermissionSetService(t *testing.T) {
+	t.Parallel()
+
+	service, err := NewTokenExchangeService(
+		&JWTValidator{},
+		&CELEvaluator{},
+		newTestProviderService(&MockServiceRepository{}),
+		&oauth2session.OAuth2SessionService{},
+		&consent.Service{},
+		nil,
+		&MockAgentRepository{},
+		&ports.TokenExchangeConfig{},
+	)
+
+	require.Error(t, err)
+	assert.Nil(t, service)
+	assert.ErrorContains(t, err, "permissionSetService")
 }
 
 // TestExchange_InvalidRequest tests handling of invalid token exchange requests
@@ -1494,138 +1515,6 @@ func (r *singleAgentRepo) ExistsOtherWithClientID(_ context.Context, _ id.Client
 	return false, nil
 }
 
-// TestExchange_EmptyGrantGuard_FiresBeforeSessionLookup is a regression test for the guard
-// that rejects a legacy grant with no GrantedPermissionSets when the agent has SRs. It
-// verifies the error is invalid_grant and that the guard fires before GetValidAccessToken —
-// if the guard position were moved after the session call, the Exchange would fail with a
-// session-related error (not invalid_grant) because the empty OAuth2SessionService would
-// return an error first.
-func TestExchange_EmptyGrantGuard_FiresBeforeSessionLookup(t *testing.T) {
-	t.Parallel()
-
-	privateKey, keySet := generateTestRSAKeySet(t)
-	agentUUID := id.NewAgentID()
-	svcID := id.NewServiceID()
-
-	agent := &storagedomain.Agent{
-		ID:          agentUUID,
-		ClientID:    ptr.To(id.ClientID("test-agent-client")),
-		DisplayName: "Test Agent",
-		ServiceRequirements: []storagedomain.ServiceRequirement{
-			{ServiceID: svcID, RequirementType: storagedomain.RequirementTypeMandatory, RequiredScopes: []string{"read"}},
-		},
-		PermissionSets: []storagedomain.AgentPermissionSetEntry{
-			{PermissionSetID: id.NewPermissionSetID(), RequirementType: storagedomain.RequirementTypeMandatory},
-		},
-	}
-
-	futureTime := time.Now().Add(time.Hour)
-	grant := &storagedomain.UserGrant{
-		ID:                    id.NewGrantID(),
-		AgentID:               agentUUID,
-		Principal:             id.Principal("user@example.com"),
-		ValidUntil:            &futureTime,
-		GrantedPermissionSets: nil, // no PS entries — legacy/migrated grant
-		CreatedAt:             time.Now(),
-		UpdatedAt:             time.Now(),
-	}
-
-	agentRepo := &singleAgentRepo{agentID: agentUUID, agent: agent}
-	grantRepo := &MockGrantRepository{grant: grant}
-	psRepo := &MockPermissionSetRepository{psMap: map[id.PermissionSetID]*storagedomain.PermissionSet{}}
-	psService := permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default())
-
-	providerEntity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:                 svcID,
-		DisplayName:        "Test Service",
-		ClientID:           id.ClientID("svc-client"),
-		Secret:             model.NewEncryptedSecret([]byte("placeholder")),
-		ProtectedResources: []string{"https://api.example.com/resource"},
-	}
-
-	consentSvc := consent.NewService(
-		agentRepo,
-		newTestProviderService(&MockServiceRepository{}),
-		grantRepo,
-		nil,
-		nil,
-		slog.Default(),
-	)
-
-	jwtValidator, err := NewJWTValidator(
-		&MockJWKSProvider{keySet: keySet},
-		"https://auth.example.com",
-		"agentic-identity-broker",
-		60,
-	)
-	require.NoError(t, err)
-
-	celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
-		PrincipalExpression:     "subject_token.sub",
-		AgentIDExpression:       "subject_token.azp",
-		AuthorizationExpression: "true",
-		EvaluationTimeout:       100 * time.Millisecond,
-	})
-	require.NoError(t, err)
-
-	svc := &TokenExchangeService{
-		jwtValidator:         jwtValidator,
-		celEvaluator:         celEvaluator,
-		providerService:      newTestProviderService(&MockServiceRepository{service: providerEntity}),
-		oauth2SessionService: &oauth2session.OAuth2SessionService{}, // nil internals — panics if called
-		consentService:       consentSvc,
-		agentRepository:      agentRepo,
-		permissionSetService: psService,
-		config: &ports.TokenExchangeConfig{
-			ClaimExtraction: ports.ClaimExtractionConfig{
-				PrincipalExpression: "subject_token.sub",
-				AgentIDExpression:   "subject_token.azp",
-			},
-			Authorization: ports.AuthorizationConfig{
-				Type: "cel",
-				CEL:  ports.CELAuthorizationConfig{Expression: "true"},
-			},
-		},
-	}
-
-	now := time.Now()
-	commonClaims := map[string]interface{}{
-		"iss": "https://auth.example.com",
-		"aud": "agentic-identity-broker",
-		"sub": "user@example.com",
-		"exp": now.Add(time.Hour).Unix(),
-		"iat": now.Unix(),
-	}
-	subjectClaims := map[string]interface{}{}
-	for k, v := range commonClaims {
-		subjectClaims[k] = v
-	}
-	subjectClaims["azp"] = agentUUID.String()
-
-	subjectToken := signServiceTestJWT(t, privateKey, subjectClaims)
-	clientAssertion := signServiceTestJWT(t, privateKey, commonClaims)
-
-	req := NewTokenExchangeRequest(
-		TokenExchangeGrantType,
-		subjectToken,
-		AccessTokenType,
-		clientAssertion,
-		JWTBearerType,
-		"https://api.example.com/resource",
-		"",
-	)
-
-	_, exchErr := svc.Exchange(context.Background(), req)
-
-	require.Error(t, exchErr)
-	tokenErr, ok := exchErr.(*TokenExchangeError)
-	require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", exchErr, exchErr)
-	assert.Equal(t, "invalid_grant", tokenErr.Code(),
-		"empty-grant guard must fire before GetValidAccessToken and return invalid_grant")
-	assert.Contains(t, tokenErr.Description(), "re-consent",
-		"error description must mention re-consent")
-}
-
 // TestExchange_PSAgentNoSRs_EmptyGrantGuard checks that the empty-grant guard also fires
 // when the agent declares PermissionSets but has no ServiceRequirements and the grant has
 // no GrantedPermissionSets entries. This is the same post-consent-edit scenario but via
@@ -1753,6 +1642,147 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 		"empty-grant guard must fire for PS-backed agent with no SRs and empty grant")
 	assert.Contains(t, tokenErr.Description(), "re-consent",
 		"error description must mention re-consent")
+}
+
+// TestExchange_UncoveredServiceDeniedBeforeSessionLookup verifies that an agent
+// with neither service requirements nor permission sets cannot exchange for an
+// uncovered service before the token vault is read.
+func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
+	t.Parallel()
+
+	privateKey, keySet := generateTestRSAKeySet(t)
+	agentID := id.NewAgentID()
+	coveredServiceID := id.NewServiceID()
+	requestedServiceID := id.NewServiceID()
+	permissionSetID := id.NewPermissionSetID()
+
+	agent := &storagedomain.Agent{
+		ID:          agentID,
+		ClientID:    ptr.To(id.ClientID("test-agent-client")),
+		DisplayName: "Test Agent",
+	}
+	futureTime := time.Now().Add(time.Hour)
+	grant := &storagedomain.UserGrant{
+		ID:         id.NewGrantID(),
+		AgentID:    agentID,
+		Principal:  id.Principal("user@example.com"),
+		ValidUntil: &futureTime,
+		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{
+			{
+				PermissionSetID:    permissionSetID,
+				IncludedServiceIDs: []id.ServiceID{coveredServiceID},
+			},
+		},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	agentRepo := &singleAgentRepo{agentID: agentID, agent: agent}
+	grantRepo := &MockGrantRepository{grant: grant}
+	psRepo := &MockPermissionSetRepository{psMap: map[id.PermissionSetID]*storagedomain.PermissionSet{
+		permissionSetID: {
+			ID:          permissionSetID,
+			Name:        "Test Permission Set",
+			Description: "Covers only a different service",
+			ServiceScopes: []storagedomain.ServiceScope{
+				{ServiceID: coveredServiceID, RequirementType: storagedomain.RequirementTypeOptional},
+			},
+		},
+	}}
+	psService := permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default())
+	consentSvc := consent.NewService(
+		agentRepo,
+		newTestProviderService(&MockServiceRepository{}),
+		grantRepo,
+		nil,
+		nil,
+		slog.Default(),
+	)
+
+	sessionRepo := &MockSessionRepository{
+		session: &storagedomain.UserSession{
+			ID:                   id.NewSessionID(),
+			Principal:            id.Principal("user@example.com"),
+			ServiceID:            requestedServiceID,
+			EncryptedAccessToken: []byte("access-token"),
+			TokenType:            "Bearer",
+		},
+	}
+	oauth2SessionService := oauth2session.NewOAuth2SessionService(
+		nil,
+		sessionRepo,
+		nil,
+		nil,
+		&MockEncryption{},
+		nil,
+		nil,
+		oauth2session.DefaultConfig(),
+		slog.Default(),
+	)
+
+	jwtValidator, err := NewJWTValidator(
+		&MockJWKSProvider{keySet: keySet},
+		"https://auth.example.com",
+		"agentic-identity-broker",
+		60,
+	)
+	require.NoError(t, err)
+	celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
+		PrincipalExpression:     "subject_token.sub",
+		AgentIDExpression:       "subject_token.azp",
+		AuthorizationExpression: "true",
+		EvaluationTimeout:       100 * time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	svc := &TokenExchangeService{
+		jwtValidator: jwtValidator,
+		celEvaluator: celEvaluator,
+		providerService: newTestProviderService(&MockServiceRepository{
+			service: &model.ThirdpartyOAuth2ProviderEntity{
+				ID:                 requestedServiceID,
+				DisplayName:        "Requested Service",
+				ClientID:           id.ClientID("service-client"),
+				Secret:             model.NewEncryptedSecret([]byte("placeholder")),
+				ProtectedResources: []string{"https://api.example.com/requested"},
+			},
+		}),
+		oauth2SessionService: oauth2SessionService,
+		consentService:       consentSvc,
+		permissionSetService: psService,
+		agentRepository:      agentRepo,
+		config: &ports.TokenExchangeConfig{
+			ClaimExtraction: ports.ClaimExtractionConfig{PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.azp"},
+			Authorization:   ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},
+		},
+	}
+
+	now := time.Now()
+	claims := map[string]interface{}{
+		"iss": "https://auth.example.com",
+		"aud": "agentic-identity-broker",
+		"sub": "user@example.com",
+		"azp": agentID.String(),
+		"exp": now.Add(time.Hour).Unix(),
+		"iat": now.Unix(),
+	}
+	req := NewTokenExchangeRequest(
+		TokenExchangeGrantType,
+		signServiceTestJWT(t, privateKey, claims),
+		AccessTokenType,
+		signServiceTestJWT(t, privateKey, claims),
+		JWTBearerType,
+		"https://api.example.com/requested",
+		"",
+	)
+
+	_, err = svc.Exchange(context.Background(), req)
+	require.Error(t, err)
+	tokenErr, ok := err.(*TokenExchangeError)
+	require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
+	assert.Equal(t, "invalid_grant", tokenErr.Code())
+	assert.Contains(t, tokenErr.Description(), "not authorized by any permission set")
+	assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "uncovered service must be rejected before token-vault lookup")
 }
 
 func TestExchange_FinalizesSecurityContextWithDistinctCallingPeer(t *testing.T) {

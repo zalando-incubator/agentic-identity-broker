@@ -101,8 +101,12 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 		ClientID:    ptr.To(id.ClientID("client-test")),
 		DisplayName: "Test Agent",
 		Description: "Integration test agent",
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		PermissionSets: []storage.AgentPermissionSetEntry{{
+			PermissionSetID: id.NewPermissionSetID(),
+			RequirementType: storage.RequirementTypeOptional,
+		}},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	err := agentRepo.Create(ctx, agent)
 	require.NoError(t, err)
@@ -291,6 +295,7 @@ func TestGrantsIntegration_SessionToken_CreateGrantWithRedirect(t *testing.T) {
 	agentID := id.NewAgentID()
 	serviceID := id.NewServiceID()
 	principalValue := id.Principal("alice@example.com")
+	permissionSetID := id.NewPermissionSetID()
 	originalURL := "https://agent.example.com/authorize?response_type=code"
 
 	agent := &storage.Agent{
@@ -298,8 +303,12 @@ func TestGrantsIntegration_SessionToken_CreateGrantWithRedirect(t *testing.T) {
 		ClientID:    ptr.To(id.ClientID("client-test")),
 		DisplayName: "Test Agent",
 		Description: "Integration test agent",
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		PermissionSets: []storage.AgentPermissionSetEntry{{
+			PermissionSetID: permissionSetID,
+			RequirementType: storage.RequirementTypeOptional,
+		}},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	require.NoError(t, agentRepo.Create(ctx, agent))
 
@@ -322,15 +331,17 @@ func TestGrantsIntegration_SessionToken_CreateGrantWithRedirect(t *testing.T) {
 
 	ts := newTestJWETokenService()
 	sessionToken := newTestSessionToken(ts, agentID, principalValue.String(), originalURL)
+	sessionRepo := memory.NewInMemoryUserSessionRepository()
+	seedActiveSession(t, sessionRepo, principalValue, serviceID)
 
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, nil, nil, slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, newPermissivePermissionSetQuerier(serviceID), slog.Default())
 	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
 
 	validUntil := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
 
 	reqBody := GrantRequest{
 		ValidUntil:            &validUntil,
-		GrantedPermissionSets: map[string][]string{},
+		GrantedPermissionSets: map[string][]string{permissionSetID.String(): {serviceID.String()}},
 	}
 	jsonBody, marshalErr := json.Marshal(reqBody)
 	require.NoError(t, marshalErr)
@@ -352,13 +363,14 @@ func TestGrantsIntegration_SessionToken_CreateGrantWithRedirect(t *testing.T) {
 	storedGrant, err := grantRepo.FindByPrincipalAndAgent(ctx, principalValue, agentID)
 	require.NoError(t, err)
 	require.NotNil(t, storedGrant)
-	assert.Equal(t, &validUntil, storedGrant.ValidUntil)
-	assert.Empty(t, storedGrant.GrantedPermissionSets)
+	require.Len(t, storedGrant.GrantedPermissionSets, 1)
+	assert.Equal(t, permissionSetID, storedGrant.GrantedPermissionSets[0].PermissionSetID)
+	assert.Equal(t, []id.ServiceID{serviceID}, storedGrant.GrantedPermissionSets[0].IncludedServiceIDs)
 }
 
 // TestGrantsIntegration_OptionalOnlyAgent verifies that agents with only optional service
-// requirements accept approval with no delegated tokens. Empty tokens create a grant with
-// no delegations (201 Created) rather than triggering a revoke.
+// requirements can grant the optional service and that an ignored redirect_uri does not
+// create a redirect response without a session token.
 func TestGrantsIntegration_OptionalOnlyAgent(t *testing.T) {
 	agentRepo := memory.NewAgentRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
@@ -370,6 +382,7 @@ func TestGrantsIntegration_OptionalOnlyAgent(t *testing.T) {
 	// Agent with only optional service requirements
 	optionalAgentID := id.NewAgentID()
 	optionalServiceID := id.NewServiceID()
+	permissionSetID := id.NewPermissionSetID()
 
 	optionalAgent := &storage.Agent{
 		ID:          optionalAgentID,
@@ -383,6 +396,10 @@ func TestGrantsIntegration_OptionalOnlyAgent(t *testing.T) {
 				RequiredScopes:  []string{"read"},
 			},
 		},
+		PermissionSets: []storage.AgentPermissionSetEntry{{
+			PermissionSetID: permissionSetID,
+			RequirementType: storage.RequirementTypeOptional,
+		}},
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -405,14 +422,15 @@ func TestGrantsIntegration_OptionalOnlyAgent(t *testing.T) {
 	}
 	err = providerService.Create(ctx, optionalService)
 	require.NoError(t, err)
+	sessionRepo := memory.NewInMemoryUserSessionRepository()
+	seedActiveSession(t, sessionRepo, id.Principal("bob@example.com"), optionalServiceID)
 
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, nil, nil, slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, newPermissivePermissionSetQuerier(optionalServiceID), slog.Default())
 	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
 
-	// Approval with no selected services creates a grant with empty permission sets (201).
-	t.Run("approve_with_no_services_optional_only_agent", func(t *testing.T) {
+	t.Run("approve_optional_service", func(t *testing.T) {
 		reqBody := GrantRequest{
-			GrantedPermissionSets: map[string][]string{},
+			GrantedPermissionSets: map[string][]string{permissionSetID.String(): {optionalServiceID.String()}},
 		}
 
 		jsonBody, _ := json.Marshal(reqBody)
@@ -430,13 +448,15 @@ func TestGrantsIntegration_OptionalOnlyAgent(t *testing.T) {
 		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 		data := resp["data"].(map[string]interface{})
 		assert.Equal(t, optionalAgentID.String(), data["agent_id"])
-		assert.Empty(t, data["granted_permission_sets"])
+		grantedPermissionSets, ok := data["granted_permission_sets"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, []interface{}{optionalServiceID.String()}, grantedPermissionSets[permissionSetID.String()])
 	})
 
 	// redirect_uri without session_token must be ignored — no redirect_url in response (SR-004, ADR 016).
 	t.Run("redirect_uri_without_session_token_is_ignored", func(t *testing.T) {
 		reqBody := GrantRequest{
-			GrantedPermissionSets: map[string][]string{},
+			GrantedPermissionSets: map[string][]string{permissionSetID.String(): {optionalServiceID.String()}},
 		}
 
 		jsonBody, _ := json.Marshal(reqBody)
@@ -477,8 +497,12 @@ func TestGrantsIntegration_Validation(t *testing.T) {
 		ClientID:    ptr.To(id.ClientID("client-validate")),
 		DisplayName: "Validation Test Agent",
 		Description: "Test validation",
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		PermissionSets: []storage.AgentPermissionSetEntry{{
+			PermissionSetID: id.NewPermissionSetID(),
+			RequirementType: storage.RequirementTypeOptional,
+		}},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	err := agentRepo.Create(ctx, agent)
 	require.NoError(t, err)
@@ -588,8 +612,12 @@ func TestGrantsIntegration_FR020_UnconnectedServices(t *testing.T) {
 		ClientID:    ptr.To(id.ClientID("client-fr020")),
 		DisplayName: "FR-020 Test Agent",
 		Description: "Agent for FR-020 unconnected services test",
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		PermissionSets: []storage.AgentPermissionSetEntry{{
+			PermissionSetID: id.NewPermissionSetID(),
+			RequirementType: storage.RequirementTypeOptional,
+		}},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	require.NoError(t, agentRepo.Create(ctx, agent))
 

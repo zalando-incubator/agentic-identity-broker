@@ -10,6 +10,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/pages"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -40,16 +41,18 @@ var _ = Describe("CIMD Consent UI", func() {
 
 		now := time.Now()
 		cimdAgent = &storage.Agent{
-			ID:           id.NewAgentID(),
-			DisplayName:  "CIMD Test Agent",
-			Description:  "Test agent for CIMD consent UI scenarios",
-			ClientURIs:   []string{"https://cimd-example.com/client_metadata.json"},
-			RedirectURIs: []string{"https://cimd-example.com/callback"},
-			CreatedAt:    now,
-			UpdatedAt:    now,
+			ID:             id.NewAgentID(),
+			DisplayName:    "CIMD Test Agent",
+			Description:    "Test agent for CIMD consent UI scenarios",
+			ClientURIs:     []string{"https://cimd-example.com/client_metadata.json"},
+			RedirectURIs:   []string{"https://cimd-example.com/callback"},
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		err := GetTestStorage().Agents().Create(ctx, cimdAgent)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create CIMD test agent")
+		Expect(fixtures.SeedDefaultConsentData(ctx, GetTestStorage(), id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 
 		sessionToken = newCIMDSessionToken(
 			cimdAgent.ID,

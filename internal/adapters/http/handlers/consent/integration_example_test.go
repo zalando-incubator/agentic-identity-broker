@@ -50,6 +50,31 @@ func newIntegrationProviderService(t *testing.T) *thirdparty.ThirdpartyOAuth2Pro
 	return thirdparty.NewThirdpartyOAuth2ProviderService(repo, testutil.NewTestEncryptionAdapter(t), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
 }
 
+func testAgentPermissionSets() []storage.AgentPermissionSetEntry {
+	return []storage.AgentPermissionSetEntry{{
+		PermissionSetID: id.NewPermissionSetID(),
+		RequirementType: storage.RequirementTypeOptional,
+	}}
+}
+
+type testPermissionSetQuerier struct{}
+
+func (testPermissionSetQuerier) ValidateIDs(context.Context, []id.PermissionSetID) error {
+	return nil
+}
+
+func (testPermissionSetQuerier) GetByIDs(_ context.Context, ids []id.PermissionSetID) ([]*storage.PermissionSet, error) {
+	permissionSets := make([]*storage.PermissionSet, 0, len(ids))
+	for _, permissionSetID := range ids {
+		permissionSets = append(permissionSets, &storage.PermissionSet{
+			ID:          permissionSetID,
+			Name:        "Test Permission Set",
+			Description: "Test permission set for integration coverage",
+		})
+	}
+	return permissionSets, nil
+}
+
 func newGitHubServiceEntity() *model.ThirdpartyOAuth2ProviderEntity {
 	return &model.ThirdpartyOAuth2ProviderEntity{
 		ID:          id.NewServiceID(),
@@ -93,6 +118,7 @@ func TestIntegration_GetAgentDetail(t *testing.T) {
 		UserDocumentationURL: &docsURL,
 		CreatedAt:            time.Now(),
 		UpdatedAt:            time.Now(),
+		PermissionSets:       testAgentPermissionSets(),
 	}
 	if err := agentRepo.Create(ctx, agent); err != nil {
 		t.Fatalf("failed to create agent: %v", err)
@@ -102,7 +128,7 @@ func TestIntegration_GetAgentDetail(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), nil, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), testPermissionSetQuerier{}, slog.Default())
 	handler := consent.NewAgentDetailHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
 
 	reqCtx := principal.WithPrincipal(ctx, principalValue)
@@ -153,12 +179,13 @@ func TestIntegration_GetAgentGrants(t *testing.T) {
 	testPermissionSetID := id.NewPermissionSetID()
 
 	agent := &storage.Agent{
-		ID:          testAgentID,
-		ClientID:    ptr.To(id.ClientID("client-456")),
-		DisplayName: "Example Agent",
-		Description: "An example agent",
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:             testAgentID,
+		ClientID:       ptr.To(id.ClientID("client-456")),
+		DisplayName:    "Example Agent",
+		Description:    "An example agent",
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		PermissionSets: testAgentPermissionSets(),
 	}
 	if err := agentRepo.Create(ctx, agent); err != nil {
 		t.Fatalf("failed to create agent: %v", err)
@@ -178,7 +205,7 @@ func TestIntegration_GetAgentGrants(t *testing.T) {
 		t.Fatalf("failed to create grant: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, nil, nil, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, nil, testPermissionSetQuerier{}, slog.Default())
 	handler := consent.NewGrantsHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
 
 	reqCtx := principal.WithPrincipal(ctx, principalValue)
@@ -246,6 +273,7 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 		AgentInterfaceURL:    &interfaceURL,
 		CreatedAt:            time.Now(),
 		UpdatedAt:            time.Now(),
+		PermissionSets:       testAgentPermissionSets(),
 	}
 	if err := agentRepo.Create(ctx, agent); err != nil {
 		t.Fatalf("failed to create agent: %v", err)
@@ -310,7 +338,7 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 		t.Fatalf("failed to create grant: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), nil, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), testPermissionSetQuerier{}, slog.Default())
 
 	t.Run("GetAgentDetail", func(t *testing.T) {
 		handler := consent.NewAgentDetailHandler(consentSvc, nil, newIntegrationSessionTokenValidator())

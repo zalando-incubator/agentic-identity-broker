@@ -59,6 +59,7 @@ var _ = Describe("Portless Redirect URI — Opaque Agent", func() {
 	It("accepts a different ephemeral port for an opaque agent with explicit-port loopback redirect URI", func() {
 		completeAuthorizationCodeFlow(
 			server,
+			testStorage,
 			fixtures.DefaultPrincipal().String(),
 			agent.ID.String(),
 			"http://localhost:9999/callback",

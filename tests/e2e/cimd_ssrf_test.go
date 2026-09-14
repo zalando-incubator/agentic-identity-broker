@@ -62,12 +62,13 @@ var _ = Describe("CIMD SSRF Protection", func() {
 
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "RFC1918 Agent",
-				Description: "E2E test agent for private-IP SSRF scenario",
-				ClientURIs:  []string{"https://10.0.0.1/client"},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "RFC1918 Agent",
+				Description:    "E2E test agent for private-IP SSRF scenario",
+				ClientURIs:     []string{"https://10.0.0.1/client"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
@@ -99,12 +100,13 @@ var _ = Describe("CIMD SSRF Protection", func() {
 
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "Loopback Agent",
-				Description: "E2E test agent for loopback SSRF scenario",
-				ClientURIs:  []string{"https://127.0.0.1/client"},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Loopback Agent",
+				Description:    "E2E test agent for loopback SSRF scenario",
+				ClientURIs:     []string{"https://127.0.0.1/client"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
@@ -136,12 +138,13 @@ var _ = Describe("CIMD SSRF Protection", func() {
 
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "Link-Local Agent",
-				Description: "E2E test agent for link-local SSRF scenario",
-				ClientURIs:  []string{"https://169.254.169.254/metadata"},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Link-Local Agent",
+				Description:    "E2E test agent for link-local SSRF scenario",
+				ClientURIs:     []string{"https://169.254.169.254/metadata"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
@@ -233,12 +236,13 @@ var _ = Describe("CIMD SSRF Protection", func() {
 			clientURL = "https://" + fakeHost + "/client"
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:          id.NewAgentID(),
-				ClientURIs:  []string{clientURL},
-				DisplayName: "Oversized CIMD Agent",
-				Description: "E2E test agent for oversized CIMD response scenario",
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				ClientURIs:     []string{clientURL},
+				DisplayName:    "Oversized CIMD Agent",
+				Description:    "E2E test agent for oversized CIMD response scenario",
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
@@ -301,12 +305,13 @@ var _ = Describe("CIMD SSRF Protection", func() {
 			clientURL = "https://" + fakeHost + "/client"
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:          id.NewAgentID(),
-				ClientURIs:  []string{clientURL},
-				DisplayName: "Timeout CIMD Agent",
-				Description: "E2E test agent for CIMD timeout scenario",
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				ClientURIs:     []string{clientURL},
+				DisplayName:    "Timeout CIMD Agent",
+				Description:    "E2E test agent for CIMD timeout scenario",
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 

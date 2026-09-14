@@ -101,13 +101,15 @@ var _ = Describe("CIMD Consent Screen", func() {
 		It("returns cimd_metadata with verified_domain when session_token is provided", func() {
 			now := time.Now()
 			agent := &domstorage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "Example CIMD Agent",
-				Description: "E2E test agent for CIMD consent scenario",
-				ClientURIs:  []string{"https://agent.example.com/client"},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Example CIMD Agent",
+				Description:    "E2E test agent for CIMD consent scenario",
+				ClientURIs:     []string{"https://agent.example.com/client"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
+			Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
 			token := createCIMDSessionToken(appInstance.SessionTokenService, agent.ID,
@@ -144,13 +146,15 @@ var _ = Describe("CIMD Consent Screen", func() {
 		It("returns cimd_metadata with localhost redirect_uri", func() {
 			now := time.Now()
 			agent := &domstorage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "Localhost Redirect Agent",
-				Description: "E2E test agent for localhost redirect CIMD scenario",
-				ClientURIs:  []string{"https://agent.example.com/client"},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Localhost Redirect Agent",
+				Description:    "E2E test agent for localhost redirect CIMD scenario",
+				ClientURIs:     []string{"https://agent.example.com/client"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
+			Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
 			token := createCIMDSessionToken(appInstance.SessionTokenService, agent.ID,
@@ -187,13 +191,15 @@ var _ = Describe("CIMD Consent Screen", func() {
 		It("returns cimd_metadata with client_id_url, redirect_uri, and requested_scopes populated", func() {
 			now := time.Now()
 			agent := &domstorage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "Advanced Detail Agent",
-				Description: "E2E test agent for CIMD advanced detail scenario",
-				ClientURIs:  []string{"https://agent.example.com/client"},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Advanced Detail Agent",
+				Description:    "E2E test agent for CIMD advanced detail scenario",
+				ClientURIs:     []string{"https://agent.example.com/client"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
+			Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
 			svc := appInstance.SessionTokenService
@@ -245,13 +251,15 @@ var _ = Describe("CIMD Consent Screen", func() {
 			now := time.Now()
 			agentID := id.NewAgentID()
 			agent := &domstorage.Agent{
-				ID:          agentID,
-				ClientID:    ptr.To(id.ClientID(agentID.String())),
-				DisplayName: "Opaque Client Agent",
-				Description: "E2E test agent for opaque client_id scenario",
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             agentID,
+				ClientID:       ptr.To(id.ClientID(agentID.String())),
+				DisplayName:    "Opaque Client Agent",
+				Description:    "E2E test agent for opaque client_id scenario",
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
+			Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
 			path := fmt.Sprintf("/api/consent/agents/%s", agent.ID)
@@ -279,13 +287,15 @@ var _ = Describe("CIMD Consent Screen", func() {
 		It("rejects with 400 Bad Request", func() {
 			now := time.Now()
 			agent := &domstorage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "Expired Session Agent",
-				Description: "E2E test for expired session rejection",
-				ClientURIs:  []string{"https://agent.example.com/client"},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Expired Session Agent",
+				Description:    "E2E test for expired session rejection",
+				ClientURIs:     []string{"https://agent.example.com/client"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
+			Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
 			token := createExpiredCIMDSessionToken(appInstance.SessionTokenService, agent.ID,
@@ -311,13 +321,15 @@ var _ = Describe("CIMD Consent Screen", func() {
 		It("rejects with 400 Bad Request", func() {
 			now := time.Now()
 			agent := &domstorage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "Invalid Token Agent",
-				Description: "E2E test for invalid token rejection",
-				ClientURIs:  []string{"https://agent.example.com/client"},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Invalid Token Agent",
+				Description:    "E2E test for invalid token rejection",
+				ClientURIs:     []string{"https://agent.example.com/client"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
+			Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
 			path := fmt.Sprintf("/api/consent/agents/%s?session_token=not-a-valid-jwe-token", agent.ID)
@@ -334,13 +346,15 @@ var _ = Describe("CIMD Consent Screen", func() {
 		It("rejects with 400 Bad Request", func() {
 			now := time.Now()
 			agent := &domstorage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "Agent Mismatch Agent",
-				Description: "E2E test for agent mismatch rejection",
-				ClientURIs:  []string{"https://agent.example.com/client"},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Agent Mismatch Agent",
+				Description:    "E2E test for agent mismatch rejection",
+				ClientURIs:     []string{"https://agent.example.com/client"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
+			Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
 			// Create token for a different (non-existent) agent ID
@@ -369,13 +383,15 @@ var _ = Describe("CIMD Consent Screen", func() {
 		It("rejects with 400 Bad Request", func() {
 			now := time.Now()
 			agent := &domstorage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "Principal Isolation Agent",
-				Description: "E2E test for principal mismatch on GET consent",
-				ClientURIs:  []string{"https://agent.example.com/client"},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Principal Isolation Agent",
+				Description:    "E2E test for principal mismatch on GET consent",
+				ClientURIs:     []string{"https://agent.example.com/client"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
+			Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
 			// Token issued for a different user

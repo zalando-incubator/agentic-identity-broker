@@ -50,6 +50,7 @@ func TestAgentRepository_Get_EmitsSpan(t *testing.T) {
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+	attachTestPermissionSet(t, adapter, agent)
 	err := repo.Create(ctx, agent)
 	require.NoError(t, err)
 
@@ -95,6 +96,11 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 
 	repo := NewAgentRepository(adapter)
 	ctx := context.Background()
+	createAgent := func(t *testing.T, agent *storage.Agent) error {
+		t.Helper()
+		attachTestPermissionSet(t, adapter, agent)
+		return repo.Create(ctx, agent)
+	}
 
 	t.Run("Create", func(t *testing.T) {
 		t.Run("successful creation", func(t *testing.T) {
@@ -107,7 +113,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				UpdatedAt:   now,
 			}
 
-			err := repo.Create(ctx, agent)
+			err := createAgent(t, agent)
 			require.NoError(t, err)
 			assert.NotEmpty(t, agent.ID, "ID should be generated")
 
@@ -137,7 +143,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				UpdatedAt:            now,
 			}
 
-			err := repo.Create(ctx, agent)
+			err := createAgent(t, agent)
 			require.NoError(t, err)
 
 			retrieved, err := repo.Get(ctx, agent.ID)
@@ -158,7 +164,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
-			require.NoError(t, repo.Create(ctx, agent1))
+			require.NoError(t, createAgent(t, agent1))
 
 			agent2 := &storage.Agent{
 				ClientID:    &sharedClientID,
@@ -168,7 +174,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				UpdatedAt:   now,
 			}
 
-			err := repo.Create(ctx, agent2)
+			err := createAgent(t, agent2)
 			require.NoError(t, err)
 			assert.NotEqual(t, agent1.ID, agent2.ID, "both agents must have distinct IDs")
 		})
@@ -238,7 +244,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				UpdatedAt:   now,
 			}
 
-			require.NoError(t, repo.Create(ctx, agent))
+			require.NoError(t, createAgent(t, agent))
 
 			retrieved, err := repo.Get(ctx, agent.ID)
 			require.NoError(t, err)
@@ -277,7 +283,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				UpdatedAt:   now,
 			}
 
-			require.NoError(t, repo.Create(ctx, agent))
+			require.NoError(t, createAgent(t, agent))
 
 			retrieved1, err := repo.Get(ctx, agent.ID)
 			require.NoError(t, err)
@@ -300,7 +306,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
-			require.NoError(t, repo.Create(ctx, agent))
+			require.NoError(t, createAgent(t, agent))
 
 			agent.DisplayName = "Updated Name"
 			agent.Description = "Updated description"
@@ -324,7 +330,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
-			require.NoError(t, repo.Create(ctx, agent))
+			require.NoError(t, createAgent(t, agent))
 
 			agent.ClientID = ptr.To(id.ClientID("basic-update-new-client-id"))
 			agent.UpdatedAt = time.Now().UTC()
@@ -348,6 +354,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				UpdatedAt:   now,
 			}
 
+			attachTestPermissionSet(t, adapter, agent)
 			err := repo.Update(ctx, agent)
 			require.Error(t, err)
 			storageErr, ok := err.(*storage.StorageError)
@@ -365,7 +372,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
-			require.NoError(t, repo.Create(ctx, agent1))
+			require.NoError(t, createAgent(t, agent1))
 
 			agent2 := &storage.Agent{
 				ClientID:    ptr.To(id.ClientID("basic-update-second-client")),
@@ -374,7 +381,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
-			require.NoError(t, repo.Create(ctx, agent2))
+			require.NoError(t, createAgent(t, agent2))
 
 			agent2.ClientID = &sharedClientID
 			err := repo.Update(ctx, agent2)
@@ -394,7 +401,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
-			require.NoError(t, repo.Create(ctx, agent))
+			require.NoError(t, createAgent(t, agent))
 
 			agent.DisplayName = ""
 			err := repo.Update(ctx, agent)
@@ -415,7 +422,7 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
-			require.NoError(t, repo.Create(ctx, agent))
+			require.NoError(t, createAgent(t, agent))
 
 			err := repo.Delete(ctx, agent.ID)
 			require.NoError(t, err)
@@ -459,6 +466,7 @@ func TestAgentRepository_CIMD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
+			attachTestPermissionSet(t, adapter, agent)
 			require.NoError(t, repo.Create(ctx, agent))
 
 			retrieved, err := repo.Get(ctx, agent.ID)
@@ -475,6 +483,7 @@ func TestAgentRepository_CIMD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
+			attachTestPermissionSet(t, adapter, agent)
 			require.NoError(t, repo.Create(ctx, agent))
 
 			agents, err := repo.List(ctx)
@@ -499,6 +508,7 @@ func TestAgentRepository_CIMD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
+			attachTestPermissionSet(t, adapter, agent)
 			require.NoError(t, repo.Create(ctx, agent))
 
 			agent.ClientURIs = []string{"https://example.com/update-new"}
@@ -520,6 +530,7 @@ func TestAgentRepository_CIMD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
+			attachTestPermissionSet(t, adapter, agent)
 			require.NoError(t, repo.Create(ctx, agent))
 
 			retrieved, err := repo.GetByClientID(ctx, clientID)
@@ -538,6 +549,7 @@ func TestAgentRepository_CIMD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
+			attachTestPermissionSet(t, adapter, agent)
 			require.NoError(t, repo.Create(ctx, agent))
 
 			retrieved, err := repo.GetByClientURI(ctx, "https://example.com/lookup-uri")
@@ -564,6 +576,7 @@ func TestAgentRepository_CIMD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
+			attachTestPermissionSet(t, adapter, agent1)
 			require.NoError(t, repo.Create(ctx, agent1))
 
 			agent2 := &storage.Agent{
@@ -573,6 +586,7 @@ func TestAgentRepository_CIMD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
+			attachTestPermissionSet(t, adapter, agent2)
 			err := repo.Create(ctx, agent2)
 			require.Error(t, err)
 			storageErr, ok := err.(*storage.StorageError)
@@ -597,6 +611,7 @@ func TestAgentRepository_CIMD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
+			attachTestPermissionSet(t, adapter, agentA)
 			require.NoError(t, repo.Create(ctx, agentA))
 
 			agentB := &storage.Agent{
@@ -606,6 +621,7 @@ func TestAgentRepository_CIMD(t *testing.T) {
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
+			attachTestPermissionSet(t, adapter, agentB)
 			require.NoError(t, repo.Create(ctx, agentB))
 
 			agentB.ClientURIs = []string{uri1}
@@ -655,6 +671,7 @@ func TestAgentRepository_List(t *testing.T) {
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		}
+		attachTestPermissionSet(t, adapter, agent1)
 		err = repo.Create(ctx, agent1)
 		require.NoError(t, err)
 
@@ -665,6 +682,7 @@ func TestAgentRepository_List(t *testing.T) {
 			CreatedAt:   now.Add(1 * time.Second),
 			UpdatedAt:   now.Add(1 * time.Second),
 		}
+		attachTestPermissionSet(t, adapter, agent2)
 		err = repo.Create(ctx, agent2)
 		require.NoError(t, err)
 
@@ -675,6 +693,7 @@ func TestAgentRepository_List(t *testing.T) {
 			CreatedAt:   now.Add(2 * time.Second),
 			UpdatedAt:   now.Add(2 * time.Second),
 		}
+		attachTestPermissionSet(t, adapter, agent3)
 		err = repo.Create(ctx, agent3)
 		require.NoError(t, err)
 
@@ -699,6 +718,7 @@ func TestAgentRepository_List(t *testing.T) {
 			UpdatedAt:   now,
 		}
 
+		attachTestPermissionSet(t, adapter, agent)
 		err := repo.Create(ctx, agent)
 		require.NoError(t, err)
 
@@ -887,6 +907,7 @@ func TestAgentRepository_ServiceRequirements_RoundTrip(t *testing.T) {
 			UpdatedAt: now,
 		}
 
+		attachTestPermissionSet(t, adapter, agent)
 		err := repo.Create(ctx, agent)
 		require.NoError(t, err)
 
@@ -924,6 +945,7 @@ func TestAgentRepository_ServiceRequirements_RoundTrip(t *testing.T) {
 			UpdatedAt: now,
 		}
 
+		attachTestPermissionSet(t, adapter, agent)
 		err := repo.Create(ctx, agent)
 		require.NoError(t, err)
 
@@ -960,6 +982,7 @@ func TestAgentRepository_ServiceRequirements_RoundTrip(t *testing.T) {
 			UpdatedAt: now,
 		}
 
+		attachTestPermissionSet(t, adapter, agent)
 		err := repo.Create(ctx, agent)
 		require.Error(t, err)
 		var storageErr *storage.StorageError
@@ -983,6 +1006,7 @@ func TestAgentRepository_ServiceRequirements_RoundTrip(t *testing.T) {
 			UpdatedAt:   now,
 		}
 
+		attachTestPermissionSet(t, adapter, agent)
 		err := repo.Create(ctx, agent)
 		require.NoError(t, err)
 
@@ -1003,6 +1027,7 @@ func TestAgentRepository_ServiceRequirements_RoundTrip(t *testing.T) {
 			UpdatedAt:           now,
 		}
 
+		attachTestPermissionSet(t, adapter, agent)
 		err := repo.Create(ctx, agent)
 		require.NoError(t, err)
 
@@ -1032,6 +1057,7 @@ func TestAgentRepository_GetByClientURIPattern(t *testing.T) {
 
 	t.Run("resolves a concrete URL through a pattern", func(t *testing.T) {
 		agent := newAgent("Pattern Agent", "https://chatgpt.com/oauth/codex/*/client.json")
+		attachTestPermissionSet(t, adapter, agent)
 		require.NoError(t, repo.Create(ctx, agent))
 
 		resolved, err := repo.GetByClientURI(ctx, "https://chatgpt.com/oauth/codex/dIwd44EtAHp-/client.json")
@@ -1042,7 +1068,9 @@ func TestAgentRepository_GetByClientURIPattern(t *testing.T) {
 	t.Run("prefers an exact registration", func(t *testing.T) {
 		pattern := newAgent("Matching Pattern Agent", "https://chatgpt.com/oauth/*/literal/client.json")
 		exact := newAgent("Exact Agent", "https://chatgpt.com/oauth/codex/literal/client.json")
+		attachTestPermissionSet(t, adapter, pattern)
 		require.NoError(t, repo.Create(ctx, pattern))
+		attachTestPermissionSet(t, adapter, exact)
 		require.NoError(t, repo.Create(ctx, exact))
 
 		resolved, err := repo.GetByClientURI(ctx, "https://chatgpt.com/oauth/codex/literal/client.json")
@@ -1053,7 +1081,9 @@ func TestAgentRepository_GetByClientURIPattern(t *testing.T) {
 	t.Run("rejects patterns that resolve to different agents", func(t *testing.T) {
 		first := newAgent("First Ambiguous Agent", "https://chatgpt.com/oauth/*/foo/client.json")
 		second := newAgent("Second Ambiguous Agent", "https://chatgpt.com/oauth/test/*/client.json")
+		attachTestPermissionSet(t, adapter, first)
 		require.NoError(t, repo.Create(ctx, first))
+		attachTestPermissionSet(t, adapter, second)
 		require.NoError(t, repo.Create(ctx, second))
 
 		_, err := repo.GetByClientURI(ctx, "https://chatgpt.com/oauth/test/foo/client.json")

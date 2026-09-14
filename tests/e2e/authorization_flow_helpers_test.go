@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,18 +11,22 @@ import (
 
 	. "github.com/onsi/gomega"
 
+	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
 func completeAuthorizationCodeFlow(
 	server *bootstrap.TestServer,
+	testStorage *storageadapter.Adapter,
 	principal string,
 	clientID string,
 	redirectURI string,
 	assertConsentContext func(data map[string]any),
 ) {
+	Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(principal))).To(Succeed())
 	verifier := helpers.PKCEVerifier()
 	state := "portless-flow-state"
 	challenge := helpers.GenerateCodeChallenge(verifier)
@@ -73,7 +78,11 @@ func completeAuthorizationCodeFlow(
 		assertConsentContext(data)
 	}
 
-	grantBody, _ := json.Marshal(map[string]any{"delegated_oauth2_tokens": []any{}})
+	grantBody, _ := json.Marshal(map[string]any{
+		"granted_permission_sets": map[string][]string{
+			fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()},
+		},
+	})
 	grantResp, err := server.AuthenticatedPOST(
 		fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", resolvedAgentID, url.QueryEscape(sessionToken)),
 		principal,

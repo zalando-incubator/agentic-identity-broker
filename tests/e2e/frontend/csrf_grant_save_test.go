@@ -69,6 +69,17 @@ var _ = Describe("Consent Grant Save Flow", func() {
 		}
 		err = GetTestStorage().Services().Create(ctx, svc2)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create test service 2")
+		permissionSetID := id.NewPermissionSetID()
+		err = GetTestStorage().PermissionSets().Create(ctx, &storage.PermissionSet{
+			ID:          permissionSetID,
+			Name:        "Grant Save Permission Set",
+			Description: "Required services for the grant-save flow",
+			ServiceScopes: []storage.ServiceScope{
+				{ServiceID: grantTestServiceID, Scopes: []string{"read"}, RequirementType: storage.RequirementTypeMandatory},
+				{ServiceID: grantTestService2ID, Scopes: []string{"email"}, RequirementType: storage.RequirementTypeMandatory},
+			},
+		})
+		Expect(err).NotTo(HaveOccurred(), "Failed to create test permission set")
 
 		agent := fixtures.AgentWithClientID("grant-flow-test-client")
 		testAgentID = agent.ID.String()
@@ -84,8 +95,23 @@ var _ = Describe("Consent Grant Save Flow", func() {
 				RequiredScopes:  []string{"email"},
 			},
 		}
+		agent.PermissionSets = []storage.AgentPermissionSetEntry{{
+			PermissionSetID: permissionSetID,
+			RequirementType: storage.RequirementTypeMandatory,
+		}}
 		err = GetTestStorage().Agents().Create(ctx, agent)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create test agent")
+		for _, serviceID := range []id.ServiceID{grantTestServiceID, grantTestService2ID} {
+			err = GetTestStorage().UserSessions().Create(ctx, &storage.UserSession{
+				ID:                   id.NewSessionID(),
+				Principal:            id.Principal(fixtures.DefaultPrincipal().String()),
+				ServiceID:            serviceID,
+				EncryptedAccessToken: []byte("opaque-test-token"),
+				TokenType:            "Bearer",
+				EncryptionContext:    storage.EncryptionContext{ServiceID: serviceID},
+			})
+			Expect(err).NotTo(HaveOccurred(), "Failed to create test session")
+		}
 
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})

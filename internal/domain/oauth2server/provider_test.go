@@ -59,10 +59,11 @@ func setupTestCredentials(t *testing.T, provider *Provider, agentRepo ports.Agen
 
 	// Create agent
 	agent := &dstorage.Agent{
-		ID:          id.NewAgentID(),
-		ClientID:    ptr.To(id.ClientID("test-oauth2-client")),
-		DisplayName: "Test OAuth2 Agent",
-		Description: "Agent for provider test",
+		ID:             id.NewAgentID(),
+		ClientID:       ptr.To(id.ClientID("test-oauth2-client")),
+		DisplayName:    "Test OAuth2 Agent",
+		Description:    "Agent for provider test",
+		PermissionSets: testAgentPermissionSets(),
 	}
 	err := agentRepo.Create(ctx, agent)
 	require.NoError(t, err)
@@ -456,10 +457,11 @@ func TestProvider_RefreshTokens(t *testing.T) {
 		enc := &testEncryptor{}
 		logger := testSlogger()
 		agent := &dstorage.Agent{
-			ID:          id.NewAgentID(),
-			ClientID:    nil,
-			DisplayName: "CIMD Agent",
-			Description: "CIMD agent without refresh grant",
+			ID:             id.NewAgentID(),
+			ClientID:       nil,
+			DisplayName:    "CIMD Agent",
+			Description:    "CIMD agent without refresh grant",
+			PermissionSets: testAgentPermissionSets(),
 		}
 		resolver := &mockClientResolver{resolveFunc: func(_ context.Context, clientID id.ClientID) (*ports.ClientResolution, error) {
 			return &ports.ClientResolution{

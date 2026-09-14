@@ -30,8 +30,14 @@ func TestResolveAgentIDByClientID_AmbiguousClientID(t *testing.T) {
 	ctx := context.Background()
 
 	shared := id.ClientID("shared-client-id")
+	permissionSets := []storage.AgentPermissionSetEntry{{
+		PermissionSetID: id.NewPermissionSetID(),
+		RequirementType: storage.RequirementTypeMandatory,
+	}}
 	agent1 := &storage.Agent{ID: id.NewAgentID(), ClientID: ptr.To(shared), DisplayName: "A1", Description: "d"}
 	agent2 := &storage.Agent{ID: id.NewAgentID(), ClientID: ptr.To(shared), DisplayName: "A2", Description: "d"}
+	agent1.PermissionSets = permissionSets
+	agent2.PermissionSets = permissionSets
 	require.NoError(t, repo.Create(ctx, agent1))
 	require.NoError(t, repo.Create(ctx, agent2))
 
@@ -47,9 +53,14 @@ func TestResolveAgentIDByClientID_AmbiguousClientID(t *testing.T) {
 func TestResolveAgentIDByClientID_UnambiguousClientID(t *testing.T) {
 	repo := memrepo.NewAgentRepository()
 	ctx := context.Background()
+	permissionSets := []storage.AgentPermissionSetEntry{{
+		PermissionSetID: id.NewPermissionSetID(),
+		RequirementType: storage.RequirementTypeMandatory,
+	}}
 
 	agentID := id.NewAgentID()
 	agent := &storage.Agent{ID: agentID, ClientID: ptr.To(id.ClientID("unique-client")), DisplayName: "A", Description: "d"}
+	agent.PermissionSets = permissionSets
 	require.NoError(t, repo.Create(ctx, agent))
 
 	svc := agents.NewService(repo, &noopServiceReqValidator{}, slog.Default(), false)

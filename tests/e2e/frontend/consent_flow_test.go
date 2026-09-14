@@ -45,6 +45,11 @@ var _ = Describe("Consent Flow", func() {
 		}
 		err := GetTestStorage().Services().Create(ctx, service)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create test service")
+		createPermissionSet(ctx, fixtures.PlaceholderPermissionSetID, "GitHub Access", "Repository access for the consent-flow fixture", []storage.ServiceScope{{
+			ServiceID:       service.ID,
+			Scopes:          []string{"repo", "user"},
+			RequirementType: storage.RequirementTypeMandatory,
+		}})
 
 		// Step 2: Create a test agent with service requirements
 		// The agent's service requirements define what services can be delegated to it
@@ -91,12 +96,24 @@ var _ = Describe("Consent Flow", func() {
 			gitlabService.ProtectedResources = []string{"https://api.gitlab.example.com/consent-flow-optional"}
 			err = GetTestStorage().Services().Create(ctx, gitlabService)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create optional GitLab service")
+			optionalPermissionSetID := id.NewPermissionSetID()
+			createPermissionSet(ctx, optionalPermissionSetID, "Optional Services", "Optional service access for the consent-flow fixture", []storage.ServiceScope{
+				{ServiceID: githubService.ID, Scopes: []string{"read"}, RequirementType: storage.RequirementTypeOptional},
+				{ServiceID: gitlabService.ID, Scopes: []string{"write"}, RequirementType: storage.RequirementTypeOptional},
+			})
+			principal := fixtures.DefaultPrincipal().String()
+			Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionForService(principal, githubService.ID.String()))).To(Succeed())
+			Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionForService(principal, gitlabService.ID.String()))).To(Succeed())
 
 			// Create agent with both services as OPTIONAL requirements.
 			// Use AnotherAgent() to avoid client_id conflict with the outer BeforeEach
 			// which creates a ValidAgent() with ClientID "test-client-valid".
 			agent := fixtures.AnotherAgent()
 			testAgentID = agent.ID.String()
+			agent.PermissionSets = []storage.AgentPermissionSetEntry{{
+				PermissionSetID: optionalPermissionSetID,
+				RequirementType: storage.RequirementTypeOptional,
+			}}
 			agent.ServiceRequirements = []storage.ServiceRequirement{
 				{
 					ServiceID:       id.MustParseServiceID("550e8400-e29b-41d4-a716-446655440001"),
@@ -113,28 +130,16 @@ var _ = Describe("Consent Flow", func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create optional-only agent")
 		})
 
-		It("should allow approving consent without delegating any optional service", func() {
-			// specs/011-agent-permission-requirements/spec.md — User Story 2, Acceptance Scenario 6:
-			// "Given optional service requirements, When the authorization endpoint processes the
-			// request, Then optional services do not block the authorization flow."
-
+		It("approves consent after selecting optional services", func() {
 			err := consentPage.NavigateToAgent(ctx, testAgentID)
 			Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 
-			// Verify the "Approve & Delegate" button is enabled:
-			// optional-only agents must never disable the button
-			enabled, err := consentPage.IsConsentButtonEnabled(ctx)
-			Expect(err).NotTo(HaveOccurred(), "Failed to check consent button state")
-			Expect(enabled).To(BeTrue(), "Approve & Delegate button should be enabled for optional-only agent")
+			err = consentPage.TogglePermissionSet(ctx, "Optional Services")
+			Expect(err).NotTo(HaveOccurred(), "Failed to select optional services")
 
-			// Click "Approve & Delegate" WITHOUT connecting any services
 			err = consentPage.SubmitConsent(ctx)
-			Expect(err).NotTo(HaveOccurred(), "SubmitConsent should succeed when button is enabled")
-
-			// Regression guard: no validation error must appear after clicking Approve.
-			// WaitForNoValidationError waits for an alert to become visible within the timeout
-			// window and treats a timeout as the expected "no error" outcome.
-			Expect(consentPage.WaitForNoValidationError(ctx, 2000)).To(Succeed(), "Expected no validation error for optional-only agent")
+			Expect(err).NotTo(HaveOccurred(), "SubmitConsent should succeed after selecting optional services")
+			Expect(consentPage.WaitForNoValidationError(ctx, 2000)).To(Succeed(), "Expected no validation error after approving optional services")
 		})
 	})
 

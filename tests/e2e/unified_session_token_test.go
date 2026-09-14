@@ -100,12 +100,13 @@ var _ = Describe("Unified Session Token State Transport", func() {
 		BeforeEach(func() {
 			now := time.Now()
 			agent = &storage.Agent{
-				ID:           id.NewAgentID(),
-				DisplayName:  "Local Test Agent",
-				Description:  "E2E test agent for unified session token scenarios",
-				RedirectURIs: []string{"https://client.example.com/cb"},
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Local Test Agent",
+				Description:    "E2E test agent for unified session token scenarios",
+				RedirectURIs:   []string{"https://client.example.com/cb"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 		})
@@ -217,13 +218,14 @@ var _ = Describe("Unified Session Token State Transport", func() {
 
 			now := time.Now()
 			agent = &storage.Agent{
-				ID:           id.NewAgentID(),
-				ClientID:     ptr.To(id.ClientID("proxy-test-client")),
-				DisplayName:  "Proxy Test Agent",
-				Description:  "E2E test agent for proxy mode unified session token scenarios",
-				RedirectURIs: []string{"https://client.example.com/cb"},
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             id.NewAgentID(),
+				ClientID:       ptr.To(id.ClientID("proxy-test-client")),
+				DisplayName:    "Proxy Test Agent",
+				Description:    "E2E test agent for proxy mode unified session token scenarios",
+				RedirectURIs:   []string{"https://client.example.com/cb"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(proxyStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 		})
@@ -281,14 +283,16 @@ var _ = Describe("Unified Session Token State Transport", func() {
 		BeforeEach(func() {
 			now := time.Now()
 			agent = &storage.Agent{
-				ID:           id.NewAgentID(),
-				DisplayName:  "Consent Handler Test Agent",
-				Description:  "E2E test agent for consent handler unified session token scenarios",
-				RedirectURIs: []string{"https://client.example.com/cb"},
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Consent Handler Test Agent",
+				Description:    "E2E test agent for consent handler unified session token scenarios",
+				RedirectURIs:   []string{"https://client.example.com/cb"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
+			Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 
 			// Register broker credentials so the issue_token code issuer can authenticate this client.
 			resp, err := http.Post(adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials", "application/json", nil)
@@ -320,7 +324,9 @@ var _ = Describe("Unified Session Token State Transport", func() {
 
 			// Submit grant using session_token — must succeed
 			grantBody, _ := json.Marshal(map[string]any{
-				"delegated_oauth2_tokens": []any{},
+				"granted_permission_sets": map[string][]string{
+					fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()},
+				},
 			})
 			grantPath := fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s",
 				agent.ID, url.QueryEscape(sessionToken))
@@ -373,7 +379,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 				"consent page load must succeed with valid session_token")
 
 			// Step 3: submit grant with session_token
-			grantBody, _ := json.Marshal(map[string]any{"delegated_oauth2_tokens": []any{}})
+			grantBody, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()}}})
 			grantPath := fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s",
 				agent.ID, url.QueryEscape(sessionToken))
 			grantResp, err := server.AuthenticatedPOST(grantPath, principal, "application/json", bytes.NewReader(grantBody))
@@ -407,7 +413,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 		// (user managing grants outside the OAuth2 flow) — no redirect_url is returned.
 		It("grant response omits redirect_url when no session_token is present", func() {
 			principal := fixtures.DefaultPrincipal().String()
-			grantBody, _ := json.Marshal(map[string]any{"delegated_oauth2_tokens": []any{}})
+			grantBody, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()}}})
 			grantPath := fmt.Sprintf("/api/consent/agents/%s/grants", agent.ID)
 
 			resp, err := server.AuthenticatedPOST(grantPath, principal, "application/json", bytes.NewReader(grantBody))

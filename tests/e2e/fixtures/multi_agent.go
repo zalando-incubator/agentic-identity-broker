@@ -1,8 +1,6 @@
 package fixtures
 
 import (
-	"time"
-
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -17,32 +15,26 @@ const SharedUpstreamClientID = "shared-upstream"
 // Its agent.id (UUID) is used as the OAuth2 client_id in broker requests.
 // ClientID "shared-upstream" is the upstream OAuth2 client credential.
 func MultiAgentAlpha() *storage.Agent {
-	now := time.Now()
-	return &storage.Agent{
-		ID:           id.NewAgentID(),
-		ClientID:     ptr.To(id.ClientID(SharedUpstreamClientID)),
-		DisplayName:  "Multi-Agent Alpha",
-		Description:  "First agent sharing an upstream OAuth2 client_id (feature 021 testing)",
-		RedirectURIs: []string{"https://client.example.com/cb"},
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
+	agent := newTestAgent(
+		ptr.To(id.ClientID(SharedUpstreamClientID)),
+		"Multi-Agent Alpha",
+		"First agent sharing an upstream OAuth2 client_id (feature 021 testing)",
+	)
+	agent.RedirectURIs = []string{"https://client.example.com/cb"}
+	return agent
 }
 
 // MultiAgentBeta returns the second test agent sharing SharedUpstreamClientID.
 // Distinct agent.id from MultiAgentAlpha, same upstream ClientID.
 // Used to verify that claim verification correctly rejects cross-agent token use.
 func MultiAgentBeta() *storage.Agent {
-	now := time.Now()
-	return &storage.Agent{
-		ID:           id.NewAgentID(),
-		ClientID:     ptr.To(id.ClientID(SharedUpstreamClientID)),
-		DisplayName:  "Multi-Agent Beta",
-		Description:  "Second agent sharing an upstream OAuth2 client_id (feature 021 testing)",
-		RedirectURIs: []string{"https://client.example.com/cb"},
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
+	agent := newTestAgent(
+		ptr.To(id.ClientID(SharedUpstreamClientID)),
+		"Multi-Agent Beta",
+		"Second agent sharing an upstream OAuth2 client_id (feature 021 testing)",
+	)
+	agent.RedirectURIs = []string{"https://client.example.com/cb"}
+	return agent
 }
 
 // MultiAgentEnabledConfig returns a ports.Config with multi_agent_client feature enabled.

@@ -73,12 +73,13 @@ var _ = Describe("CIMD Response Caching", func() {
 
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:          id.NewAgentID(),
-				ClientURIs:  []string{clientURL},
-				DisplayName: "Caching Test Agent",
-				Description: "E2E test agent for CIMD caching scenario",
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				ClientURIs:     []string{clientURL},
+				DisplayName:    "Caching Test Agent",
+				Description:    "E2E test agent for CIMD caching scenario",
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
@@ -133,12 +134,13 @@ var _ = Describe("CIMD Response Caching", func() {
 
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "No-Error-Cache Agent",
-				Description: "E2E test agent for CIMD no-error-cache scenario",
-				ClientURIs:  []string{clientURL},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "No-Error-Cache Agent",
+				Description:    "E2E test agent for CIMD no-error-cache scenario",
+				ClientURIs:     []string{clientURL},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
@@ -200,12 +202,13 @@ var _ = Describe("CIMD Response Caching", func() {
 
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "TTL Clamp Test Agent",
-				Description: "E2E test agent for CIMD TTL clamping scenario",
-				ClientURIs:  []string{clientURL},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "TTL Clamp Test Agent",
+				Description:    "E2E test agent for CIMD TTL clamping scenario",
+				ClientURIs:     []string{clientURL},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 
@@ -267,12 +270,13 @@ var _ = Describe("CIMD Response Caching", func() {
 
 			now := time.Now()
 			agent := &storage.Agent{
-				ID:          id.NewAgentID(),
-				DisplayName: "TTL Expiry Agent",
-				Description: "E2E test agent for CIMD TTL expiry scenario",
-				ClientURIs:  []string{clientURL},
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "TTL Expiry Agent",
+				Description:    "E2E test agent for CIMD TTL expiry scenario",
+				ClientURIs:     []string{clientURL},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
 

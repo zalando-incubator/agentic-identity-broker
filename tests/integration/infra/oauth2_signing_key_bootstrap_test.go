@@ -29,6 +29,7 @@ import (
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	domstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
@@ -90,8 +91,7 @@ func TestConcurrentLocalModeBootstrapUsesSingleSigningKeyAcrossReplicas(t *testi
 	current, err := storage1.SigningKeys().GetCurrent(ctx)
 	require.NoError(t, err)
 
-	agent := newLocalIntegrationAgent()
-	require.NoError(t, storage1.Agents().Create(ctx, agent))
+	agent := createLocalIntegrationAgent(t, storage1)
 
 	adminServer, err := e2ebootstrap.NewAdminTestServer(apps[0], logger)
 	require.NoError(t, err)
@@ -237,6 +237,49 @@ func newLocalIntegrationAgent() *domstorage.Agent {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+}
+
+func createLocalIntegrationAgent(t *testing.T, store *storageadapter.Adapter) *domstorage.Agent {
+	t.Helper()
+
+	ctx := context.Background()
+	serviceID := id.NewServiceID()
+	permissionSetID := id.NewPermissionSetID()
+	service := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:          serviceID,
+		DisplayName: "HA test service",
+		ClientID:    id.ClientID("ha-test-client"),
+		Secret:      model.NewEncryptedSecret([]byte("test-ciphertext")),
+		IssuerURI:   "https://service.example.com",
+		Endpoints: model.OAuth2Endpoints{
+			AuthorizeEndpoint: "https://service.example.com/authorize",
+			TokenEndpoint:     "https://service.example.com/token",
+		},
+		Scopes:    []model.OAuthScope{{ScopeValue: "read", Description: "Read access"}},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, store.Services().Create(ctx, service))
+	require.NoError(t, store.PermissionSets().Create(ctx, &domstorage.PermissionSet{
+		ID:          permissionSetID,
+		Name:        "HA test permission set",
+		Description: "Permission set for signing-key bootstrap",
+		ServiceScopes: []domstorage.ServiceScope{{
+			ServiceID:       serviceID,
+			Scopes:          []string{"read"},
+			RequirementType: domstorage.RequirementTypeOptional,
+		}},
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}))
+
+	agent := newLocalIntegrationAgent()
+	agent.PermissionSets = []domstorage.AgentPermissionSetEntry{{
+		PermissionSetID: permissionSetID,
+		RequirementType: domstorage.RequirementTypeOptional,
+	}}
+	require.NoError(t, store.Agents().Create(ctx, agent))
+	return agent
 }
 
 func createClientCredentials(t *testing.T, adminServer *e2ebootstrap.TestServer, agentID string) string {

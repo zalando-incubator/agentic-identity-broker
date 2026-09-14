@@ -32,6 +32,7 @@ func createTestAgent(t *testing.T, adapter *Adapter) *storage.Agent {
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+	attachTestPermissionSet(t, adapter, agent)
 	err := repo.Create(context.Background(), agent)
 	require.NoError(t, err)
 	return agent

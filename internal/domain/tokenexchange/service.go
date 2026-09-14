@@ -102,7 +102,9 @@ func NewTokenExchangeService(
 	if consentService == nil {
 		return nil, fmt.Errorf("consentService cannot be nil")
 	}
-	// permissionSetService is optional — when nil, permission set scope validation is skipped
+	if permissionSetService == nil {
+		return nil, fmt.Errorf("permissionSetService cannot be nil")
+	}
 	if agentRepository == nil {
 		return nil, fmt.Errorf("agentRepository cannot be nil")
 	}
@@ -286,15 +288,23 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, NewServerErrorWithCause("failed to verify user grant", err)
 	}
 
-	// Guard: if the agent participates in the PS model (declares service requirements
-	// or permission set associations) but the grant has no PS entries, the grant is
-	// structurally incomplete. Return invalid_grant to force re-consent. Checked here,
-	// before any session/token retrieval, to avoid side effects on a semantically invalid
-	// grant. This covers both the legacy case (agent has SRs, grant predates PS migration)
-	// and the post-consent edit case (agent PermissionSets removed or SRs cleared).
-	agentUsesPS := len(agent.ServiceRequirements) > 0 || len(agent.PermissionSets) > 0
-	if grant != nil && s.permissionSetService != nil && agentUsesPS && len(grant.GrantedPermissionSets) == 0 {
-		return nil, NewInvalidGrantError("grant has no permission set entries but agent is permission-set-backed; re-consent required")
+	// Step 9a: Authorize the requested service against the grant (FR-010, SR-007).
+	// Fail closed for every agent: the grant must cover the requested service before any
+	// session lookup or credential decryption. Agents that declare neither PermissionSets
+	// nor ServiceRequirements are not exempt.
+	if len(grant.GrantedPermissionSets) == 0 {
+		return nil, NewInvalidGrantError("grant has no permission set entries; re-consent required")
+	}
+	effectiveScopes, err := s.resolveEffectiveScopes(ctx, grant, agent)
+	if err != nil {
+		return nil, err
+	}
+	serviceScopes, covered := effectiveScopes[service.ID]
+	if !covered {
+		return nil, NewInvalidGrantError(fmt.Sprintf(
+			"service %s is not authorized by any permission set in the grant; re-consent required",
+			service.ID,
+		))
 	}
 
 	// Step 10: Get valid access token with session metadata (with transparent refresh if needed)
@@ -335,48 +345,27 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, NewServerErrorWithCause("failed to get valid access token", err)
 	}
 
-	// Step 11: Resolve permission set scopes and validate (FR-012, FR-013, FR-018)
-	// T051: Resolve permission sets, compute scope union with SR ceiling, validate session scopes.
-	// Gated on agentUsesPS (agent declares PermissionSets or ServiceRequirements) — pure legacy
-	// agents may carry placeholder grant PS entries and bypass this block entirely.
-	if grant != nil && s.permissionSetService != nil && len(grant.GrantedPermissionSets) > 0 && agentUsesPS {
-		effectiveScopes, err := s.resolveEffectiveScopes(ctx, grant, agent)
-		if err != nil {
-			return nil, err
+	// Step 11: Validate the session's scopes cover the effective scopes for the requested
+	// service (FR-012, FR-013). Requires the session, so it runs after retrieval.
+	if len(serviceScopes) > 0 {
+		sessionScopeSet := make(map[string]bool, len(sessionObj.Scope))
+		for _, scope := range sessionObj.Scope {
+			sessionScopeSet[scope] = true
 		}
-
-		// FR-018: Fail closed — if the requested service is not covered by any resolved grant
-		// entry, reject the exchange. Applies to all agents that declare PermissionSets or
-		// ServiceRequirements (agentUsesPS); pure legacy agents never reach this block.
-		serviceScopes, covered := effectiveScopes[service.ID]
-		if !covered {
-			return nil, NewInvalidGrantError(fmt.Sprintf(
-				"service %s is not authorized by any permission set in the grant; re-consent required",
-				service.ID,
-			))
+		var missingScopes []string
+		for _, scope := range serviceScopes {
+			if !sessionScopeSet[scope] {
+				missingScopes = append(missingScopes, scope)
+			}
 		}
-
-		// Validate session scopes cover the effective scopes for the requested service.
-		if len(serviceScopes) > 0 {
-			sessionScopeSet := make(map[string]bool, len(sessionObj.Scope))
-			for _, scope := range sessionObj.Scope {
-				sessionScopeSet[scope] = true
-			}
-			var missingScopes []string
-			for _, scope := range serviceScopes {
-				if !sessionScopeSet[scope] {
-					missingScopes = append(missingScopes, scope)
-				}
-			}
-			if len(missingScopes) > 0 {
-				description := fmt.Sprintf(
-					"User session does not cover all required scopes for service %s. Missing: %s. Please re-authenticate with the required scopes.",
-					service.DisplayName,
-					strings.Join(missingScopes, ", "),
-				)
-				reAuthURL := s.oauth2SessionService.ServiceAuthorizeURL(service.ID)
-				return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL)
-			}
+		if len(missingScopes) > 0 {
+			description := fmt.Sprintf(
+				"User session does not cover all required scopes for service %s. Missing: %s. Please re-authenticate with the required scopes.",
+				service.DisplayName,
+				strings.Join(missingScopes, ", "),
+			)
+			reAuthURL := s.oauth2SessionService.ServiceAuthorizeURL(service.ID)
+			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL)
 		}
 	}
 
@@ -398,7 +387,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	)
 
 	// T051: Include granted_permission_sets in response (FR-012)
-	if grant != nil && len(grant.GrantedPermissionSets) > 0 {
+	if len(grant.GrantedPermissionSets) > 0 {
 		psMap := make(map[string][]string, len(grant.GrantedPermissionSets))
 		for _, entry := range grant.GrantedPermissionSets {
 			svcIDs := make([]string, len(entry.IncludedServiceIDs))

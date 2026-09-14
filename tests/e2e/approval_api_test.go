@@ -141,12 +141,13 @@ var _ = Describe("Tool Approval API", func() {
 		agentID = id.NewAgentID()
 		agentRepo := testStorage.Agents()
 		err = agentRepo.Create(context.Background(), &storage.Agent{
-			ID:          agentID,
-			ClientID:    ptr.To(id.ClientID("code-assistant")),
-			DisplayName: "Code Assistant",
-			Description: "An AI coding agent",
-			CreatedAt:   time.Now().UTC(),
-			UpdatedAt:   time.Now().UTC(),
+			ID:             agentID,
+			ClientID:       ptr.To(id.ClientID("code-assistant")),
+			DisplayName:    "Code Assistant",
+			Description:    "An AI coding agent",
+			CreatedAt:      time.Now().UTC(),
+			UpdatedAt:      time.Now().UTC(),
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		})
 		Expect(err).ToNot(HaveOccurred())
 

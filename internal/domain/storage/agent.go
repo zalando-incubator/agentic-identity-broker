@@ -294,15 +294,13 @@ func (a *Agent) ValidateServiceRequirements() error {
 
 // ValidatePermissionSets validates the permission sets array.
 // Returns error if:
+// - The array is empty
 // - Any entry has a zero PermissionSetID
 // - Any entry has an invalid RequirementType
 // - Duplicate PermissionSetID exists in the array
-//
-// Note: Empty arrays are allowed at the domain level for backward compatibility.
-// The HTTP handler enforces the "at least one entry" constraint per FR-006.
 func (a *Agent) ValidatePermissionSets() error {
 	if len(a.PermissionSets) == 0 {
-		return nil
+		return errors.New("at least one permission set entry is required")
 	}
 
 	seen := make(map[id.PermissionSetID]int)

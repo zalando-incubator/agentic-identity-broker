@@ -218,8 +218,8 @@ var _ = Describe("Request Security Context", func() {
 
 		ctx := context.Background()
 		Expect(testStorage.Agents().Create(ctx, agent)).To(Succeed())
-		Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage)).To(Succeed())
 		Expect(testStorage.Services().Create(ctx, githubService)).To(Succeed())
+		Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage, githubService.ID)).To(Succeed())
 		Expect(testStorage.UserGrants().Create(ctx, fixtures.ActiveGrant(principal, agent.ID.String(), githubService.ID.String(), []string{"repo", "user"}))).To(Succeed())
 		Expect(testStorage.UserSessions().Create(ctx, fixtures.GitHubSessionForPrincipal(principal))).To(Succeed())
 

@@ -792,6 +792,16 @@ func (cp *ConsentPage) DelegateService(ctx context.Context, serviceDisplayName s
 	return fmt.Errorf("action button (Login or Delegate) not found for service %q", serviceDisplayName)
 }
 
+// TogglePermissionSet changes an optional permission set's selection by name.
+func (cp *ConsentPage) TogglePermissionSet(_ context.Context, permissionSetName string) error {
+	if permissionSetName == "" {
+		return fmt.Errorf("permission set name cannot be empty")
+	}
+	return cp.page().GetByRole("switch", playwright.PageGetByRoleOptions{
+		Name: "Toggle " + permissionSetName,
+	}).Click()
+}
+
 // RevokeService clicks the Revoke button for a service.
 //
 // Parameters:

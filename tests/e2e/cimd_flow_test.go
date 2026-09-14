@@ -58,14 +58,16 @@ var _ = Describe("CIMD Full Authorization Flow", func() {
 
 		now := time.Now()
 		agent = &storage.Agent{
-			ID:          id.NewAgentID(),
-			ClientURIs:  []string{clientURL},
-			DisplayName: "Flow Test Agent",
-			Description: "E2E test agent for full CIMD authorization flow",
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:             id.NewAgentID(),
+			ClientURIs:     []string{clientURL},
+			DisplayName:    "Flow Test Agent",
+			Description:    "E2E test agent for full CIMD authorization flow",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
+		Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 
 		config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
 		serverFactory = bootstrap.NewServerFactory(config, logger)
@@ -138,9 +140,10 @@ var _ = Describe("CIMD Full Authorization Flow", func() {
 			Expect(ok).To(BeTrue(), "cimd_metadata should be present")
 			Expect(cimdMeta["verified_domain"]).To(Equal(fakeHost))
 
-			// Step 3: Submit grant using the same session_token from the authorize redirect.
 			grantBody, _ := json.Marshal(map[string]any{
-				"delegated_oauth2_tokens": []any{},
+				"granted_permission_sets": map[string][]string{
+					fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()},
+				},
 			})
 			grantResp, err := server.AuthenticatedPOST(
 				fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", agent.ID, sessionToken),

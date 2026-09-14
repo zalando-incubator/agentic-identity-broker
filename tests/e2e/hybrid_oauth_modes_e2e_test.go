@@ -80,13 +80,14 @@ var _ = Describe("US2: Hybrid Mode Agent Coexistence", func() {
 	It("accepts proxy agent requests (proxy path) in hybrid mode", func() {
 		now := time.Now()
 		proxyAgent := &storage.Agent{
-			ID:           id.NewAgentID(),
-			ClientID:     ptr.To(id.ClientID("upstream-client-abc")),
-			DisplayName:  "Proxy Agent",
-			Description:  "Agent with upstream ClientID — proxy path",
-			RedirectURIs: []string{"https://example.com/cb"},
-			CreatedAt:    now,
-			UpdatedAt:    now,
+			ID:             id.NewAgentID(),
+			ClientID:       ptr.To(id.ClientID("upstream-client-abc")),
+			DisplayName:    "Proxy Agent",
+			Description:    "Agent with upstream ClientID — proxy path",
+			RedirectURIs:   []string{"https://example.com/cb"},
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		Expect(testStorage.Agents().Create(context.Background(), proxyAgent)).To(Succeed())
 
@@ -233,12 +234,13 @@ var _ = Describe("US2+US3: Hybrid Mode with CIMD", func() {
 	It("resolves CIMD agent via URL-format client_id in hybrid mode", func() {
 		now := time.Now()
 		cimdAgent := &storage.Agent{
-			ID:          id.NewAgentID(),
-			ClientURIs:  []string{clientURL},
-			DisplayName: "CIMD Agent",
-			Description: "CIMD agent in hybrid mode",
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:             id.NewAgentID(),
+			ClientURIs:     []string{clientURL},
+			DisplayName:    "CIMD Agent",
+			Description:    "CIMD agent in hybrid mode",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		Expect(testStorage.Agents().Create(context.Background(), cimdAgent)).To(Succeed())
 
@@ -261,13 +263,14 @@ var _ = Describe("US2+US3: Hybrid Mode with CIMD", func() {
 	It("proxy agent bypasses CIMD in hybrid mode — resolved by UUID without CIMD lookup", func() {
 		now := time.Now()
 		proxyAgent := &storage.Agent{
-			ID:           id.NewAgentID(),
-			ClientID:     ptr.To(id.ClientID("upstream-client-xyz")),
-			DisplayName:  "Proxy Agent",
-			Description:  "Proxy agent in hybrid+CIMD mode — resolved by UUID",
-			RedirectURIs: []string{"https://example.com/cb"},
-			CreatedAt:    now,
-			UpdatedAt:    now,
+			ID:             id.NewAgentID(),
+			ClientID:       ptr.To(id.ClientID("upstream-client-xyz")),
+			DisplayName:    "Proxy Agent",
+			Description:    "Proxy agent in hybrid+CIMD mode — resolved by UUID",
+			RedirectURIs:   []string{"https://example.com/cb"},
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		Expect(testStorage.Agents().Create(context.Background(), proxyAgent)).To(Succeed())
 
@@ -294,14 +297,16 @@ var _ = Describe("US2+US3: Hybrid Mode with CIMD", func() {
 
 		now := time.Now()
 		cimdAgent := &storage.Agent{
-			ID:          id.NewAgentID(),
-			ClientURIs:  []string{clientURL},
-			DisplayName: "CIMD Auth Code Agent",
-			Description: "CIMD agent for full auth code flow test",
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:             id.NewAgentID(),
+			ClientURIs:     []string{clientURL},
+			DisplayName:    "CIMD Auth Code Agent",
+			Description:    "CIMD agent for full auth code flow test",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		Expect(testStorage.Agents().Create(ctx, cimdAgent)).To(Succeed())
+		Expect(fixtures.SeedDefaultConsentData(ctx, testStorage, id.Principal(principal))).To(Succeed())
 
 		// Step 1: Authorize — no grant → consent redirect.
 		authResp, err := server.AuthenticatedGET(
@@ -316,8 +321,8 @@ var _ = Describe("US2+US3: Hybrid Mode with CIMD", func() {
 		sessionToken := consentLoc.Query().Get("session_token")
 		Expect(sessionToken).ToNot(BeEmpty())
 
-		// Step 2: Submit grant (no service delegations for this agent).
-		grantBody, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string]any{}})
+		// Step 2: Submit grant for the agent's declared permission set.
+		grantBody, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()}}})
 		grantResp, err := server.AuthenticatedPOST(
 			fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", cimdAgent.ID, url.QueryEscape(sessionToken)),
 			principal, "application/json", bytes.NewReader(grantBody),
@@ -390,6 +395,7 @@ var _ = Describe("US2: Hybrid Mode — Local Agent Full Authorization Code Journ
 		agent = fixtures.LocalAgent()
 		agent.RedirectURIs = []string{localAgentRedirectURI}
 		Expect(testStorage.Agents().Create(context.Background(), agent)).To(Succeed())
+		Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 
 		config := fixtures.HybridConfig(mockUpstream.Server.URL)
 		serverFactory := bootstrap.NewServerFactory(config, logger)
@@ -455,8 +461,8 @@ var _ = Describe("US2: Hybrid Mode — Local Agent Full Authorization Code Journ
 		sessionToken := consentLoc.Query().Get("session_token")
 		Expect(sessionToken).ToNot(BeEmpty())
 
-		// Step 2: Submit grant — no service delegations required for this local agent.
-		grantBodyBytes, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string]any{}})
+		// Step 2: Submit grant for the agent's declared permission set.
+		grantBodyBytes, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()}}})
 		grantResp, err := enduserServer.AuthenticatedPOST(
 			fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", agent.ID, url.QueryEscape(sessionToken)),
 			principal, "application/json", bytes.NewReader(grantBodyBytes),
@@ -528,7 +534,7 @@ var _ = Describe("US2: Hybrid Mode — Local Agent Full Authorization Code Journ
 		Expect(sessionToken).ToNot(BeEmpty())
 
 		// Step 2: Submit grant.
-		grantBodyBytes, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string]any{}})
+		grantBodyBytes, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()}}})
 		grantResp, err := enduserServer.AuthenticatedPOST(
 			fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", agent.ID, url.QueryEscape(sessionToken)),
 			principal, "application/json", bytes.NewReader(grantBodyBytes),
@@ -596,15 +602,17 @@ var _ = Describe("US2: Hybrid Mode — Proxy Agent Full Authorization Code Journ
 
 		now := time.Now()
 		proxyAgent = &storage.Agent{
-			ID:           id.NewAgentID(),
-			ClientID:     ptr.To(id.ClientID("upstream-client-abc")),
-			DisplayName:  "Proxy Journey Agent",
-			Description:  "Proxy agent for full authorization code journey test",
-			RedirectURIs: []string{proxyRedirectURI},
-			CreatedAt:    now,
-			UpdatedAt:    now,
+			ID:             id.NewAgentID(),
+			ClientID:       ptr.To(id.ClientID("upstream-client-abc")),
+			DisplayName:    "Proxy Journey Agent",
+			Description:    "Proxy agent for full authorization code journey test",
+			RedirectURIs:   []string{proxyRedirectURI},
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		Expect(testStorage.Agents().Create(context.Background(), proxyAgent)).To(Succeed())
+		Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 
 		config := fixtures.HybridConfig(mockUpstream.Server.URL)
 		serverFactory := bootstrap.NewServerFactory(config, logger)
@@ -649,7 +657,7 @@ var _ = Describe("US2: Hybrid Mode — Proxy Agent Full Authorization Code Journ
 		Expect(sessionToken).ToNot(BeEmpty())
 
 		// Step 2: Submit grant.
-		grantBodyBytes, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string]any{}})
+		grantBodyBytes, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()}}})
 		grantResp, err := server.AuthenticatedPOST(
 			fmt.Sprintf("/api/consent/agents/%s/grants?session_token=%s", proxyAgent.ID, url.QueryEscape(sessionToken)),
 			principal, "application/json", bytes.NewReader(grantBodyBytes),

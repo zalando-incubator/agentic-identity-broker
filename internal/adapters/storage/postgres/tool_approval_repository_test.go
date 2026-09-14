@@ -22,14 +22,16 @@ func seedAgent(t *testing.T, adapter *Adapter, agentID id.AgentID) {
 	t.Helper()
 	ctx := context.Background()
 	repo := NewAgentRepository(adapter)
-	err := repo.Create(ctx, &storage.Agent{
+	agent := &storage.Agent{
 		ID:          agentID,
 		ClientID:    ptr.To(id.ClientID("test-client-" + agentID.String()[:8])),
 		DisplayName: "Test Agent",
 		Description: "seeded for FK constraint",
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
-	})
+	}
+	attachTestPermissionSet(t, adapter, agent)
+	err := repo.Create(ctx, agent)
 	require.NoError(t, err, "seedAgent: failed to create agent %s", agentID)
 }
 

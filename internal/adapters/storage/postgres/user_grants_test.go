@@ -40,6 +40,7 @@ func createUserGrantTestAgent(t *testing.T, agentRepo *AgentRepository, label st
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+	attachTestPermissionSet(t, agentRepo.adapter, agent)
 	require.NoError(t, agentRepo.Create(context.Background(), agent))
 	return agent
 }

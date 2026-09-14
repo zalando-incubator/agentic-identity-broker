@@ -84,12 +84,13 @@ var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 		It("rejects LocalClient agent with unauthorized_client (FR-006, SR-002)", func() {
 			now := time.Now()
 			localAgent := &storage.Agent{
-				ID:           id.NewAgentID(),
-				DisplayName:  "Local Agent in Proxy Mode",
-				Description:  "agent with no ClientID — classified as LocalClient",
-				RedirectURIs: []string{"https://example.com/cb"},
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Local Agent in Proxy Mode",
+				Description:    "agent with no ClientID — classified as LocalClient",
+				RedirectURIs:   []string{"https://example.com/cb"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), localAgent)).To(Succeed())
 
@@ -109,12 +110,13 @@ var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 		It("rejects LocalClient agent at token endpoint with unauthorized_client (SR-002)", func() {
 			now := time.Now()
 			localAgent := &storage.Agent{
-				ID:           id.NewAgentID(),
-				DisplayName:  "Local Agent at Token Endpoint",
-				Description:  "agent with no ClientID — classified as LocalClient",
-				RedirectURIs: []string{"https://example.com/cb"},
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             id.NewAgentID(),
+				DisplayName:    "Local Agent at Token Endpoint",
+				Description:    "agent with no ClientID — classified as LocalClient",
+				RedirectURIs:   []string{"https://example.com/cb"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), localAgent)).To(Succeed())
 
@@ -170,13 +172,14 @@ var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 		It("rejects ProxyClient agent with unauthorized_client (FR-007, SR-002)", func() {
 			now := time.Now()
 			proxyAgent := &storage.Agent{
-				ID:           id.NewAgentID(),
-				ClientID:     ptr.To(id.ClientID("upstream-client-xyz")),
-				DisplayName:  "Proxy Agent in Local Mode",
-				Description:  "agent with ClientID — classified as ProxyClient",
-				RedirectURIs: []string{"https://example.com/cb"},
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             id.NewAgentID(),
+				ClientID:       ptr.To(id.ClientID("upstream-client-xyz")),
+				DisplayName:    "Proxy Agent in Local Mode",
+				Description:    "agent with ClientID — classified as ProxyClient",
+				RedirectURIs:   []string{"https://example.com/cb"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), proxyAgent)).To(Succeed())
 
@@ -195,13 +198,14 @@ var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 		It("rejects ProxyClient agent at token endpoint with unauthorized_client (SR-002)", func() {
 			now := time.Now()
 			proxyAgent := &storage.Agent{
-				ID:           id.NewAgentID(),
-				ClientID:     ptr.To(id.ClientID("upstream-client-token")),
-				DisplayName:  "Proxy Agent at Token Endpoint",
-				Description:  "agent with ClientID — classified as ProxyClient",
-				RedirectURIs: []string{"https://example.com/cb"},
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             id.NewAgentID(),
+				ClientID:       ptr.To(id.ClientID("upstream-client-token")),
+				DisplayName:    "Proxy Agent at Token Endpoint",
+				Description:    "agent with ClientID — classified as ProxyClient",
+				RedirectURIs:   []string{"https://example.com/cb"},
+				CreatedAt:      now,
+				UpdatedAt:      now,
+				PermissionSets: fixtures.DefaultPermissionSets(),
 			}
 			Expect(testStorage.Agents().Create(context.Background(), proxyAgent)).To(Succeed())
 
@@ -248,13 +252,14 @@ var _ = Describe("FR-005: CIMD Agent UUID Rejection", func() {
 
 		now := time.Now()
 		cimdAgent = &storage.Agent{
-			ID:           id.NewAgentID(),
-			ClientURIs:   []string{"https://cimd-fr005.test.invalid/client"},
-			DisplayName:  "CIMD Agent",
-			Description:  "agent with client_uris — classified as CIMDClient",
-			RedirectURIs: []string{"https://cimd-fr005.test.invalid/callback"},
-			CreatedAt:    now,
-			UpdatedAt:    now,
+			ID:             id.NewAgentID(),
+			ClientURIs:     []string{"https://cimd-fr005.test.invalid/client"},
+			DisplayName:    "CIMD Agent",
+			Description:    "agent with client_uris — classified as CIMDClient",
+			RedirectURIs:   []string{"https://cimd-fr005.test.invalid/callback"},
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		Expect(testStorage.Agents().Create(context.Background(), cimdAgent)).To(Succeed())
 

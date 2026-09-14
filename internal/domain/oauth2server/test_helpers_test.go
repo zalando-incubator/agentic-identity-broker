@@ -14,13 +14,21 @@ func testAgentID() id.AgentID {
 	return id.NewAgentID()
 }
 
+func testAgentPermissionSets() []storage.AgentPermissionSetEntry {
+	return []storage.AgentPermissionSetEntry{{
+		PermissionSetID: id.NewPermissionSetID(),
+		RequirementType: storage.RequirementTypeOptional,
+	}}
+}
+
 // testAgent returns a test agent for testing.
 func testAgent() *storage.Agent {
 	return &storage.Agent{
-		ID:          id.NewAgentID(),
-		ClientID:    ptr.To(id.ClientID("test-client")),
-		DisplayName: "Test Agent",
-		Description: "A test agent for unit testing",
+		ID:             id.NewAgentID(),
+		ClientID:       ptr.To(id.ClientID("test-client")),
+		DisplayName:    "Test Agent",
+		Description:    "A test agent for unit testing",
+		PermissionSets: testAgentPermissionSets(),
 	}
 }
 

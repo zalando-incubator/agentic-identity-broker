@@ -328,6 +328,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_DeleteProviderReferencedByAg
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	attachTestPermissionSet(t, adapter, agent)
 	require.NoError(t, NewAgentRepository(adapter).Create(ctx, agent))
 
 	err := repo.Delete(ctx, provider.ID)

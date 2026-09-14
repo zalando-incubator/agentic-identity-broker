@@ -745,6 +745,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			}
 			testStorage, err = storageadapter.NewAdapter(&storageConfig)
 			Expect(err).ToNot(HaveOccurred())
+			Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage)).To(Succeed())
 			Expect(testStorage.Agents().Create(ctx, targetAgent)).To(Succeed())
 
 			config := validConfig()

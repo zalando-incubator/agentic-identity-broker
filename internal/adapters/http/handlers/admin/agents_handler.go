@@ -561,15 +561,11 @@ func (h *AgentsHandler) convertServiceRequirements(ctx context.Context, reqSRs [
 }
 
 // convertPermissionSetRequests converts request DTOs to domain entries and validates all IDs exist.
-// When the permission set service is available (psService != nil), both an omitted field (nil)
-// and an explicit empty array are rejected per FR-006 — at least one entry is required.
+// Both an omitted field (nil) and an explicit empty array are rejected per FR-006.
 // Returns an error if any ID is invalid or not found.
 func (h *AgentsHandler) convertPermissionSetRequests(ctx context.Context, reqs []PermissionSetRequest) ([]storage.AgentPermissionSetEntry, error) {
-	if h.psService != nil && len(reqs) == 0 {
-		return nil, fmt.Errorf("at least one permission set entry is required")
-	}
 	if len(reqs) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("at least one permission set entry is required")
 	}
 	entries := make([]storage.AgentPermissionSetEntry, len(reqs))
 	for i, ps := range reqs {

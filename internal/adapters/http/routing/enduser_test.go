@@ -18,6 +18,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/routing"
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
@@ -206,6 +208,23 @@ func newEnduserConsentRouter(t *testing.T) (http.Handler, string) {
 
 	testAgent := fixtures.ValidAgent()
 	require.NoError(t, storage.Agents().Create(context.Background(), testAgent))
+	require.NoError(t, storage.PermissionSets().Create(context.Background(), &domainstorage.PermissionSet{
+		ID:          fixtures.PlaceholderPermissionSetID,
+		Name:        "Router Permission Set",
+		Description: "Permission set for consent route tests",
+		ServiceScopes: []domainstorage.ServiceScope{{
+			ServiceID:       fixtures.PlaceholderServiceID,
+			RequirementType: domainstorage.RequirementTypeOptional,
+		}},
+	}))
+	require.NoError(t, storage.UserSessions().Create(context.Background(), &domainstorage.UserSession{
+		ID:                   id.NewSessionID(),
+		Principal:            id.Principal("user@example.com"),
+		ServiceID:            fixtures.PlaceholderServiceID,
+		EncryptedAccessToken: []byte("opaque-test-token"),
+		TokenType:            "Bearer",
+		EncryptionContext:    domainstorage.EncryptionContext{ServiceID: fixtures.PlaceholderServiceID},
+	}))
 
 	application, err := app.NewBuilder().
 		WithConfig(cfg).
@@ -244,7 +263,9 @@ func newGrantRequest(t *testing.T, agentID string) *http.Request {
 	t.Helper()
 
 	postBody, err := json.Marshal(map[string]any{
-		"granted_permission_sets": map[string][]string{},
+		"granted_permission_sets": map[string][]string{
+			fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()},
+		},
 	})
 	require.NoError(t, err)
 

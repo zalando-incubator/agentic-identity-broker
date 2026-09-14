@@ -109,6 +109,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		It("should accept ephemeral port 52341 when portless URI is registered", func() {
 			completeAuthorizationCodeFlow(
 				server,
+				testStorage,
 				fixtures.DefaultPrincipal().String(),
 				clientURL,
 				"http://localhost:52341/callback",
@@ -122,6 +123,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		It("should accept ephemeral port 8080 when portless URI is registered", func() {
 			completeAuthorizationCodeFlow(
 				server,
+				testStorage,
 				fixtures.DefaultPrincipal().String(),
 				clientURL,
 				"http://localhost:8080/callback",
@@ -135,6 +137,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		It("should accept portless request when portless URI is registered", func() {
 			completeAuthorizationCodeFlow(
 				server,
+				testStorage,
 				fixtures.DefaultPrincipal().String(),
 				clientURL,
 				"http://localhost/callback",
@@ -209,6 +212,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		It("should accept a different ephemeral port when explicit port :3000 is registered", func() {
 			completeAuthorizationCodeFlow(
 				server,
+				testStorage,
 				fixtures.DefaultPrincipal().String(),
 				clientURL,
 				"http://localhost:9999/callback",
@@ -222,6 +226,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		It("should accept portless request when explicit port :3000 is registered", func() {
 			completeAuthorizationCodeFlow(
 				server,
+				testStorage,
 				fixtures.DefaultPrincipal().String(),
 				clientURL,
 				"http://localhost/callback",
@@ -282,6 +287,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		It("should accept a different ephemeral port for 127.0.0.1 loopback registration", func() {
 			completeAuthorizationCodeFlow(
 				server,
+				testStorage,
 				fixtures.DefaultPrincipal().String(),
 				clientURL,
 				"http://127.0.0.1:51234/callback",
@@ -356,6 +362,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		It("should accept exact match for non-loopback URI", func() {
 			completeAuthorizationCodeFlow(
 				server,
+				testStorage,
 				fixtures.DefaultPrincipal().String(),
 				clientURL,
 				"https://"+fakeHost+"/callback",
@@ -430,6 +437,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		It("should accept non-loopback request when explicit port :443 matches exactly", func() {
 			completeAuthorizationCodeFlow(
 				server,
+				testStorage,
 				fixtures.DefaultPrincipal().String(),
 				clientURL,
 				"https://"+fakeHost+":443/callback",

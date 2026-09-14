@@ -53,14 +53,16 @@ var _ = Describe("CIMD Full Browser Authorization Flow", func() {
 		// 3. Register the CIMD agent in test storage.
 		now := time.Now()
 		cimdAgent := &storage.Agent{
-			ID:          id.NewAgentID(),
-			ClientURIs:  []string{cimdClientURL},
-			DisplayName: "CIMD Browser Flow Agent",
-			Description: "Agent for full browser CIMD authorization flow test",
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:             id.NewAgentID(),
+			ClientURIs:     []string{cimdClientURL},
+			DisplayName:    "CIMD Browser Flow Agent",
+			Description:    "Agent for full browser CIMD authorization flow test",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		Expect(GetTestStorage().Agents().Create(ctx, cimdAgent)).To(Succeed())
+		Expect(fixtures.SeedDefaultConsentData(ctx, GetTestStorage(), id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 
 		// 4. Build a CIMD-enabled app server with URL alignment so the OAuth2 service's
 		// consent redirect URL matches the actual httptest server port.
@@ -188,14 +190,16 @@ var _ = Describe("CIMD Loopback Warning Browser Flow", func() {
 
 		now := time.Now()
 		cimdAgent := &storage.Agent{
-			ID:          id.NewAgentID(),
-			ClientURIs:  []string{cimdClientURL},
-			DisplayName: "CIMD Loopback Warning Agent",
-			Description: "Agent for SC-005 loopback warning browser flow test",
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:             id.NewAgentID(),
+			ClientURIs:     []string{cimdClientURL},
+			DisplayName:    "CIMD Loopback Warning Agent",
+			Description:    "Agent for SC-005 loopback warning browser flow test",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			PermissionSets: fixtures.DefaultPermissionSets(),
 		}
 		Expect(GetTestStorage().Agents().Create(ctx, cimdAgent)).To(Succeed())
+		Expect(fixtures.SeedDefaultConsentData(ctx, GetTestStorage(), id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 
 		config := fixtures.OAuth2ConfigWithCIMD(GetMockUpstream().Server.URL)
 		sf := bootstrap.NewServerFactory(config, GetLogger())
