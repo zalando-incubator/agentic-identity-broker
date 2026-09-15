@@ -44,7 +44,7 @@ var _ = Describe("Root-Mounted SPA Routing", func() {
 		}
 	})
 
-	// Browser route delivery contract from ADR 035.
+	// Browser route delivery and SPA response security contract from ADRs 035 and 005.
 	It("serves canonical browser views for GET and HEAD", func() {
 		for _, path := range []string{
 			"/",
@@ -69,6 +69,14 @@ var _ = Describe("Root-Mounted SPA Routing", func() {
 		Expect(err).ToNot(HaveOccurred())
 		DeferCleanup(func() { _ = headResponse.Body.Close() })
 		Expect(headResponse.StatusCode).To(Equal(http.StatusOK))
+		for header, expected := range map[string]string{
+			"X-Frame-Options":         "DENY",
+			"X-Content-Type-Options":  "nosniff",
+			"Content-Security-Policy": "frame-ancestors 'none'",
+		} {
+			Expect(getResponse.Header.Values(header)).To(Equal([]string{expected}), header)
+			Expect(headResponse.Header.Values(header)).To(Equal([]string{expected}), header)
+		}
 		for _, header := range []string{"Content-Type", "Content-Length", "Last-Modified", "Accept-Ranges"} {
 			Expect(headResponse.Header.Values(header)).To(Equal(getResponse.Header.Values(header)), header)
 		}
