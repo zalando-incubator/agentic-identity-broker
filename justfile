@@ -317,9 +317,70 @@ verify-junit:
     #!/usr/bin/env bash
     set +e
 
+    JUNIT_REPORTS=(
+        test-results/fast-junit.xml
+        test-results/integration-self-contained-junit.xml
+        test-results/integration-infra-junit.xml
+        test-results/e2e-backend-junit.xml
+        test-results/e2e-extproc-junit.xml
+        test-results/e2e-frontend-junit.xml
+        test-results/web-unit-junit.xml
+        test-results/cdk-junit.xml
+        test-results/mock-agent-junit.xml
+        test-results/mock-oauth2-junit.xml
+    )
+
+    merge_junit_reports() {
+        echo ""
+        echo "==> Merging JUnit reports..."
+        if command -v npx > /dev/null; then
+            npx -y junit-report-merger@9.0.3 \
+                test-results/all-tests-junit.xml \
+                "${JUNIT_REPORTS[@]}"
+        else
+            echo "⚠ npx not found, junit-report-merger not available"
+            return 1
+        fi
+    }
+
+    finalize_verification() {
+        VERIFICATION_EXIT=$?
+        trap - EXIT
+        merge_junit_reports
+        MERGER_EXIT=$?
+
+        if [ "$VERIFICATION_EXIT" -ne 0 ]; then
+            if [ "$MERGER_EXIT" -eq 0 ]; then
+                echo "✓ Merged JUnit report"
+            else
+                echo "✗ Merged JUnit report ($MERGER_EXIT)"
+            fi
+            exit "$VERIFICATION_EXIT"
+        fi
+
+        echo ""
+        echo "=== Verification Summary ==="
+        echo "✓ Fast/package suites"
+        echo "✓ Integration suites"
+        echo "✓ E2E suites"
+
+        if [ "$MERGER_EXIT" -ne 0 ]; then
+            echo "✗ Merged JUnit report ($MERGER_EXIT)"
+            echo ""
+            echo "✗ Verification completed but JUnit merge failed"
+            exit "$MERGER_EXIT"
+        fi
+
+        echo "✓ Merged JUnit report"
+        echo ""
+        echo "✓ Verification JUnit report generated at test-results/all-tests-junit.xml"
+        exit 0
+    }
+
     echo "Running verification suite with JUnit output..."
     mkdir -p test-results coverage
-
+    rm -f test-results/all-tests-junit.xml "${JUNIT_REPORTS[@]}"
+    trap finalize_verification EXIT
     # ===== STAGE 1: FAST/PACKAGE SUITES =====
     echo ""
     echo "==> Stage 1: fast/package suites"
@@ -497,42 +558,6 @@ verify-junit:
 
     echo "✓ Stage 3 passed"
 
-    # ===== MERGE JUNIT REPORTS =====
-    echo ""
-    echo "==> Merging JUnit reports..."
-    MERGER_EXIT=0
-    if command -v npx > /dev/null; then
-        npx -y junit-report-merger@9.0.3 \
-            test-results/all-tests-junit.xml \
-            test-results/fast-junit.xml \
-            test-results/integration-self-contained-junit.xml \
-            test-results/integration-infra-junit.xml \
-            test-results/e2e-backend-junit.xml \
-            test-results/e2e-extproc-junit.xml \
-            test-results/e2e-frontend-junit.xml \
-            test-results/web-unit-junit.xml \
-            test-results/cdk-junit.xml \
-            test-results/mock-agent-junit.xml \
-            test-results/mock-oauth2-junit.xml || MERGER_EXIT=$?
-    else
-        echo "⚠ npx not found, junit-report-merger not available"
-        MERGER_EXIT=1
-    fi
-
-    echo ""
-    echo "=== Verification Summary ==="
-    echo "✓ Fast/package suites"
-    echo "✓ Integration suites"
-    echo "✓ E2E suites"
-    [ $MERGER_EXIT -eq 0 ] && echo "✓ Merged JUnit report" || echo "✗ Merged JUnit report ($MERGER_EXIT)"
-    echo ""
-
-    if [ $MERGER_EXIT -ne 0 ]; then
-        echo "✗ Verification completed but JUnit merge failed"
-        exit 1
-    fi
-
-    echo "✓ Verification JUnit report generated at test-results/all-tests-junit.xml"
 
 # Run the full local verification gate with E2E as the final guard layer
 verify: check test web-test cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-all test-e2e
