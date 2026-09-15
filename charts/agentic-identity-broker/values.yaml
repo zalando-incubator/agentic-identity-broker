@@ -326,6 +326,9 @@ migration:
 
 # Broker application configuration
 broker:
+  # -- Additional broker environment variables (supports value or valueFrom)
+  extraEnv: []
+
   # Logging
   log:
     # -- Log level (debug, info, warn, error)

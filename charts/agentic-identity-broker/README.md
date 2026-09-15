@@ -114,6 +114,7 @@ See [values.yaml](values.yaml) for the complete list of configuration options.
 | `replicaCount` | Number of broker pods | `1` |
 | `image.repository` | Broker container image repository | `agentic-identity-broker` |
 | `image.tag` | Broker image tag | Chart appVersion |
+| `broker.extraEnv` | Additional broker environment variables (`value` or `valueFrom`) | `[]` |
 | `migration.image.repository` | Migration container image repository | `agentic-identity-broker-migrate` |
 | `migration.image.tag` | Migration image tag | Chart appVersion |
 | `storage.type` | Storage backend (`memory` or `postgres`) | `memory` |

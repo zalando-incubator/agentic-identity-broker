@@ -1287,6 +1287,13 @@
             }
           }
         },
+        "extraEnv": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/envVar"
+          },
+          "description": "Additional broker environment variables"
+        },
         "extraConfig": {
           "type": "object",
           "description": "Additional broker configuration (merged into config.yaml)"
@@ -1327,6 +1334,31 @@
     }
   },
   "definitions": {
+    "envVar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": "string"
+        },
+        "valueFrom": {
+          "type": "object"
+        }
+      },
+      "required": ["name"],
+      "oneOf": [
+        {
+          "required": ["value"]
+        },
+        {
+          "required": ["valueFrom"]
+        }
+      ]
+    },
     "ingress": {
       "type": "object",
       "additionalProperties": false,

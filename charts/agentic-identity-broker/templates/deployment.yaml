@@ -102,6 +102,9 @@ spec:
         - name: IDENTITY_BROKER_STORAGE_POSTGRES_URL
           value: {{ include "agentic-identity-broker.postgresURL" . | quote }}
         {{- end }}
+        {{- with .Values.broker.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
         volumeMounts:
         - name: config
           mountPath: /app/config.yaml
