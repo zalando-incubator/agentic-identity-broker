@@ -135,20 +135,31 @@ Keep `mapTelemetryConfig` in `cmd/extproc-token-exchange/root.go`.
 
 ### 2a. OPA Authorization Pipeline (when enabled)
 
+Read token-exchange inputs only from the flat `aib.tokenexchange` dynamic-metadata namespace. Do not use raw `Authorization`, `:path`, `:scheme`, `:authority`, or any other HTTP attribute as a token-exchange input.
+
+Validate `subject_token` before `resource_uri`. Both fields must be strings. The subject token must be nonblank and have no case-insensitive `Bearer ` prefix. The resource URI must be nonblank, absolute, HTTP or HTTPS, and have a host. Pass accepted metadata values to `Exchanger.Exchange` without modification.
+
+Invalid subject-token metadata returns the fixed 503 `invalid_subject_token` response. Invalid resource metadata returns the fixed 503 `invalid_resource` response. Validate before protocol metadata checks, MCP transport checks, OPA input construction, or OPA evaluation. Invalid metadata must not reach OPA.
+
+Keep request headers for OPA input and MCP transport checks. In particular, `:method` remains a transport check. These headers cannot supply token-exchange inputs.
+
+An Agentgateway `jwtAuth` policy with `mode: strict` must run before ExtProc. Set `preserveToken: false` explicitly. This removes the raw authorization header, but the ExtProc metadata producer can still project the validated token with `jwt.rawToken.unredacted()`.
+
 ```
 Body-bearing requests:
-RequestHeaders → extract Bearer + resource URI + agentgateway.protocol metadata
-               → Exchanger.Exchange(bearer, resource)
+RequestHeaders → validate subject metadata → validate resource metadata
+               → protocol and transport checks → Exchanger.Exchange(subject, resource)
                → Authorization header mutation + BUFFERED body
 RequestBody    → BuildOPAInput(protocol, body, headers, grantedPermissionSets)
                → OPAAuthorizer.Evaluate(ctx, opaInput) → allow: echo body
                                                       → deny: 403 ImmediateResponse {"error":"access_denied","error_description":"...reasons..."}
 
 Header-only requests:
-RequestHeaders(end_of_stream=true)
-               → authorization.BuildOPAInputHeadersOnly(protocol, headers)
-               → OPAAuthorizer.Evaluate(ctx, opaInput) → allow: Exchanger.Exchange(...) + Authorization header mutation
-                                                      → deny: 403 ImmediateResponse `{"error":"access_denied","error_description":"...reasons..."}`
+RequestHeaders(end_of_stream=true) → validate subject metadata → validate resource metadata
+                                  → protocol and transport checks
+                                  → authorization.BuildOPAInputHeadersOnly(protocol, headers)
+                                  → OPAAuthorizer.Evaluate(ctx, opaInput) → allow: Exchanger.Exchange(subject, resource) + Authorization header mutation
+                                                                         → deny: 403 ImmediateResponse `{"error":"access_denied","error_description":"...reasons..."}`
 ```
 
 `authorization.BuildOPAInput` selects a parser by `protocol`:
@@ -196,9 +207,11 @@ Call `LoadWithCommand()` in `cmd/extproc-token-exchange/root.go`. Do not read co
 
 Envoy ExtProc needs a response type for each phase. Use `StreamedBodyResponse` for request and response bodies.
 
-### 8. Resource URI construction
+### 8. Metadata-only token-exchange input (ADR 036)
 
-agentgateway sends `:path`, `:scheme`, and `:authority` separately. `buildResourceURI()` preserves an absolute path. Otherwise it creates `{scheme}://{authority}{path}`. If the scheme is absent, it uses `https`. `validateResourceURI()` accepts only non-empty HTTP(S) absolute URIs.
+Both header paths must call `extractTokenExchangeInput()` as the single validation path. Do not restore raw-header extraction, resource-URI construction, fallback, dual-source precedence, or a configuration toggle. Do not log, return, or emit the subject token or rejected resource URI in diagnostics.
+
+See accepted `adrs/036-extproc-metadata-token-exchange-input.md`. It changes the input trust boundary only. It does not change the standalone-process boundary in ADR 011 or the token cache in ADR 012.
 
 ---
 

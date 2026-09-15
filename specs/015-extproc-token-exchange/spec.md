@@ -4,16 +4,20 @@
 **Created**: 2026-02-23  
 **Status**: Draft  
 **Input**: User description: "support for token exchange via Envoy's ExtProc interface. I want to implement a new application in this codebase (resulting in a new process defined in cmd/) in this project that implements the ExtProc interface that Envoy exposes. The new cmd should use the same configuration _structure_ but with completely different content. It is designed to be usable with agentgateway so that an agent can call an MCP tool or another agent with transparent token exchange. The new application should only share the infrastructure of the configuration but should not share any structures, i.e. it has its own schema. The ExtProc interface should be implemented to transparently exchange a Bearer token of the request using the identity broker's token exchange capability as specified in specs/013-token-exchange/spec.md and specs/013-token-exchange/quickstart.md. The resource that is required as part of the token exchange should be the request URI that the ExtProc interface receives. The exchanged token should be cached until the lifetime of the token expires. A simple in memory cache is sufficient. The configuration should include: - server and port for the grpc interface - the OAuth2 Authorization Server that supports the token exhange RFC - ClientID + Secret to obtain an id token to be used as the client assertion in the token exchange. We do not need to introduce new domain objects as this is a separate application. Also this must define completely separate e2e tests, the existing test harness cannot be used."
+> **Implementation note (superseded raw input):**
+> [Feature 043](../043-extproc-metadata-input/contracts/extproc-metadata-input.md) and [ADR 036](../../adrs/036-extproc-metadata-token-exchange-input.md) replace raw `Authorization` and pseudo-header input, no-Bearer pass-through, and raw resource validation.
+> This document retains the standalone process, configuration, cache, circuit-breaker, and exchange mechanics that remain applicable.
+
 
 ## Clarifications
 
-### Session 2026-02-23
+### Current input contract
 
-- Q: Behavior when Authorization header is missing or not Bearer? → A: Pass through unchanged (no exchange attempt)
-- Q: Behavior when token exchange times out or returns non-200? → A: Return a 500 response via ExtProc and log the failure
-- Q: When exchanged token response lacks an expiry, what TTL should the cache use? → A: Use extproc.cache.default_ttl
-- Q: What response should ExtProc return when the request URI is empty or invalid for resource? → A: Reject with 503 (service unavailable)
-- Q: How should concurrent requests refresh an expired cached token? → A: Use single-flight refresh (one exchange, others wait)
+- Q: How does ExtProc obtain token-exchange inputs? → A: Feature 043 and ADR 036 define the metadata-only input contract and its validation responses.
+- Q: Which exchange errors return a 500 response? → A: The Feature 043 response matrix defines generic and exception outcomes.
+- Q: When exchanged token response lacks an expiry, what TTL should the cache use? → A: Use extproc.cache.default_ttl.
+- Q: How should concurrent requests refresh an expired cached token? → A: Use single-flight refresh.
+
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -47,13 +51,16 @@ An operator deploys an Envoy External Processing (ExtProc) service so that incom
 
 **Why this priority**: This is the core capability enabling transparent token exchange for agentgateway and downstream MCP tooling.
 
-**Independent Test**: Send a request with a Bearer token through ExtProc and verify the outgoing Authorization header contains the exchanged token tied to the request URI.
+**Independent Test**: See Feature 043 for the metadata-only input and exchange test. This feature retains the standalone exchange mechanics.
+
 
 **Acceptance Scenarios**:
 
-1. **Given** an incoming request with an Authorization header using the Bearer scheme, **When** ExtProc receives request headers, **Then** it requests a token exchange using the incoming token as the subject token and the request URI as the resource
+1. **Superseded**: Feature 043 defines metadata-only subject-token and resource-URI provenance.
+
 2. **Given** a successful token exchange response, **When** ExtProc responds to Envoy, **Then** the Authorization header is replaced with the exchanged token and the request continues
-3. **Given** the token exchange request fails validation or authorization, **When** ExtProc processes the headers, **Then** the request is rejected with a failure response and the original token is not forwarded
+3. **Given** token exchange fails. **When** ExtProc processes validated metadata. **Then** it returns the Feature 043 response-matrix outcome and does not forward a credential.
+
 
 ---
 
@@ -91,28 +98,29 @@ An operator configures the ExtProc service with gRPC settings and OAuth2 authori
 
 ### Edge Cases
 
-- What happens when the Authorization header is missing or not a Bearer token?
-- How does the service handle token exchange timeouts or non-200 responses from the authorization server? Return a 500 response and log the failure.
-- What happens when the request URI is empty or cannot be parsed into a resource value? Reject with 503.
-- What happens when the exchanged token response lacks an expiration time? Use the default cache TTL.
+- Feature 043 defines metadata-only input rejection, including absent credentials, invalid resources, and all raw HTTP attributes.
+- Feature 043 defines the exchange-error response matrix, including generic 500 responses and 503 exceptions.
+- When the exchanged token response lacks an expiration time, use the default cache TTL.
+
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-001**: System MUST run as a standalone ExtProc gRPC service that can be deployed alongside Envoy
-- **FR-002**: System MUST process Envoy ExtProc request headers and inspect the Authorization header
-- **FR-003**: System MUST treat the incoming Bearer token as the subject_token for RFC 8693 token exchange
-- **FR-004**: System MUST use the request URI (the `:path` pseudo-header from Envoy, which MUST be a non-empty absolute URI with `http` or `https` scheme) as the resource parameter in the token exchange request. **Implementation note**: Agentgateway populates `:path` with the full backend target URL (e.g., `http://mcp-server:9003/mcp`) when routing to MCP backends via HTTP streamable transport, so the absolute URI requirement is satisfied by the gateway. If `:path` contains only a relative path (e.g., `/mcp`), the request MUST be rejected per FR-013.
+- **FR-002–FR-004**: Superseded. Feature 043 and ADR 036 define metadata-only subject-token and resource-URI input provenance.
+
 - **FR-005**: System MUST call the identity broker’s token exchange capability as defined in `specs/013-token-exchange/spec.md`
 - **FR-006**: System MUST obtain a client assertion by performing a `client_credentials` grant (with `scope=openid`) against the configured authorization server and extracting the `id_token` from the response to use as the client assertion (per RFC 7523)
 - **FR-007**: System MUST send token exchange requests with the client assertion and subject token, and MUST replace the Authorization header with the exchanged access token on success
 - **FR-008**: System MUST reject requests when token exchange fails or is unauthorized, without forwarding the original token
-- **FR-009**: System MUST pass through requests without an Authorization Bearer token unchanged and without performing token exchange
-- **FR-010**: System MUST return a 500 response via ExtProc and log failures when token exchange times out or returns non-200
+- **FR-009**: Superseded. Feature 043 rejects missing metadata and forbids no-Bearer pass-through.
+- **FR-010**: The system MUST return the generic 500 ExtProc response for ordinary exchange failures. Feature 043 defines `error_uri`, expired-assertion, and circuit-open exceptions.
+
 - **FR-011**: System MUST cache exchanged tokens keyed by subject token and resource until the exchanged token’s expiration time
 - **FR-012**: System MUST use extproc.cache.default_ttl when the exchanged token response lacks an expiration time
-- **FR-013**: System MUST reject requests with empty or invalid request URIs by returning a 503 response via ExtProc
+- **FR-013**: Superseded. Feature 043 defines metadata validation and fixed 503 rejection responses.
+
 - **FR-014**: System MUST ensure only one token exchange occurs per subject token/resource when refreshing expired cache entries
 - **FR-015**: System MUST evict expired cache entries before reuse and MUST periodically sweep expired entries via a background goroutine to bound memory growth
 - **FR-018**: System MUST cap cached token TTL at `extproc.cache.max_ttl` regardless of the `expires_in` value from the token exchange response

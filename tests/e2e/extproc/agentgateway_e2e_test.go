@@ -18,6 +18,7 @@ package extproc_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -43,6 +44,7 @@ import (
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/bootstrap"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/fixtures"
 )
 
 // agentgwLogger writes structured test output to GinkgoWriter for test visibility.
@@ -64,10 +66,11 @@ const agentgwAuthHeaderKey agentgwContextKey = "authorization"
 const (
 	defaultAgentgatewayImage = "cr.agentgateway.dev/agentgateway:v1.5.0"
 
-	// Test tokens used in agentgateway integration tests.
-	agentgwOriginalBearerToken = "original-agent-bearer-token-e2e"
-	agentgwExchangedToken      = "exchanged-downstream-token-e2e"
-	agentgwMockAccessToken     = "mock-client-assertion-access-token"
+	agentgwJWTIssuer   = "https://agentgateway.e2e.test"
+	agentgwJWTAudience = "agentgateway-mcp"
+
+	agentgwExchangedToken  = "exchanged-downstream-token-e2e"
+	agentgwMockAccessToken = "mock-client-assertion-access-token"
 )
 
 func agentgatewayTestImage() string {
@@ -86,6 +89,8 @@ var _ = Describe("Agentgateway Integration", Ordered, func() {
 	var (
 		ctx                  context.Context
 		cancel               context.CancelFunc
+		jwtFixture           *fixtures.RS256JWTFixture
+		mintedJWT            string
 		mockOAuth2Srv        *httptest.Server
 		mockTokenExchangeSvr *agentgwMockTokenExchangeSrv
 		extprocGRPC          *grpc.Server
@@ -96,6 +101,12 @@ var _ = Describe("Agentgateway Integration", Ordered, func() {
 	BeforeAll(func() {
 
 		ctx, cancel = context.WithTimeout(context.Background(), 120*time.Second)
+
+		var err error
+		jwtFixture, err = fixtures.NewRS256JWTFixture(agentgwJWTIssuer, agentgwJWTAudience)
+		Expect(err).NotTo(HaveOccurred(), "failed to create agentgateway JWT fixture")
+		mintedJWT, err = jwtFixture.MintToken("agentgateway-e2e-subject", time.Now().Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred(), "failed to mint agentgateway JWT")
 
 		// --- 1. Start mock identity broker (client_credentials + token exchange) ---
 		mockOAuth2Srv = newAgentgwMockOAuth2Srv()
@@ -115,12 +126,12 @@ var _ = Describe("Agentgateway Integration", Ordered, func() {
 		agentgwLogger.Info("ExtProc gRPC server listening", "port", extprocPort)
 
 		// --- 4. Start agentgateway Docker container ---
-		agentgatewayPort := startAgentgwContainer(ctx, extprocPort, mcpPort)
+		agentgatewayPort := startAgentgwContainer(ctx, extprocPort, mcpPort, jwtFixture)
 		agentgwLogger.Info("agentgateway accessible on host port", "port", agentgatewayPort)
 
 		// --- 5. Create MCP client and connect through agentgateway ---
 		agentgatewayURL := fmt.Sprintf("http://localhost:%s", agentgatewayPort)
-		mcpClient = connectAgentgwMCPClient(ctx, agentgatewayURL)
+		mcpClient = connectAgentgwMCPClient(ctx, agentgatewayURL, mintedJWT)
 
 		DeferCleanup(func() {
 			if mcpClient != nil {
@@ -157,17 +168,14 @@ var _ = Describe("Agentgateway Integration", Ordered, func() {
 		Expect(result.IsError).To(BeFalse(), "CallTool should not return an error result")
 		Expect(result.Content).NotTo(BeEmpty(), "CallTool result should have content")
 
-		// The MCP server's whoami tool returns the Authorization header it received.
-		// It should contain the EXCHANGED token, not the original.
+		// The MCP server's whoami tool returns a credential digest so a failed assertion
+		// cannot expose the suite-minted JWT.
 		text := agentgwExtractTextContent(result)
-		agentgwLogger.Info("whoami response", "text", text)
 
 		Expect(text).To(ContainSubstring("auth_scheme=Bearer"),
 			"MCP server should have received a Bearer token")
-		Expect(text).To(ContainSubstring(agentgwExchangedToken),
-			"MCP server should have received the EXCHANGED token, not the original")
-		Expect(text).NotTo(ContainSubstring(agentgwOriginalBearerToken),
-			"MCP server must NOT receive the original Bearer token")
+		Expect(text).To(ContainSubstring("token_digest="+agentgwTokenDigest(agentgwExchangedToken)),
+			"MCP server should have received the exchanged token")
 
 		Expect(mockTokenExchangeSvr.callCount()).To(BeNumerically(">=", 1),
 			"Token exchange endpoint should have been called at least once")
@@ -225,12 +233,6 @@ func newAgentgwMockTokenExchangeSrv() *agentgwMockTokenExchangeSrv {
 		m.calls++
 		m.mu.Unlock()
 
-		agentgwLogger.Info("Token exchange called",
-			"grant_type", r.FormValue("grant_type"),
-			"subject_token", r.FormValue("subject_token"),
-			"resource", r.FormValue("resource"),
-		)
-
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, //nolint:errcheck
 			`{"access_token":%q,"issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":3600}`,
@@ -250,8 +252,8 @@ func (m *agentgwMockTokenExchangeSrv) callCount() int {
 // --- Mock MCP Server (using mcp-go) ---
 
 // startAgentgwMCPServer creates an MCP server with "echo" and "whoami" tools using the mcp-go library.
-// The "whoami" tool captures the Authorization header from the incoming HTTP request
-// and returns it in the response, allowing the test to verify token exchange.
+// The "whoami" tool returns a digest of the Authorization credential so the test can
+// verify token exchange without exposing a suite-minted JWT.
 func startAgentgwMCPServer() net.Listener {
 	mcpSvr := mcpserver.NewMCPServer(
 		"e2e-mock-mcp-server", "1.0.0",
@@ -268,9 +270,9 @@ func startAgentgwMCPServer() net.Listener {
 		return mcp.NewToolResultText(fmt.Sprintf("echo: %s", msg)), nil
 	})
 
-	// Register "whoami" tool — captures Authorization header from context
+	// Register "whoami" tool — returns a digest of the Authorization credential.
 	whoamiTool := mcp.NewTool("whoami",
-		mcp.WithDescription("Returns the Authorization token visible to the MCP server."),
+		mcp.WithDescription("Returns a digest of the Authorization token visible to the MCP server."),
 	)
 	mcpSvr.AddTool(whoamiTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		authHeader, _ := ctx.Value(agentgwAuthHeaderKey).(string)
@@ -283,7 +285,7 @@ func startAgentgwMCPServer() net.Listener {
 				token = parts[1]
 			}
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("auth_scheme=%s\ntoken=%s", scheme, token)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("auth_scheme=%s\ntoken_digest=%s", scheme, agentgwTokenDigest(token))), nil
 	})
 
 	// Create the streamable HTTP server with context injection for Authorization header
@@ -371,8 +373,9 @@ func startAgentgwExtProc(
 
 // --- agentgateway Docker Container ---
 
-func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort int) string {
+func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort int, jwtFixture *fixtures.RS256JWTFixture) string {
 	image := agentgatewayTestImage()
+	resourceExpression := fmt.Sprintf("'%s'", fixtures.ValidResourceURI)
 
 	// Generate agentgateway config pointing to host services
 	configYAML := fmt.Sprintf(`binds:
@@ -380,16 +383,29 @@ func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort int) string
   listeners:
   - routes:
     - policies:
+        jwtAuth:
+          mode: strict
+          preserveToken: false
+          providers:
+          - issuer: %q
+            audiences:
+            - %q
+            jwks:
+              file: /jwks.json
         extProc:
           host: "host.testcontainers.internal:%d"
           failureMode: failClosed
+          metadataContext:
+            aib.tokenexchange:
+              subject_token: "jwt.rawToken.unredacted()"
+              resource_uri: %q
       backends:
       - mcp:
           targets:
           - name: tools
             mcp:
               host: http://host.testcontainers.internal:%d/mcp
-`, extprocPort, mcpPort)
+`, jwtFixture.Issuer(), jwtFixture.Audience(), extprocPort, resourceExpression, mcpPort)
 
 	agentgwLogger.Info("agentgateway config", "yaml", configYAML)
 
@@ -404,6 +420,11 @@ func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort int) string
 				ContainerFilePath: "/config.yaml",
 				FileMode:          0644,
 			},
+			{
+				Reader:            strings.NewReader(jwtFixture.JWKSJSON()),
+				ContainerFilePath: "/jwks.json",
+				FileMode:          0644,
+			},
 		},
 		WaitingFor: wait.ForListeningPort("4000/tcp").WithStartupTimeout(30 * time.Second),
 	}
@@ -416,12 +437,6 @@ func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort int) string
 	Expect(err).NotTo(HaveOccurred(), "failed to start agentgateway container")
 
 	DeferCleanup(func() {
-		if logs, logErr := container.Logs(ctx); logErr == nil {
-			buf := make([]byte, 4096)
-			n, _ := logs.Read(buf)
-			agentgwLogger.Info("agentgateway container logs", "logs", string(buf[:n]))
-			logs.Close() //nolint:errcheck
-		}
 		if termErr := container.Terminate(ctx); termErr != nil {
 			agentgwLogger.Error("failed to terminate agentgateway container", "err", termErr)
 		}
@@ -435,11 +450,11 @@ func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort int) string
 
 // --- MCP Client ---
 
-func connectAgentgwMCPClient(ctx context.Context, agentgatewayURL string) *client.Client {
+func connectAgentgwMCPClient(ctx context.Context, agentgatewayURL, token string) *client.Client {
 	mcpClient, err := client.NewStreamableHttpClient(
 		agentgatewayURL+"/mcp",
 		transport.WithHTTPHeaders(map[string]string{
-			"Authorization": "Bearer " + agentgwOriginalBearerToken,
+			"Authorization": "Bearer " + token,
 		}),
 	)
 	Expect(err).NotTo(HaveOccurred(), "failed to create MCP client")
@@ -469,6 +484,11 @@ func agentgwExtractTextContent(result *mcp.CallToolResult) string {
 		}
 	}
 	return ""
+}
+
+func agentgwTokenDigest(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", digest)
 }
 
 // --- Agentgateway Elicitation Integration ---
@@ -504,6 +524,8 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 	var (
 		ctx               context.Context
 		cancel            context.CancelFunc
+		jwtFixture        *fixtures.RS256JWTFixture
+		mintedJWT         string
 		elicitationBroker *httptest.Server
 		extprocGRPC       *grpc.Server
 		exchanger         *extprocserver.TokenExchanger
@@ -517,6 +539,12 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 		}
 
 		ctx, cancel = context.WithTimeout(context.Background(), 120*time.Second)
+
+		var err error
+		jwtFixture, err = fixtures.NewRS256JWTFixture(agentgwJWTIssuer, agentgwJWTAudience)
+		Expect(err).NotTo(HaveOccurred(), "failed to create elicitation Agentgateway JWT fixture")
+		mintedJWT, err = jwtFixture.MintToken("agentgateway-elicitation-subject", time.Now().Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred(), "failed to mint elicitation Agentgateway JWT")
 
 		// 1. Broker: client_credentials succeeds, token exchange returns 401 + error_uri.
 		elicitationBroker = newAgentgwElicitationBroker()
@@ -535,7 +563,7 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 		agentgwLogger.Info("Elicitation ExtProc listening", "port", extprocPort)
 
 		// 4. agentgateway Docker container.
-		agentgatewayPort := startAgentgwContainer(ctx, extprocPort, mcpPort)
+		agentgatewayPort := startAgentgwContainer(ctx, extprocPort, mcpPort, jwtFixture)
 		agentgatewayURL = fmt.Sprintf("http://localhost:%s", agentgatewayPort)
 		agentgwLogger.Info("Elicitation agentgateway accessible", "url", agentgatewayURL)
 
@@ -572,7 +600,7 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
-		req.Header.Set("Authorization", "Bearer "+agentgwOriginalBearerToken)
+		req.Header.Set("Authorization", "Bearer "+mintedJWT)
 
 		resp, err := http.DefaultClient.Do(req)
 		Expect(err).NotTo(HaveOccurred())

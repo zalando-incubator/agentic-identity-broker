@@ -532,6 +532,58 @@ func TestNewCELEvaluatorWithCustomTimeout(t *testing.T) {
 	assert.Equal(t, 250*time.Millisecond, evaluator.evaluationTimeout)
 }
 
+func TestExtractAgentIDComposeHybridExpression(t *testing.T) {
+	const (
+		localAgentID  = "0a771543-779d-4be8-9967-2895f55f4ee1"
+		upstreamAgent = "d7e68b7a-d7ec-46ce-84d2-8b708ed6eb4c"
+	)
+
+	tests := []struct {
+		name             string
+		claims           map[string]interface{}
+		wantAgentID      string
+		wantResolverCall bool
+	}{
+		{
+			name: "local token uses its broker-issued agent ID",
+			claims: map[string]interface{}{
+				"agent_id": localAgentID,
+			},
+			wantAgentID: localAgentID,
+		},
+		{
+			name: "upstream token resolves its authorized party",
+			claims: map[string]interface{}{
+				"azp": "upstream-client",
+			},
+			wantAgentID:      upstreamAgent,
+			wantResolverCall: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolverCalls := 0
+			config := validTokenExchangeConfig(t)
+			config.AgentIDExpression = "has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp)"
+			config.ResolveAgentIDByClientID = func(clientID string) (string, error) {
+				resolverCalls++
+				if clientID != "upstream-client" {
+					return "", fmt.Errorf("unknown client_id: %s", clientID)
+				}
+				return upstreamAgent, nil
+			}
+			evaluator, err := NewCELEvaluator(config)
+			require.NoError(t, err)
+
+			agentID, err := evaluator.ExtractAgentID(tt.claims)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantAgentID, agentID)
+			assert.Equal(t, tt.wantResolverCall, resolverCalls == 1)
+		})
+	}
+}
+
 // Helper function to create a valid CELEvaluatorConfig for testing
 func validTokenExchangeConfig(_ *testing.T) CELEvaluatorConfig {
 	return CELEvaluatorConfig{

@@ -52,35 +52,6 @@ func (m *replacedAuthHeaderMatcher) NegatedFailureMessage(actual interface{}) st
 		m.expected)
 }
 
-// BePassThroughResponse asserts that the ProcessingResponse is a pass-through
-// (no header mutations). Used when no Bearer token is present.
-//
-// Example:
-//
-//	Expect(resp).To(helpers.BePassThroughResponse())
-func BePassThroughResponse() types.GomegaMatcher {
-	return &passThroughMatcher{}
-}
-
-type passThroughMatcher struct{}
-
-func (m *passThroughMatcher) Match(actual interface{}) (success bool, err error) {
-	resp, ok := actual.(*extprocv3.ProcessingResponse)
-	if !ok {
-		return false, fmt.Errorf("BePassThroughResponse expects *extprocv3.ProcessingResponse, got %T", actual)
-	}
-
-	return IsPassThroughResponse(resp), nil
-}
-
-func (m *passThroughMatcher) FailureMessage(actual interface{}) string {
-	return "Expected ProcessingResponse to be a pass-through (no header mutations) but it was not"
-}
-
-func (m *passThroughMatcher) NegatedFailureMessage(actual interface{}) string {
-	return "Expected ProcessingResponse NOT to be a pass-through but it was"
-}
-
 // BeForwardedRequestBody asserts that the ProcessingResponse forwards the request body
 // in the RequestBody phase. This is the allow-path response shape for body-bearing OPA
 // requests after the headers-phase token exchange has already succeeded.

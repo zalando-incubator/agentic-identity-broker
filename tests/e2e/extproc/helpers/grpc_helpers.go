@@ -20,9 +20,12 @@ import (
 // ProcessingRequestBuilder builds Envoy ProcessingRequest messages for testing.
 // Implements the builder pattern for fluent test construction.
 type ProcessingRequestBuilder struct {
-	headers     map[string]string
-	protocol    string // agentgateway protocol metadata (e.g., "mcp", "a2a")
-	endOfStream bool   // set EndOfStream=true on HttpHeaders (simulates header-only GET)
+	headers                  map[string]string
+	protocol                 string // agentgateway protocol metadata (e.g., "mcp", "a2a")
+	subjectToken             string
+	resourceURI              string
+	hasTokenExchangeMetadata bool
+	endOfStream              bool // set EndOfStream=true on HttpHeaders (simulates header-only GET)
 }
 
 // NewRequestHeaders creates a builder initialized with common pseudo-headers for ExtProc testing.
@@ -37,7 +40,7 @@ func NewRequestHeaders() *ProcessingRequestBuilder {
 	}
 }
 
-// WithPath sets the :path pseudo-header (used as resource parameter in token exchange).
+// WithPath sets a raw :path pseudo-header that cannot supply token-exchange input.
 func (b *ProcessingRequestBuilder) WithPath(path string) *ProcessingRequestBuilder {
 	b.headers[":path"] = path
 	return b
@@ -235,16 +238,21 @@ func (b *ProcessingRequestBuilder) WithEndOfStream(v bool) *ProcessingRequestBui
 	return b
 }
 
-// WithMetadata adds agentgateway ExtProc filter metadata to the request.
-// The metadata sets the protocol field (e.g., "mcp", "a2a") in the agentgateway namespace.
-// This simulates the metadata agentgateway sends when routing protocol-aware traffic through ExtProc.
+// WithAgentgatewayProtocol adds the protocol metadata emitted by Agentgateway.
 func (b *ProcessingRequestBuilder) WithAgentgatewayProtocol(protocol string) *ProcessingRequestBuilder {
 	b.protocol = protocol
 	return b
 }
 
-// BuildWithMetadata constructs the ProcessingRequest with request headers phase and
-// includes agentgateway filter metadata for the protocol type.
+// WithTokenExchangeMetadata adds the metadata required for ExtProc token exchange.
+func (b *ProcessingRequestBuilder) WithTokenExchangeMetadata(subjectToken, resourceURI string) *ProcessingRequestBuilder {
+	b.subjectToken = subjectToken
+	b.resourceURI = resourceURI
+	b.hasTokenExchangeMetadata = true
+	return b
+}
+
+// BuildWithMetadata constructs the ProcessingRequest with all configured Agentgateway metadata.
 func (b *ProcessingRequestBuilder) BuildWithMetadata() *extprocv3.ProcessingRequest {
 	headers := make([]*corev3.HeaderValue, 0, len(b.headers))
 	for k, v := range b.headers {
@@ -265,16 +273,24 @@ func (b *ProcessingRequestBuilder) BuildWithMetadata() *extprocv3.ProcessingRequ
 		},
 	}
 
+	filterMetadata := make(map[string]*structpb.Struct, 2)
 	if b.protocol != "" {
-		req.MetadataContext = &corev3.Metadata{
-			FilterMetadata: map[string]*structpb.Struct{
-				"agentgateway": {
-					Fields: map[string]*structpb.Value{
-						"protocol": structpb.NewStringValue(b.protocol),
-					},
-				},
+		filterMetadata["agentgateway"] = &structpb.Struct{
+			Fields: map[string]*structpb.Value{
+				"protocol": structpb.NewStringValue(b.protocol),
 			},
 		}
+	}
+	if b.hasTokenExchangeMetadata {
+		filterMetadata["aib.tokenexchange"] = &structpb.Struct{
+			Fields: map[string]*structpb.Value{
+				"subject_token": structpb.NewStringValue(b.subjectToken),
+				"resource_uri":  structpb.NewStringValue(b.resourceURI),
+			},
+		}
+	}
+	if len(filterMetadata) != 0 {
+		req.MetadataContext = &corev3.Metadata{FilterMetadata: filterMetadata}
 	}
 
 	return req
@@ -322,25 +338,4 @@ func SendHeadersAndBody(
 	Expect(err).NotTo(HaveOccurred(), "failed to receive response to RequestBody")
 
 	return headersResp, bodyResp
-}
-
-// IsPassThroughResponse returns true if the response is a pass-through (empty HeadersResponse
-// with no mutations). This is the expected response when no Bearer token is present.
-func IsPassThroughResponse(resp *extprocv3.ProcessingResponse) bool {
-	headersResp, ok := resp.Response.(*extprocv3.ProcessingResponse_RequestHeaders)
-	if !ok {
-		return false
-	}
-
-	if headersResp.RequestHeaders == nil {
-		return true
-	}
-
-	// Pass-through has no header mutations
-	if headersResp.RequestHeaders.Response == nil {
-		return true
-	}
-
-	mutation := headersResp.RequestHeaders.Response.HeaderMutation
-	return mutation == nil || (len(mutation.SetHeaders) == 0 && len(mutation.RemoveHeaders) == 0)
 }

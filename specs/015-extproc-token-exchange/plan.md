@@ -4,10 +4,15 @@
 **Input**: Feature specification from `/specs/015-extproc-token-exchange/spec.md`
 
 **Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
+> **Implementation note (superseded raw input):**
+> [Feature 043](../043-extproc-metadata-input/contracts/extproc-metadata-input.md) and [ADR 036](../../adrs/036-extproc-metadata-token-exchange-input.md) replace raw `Authorization` and pseudo-header input, no-Bearer pass-through, and raw resource validation.
+> This document retains the standalone process, configuration, cache, circuit-breaker, and exchange mechanics that remain applicable.
+
 
 ## Summary
 
-A standalone Go gRPC application implementing the Envoy External Processor (ExtProc) protocol for transparent OAuth2 token exchange. When deployed alongside agentgateway, the service intercepts incoming requests, extracts the Bearer token, performs an RFC 8693 token exchange against the identity broker, and replaces the Authorization header with the exchanged token. Exchanged tokens are cached in-memory with singleflight deduplication. The service uses its own configuration schema (env prefix `EXTPROC_`) built on the shared Viper/Cobra infrastructure.
+A standalone Go gRPC application implements Envoy ExtProc token exchange. Feature 043 defines metadata-only inputs and outcomes. This feature retains cache, configuration, standalone-process, and exchange mechanics.
+
 
 ## Technical Context
 
@@ -134,15 +139,17 @@ examples/
 
 | Spec Scenario | E2E Test File | Test Description |
 |---------------|---------------|------------------|
-| US1 Scenario 1 | `token_exchange_test.go` | `It("should exchange the Bearer token using request URI as resource")` |
+| Feature 043 metadata input | `metadata_input_test.go` | Validated metadata supplies both exchange inputs |
+
 | US1 Scenario 2 | `token_exchange_test.go` | `It("should replace the Authorization header with the exchanged token")` |
-| US1 Scenario 3 | `token_exchange_test.go` | `It("should reject with failure response when token exchange fails")` |
+| Feature 043 exchange errors | `metadata_input_test.go` | Fixed matrix rejects failed exchanges without forwarding a credential |
+
 | US2 Scenario 1 | `token_exchange_test.go` | `It("should use cached token for same subject token and resource")` |
 | US2 Scenario 2 | `token_exchange_test.go` | `It("should perform fresh exchange when cached token is expired")` |
 | US3 Scenario 1 | `token_exchange_test.go` | `It("should bind to configured host/port and log startup summary")` |
 | US3 Scenario 2 | `token_exchange_test.go` | `It("should exit with validation error on invalid configuration")` |
-| Edge: no Bearer | `token_exchange_test.go` | `It("should pass through the request unchanged")` |
-| Edge: empty URI | `token_exchange_test.go` | `It("should reject with 503 response")` |
+| Feature 043 raw attributes | `metadata_input_test.go` | Missing metadata returns the defined rejection |
+
 | Edge: timeout | `token_exchange_test.go` | `It("should return 500 response and log the failure")` |
 | Edge: no expiry | `token_exchange_test.go` | `It("should use the default cache TTL")` |
 | Edge: singleflight | `token_exchange_test.go` | `It("should perform only one token exchange via singleflight")` |
@@ -173,7 +180,8 @@ examples/
 
 **Unit Tests**:
 - `internal/extproc/config/loader_test.go` — Config loading, validation, env var expansion
-- `internal/extproc/server/server_test.go` — ExtProc streaming logic, header extraction
+- `internal/extproc/server/server_test.go` — ExtProc streaming logic and metadata extraction
+
 - `internal/extproc/server/exchanger_test.go` — Token exchange, caching, singleflight
 
 **Integration Tests**:

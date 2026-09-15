@@ -1,15 +1,14 @@
 // Package fixtures provides test tokens, configurations, and mock response data
 // for ExtProc Token Exchange E2E tests.
 //
-// All tokens are static test values. For JWT-signed tokens (if needed for specific tests),
-// use helpers.SignTestJWT with a generated key pair.
+// Direct ExtProc tests use opaque metadata subject tokens. Agentgateway tests use
+// RS256JWTFixture to mint tokens accepted by their strict JWT policy.
 package fixtures
 
 import "time"
 
-// TestBearerTokens contains Bearer tokens for use in test scenarios.
-// These are opaque tokens — the ExtProc service does not parse them,
-// it passes them as subject_token to the identity broker.
+// TestBearerTokens contains opaque tokens for direct metadata-input scenarios.
+// ExtProc forwards accepted values as RFC 8693 subject_token parameters without parsing them.
 const (
 	// ValidBearerToken is a valid opaque Bearer token for happy path tests.
 	ValidBearerToken = "test-bearer-token-subject-abc123"
@@ -24,9 +23,8 @@ const (
 	ExpiredBearerToken = "test-bearer-token-expired-999"
 )
 
-// TestResourceURIs contains resource URI values for use in test scenarios.
-// These are passed as the resource parameter in RFC 8693 token exchange requests.
-// Per FR-004, the :path pseudo-header must be an absolute URI with http/https scheme.
+// TestResourceURIs contains `aib.tokenexchange.resource_uri` values.
+// Each accepted value is an absolute HTTP or HTTPS URI with a non-empty host.
 const (
 	// ValidResourceURI is a valid absolute URI for happy path tests.
 	ValidResourceURI = "http://mcp-server:9003/mcp"
@@ -37,13 +35,13 @@ const (
 	// AlternativeResourceURI is a second valid resource URI for cache differentiation tests.
 	AlternativeResourceURI = "http://another-mcp-server:9004/tools"
 
-	// EmptyResourceURI represents an empty path (should trigger 503 per FR-013).
+	// EmptyResourceURI represents invalid empty resource metadata.
 	EmptyResourceURI = ""
 
-	// RelativePathResourceURI is a relative path that should trigger 503 per FR-013.
+	// RelativePathResourceURI represents invalid non-absolute resource metadata.
 	RelativePathResourceURI = "/mcp"
 
-	// InvalidSchemeResourceURI has an unsupported scheme (should trigger 503 per FR-013).
+	// InvalidSchemeResourceURI represents invalid non-HTTP(S) resource metadata.
 	InvalidSchemeResourceURI = "ftp://example.com/resource"
 )
 

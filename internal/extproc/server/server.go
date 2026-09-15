@@ -1,8 +1,8 @@
-// Package server implements the Envoy ExtProc gRPC server for token exchange.
-// The Server type handles the streaming Process RPC, extracts Bearer tokens,
-// performs RFC 8693 token exchange, and replaces the Authorization header.
-// In OPA mode, body-bearing requests exchange in the RequestHeaders phase and
-// evaluate policy in the RequestBody phase; header-only requests evaluate first.
+// Package server implements the Envoy ExtProc gRPC server for metadata-driven token exchange.
+// The Server type validates token-exchange metadata, performs RFC 8693 token exchange,
+// and replaces the Authorization header after success. In OPA mode, body-bearing requests
+// exchange in the RequestHeaders phase and evaluate policy in the RequestBody phase;
+// header-only requests evaluate policy first.
 package server
 
 import (
@@ -31,20 +31,19 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 )
 
-// agentgatewayProtocolMetadataKey is the filter_metadata namespace key used by agentgateway
-// to pass the protocol type (e.g., "mcp", "a2a") to ExtProc via MetadataContext.
-// The metadata structure is: MetadataContext.FilterMetadata["agentgateway"]["protocol"] = "<type>".
-// Source: agentgateway ExtProc filter configuration (specs/020-extproc-opa-authorization/research.md).
-const agentgatewayProtocolMetadataKey = "agentgateway"
-
-// agentgatewayProtocolFieldKey is the field name within the agentgateway filter metadata struct
-// that contains the protocol type value.
-const agentgatewayProtocolFieldKey = "protocol"
+const (
+	agentgatewayProtocolMetadataKey = "agentgateway"
+	agentgatewayProtocolFieldKey    = "protocol"
+	tokenExchangeMetadataNamespace  = "aib.tokenexchange"
+	subjectTokenFieldKey            = "subject_token"
+	resourceURIFieldKey             = "resource_uri"
+)
 
 // ExchangeResult holds the result of a successful token exchange.
 type ExchangeResult struct {
@@ -81,13 +80,23 @@ type Server struct {
 // requestState holds per-stream state accumulated from the RequestHeaders phase
 // that is needed when processing the RequestBody phase (OPA mode only).
 type requestState struct {
-	bearerToken           string
+	subjectToken          string
 	resourceURI           string
 	headers               map[string]string
 	protocol              string
 	grantedPermissionSets map[string][]string
 	requestContext        context.Context
 	finishObservation     func(outcome, resourceURI, errorType string)
+}
+
+type tokenExchangeInput struct {
+	subjectToken string
+	resourceURI  string
+}
+
+type inputRejection struct {
+	code   string
+	reason string
 }
 
 type requestLoggerKey struct{}
@@ -267,18 +276,14 @@ func (s *Server) beginTokenExchangeObservation(ctx context.Context) (context.Con
 }
 
 // Process implements the streaming ExtProc gRPC RPC.
-// When OPA is disabled (authorizer == nil):
-//   - RequestHeaders: extract Bearer + path → token exchange → replace header
-//   - All other phases: pass through unchanged
+// When OPA is disabled (authorizer == nil), RequestHeaders validates token-exchange metadata,
+// exchanges it, and replaces the Authorization header. All other phases pass through unchanged.
 //
-// When OPA is enabled (authorizer != nil) and Bearer token is present:
-//   - Body-bearing requests: RequestHeaders performs token exchange, sets header mutation, and requests BUFFERED body; RequestBody evaluates OPA and echoes or denies
-//   - Header-only requests: RequestHeaders evaluates OPA first, then performs token exchange on allow
-//   - All other phases: pass through unchanged
+// When OPA is enabled, body-bearing requests exchange validated metadata in RequestHeaders and
+// evaluate policy in RequestBody. Header-only requests evaluate policy first and exchange on allow.
 func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
-	// Per-stream OPA state populated by a preceding RequestHeaders message on the same
-	// ExtProc stream. It remains nil for OPA-disabled requests, Bearer-less passthrough,
-	// and any RequestBody message that arrives without an earlier headers phase.
+	// Per-stream OPA state is populated by a preceding RequestHeaders message on the same
+	// ExtProc stream and consumed by the body or header-only processing path.
 	var state *requestState
 	activeCtx := stream.Context()
 
@@ -380,15 +385,7 @@ func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error
 	}
 }
 
-// processRequestHeaders implements the primary ExtProc processing phase (OPA disabled).
-// It handles:
-//   - No Bearer token → pass through (FR-009)
-//   - Empty/invalid :path → 503 ImmediateResponse (FR-013)
-//   - Successful exchange → replace Authorization header (FR-007)
-//   - Re-auth required (broker error_uri) → URLElicitationRequiredError for MCP, 503 for other protocols
-//   - Exchange failure → 500 ImmediateResponse (FR-008, FR-010)
-//
-// ctx carries trace context and must be passed to all blocking operations.
+// processRequestHeaders implements the primary ExtProc processing phase when OPA is disabled.
 func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.ProcessingRequest, headers *extprocv3.HttpHeaders) *extprocv3.ProcessingResponse {
 	start := time.Now()
 	outcome := "success"
@@ -397,12 +394,7 @@ func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.Proce
 	tracesEnabled := telemetryEnabled && s.cfg.Telemetry.Traces.Enabled
 	metricsEnabled := telemetryEnabled && s.cfg.Telemetry.Metrics.Enabled
 
-	// Extract tracing context from incoming request headers before starting a span.
-	// In ExtProc, traceparent and baggage live in HttpHeaders, not the gRPC stream context.
 	ctx = s.extractTraceContext(ctx, headers)
-	// FR-003: Start span for token exchange with extracted trace context.
-	// When traces are disabled, use a no-op span so downstream span.SetAttributes
-	// calls remain safe without additional guards throughout the function.
 	var span trace.Span
 	if tracesEnabled {
 		ctx, span = otel.Tracer("extproc").Start(ctx, "extproc.token_exchange")
@@ -415,8 +407,6 @@ func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.Proce
 		span.End()
 		if metricsEnabled {
 			outcomeAttr := metric.WithAttributes(attribute.String("outcome", outcome))
-			// Use context.WithoutCancel for metric recording — metrics must be recorded
-			// even if the gRPC stream was cancelled (client disconnect).
 			metricCtx := context.WithoutCancel(ctx)
 			if s.requestCounter != nil {
 				s.requestCounter.Add(metricCtx, 1, outcomeAttr)
@@ -427,50 +417,25 @@ func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.Proce
 		}
 	}()
 
-	bearerToken := extractBearerToken(headers)
-	if bearerToken == "" {
-		// FR-009: No Bearer token — pass through without modification.
-		outcome = "passthrough"
-		logger.DebugContext(ctx, "no Bearer token — passing through")
-		return passThrough()
+	input, rejection := extractTokenExchangeInput(req)
+	if rejection != nil {
+		outcome = rejection.code
+		logger.WarnContext(ctx, "extproc: token-exchange metadata rejected", "reason", rejection.reason)
+		span.SetAttributes(attribute.String("error.type", rejection.code))
+		return inputRejectionResponse(rejection)
 	}
 
-	path := extractHeader(headers, ":path")
-	scheme := extractHeader(headers, ":scheme")
-	authority := extractHeader(headers, ":authority")
-	resourceURI := buildResourceURI(scheme, authority, path)
-
-	// Sanitize the URI for telemetry (SR-001: no token values in query strings).
-	sanitizedURI := sanitizeURIForTelemetry(resourceURI)
-
-	if err := validateResourceURI(resourceURI); err != nil {
-		logger.WarnContext(ctx, "extproc: invalid resource URI — rejecting with 503",
-			"scheme", scheme,
-			"authority", authority,
-			"resource_uri", sanitizedURI,
-			"error", err)
-		outcome = "invalid_resource"
-		span.SetAttributes(
-			attribute.String("resource.uri", sanitizedURI),
-			attribute.String("error.type", "invalid_resource"),
-		)
-		return immediateResponse(httpv3.StatusCode_ServiceUnavailable,
-			`{"error":"invalid_resource","error_description":"request URI is empty or invalid"}`)
-	}
-
+	sanitizedURI := sanitizeURIForTelemetry(input.resourceURI)
 	span.SetAttributes(attribute.String("resource.uri", sanitizedURI))
 
-	// Extract protocol; default to "mcp" when absent. The non-OPA token-exchange
-	// path is MCP-only by design — deployments without protocol metadata are
-	// pre-OPA MCP clients. Explicit non-MCP values (e.g. "a2a") are respected.
 	protocol, _ := extractProtocolFromMetadata(req)
 	if protocol == "" {
 		protocol = "mcp"
 	}
 
-	result, err := s.exchanger.Exchange(ctx, bearerToken, resourceURI)
+	result, err := s.exchanger.Exchange(ctx, input.subjectToken, input.resourceURI)
 	if err != nil {
-		resp, mappedOutcome, mappedErrorType := s.exchangeErrorResponse(ctx, "", protocol, resourceURI, err)
+		resp, mappedOutcome, mappedErrorType := s.exchangeErrorResponse(ctx, "", protocol, input.resourceURI, err)
 		outcome = mappedOutcome
 		span.SetAttributes(attribute.String("error.type", mappedErrorType))
 		return resp
@@ -480,51 +445,28 @@ func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.Proce
 }
 
 // processRequestHeadersOPA handles the RequestHeaders phase when OPA is enabled.
-//
-// For body-bearing requests (endOfStream=false): token exchange runs eagerly here so
-// that the Authorization mutation is part of the headers-phase response. Proxies such
-// as agentgateway only apply header mutations from the first (headers-phase) ExtProc
-// response; body-phase mutations are silently dropped by those proxies.
-//
-// For header-only requests (endOfStream=true): exchange is deferred to
-// processHeadersOnlyOPA so that OPA can gate the exchange before any broker call.
-//
-// Returns (ImmediateResponse, nil) on validation/exchange error, or (response, state).
 func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool, req *extprocv3.ProcessingRequest, headers *extprocv3.HttpHeaders) (*extprocv3.ProcessingResponse, *requestState) {
 	ctx = s.extractTraceContext(ctx, headers)
-
-	s.logger.DebugContext(ctx, "OPA mode: Running .....")
-	bearerToken := extractBearerToken(headers)
-	if bearerToken == "" {
-		ctx, logger := s.withRequestLogger(ctx, "", "")
-		logger.DebugContext(ctx, "OPA mode: no Bearer token — passing through")
-		return passThrough(), nil
-	}
-
 	ctx, finishObservation := s.beginTokenExchangeObservation(ctx)
 	ctx, logger := s.withRequestLogger(ctx, "", "")
 	finishNow := true
 	outcome := "success"
 	errorType := ""
-	path := extractHeader(headers, ":path")
-	scheme := extractHeader(headers, ":scheme")
-	authority := extractHeader(headers, ":authority")
-	resourceURI := buildResourceURI(scheme, authority, path)
+	resourceURI := ""
 	defer func() {
 		if finishNow {
 			finishObservation(outcome, resourceURI, errorType)
 		}
 	}()
 
-	if err := validateResourceURI(resourceURI); err != nil {
-		outcome = "invalid_resource"
-		errorType = "invalid_resource"
-		logger.WarnContext(ctx, "extproc OPA: invalid resource URI — rejecting with 503",
-			"path", path, "scheme", scheme, "authority", authority,
-			"resource_uri", sanitizeURIForTelemetry(resourceURI), "error", err)
-		return immediateResponse(httpv3.StatusCode_ServiceUnavailable,
-			`{"error":"invalid_resource","error_description":"request URI is empty or invalid"}`), nil
+	input, rejection := extractTokenExchangeInput(req)
+	if rejection != nil {
+		outcome = rejection.code
+		errorType = rejection.code
+		logger.WarnContext(ctx, "extproc OPA: token-exchange metadata rejected", "reason", rejection.reason)
+		return inputRejectionResponse(rejection), nil
 	}
+	resourceURI = input.resourceURI
 
 	protocol, ok := extractProtocolFromMetadata(req)
 	if !ok {
@@ -537,7 +479,6 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	}
 
 	headerMap := extractAllHeaders(headers)
-
 	if protocol == "mcp" && !isMCPHeaderOnlyMethod(headerMap[":method"]) && !isBodyBearingMethod(headerMap[":method"]) {
 		outcome = "invalid_request"
 		errorType = "invalid_method"
@@ -547,7 +488,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	}
 
 	state := &requestState{
-		bearerToken:       bearerToken,
+		subjectToken:      input.subjectToken,
 		resourceURI:       resourceURI,
 		headers:           headerMap,
 		protocol:          protocol,
@@ -560,7 +501,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 		return passThrough(), state
 	}
 
-	exchangeResult, exchErr := s.exchanger.Exchange(ctx, bearerToken, resourceURI)
+	exchangeResult, exchErr := s.exchanger.Exchange(ctx, input.subjectToken, resourceURI)
 	if exchErr != nil {
 		resp, mappedOutcome, mappedErrorType := s.exchangeErrorResponse(ctx, "OPA: headers-phase", protocol, resourceURI, exchErr)
 		outcome = mappedOutcome
@@ -669,7 +610,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 		return accessDeniedResponse(decision.Reasons)
 	}
 
-	exchangeResult, exchErr := s.exchanger.Exchange(ctx, state.bearerToken, state.resourceURI)
+	exchangeResult, exchErr := s.exchanger.Exchange(ctx, state.subjectToken, state.resourceURI)
 	if exchErr != nil {
 		resp, mappedOutcome, mappedErrorType := s.exchangeErrorResponse(ctx, "OPA: header-only", state.protocol, state.resourceURI, exchErr)
 		outcome = mappedOutcome
@@ -810,6 +751,55 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, phase, protocol, res
 	}
 }
 
+func extractTokenExchangeInput(req *extprocv3.ProcessingRequest) (tokenExchangeInput, *inputRejection) {
+	if req == nil || req.MetadataContext == nil {
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token", reason: "metadata context is missing"}
+	}
+
+	metadata, ok := req.MetadataContext.FilterMetadata[tokenExchangeMetadataNamespace]
+	if !ok || metadata == nil || metadata.Fields == nil {
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token", reason: "token-exchange namespace is missing"}
+	}
+
+	subjectToken, reason := metadataStringField(metadata.Fields, subjectTokenFieldKey)
+	if reason != "" {
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token", reason: reason}
+	}
+	if strings.TrimSpace(subjectToken) == "" {
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token", reason: "subject token is blank"}
+	}
+	if len(subjectToken) >= len("bearer ") && strings.EqualFold(subjectToken[:len("bearer ")], "bearer ") {
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token", reason: "subject token has a bearer scheme"}
+	}
+
+	resourceURI, reason := metadataStringField(metadata.Fields, resourceURIFieldKey)
+	if reason != "" {
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: reason}
+	}
+	if strings.TrimSpace(resourceURI) == "" {
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: "resource URI is blank"}
+	}
+	if err := validateResourceURI(resourceURI); err != nil {
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: status.Convert(err).Message()}
+	}
+
+	return tokenExchangeInput{subjectToken: subjectToken, resourceURI: resourceURI}, nil
+}
+
+func metadataStringField(fields map[string]*structpb.Value, key string) (string, string) {
+	value, ok := fields[key]
+	if !ok || value == nil {
+		return "", "field is missing"
+	}
+
+	stringValue, ok := value.GetKind().(*structpb.Value_StringValue)
+	if !ok {
+		return "", "field is not a string"
+	}
+
+	return stringValue.StringValue, ""
+}
+
 // extractProtocolFromMetadata extracts the agentgateway protocol value from the
 // MetadataContext FilterMetadata.
 //
@@ -892,28 +882,8 @@ func requestBodyBufferingResponseWithAuth(authValue string) *extprocv3.Processin
 	}
 }
 
-// extractBearerToken extracts the raw token value from a "Bearer <token>" Authorization header.
-// Returns empty string if the header is absent or uses a different scheme.
-func extractBearerToken(headers *extprocv3.HttpHeaders) string {
-	authValue := extractHeader(headers, "authorization")
-	if authValue == "" {
-		return ""
-	}
-	const prefix = "Bearer "
-	if !strings.HasPrefix(authValue, prefix) {
-		return ""
-	}
-	return strings.TrimPrefix(authValue, prefix)
-}
-
-// extractHeader returns the value of the named header (case-insensitive) from the header map.
-// RawValue (bytes) takes precedence over Value (string). agentgateway uses Value for
-// pseudo-headers (:path, :method, :scheme, :authority) and RawValue for regular headers.
-// Returns empty string if not found.
 // extractHeader returns the first matching header value (case-insensitive key match),
-// preferring RawValue over Value. Returns on first key match, even if both RawValue
-// and Value are empty — matching http.Header.Get() first-match semantics. Envoy
-// guarantees at least one of RawValue/Value is populated for headers it forwards.
+// preferring RawValue over Value. It is used for trace propagation and transport metadata.
 func extractHeader(headers *extprocv3.HttpHeaders, name string) string {
 	if headers == nil || headers.Headers == nil {
 		return ""
@@ -930,42 +900,21 @@ func extractHeader(headers *extprocv3.HttpHeaders, name string) string {
 	return ""
 }
 
-// buildResourceURI constructs an absolute URI for use as the RFC 8693 resource parameter.
-// If path is already an absolute URI (starts with http:// or https://), it is returned as-is.
-// Otherwise, the URI is assembled from the HTTP/2 pseudo-headers: {scheme}://{authority}{path}.
-// Returns an empty string if both path and authority are empty.
-func buildResourceURI(scheme, authority, path string) string {
-	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		return path
-	}
-	if authority == "" {
-		return path // fall through to validation which will reject empty/relative paths
-	}
-	if scheme == "" {
-		scheme = "https" // default to https if scheme is missing, per Envoy's behavior
-	}
-	return scheme + "://" + authority + path
-}
-
 // validateResourceURI checks that resourceURI is a non-empty absolute URI with
-// http or https scheme, mitigating SSRF attacks per FR-004, FR-013.
+// an HTTP or HTTPS scheme and a non-empty host.
 func validateResourceURI(resourceURI string) error {
 	if strings.TrimSpace(resourceURI) == "" {
-		return status.Error(codes.InvalidArgument, "empty :path")
+		return status.Error(codes.InvalidArgument, "empty resource URI")
 	}
 	u, err := url.ParseRequestURI(resourceURI)
 	if err != nil {
-		// SR-001: Do not echo the raw URI in error messages — it may contain
-		// sensitive query parameters. Return a generic parse failure instead.
-		return status.Error(codes.InvalidArgument, "invalid :path: URI parse error")
+		return status.Error(codes.InvalidArgument, "invalid resource URI: parse error")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		// SR-001: Do not echo the parsed scheme — input may contain
-		// unexpected URI schemes (e.g. data:, javascript:).
-		return status.Error(codes.InvalidArgument, ":path must have http or https scheme")
+		return status.Error(codes.InvalidArgument, "resource URI must have http or https scheme")
 	}
 	if u.Host == "" {
-		return status.Error(codes.InvalidArgument, ":path must have a non-empty host")
+		return status.Error(codes.InvalidArgument, "resource URI must have a non-empty host")
 	}
 	return nil
 }
@@ -1077,6 +1026,23 @@ func isMCPHeaderOnlyMethod(method string) bool {
 // MCP uses POST exclusively for JSON-RPC messages.
 func isBodyBearingMethod(method string) bool {
 	return strings.ToUpper(method) == "POST"
+}
+
+func invalidSubjectTokenResponse() *extprocv3.ProcessingResponse {
+	return immediateResponse(httpv3.StatusCode_ServiceUnavailable,
+		`{"error":"invalid_subject_token","error_description":"subject token metadata is missing or invalid"}`)
+}
+
+func invalidResourceResponse() *extprocv3.ProcessingResponse {
+	return immediateResponse(httpv3.StatusCode_ServiceUnavailable,
+		`{"error":"invalid_resource","error_description":"resource metadata is missing or invalid"}`)
+}
+
+func inputRejectionResponse(rejection *inputRejection) *extprocv3.ProcessingResponse {
+	if rejection.code == "invalid_resource" {
+		return invalidResourceResponse()
+	}
+	return invalidSubjectTokenResponse()
 }
 
 func immediateResponse(code httpv3.StatusCode, body string) *extprocv3.ProcessingResponse {

@@ -398,10 +398,7 @@ func TestServer_Process_CircuitOpen_Returns503(t *testing.T) {
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://mcp-server:9003/mcp",
-		"authorization": "Bearer some-token",
-	})
+	resp, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
@@ -409,8 +406,9 @@ func TestServer_Process_CircuitOpen_Returns503(t *testing.T) {
 	assert.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable),
 		int32(immResp.ImmediateResponse.Status.Code),
 		"circuit open must return HTTP 503")
-	assert.Contains(t, string(immResp.ImmediateResponse.Body),
-		"circuit breaker", "error body must mention circuit breaker")
+	assert.Equal(t, `{"error":"service_unavailable","error_description":"circuit breaker is open"}`, string(immResp.ImmediateResponse.Body))
+	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "open circuit must not mutate authorization")
 }
 
 // ---------------------------------------------------------------------------

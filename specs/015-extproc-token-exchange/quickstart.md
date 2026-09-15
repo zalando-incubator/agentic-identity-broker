@@ -1,6 +1,10 @@
 # Quickstart: Implementing ExtProc Token Exchange Service
 
 This guide provides step-by-step instructions for implementing the ExtProc token exchange service following a phased approach that ensures E2E tests compile at each stage.
+> **Implementation note (superseded raw input):**
+> [Feature 043](../043-extproc-metadata-input/contracts/extproc-metadata-input.md) and [ADR 036](../../adrs/036-extproc-metadata-token-exchange-input.md) replace raw `Authorization` and pseudo-header input, no-Bearer pass-through, and raw resource validation.
+> This document retains the standalone process, configuration, cache, circuit-breaker, and exchange mechanics that remain applicable.
+
 
 ## Prerequisites
 

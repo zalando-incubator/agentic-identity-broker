@@ -30,6 +30,7 @@ package extproc_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -59,23 +60,14 @@ import (
 )
 
 const (
-	opaAgentgwOriginalBearerToken = "opa-agentgw-original-bearer-token"
-	opaAgentgwExchangedToken      = "opa-agentgw-exchanged-token"
-	opaAgentgwMockAccessToken     = "opa-agentgw-mock-access-token"
-	// opaAgentgwReAuthBearerToken is a distinct token used only in the re-auth scenario
-	// so the exchanger's in-memory cache (populated by Initialize()) does not shadow it.
-	opaAgentgwReAuthBearerToken = "opa-agentgw-reauth-bearer-token"
-	// opaAgentgwHeadersOnlyBearerToken is a distinct token used only in the mcp_headers_only
-	// scenario so the exchanger cache does not produce a false-positive cache hit.
-	opaAgentgwHeadersOnlyBearerToken = "opa-agentgw-headers-only-bearer-token"
-	// opaAgentgwPermissionedBearerToken is a distinct token used only in the permission-set
-	// scenario so the broker response carrying an authoritative granted_permission_sets snapshot is guaranteed to populate the cache.
-	opaAgentgwPermissionedBearerToken = "opa-agentgw-permissioned-bearer-token"
-	// opaAgentgwPermissionUnavailableBearerToken is a distinct token used only in the
-	// omission scenario so cached authoritative permission snapshots from other tests cannot leak in.
-	opaAgentgwPermissionUnavailableBearerToken = "opa-agentgw-permission-unavailable-bearer-token"
-	opaAgentgwGrantedPermissionSetID           = "11111111-1111-1111-1111-111111111111"
-	opaAgentgwRequiredServiceID                = "22222222-2222-2222-2222-222222222222"
+	opaAgentgwJWTIssuer   = "https://opa-agentgateway.e2e.test"
+	opaAgentgwJWTAudience = "opa-agentgateway-mcp"
+
+	opaAgentgwExchangedToken  = "opa-agentgw-exchanged-token"
+	opaAgentgwMockAccessToken = "opa-agentgw-mock-access-token"
+
+	opaAgentgwGrantedPermissionSetID = "11111111-1111-1111-1111-111111111111"
+	opaAgentgwRequiredServiceID      = "22222222-2222-2222-2222-222222222222"
 )
 
 // opaAgentgwLogger writes structured test output to GinkgoWriter.
@@ -91,18 +83,24 @@ const opaAgentgwAuthKey opaAgentgwContextKey = "authorization"
 // The container setup is shared across scenarios (Ordered + BeforeAll).
 var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 	var (
-		ctx                  context.Context
-		cancel               context.CancelFunc
-		mockOAuth2Srv        *httptest.Server
-		mockTokenExchangeSvr *opaAgentgwMockTokenExchangeSrv
-		extprocGRPC          *grpc.Server
-		extprocAddr          string // direct gRPC address of the ExtProc server
-		exchanger            *extprocserver.TokenExchanger
-		mcpClient            *client.Client
-		agentgatewayPort     string // host port for the agentgateway container
+		ctx                      context.Context
+		cancel                   context.CancelFunc
+		jwtFixture               *fixtures.RS256JWTFixture
+		mcpJWT                   string
+		reAuthJWT                string
+		permissionedJWT          string
+		permissionUnavailableJWT string
+		headersOnlyJWT           string
+		mockOAuth2Srv            *httptest.Server
+		mockTokenExchangeSvr     *opaAgentgwMockTokenExchangeSrv
+		extprocGRPC              *grpc.Server
+		extprocAddr              string // direct gRPC address of the ExtProc server
+		exchanger                *extprocserver.TokenExchanger
+		mcpClient                *client.Client
+		agentgatewayPort         string // host port for the agentgateway container
 
-		// lastReceivedAuthHeader captures the Authorization header seen by the MCP server.
-		lastReceivedAuthHeader string
+		// lastReceivedAuthDigest captures a digest of the Authorization header seen by the MCP server.
+		lastReceivedAuthDigest string
 		authHeaderMu           sync.Mutex
 	)
 
@@ -114,12 +112,28 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 
 		ctx, cancel = context.WithTimeout(context.Background(), 300*time.Second)
 
+		var err error
+		jwtFixture, err = fixtures.NewRS256JWTFixture(opaAgentgwJWTIssuer, opaAgentgwJWTAudience)
+		Expect(err).NotTo(HaveOccurred(), "failed to create OPA Agentgateway JWT fixture")
+
+		expiresAt := time.Now().Add(10 * time.Minute)
+		mcpJWT, err = jwtFixture.MintToken("opa-agentgateway-mcp-subject", expiresAt)
+		Expect(err).NotTo(HaveOccurred(), "failed to mint OPA MCP JWT")
+		reAuthJWT, err = jwtFixture.MintToken("opa-agentgateway-reauth-subject", expiresAt)
+		Expect(err).NotTo(HaveOccurred(), "failed to mint OPA re-auth JWT")
+		permissionedJWT, err = jwtFixture.MintToken("opa-agentgateway-permissioned-subject", expiresAt)
+		Expect(err).NotTo(HaveOccurred(), "failed to mint OPA permissioned JWT")
+		permissionUnavailableJWT, err = jwtFixture.MintToken("opa-agentgateway-permission-unavailable-subject", expiresAt)
+		Expect(err).NotTo(HaveOccurred(), "failed to mint OPA unavailable-permission JWT")
+		headersOnlyJWT, err = jwtFixture.MintToken("opa-agentgateway-headers-only-subject", expiresAt)
+		Expect(err).NotTo(HaveOccurred(), "failed to mint OPA headers-only JWT")
+
 		// --- 1. Start mock identity broker ---
 		mockOAuth2Srv = opaAgentgwNewMockOAuth2Srv()
 		mockTokenExchangeSvr = opaAgentgwNewMockTokenExchangeSrv()
 
-		// --- 2. Start mock MCP server that captures Authorization header ---
-		mcpListener := opaAgentgwStartMCPServer(&lastReceivedAuthHeader, &authHeaderMu)
+		// --- 2. Start mock MCP server that captures Authorization digests ---
+		mcpListener := opaAgentgwStartMCPServer(&lastReceivedAuthDigest, &authHeaderMu)
 		mcpPort := mcpListener.Addr().(*net.TCPAddr).Port
 		opaAgentgwLogger.Info("Mock MCP server listening", "port", mcpPort)
 
@@ -133,12 +147,12 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		opaAgentgwLogger.Info("ExtProc gRPC server with OPA listening", "port", extprocPort)
 
 		// --- 4. Start agentgateway Docker container ---
-		agentgatewayPort = opaAgentgwStartContainer(ctx, extprocPort, mcpPort)
+		agentgatewayPort = opaAgentgwStartContainer(ctx, extprocPort, mcpPort, jwtFixture)
 		opaAgentgwLogger.Info("agentgateway accessible on host port", "port", agentgatewayPort)
 
 		// --- 5. Create MCP client connected through agentgateway ---
 		agentgatewayURL := fmt.Sprintf("http://localhost:%s", agentgatewayPort)
-		mcpClient = opaAgentgwConnectMCPClient(ctx, agentgatewayURL)
+		mcpClient = opaAgentgwConnectMCPClient(ctx, agentgatewayURL, mcpJWT)
 
 		DeferCleanup(func() {
 			if mcpClient != nil {
@@ -163,7 +177,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 	BeforeEach(func() {
 		// Reset state between scenarios
 		authHeaderMu.Lock()
-		lastReceivedAuthHeader = ""
+		lastReceivedAuthDigest = ""
 		authHeaderMu.Unlock()
 		mockTokenExchangeSvr.reset()
 	})
@@ -186,15 +200,13 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		Expect(result).NotTo(BeNil())
 		Expect(result.IsError).To(BeFalse(), "tool call should not return an MCP error")
 
-		// Verify the MCP server received the EXCHANGED token (not the original)
+		// Verify the MCP server received the exchanged credential without retaining a raw token.
 		authHeaderMu.Lock()
-		receivedAuth := lastReceivedAuthHeader
+		receivedAuthDigest := lastReceivedAuthDigest
 		authHeaderMu.Unlock()
 
-		Expect(receivedAuth).To(ContainSubstring(opaAgentgwExchangedToken),
+		Expect(receivedAuthDigest).To(Equal(opaAgentgwAuthorizationDigest("Bearer "+opaAgentgwExchangedToken)),
 			"MCP server should receive the exchanged token after OPA allow decision")
-		Expect(receivedAuth).NotTo(ContainSubstring(opaAgentgwOriginalBearerToken),
-			"MCP server must NOT receive the original Bearer token")
 		// Note: callCount may be 0 when the token is served from the exchanger's in-memory cache
 		// (populated during BeforeAll's initialize handshake). The receivedAuth assertions above
 		// are the authoritative proof that the exchanged token was forwarded correctly.
@@ -219,9 +231,9 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"delete_repository should be denied by OPA policy (403 from ExtProc)")
 
 		authHeaderMu.Lock()
-		receivedAuth := lastReceivedAuthHeader
+		receivedAuthDigest := lastReceivedAuthDigest
 		authHeaderMu.Unlock()
-		Expect(receivedAuth).To(BeEmpty(),
+		Expect(receivedAuthDigest).To(BeEmpty(),
 			"denied requests must not be forwarded to the MCP server, regardless of cache hits or eager exchange")
 
 		directClient, conn := helpers.ConnectToExtProc(extprocAddr)
@@ -232,7 +244,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			WithHeader(":method", "POST").
 			WithHeader(":authority", "mcp-server:9003").
 			WithHeader(":scheme", "http").
-			WithBearerToken(opaAgentgwOriginalBearerToken).
+			WithTokenExchangeMetadata(mcpJWT, fixtures.ValidResourceURI).
 			WithAgentgatewayProtocol("mcp").
 			BuildWithMetadata()
 
@@ -265,9 +277,9 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		Expect(err != nil || (result != nil && result.IsError)).To(BeTrue(),
 			"unknown tool should be denied by default deny decision")
 		authHeaderMu.Lock()
-		receivedAuth := lastReceivedAuthHeader
+		receivedAuthDigest := lastReceivedAuthDigest
 		authHeaderMu.Unlock()
-		Expect(receivedAuth).To(BeEmpty(),
+		Expect(receivedAuthDigest).To(BeEmpty(),
 			"default-denied requests must not be forwarded to the MCP server, regardless of cache hits or eager exchange")
 	})
 
@@ -291,7 +303,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		newClient, err := client.NewStreamableHttpClient(
 			agentgatewayURL+"/mcp",
 			transport.WithHTTPHeaders(map[string]string{
-				"Authorization": "Bearer " + opaAgentgwOriginalBearerToken,
+				"Authorization": "Bearer " + mcpJWT,
 			}),
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -316,7 +328,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		newClient, err := client.NewStreamableHttpClient(
 			agentgatewayURL+"/mcp",
 			transport.WithHTTPHeaders(map[string]string{
-				"Authorization": "Bearer " + opaAgentgwPermissionedBearerToken,
+				"Authorization": "Bearer " + permissionedJWT,
 			}),
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -333,7 +345,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"initialize should succeed so the permission-scoped token exchange snapshot is cached")
 
 		authHeaderMu.Lock()
-		lastReceivedAuthHeader = ""
+		lastReceivedAuthDigest = ""
 		authHeaderMu.Unlock()
 
 		result, err := newClient.CallTool(ctx, mcp.CallToolRequest{
@@ -347,13 +359,11 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		Expect(result.IsError).To(BeFalse())
 
 		authHeaderMu.Lock()
-		receivedAuth := lastReceivedAuthHeader
+		receivedAuthDigest := lastReceivedAuthDigest
 		authHeaderMu.Unlock()
 
-		Expect(receivedAuth).To(ContainSubstring(opaAgentgwExchangedToken),
+		Expect(receivedAuthDigest).To(Equal(opaAgentgwAuthorizationDigest("Bearer "+opaAgentgwExchangedToken)),
 			"permission-gated requests should forward the exchanged token after OPA allow")
-		Expect(receivedAuth).NotTo(ContainSubstring(opaAgentgwPermissionedBearerToken),
-			"permission-gated requests must not forward the original Bearer token")
 		Expect(mockTokenExchangeSvr.callCount()).To(BeNumerically(">=", 1),
 			"the broker must be reached so an authoritative granted_permission_sets snapshot enters the token-bound cache")
 	})
@@ -368,7 +378,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		newClient, err := client.NewStreamableHttpClient(
 			agentgatewayURL+"/mcp",
 			transport.WithHTTPHeaders(map[string]string{
-				"Authorization": "Bearer " + opaAgentgwPermissionUnavailableBearerToken,
+				"Authorization": "Bearer " + permissionUnavailableJWT,
 			}),
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -385,7 +395,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"initialize should succeed so the cached token snapshot carries unavailable permission context into the tool call")
 
 		authHeaderMu.Lock()
-		lastReceivedAuthHeader = ""
+		lastReceivedAuthDigest = ""
 		authHeaderMu.Unlock()
 
 		result, err := newClient.CallTool(ctx, mcp.CallToolRequest{
@@ -397,9 +407,9 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			"permissioned_read should be denied when granted permission-set context is unavailable")
 
 		authHeaderMu.Lock()
-		receivedAuth := lastReceivedAuthHeader
+		receivedAuthDigest := lastReceivedAuthDigest
 		authHeaderMu.Unlock()
-		Expect(receivedAuth).To(BeEmpty(),
+		Expect(receivedAuthDigest).To(BeEmpty(),
 			"permission-set-denied requests must not be forwarded to the MCP server")
 		Expect(mockTokenExchangeSvr.callCount()).To(BeNumerically(">=", 1),
 			"the broker must be reached so unavailable permission-set context is cached with the exchanged token")
@@ -412,7 +422,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			WithHeader(":method", "POST").
 			WithHeader(":authority", "mcp-server:9003").
 			WithHeader(":scheme", "http").
-			WithBearerToken(opaAgentgwPermissionUnavailableBearerToken).
+			WithTokenExchangeMetadata(permissionUnavailableJWT, fixtures.ValidResourceURI).
 			WithAgentgatewayProtocol("mcp").
 			BuildWithMetadata()
 
@@ -439,7 +449,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 
 		// Send a tools/call for list_repositories (OPA allows) via raw HTTP so we can
 		// inspect the JSON-RPC response body directly (mcp-go may reject custom error codes).
-		// Use a distinct bearer token so the exchanger cache (populated during BeforeAll
+		// Use a distinct minted JWT so the exchanger cache (populated during BeforeAll
 		// Initialize()) does not return a cached successful exchange for this scenario.
 		const requestID = 99
 		reqBody := fmt.Sprintf(
@@ -453,7 +463,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json, text/event-stream")
-		httpReq.Header.Set("Authorization", "Bearer "+opaAgentgwReAuthBearerToken)
+		httpReq.Header.Set("Authorization", "Bearer "+reAuthJWT)
 
 		resp, err := http.DefaultClient.Do(httpReq)
 		Expect(err).NotTo(HaveOccurred())
@@ -503,8 +513,8 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 	It("should allow mcp_headers_only GET /mcp and forward exchanged token to MCP server", func() {
 		// mcp_headers_only scenario from specs/020-extproc-opa-authorization/spec.md (FR-018)
 		//
-		// Uses opaAgentgwHeadersOnlyBearerToken (not seen in any prior scenario) to ensure
-		// the exchange endpoint is actually called and no cached token produces a false pass.
+		// Uses a distinct minted JWT so the exchange endpoint is actually called and no
+		// cached token produces a false pass.
 		mockTokenExchangeSvr.withExchangedToken(opaAgentgwExchangedToken)
 		callsBefore := mockTokenExchangeSvr.callCount()
 
@@ -520,7 +530,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			WithHeader(":method", "GET").
 			WithHeader(":authority", "mcp-server:9003").
 			WithHeader(":scheme", "http").
-			WithBearerToken(opaAgentgwHeadersOnlyBearerToken).
+			WithTokenExchangeMetadata(headersOnlyJWT, fixtures.ValidResourceURI).
 			WithEndOfStream(true).
 			WithAgentgatewayProtocol("mcp").
 			BuildWithMetadata()
@@ -529,8 +539,6 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 
 		Expect(helpers.ExtractMutatedAuthorizationHeader(resp)).To(ContainSubstring(opaAgentgwExchangedToken),
 			"mcp_headers_only GET allowed by allow_readonly policy: auth header must contain exchanged token")
-		Expect(helpers.ExtractMutatedAuthorizationHeader(resp)).NotTo(ContainSubstring(opaAgentgwHeadersOnlyBearerToken),
-			"original Bearer token must NOT appear in the auth mutation")
 
 		Expect(mockTokenExchangeSvr.callCount()).To(BeNumerically(">", callsBefore),
 			"exchange endpoint must be called — cache must not produce a false-positive pass")
@@ -549,14 +557,14 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 		directClient, conn := helpers.ConnectToExtProc(extprocAddr)
 		defer conn.Close() //nolint:errcheck
 
-		// Send a request with a Bearer token but a non-JSON-RPC body so that
+		// Send a request with token-exchange metadata but a non-JSON-RPC body so that
 		// auto-detection returns type="unknown" and the allow_readonly policy denies it.
 		headersReq := helpers.NewRequestHeaders().
 			WithPath("/mcp").
-			WithBearerToken(opaAgentgwOriginalBearerToken).
+			WithTokenExchangeMetadata(mcpJWT, fixtures.ValidResourceURI).
 			WithHeader(":authority", "mcp-server:9003").
 			WithHeader(":scheme", "http").
-			Build()
+			BuildWithMetadata()
 
 		nonMCPBody := []byte(`plain text — not a JSON-RPC message`)
 
@@ -680,7 +688,12 @@ func (m *opaAgentgwMockTokenExchangeSrv) reset() {
 
 // --- Mock MCP Server ---
 
-func opaAgentgwStartMCPServer(lastAuth *string, mu *sync.Mutex) net.Listener {
+func opaAgentgwAuthorizationDigest(header string) string {
+	digest := sha256.Sum256([]byte(header))
+	return fmt.Sprintf("%x", digest)
+}
+
+func opaAgentgwStartMCPServer(lastAuthDigest *string, mu *sync.Mutex) net.Listener {
 	mcpSvr := mcpserver.NewMCPServer(
 		"opa-e2e-mock-mcp-server", "1.0.0",
 		mcpserver.WithToolCapabilities(false),
@@ -693,7 +706,7 @@ func opaAgentgwStartMCPServer(lastAuth *string, mu *sync.Mutex) net.Listener {
 	mcpSvr.AddTool(listTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		authHeader, _ := ctx.Value(opaAgentgwAuthKey).(string)
 		mu.Lock()
-		*lastAuth = authHeader
+		*lastAuthDigest = opaAgentgwAuthorizationDigest(authHeader)
 		mu.Unlock()
 		return mcp.NewToolResultText("repositories: [acme/app]"), nil
 	})
@@ -706,7 +719,7 @@ func opaAgentgwStartMCPServer(lastAuth *string, mu *sync.Mutex) net.Listener {
 	mcpSvr.AddTool(deleteTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		authHeader, _ := ctx.Value(opaAgentgwAuthKey).(string)
 		mu.Lock()
-		*lastAuth = authHeader
+		*lastAuthDigest = opaAgentgwAuthorizationDigest(authHeader)
 		mu.Unlock()
 		return mcp.NewToolResultText("deleted"), nil
 	})
@@ -719,7 +732,7 @@ func opaAgentgwStartMCPServer(lastAuth *string, mu *sync.Mutex) net.Listener {
 	mcpSvr.AddTool(permissionedTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		authHeader, _ := ctx.Value(opaAgentgwAuthKey).(string)
 		mu.Lock()
-		*lastAuth = authHeader
+		*lastAuthDigest = opaAgentgwAuthorizationDigest(authHeader)
 		mu.Unlock()
 		return mcp.NewToolResultText("permissioned result"), nil
 	})
@@ -739,10 +752,10 @@ func opaAgentgwStartMCPServer(lastAuth *string, mu *sync.Mutex) net.Listener {
 		mcpserver.WithDisableLocalhostProtection(true),
 		mcpserver.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
 			auth := r.Header.Get("Authorization")
-			// Capture auth for all HTTP requests (GET, POST) so header-only GET /mcp
-			// tests can verify the exchanged token is forwarded.
+			// Capture an authorization digest for all HTTP requests (GET, POST) so
+			// header-only GET /mcp tests can verify the exchanged token is forwarded.
 			mu.Lock()
-			*lastAuth = auth
+			*lastAuthDigest = opaAgentgwAuthorizationDigest(auth)
 			mu.Unlock()
 			return context.WithValue(ctx, opaAgentgwAuthKey, auth)
 		}),
@@ -831,16 +844,29 @@ func opaAgentgwStartExtProc(
 
 // --- agentgateway Docker Container ---
 
-func opaAgentgwStartContainer(ctx context.Context, extprocPort, mcpPort int) string {
+func opaAgentgwStartContainer(ctx context.Context, extprocPort, mcpPort int, jwtFixture *fixtures.RS256JWTFixture) string {
+	resourceExpression := fmt.Sprintf("'%s'", fixtures.ValidResourceURI)
 	configYAML := fmt.Sprintf(`binds:
 - port: 4000
   listeners:
   - routes:
     - policies:
+        jwtAuth:
+          mode: strict
+          preserveToken: false
+          providers:
+          - issuer: %q
+            audiences:
+            - %q
+            jwks:
+              file: /jwks.json
         extProc:
           host: "host.testcontainers.internal:%d"
           failureMode: failClosed
           metadataContext:
+            aib.tokenexchange:
+              subject_token: "jwt.rawToken.unredacted()"
+              resource_uri: %q
             agentgateway:
               protocol: "'mcp'"
       backends:
@@ -849,7 +875,7 @@ func opaAgentgwStartContainer(ctx context.Context, extprocPort, mcpPort int) str
           - name: tools
             mcp:
               host: http://host.testcontainers.internal:%d/mcp
-`, extprocPort, mcpPort)
+`, jwtFixture.Issuer(), jwtFixture.Audience(), extprocPort, resourceExpression, mcpPort)
 
 	req := testcontainers.ContainerRequest{
 		Image:           agentgatewayTestImage(),
@@ -860,6 +886,11 @@ func opaAgentgwStartContainer(ctx context.Context, extprocPort, mcpPort int) str
 			{
 				Reader:            strings.NewReader(configYAML),
 				ContainerFilePath: "/config.yaml",
+				FileMode:          0644,
+			},
+			{
+				Reader:            strings.NewReader(jwtFixture.JWKSJSON()),
+				ContainerFilePath: "/jwks.json",
 				FileMode:          0644,
 			},
 		},
@@ -873,12 +904,6 @@ func opaAgentgwStartContainer(ctx context.Context, extprocPort, mcpPort int) str
 	Expect(err).NotTo(HaveOccurred(), "failed to start agentgateway container for OPA tests")
 
 	DeferCleanup(func() {
-		if logs, logErr := container.Logs(ctx); logErr == nil {
-			buf := make([]byte, 8192)
-			n, _ := logs.Read(buf)
-			opaAgentgwLogger.Info("agentgateway OPA test container logs", "logs", string(buf[:n]))
-			logs.Close() //nolint:errcheck
-		}
 		if termErr := container.Terminate(ctx); termErr != nil {
 			opaAgentgwLogger.Error("failed to terminate agentgateway OPA container", "err", termErr)
 		}
@@ -892,11 +917,11 @@ func opaAgentgwStartContainer(ctx context.Context, extprocPort, mcpPort int) str
 
 // --- MCP Client ---
 
-func opaAgentgwConnectMCPClient(ctx context.Context, agentgatewayURL string) *client.Client {
+func opaAgentgwConnectMCPClient(ctx context.Context, agentgatewayURL, token string) *client.Client {
 	mcpClient, err := client.NewStreamableHttpClient(
 		agentgatewayURL+"/mcp",
 		transport.WithHTTPHeaders(map[string]string{
-			"Authorization": "Bearer " + opaAgentgwOriginalBearerToken,
+			"Authorization": "Bearer " + token,
 		}),
 	)
 	Expect(err).NotTo(HaveOccurred(), "failed to create OPA MCP client")
@@ -929,6 +954,3 @@ func opaAgentgwExtractText(result *mcp.CallToolResult) string {
 
 // Ensure opaAgentgwExtractText is used to avoid unused variable lint errors.
 var _ = opaAgentgwExtractText
-
-// Ensure fixtures package is used.
-var _ = fixtures.ValidBearerToken

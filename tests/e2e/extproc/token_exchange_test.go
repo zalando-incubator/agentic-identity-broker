@@ -5,10 +5,10 @@
 // satisfies each acceptance scenario.
 //
 // Scenario Mapping:
-//   - US1 Scenario 1-3: Bearer token exchange and header replacement (3 tests)
+//   - US1 Scenario 1-3: Metadata token exchange and header replacement (3 tests)
 //   - US2 Scenario 1-2: Caching and cache expiry (2 tests)
-//   - US3 Scenario 1-2: Configuration and startup validation (2 tests)
-//   - Edge Cases:       no Bearer, empty URI, timeout, default TTL, singleflight (5 tests)
+//   - US3 Scenario 1-4: Configuration, startup validation, and scopes (4 tests)
+//   - Edge Cases:       timeout, default TTL, singleflight (3 tests)
 //
 // Total: 12 acceptance test scenarios
 //
@@ -67,11 +67,11 @@ var _ = Describe("ExtProc Token Exchange", func() {
 	Describe("US1: Transparent Token Exchange", func() {
 
 		// Spec: US1 Scenario 1
-		// Given an incoming request with an Authorization header using the Bearer scheme,
+		// Given an incoming request with token-exchange metadata,
 		// When ExtProc receives request headers,
-		// Then it requests a token exchange using the incoming token as the subject token
-		// and the request URI as the resource.
-		It("should exchange the Bearer token using request URI as resource", func() {
+		// Then it requests a token exchange using the metadata subject token
+		// and resource URI.
+		It("should exchange the metadata subject token using its resource URI", func() {
 			// Spec: US1 Scenario 1
 
 			// Given: Mock token exchange endpoint captures the request parameters
@@ -79,11 +79,10 @@ var _ = Describe("ExtProc Token Exchange", func() {
 			expiresIn := fixtures.StandardExpiresIn
 			env.MockTokenExchange.WithExpiresIn(&expiresIn)
 
-			// When: ExtProc receives request headers with Bearer token and absolute URI path
+			// When: ExtProc receives request headers with token-exchange metadata
 			req := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
-				Build()
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				BuildWithMetadata()
 
 			resp := helpers.SendRequestHeaders(context.Background(), client, req)
 
@@ -97,7 +96,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 			// The request body should contain the subject_token and resource parameters
 			lastBody := env.MockTokenExchange.LastBody()
 			Expect(lastBody).To(ContainSubstring(fixtures.ValidBearerToken),
-				"token exchange request should contain the Bearer token as subject_token")
+				"token exchange request should contain the metadata subject_token")
 			Expect(lastBody).To(ContainSubstring("resource"),
 				"token exchange request should contain the resource parameter")
 		})
@@ -114,11 +113,10 @@ var _ = Describe("ExtProc Token Exchange", func() {
 			expiresIn := fixtures.StandardExpiresIn
 			env.MockTokenExchange.WithExpiresIn(&expiresIn)
 
-			// When: ExtProc processes a request with a Bearer token
+			// When: ExtProc processes a request with token-exchange metadata
 			req := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
-				Build()
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				BuildWithMetadata()
 
 			resp := helpers.SendRequestHeaders(context.Background(), client, req)
 
@@ -139,11 +137,10 @@ var _ = Describe("ExtProc Token Exchange", func() {
 			// Given: Token exchange endpoint returns 403 access_denied
 			env.MockTokenExchange.WithError(403, "access_denied")
 
-			// When: ExtProc processes a request with a Bearer token
+			// When: ExtProc processes a request with token-exchange metadata
 			req := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
-				Build()
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				BuildWithMetadata()
 
 			resp := helpers.SendRequestHeaders(context.Background(), client, req)
 
@@ -154,10 +151,10 @@ var _ = Describe("ExtProc Token Exchange", func() {
 			Expect(resp).To(helpers.HaveImmediateResponseWithStatus(500),
 				"failed token exchange should result in HTTP 500 ImmediateResponse")
 
-			// The original Bearer token must not appear in any header mutation
+			// The metadata subject token must not appear in any header mutation.
 			mutatedAuth := helpers.ExtractMutatedAuthorizationHeader(resp)
 			Expect(mutatedAuth).To(BeEmpty(),
-				"original Bearer token must not be forwarded on exchange failure")
+				"failed exchange must not forward the metadata subject token")
 		})
 	})
 
@@ -180,9 +177,8 @@ var _ = Describe("ExtProc Token Exchange", func() {
 			env.MockTokenExchange.WithExpiresIn(&expiresIn)
 
 			req := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
-				Build()
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				BuildWithMetadata()
 
 			// First request — should call token exchange
 			resp1 := helpers.SendRequestHeaders(context.Background(), client, req)
@@ -234,9 +230,8 @@ var _ = Describe("ExtProc Token Exchange", func() {
 				env.MockTokenExchange.WithExpiresIn(&shortTTLSeconds)
 
 				req := helpers.NewRequestHeaders().
-					WithPath(fixtures.ValidResourceURI).
-					WithBearerToken(fixtures.ValidBearerToken).
-					Build()
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					BuildWithMetadata()
 
 				resp1 := helpers.SendRequestHeaders(context.Background(), client, req)
 				Expect(resp1).NotTo(BeNil())
@@ -285,21 +280,18 @@ var _ = Describe("ExtProc Token Exchange", func() {
 			// Given: Valid config (default test config)
 			// (env is started in BeforeEach)
 
-			// When: Client connects and makes a health check request
-			// A no-op request (pass-through) validates the server is running
+			// When: Client connects and makes a metadata-backed exchange request.
 			req := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithoutAuthorizationHeader(). // no Bearer → pass-through response
-				Build()
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				BuildWithMetadata()
 
 			resp := helpers.SendRequestHeaders(context.Background(), client, req)
 
-			// Then: Server responds (it bound successfully and is processing requests)
+			// Then: Server responds (it bound successfully and is processing requests).
 			Expect(resp).NotTo(BeNil(),
 				"server should respond to requests when started with valid config")
-			// Pass-through response (no auth header) verifies server is running
-			Expect(resp).To(helpers.BePassThroughResponse(),
-				"request without Bearer should be passed through")
+			Expect(resp).To(helpers.HaveReplacedAuthorizationHeader("Bearer "+fixtures.DefaultExchangedToken),
+				"metadata-backed exchange should succeed on the started server")
 		})
 
 		// Spec: US3 Scenario 2
@@ -330,67 +322,6 @@ var _ = Describe("ExtProc Token Exchange", func() {
 	// ---------------------------------------------------------------------------
 	Describe("Edge Cases", func() {
 
-		// Edge Case: no Bearer token
-		// What happens when the Authorization header is missing or not a Bearer token?
-		// Expected: pass through unchanged (FR-009)
-		It("should pass through the request unchanged when no Bearer token", func() {
-			// Spec: Edge case — no Bearer token
-
-			// Given: Request without an Authorization header
-			req := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithoutAuthorizationHeader().
-				Build()
-
-			// When: ExtProc processes the request
-			resp := helpers.SendRequestHeaders(context.Background(), client, req)
-
-			// Then: Request is passed through unchanged (no token exchange, no modification)
-			Expect(resp).NotTo(BeNil())
-			Expect(resp).To(helpers.BePassThroughResponse(),
-				"request without Bearer token should be passed through unchanged")
-
-			// Token exchange endpoint must NOT be called
-			Expect(env.MockTokenExchange.CallCount()).To(Equal(0),
-				"no token exchange should occur when no Bearer token is present")
-		})
-
-		// Edge Case: empty URI
-		// What happens when the request URI is empty or cannot be used as a resource?
-		// Expected: reject with 503 (FR-013)
-		It("should reject with 503 response when request URI is empty or invalid", func() {
-			// Spec: Edge case — empty URI / invalid resource
-			// Note: :authority is cleared so buildResourceURI cannot produce a valid URI;
-			// this simulates the scenario where neither :path nor :authority provides a usable resource.
-
-			// Given: Request with an empty :path pseudo-header and no :authority
-			req := helpers.NewRequestHeaders().
-				WithPath(fixtures.EmptyResourceURI).
-				WithHeader(":authority", "").
-				WithBearerToken(fixtures.ValidBearerToken).
-				Build()
-
-			// When: ExtProc processes the request
-			resp := helpers.SendRequestHeaders(context.Background(), client, req)
-
-			// Then: ExtProc rejects with 503 ImmediateResponse (FR-013)
-			Expect(resp).NotTo(BeNil())
-			Expect(resp).To(helpers.HaveImmediateResponseWithStatus(503),
-				"empty request URI should result in HTTP 503 ImmediateResponse")
-
-			// Also test relative path without :authority (cannot build absolute URI)
-			relativeReq := helpers.NewRequestHeaders().
-				WithPath(fixtures.RelativePathResourceURI).
-				WithHeader(":authority", "").
-				WithBearerToken(fixtures.ValidBearerToken).
-				Build()
-
-			relativeResp := helpers.SendRequestHeaders(context.Background(), client, relativeReq)
-			Expect(relativeResp).NotTo(BeNil())
-			Expect(relativeResp).To(helpers.HaveImmediateResponseWithStatus(503),
-				"relative path URI without authority should result in HTTP 503 ImmediateResponse")
-		})
-
 		// Edge Case: timeout
 		// How does the service handle token exchange timeouts or non-200 responses?
 		// Expected: return 500 response and log the failure (FR-010)
@@ -402,9 +333,8 @@ var _ = Describe("ExtProc Token Exchange", func() {
 
 			// When: ExtProc processes a request
 			req := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
-				Build()
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				BuildWithMetadata()
 
 			resp := helpers.SendRequestHeaders(context.Background(), client, req)
 
@@ -431,9 +361,8 @@ var _ = Describe("ExtProc Token Exchange", func() {
 
 			// When: ExtProc processes a request
 			req := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
-				Build()
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				BuildWithMetadata()
 
 			resp := helpers.SendRequestHeaders(context.Background(), client, req)
 
@@ -467,9 +396,8 @@ var _ = Describe("ExtProc Token Exchange", func() {
 
 				// Trigger a token exchange to ensure the client assertion was acquired.
 				req := helpers.NewRequestHeaders().
-					WithPath(fixtures.ValidResourceURI).
-					WithBearerToken(fixtures.ValidBearerToken).
-					Build()
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					BuildWithMetadata()
 
 				resp := helpers.SendRequestHeaders(context.Background(), client, req)
 				Expect(resp).NotTo(BeNil())
@@ -503,9 +431,8 @@ var _ = Describe("ExtProc Token Exchange", func() {
 			It("should send the configured scopes to the client_credentials endpoint", func() {
 				// Trigger a token exchange to ensure the client assertion was acquired.
 				req := helpers.NewRequestHeaders().
-					WithPath(fixtures.ValidResourceURI).
-					WithBearerToken(fixtures.ValidBearerToken).
-					Build()
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					BuildWithMetadata()
 
 				resp := helpers.SendRequestHeaders(context.Background(), client, req)
 				Expect(resp).NotTo(BeNil())
@@ -555,9 +482,8 @@ var _ = Describe("ExtProc Token Exchange", func() {
 				env.MockTokenExchange.WithExpiresIn(&zeroExpiry) // triggers short default TTL
 
 				req := helpers.NewRequestHeaders().
-					WithPath(fixtures.ValidResourceURI).
-					WithBearerToken(fixtures.ValidBearerToken).
-					Build()
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					BuildWithMetadata()
 
 				resp0 := helpers.SendRequestHeaders(context.Background(), client, req)
 				Expect(resp0).NotTo(BeNil())

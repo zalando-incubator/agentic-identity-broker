@@ -7,7 +7,7 @@ tmp_dir = "tmp"
 
 [build]
   # Command to build the application
-  cmd = "go build -o ./tmp/agentic-identity-broker ./cmd/agentic-identity-broker"
+  cmd = "go build -p 1 -o ./tmp/agentic-identity-broker ./cmd/agentic-identity-broker"
 
   # Use wrapper script that auto-seeds data before starting broker (docker-compose only)
   # The wrapper checks if we're in docker-compose and seeds data, then execs the broker binary

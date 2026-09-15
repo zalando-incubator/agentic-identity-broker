@@ -45,6 +45,7 @@ import (
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/bootstrap"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/fixtures"
 )
 
 const (
@@ -122,6 +123,8 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 		broker          *bootstrap.MockTokenExchangeServer
 		extprocGRPC     *grpc.Server
 		exchanger       *extprocserver.TokenExchanger
+		jwtFixture      *fixtures.RS256JWTFixture
+		mintedJWT       string
 		agentgatewayURL string
 		prevTP          trace.TracerProvider
 		prevProp        propagation.TextMapPropagator
@@ -151,6 +154,12 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 		}
 
 		ctx, cancel = context.WithTimeout(context.Background(), 120*time.Second)
+
+		var err error
+		jwtFixture, err = fixtures.NewRS256JWTFixture(agentgwJWTIssuer, agentgwJWTAudience)
+		Expect(err).NotTo(HaveOccurred(), "failed to create telemetry Agentgateway JWT fixture")
+		mintedJWT, err = jwtFixture.MintToken("agentgateway-telemetry-subject", time.Now().Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred(), "failed to mint telemetry Agentgateway JWT")
 
 		// Install test OTel globals BEFORE creating any servers.
 		// SpanRecorder captures all spans; TraceContext propagator enables W3C traceparent.
@@ -189,7 +198,7 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 		// the container's DeferCleanup (Logs/Terminate) runs first with a live context,
 		// and containerCancel runs after.
 		DeferCleanup(containerCancel)
-		agentgatewayPort := startAgentgwContainer(containerCtx, extprocPort, mcpPort)
+		agentgatewayPort := startAgentgwContainer(containerCtx, extprocPort, mcpPort, jwtFixture)
 		agentgatewayURL = fmt.Sprintf("http://localhost:%s", agentgatewayPort)
 		agentgwLogger.Info("OTel agentgateway accessible", "url", agentgatewayURL)
 
@@ -231,7 +240,7 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 		mcpCl, err := client.NewStreamableHttpClient(
 			agentgatewayURL+"/mcp",
 			transport.WithHTTPHeaders(map[string]string{
-				"Authorization": "Bearer " + agentgwOriginalBearerToken,
+				"Authorization": "Bearer " + mintedJWT,
 				"traceparent":   traceparent,
 			}),
 		)
@@ -275,7 +284,7 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 		Expect(result).NotTo(BeNil())
 		Expect(result.IsError).To(BeFalse())
 		text := agentgwExtractTextContent(result)
-		Expect(text).To(ContainSubstring(agentgwExchangedToken),
+		Expect(text).To(ContainSubstring("token_digest="+agentgwTokenDigest(agentgwExchangedToken)),
 			"Token exchange must still work with OTel enabled")
 
 		// --- Three-hop trace propagation assertions ---

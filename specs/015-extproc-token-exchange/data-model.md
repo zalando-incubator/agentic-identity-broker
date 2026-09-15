@@ -2,6 +2,10 @@
 
 **Branch**: `015-extproc-token-exchange`  
 **Date**: 2026-02-23
+> **Implementation note (superseded raw input):**
+> [Feature 043](../043-extproc-metadata-input/contracts/extproc-metadata-input.md) and [ADR 036](../../adrs/036-extproc-metadata-token-exchange-input.md) replace raw `Authorization` and pseudo-header input, no-Bearer pass-through, and raw resource validation.
+> This document retains the standalone process, configuration, cache, circuit-breaker, and exchange mechanics that remain applicable.
+
 
 ## Overview
 

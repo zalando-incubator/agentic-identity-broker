@@ -24,7 +24,7 @@ COPY . .
 
 # Prime the Go build cache so Air's first container build does not spend minutes compiling dependencies.
 RUN mkdir -p tmp \
-    && go build -o /tmp/agentic-identity-broker ./cmd/agentic-identity-broker \
+    && go build -p 1 -o /tmp/agentic-identity-broker ./cmd/agentic-identity-broker \
     && rm -f /tmp/agentic-identity-broker
 
 # Expose ports: 8000 (user API), 14000 (admin API)

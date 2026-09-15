@@ -2,7 +2,7 @@
 # HTTP endpoints (identity-broker, upstream-oauth2) are used for local Docker Compose.
 # In production: use HTTPS and set oauth2.tls.allow_http: false in ExtProc config.
 #
-# Reference: specs/015-extproc-token-exchange/contracts/docker-compose.md
+# Reference: specs/043-extproc-metadata-input/contracts/extproc-metadata-input.md
 
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
 binds:
@@ -19,12 +19,29 @@ binds:
             - "*"
           exposeHeaders:
             - "Mcp-Session-Id"
+        jwtAuth:
+          mode: strict
+          preserveToken: false
+          providers:
+          - issuer: "http://upstream-oauth2:9001"
+            audiences:
+            - "token-exchange-broker"
+            jwks:
+              url: "http://upstream-oauth2:9001/.well-known/jwks.json"
+          - issuer: "http://localhost:3000"
+            audiences:
+            - "token-exchange-broker"
+            jwks:
+              url: "http://identity-broker:8000/oauth2/jwks.json"
         extProc:
           host: "extproc-token-exchange:50051"
           failureMode: failClosed
           metadataContext:
             agentgateway:
               protocol: "'mcp'"
+            aib.tokenexchange:
+              subject_token: "jwt.rawToken.unredacted()"
+              resource_uri: "'http://agentgateway:4000/mcp'"
       backends:
       - mcp:
           targets:

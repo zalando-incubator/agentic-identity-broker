@@ -131,8 +131,7 @@ var _ = Describe("OPA Authorization", func() {
 		// Then input contains type="mcp_tool_call", mcp.tool_name="create_issue".
 		It("should build OPA input with mcp.tool_name for tools/call", func() {
 			headersReq := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithHeader(":method", "POST").
 				WithAgentgatewayProtocol("mcp").
 				BuildWithMetadata()
@@ -156,8 +155,7 @@ var _ = Describe("OPA Authorization", func() {
 		// Then type="unknown" and raw body is available in input.attributes.request.http.body.
 		It("should set type=unknown for unrecognized protocol", func() {
 			headersReq := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithAgentgatewayProtocol("some-unknown-protocol").
 				BuildWithMetadata()
 
@@ -177,8 +175,7 @@ var _ = Describe("OPA Authorization", func() {
 		// Then input contains type="mcp_method", mcp.method="initialize".
 		It("should build OPA input with mcp.method=initialize", func() {
 			headersReq := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithHeader(":method", "POST").
 				WithAgentgatewayProtocol("mcp").
 				BuildWithMetadata()
@@ -221,8 +218,7 @@ var _ = Describe("OPA Authorization", func() {
 
 			// Allowed tool: list_repositories
 			allowedReq := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithHeader(":method", "POST").
 				WithAgentgatewayProtocol("mcp").
 				BuildWithMetadata()
@@ -242,8 +238,7 @@ var _ = Describe("OPA Authorization", func() {
 			defer conn2.Close() //nolint:errcheck
 
 			deniedReq := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithHeader(":method", "POST").
 				WithAgentgatewayProtocol("mcp").
 				BuildWithMetadata()
@@ -357,8 +352,7 @@ this is not valid rego syntax !!!
 
 			// The allow_readonly.rego in the bundle allows list_repositories.
 			headersReq := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithHeader(":method", "POST").
 				WithAgentgatewayProtocol("mcp").
 				BuildWithMetadata()
@@ -467,8 +461,7 @@ bundles:
 			defer conn.Close() //nolint:errcheck
 
 			headersReq := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithHeader(":method", "POST").
 				WithAgentgatewayProtocol("mcp").
 				BuildWithMetadata()
@@ -539,9 +532,8 @@ bundles:
 		// Then the service processes requests using token exchange only.
 		It("should process requests without OPA when not configured", func() {
 			req := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
-				Build()
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				BuildWithMetadata()
 
 			resp := helpers.SendRequestHeaders(context.Background(), grpcClient, req)
 
@@ -558,13 +550,12 @@ bundles:
 
 		// Scenario US5.2 from specs/020-extproc-opa-authorization/spec.md
 		// Given OPA is explicitly disabled,
-		// When a request with a Bearer token arrives,
+		// When a request with token-exchange metadata arrives,
 		// Then no body inspection occurs and token exchange proceeds directly.
 		It("should skip body inspection when OPA disabled", func() {
 			headersReq := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
-				Build()
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				BuildWithMetadata()
 
 			resp := helpers.SendRequestHeaders(context.Background(), grpcClient, headersReq)
 
@@ -640,8 +631,7 @@ bundles:
 			defer conn.Close() //nolint:errcheck
 
 			headersReq := helpers.NewRequestHeaders().
-				WithPath(fixtures.ValidResourceURI).
-				WithBearerToken(fixtures.ValidBearerToken).
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithHeader(":method", "POST").
 				WithAgentgatewayProtocol("mcp").
 				BuildWithMetadata()

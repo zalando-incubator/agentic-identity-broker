@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -36,59 +35,30 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/fixtures"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/helpers"
 )
 
 // testLogger provides consistent logging for test setup and teardown.
 var testLogger = bootstrap.NewTestLogger()
 
-// sendExchangeRequest sends a RequestHeaders message with the given headers and returns
-// the response. It handles stream lifecycle automatically.
+// sendExchangeRequest sends a metadata-backed token-exchange RequestHeaders message and
+// returns the response. It handles stream lifecycle automatically.
 //
-// The gRPC stream uses a 10s timeout derived from context.Background() because
-// ExtProc trace context propagation happens via the HttpHeaders payload
-// (headerCarrier), not via gRPC metadata. This mirrors the real Envoy ExtProc contract.
-func sendExchangeRequest(client extprocv3.ExternalProcessorClient, headers map[string]string) *extprocv3.ProcessingResponse {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	stream, err := client.Process(ctx)
-	Expect(err).NotTo(HaveOccurred())
-
-	headerValues := make([]*corev3.HeaderValue, 0, len(headers))
-	for k, v := range headers {
-		headerValues = append(headerValues, &corev3.HeaderValue{Key: k, Value: v})
-	}
-
-	req := &extprocv3.ProcessingRequest{
-		Request: &extprocv3.ProcessingRequest_RequestHeaders{
-			RequestHeaders: &extprocv3.HttpHeaders{
-				Headers: &corev3.HeaderMap{Headers: headerValues},
-			},
-		},
-	}
-
-	Expect(stream.Send(req)).To(Succeed())
-	resp, err := stream.Recv()
-	Expect(err).NotTo(HaveOccurred())
-	Expect(stream.CloseSend()).To(Succeed())
-	return resp
+// Trace context propagates through the HttpHeaders payload (headerCarrier), while token
+// exchange input is carried exclusively by filter metadata.
+func sendExchangeRequest(client extprocv3.ExternalProcessorClient, request *helpers.ProcessingRequestBuilder) *extprocv3.ProcessingResponse {
+	return helpers.SendRequestHeaders(context.Background(), client, request.BuildWithMetadata())
 }
 
-// standardRequestHeaders returns a complete set of request headers for token exchange.
-// The Authorization header carries a valid Bearer token; :path, :scheme, :authority
-// are required HTTP/2 pseudo-headers for resource URI construction.
-func standardRequestHeaders() map[string]string {
-	return map[string]string{
-		":path":         "/api/resource",
-		":scheme":       "https",
-		":authority":    "example.com",
-		"authorization": "Bearer subject-token",
-	}
+// standardRequestHeaders returns a metadata-backed token-exchange request fixture.
+func standardRequestHeaders() *helpers.ProcessingRequestBuilder {
+	return helpers.NewRequestHeaders().
+		WithTokenExchangeMetadata("subject-token", "https://example.com/api/resource")
 }
 
-// withTraceparent adds a W3C traceparent header to the given headers map.
-func withTraceparent(headers map[string]string, traceID, spanID string) map[string]string {
-	headers["traceparent"] = fmt.Sprintf("00-%s-%s-01", traceID, spanID)
-	return headers
+// withTraceparent adds a W3C traceparent header to the request.
+func withTraceparent(request *helpers.ProcessingRequestBuilder, traceID, spanID string) *helpers.ProcessingRequestBuilder {
+	return request.WithHeader("traceparent", fmt.Sprintf("00-%s-%s-01", traceID, spanID))
 }
 
 // findSpan returns the first ended span with the given name, or nil if not found.

@@ -119,20 +119,18 @@ func startOPATraceEnvironment() (*bootstrap.TestEnvironment, extprocv3.ExternalP
 
 func sendDirectTraceRequest(client extprocv3.ExternalProcessorClient, traceparent string) {
 	headersReq := helpers.NewRequestHeaders().
-		WithPath(fixtures.ValidResourceURI).
-		WithBearerToken(fixtures.ValidBearerToken)
+		WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI)
 	if traceparent != "" {
 		headersReq = headersReq.WithHeader("traceparent", traceparent)
 	}
 
-	resp := helpers.SendRequestHeaders(context.Background(), client, headersReq.Build())
+	resp := helpers.SendRequestHeaders(context.Background(), client, headersReq.BuildWithMetadata())
 	Expect(resp).NotTo(BeNil())
 }
 
 func sendOPATraceRequest(client extprocv3.ExternalProcessorClient, traceparent string) {
 	headersReq := helpers.NewRequestHeaders().
-		WithPath(fixtures.ValidResourceURI).
-		WithBearerToken(fixtures.ValidBearerToken).
+		WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 		WithHeader(":method", "POST")
 	if traceparent != "" {
 		headersReq = headersReq.WithHeader("traceparent", traceparent)

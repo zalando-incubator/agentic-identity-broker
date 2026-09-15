@@ -245,8 +245,8 @@ func startTestServerWithConfig(t *testing.T, cfg *extprocconfig.Config, exchange
 	return client, cleanup
 }
 
-// sendRequestHeaders opens a Process stream, sends a RequestHeaders message,
-// and returns the first ProcessingResponse.
+// sendRequestHeaders opens a Process stream, sends a RequestHeaders message with
+// valid token-exchange metadata, and returns the first ProcessingResponse.
 func sendRequestHeaders(t *testing.T, client extprocv3.ExternalProcessorClient, headers map[string]string) (*extprocv3.ProcessingResponse, error) {
 	t.Helper()
 	return sendRequestHeadersWithProtocol(t, client, headers, "")
@@ -266,18 +266,12 @@ func sendRequestHeadersWithProtocol(t *testing.T, client extprocv3.ExternalProce
 	}
 
 	req := &extprocv3.ProcessingRequest{
+		MetadataContext: validTokenExchangeMetadata(protocol),
 		Request: &extprocv3.ProcessingRequest_RequestHeaders{
 			RequestHeaders: &extprocv3.HttpHeaders{
 				Headers: &corev3.HeaderMap{Headers: headerList},
 			},
 		},
-	}
-	if protocol != "" {
-		protocolStruct, sErr := structpb.NewStruct(map[string]any{"protocol": protocol})
-		require.NoError(t, sErr)
-		req.MetadataContext = &corev3.Metadata{
-			FilterMetadata: map[string]*structpb.Struct{"agentgateway": protocolStruct},
-		}
 	}
 
 	if err = stream.Send(req); err != nil {
@@ -290,8 +284,8 @@ func sendRequestHeadersWithProtocol(t *testing.T, client extprocv3.ExternalProce
 }
 
 // sendRequestHeadersWithProtocolEOS sends a RequestHeaders message with EndOfStream=true
-// (no body phase will follow), attaches agentgateway protocol metadata when protocol is
-// non-empty, and returns the single ProcessingResponse.
+// (no body phase will follow), valid token-exchange metadata, and agentgateway protocol
+// metadata when protocol is non-empty.
 func sendRequestHeadersWithProtocolEOS(t *testing.T, client extprocv3.ExternalProcessorClient, headers map[string]string, protocol string) (*extprocv3.ProcessingResponse, error) {
 	t.Helper()
 
@@ -304,19 +298,13 @@ func sendRequestHeadersWithProtocolEOS(t *testing.T, client extprocv3.ExternalPr
 	}
 
 	req := &extprocv3.ProcessingRequest{
+		MetadataContext: validTokenExchangeMetadata(protocol),
 		Request: &extprocv3.ProcessingRequest_RequestHeaders{
 			RequestHeaders: &extprocv3.HttpHeaders{
 				Headers:     &corev3.HeaderMap{Headers: headerList},
 				EndOfStream: true,
 			},
 		},
-	}
-	if protocol != "" {
-		protocolStruct, sErr := structpb.NewStruct(map[string]any{"protocol": protocol})
-		require.NoError(t, sErr)
-		req.MetadataContext = &corev3.Metadata{
-			FilterMetadata: map[string]*structpb.Struct{"agentgateway": protocolStruct},
-		}
 	}
 
 	if err = stream.Send(req); err != nil {
@@ -329,79 +317,641 @@ func sendRequestHeadersWithProtocolEOS(t *testing.T, client extprocv3.ExternalPr
 }
 
 // ---------------------------------------------------------------------------
+// T013: Token-exchange metadata input boundary
+// ---------------------------------------------------------------------------
+
+const (
+	tokenExchangeMetadataNamespace = "aib.tokenexchange"
+	subjectTokenMetadataField      = "subject_token"
+	resourceURIMetadataField       = "resource_uri"
+
+	invalidSubjectTokenMetadataBody = `{"error":"invalid_subject_token","error_description":"subject token metadata is missing or invalid"}`
+	invalidResourceMetadataBody     = `{"error":"invalid_resource","error_description":"resource metadata is missing or invalid"}`
+)
+
+type exchangeCall struct {
+	subjectToken string
+	resourceURI  string
+}
+
+type exchangeCallRecorder struct {
+	mu    sync.Mutex
+	calls []exchangeCall
+}
+
+func (r *exchangeCallRecorder) record(subjectToken, resourceURI string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, exchangeCall{subjectToken: subjectToken, resourceURI: resourceURI})
+}
+
+func (r *exchangeCallRecorder) snapshot() []exchangeCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]exchangeCall(nil), r.calls...)
+}
+
+type callCounter struct {
+	mu    sync.Mutex
+	count int
+}
+
+func (c *callCounter) increment() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.count++
+}
+
+func (c *callCounter) value() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.count
+}
+
+func recordingExchanger(recorder *exchangeCallRecorder, result server.ExchangeResult) *mockExchanger {
+	return &mockExchanger{
+		exchangeFunc: func(_ context.Context, subjectToken, resourceURI string) (server.ExchangeResult, error) {
+			recorder.record(subjectToken, resourceURI)
+			return result, nil
+		},
+	}
+}
+
+func tokenExchangeMetadata(fields map[string]*structpb.Value) *corev3.Metadata {
+	return &corev3.Metadata{
+		FilterMetadata: map[string]*structpb.Struct{
+			tokenExchangeMetadataNamespace: {Fields: fields},
+		},
+	}
+}
+
+func tokenExchangeMetadataWithProtocol(fields map[string]*structpb.Value, protocol string) *corev3.Metadata {
+	metadata := tokenExchangeMetadata(fields)
+	metadata.FilterMetadata["agentgateway"] = &structpb.Struct{
+		Fields: map[string]*structpb.Value{
+			"protocol": structpb.NewStringValue(protocol),
+		},
+	}
+	return metadata
+}
+
+func tokenExchangeMetadataFields(subjectToken, resourceURI *structpb.Value) map[string]*structpb.Value {
+	return map[string]*structpb.Value{
+		subjectTokenMetadataField: subjectToken,
+		resourceURIMetadataField:  resourceURI,
+	}
+}
+
+const (
+	testSubjectToken = "test-metadata-subject-token"
+	testResourceURI  = "https://metadata.example.test/resource"
+)
+
+func validTokenExchangeMetadata(protocol string) *corev3.Metadata {
+	fields := tokenExchangeMetadataFields(
+		structpb.NewStringValue(testSubjectToken),
+		structpb.NewStringValue(testResourceURI),
+	)
+	if protocol == "" {
+		return tokenExchangeMetadata(fields)
+	}
+	return tokenExchangeMetadataWithProtocol(fields, protocol)
+}
+
+func extProcHeaders(headers map[string]string, endOfStream bool) *extprocv3.HttpHeaders {
+	headerList := make([]*corev3.HeaderValue, 0, len(headers))
+	for key, value := range headers {
+		headerList = append(headerList, &corev3.HeaderValue{Key: key, RawValue: []byte(value)})
+	}
+
+	return &extprocv3.HttpHeaders{
+		Headers:     &corev3.HeaderMap{Headers: headerList},
+		EndOfStream: endOfStream,
+	}
+}
+
+func sendRequestHeadersWithMetadata(t *testing.T, client extprocv3.ExternalProcessorClient, headers map[string]string, metadata *corev3.Metadata, endOfStream bool) (*extprocv3.ProcessingResponse, error) {
+	t.Helper()
+
+	stream, err := client.Process(context.Background())
+	require.NoError(t, err)
+
+	err = stream.Send(&extprocv3.ProcessingRequest{
+		MetadataContext: metadata,
+		Request: &extprocv3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: extProcHeaders(headers, endOfStream),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	_ = stream.CloseSend()
+
+	return stream.Recv()
+}
+
+func sendHeadersThenBodyWithMetadata(t *testing.T, client extprocv3.ExternalProcessorClient, headers map[string]string, metadata *corev3.Metadata, body []byte) (*extprocv3.ProcessingResponse, *extprocv3.ProcessingResponse) {
+	t.Helper()
+
+	stream, err := client.Process(context.Background())
+	require.NoError(t, err)
+
+	err = stream.Send(&extprocv3.ProcessingRequest{
+		MetadataContext: metadata,
+		Request: &extprocv3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: extProcHeaders(headers, false),
+		},
+	})
+	require.NoError(t, err)
+
+	headersResp, err := stream.Recv()
+	require.NoError(t, err)
+	if _, isImmediate := headersResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse); isImmediate {
+		_ = stream.CloseSend()
+		return headersResp, nil
+	}
+
+	err = stream.Send(&extprocv3.ProcessingRequest{
+		Request: &extprocv3.ProcessingRequest_RequestBody{
+			RequestBody: &extprocv3.HttpBody{Body: body, EndOfStream: true},
+		},
+	})
+	require.NoError(t, err)
+	_ = stream.CloseSend()
+
+	bodyResp, err := stream.Recv()
+	require.NoError(t, err)
+	return headersResp, bodyResp
+}
+
+func headerMutationValue(mutation *extprocv3.HeaderMutation, key string) string {
+	if mutation == nil {
+		return ""
+	}
+	for _, option := range mutation.SetHeaders {
+		if option != nil && option.Header != nil && option.Header.Key == key {
+			return string(option.Header.RawValue)
+		}
+	}
+	return ""
+}
+
+func requireTokenExchangeMetadataRejection(t *testing.T, response *extprocv3.ProcessingResponse, wantBody string) {
+	t.Helper()
+
+	require.NotNil(t, response)
+	immediate, ok := response.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+	require.True(t, ok, "metadata validation must return an ImmediateResponse")
+	require.NotNil(t, immediate.ImmediateResponse)
+	require.NotNil(t, immediate.ImmediateResponse.Status)
+	assert.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable), int32(immediate.ImmediateResponse.Status.Code))
+	assert.Equal(t, wantBody, string(immediate.ImmediateResponse.Body))
+	assert.Equal(t, "application/json", headerMutationValue(immediate.ImmediateResponse.Headers, "content-type"))
+	assert.Empty(t, headerMutationValue(immediate.ImmediateResponse.Headers, "authorization"), "rejection must not mutate authorization")
+}
+
+func requireAuthorizationMutation(t *testing.T, response *extprocv3.ProcessingResponse) string {
+	t.Helper()
+
+	require.NotNil(t, response)
+	headersResp, ok := response.Response.(*extprocv3.ProcessingResponse_RequestHeaders)
+	require.True(t, ok, "successful token exchange must return a RequestHeaders response")
+	require.NotNil(t, headersResp.RequestHeaders)
+	require.NotNil(t, headersResp.RequestHeaders.Response)
+	return headerMutationValue(headersResp.RequestHeaders.Response.HeaderMutation, "authorization")
+}
+
+func conflictingRawRequestHeaders(method string) map[string]string {
+	return map[string]string{
+		":method":       method,
+		":path":         "https://raw-input.example.test/should-not-be-used",
+		"authorization": "Bearer raw-input-subject-token",
+	}
+}
+
+func TestServer_Process_TokenExchangeMetadataRejectsInvalidInputs(t *testing.T) {
+	const (
+		validSubjectToken = "metadata-subject-token"
+		validResourceURI  = "https://metadata.example.test/mcp"
+	)
+
+	type testCase struct {
+		name     string
+		metadata func() *corev3.Metadata
+		wantBody string
+	}
+
+	tests := []testCase{
+		{
+			name:     "metadata context is absent",
+			metadata: func() *corev3.Metadata { return nil },
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "filter metadata is nil",
+			metadata: func() *corev3.Metadata {
+				return &corev3.Metadata{FilterMetadata: nil}
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name:     "token exchange namespace is absent",
+			metadata: func() *corev3.Metadata { return &corev3.Metadata{FilterMetadata: map[string]*structpb.Struct{}} },
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "token exchange input is in another namespace",
+			metadata: func() *corev3.Metadata {
+				return &corev3.Metadata{FilterMetadata: map[string]*structpb.Struct{
+					"aib.other": {Fields: tokenExchangeMetadataFields(structpb.NewStringValue(validSubjectToken), structpb.NewStringValue(validResourceURI))},
+				}}
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "token exchange namespace is nil",
+			metadata: func() *corev3.Metadata {
+				return &corev3.Metadata{FilterMetadata: map[string]*structpb.Struct{tokenExchangeMetadataNamespace: nil}}
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name:     "token exchange namespace has no fields",
+			metadata: func() *corev3.Metadata { return tokenExchangeMetadata(nil) },
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "subject token field is absent",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(map[string]*structpb.Value{resourceURIMetadataField: structpb.NewStringValue(validResourceURI)})
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "subject token field is nil",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(nil, structpb.NewStringValue(validResourceURI)))
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "subject token is empty",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(""), structpb.NewStringValue(validResourceURI)))
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "subject token is whitespace only",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(" \t\r\n"), structpb.NewStringValue(validResourceURI)))
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "subject token has Bearer prefix",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue("Bearer metadata-subject-token"), structpb.NewStringValue(validResourceURI)))
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "subject token has lowercase bearer prefix",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue("bearer metadata-subject-token"), structpb.NewStringValue(validResourceURI)))
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "subject token has uppercase BEARER prefix",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue("BEARER metadata-subject-token"), structpb.NewStringValue(validResourceURI)))
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "subject token has mixed-case bearer prefix",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue("bEaReR metadata-subject-token"), structpb.NewStringValue(validResourceURI)))
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "subject token has no protobuf value kind",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(&structpb.Value{}, structpb.NewStringValue(validResourceURI)))
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "resource URI field is absent",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(map[string]*structpb.Value{subjectTokenMetadataField: structpb.NewStringValue(validSubjectToken)})
+			},
+			wantBody: invalidResourceMetadataBody,
+		},
+		{
+			name: "resource URI field is nil",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(validSubjectToken), nil))
+			},
+			wantBody: invalidResourceMetadataBody,
+		},
+		{
+			name: "resource URI is empty",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(validSubjectToken), structpb.NewStringValue("")))
+			},
+			wantBody: invalidResourceMetadataBody,
+		},
+		{
+			name: "resource URI is whitespace only",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(validSubjectToken), structpb.NewStringValue(" \t\r\n")))
+			},
+			wantBody: invalidResourceMetadataBody,
+		},
+		{
+			name: "resource URI is relative",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(validSubjectToken), structpb.NewStringValue("/mcp")))
+			},
+			wantBody: invalidResourceMetadataBody,
+		},
+		{
+			name: "resource URI has a non HTTP scheme",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(validSubjectToken), structpb.NewStringValue("grpc://metadata.example.test/mcp")))
+			},
+			wantBody: invalidResourceMetadataBody,
+		},
+		{
+			name: "resource URI has no host",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(validSubjectToken), structpb.NewStringValue("https:///mcp")))
+			},
+			wantBody: invalidResourceMetadataBody,
+		},
+		{
+			name: "resource URI is malformed",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(validSubjectToken), structpb.NewStringValue("https://metadata.example.test/%zz")))
+			},
+			wantBody: invalidResourceMetadataBody,
+		},
+		{
+			name: "subject token validation takes precedence over resource URI validation",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(" "), structpb.NewStringValue("/mcp")))
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+	}
+
+	nonStringValues := []struct {
+		name  string
+		value func() *structpb.Value
+	}{
+		{name: "null", value: func() *structpb.Value { return structpb.NewNullValue() }},
+		{name: "number", value: func() *structpb.Value { return structpb.NewNumberValue(1) }},
+		{name: "boolean", value: func() *structpb.Value { return structpb.NewBoolValue(true) }},
+		{name: "struct", value: func() *structpb.Value { return structpb.NewStructValue(&structpb.Struct{}) }},
+		{name: "list", value: func() *structpb.Value { return structpb.NewListValue(&structpb.ListValue{}) }},
+	}
+	for _, nonStringValue := range nonStringValues {
+		nonStringValue := nonStringValue
+		tests = append(tests,
+			testCase{
+				name: "subject token has " + nonStringValue.name + " protobuf value",
+				metadata: func() *corev3.Metadata {
+					return tokenExchangeMetadata(tokenExchangeMetadataFields(nonStringValue.value(), structpb.NewStringValue(validResourceURI)))
+				},
+				wantBody: invalidSubjectTokenMetadataBody,
+			},
+			testCase{
+				name: "resource URI has " + nonStringValue.name + " protobuf value",
+				metadata: func() *corev3.Metadata {
+					return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(validSubjectToken), nonStringValue.value()))
+				},
+				wantBody: invalidResourceMetadataBody,
+			},
+		)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := &exchangeCallRecorder{}
+			client, cleanup := startTestServer(t, recordingExchanger(recorder, server.ExchangeResult{Token: "must-not-be-returned"}))
+			t.Cleanup(cleanup)
+
+			response, err := sendRequestHeadersWithMetadata(t, client, conflictingRawRequestHeaders("POST"), tt.metadata(), false)
+			require.NoError(t, err)
+			requireTokenExchangeMetadataRejection(t, response, tt.wantBody)
+			assert.Empty(t, recorder.snapshot(), "invalid metadata must not invoke token exchange")
+		})
+	}
+}
+
+func TestServer_Process_TokenExchangeMetadataOverridesRawInputsAndPropagatesSubjectVerbatim(t *testing.T) {
+	const (
+		subjectToken = " \tmetadata subject token\n"
+		exchanged    = "exchanged-metadata-token"
+	)
+
+	tests := []struct {
+		name        string
+		resourceURI string
+	}{
+		{name: "HTTPS resource", resourceURI: "https://metadata.example.test/opaque-resource"},
+		{name: "HTTP resource", resourceURI: "http://metadata.example.test/opaque-resource"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := &exchangeCallRecorder{}
+			client, cleanup := startTestServer(t, recordingExchanger(recorder, server.ExchangeResult{Token: exchanged}))
+			t.Cleanup(cleanup)
+
+			response, err := sendRequestHeadersWithMetadata(t, client, conflictingRawRequestHeaders("POST"), tokenExchangeMetadata(map[string]*structpb.Value{
+				subjectTokenMetadataField: structpb.NewStringValue(subjectToken),
+				resourceURIMetadataField:  structpb.NewStringValue(tt.resourceURI),
+				"unrelated":               structpb.NewStringValue("ignored"),
+			}), false)
+			require.NoError(t, err)
+
+			assert.Equal(t, []exchangeCall{{subjectToken: subjectToken, resourceURI: tt.resourceURI}}, recorder.snapshot())
+			assert.Equal(t, "Bearer "+exchanged, requireAuthorizationMutation(t, response))
+		})
+	}
+}
+
+func TestServer_OPA_TokenExchangeMetadataRejectsBeforeProtocolPolicyOrExchange(t *testing.T) {
+	const validResourceURI = "https://metadata.example.test/mcp"
+
+	type testCase struct {
+		name     string
+		metadata func() *corev3.Metadata
+		wantBody string
+	}
+	tests := []testCase{
+		{
+			name: "subject token rejection takes precedence over resource URI and protocol metadata",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadata(tokenExchangeMetadataFields(structpb.NewStringValue(" "), structpb.NewStringValue("/mcp")))
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+		{
+			name: "resource URI rejection precedes policy evaluation",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadataWithProtocol(tokenExchangeMetadataFields(structpb.NewStringValue("metadata-subject-token"), structpb.NewStringValue("/mcp")), "mcp")
+			},
+			wantBody: invalidResourceMetadataBody,
+		},
+		{
+			name: "subject token rejection with protocol metadata",
+			metadata: func() *corev3.Metadata {
+				return tokenExchangeMetadataWithProtocol(tokenExchangeMetadataFields(structpb.NewStringValue("bearer metadata-subject-token"), structpb.NewStringValue(validResourceURI)), "mcp")
+			},
+			wantBody: invalidSubjectTokenMetadataBody,
+		},
+	}
+
+	type requestShape struct {
+		name string
+		send func(t *testing.T, client extprocv3.ExternalProcessorClient, metadata *corev3.Metadata) (*extprocv3.ProcessingResponse, *extprocv3.ProcessingResponse)
+	}
+	shapes := []requestShape{
+		{
+			name: "body bearing request",
+			send: func(t *testing.T, client extprocv3.ExternalProcessorClient, metadata *corev3.Metadata) (*extprocv3.ProcessingResponse, *extprocv3.ProcessingResponse) {
+				return sendHeadersThenBodyWithMetadata(t, client, conflictingRawRequestHeaders("POST"), metadata, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`))
+			},
+		},
+		{
+			name: "header only request",
+			send: func(t *testing.T, client extprocv3.ExternalProcessorClient, metadata *corev3.Metadata) (*extprocv3.ProcessingResponse, *extprocv3.ProcessingResponse) {
+				response, err := sendRequestHeadersWithMetadata(t, client, conflictingRawRequestHeaders("GET"), metadata, true)
+				require.NoError(t, err)
+				return response, nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, shape := range shapes {
+				shape := shape
+				t.Run(shape.name, func(t *testing.T) {
+					recorder := &exchangeCallRecorder{}
+					authorizerCalls := &callCounter{}
+					authorizer := &mockAuthorizer{
+						evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
+							authorizerCalls.increment()
+							return &authorization.OPADecision{Action: "allow"}, nil
+						},
+					}
+					client, cleanup := startTestServerWithAuthorizer(t, recordingExchanger(recorder, server.ExchangeResult{Token: "must-not-be-returned"}), authorizer)
+					t.Cleanup(cleanup)
+
+					headersResp, bodyResp := shape.send(t, client, tt.metadata())
+					assert.Nil(t, bodyResp, "invalid metadata must terminate the stream in the headers phase")
+					requireTokenExchangeMetadataRejection(t, headersResp, tt.wantBody)
+					assert.Empty(t, recorder.snapshot(), "invalid metadata must not invoke token exchange")
+					assert.Equal(t, 0, authorizerCalls.value(), "metadata validation must run before policy evaluation")
+				})
+			}
+		})
+	}
+}
+
+func TestServer_OPA_TokenExchangeMetadataCarriesValuesThroughBodyPhase(t *testing.T) {
+	const (
+		subjectToken = " \tbody metadata subject\n"
+		resourceURI  = "https://metadata.example.test/body-phase"
+		exchanged    = "body-phase-exchanged-token"
+	)
+
+	recorder := &exchangeCallRecorder{}
+	authorizerCalls := &callCounter{}
+	authorizer := &mockAuthorizer{
+		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
+			authorizerCalls.increment()
+			return &authorization.OPADecision{Action: "allow"}, nil
+		},
+	}
+	client, cleanup := startTestServerWithAuthorizer(t, recordingExchanger(recorder, server.ExchangeResult{Token: exchanged}), authorizer)
+	defer cleanup()
+
+	headersResp, bodyResp := sendHeadersThenBodyWithMetadata(t, client, conflictingRawRequestHeaders("POST"), tokenExchangeMetadataWithProtocol(map[string]*structpb.Value{
+		subjectTokenMetadataField: structpb.NewStringValue(subjectToken),
+		resourceURIMetadataField:  structpb.NewStringValue(resourceURI),
+		"unrelated":               structpb.NewStringValue("ignored"),
+	}, "mcp"), []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`))
+
+	assert.Equal(t, []exchangeCall{{subjectToken: subjectToken, resourceURI: resourceURI}}, recorder.snapshot())
+	assert.Equal(t, "Bearer "+exchanged, requireAuthorizationMutation(t, headersResp))
+	require.NotNil(t, bodyResp, "the OPA body phase must receive the request after validated metadata is stored")
+	_, isRequestBody := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
+	assert.True(t, isRequestBody, "an allowed OPA body phase must return a RequestBody response")
+	assert.Equal(t, 1, authorizerCalls.value(), "the body phase must evaluate policy once")
+}
+
+func TestServer_OPA_TokenExchangeMetadataCarriesValuesThroughHeadersOnly(t *testing.T) {
+	const (
+		subjectToken = " \theader only metadata subject\n"
+		resourceURI  = "https://metadata.example.test/headers-only"
+		exchanged    = "headers-only-exchanged-token"
+	)
+
+	recorder := &exchangeCallRecorder{}
+	authorizerCalls := &callCounter{}
+	authorizer := &mockAuthorizer{
+		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
+			authorizerCalls.increment()
+			return &authorization.OPADecision{Action: "allow"}, nil
+		},
+	}
+	client, cleanup := startTestServerWithAuthorizer(t, recordingExchanger(recorder, server.ExchangeResult{Token: exchanged}), authorizer)
+	defer cleanup()
+
+	response, err := sendRequestHeadersWithMetadata(t, client, conflictingRawRequestHeaders("GET"), tokenExchangeMetadataWithProtocol(tokenExchangeMetadataFields(
+		structpb.NewStringValue(subjectToken),
+		structpb.NewStringValue(resourceURI),
+	), "mcp"), true)
+	require.NoError(t, err)
+
+	assert.Equal(t, []exchangeCall{{subjectToken: subjectToken, resourceURI: resourceURI}}, recorder.snapshot())
+	assert.Equal(t, "Bearer "+exchanged, requireAuthorizationMutation(t, response))
+	assert.Equal(t, 1, authorizerCalls.value(), "header-only OPA requests must evaluate policy before exchange")
+}
+
+// ---------------------------------------------------------------------------
 // T015: ExtProc gRPC streaming logic — RequestHeaders processing
 // ---------------------------------------------------------------------------
 
-// Spec: FR-009 — No Bearer token → pass through unchanged
-func TestServer_Process_NoBearerToken_PassThrough(t *testing.T) {
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			t.Fatal("Exchange should not be called when no Bearer token is present")
-			return server.ExchangeResult{}, nil
-		},
-	}
-	client, cleanup := startTestServer(t, exchanger)
-	defer cleanup()
-
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":   "http://mcp-server:9003/mcp",
-		":method": "POST",
-	})
-	require.NoError(t, err)
-
-	// Expect a RequestHeaders response with no mutations (pass-through)
-	headersResp, ok := resp.Response.(*extprocv3.ProcessingResponse_RequestHeaders)
-	require.True(t, ok, "expected RequestHeaders response for pass-through")
-
-	if headersResp.RequestHeaders != nil && headersResp.RequestHeaders.Response != nil {
-		mutation := headersResp.RequestHeaders.Response.HeaderMutation
-		if mutation != nil {
-			assert.Empty(t, mutation.SetHeaders, "pass-through should not set any headers")
-		}
-	}
-}
-
-// Spec: FR-009 — Non-Bearer authorization header → pass through unchanged
-func TestServer_Process_NonBearerAuth_PassThrough(t *testing.T) {
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			t.Fatal("Exchange should not be called for non-Bearer auth")
-			return server.ExchangeResult{}, nil
-		},
-	}
-	client, cleanup := startTestServer(t, exchanger)
-	defer cleanup()
-
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://mcp-server:9003/mcp",
-		"authorization": "Basic dXNlcjpwYXNz",
-	})
-	require.NoError(t, err)
-
-	_, ok := resp.Response.(*extprocv3.ProcessingResponse_RequestHeaders)
-	assert.True(t, ok, "non-Bearer auth should produce a pass-through RequestHeaders response")
-}
-
-// Spec: FR-002, FR-003, FR-007 — Valid Bearer token → exchanged token replaces Authorization
-func TestServer_Process_BearerToken_ReplacesAuthorizationHeader(t *testing.T) {
-	const subjectToken = "incoming-bearer-token"
+// Valid token-exchange metadata replaces the downstream Authorization header.
+func TestServer_Process_TokenExchangeMetadata_ReplacesAuthorizationHeader(t *testing.T) {
+	const subjectToken = "metadata-subject-token"
 	const exchangedToken = "exchanged-downstream-token"
-	const resourceURI = "http://mcp-server:9003/mcp"
+	const resourceURI = "https://metadata.example.test/mcp"
 
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, st, ru string) (server.ExchangeResult, error) {
-			assert.Equal(t, subjectToken, st, "Exchange must receive the incoming Bearer token")
-			assert.Equal(t, resourceURI, ru, "Exchange must receive the :path as resource URI")
+			assert.Equal(t, subjectToken, st, "Exchange must receive the metadata subject token")
+			assert.Equal(t, resourceURI, ru, "Exchange must receive the metadata resource URI")
 			return server.ExchangeResult{Token: exchangedToken}, nil
 		},
 	}
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         resourceURI,
-		"authorization": "Bearer " + subjectToken,
-	})
+	resp, err := sendRequestHeadersWithMetadata(t, client, nil, tokenExchangeMetadata(tokenExchangeMetadataFields(
+		structpb.NewStringValue(subjectToken),
+		structpb.NewStringValue(resourceURI),
+	)), false)
 	require.NoError(t, err)
 
 	headersResp, ok := resp.Response.(*extprocv3.ProcessingResponse_RequestHeaders)
@@ -433,10 +983,7 @@ func TestServer_Process_ExchangeFailure_Returns500(t *testing.T) {
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://mcp-server:9003/mcp",
-		"authorization": "Bearer some-token",
-	})
+	resp, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
@@ -444,105 +991,9 @@ func TestServer_Process_ExchangeFailure_Returns500(t *testing.T) {
 	assert.Equal(t, int32(httpv3.StatusCode_InternalServerError),
 		int32(immResp.ImmediateResponse.Status.Code),
 		"exchange failure must return HTTP 500")
-	assert.Contains(t, string(immResp.ImmediateResponse.Body),
-		"token_exchange_failed", "error body must contain token_exchange_failed")
-}
-
-// Spec: FR-013 — Empty :path → 503 ImmediateResponse
-func TestServer_Process_EmptyPath_Returns503(t *testing.T) {
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			t.Fatal("Exchange should not be called with empty :path")
-			return server.ExchangeResult{}, nil
-		},
-	}
-	client, cleanup := startTestServer(t, exchanger)
-	defer cleanup()
-
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "",
-		"authorization": "Bearer some-token",
-	})
-	require.NoError(t, err)
-
-	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "empty :path must produce an ImmediateResponse")
-	assert.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable),
-		int32(immResp.ImmediateResponse.Status.Code),
-		"empty :path must return HTTP 503")
-	assert.Contains(t, string(immResp.ImmediateResponse.Body),
-		"invalid_resource", "error body must contain invalid_resource")
-}
-
-// Spec: FR-013 — Relative :path (not absolute URI) → 503 ImmediateResponse (SSRF mitigation)
-func TestServer_Process_RelativePath_Returns503(t *testing.T) {
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			t.Fatal("Exchange should not be called with relative :path")
-			return server.ExchangeResult{}, nil
-		},
-	}
-	client, cleanup := startTestServer(t, exchanger)
-	defer cleanup()
-
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "/mcp",
-		"authorization": "Bearer some-token",
-	})
-	require.NoError(t, err)
-
-	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "relative :path must produce an ImmediateResponse")
-	assert.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable),
-		int32(immResp.ImmediateResponse.Status.Code),
-		"relative :path must return HTTP 503")
-}
-
-// Spec: FR-013 — Non-http(s) :path → 503 ImmediateResponse (SSRF mitigation)
-func TestServer_Process_NonHTTPPath_Returns503(t *testing.T) {
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			t.Fatal("Exchange should not be called with non-http :path")
-			return server.ExchangeResult{}, nil
-		},
-	}
-	client, cleanup := startTestServer(t, exchanger)
-	defer cleanup()
-
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "grpc://mcp-server:9003/mcp",
-		"authorization": "Bearer some-token",
-	})
-	require.NoError(t, err)
-
-	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "non-http :path must produce an ImmediateResponse")
-	assert.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable),
-		int32(immResp.ImmediateResponse.Status.Code))
-}
-
-// SR-001 — Malformed :path with sensitive query params must return 503 without leaking secrets.
-// The actual query-string-in-error regression test is in security_test.go (white-box).
-func TestServer_Process_MalformedPathWithSecrets_Returns503(t *testing.T) {
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			t.Fatal("Exchange should not be called with malformed :path")
-			return server.ExchangeResult{}, nil
-		},
-	}
-	client, cleanup := startTestServer(t, exchanger)
-	defer cleanup()
-
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "https://example.com/%zz?access_token=secret123",
-		"authorization": "Bearer some-token",
-	})
-	require.NoError(t, err)
-
-	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "malformed :path must produce an ImmediateResponse")
-	assert.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable),
-		int32(immResp.ImmediateResponse.Status.Code))
+	assert.Equal(t, `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`, string(immResp.ImmediateResponse.Body))
+	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "exchange failure must not mutate authorization")
 }
 
 // SR-003 — Exchanged token details must not appear in error responses (information disclosure)
@@ -556,10 +1007,10 @@ func TestServer_Process_ErrorResponse_DoesNotLeakTokenDetails(t *testing.T) {
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://mcp-server:9003/mcp",
-		"authorization": "Bearer secret-token",
-	})
+	resp, err := sendRequestHeadersWithMetadata(t, client, nil, tokenExchangeMetadata(tokenExchangeMetadataFields(
+		structpb.NewStringValue("secret-token"),
+		structpb.NewStringValue(testResourceURI),
+	)), false)
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
@@ -580,10 +1031,7 @@ func TestServer_Process_ExpiredAssertion_Returns503(t *testing.T) {
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://mcp-server:9003/mcp",
-		"authorization": "Bearer some-token",
-	})
+	resp, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
@@ -591,8 +1039,10 @@ func TestServer_Process_ExpiredAssertion_Returns503(t *testing.T) {
 	assert.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable),
 		int32(immResp.ImmediateResponse.Status.Code),
 		"expired assertion must return HTTP 503")
-	assert.Contains(t, string(immResp.ImmediateResponse.Body),
-		"service_unavailable", "error body must contain service_unavailable")
+	assert.Equal(t, `{"error":"service_unavailable","error_description":"client assertion expired"}`, string(immResp.ImmediateResponse.Body))
+	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "expired assertion must not mutate authorization")
+
 }
 
 // Spec: FR-001 — Server must implement ExternalProcessorServer interface
@@ -700,8 +1150,8 @@ func startTestServerWithAuthorizerConfig(t *testing.T, cfg *extprocconfig.Config
 	return extprocv3.NewExternalProcessorClient(conn), cleanup
 }
 
-// sendHeadersThenBody sends RequestHeaders (with agentgateway metadata) followed by
-// RequestBody on the same stream, returning the response to the body phase.
+// sendHeadersThenBody sends RequestHeaders with valid token-exchange and default MCP
+// protocol metadata followed by RequestBody on the same stream.
 func sendHeadersThenBody(t *testing.T, client extprocv3.ExternalProcessorClient, headers map[string]string, body []byte) (*extprocv3.ProcessingResponse, *extprocv3.ProcessingResponse) {
 	t.Helper()
 
@@ -713,14 +1163,7 @@ func sendHeadersThenBody(t *testing.T, client extprocv3.ExternalProcessorClient,
 		headerList = append(headerList, &corev3.HeaderValue{Key: k, RawValue: []byte(v)})
 	}
 
-	// Build MetadataContext with agentgateway protocol = "mcp"
-	protocolStruct, err := structpb.NewStruct(map[string]any{"protocol": "mcp"})
-	require.NoError(t, err)
-	metadata := &corev3.Metadata{
-		FilterMetadata: map[string]*structpb.Struct{
-			"agentgateway": protocolStruct,
-		},
-	}
+	metadata := validTokenExchangeMetadata("mcp")
 
 	err = stream.Send(&extprocv3.ProcessingRequest{
 		MetadataContext: metadata,
@@ -759,8 +1202,8 @@ func sendHeadersThenBody(t *testing.T, client extprocv3.ExternalProcessorClient,
 	return headersResp, bodyResp
 }
 
-// sendHeadersThenBodyWithProtocol is like sendHeadersThenBody but uses the given protocol
-// in the agentgateway MetadataContext instead of the default "mcp".
+// sendHeadersThenBodyWithProtocol is like sendHeadersThenBody but uses the given
+// agentgateway protocol metadata instead of the default "mcp".
 func sendHeadersThenBodyWithProtocol(t *testing.T, client extprocv3.ExternalProcessorClient, headers map[string]string, body []byte, protocol string) (*extprocv3.ProcessingResponse, *extprocv3.ProcessingResponse) {
 	t.Helper()
 
@@ -772,13 +1215,7 @@ func sendHeadersThenBodyWithProtocol(t *testing.T, client extprocv3.ExternalProc
 		headerList = append(headerList, &corev3.HeaderValue{Key: k, RawValue: []byte(v)})
 	}
 
-	protocolStruct, err := structpb.NewStruct(map[string]any{"protocol": protocol})
-	require.NoError(t, err)
-	metadata := &corev3.Metadata{
-		FilterMetadata: map[string]*structpb.Struct{
-			"agentgateway": protocolStruct,
-		},
-	}
+	metadata := validTokenExchangeMetadata(protocol)
 
 	err = stream.Send(&extprocv3.ProcessingRequest{
 		MetadataContext: metadata,
@@ -812,32 +1249,6 @@ func sendHeadersThenBodyWithProtocol(t *testing.T, client extprocv3.ExternalProc
 	return headersResp, bodyResp
 }
 
-// Spec: FR-009 — No Bearer token with OPA enabled → pass through in headers phase
-func TestServer_OPA_NoBearerToken_PassThrough(t *testing.T) {
-	auth := &mockAuthorizer{
-		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
-			t.Fatal("Evaluate must not be called when no Bearer token is present")
-			return nil, nil
-		},
-	}
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			t.Fatal("Exchange must not be called when no Bearer token is present")
-			return server.ExchangeResult{}, nil
-		},
-	}
-	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
-	defer cleanup()
-
-	headersResp, _ := sendHeadersThenBody(t, client, map[string]string{
-		":path":   "http://mcp-server:9003/mcp",
-		":method": "POST",
-	}, nil)
-
-	_, ok := headersResp.Response.(*extprocv3.ProcessingResponse_RequestHeaders)
-	assert.True(t, ok, "no-Bearer-token with OPA enabled must pass through at headers phase")
-}
-
 // Spec: OPA disabled (nil authorizer) → direct token exchange in headers phase (no body buffering)
 func TestServer_OPA_Disabled_DirectExchange(t *testing.T) {
 	const exchangedToken = "direct-exchanged-token"
@@ -861,10 +1272,7 @@ func TestServer_OPA_Disabled_DirectExchange(t *testing.T) {
 	defer func() { _ = conn.Close(); grpcSrv.GracefulStop() }()
 	client := extprocv3.NewExternalProcessorClient(conn)
 
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://mcp-server:9003/mcp",
-		"authorization": "Bearer incoming-token",
-	})
+	resp, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	headersResp, ok := resp.Response.(*extprocv3.ProcessingResponse_RequestHeaders)
@@ -899,11 +1307,7 @@ func TestServer_OPA_Enabled_Allow_ExchangeCompletes(t *testing.T) {
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer incoming-token",
+		":method": "POST",
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`))
 
 	require.NotNil(t, bodyResp, "expected body response after OPA allow")
@@ -937,11 +1341,7 @@ func TestServer_OPA_Enabled_Deny_Returns403(t *testing.T) {
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer incoming-token",
+		":method": "POST",
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"delete_file"}}`))
 
 	require.NotNil(t, bodyResp, "expected response in body phase after OPA deny")
@@ -952,9 +1352,9 @@ func TestServer_OPA_Enabled_Deny_Returns403(t *testing.T) {
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "tool is destructive")
 }
 
-// Spec: OPA enabled + header-only request (end_of_stream=true in headers phase) + allow →
+// Spec: OPA enabled + header-only request (end_of_stream=true) + allow →
 // OPA is evaluated with type="mcp_headers_only" and token exchange completes in the headers
-// phase. The original bearer token is NOT forwarded unchanged — Authorization header is replaced.
+// phase, replacing downstream Authorization with the exchanged token.
 func TestServer_OPA_HeadersOnly_EndOfStream_Allow_ExchangeCompletes(t *testing.T) {
 	var capturedInput authorization.OPAInput
 	auth := &mockAuthorizer{
@@ -972,11 +1372,7 @@ func TestServer_OPA_HeadersOnly_EndOfStream_Allow_ExchangeCompletes(t *testing.T
 	defer cleanup()
 
 	resp, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
-		":method":       "GET",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer incoming-token",
+		":method": "GET",
 	}, "mcp")
 	require.NoError(t, err)
 
@@ -1013,11 +1409,7 @@ func TestServer_OPA_HeadersOnly_EndOfStream_Deny_Returns403(t *testing.T) {
 	defer cleanup()
 
 	resp, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
-		":method":       "GET",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer incoming-token",
+		":method": "GET",
 	}, "mcp")
 	require.NoError(t, err)
 
@@ -1049,11 +1441,7 @@ func TestServer_OPA_HeadersOnly_EndOfStream_ReAuth_Returns401WithElicitation(t *
 	defer cleanup()
 
 	resp, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
-		":method":       "GET",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer incoming-token",
+		":method": "GET",
 	}, "mcp")
 	require.NoError(t, err)
 
@@ -1085,11 +1473,7 @@ func TestServer_OPA_HeadersOnly_EndOfStream_5xxWithErrorURI_Returns500NotElicita
 	defer cleanup()
 
 	resp, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
-		":method":       "GET",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer incoming-token",
+		":method": "GET",
 	}, "mcp")
 	require.NoError(t, err)
 
@@ -1137,11 +1521,7 @@ func TestServer_OPA_HeadersOnly_MCP_InvalidMethods(t *testing.T) {
 			defer cleanup()
 
 			resp, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
-				":method":       tc.method,
-				":path":         "http://mcp-server:9003/mcp",
-				":authority":    "mcp-server:9003",
-				":scheme":       "http",
-				"authorization": "Bearer incoming-token",
+				":method": tc.method,
 			}, "mcp")
 			require.NoError(t, err)
 
@@ -1190,11 +1570,7 @@ func TestServer_OPA_HeadersOnly_MCP_GET_Succeeds(t *testing.T) {
 	defer cleanup()
 
 	resp, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
-		":method":       "GET",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer incoming-token",
+		":method": "GET",
 	}, "mcp")
 	require.NoError(t, err)
 
@@ -1229,11 +1605,7 @@ func TestServer_OPA_MCP_GET_WithBody_Returns405(t *testing.T) {
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
-		":method":       "GET",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer incoming-token",
+		":method": "GET",
 	}, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}`), "mcp")
 
 	require.NotNil(t, bodyResp)
@@ -1269,11 +1641,7 @@ func TestServer_OPA_MCP_InvalidBodyMethods_Return405(t *testing.T) {
 			defer cleanup()
 
 			headersResp, _ := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
-				":method":       method,
-				":path":         "http://mcp-server:9003/mcp",
-				":authority":    "mcp-server:9003",
-				":scheme":       "http",
-				"authorization": "Bearer incoming-token",
+				":method": method,
 			}, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}`), "mcp")
 
 			immResp, ok := headersResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
@@ -1341,16 +1709,15 @@ func TestServer_Process_BrokerErrorWithURI_ReturnsElicitationFromHeadersPhase(t 
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeadersWithProtocol(t, client, map[string]string{
-		":path":         "http://mcp-server:9003/mcp",
-		"authorization": "Bearer subject-token",
-	}, "mcp")
+	resp, err := sendRequestHeadersWithProtocol(t, client, nil, "mcp")
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
 	require.True(t, ok, "headers phase must return ImmediateResponse for elicitation")
 	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
 		"elicitation must use HTTP 200 (JSON-RPC errors always travel over HTTP 200)")
+	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "elicitation must not mutate authorization")
 
 	var envelope struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -1381,9 +1748,9 @@ func TestServer_Process_BrokerErrorWithURI_ReturnsElicitationFromHeadersPhase(t 
 }
 
 // Spec: When broker returns error_uri and protocol metadata is absent, non-OPA mode
-// returns URLElicitationRequiredError (same as protocol="mcp"). Absent metadata is
-// treated as MCP for backward compatibility with token-exchange-only deployments.
-func TestServer_Process_BrokerErrorWithURI_AbsentMetadata_ReturnsElicitationFromHeadersPhase(t *testing.T) {
+// returns URLElicitationRequiredError (same as protocol="mcp"). The absent protocol
+// defaults to MCP for token-exchange-only deployments.
+func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_ReturnsElicitationFromHeadersPhase(t *testing.T) {
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
 			return server.ExchangeResult{}, &server.BrokerExchangeError{
@@ -1397,23 +1764,19 @@ func TestServer_Process_BrokerErrorWithURI_AbsentMetadata_ReturnsElicitationFrom
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://api-server:9003/v1/resource",
-		"authorization": "Bearer subject-token",
-	})
+	resp, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "absent metadata must produce an ImmediateResponse")
+	require.True(t, ok, "absent protocol metadata must produce an ImmediateResponse")
 	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"absent metadata is treated as MCP — elicitation uses HTTP 200")
+		"absent protocol metadata defaults to MCP — elicitation uses HTTP 200")
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "-32042",
-		"absent metadata must return URLElicitationRequiredError (JSON-RPC -32042), not 503")
+		"absent protocol metadata must return URLElicitationRequiredError (JSON-RPC -32042), not 503")
 }
 
-// Spec: absent metadata with any path returns URLElicitationRequiredError — protocol ""
-// is treated as MCP for backward compatibility regardless of the request path.
-func TestServer_Process_BrokerErrorWithURI_AbsentMetadataNonMCPPath_ReturnsElicitation(t *testing.T) {
+// Spec: Absent protocol metadata defaults to MCP in non-OPA mode.
+func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_DefaultsToMCP(t *testing.T) {
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
 			return server.ExchangeResult{}, &server.BrokerExchangeError{
@@ -1427,24 +1790,19 @@ func TestServer_Process_BrokerErrorWithURI_AbsentMetadataNonMCPPath_ReturnsElici
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://a2a-server:9003/a2a",
-		":authority":    "a2a-server:9003",
-		"authorization": "Bearer subject-token",
-	})
+	resp, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "absent metadata must produce an ImmediateResponse")
+	require.True(t, ok, "absent protocol metadata must produce an ImmediateResponse")
 	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"absent metadata returns URLElicitationRequiredError (HTTP 200)")
+		"absent protocol metadata defaults to MCP — elicitation uses HTTP 200")
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "-32042",
-		"absent metadata must return URLElicitationRequiredError (JSON-RPC -32042)")
+		"absent protocol metadata must return URLElicitationRequiredError (JSON-RPC -32042)")
 }
 
-// Spec: absent metadata with /mcp path returns URLElicitationRequiredError — protocol ""
-// is treated as MCP for backward compatibility with direct connections.
-func TestServer_Process_BrokerErrorWithURI_AbsentMetadataMCPPath_ReturnsElicitation(t *testing.T) {
+// Spec: Absent protocol metadata defaults to MCP for direct ExtProc clients.
+func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_DirectClientDefaultsToMCP(t *testing.T) {
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
 			return server.ExchangeResult{}, &server.BrokerExchangeError{
@@ -1458,18 +1816,15 @@ func TestServer_Process_BrokerErrorWithURI_AbsentMetadataMCPPath_ReturnsElicitat
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://mcp-server:9003/mcp",
-		"authorization": "Bearer subject-token",
-	})
+	resp, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "absent metadata must produce an ImmediateResponse")
+	require.True(t, ok, "absent protocol metadata must produce an ImmediateResponse")
 	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"absent metadata is treated as MCP — elicitation uses HTTP 200")
+		"absent protocol metadata defaults to MCP — elicitation uses HTTP 200")
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "-32042",
-		"absent metadata is treated as MCP — elicitation returns JSON-RPC -32042")
+		"absent protocol metadata returns JSON-RPC -32042")
 }
 
 // Spec: When broker returns error_uri and protocol is explicitly non-MCP (e.g. "a2a"),
@@ -1488,24 +1843,24 @@ func TestServer_Process_BrokerErrorWithURI_NonMCP_Returns503FromHeadersPhase(t *
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeadersWithProtocol(t, client, map[string]string{
-		":path":         "http://a2a-server:9003/a2a",
-		"authorization": "Bearer subject-token",
-	}, "a2a")
+	resp, err := sendRequestHeadersWithProtocol(t, client, nil, "a2a")
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
 	require.True(t, ok, "non-MCP re-auth must produce an ImmediateResponse")
 	assert.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable), int32(immResp.ImmediateResponse.Status.Code),
 		"non-MCP re-auth in headers phase must return 503")
-	assert.Contains(t, string(immResp.ImmediateResponse.Body), "service_unavailable")
+	assert.Equal(t, `{"error":"service_unavailable","error_description":"token exchange requires re-authentication"}`, string(immResp.ImmediateResponse.Body))
+	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "non-MCP re-auth must not mutate authorization")
+
 }
 
 // Spec: A transient 5xx broker error carrying error_uri must NOT trigger re-auth
-// elicitation — it must be treated as a normal exchange failure (503), even when
+// elicitation — it must be treated as a normal exchange failure (500), even when
 // the exchange cache is empty (cache miss). Transient errors must never surface
 // a spurious re-auth URL.
-func TestServer_Process_5xxBrokerErrorWithURI_Returns503NotElicitation(t *testing.T) {
+func TestServer_Process_5xxBrokerErrorWithURI_Returns500NotElicitation(t *testing.T) {
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
 			return server.ExchangeResult{}, &server.BrokerExchangeError{
@@ -1518,10 +1873,7 @@ func TestServer_Process_5xxBrokerErrorWithURI_Returns503NotElicitation(t *testin
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeadersWithProtocol(t, client, map[string]string{
-		":path":         "http://mcp-server:9003/mcp",
-		"authorization": "Bearer subject-token",
-	}, "mcp")
+	resp, err := sendRequestHeadersWithProtocol(t, client, nil, "mcp")
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
@@ -1530,6 +1882,9 @@ func TestServer_Process_5xxBrokerErrorWithURI_Returns503NotElicitation(t *testin
 		"transient 5xx with error_uri must not return elicitation (HTTP 200)")
 	assert.Equal(t, int32(httpv3.StatusCode_InternalServerError), int32(immResp.ImmediateResponse.Status.Code),
 		"transient 5xx with error_uri must return 500, not elicitation")
+	assert.Equal(t, `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`, string(immResp.ImmediateResponse.Body))
+	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "transient failure must not mutate authorization")
 }
 
 // ---------------------------------------------------------------------------
@@ -1538,7 +1893,7 @@ func TestServer_Process_5xxBrokerErrorWithURI_Returns503NotElicitation(t *testin
 
 // Spec: FR-003 — when OPA is enabled and agentgateway protocol metadata is absent,
 // the request MUST be rejected with 403 without calling the exchanger or authorizer.
-func TestServer_OPA_AbsentMetadata_Returns403(t *testing.T) {
+func TestServer_OPA_AbsentProtocolMetadata_Returns403(t *testing.T) {
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
 			t.Fatal("Evaluate must not be called when protocol metadata is absent")
@@ -1557,18 +1912,10 @@ func TestServer_OPA_AbsentMetadata_Returns403(t *testing.T) {
 	stream, err := client.Process(context.Background())
 	require.NoError(t, err)
 
-	// Send RequestHeaders without MetadataContext.
 	err = stream.Send(&extprocv3.ProcessingRequest{
-		// MetadataContext intentionally omitted.
+		MetadataContext: validTokenExchangeMetadata(""),
 		Request: &extprocv3.ProcessingRequest_RequestHeaders{
-			RequestHeaders: &extprocv3.HttpHeaders{
-				Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
-					{Key: ":path", RawValue: []byte("/mcp")},
-					{Key: ":scheme", RawValue: []byte("https")},
-					{Key: ":authority", RawValue: []byte("mcp-server:9003")},
-					{Key: "authorization", RawValue: []byte("Bearer subject-token")},
-				}},
-			},
+			RequestHeaders: extProcHeaders(nil, false),
 		},
 	})
 	require.NoError(t, err)
@@ -1577,7 +1924,7 @@ func TestServer_OPA_AbsentMetadata_Returns403(t *testing.T) {
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "absent metadata must produce an ImmediateResponse")
+	require.True(t, ok, "absent protocol metadata must produce an ImmediateResponse")
 	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immResp.ImmediateResponse.Status.Code))
 }
 
@@ -1605,11 +1952,7 @@ func TestServer_OPA_BodyPhaseReauth_ReturnsElicitationInHeadersPhase(t *testing.
 	defer cleanup()
 
 	headersResp, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer subject-token",
+		":method": "POST",
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","id":42,"params":{"name":"list_files"}}`))
 
 	// Exchange failed in headers phase → elicitation is in headersResp, no body phase.
@@ -1647,11 +1990,7 @@ func TestServer_OPA_BodyPhase_EmptyMCPBody_Denied(t *testing.T) {
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer subject-token",
+		":method": "POST",
 	}, []byte{})
 
 	require.NotNil(t, bodyResp, "empty-body MCP request must produce a body-phase response")
@@ -1682,11 +2021,7 @@ func TestServer_OPA_BodyPhase_RequestTooLarge_DeniesWithoutAuthorizerCall(t *tes
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer subject-token",
+		":method": "POST",
 	}, []byte("01234567890"))
 
 	require.NotNil(t, bodyResp, "oversized request must produce a body-phase response")
@@ -1717,11 +2052,7 @@ func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
 
 	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}},{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"read_config","arguments":{}}}]`)
 	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer subject-token",
+		":method": "POST",
 	}, batch)
 
 	require.NotNil(t, bodyResp)
@@ -1754,11 +2085,7 @@ func TestServer_OPA_BatchBodyPhase_Deny_AggregatesReasons(t *testing.T) {
 
 	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"delete_repo","arguments":{}}},{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"drop_db","arguments":{}}}]`)
 	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer subject-token",
+		":method": "POST",
 	}, batch)
 
 	require.NotNil(t, bodyResp)
@@ -1795,11 +2122,7 @@ func TestServer_OPA_BatchBodyPhaseReauth_ReturnsElicitationInHeadersPhase(t *tes
 
 	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":7,"params":{"name":"a"}},{"jsonrpc":"2.0","method":"tools/call","id":8,"params":{"name":"b"}}]`)
 	headersResp, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer subject-token",
+		":method": "POST",
 	}, batch)
 
 	// Exchange failed in headers phase → elicitation is in headersResp, no body phase.
@@ -1840,11 +2163,7 @@ func TestServer_OPA_BatchBodyPhaseReauth_NotificationFirstUsesNextID(t *testing.
 	// First element is a notification (no id field); second carries id=42.
 	batch := []byte(`[{"jsonrpc":"2.0","method":"notifications/progress"},{"jsonrpc":"2.0","method":"tools/call","id":42,"params":{"name":"a"}}]`)
 	headersResp, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer subject-token",
+		":method": "POST",
 	}, batch)
 
 	// Exchange failed in headers phase → elicitation is in headersResp, no body phase.
@@ -1882,11 +2201,7 @@ func TestServer_OPA_BatchBodyPhase_5xxWithErrorURI_Returns500NotElicitation(t *t
 
 	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"a"}}]`)
 	headersResp, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "http://mcp-server:9003/mcp",
-		":authority":    "mcp-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer subject-token",
+		":method": "POST",
 	}, batch)
 
 	// Exchange failed in headers phase → error is in headersResp, no body phase.
@@ -1934,11 +2249,7 @@ func TestServer_OPA_BodyPhaseReauth_InvalidIDTypesFallBackToNull(t *testing.T) {
 			defer cleanup()
 
 			headersResp, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-				":method":       "POST",
-				":path":         "http://mcp-server:9003/mcp",
-				":authority":    "mcp-server:9003",
-				":scheme":       "http",
-				"authorization": "Bearer subject-token",
+				":method": "POST",
 			}, tc.body)
 
 			// Exchange failed in headers phase → elicitation is in headersResp, no body phase.
@@ -1977,12 +2288,7 @@ func TestServer_OPA_NonMCPBodyPhaseReauth_DoesNotReturnElicitation(t *testing.T)
 	defer cleanup()
 
 	// Send as "a2a" protocol (non-MCP) — Exchange returns error_uri in headers phase.
-	headersResp, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
-		":path":         "http://a2a-server:9003/a2a",
-		":authority":    "a2a-server:9003",
-		":scheme":       "http",
-		"authorization": "Bearer subject-token",
-	}, []byte(`{"some":"a2a-body"}`), "a2a")
+	headersResp, bodyResp := sendHeadersThenBodyWithProtocol(t, client, nil, []byte(`{"some":"a2a-body"}`), "a2a")
 
 	// Exchange failed in headers phase → error is in headersResp, no body phase.
 	assert.Nil(t, bodyResp, "non-MCP re-auth in headers phase must not produce a body-phase response")
@@ -2009,10 +2315,7 @@ func TestServer_Process_BrokerErrorWithoutURI_Returns500(t *testing.T) {
 	client, cleanup := startTestServer(t, exchanger)
 	defer cleanup()
 
-	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://mcp-server:9003/mcp",
-		"authorization": "Bearer some-token",
-	})
+	resp, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
@@ -2042,12 +2345,7 @@ func TestServer_ProcessRequestHeaders_CreatesSpanWithAttributes(t *testing.T) {
 	client, cleanup := startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
 	defer cleanup()
 
-	_, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "/api/resource",
-		":scheme":       "https",
-		":authority":    "example.com",
-		"authorization": "Bearer test-token",
-	})
+	_, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	tp.ForceFlush(context.Background()) //nolint:errcheck
@@ -2059,7 +2357,7 @@ func TestServer_ProcessRequestHeaders_CreatesSpanWithAttributes(t *testing.T) {
 		if s.Name() == "extproc.token_exchange" {
 			found = true
 			attrs := attributeMap(s.Attributes())
-			assert.Equal(t, "https://example.com/api/resource", attrs["resource.uri"], "resource.uri must be set")
+			assert.Equal(t, testResourceURI, attrs["resource.uri"], "resource.uri must be set")
 			assert.Equal(t, "success", attrs["outcome"], "outcome must be 'success'")
 			break
 		}
@@ -2083,10 +2381,7 @@ func TestServer_ProcessRequestHeaders_SpanOutcomeOnSuccess(t *testing.T) {
 	client, cleanup := startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
 	defer cleanup()
 
-	_, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://example.com/api",
-		"authorization": "Bearer test-token",
-	})
+	_, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	tp.ForceFlush(context.Background()) //nolint:errcheck
@@ -2117,10 +2412,7 @@ func TestServer_ProcessRequestHeaders_SpanOutcomeOnFailure(t *testing.T) {
 	client, cleanup := startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
 	defer cleanup()
 
-	_, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://example.com/api",
-		"authorization": "Bearer test-token",
-	})
+	_, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	tp.ForceFlush(context.Background()) //nolint:errcheck
@@ -2151,10 +2443,7 @@ func TestServer_ProcessRequestHeaders_MetricsRecordOutcome(t *testing.T) {
 	client, cleanup := startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
 	defer cleanup()
 
-	_, err := sendRequestHeaders(t, client, map[string]string{
-		":path":         "http://example.com/api",
-		"authorization": "Bearer test-token",
-	})
+	_, err := sendRequestHeaders(t, client, nil)
 	require.NoError(t, err)
 
 	var rm metricdata.ResourceMetrics
@@ -2220,13 +2509,9 @@ func TestServer_ProcessRequestHeaders_MetricsRecordedWhenStreamCancelled(t *test
 	require.NoError(t, err)
 
 	err = stream.Send(&extprocv3.ProcessingRequest{
+		MetadataContext: validTokenExchangeMetadata(""),
 		Request: &extprocv3.ProcessingRequest_RequestHeaders{
-			RequestHeaders: &extprocv3.HttpHeaders{
-				Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
-					{Key: ":path", RawValue: []byte("http://example.com/api")},
-					{Key: "authorization", RawValue: []byte("Bearer test-token")},
-				}},
-			},
+			RequestHeaders: extProcHeaders(nil, false),
 		},
 	})
 	require.NoError(t, err)
@@ -2299,10 +2584,8 @@ func TestServer_OPA_BodyBearing_EmitsTelemetryAndPropagatesTrace(t *testing.T) {
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "https://example.com/api/resource?access_token=secret",
-		"authorization": "Bearer test-token",
-		"traceparent":   traceparentHeader,
+		":method":     "POST",
+		"traceparent": traceparentHeader,
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`), "mcp")
 	require.NotNil(t, bodyResp)
 	_, isImmediate := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
@@ -2318,7 +2601,7 @@ func TestServer_OPA_BodyBearing_EmitsTelemetryAndPropagatesTrace(t *testing.T) {
 		if s.Name() == "extproc.token_exchange" {
 			foundSpan = true
 			attrs := attributeMap(s.Attributes())
-			assert.Equal(t, "https://example.com/api/resource", attrs["resource.uri"])
+			assert.Equal(t, testResourceURI, attrs["resource.uri"])
 			assert.Equal(t, "success", attrs["outcome"])
 		}
 	}
@@ -2392,10 +2675,8 @@ func TestServer_OPA_HeadersOnly_EmitsTelemetryAndPropagatesTrace(t *testing.T) {
 	defer cleanup()
 
 	resp, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
-		":method":       "GET",
-		":path":         "https://example.com/mcp?client_secret=secret",
-		"authorization": "Bearer test-token",
-		"traceparent":   traceparentHeader,
+		":method":     "GET",
+		"traceparent": traceparentHeader,
 	}, "mcp")
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -2410,7 +2691,7 @@ func TestServer_OPA_HeadersOnly_EmitsTelemetryAndPropagatesTrace(t *testing.T) {
 		if s.Name() == "extproc.token_exchange" {
 			foundSpan = true
 			attrs := attributeMap(s.Attributes())
-			assert.Equal(t, "https://example.com/mcp", attrs["resource.uri"])
+			assert.Equal(t, testResourceURI, attrs["resource.uri"])
 			assert.Equal(t, "success", attrs["outcome"])
 		}
 	}
@@ -2477,9 +2758,7 @@ func TestServer_OPA_HeadersOnly_Deny_RecordsAuthorizationOutcome(t *testing.T) {
 	defer cleanup()
 
 	resp, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
-		":method":       "GET",
-		":path":         "https://example.com/mcp?token=secret",
-		"authorization": "Bearer test-token",
+		":method": "GET",
 	}, "mcp")
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -2493,7 +2772,7 @@ func TestServer_OPA_HeadersOnly_Deny_RecordsAuthorizationOutcome(t *testing.T) {
 		if s.Name() == "extproc.token_exchange" {
 			foundSpan = true
 			attrs := attributeMap(s.Attributes())
-			assert.Equal(t, "https://example.com/mcp", attrs["resource.uri"])
+			assert.Equal(t, testResourceURI, attrs["resource.uri"])
 			assert.Equal(t, "authorization_denied", attrs["outcome"])
 			assert.Equal(t, "access_denied", attrs["error.type"])
 		}
@@ -2549,11 +2828,7 @@ func TestServer_RequestContext_DirectPath_LogsPropagatedTraceIDAndAnonymousActor
 	defer cleanup()
 
 	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":scheme":       "https",
-		":authority":    "example.com",
-		":path":         "/mcp",
-		"authorization": "Bearer test-token",
-		"traceparent":   traceparentHeader,
+		"traceparent": traceparentHeader,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -2595,11 +2870,7 @@ func TestServer_RequestContext_DirectPath_ReusesInboundTraceWhenTracingDisabled(
 	defer cleanup()
 
 	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":scheme":       "https",
-		":authority":    "example.com",
-		":path":         "/mcp",
-		"authorization": "Bearer test-token",
-		"traceparent":   "00-" + inboundTraceID + "-bbbbbbbbbbbbbbbb-01",
+		"traceparent": "00-" + inboundTraceID + "-bbbbbbbbbbbbbbbb-01",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -2629,9 +2900,7 @@ func TestServer_RequestContext_OPABodyBearingPath_LogsGeneratedTraceIDAndAnonymo
 	defer cleanup()
 
 	headersResp, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "https://example.com/mcp",
-		"authorization": "Bearer test-token",
+		":method": "POST",
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`), "mcp")
 	require.NotNil(t, headersResp)
 	require.NotNil(t, bodyResp)
@@ -2670,10 +2939,8 @@ func TestServer_RequestContext_OPAHeadersOnlyPath_LogsPropagatedTraceIDAndAnonym
 	defer cleanup()
 
 	resp, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
-		":method":       "GET",
-		":path":         "https://example.com/mcp",
-		"authorization": "Bearer test-token",
-		"traceparent":   traceparentHeader,
+		":method":     "GET",
+		"traceparent": traceparentHeader,
 	}, "mcp")
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -2710,11 +2977,7 @@ func TestServer_RequestContext_DirectPath_ExchangeFailureLogsTraceID(t *testing.
 	defer cleanup()
 
 	resp, err := sendRequestHeaders(t, client, map[string]string{
-		":scheme":       "https",
-		":authority":    "example.com",
-		":path":         "/mcp",
-		"authorization": "Bearer test-token",
-		"traceparent":   traceparentHeader,
+		"traceparent": traceparentHeader,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -2748,10 +3011,8 @@ func TestServer_RequestContext_OPADeny_LogsTraceID(t *testing.T) {
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "https://example.com/mcp",
-		"authorization": "Bearer test-token",
-		"traceparent":   traceparentHeader,
+		":method":     "POST",
+		"traceparent": traceparentHeader,
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`), "mcp")
 	require.NotNil(t, bodyResp)
 
@@ -2784,10 +3045,8 @@ func TestServer_RequestContext_OPAEvaluationError_LogsTraceID(t *testing.T) {
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "https://example.com/mcp",
-		"authorization": "Bearer test-token",
-		"traceparent":   traceparentHeader,
+		":method":     "POST",
+		"traceparent": traceparentHeader,
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`), "mcp")
 	require.NotNil(t, bodyResp)
 
@@ -2820,10 +3079,8 @@ func TestServer_RequestContext_OPAInvalidInput_LogsTraceID(t *testing.T) {
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
-		":method":       "POST",
-		":path":         "https://example.com/mcp",
-		"authorization": "Bearer test-token",
-		"traceparent":   traceparentHeader,
+		":method":     "POST",
+		"traceparent": traceparentHeader,
 	}, []byte(`this is not valid json-rpc`), "mcp")
 	require.NotNil(t, bodyResp)
 
@@ -2876,13 +3133,9 @@ func (s *failingProcessStream) RecvMsg(any) error { return nil }
 
 func TestServer_Process_TransportFailuresRetainRequestContext(t *testing.T) {
 	request := &extprocv3.ProcessingRequest{
+		MetadataContext: validTokenExchangeMetadata(""),
 		Request: &extprocv3.ProcessingRequest_RequestHeaders{
-			RequestHeaders: &extprocv3.HttpHeaders{
-				Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
-					{Key: ":path", RawValue: []byte("https://example.com/mcp")},
-					{Key: "authorization", RawValue: []byte("Bearer test-token")},
-				}},
-			},
+			RequestHeaders: extProcHeaders(nil, false),
 		},
 	}
 	tests := []struct {

@@ -2,6 +2,10 @@
 
 **Protocol**: Envoy External Processing (ExtProc) gRPC v3  
 **Proto**: `envoy.service.ext_proc.v3.ExternalProcessor`
+> **Implementation note (superseded raw input):**
+> [Feature 043](../../043-extproc-metadata-input/contracts/extproc-metadata-input.md) and [ADR 036](../../../adrs/036-extproc-metadata-token-exchange-input.md) replace raw `Authorization` and pseudo-header input, no-Bearer pass-through, and raw resource validation.
+> This document retains the standalone process, configuration, cache, circuit-breaker, and exchange mechanics that remain applicable.
+
 
 ## Service Definition
 
@@ -34,29 +38,15 @@ This is the **primary processing phase** where token exchange occurs.
 
 #### Input: ProcessingRequest_RequestHeaders
 
-The ExtProc server receives all request headers including:
-- `:authority` — target host
-- `:path` — request URI (used as `resource` parameter for token exchange)
+The current input contract is [Feature 043](../../043-extproc-metadata-input/contracts/extproc-metadata-input.md). ExtProc reads `subject_token` and `resource_uri` only from `aib.tokenexchange` dynamic metadata. Raw HTTP attributes remain available only for transport and OPA checks.
 
-  The `:path` value is validated to be a non-empty absolute URI with `http` or `https` scheme before being used as the `resource` parameter. Relative paths and non-http(s) schemes return a 503 response (SSRF mitigation).
-- `:method` — HTTP method
-- `authorization` — Bearer token to exchange (if present)
 
 #### Output Scenarios
 
-**Scenario 1: No Bearer Token → Pass Through**
+**Scenario 1: Missing or Invalid Metadata → Immediate 503 Response**
 
-When the Authorization header is missing or does not use the Bearer scheme:
+Feature 043 defines the fixed `invalid_subject_token` and `invalid_resource` JSON responses. Raw `Authorization` and pseudo-headers cannot supply token-exchange input.
 
-```
-ProcessingResponse{
-  Response: ProcessingResponse_RequestHeaders{
-    RequestHeaders: HeadersResponse{
-      // Empty response — no modifications
-    }
-  }
-}
-```
 
 **Scenario 2: Valid Bearer Token → Replace Authorization**
 
@@ -85,7 +75,7 @@ ProcessingResponse{
 
 **Scenario 3: Token Exchange Failure → Immediate 500 Response**
 
-When the token exchange endpoint returns an error or times out:
+Ordinary exchange errors use this response:
 
 ```
 ProcessingResponse{
@@ -102,38 +92,18 @@ ProcessingResponse{
           }
         ]
       },
-      Body: '{"error": "token_exchange_failed", "error_description": "token exchange request failed"}'
+      Body: '{"error":"token_exchange_failed","error_description":"token exchange request failed"}'
     }
   }
 }
 ```
 
-The `error_description` is a fixed generic string — the upstream error detail is logged internally and never exposed to the caller (information disclosure prevention).
+Feature 043 defines the `error_uri`, expired-assertion, and circuit-open exceptions. No failure response emits an authorization mutation.
 
-**Scenario 4: Invalid/Empty Request URI → Immediate 503 Response**
 
-When the `:path` pseudo-header is empty or invalid:
+**Scenario 4: Invalid Metadata → Immediate 503 Response**
 
-```
-ProcessingResponse{
-  Response: ProcessingResponse_ImmediateResponse{
-    ImmediateResponse: ImmediateResponse{
-      Status: HttpStatus{Code: 503},
-      Headers: HeaderMutation{
-        SetHeaders: [
-          HeaderValueOption{
-            Header: HeaderValue{
-              Key: "content-type",
-              RawValue: "application/json"
-            }
-          }
-        ]
-      },
-      Body: '{"error": "invalid_resource", "error_description": "request URI is empty or invalid"}'
-    }
-  }
-}
-```
+Feature 043 defines the metadata validation order and exact `invalid_subject_token` and `invalid_resource` JSON responses.
 
 ### RequestBody Phase → Pass Through
 

@@ -831,7 +831,9 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **Name**: extproc-token-exchange
 
-**Purpose**: Standalone gRPC microservice that implements the Envoy External Processor protocol for transparent OAuth2 token exchange. When deployed alongside agentgateway, the service intercepts incoming HTTP requests via Envoy's ExtProc filter, extracts Bearer tokens from request headers, performs RFC 8693 token exchange against the identity broker, and replaces the Authorization header with the exchanged token. Exchanged tokens are cached in-memory with singleflight deduplication to optimize performance.
+**Purpose**: Standalone gRPC microservice that performs transparent RFC 8693 token exchange. Agentgateway provides token-exchange inputs through dynamic metadata. After a successful exchange, the service replaces the `Authorization` header. In-memory caching with singleflight deduplicates exchanges.
+
+**Token-Exchange Input Source of Truth**: [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) defines the fixed dynamic-metadata contract. ExtProc reads only that contract and has no header or pseudo-header fallback.
 
 **Architecture**: Hexagonal (ports and adapters)
 
@@ -870,28 +872,34 @@ The gates compose as fail-closed AND: ExtProc OPA can only further restrict a re
 **Server**: Implements Envoy's `ExternalProcessorServer` interface with:
 
 - **Process RPC**: Streaming bidirectional RPC handling all Envoy ExtProc phases (RequestHeaders, RequestBody, ResponseHeaders, ResponseBody, RequestTrailers, ResponseTrailers)
-- **RequestHeaders Phase**: Primary processing phase where Bearer token extraction and exchange occurs
+- **RequestHeaders Phase**: Primary processing phase where ExtProc reads token-exchange metadata and performs the exchange
 - **Other Phases**: Pass-through responses with phase-specific response types
-- **ImmediateResponse**: Error response mechanism (500 on exchange failure, 503 on invalid URI)
+- **ImmediateResponse**: Fail-closed error response mechanism. Invalid token-exchange metadata returns a 503 JSON response. Token-exchange failure behavior is unchanged.
 
 #### 3.2.3. Request Processing
 
 **RequestHeaders Processing**:
 
-1. Extract Bearer token from Authorization header (pass through if absent or non-Bearer)
-2. Extract resource URI from `:path` pseudo-header
-3. Validate URI (absolute, http/https scheme, non-empty host) — SSRF mitigation
-4. Call `Exchanger.Exchange()` with (token, uri)
-5. On success: replace Authorization header with `"Bearer " + exchangedToken`
-6. On failure: return 500 ImmediateResponse, reject request, log failure
+**Agentgateway Producer and Trust Boundary**: Agentgateway runs `jwtAuth` with `mode: strict` before the `extProc` policy. It sets `preserveToken: false`, which removes the raw `Authorization` header. Agentgateway's validated claims extension retains the raw token for `jwt.rawToken.unredacted()`. The policy projects that value as `subject_token` and a configured absolute HTTP(S) URI as `resource_uri`.
+
+Agentgateway places both values in `MetadataContext.FilterMetadata["aib.tokenexchange"]`. The namespace is a literal flat map key. Its validated claims extension stays in Agentgateway, and only this metadata projection crosses the gRPC boundary.
+
+1. Read `subject_token` and `resource_uri` only from `aib.tokenexchange` metadata.
+2. Validate `subject_token` first. It must be a non-blank string with no case-insensitive `Bearer ` prefix.
+3. Validate `resource_uri`. It must be a non-blank string containing an absolute HTTP or HTTPS URI with a host.
+4. Call `Exchanger.Exchange()` with the accepted values unchanged.
+5. On success, replace the `Authorization` header with `Bearer <exchanged token>`.
+6. On invalid metadata, return a 503 JSON `ImmediateResponse` with `invalid_subject_token` or `invalid_resource`. The subject-token error takes precedence.
+
+ExtProc does not read the raw `Authorization` header or request pseudo-headers. It has no alternate input source, compatibility path, or configuration toggle.
 
 **Helper Functions**:
 
-- `extractBearerToken()`: Parse "Bearer <token>" format
-- `extractHeader()`: Case-insensitive header lookup
-- `validateResourceURI()`: URI parsing and scheme validation
-- `replaceAuthorizationHeader()`: Build HeadersResponse with header mutation
-- `immediateResponse()`: Build ImmediateResponse with status code and JSON body
+- `extractTokenExchangeInput()`: Reads `aib.tokenexchange` metadata and validates both fields in the required order
+- `metadataStringField()`: Requires each metadata field to be a protobuf string value
+- `validateResourceURI()`: Validates the resource URI format, scheme, and host
+- `replaceAuthorizationHeader()`: Builds a HeadersResponse with the successful credential mutation
+- `immediateResponse()`: Builds an ImmediateResponse with a status code and JSON body
 
 #### 3.2.4. Configuration
 
@@ -939,11 +947,13 @@ The gates compose as fail-closed AND: ExtProc OPA can only further restrict a re
 
 #### 3.2.5. Security Features
 
-**Fail-Closed**: Exchange failures return 500 ImmediateResponse; original bearer token is never forwarded.
+**Fail-Closed**: Invalid token-exchange metadata returns a 503 JSON `ImmediateResponse`. ExtProc does not exchange or forward the original credential.
 
-**SSRF Mitigation**: `validateResourceURI()` enforces absolute URIs with http/https schemes only.
+**Metadata Trust Boundary**: ExtProc accepts only `aib.tokenexchange.subject_token` and `aib.tokenexchange.resource_uri`. It never derives either input from HTTP headers or pseudo-headers. [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) defines this clean cutover.
 
-**Token Redaction**: Bearer tokens and exchanged tokens absent from all logs and error responses.
+**SSRF Mitigation**: `validateResourceURI()` accepts only absolute HTTP or HTTPS URIs with a non-empty host.
+
+**Token Redaction**: Subject tokens and exchanged tokens never appear in diagnostics or error responses. ExtProc does not expose an unvalidated resource URI.
 
 **Client Secret Protection**: client_secret stored in memory only (config), never logged (logged as `[REDACTED]`), redacted from error responses.
 
@@ -1150,6 +1160,7 @@ This section lists all architectural decisions made for this project. ADRs docum
 ### RFC 8693 Token Exchange
 
 - [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
+- [ADR 036: ExtProc Metadata Token-Exchange Input](adrs/036-extproc-metadata-token-exchange-input.md) - Fixed dynamic-metadata input contract with no HTTP attribute fallback
 
 ### Security & Encryption
 
@@ -1384,9 +1395,11 @@ Define any project-specific terms or acronyms.)
 
 ### ExtProc (Envoy External Processor) Domain
 
-**ExtProc**: Envoy's External Processor (ExtProc) gRPC protocol allowing a standalone microservice to intercept and modify HTTP requests/responses in real-time. The extproc-token-exchange service implements this protocol to transparently exchange OAuth2 tokens.
+**ExtProc**: Envoy's External Processor (ExtProc) gRPC protocol allows a standalone microservice to intercept and modify HTTP requests and responses. The extproc-token-exchange service uses the protocol for OAuth2 token exchange. It accepts token-exchange input only through the dynamic metadata defined by [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md).
 
-**agentgateway**: Envoy-based reverse proxy deployed alongside the identity broker and ExtProc service. Configures Envoy's ExtProc filter to delegate token exchange decisions to the extproc-token-exchange microservice. Routes requests from agents through the ExtProc filter before forwarding to upstream services.
+**agentgateway**: Envoy-based reverse proxy deployed alongside the identity broker and ExtProc service. It validates JWTs through `jwtAuth` before the `extProc` policy projects token-exchange input into dynamic metadata.
+
+**Token-Exchange Metadata Input**: The `subject_token` and `resource_uri` protobuf string fields in `MetadataContext.FilterMetadata["aib.tokenexchange"]`. Agentgateway supplies the fields after strict JWT validation. ExtProc has no raw-header or pseudo-header fallback.
 
 **Exchanged Token**: OAuth2 access token obtained via RFC 8693 token exchange, scoped to a specific downstream service (resource URI). Replaces the original Bearer token in request headers. Used by agents to access third-party services without exposing their original credentials.
 
