@@ -761,7 +761,7 @@ paths:
         2. Creates JWE state token containing principal, PKCE verifier, service ID, redirect_uri
         3. Redirects user to third-party authorization endpoint
 
-        The redirect_uri parameter must match the host of the incoming request (same-origin validation).
+        redirect_uri must have the same origin (scheme, host, and port) as the configured public URL.
       tags:
         - Third-Party Sessions
       security:
@@ -780,7 +780,7 @@ paths:
           required: true
           description: |
             URI to redirect user after OAuth2 flow completes.
-            Must match the host of the incoming request (same-origin validation).
+            redirect_uri must have the same origin (scheme, host, and port) as the configured public URL.
           schema:
             type: string
             format: uri
@@ -795,14 +795,14 @@ paths:
                 type: string
                 format: uri
         "400":
-          description: Invalid request (missing redirect_uri or origin mismatch)
+          description: Invalid request (missing or malformed redirect_uri, or configured-origin mismatch)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               example:
                 error: invalid_redirect_uri
-                message: redirect_uri must match the host of the request
+                message: redirect_uri must be on the same origin as the configured public URL
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":

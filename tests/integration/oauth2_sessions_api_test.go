@@ -405,25 +405,39 @@ func TestAuthorizeEndpoint_InvalidRedirectURI(t *testing.T) {
 	handler := oauth2_sessions.NewHandler(service)
 	router := setupTestRouter(handler)
 
-	// Make request with redirect_uri on different host
+	tests := []struct {
+		name        string
+		redirectURI string
+	}{
+		{
+			name:        "different host",
+			redirectURI: "https://evil.com/callback",
+		},
+		{
+			name:        "same host different scheme",
+			redirectURI: "http://broker.example.com/callback",
+		},
+	}
+
 	principal := "user@example.com"
-	redirectURI := "https://evil.com/callback"
-	reqURL := "/api/third-party/" + serviceUUID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(redirectURI)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reqURL := "/api/third-party/" + serviceUUID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(tt.redirectURI)
+			req := httptest.NewRequest("GET", reqURL, nil)
+			req.Header.Set("X-Remote-User", principal)
+			req.Host = "broker.example.com" // Set the request host
+			w := httptest.NewRecorder()
 
-	req := httptest.NewRequest("GET", reqURL, nil)
-	req.Header.Set("X-Remote-User", principal)
-	req.Host = "broker.example.com" // Set the request host
-	w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
 
-	router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
 
-	// Should return 400 Bad Request
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-
-	var resp map[string]string
-	err = json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NoError(t, err)
-	assert.Equal(t, "invalid_redirect_uri", resp["error"])
+			var resp map[string]string
+			err = json.Unmarshal(w.Body.Bytes(), &resp)
+			assert.NoError(t, err)
+			assert.Equal(t, "invalid_redirect_uri", resp["error"])
+		})
+	}
 }
 
 func TestAuthorizeEndpoint_VerifyAuthorizationURL(t *testing.T) {

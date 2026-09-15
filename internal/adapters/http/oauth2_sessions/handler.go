@@ -158,9 +158,9 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check that redirect_uri host matches the configured callback origin
+	// Check that redirect_uri origin matches the configured callback origin
 	// This prevents open redirect attacks and ensures the URL is under application control
-	if redirectURL.Host != callbackURL.Host {
+	if redirectURL.Host != callbackURL.Host || redirectURL.Scheme != callbackURL.Scheme {
 		h.logger.Warn("redirect_uri origin mismatch",
 			"redirect_host", redirectURL.Host,
 			"configured_host", callbackURL.Host,
