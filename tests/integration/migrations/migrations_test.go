@@ -229,10 +229,10 @@ func TestMigration029CanonicalIDs(t *testing.T) {
 	}
 }
 
-func TestMigration030ApprovalPatterns(t *testing.T) {
+func TestMigration031ApprovalPatterns(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 29))
+	require.NoError(t, f.Up(t, 30))
 	exists, err := f.ColumnExists(t, "tool_approvals", "tool_pattern")
 	require.NoError(t, err)
 	assert.False(t, exists)
@@ -280,7 +280,7 @@ func TestMigration030ApprovalPatterns(t *testing.T) {
 		assert.Equal(t, map[string]string{"40000000-0000-0000-0000-000000000001": "scalar_tool", "40000000-0000-0000-0000-000000000002": "composite_tool", "40000000-0000-0000-0000-000000000003": "escape_tool"}[row.ID], row.ToolPattern)
 		assert.True(t, toolpattern.Matches(row.ToolPattern, row.ParamsPattern, row.ToolPattern, args))
 	}
-	require.NoError(t, f.Down(t, 29))
+	require.NoError(t, f.Down(t, 30))
 	for _, column := range []string{"tool_pattern", "params_pattern"} {
 		exists, err := f.ColumnExists(t, "tool_approvals", column)
 		require.NoError(t, err)

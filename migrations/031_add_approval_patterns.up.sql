@@ -1,4 +1,4 @@
--- Migration 030: Add glob pattern columns to tool_approvals
+-- Migration 031: Add glob pattern columns to tool_approvals
 --
 -- tool_pattern/params_pattern record which future invocations an approval decision covers.
 -- Both are NOT NULL, so existing rows are backfilled to the exact coverage of the call they

@@ -477,5 +477,5 @@ With multiple developers or agents:
 
 - [ ] T151 Update the OpenAPI contracts, specification artifacts, and rendered approval API documentation for decomposed approval patterns.
 - [ ] T152 Implement the shared `internal/toolpattern` package and record the ADR 035 shared-dependency boundary.
-- [ ] T153 Extend the approval aggregate, repository port, in-memory and PostgreSQL adapters, and migration 030 with non-null pattern fields.
+- [ ] T153 Extend the approval aggregate, repository port, in-memory and PostgreSQL adapters, and migration 031 with non-null pattern fields.
 - [ ] T154 Resolve approval patterns in the domain service, expose them through HTTP read and sync endpoints, and add the React pattern editor.

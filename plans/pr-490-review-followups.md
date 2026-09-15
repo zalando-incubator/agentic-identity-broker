@@ -28,7 +28,7 @@ consumer in #490.
 | D2 | Move `internal/toolpattern` → **`internal/domain/approval/toolpattern`**, and revise **ADR 035 in place** (Status stays `Accepted`). | Resolves finding #3 (domain ring imported a non-ring package). Owner = approval bounded context. ADR 035 is introduced by this branch (`[ADDED]` in the PR file list), so it is edited rather than superseded; the repository owner reviews it before merge. |
 | D3 | **Remove the precedence engine** from the shared package; it moves to `internal/extproc/approval` on branch 026. | Evaluation-of-many belongs with the enforcer; validation/derivation is universal. Resolves finding #4. |
 | D4 | **Delete the TypeScript matcher.** The SPA calls a new broker endpoint to validate + render patterns. | One source of truth; resolves finding #2 and the `String(1e21)` divergence permanently. |
-| D5 | Migration 030 is edited **in place**; no compensating migration. | Tables are empty and 030 has not shipped in a release. See "Migration 030" for the operator note. |
+| D5 | Migration 031 is edited **in place**; no compensating migration. | Tables are empty and 031 has not shipped in a release. See "Migration 031" for the operator note. |
 
 ### D3 in detail — who uses what
 
@@ -335,11 +335,11 @@ Also in the OpenAPI:
 8. `tests/e2e/pages/approval_page.go`: update the `Custom match` selectors (`:295` region) to the new
    accessible names; `GetPatternPreview` (`:319`) now waits for the server-rendered preview.
 
-### Step 7 — Migration 030
+### Step 7 — Migration 031
 
-Tables are empty and 030 has not shipped in a release, so it is edited in place (D5).
+Tables are empty and 031 has not shipped in a release, so it is edited in place (D5).
 
-Rewrite `migrations/030_add_approval_patterns.up.sql`:
+Rewrite `migrations/031_add_approval_patterns.up.sql`:
 - Header comment: state that the backfill sets exact coverage for pre-existing rows and that the
   row-level `trigger_tool_approvals_sync` fires per updated row, which is intentional — it is the
   single mechanism that bumps the sync version (ADR 014). Remove the stale claim currently at
@@ -533,7 +533,7 @@ unchanged behaviour, and `grep -rn "internal/toolpattern" .` must return nothing
 | `internal/domain/approval/service.go` | `:223-291` `ApproveApproval` / `resolveApprovalDecision`; `:445` creation; `:680-711` `ApprovalDetail` | Ordering, escaping, observability, preview field — Steps 2, 4, 5 |
 | `internal/domain/storage/tool_approval.go` | `:11`, `:109-117`, `:128-133` | Grammar import removed, `EnsureApprovable` extracted — Steps 2, 4 |
 | `internal/adapters/http/handlers/approval/approve_handler.go` | `:15-19`, `:61-72` | Presence-preserving DTO + shared decoder — Steps 3, 5 |
-| `migrations/030_add_approval_patterns.up.sql` | `:1-6`, `:49-61`, `:52`, `:67` | Comment, trigger dance, escaping, defaults — Step 7 |
+| `migrations/031_add_approval_patterns.up.sql` | `:1-6`, `:49-61`, `:52`, `:67` | Comment, trigger dance, escaping, defaults — Step 7 |
 | `web/src/components/approvals/ApprovalScopeEditor.tsx` | `:75`, `:93-102`, `:259-267`, `:281`, `:347-359`, `:389`, `:399` | Server-driven validation/preview + a11y labels — Step 6 |
 
 ## Verification
@@ -572,7 +572,7 @@ Run from the repository root.
    → `200` with `"preview": "create_pull_request(repo=acme/*)"`.
    With `-d '{"tool_pattern":"delete_*"}'` → `422` and body `"error":"invalid_pattern"`.
 9. **Migration (Step 7):** `just test-integration-infra` (or
-   `go test -tags=integration ./tests/integration/migrations/ -run TestMigration030ApprovalPatterns`)
+   `go test -tags=integration ./tests/integration/migrations/ -run TestMigration031ApprovalPatterns`)
    — requires Docker/Podman.
 10. **Frontend unit:** `just web-test`.
 11. **Browser acceptance (Steps 5, 6, 9):** `just test-e2e-frontend`. Then drive the review page in a
@@ -584,16 +584,16 @@ Run from the repository root.
 
 ## Assumptions & contingencies
 
-- **`tool_approvals` is empty in every environment, and migration 030's schema is already applied
+- **`tool_approvals` is empty in every environment, and migration 031's schema is already applied
   in the pre-release environment.** Both were stated by the repository owner during planning; they
-  are the reason Step 7 edits 030 in place and does not add an expand/contract compatibility path
+  are the reason Step 7 edits 031 in place and does not add an expand/contract compatibility path
   for the `DROP DEFAULT`s. If a deployment turns out to hold rows, the exact-coverage backfill still
   runs and is correct; only the removed `DISABLE TRIGGER` optimisation is lost, costing one
   sync-version bump per row. If old replicas can still serve after the pre-upgrade migration Job in
-  a real rollout, do **not** drop the defaults in 030: keep them and drop them in a follow-up
+  a real rollout, do **not** drop the defaults in 031: keep them and drop them in a follow-up
   migration one release later.
-- **Migration 030 has not shipped in a release.** If it turns out to have shipped, do **not** edit it
-  in place: add `migrations/031_fix_approval_pattern_defaults.{up,down}.sql` performing the two
+- **Migration 031 has not shipped in a release.** If it turns out to have shipped, do **not** edit it
+  in place: add `migrations/032_fix_approval_pattern_defaults.{up,down}.sql` performing the two
   `DROP DEFAULT`s and re-running the escaped backfill with `WHERE tool_pattern <> aib_glob_escape(tool_name)`.
 - **`lsp rename_file` may not move a Go package directory.** If it fails, do the `git mv` and rewrite
   the five import sites listed in Step 1 by hand, then `just check`.

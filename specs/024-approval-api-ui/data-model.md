@@ -408,9 +408,9 @@ DROP TABLE IF EXISTS approval_sync_state;
 
 ---
 
-### Migration 030: approval patterns
+### Migration 031: approval patterns
 
-`030_add_approval_patterns.up.sql` adds `tool_pattern VARCHAR(255) NOT NULL` and `params_pattern JSONB NOT NULL DEFAULT '{}'` to `tool_approvals`. It backfills each row with `tool_pattern = tool_name` and an exact, escaped params pattern using the same canonical rendering as `internal/toolpattern.ExactParams`; no index is added because matching is client-side in ExtProc. The down migration drops both columns.
+`031_add_approval_patterns.up.sql` adds `tool_pattern VARCHAR(255) NOT NULL` and `params_pattern JSONB NOT NULL DEFAULT '{}'` to `tool_approvals`. It backfills each row with `tool_pattern = tool_name` and an exact, escaped params pattern using the same canonical rendering as `internal/toolpattern.ExactParams`; no index is added because matching is client-side in ExtProc. The down migration drops both columns.
 
 
 ## Relationships
