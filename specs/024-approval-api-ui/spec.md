@@ -137,23 +137,27 @@ A user who has granted permanent approval for a tool invocation can view it alon
 
 ### User Story 7 — User Scopes an Approval Decision (Priority: P2)
 
-When approving for a session or permanently, a user can narrow or widen the future calls covered by
-the decision. The broker validates and renders the scope so the UI cannot diverge from enforcement.
+When approving for a session or permanently, a user can narrow or widen parameter coverage for
+future calls to the reviewed tool. The broker validates and renders the scope so the UI cannot
+diverge from enforcement.
 
 **Acceptance Scenarios**:
 
 1. **Given** a pending approval for `create_pull_request` with repository `acme/app`, **When** the
-user approves without pattern fields, **Then** the stored patterns cover exactly that tool and the
-reviewed arguments.
+user approves without pattern fields, **Then** the stored patterns cover exactly the reviewed tool
+and arguments.
 2. **Given** that pending approval, **When** the user submits `params_pattern: {repo: "acme/*"}`,
-**Then** the pattern is persisted and returned in the approval sync response.
+**Then** the server derives `tool_pattern: "create_pull_request"`, persists the parameter pattern,
+and returns both in the approval sync response.
 3. **Given** that pending approval, **When** the user submits an explicit empty `params_pattern`,
-**Then** every argument is unconstrained.
-4. **Given** that pending approval, **When** the user submits a malformed or non-covering pattern,
-**Then** the API returns `422 invalid_pattern` and the approval remains pending.
-5. **Given** a session or permanent scope editor, **When** the user edits a pattern, **Then** the
-broker validates it and the UI displays the latest server-rendered technical rule; approval remains
-disabled until the current pattern validates successfully.
+**Then** the server leaves every argument unconstrained for the reviewed tool.
+4. **Given** that pending approval, **When** the user submits a malformed or non-covering parameter
+pattern, **Then** the API returns `422 invalid_pattern` and the approval remains pending.
+5. **Given** that pending approval, **When** the user supplies `tool_pattern`, **Then** the API
+returns `400 invalid_request` with `tool_pattern is not allowed` and the approval remains pending.
+6. **Given** a session or permanent scope editor, **When** the user edits a parameter pattern,
+**Then** the broker validates it and the UI displays the latest server-rendered technical rule;
+approval remains disabled until the current pattern validates successfully.
 
 ---
 
@@ -234,7 +238,7 @@ flowchart TD
 - **FR-002**: The `POST /api/approvals` response MUST include an `approval_url` pointing to the Approval UI page for that record.
 - **FR-003**: The system MUST implement idempotent approval creation: a second `POST /api/approvals` for an existing pending record with the same `(principal, agent_id, tool_name, arguments_hash)` MUST return the existing record without creating a duplicate. Deduplication is enforced at the database level by DB-003 and applies to pending records only; approved, consumed, and denied records are not deduplicated.
 - **FR-003a**: The system MUST enforce a rate limit on `POST /api/approvals` per `(principal, agent_id)` pair: a configurable maximum number of pending approvals per pair (default 50) and a configurable creation-rate cap (default 10 requests per minute per pair). Exceeding either limit MUST return `429 Too Many Requests`.
-- **FR-004**: The system MUST expose `POST /api/approvals/{id}/approve` to transition a pending approval to `approved`, accepting a `persistence` field (`once`, `session`, or `permanent`) and optional `tool_pattern` and `params_pattern` fields.
+- **FR-004**: The system MUST expose `POST /api/approvals/{id}/approve` to transition a pending approval to `approved`, accepting a `persistence` field (`once`, `session`, or `permanent`) and an optional `params_pattern` field. A supplied `tool_pattern` MUST return `400 invalid_request` with `tool_pattern is not allowed`.
 - **FR-005**: The system MUST expose `POST /api/approvals/{id}/deny` to transition a pending approval to `denied`, optionally accepting `persistence: "permanent"`. A permanent denial blocks the tool for that agent indefinitely and is visible and revocable from the consent management UI alongside permanent approvals.
 - **FR-006**: The system MUST expose `POST /api/approvals/{id}/consume` to mark an approved `once`-persistence approval as consumed.
 - **FR-007**: The system MUST expose `GET /api/approvals/{id}` to retrieve a single approval record.
@@ -244,17 +248,17 @@ flowchart TD
 - **FR-011**: `POST /api/approvals` MUST be authenticated via both the user's `Authorization: Bearer {subject_token}` (principal derivation) and the gateway's client assertion (validated via CEL expression, same mechanism as token exchange). Both MUST be valid; either failure returns `401 Unauthorized`. Dual auth is REQUIRED here because approval creation establishes user-visible security state and must bind both the trusted gateway caller and the user-scoped subject context.
 - **FR-012**: The long-poll `GET /api/approvals` endpoint MUST be authenticated via a client assertion validated through the existing CEL expression mechanism (same trust path as token exchange). No subject token is required because this is a gateway control-plane sync channel rather than a user-facing operation.
 - **FR-013**: Browser-facing approval endpoints (`GET /api/approvals/{id}`, `POST /api/approvals/{id}/approve`, `POST /api/approvals/{id}/deny`, `POST /api/approvals/{id}/revoke`, `GET /api/approvals/permanent`, `GET /api/approvals/pending`) MUST be authenticated via the acting user's authenticated principal as propagated by the browser auth layer (for example `X-Remote-User` in pre-auth deployments), and the broker MUST verify the acting user matches the approval's stored principal. `POST /api/approvals/{id}/consume` is authenticated via the user's subject token only because it is a per-approval, principal-scoped machine mutation and does not expose cross-user state.
-- **FR-014**: The system MUST serve an Approval UI page at `/consent/approvals/{id}` within the existing React SPA, showing: tool name, all parameters with their values, a human-readable action description, agent name, risk level, and the three persistence choices. When the user selects `session` or `permanent`, the page MUST let them edit the stored pattern and show a live preview; `once` keeps the exact display.
-- **FR-015**: The Approval UI MUST allow the user to approve with persistence `once`, `session`, or `permanent`, or to deny the request. `session` and `permanent` decisions expose the pattern editor while `once` keeps exact coverage.
+- **FR-014**: The system MUST serve an Approval UI page at `/consent/approvals/{id}` within the existing React SPA, showing: tool name, all parameters with their values, a human-readable action description, agent name, risk level, and the three persistence choices. When the user selects `session` or `permanent`, the page MUST let them edit parameter patterns and show a live preview; `once` keeps exact coverage.
+- **FR-015**: The Approval UI MUST allow the user to approve with persistence `once`, `session`, or `permanent`, or to deny the request. `session` and `permanent` decisions expose a parameter-pattern editor while the server derives exact tool coverage; `once` keeps exact coverage.
 - **FR-016**: The Approval UI MUST display an unambiguous warning when the user selects `permanent`, explaining that this authorizes future invocations and can be revoked.
 - **FR-017**: Permanent approvals and permanent denials MUST appear in the consent management UI alongside grants, each with a revocation action (reverting to the default non-permanent state).
 - **FR-018**: Pending approvals MUST have a configurable TTL (default 10 minutes) after which they are expired and no longer actionable.
 - **FR-019**: The `GET /api/approvals` response MUST be grouped by `(principal, agent)` pair and include both `approvals` and `granted_permission_sets` per pair.
 - **FR-020**: The `GET /api/approvals` endpoint MUST support optional filtering via `?principal={p}` to limit the response to a specific principal.
 - **FR-021**: The system MUST maintain a global monotonically increasing version counter incremented on every approval or permission-set mutation, used to generate ETags for the long-poll protocol.
-- **FR-022**: Every approval record MUST carry a `tool_pattern` (a glob over the tool name) and a `params_pattern` (an object mapping argument names to globs). Argument names absent from `params_pattern` are unconstrained. `*` is the only metacharacter; `\` escapes it.
-- **FR-023**: A concrete invocation `(tool_name, arguments)` matches a stored approval when the tool name matches `tool_pattern` and every constrained argument matches its glob. When several approvals match, the most specific wins, ranked by exact tool name over wildcard, then more constrained arguments, then fewer wildcards, then most recently decided.
-- **FR-024**: `POST /api/approvals/{id}/approve` MUST accept optional `tool_pattern` and `params_pattern` fields alongside `persistence`. Omitting `tool_pattern` stores the approval's own tool name; omitting `params_pattern` stores the exact coverage of the reviewed arguments; an explicit empty `params_pattern` leaves all arguments unconstrained. The resolved pattern MUST cover the reviewed tool call; a malformed or non-covering pattern MUST be rejected with `422`.
+- **FR-022**: Every approval record MUST carry a server-derived exact `tool_pattern` for its `tool_name` and a `params_pattern` object mapping argument names to globs. Argument names absent from `params_pattern` are unconstrained. `*` is the only metacharacter; `\` escapes it.
+- **FR-023**: A concrete invocation `(tool_name, arguments)` matches a stored approval when the tool name matches its server-derived exact `tool_pattern` and every constrained argument matches its glob. When several approvals match, the most specific wins, ranked by exact tool name, then more constrained arguments, then fewer wildcards, then most recently decided.
+- **FR-024**: `POST /api/approvals/{id}/approve` MUST accept optional `params_pattern` alongside `persistence`. The server derives `tool_pattern` from the approval's own tool name. Omitting `params_pattern` stores the exact coverage of the reviewed arguments; an explicit empty `params_pattern` leaves all arguments unconstrained. A supplied `tool_pattern` MUST return `400 invalid_request` with `tool_pattern is not allowed`. A malformed or non-covering parameter pattern MUST be rejected with `422 invalid_pattern`.
 - **FR-025**: `POST /api/approvals` MUST store the exact coverage of the reviewed call (`tool_pattern = tool_name`, every argument constrained to its literal value). Pending-record deduplication is unchanged and remains keyed on `(principal, agent_id, tool_name, arguments_hash)`.
 - **FR-026**: `GET /api/approvals`, `GET /api/approvals/{id}`, `GET /api/approvals/pending`, and `GET /api/approvals/permanent` MUST expose `tool_pattern` and `params_pattern`. `arguments_hash` is retained on the sync summary.
 - **FR-027**: Pattern grammar, canonicalization, matching, and precedence MUST have exactly one implementation, shared by the broker and ExtProc, pinned by a language-neutral vector fixture consumed by both test suites.
@@ -313,7 +317,7 @@ approvals:
 - **API-002**: APIs MUST follow Zalando RESTful API and Event Guidelines.
 - **API-003**: `POST /api/approvals` — create pending approval. Auth: `Authorization: Bearer {subject_token}` (user context) + client assertion (gateway, CEL-validated). The gateway identity and the subject context are both required because this endpoint creates user-visible approval state. Optional header: W3C `traceparent`. Request body: `{metadata: {mcp_session_id, agent_session_id, tool_invocation_id, description}, tool_name, arguments}`. Response: `{id, status: "pending", approval_url, created_at}`.
 - **API-004**: `GET /api/approvals/{id}` — retrieve single approval. Auth: acting user principal from the browser auth layer (for example `X-Remote-User` in pre-auth deployments). Response: full approval record.
-- **API-005**: `POST /api/approvals/{id}/approve` — approve pending approval. Auth: acting user principal from the browser auth layer. Request: `{persistence: "once"|"session"|"permanent", tool_pattern?, params_pattern?}`. Response: `{id, status: "approved", persistence, approved_at}`.
+- **API-005**: `POST /api/approvals/{id}/approve` — approve pending approval. Auth: acting user principal from the browser auth layer. Request: `{persistence: "once"|"session"|"permanent", params_pattern?}`. A supplied `tool_pattern` returns `400 invalid_request` with `tool_pattern is not allowed`. Response: `{id, status: "approved", persistence, approved_at}`.
 - **API-006**: `POST /api/approvals/{id}/deny` — deny pending approval. Auth: acting user principal from the browser auth layer. Optional request body: `{persistence: "permanent"}`. Response: `{id, status: "denied", persistence?, denied_at}`.
 - **API-007**: `POST /api/approvals/{id}/consume` — consume a one-time approval. Auth: `Authorization: Bearer {subject_token}` only. Response: `{id, consumed: true, consumed_at}`.
 - **API-008**: `GET /api/approvals` — sync/long-poll endpoint. Auth: client assertion only (`Authorization: Bearer {client_assertion}`, CEL-validated). Optional `?principal={p}`. Long-poll activated by `If-None-Match` + `X-Long-Poll-Timeout` headers. Response: `{pairs: {...}}` with `ETag`. Returns `304 Not Modified` when no changes occur within timeout.
@@ -416,8 +420,8 @@ approvals:
 
 ### Session 2026-09-04
 
-- The pattern is carried as a decomposed `(tool_pattern, params_pattern)` pair rather than the combined grammar string.
-- There is no coverage-mode enum. The user edits the pattern directly and the API takes only the two pattern fields.
+- The pattern is carried as a decomposed `(tool_pattern, params_pattern)` pair rather than the combined grammar string. The server derives the exact `tool_pattern` from the reviewed tool name.
+- There is no coverage-mode enum. The user edits only `params_pattern`; a supplied `tool_pattern` returns `400 invalid_request` with `tool_pattern is not allowed`.
 - An omitted `params_pattern` means exact coverage while an explicit `{}` means no constrained arguments.
 - Permanent denials are unchanged.
 

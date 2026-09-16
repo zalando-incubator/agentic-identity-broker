@@ -617,10 +617,6 @@ components:
           type: string
           enum: [once, session, permanent]
           description: How long the approval should persist
-        tool_pattern:
-          type: string
-          description: >-
-            Glob over the tool name. Omit to cover only the reviewed tool.
         params_pattern:
           type: object
           additionalProperties:
@@ -628,7 +624,7 @@ components:
           description: >-
             Constrained argument names mapped to globs. Omit the field entirely to cover only
             the reviewed argument values; send an empty object to leave every argument
-            unconstrained. The resulting pattern must still cover the reviewed call.
+            unconstrained. The resulting pattern must cover the reviewed arguments.
 
     ApproveResponse:
       type: object

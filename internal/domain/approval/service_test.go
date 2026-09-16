@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval/toolpattern"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -419,31 +420,24 @@ func TestService_ResolveApprovalDecision(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		req    ApproveRequest
-		tool   string
 		params map[string]string
 	}{
-		{"exact defaults", ApproveRequest{Persistence: storage.ApprovalPersistenceOnce}, "test-tool", map[string]string{"key": "value"}},
-		{"unconstrained params", ApproveRequest{Persistence: storage.ApprovalPersistenceSession, ParamsPattern: map[string]string{}}, "test-tool", map[string]string{}},
-		{"edited params", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ParamsPattern: map[string]string{"key": "val*"}}, "test-tool", map[string]string{"key": "val*"}},
-		{"tool family", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: stringPtr("test-*")}, "test-*", map[string]string{"key": "value"}},
-		{"all", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: stringPtr("*"), ParamsPattern: map[string]string{}}, "*", map[string]string{}},
+		{"exact defaults", ApproveRequest{Persistence: storage.ApprovalPersistenceOnce}, map[string]string{"key": "value"}},
+		{"unconstrained params", ApproveRequest{Persistence: storage.ApprovalPersistenceSession, ParamsPattern: map[string]string{}}, map[string]string{}},
+		{"edited params", ApproveRequest{Persistence: storage.ApprovalPersistencePermanent, ParamsPattern: map[string]string{"key": "val*"}}, map[string]string{"key": "val*"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			decision, err := resolveApprovalDecision(approval, test.req)
-			if err != nil || decision.ToolPattern != test.tool || !reflect.DeepEqual(decision.ParamsPattern, test.params) {
+			if err != nil || decision.ToolPattern != toolpattern.EscapeLiteral(approval.ToolName) || !reflect.DeepEqual(decision.ParamsPattern, test.params) {
 				t.Fatalf("decision=%#v err=%v", decision, err)
 			}
 		})
 	}
-	for _, req := range []ApproveRequest{{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: stringPtr("bad?")}, {Persistence: storage.ApprovalPersistencePermanent, ToolPattern: stringPtr("delete_repository")}, {Persistence: storage.ApprovalPersistencePermanent, ParamsPattern: map[string]string{"branch": "main"}}} {
+	for _, req := range []ApproveRequest{{Persistence: storage.ApprovalPersistencePermanent, ParamsPattern: map[string]string{"branch": "main"}}} {
 		if _, err := resolveApprovalDecision(approval, req); !errors.Is(err, ErrApprovalInvalidPattern) {
 			t.Fatalf("expected invalid pattern, got %v", err)
 		}
 	}
-}
-
-func stringPtr(value string) *string {
-	return &value
 }
 
 func TestService_DenyApproval(t *testing.T) {

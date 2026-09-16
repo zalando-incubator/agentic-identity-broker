@@ -44,10 +44,8 @@ feature 026 FR-015 becomes buildable.
 
 Extend feature 024 so that:
 
-- Approvals carry a **glob `tool_pattern` and `params_pattern`** in addition to the exact
-  `tool_name`/`arguments`/`arguments_hash` used for creation-time deduplication.
-- The Approval UI lets the user choose the **breadth** of a `session`/`permanent` approval and
-  previews the pattern that will be stored.
+- Approvals carry a server-derived exact `tool_pattern` and an editable `params_pattern` in addition to the exact `tool_name`/`arguments`/`arguments_hash` used for creation-time deduplication.
+- The Approval UI lets the user choose parameter coverage for a `session` or `permanent` approval and previews the stored pattern.
 - The `GET /api/approvals` sync channel (and browser read endpoints) expose the patterns so
   ExtProc and the UI can match/display them.
 - The pattern grammar, precedence, and canonicalization are defined once, with cross-service
@@ -94,19 +92,19 @@ number of constrained (non-`*`) params; then fewer glob metacharacters. Ties MUS
 deterministically (e.g. most recently approved). This ranking MUST be identical in the broker and
 in ExtProc and is fixed by the FR-B7 test vectors.
 
-### FR-B3: Approval-time breadth selection
+### FR-B3: Approval-time parameter scope
 
-`POST /api/approvals/{id}/approve` MUST accept, alongside `persistence`, an optional breadth
-selector that yields the stored pattern:
+`POST /api/approvals/{id}/approve` MUST accept, alongside `persistence`, an optional
+`params_pattern`. The broker derives `tool_pattern` with `toolpattern.EscapeLiteral` from the
+reviewed tool name. A supplied `tool_pattern` MUST return `400 invalid_request` with
+`tool_pattern is not allowed`.
 
-- `this_call` (default for `once`) → `tool_pattern = tool_name`, `params_pattern` = exact
-  arguments.
-- `any_params` (typical for `session`) → `tool_pattern = tool_name`, `params_pattern = {}`.
-- `custom` → an explicit `tool_pattern` (+ optional `params_pattern`) validated against FR-B1.
+- Omitted `params_pattern` (the default for `once`) stores exact arguments.
+- An explicit `{}` (typical for `session`) leaves all arguments unconstrained.
+- An explicit parameter map stores the supplied patterns after validation against FR-B1.
 
-The broker MUST validate the requested pattern is within the requesting user's authority (it may
-only broaden coverage of the same tool/permission-set boundary, never escalate to tools the user
-could not approve). Invalid or over-broad patterns MUST be rejected with `422`.
+The broker MUST validate each requested parameter pattern. A malformed or non-covering parameter
+pattern MUST be rejected with `422 invalid_pattern`.
 
 ### FR-B4: Creation stays exact (dedup unchanged)
 
@@ -123,12 +121,12 @@ and continues to dedup pending records by `(principal, agent_id, tool_name, argu
   the same pattern fields for UI display.
 - The `arguments_hash` field is retained for exact once/dedup semantics and back-compat.
 
-### FR-B6: Approval UI pattern control
+### FR-B6: Approval UI parameter control
 
-The Approval page MUST let a user selecting `session` or `permanent` choose the breadth (FR-B3)
-and MUST preview the human-readable pattern (design §4.8), e.g.
-"Always allow this agent to call `create_pull_request` on any repo in `acme/*`". `once` retains the
-current exact display.
+The Approval page MUST let a user selecting `session` or `permanent` edit parameter coverage
+(FR-B3) and MUST preview the human-readable pattern (design §4.8), for example "Always allow this
+agent to call `create_pull_request` on any repo in `acme/*`". The UI shows the exact reviewed tool
+as read-only. `once` retains the current exact display.
 
 ### FR-B7: Canonicalization & cross-service test vectors
 
@@ -163,28 +161,22 @@ matching exactly as today.
 - **API-B1**: Update `/api/enduser/openapi.yaml`: `ApprovalSyncResponse` approval summary and the
   single/pending/permanent approval schemas gain `tool_pattern` (string) and `params_pattern`
   (object).
-- **API-B2**: `POST /api/approvals/{id}/approve` request schema gains the optional breadth selector
-  / `tool_pattern` + `params_pattern` (FR-B3).
-- **API-B3**: All API changes MUST be confirmed with stakeholders before implementation
-  (Constitution IV/X). This is an additive, backward-compatible change (new optional fields).
+- **API-B2**: `POST /api/approvals/{id}/approve` accepts optional `params_pattern` alongside `persistence`. The server derives the exact `tool_pattern`; a supplied `tool_pattern` returns `400 invalid_request` with `tool_pattern is not allowed`.
+- **API-B3**: All API changes MUST be confirmed with stakeholders before implementation (Constitution IV/X). This cutover removes the request field before release.
 
 ## 7. Testing
 
 - Unit tests for pattern parsing, matching, and precedence (broker) driven by the FR-B7 vectors.
 - PostgreSQL integration tests for the migration (apply + rollback + backfill correctness).
-- Handler tests: approve with each breadth; sync/read responses include pattern fields.
-- Frontend tests: breadth control + pattern preview.
+- Handler tests: parameter scopes and rejected `tool_pattern`; sync/read responses include effective patterns.
+- Frontend tests: read-only tool statement, parameter control, and pattern preview.
 - The FR-B7 vector fixture is shared with feature 026's ExtProc matcher tests.
 
 ## 8. Acceptance Criteria
 
-1. A user approving `create_pull_request` with `permanent` + `custom` pattern `repo=acme/*` results
-   in a stored approval whose `GET /api/approvals` summary carries
-   `tool_pattern="create_pull_request(repo=acme/*)"` (or equivalent structured form).
-2. A subsequent concrete call `create_pull_request(repo=acme/app, title=…)` matches that approval
-   per the shared FR-B7 vectors, in both the broker and ExtProc implementations.
-3. A `session` + `any_params` approval matches any params for that tool within the session and no
-   others.
+1. A user approving `create_pull_request` with `permanent` and `params_pattern={"repo":"acme/*"}` results in a stored approval whose `GET /api/approvals` summary carries `tool_pattern="create_pull_request"` and `params_pattern={"repo":"acme/*"}`.
+2. A subsequent concrete call `create_pull_request(repo=acme/app, title=…)` matches that approval per the shared FR-B7 vectors, in both the broker and ExtProc implementations.
+3. A `session` approval with `params_pattern={}` matches any parameters for that tool within the session and no others.
 4. Pre-extension exact approvals continue to match exactly after the migration (FR-B8).
 5. The migration applies and rolls back cleanly against real PostgreSQL with no data loss.
 

@@ -410,8 +410,8 @@ ginkgo -v --focus="Authorization Endpoint" ./tests/e2e/
 **Purpose**: Human-in-the-loop authorization for agent tool calls. When an AI agent attempts to invoke a tool that requires human-in-the-loop authorization, the system creates a pending approval record, presents it to the user, and blocks the tool call until the user approves or denies it.
 
 **Domain Model**:
-- **ToolApproval**: Aggregate root representing an approval record with lifecycle status (pending → approved/denied), persistence scope (once/session/permanent), and consumption tracking.
-- **ApprovalService**: Core business logic (`internal/domain/approval/service.go`) — create, get, approve, deny, consume, list permanent, revoke, sync state. Enforces principal-matching, expiry checks, rate limiting, and idempotency.
+- **ToolApproval**: Aggregate root representing an approval record with lifecycle status (pending → approved/denied), persistence scope (once/session/permanent), consumption tracking, and an exact server-derived tool matcher with editable parameter constraints.
+- **ApprovalService**: Core business logic (`internal/domain/approval/service.go`) — create, get, approve, deny, consume, list permanent, revoke, sync state. Enforces principal-matching, expiry checks, rate limiting, idempotency, and server-owned exact tool coverage.
 
 **API Endpoints** (8 routes on end-user server):
 ```
@@ -1518,17 +1518,17 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 ### Tool Approval Domain
 
-**ToolApproval**: Aggregate root representing a human-in-the-loop authorization record for a tool invocation. Contains tool name, arguments, principal, agent reference, lifecycle status, persistence scope, and the `ToolPattern`/`ParamsPattern` describing future calls covered by the decision. Located in `internal/domain/storage/tool_approval.go`. Identified by `ApprovalID` (typed UUID per ADR 013).
+**ToolApproval**: Aggregate root representing a human-in-the-loop authorization record for a tool invocation. Contains tool name, arguments, principal, agent reference, lifecycle status, persistence scope, and `ToolPattern`/`ParamsPattern` for future calls. `ToolPattern` is server-derived from the exact tool name. `ParamsPattern` is the browser-editable scope. Located in `internal/domain/storage/tool_approval.go`. Identified by `ApprovalID` (typed UUID per ADR 013).
 
 **ApprovalStatus**: Value object enum with three states: `pending` (awaiting user decision), `approved` (user authorized the tool call), `denied` (user rejected the tool call). State transitions are one-way: pending → approved or pending → denied.
 
 **ApprovalPersistence**: Value object enum controlling how long an approval decision persists: `once` (single use, consumed after first match), `session` (valid for the agent session duration, scoped by `agent_session_id`), `permanent` (persists indefinitely, visible in consent management UI). Set by the user during approve/deny action.
 
-**ToolPattern**: A glob over a tool name for an approval decision. It uses `*` as its only metacharacter; `\` escapes the next character. Together with ParamsPattern it describes the future invocations covered by the decision.
+**ToolPattern**: The server derives this exact matcher from the approval tool name with `toolpattern.EscapeLiteral`. Browser decisions cannot change it. Together with ParamsPattern it describes the future invocations covered by the decision.
 
 **ParamsPattern**: A map from top-level argument names to glob strings for an approval decision. Argument names absent from the map are unconstrained; a present key must match the canonical rendering of that argument value. An empty map leaves every argument unconstrained.
 
-**Approval pattern authority**: `arguments_hash` is the exact identity used to de-duplicate pending approvals. `ToolPattern`/`ParamsPattern` define coverage and are consumed by ExtProc's approval matcher. `ComputeArgumentsHash` and `toolpattern.Canonical` intentionally serve different purposes and must not be unified.
+**Approval pattern authority**: `arguments_hash` is the exact identity used to de-duplicate pending approvals. `ToolPattern` is server-owned exact coverage, and `ParamsPattern` defines editable coverage consumed by ExtProc's approval matcher. `ComputeArgumentsHash` and `toolpattern.Canonical` intentionally serve different purposes and must not be unified.
 
 **ApprovalSyncState**: Single-row entity tracking a monotonically increasing version counter. Incremented on every approval mutation. Used as the ETag source for the long-poll sync endpoint. Located in `migrations/009_create_approval_sync_state.up.sql`.
 

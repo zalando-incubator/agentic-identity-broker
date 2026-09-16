@@ -47,13 +47,11 @@ export function ApprovalReviewPage({
   onRetry,
 }: ApprovalReviewPageProps) {
   const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
-  const [toolPattern, setToolPattern] = useState(approval.tool_pattern ?? approval.tool_name);
   const [paramsPattern, setParamsPattern] = useState(approval.params_pattern ?? {});
   const [scopeValid, setScopeValid] = useState(false);
 
   const handlePersistenceChange = (value: ApprovalPersistence) => {
     setPersistence(value);
-    setToolPattern(approval.tool_pattern ?? approval.tool_name);
     setParamsPattern(approval.params_pattern ?? {});
   };
 
@@ -94,9 +92,9 @@ export function ApprovalReviewPage({
   }
 
   const handleApprove = async () => {
-    await onApprove(persistence === 'once'
-      ? { persistence }
-      : { persistence, tool_pattern: toolPattern, params_pattern: paramsPattern });
+    await onApprove(
+      persistence === 'once' ? { persistence } : { persistence, params_pattern: paramsPattern },
+    );
   };
 
   const handleDeny = async () => {
@@ -139,8 +137,6 @@ export function ApprovalReviewPage({
         />
         <ApprovalScopeEditor
           approval={approval}
-          toolPattern={toolPattern}
-          onToolPatternChange={setToolPattern}
           paramsPattern={paramsPattern}
           onParamsPatternChange={setParamsPattern}
           persistence={persistence}

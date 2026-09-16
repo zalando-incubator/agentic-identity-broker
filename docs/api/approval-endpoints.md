@@ -67,7 +67,7 @@ header contains the current version.
 **Query Parameters**:
 - `principal` (optional): Filter results for one principal.
 
-Each approval summary includes `tool_pattern` and `params_pattern`. The tool pattern is a glob over the tool name; the params pattern maps constrained argument names to globs. Missing argument names are unconstrained.
+Each approval summary includes server-derived `tool_pattern` and `params_pattern`. The exact tool pattern matches only the approval's tool name. The params pattern maps constrained argument names to globs. Missing argument names are unconstrained.
 
 ### Get Approval Detail
 
@@ -90,7 +90,15 @@ Changes a pending approval to approved. The request requires a `persistence` fie
 - `session`: Valid for the agent session duration.
 - `permanent`: Persists until a user revokes it. The consent interface manages it.
 
-The request can also include optional `tool_pattern` and `params_pattern` fields. Omit both for exact coverage of the reviewed call. Omit `params_pattern` to retain exact argument coverage, or send `{}` to allow any arguments for the selected tool pattern. Malformed patterns and patterns that do not cover the reviewed call return `422 invalid_pattern`.
+The request can include an optional `params_pattern` field. Omit it for exact coverage of the reviewed arguments, or send `{}` to allow all arguments for the reviewed tool. A supplied `tool_pattern` returns `400 invalid_request` with `tool_pattern is not allowed`. Malformed or non-covering parameter patterns return `422 invalid_pattern`.
+
+### Scope Preview
+
+```
+POST /api/approvals/{id}/scope-preview
+```
+
+The request accepts only `params_pattern` and does not change approval state. The response includes the server-derived exact `tool_pattern`, resolved `params_pattern`, and preview. A supplied `tool_pattern` returns `400 invalid_request` with `tool_pattern is not allowed`.
 
 ### Deny
 
@@ -150,6 +158,7 @@ All error responses use the `ApprovalError` schema:
 |---|---|---|
 | `unauthorized` | 401 | Missing or invalid authentication |
 | `bad_request` | 400 | Invalid request body or parameters |
+| `invalid_request` | 400 | Supplied `tool_pattern` or another invalid request field |
 | `forbidden` | 403 | Principal does not match approval owner |
 | `not_found` | 404 | Approval not found |
 | `gone` | 410 | Approval has expired |

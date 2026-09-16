@@ -197,13 +197,14 @@ func (h *CreateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-The approve handler decodes optional pattern fields without collapsing a missing `params_pattern` into an empty object:
+The approve handler detects a supplied `tool_pattern` and rejects it. It preserves an omitted
+`params_pattern` as nil:
 
 ```go
 type approveRequest struct {
-    Persistence   string            `json:"persistence"`
-    ToolPattern   string            `json:"tool_pattern"`
-    ParamsPattern map[string]string `json:"params_pattern"`
+    Persistence           string          `json:"persistence"`
+    DisallowedToolPattern json.RawMessage `json:"tool_pattern"`
+    ParamsPattern         json.RawMessage `json:"params_pattern"`
 }
 ```
 

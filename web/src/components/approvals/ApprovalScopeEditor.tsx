@@ -19,8 +19,6 @@ import type { ApprovalPersistence, ToolApprovalDetail } from '../../types/approv
 
 interface ApprovalScopeEditorProps {
   approval: ToolApprovalDetail;
-  toolPattern: string;
-  onToolPatternChange: (value: string) => void;
   paramsPattern: Record<string, string>;
   onParamsPatternChange: (value: Record<string, string>) => void;
   persistence: ApprovalPersistence;
@@ -29,12 +27,7 @@ interface ApprovalScopeEditorProps {
 }
 
 type ParameterMode = 'exact' | 'any' | 'custom';
-type ToolMode = 'exact' | 'custom';
 
-const TOOL_MODE_OPTIONS: SelectOption[] = [
-  { value: 'exact', label: 'Exactly this tool' },
-  { value: 'custom', label: 'Custom match' },
-];
 
 const PARAMETER_MODE_OPTIONS: SelectOption[] = [
   { value: 'exact', label: 'This value' },
@@ -48,12 +41,6 @@ function isParameterMode(value: string | number | (string | number)[] | null): v
   return value === 'exact' || value === 'any' || value === 'custom';
 }
 
-function isToolMode(value: string | number | (string | number)[] | null): value is ToolMode {
-  return value === 'exact' || value === 'custom';
-}
-function exactToolPattern(approval: ToolApprovalDetail): string {
-  return approval.tool_pattern || approval.tool_name;
-}
 
 function exactParamPattern(approval: ToolApprovalDetail, key: string): string {
   return approval.params_pattern?.[key] ?? '';
@@ -70,8 +57,6 @@ function parameterKeys(approval: ToolApprovalDetail): string[] {
 
 export function ApprovalScopeEditor({
   approval,
-  toolPattern,
-  onToolPatternChange,
   paramsPattern,
   onParamsPatternChange,
   persistence,
@@ -79,7 +64,6 @@ export function ApprovalScopeEditor({
   onScopeValidationChange,
 }: ApprovalScopeEditorProps) {
   const [customKeys, setCustomKeys] = useState<Set<string>>(new Set());
-  const [toolCustom, setToolCustom] = useState(false);
   const [expandedValues, setExpandedValues] = useState<Set<string>>(new Set());
   const [lastPersistence, setLastPersistence] = useState(persistence);
   const validationRequest = useRef(0);
@@ -90,12 +74,10 @@ export function ApprovalScopeEditor({
   if (persistence !== lastPersistence) {
     setLastPersistence(persistence);
     setCustomKeys(new Set());
-    setToolCustom(false);
     setExpandedValues(new Set());
   }
 
 
-  const exactTool = exactToolPattern(approval);
   const keys = parameterKeys(approval);
   const constraints = paramsPattern ?? {};
 
@@ -106,7 +88,6 @@ export function ApprovalScopeEditor({
     const timer = window.setTimeout(() => {
       void approvalApi
         .previewApprovalScope(approval.id, {
-          tool_pattern: toolPattern,
           params_pattern: constraints,
         })
         .then((response) => {
@@ -120,11 +101,10 @@ export function ApprovalScopeEditor({
         });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [approval.id, constraints, onScopeValidationChange, persistence, toolPattern]);
+  }, [approval.id, constraints, onScopeValidationChange, persistence]);
 
   if (persistence === 'once') return null;
 
-  const toolMode: ToolMode = toolCustom || toolPattern !== exactTool ? 'custom' : 'exact';
 
   const modeOf = (key: string): ParameterMode => {
     const value = constraints[key];
@@ -143,6 +123,7 @@ export function ApprovalScopeEditor({
     });
   };
 
+
   const setParamPattern = (key: string, value: string | undefined) => {
     const next = { ...constraints };
     if (value === undefined) delete next[key];
@@ -157,10 +138,6 @@ export function ApprovalScopeEditor({
     else setParamPattern(key, `${exactParamPattern(approval, key)}*`);
   };
 
-  const selectToolMode = (mode: ToolMode) => {
-    setToolCustom(mode === 'custom');
-    onToolPatternChange(mode === 'exact' ? exactTool : `${exactTool}*`);
-  };
 
   const toggleExpanded = (key: string) => {
     setExpandedValues((previous) => {
@@ -173,23 +150,18 @@ export function ApprovalScopeEditor({
 
   const resetToRequest = () => {
     setCustomKeys(new Set());
-    setToolCustom(false);
-    onToolPatternChange(exactTool);
     const exact: Record<string, string> = {};
     for (const key of keys) exact[key] = exactParamPattern(approval, key);
     onParamsPatternChange(exact);
   };
 
   const changedKeys = keys.filter((key) => modeOf(key) !== 'exact');
-  const customized = toolMode === 'custom' || changedKeys.length > 0;
+  const customized = changedKeys.length > 0;
 
-  const changeSummaries = [
-    ...(toolMode === 'custom' ? ['Tool (custom match)'] : []),
-    ...changedKeys.map(
-      (key) =>
-        `${humanizeParameterKey(key)} (${modeOf(key) === 'any' ? 'any value' : 'custom match'})`,
-    ),
-  ];
+  const changeSummaries = changedKeys.map(
+    (key) =>
+      `${humanizeParameterKey(key)} (${modeOf(key) === 'any' ? 'any value' : 'custom match'})`,
+  );
 
   const description = customized
     ? `Future calls may vary: ${changeSummaries.slice(0, 3).join(', ')}${
@@ -199,8 +171,6 @@ export function ApprovalScopeEditor({
       ? 'Future calls must match this tool.'
       : `Future calls must match this tool and all ${keys.length} values from this request.`;
 
-  const toolControlId = `approval-${approval.id}-tool-mode`;
-  const toolLabel = humanizeParameterKey(approval.tool_name);
 
   const content = (
     <div className="space-y-6">
@@ -209,51 +179,6 @@ export function ApprovalScopeEditor({
         to differ.
       </p>
 
-      <div className="space-y-3 border-b border-neutral-200 pb-5">
-        <div className="grid gap-x-3 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(12rem,0.8fr)] sm:items-center">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="text-xs font-semibold uppercase tracking-wide text-trust">Tool</span>
-              <span className="text-sm font-medium text-neutral-900">{toolLabel}</span>
-              {toolLabel !== approval.tool_name && (
-                <code className="font-mono text-xs text-neutral-500 break-all">
-                  {approval.tool_name}
-                </code>
-              )}
-            </div>
-          </div>
-          <span className="text-sm text-secondary">matches</span>
-          <div>
-            <Select
-              id={toolControlId}
-              aria-label="Tool matching rule"
-              size="sm"
-              options={TOOL_MODE_OPTIONS}
-              value={toolMode}
-              disabled={disabled}
-              className="[&>div:last-child]:hidden"
-              onChange={(value) => {
-                if (isToolMode(value)) selectToolMode(value);
-              }}
-            />
-          </div>
-        </div>
-
-        {toolMode === 'custom' && (
-          <TextInput
-            id={`${toolControlId}-pattern`}
-            size="sm"
-            label={`${toolLabel} custom match`}
-            value={toolPattern}
-            disabled={disabled}
-            onChange={(event) => {
-              setToolCustom(true);
-              onToolPatternChange(event.target.value);
-            }}
-            helperText="Use * for any characters. Example: create_* matches tool names that start with create_."
-          />
-        )}
-      </div>
 
       {keys.length > 0 && (
         <div className="space-y-0">
@@ -355,11 +280,7 @@ export function ApprovalScopeEditor({
       <div className="space-y-2 border-t border-neutral-200 pt-5">
         <p className="text-xs font-semibold uppercase tracking-wide text-trust">Applies to</p>
         <ul className="list-disc space-y-1 pl-5 text-sm text-neutral-700 break-words">
-          <li>
-            {toolMode === 'custom'
-              ? `Tools matching ${toolPattern}`
-              : `Only the tool ${approval.tool_name}`}
-          </li>
+          <li>{`Only the tool ${approval.tool_name}`}</li>
           {keys.map((key) => {
             const mode = modeOf(key);
             const label = humanizeParameterKey(key);

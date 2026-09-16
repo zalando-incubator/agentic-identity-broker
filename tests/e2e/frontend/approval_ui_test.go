@@ -407,8 +407,8 @@ var _ = Describe("Approval UI", func() {
 
 		GetLogger().Info("Test passed: Error banner shown for already-actioned approval")
 	})
-	// US7-S2 from specs/024-approval-api-ui/spec.md
-	It("should edit and persist a permanent approval pattern", func() {
+	// US7-S6 from specs/024-approval-api-ui/spec.md
+	It("should edit and persist a permanent parameter scope", func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "create_pull_request", time.Now().Add(10*time.Minute))
 		approval.Arguments = map[string]any{"repo": "acme/app", "title": "Fix bug"}
@@ -419,6 +419,12 @@ var _ = Describe("Approval UI", func() {
 		Expect(approvalPage.WaitForReviewPage(ctx)).To(Succeed())
 		Expect(approvalPage.SelectPersistence(ctx, "Always allow")).To(Succeed())
 		Expect(approvalPage.ExpandApprovalScope(ctx)).To(Succeed())
+		hasToolRule, err := approvalPage.HasVisibleText(ctx, "Tool matching rule")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hasToolRule).To(BeFalse())
+		hasExactTool, err := approvalPage.HasVisibleText(ctx, "Only the tool create_pull_request")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hasExactTool).To(BeTrue())
 		Expect(approvalPage.SetParameterMode(ctx, "repo", "Custom match")).To(Succeed())
 		Expect(approvalPage.SetParameterCustomPattern(ctx, "repo", "acme/*")).To(Succeed())
 		Eventually(func(g Gomega) {

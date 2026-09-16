@@ -763,7 +763,7 @@ var _ = Describe("Tool Approval API", func() {
 		It("should persist an edited parameter glob and expose it through sync", func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{
-				"persistence": "permanent", "tool_pattern": "create_pull_request", "params_pattern": map[string]string{"repo": "acme/*"},
+				"persistence": "permanent", "params_pattern": map[string]string{"repo": "acme/*"},
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -812,11 +812,28 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// US7-S4 from specs/024-approval-api-ui/spec.md
-		It("should reject a non-covering pattern and leave the approval pending", func() {
+		It("should reject a non-covering parameter pattern and leave the approval pending", func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
-			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "tool_pattern": "delete_repository"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "params_pattern": map[string]string{"repo": "other/*"}})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusUnprocessableEntity))
+			errorResponse := decodeJSON[helpers.ApprovalErrorResponse](resp)
+			Expect(errorResponse.Error).To(Equal("invalid_pattern"))
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.Status).To(Equal("pending"))
+		})
+
+		// US7-S5 from specs/024-approval-api-ui/spec.md
+		It("should reject a tool pattern and leave the approval pending", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "tool_pattern": "*"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+			errorResponse := decodeJSON[helpers.ApprovalErrorResponse](resp)
+			Expect(errorResponse.Error).To(Equal("invalid_request"))
+			Expect(errorResponse.Message).To(Equal("tool_pattern is not allowed"))
 			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
 			Expect(err).NotTo(HaveOccurred())
 			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)

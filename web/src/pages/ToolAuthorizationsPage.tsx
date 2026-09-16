@@ -79,13 +79,11 @@ type ActionState = null | 'approve' | 'deny';
 function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps) {
   const [action, setAction] = useState<ActionState>(null);
   const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
-  const [toolPattern, setToolPattern] = useState(approval.tool_pattern ?? approval.tool_name);
   const [paramsPattern, setParamsPattern] = useState(approval.params_pattern ?? {});
   const [scopeValid, setScopeValid] = useState(false);
 
   const handlePersistenceChange = (value: ApprovalPersistence) => {
     setPersistence(value);
-    setToolPattern(approval.tool_pattern ?? approval.tool_name);
     setParamsPattern(approval.params_pattern ?? {});
   };
   const [submitting, setSubmitting] = useState(false);
@@ -96,9 +94,10 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
     setSubmitting(true);
     setErrorText(null);
     try {
-      await approvalApi.approveApproval(approval.id, persistence === 'once'
-        ? { persistence }
-        : { persistence, tool_pattern: toolPattern, params_pattern: paramsPattern });
+      await approvalApi.approveApproval(
+        approval.id,
+        persistence === 'once' ? { persistence } : { persistence, params_pattern: paramsPattern },
+      );
       onResolved(approval.id, persistence === 'permanent');
     } catch {
       setErrorText('Could not approve this request. Check the approval scope and try again.');
@@ -120,7 +119,6 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
     setAction(null);
     setPersistence('once');
     setErrorText(null);
-    setToolPattern(approval.tool_pattern ?? approval.tool_name);
     setParamsPattern(approval.params_pattern ?? {});
   };
 
@@ -141,8 +139,6 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
             />
             <ApprovalScopeEditor
               approval={approval}
-              toolPattern={toolPattern}
-              onToolPatternChange={setToolPattern}
               paramsPattern={paramsPattern}
               onParamsPatternChange={setParamsPattern}
               persistence={persistence}

@@ -48,11 +48,10 @@ type CreateApprovalRequest struct {
 	OpenTelemetryTraceparent *string
 }
 
-// ApproveRequest carries the user's approval decision. A nil ToolPattern or ParamsPattern means
-// the corresponding pattern is omitted; a non-nil empty ParamsPattern leaves all arguments unconstrained.
+// ApproveRequest carries the user's approval decision. A nil ParamsPattern means the pattern is
+// omitted. A non-nil empty ParamsPattern leaves all arguments unconstrained.
 type ApproveRequest struct {
 	Persistence   storage.ApprovalPersistence
-	ToolPattern   *string
 	ParamsPattern map[string]string
 }
 
@@ -276,9 +275,6 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 
 func resolveApprovalDecision(approval *storage.ToolApproval, req ApproveRequest) (storage.ApprovalDecision, error) {
 	toolPattern := toolpattern.EscapeLiteral(approval.ToolName)
-	if req.ToolPattern != nil {
-		toolPattern = *req.ToolPattern
-	}
 	paramsPattern := req.ParamsPattern
 	if paramsPattern == nil {
 		paramsPattern = toolpattern.ExactParams(approval.Arguments)
@@ -317,7 +313,19 @@ func (s *Service) PreviewApprovalScope(ctx context.Context, approvalID id.Approv
 	if err != nil {
 		return nil, err
 	}
-	return &ScopePreview{ToolPattern: decision.ToolPattern, ParamsPattern: decision.ParamsPattern, Preview: toolpattern.Format(decision.ToolPattern, decision.ParamsPattern)}, nil
+	previewParamsPattern := decision.ParamsPattern
+	exactParamsPattern := toolpattern.ExactParams(approval.Arguments)
+	for key, pattern := range decision.ParamsPattern {
+		if pattern == exactParamsPattern[key] {
+			continue
+		}
+		previewParamsPattern = exactParamsPattern
+		for overrideKey, overridePattern := range decision.ParamsPattern {
+			previewParamsPattern[overrideKey] = overridePattern
+		}
+		break
+	}
+	return &ScopePreview{ToolPattern: decision.ToolPattern, ParamsPattern: decision.ParamsPattern, Preview: toolpattern.Format(decision.ToolPattern, previewParamsPattern)}, nil
 }
 
 // DenyApproval transitions a pending approval to denied state.

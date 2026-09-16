@@ -16,9 +16,9 @@ import (
 var errNullParamsPattern = errors.New("params_pattern must be an object")
 
 type approveRequest struct {
-	Persistence   string          `json:"persistence"`
-	ToolPattern   *string         `json:"tool_pattern"`
-	ParamsPattern json.RawMessage `json:"params_pattern"`
+	Persistence           string          `json:"persistence"`
+	DisallowedToolPattern json.RawMessage `json:"tool_pattern"`
+	ParamsPattern         json.RawMessage `json:"params_pattern"`
 }
 
 type approveResponse struct {
@@ -68,7 +68,11 @@ func (h *ApproveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	toolPattern, paramsPattern, err := decodePatternFields(req.ToolPattern, req.ParamsPattern)
+	if len(req.DisallowedToolPattern) > 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "tool_pattern is not allowed")
+		return
+	}
+	paramsPattern, err := decodeParamsPattern(req.ParamsPattern)
 	if err != nil {
 		if errors.Is(err, errNullParamsPattern) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_pattern", err.Error())
@@ -78,7 +82,7 @@ func (h *ApproveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.service.ApproveApproval(r.Context(), approvalID, id.Principal(principalValue), domainapproval.ApproveRequest{Persistence: persistence, ToolPattern: toolPattern, ParamsPattern: paramsPattern})
+	result, err := h.service.ApproveApproval(r.Context(), approvalID, id.Principal(principalValue), domainapproval.ApproveRequest{Persistence: persistence, ParamsPattern: paramsPattern})
 	if err != nil {
 		if errors.Is(err, domainapproval.ErrApprovalInvalidPattern) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_pattern", err.Error())
@@ -104,17 +108,17 @@ func (h *ApproveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func decodePatternFields(toolPattern *string, rawParamsPattern json.RawMessage) (*string, map[string]string, error) {
+func decodeParamsPattern(rawParamsPattern json.RawMessage) (map[string]string, error) {
 	if len(rawParamsPattern) == 0 {
-		return toolPattern, nil, nil
+		return nil, nil
 	}
 	rawParamsPattern = bytes.TrimSpace(rawParamsPattern)
 	if bytes.Equal(rawParamsPattern, []byte("null")) {
-		return nil, nil, errNullParamsPattern
+		return nil, errNullParamsPattern
 	}
 	paramsPattern := make(map[string]string)
 	if err := json.Unmarshal(rawParamsPattern, &paramsPattern); err != nil {
-		return nil, nil, errors.New("params_pattern must be an object")
+		return nil, errors.New("params_pattern must be an object")
 	}
-	return toolPattern, paramsPattern, nil
+	return paramsPattern, nil
 }

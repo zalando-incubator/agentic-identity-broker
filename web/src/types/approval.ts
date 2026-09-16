@@ -50,13 +50,11 @@ export interface ApprovalDetailResponse {
 /** Request body for POST /api/approvals/:id/approve */
 export interface ApproveRequest {
   persistence: ApprovalPersistence;
-  tool_pattern?: string;
   params_pattern?: Record<string, string>;
 }
 
 /** Request body for POST /api/approvals/:id/scope-preview */
 export interface ScopePreviewRequest {
-  tool_pattern?: string;
   params_pattern?: Record<string, string>;
 }
 

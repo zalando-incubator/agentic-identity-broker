@@ -18,7 +18,7 @@
 | `tool_name` | `string` | No | — | VARCHAR(255) | MCP tool name — programmatic identifier |
 | `arguments` | `map[string]interface{}` | No | — | JSONB | Actual argument values passed to the tool call |
 | `arguments_hash` | `string` | No | — | VARCHAR(64) | SHA-256 hex of canonical JSON arguments |
-| `tool_pattern` | `string` | No | Exact tool name | VARCHAR(255) | Glob over the tool name covered by this approval |
+| `tool_pattern` | `string` | No | Exact escaped tool name | VARCHAR(255) | Server-derived exact matcher for the approval tool name |
 | `params_pattern` | `map[string]string` | No | `{}` | JSONB | Constrained argument names mapped to globs; absent names are unconstrained |
 | `description` | `string` | Yes | `""` | TEXT | Caller-provided human-readable action description (primary UI text) |
 | `risk_level` | `string` | Yes | `""` | VARCHAR(50) | Risk classification (low/medium/critical) |
@@ -182,15 +182,13 @@ type ApprovalDecision struct {
 }
 ```
 
-The resolved decision defaults to the reviewed tool name and exact argument patterns. An omitted or `null` `params_pattern` stores exact coverage; an explicit `{}` leaves all arguments unconstrained. A supplied `tool_pattern` and/or `params_pattern` must be valid and must match the reviewed call.
+The server derives the exact escaped tool pattern from the reviewed tool name. An omitted `params_pattern` stores exact coverage. A `null` `params_pattern` returns `422 invalid_pattern`. An explicit `{}` leaves all arguments unconstrained. A supplied `tool_pattern` returns `400 invalid_request` with `tool_pattern is not allowed`.
 
 | Request beyond `persistence` | Resolved `tool_pattern` | Resolved `params_pattern` |
 |---|---|---|
-| nothing | approval tool name | exact reviewed arguments |
-| `params_pattern: {}` | approval tool name | `{}` |
-| `params_pattern: {"repo":"acme/*"}` | approval tool name | as supplied |
-| `tool_pattern: "issues.*"` | `issues.*` | exact reviewed arguments |
-| `tool_pattern: "*", params_pattern: {}` | `*` | `{}` |
+| nothing | escaped approval tool name | exact reviewed arguments |
+| `params_pattern: {}` | escaped approval tool name | `{}` |
+| `params_pattern: {"repo":"acme/*"}` | escaped approval tool name | as supplied |
 
 ---
 

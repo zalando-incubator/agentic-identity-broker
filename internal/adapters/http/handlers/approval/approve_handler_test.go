@@ -40,15 +40,14 @@ func TestApproveHandlerPatterns(t *testing.T) {
 		status     int
 		params     map[string]string
 		code       string
+		message    string
 	}{
-		{"omitted defaults exact", `{"persistence":"once"}`, http.StatusOK, map[string]string{"repo": "acme/app", "title": "Fix bug"}, ""},
-		{"empty allows any arguments", `{"persistence":"session","params_pattern":{}}`, http.StatusOK, map[string]string{}, ""},
-		{"edited pattern persists", `{"persistence":"permanent","params_pattern":{"repo":"acme/*"}}`, http.StatusOK, map[string]string{"repo": "acme/*"}, ""},
-		{"retarget rejects", `{"persistence":"permanent","tool_pattern":"delete_repository"}`, http.StatusUnprocessableEntity, nil, "invalid_pattern"},
-		{"malformed rejects", `{"persistence":"permanent","tool_pattern":"bad?"}`, http.StatusUnprocessableEntity, nil, "invalid_pattern"},
-		{"explicit null rejects", `{"persistence":"permanent","params_pattern":null}`, http.StatusUnprocessableEntity, nil, "invalid_pattern"},
-		{"explicit empty tool rejects", `{"persistence":"permanent","tool_pattern":""}`, http.StatusUnprocessableEntity, nil, "invalid_pattern"},
-		{"non-object params reject", `{"persistence":"permanent","params_pattern":"*"}`, http.StatusBadRequest, nil, "invalid_request"},
+		{"omitted defaults exact", `{"persistence":"once"}`, http.StatusOK, map[string]string{"repo": "acme/app", "title": "Fix bug"}, "", ""},
+		{"empty allows any arguments", `{"persistence":"session","params_pattern":{}}`, http.StatusOK, map[string]string{}, "", ""},
+		{"edited pattern persists", `{"persistence":"permanent","params_pattern":{"repo":"acme/*"}}`, http.StatusOK, map[string]string{"repo": "acme/*"}, "", ""},
+		{"tool pattern is not allowed", `{"persistence":"permanent","tool_pattern":"*"}`, http.StatusBadRequest, nil, "invalid_request", "tool_pattern is not allowed"},
+		{"explicit null rejects", `{"persistence":"permanent","params_pattern":null}`, http.StatusUnprocessableEntity, nil, "invalid_pattern", ""},
+		{"non-object params reject", `{"persistence":"permanent","params_pattern":"*"}`, http.StatusBadRequest, nil, "invalid_request", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			handler, repo, approval := newApprovePatternHandler(t)
@@ -68,6 +67,9 @@ func TestApproveHandlerPatterns(t *testing.T) {
 				}
 				if response["error"] != test.code {
 					t.Fatalf("error = %q", response["error"])
+				}
+				if test.message != "" && response["message"] != test.message {
+					t.Fatalf("message = %q, want %q", response["message"], test.message)
 				}
 				stored, err := repo.Get(context.Background(), approval.ID)
 				if err != nil || stored.Status != storage.ApprovalStatusPending {

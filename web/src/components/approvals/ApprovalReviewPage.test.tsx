@@ -84,10 +84,9 @@ describe('ApprovalReviewPage', () => {
 	    expect(screen.getByRole('button', { name: /approval scope/i })).toBeInTheDocument();
 	    await waitFor(() => expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled());
 
-	    await user.click(screen.getByRole('button', { name: /^approve$/i }));
+    await user.click(screen.getByRole('button', { name: /^approve$/i }));
     expect(onApprove).toHaveBeenCalledWith({
       persistence: 'session',
-      tool_pattern: 'read_file',
       params_pattern: { path: '/tmp/example' },
     });
   });
@@ -110,11 +109,11 @@ describe('ApprovalReviewPage', () => {
       />,
     );
 
-	    await user.click(screen.getByRole('radio', { name: /always allow/i }));
-	    await waitFor(() => expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled());
-	    await user.click(screen.getByRole('button', { name: /^approve$/i }));
+    await user.click(screen.getByRole('radio', { name: /always allow/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: /^approve$/i }));
 
-    expect(onApprove).toHaveBeenCalledWith({ persistence: 'permanent', tool_pattern: 'read_file', params_pattern: { path: '/tmp/example' } });
+    expect(onApprove).toHaveBeenCalledWith({ persistence: 'permanent', params_pattern: { path: '/tmp/example' } });
   });
 
   it('shows a read-only recorded decision for an already approved once-only request', () => {

@@ -22,7 +22,6 @@ const approval: ToolApprovalDetail = {
 };
 
 function ScopeHarness({ detail }: { detail: ToolApprovalDetail }) {
-  const [toolPattern, setToolPattern] = useState(detail.tool_pattern);
   const [paramsPattern, setParamsPattern] = useState(detail.params_pattern);
   const [scopeValid, setScopeValid] = useState(false);
 
@@ -30,8 +29,6 @@ function ScopeHarness({ detail }: { detail: ToolApprovalDetail }) {
     <>
       <ApprovalScopeEditor
         approval={detail}
-        toolPattern={toolPattern}
-        onToolPatternChange={setToolPattern}
         paramsPattern={paramsPattern}
         onParamsPatternChange={setParamsPattern}
         persistence="permanent"
@@ -46,12 +43,10 @@ function ScopeHarness({ detail }: { detail: ToolApprovalDetail }) {
 
 function PersistenceHarness({ detail }: { detail: ToolApprovalDetail }) {
   const [persistence, setPersistence] = useState<ApprovalPersistence>('session');
-  const [toolPattern, setToolPattern] = useState(detail.tool_pattern);
   const [paramsPattern, setParamsPattern] = useState(detail.params_pattern);
 
   const changePersistence = (value: ApprovalPersistence) => {
     setPersistence(value);
-    setToolPattern(detail.tool_pattern);
     setParamsPattern(detail.params_pattern);
   };
 
@@ -62,8 +57,6 @@ function PersistenceHarness({ detail }: { detail: ToolApprovalDetail }) {
       </button>
       <ApprovalScopeEditor
         approval={detail}
-        toolPattern={toolPattern}
-        onToolPatternChange={setToolPattern}
         paramsPattern={paramsPattern}
         onParamsPatternChange={setParamsPattern}
         persistence={persistence}
@@ -77,8 +70,6 @@ describe('ApprovalScopeEditor', () => {
     render(
       <ApprovalScopeEditor
         approval={approval}
-        toolPattern={approval.tool_pattern}
-        onToolPatternChange={vi.fn()}
         paramsPattern={approval.params_pattern}
         onParamsPatternChange={vi.fn()}
         persistence="session"
@@ -96,8 +87,6 @@ describe('ApprovalScopeEditor', () => {
     const { container } = render(
       <ApprovalScopeEditor
         approval={approval}
-        toolPattern={approval.tool_pattern}
-        onToolPatternChange={vi.fn()}
         paramsPattern={approval.params_pattern}
         onParamsPatternChange={vi.fn()}
         persistence="once"
@@ -114,8 +103,6 @@ describe('ApprovalScopeEditor', () => {
     render(
       <ApprovalScopeEditor
         approval={approval}
-        toolPattern={approval.tool_pattern}
-        onToolPatternChange={vi.fn()}
         paramsPattern={approval.params_pattern}
         onParamsPatternChange={onParamsPatternChange}
         persistence="permanent"
@@ -186,9 +173,9 @@ it('labels custom inputs with their distinct targets', async () => {
   const user = userEvent.setup();
   render(<ScopeHarness detail={approval} />);
   await user.click(screen.getByRole('button', { name: /approval scope/i }));
-  await user.click(screen.getByRole('button', { name: 'Tool matching rule' }));
-  await user.click(screen.getByRole('option', { name: 'Custom match' }));
-  expect(screen.getByRole('textbox', { name: 'Create Pull Request custom match' })).toBeInTheDocument();
+
+  expect(screen.getByText('Only the tool create_pull_request')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Tool matching rule' })).not.toBeInTheDocument();
 
   const repoBlock = screen.getByTestId('approval-scope-param-repo');
   await user.click(within(repoBlock).getByRole('button', { name: 'Repo match mode' }));

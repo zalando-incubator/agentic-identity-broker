@@ -67,7 +67,6 @@ type ApprovalListResponse struct {
 // ApproveRequest is the request body for POST /api/approvals/{id}/approve.
 type ApproveRequest struct {
 	Persistence   string            `json:"persistence"`
-	ToolPattern   string            `json:"tool_pattern,omitempty"`
 	ParamsPattern map[string]string `json:"params_pattern,omitempty"`
 }
 

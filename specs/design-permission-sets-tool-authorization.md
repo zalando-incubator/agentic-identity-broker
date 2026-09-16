@@ -691,14 +691,16 @@ tool_name    := identifier | identifier ".*"   # wildcard suffix
 | `issues.*` | `issues.create`, `issues.update`, `issues.close`, etc. | Broad permanent approval |
 | `*` | Any tool | "Trust this agent fully" (within permission set boundary) |
 
-**Matching in ExtProc**: When a tool call arrives, ExtProc checks existing approvals by matching the concrete tool invocation `(tool_name, params)` against stored patterns. The most specific match wins. A permanent approval for `create_pull_request(repo=acme/*)` would match `create_pull_request(repo=acme/app, title="Fix bug")` because unspecified params are implicitly `*`.
+**Matching in ExtProc**: When a tool call arrives, ExtProc checks existing approvals by matching the concrete tool invocation `(tool_name, params)` against stored patterns. The most specific match wins. A permanent approval for `create_pull_request(repo=acme/*)` matches `create_pull_request(repo=acme/app, title="Fix bug")` because unspecified parameters are unconstrained.
+
+**Browser-owned scope**: The broker derives `tool_pattern` as an exact escaped matcher for the reviewed tool name. Browser users cannot edit it. Users can edit only `params_pattern` for session and permanent approvals.
 
 **Approval UI displays**: When users review a pending approval, they see:
 - The **exact tool name** (e.g., `create_pull_request`)
 - The **full parameters** with values (e.g., `repo: acme/app`, `title: Fix bug`, `body: This fixes...`)
 - A **description** rendered from the OPA policy's `description_template` with parameter interpolation
 
-When users choose session or permanent persistence, the UI shows the **pattern** that will be stored and explains what it covers:
+When users choose session or permanent persistence, the UI shows the parameter pattern that will be stored and explains what it covers:
 > "Always allow this agent to call `create_pull_request` on any repo in `acme/*`"
 
 ### 4.9 Key Design Properties

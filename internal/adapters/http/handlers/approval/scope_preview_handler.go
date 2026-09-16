@@ -12,8 +12,8 @@ import (
 )
 
 type scopePreviewRequest struct {
-	ToolPattern   *string         `json:"tool_pattern"`
-	ParamsPattern json.RawMessage `json:"params_pattern"`
+	DisallowedToolPattern json.RawMessage `json:"tool_pattern"`
+	ParamsPattern         json.RawMessage `json:"params_pattern"`
 }
 
 type scopePreviewResponse struct {
@@ -44,7 +44,11 @@ func (h *ScopePreviewHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "bad_request", "request body must be valid JSON")
 		return
 	}
-	toolPattern, paramsPattern, err := decodePatternFields(req.ToolPattern, req.ParamsPattern)
+	if len(req.DisallowedToolPattern) > 0 {
+		writeError(w, http.StatusBadRequest, "invalid_request", "tool_pattern is not allowed")
+		return
+	}
+	paramsPattern, err := decodeParamsPattern(req.ParamsPattern)
 	if err != nil {
 		if errors.Is(err, errNullParamsPattern) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_pattern", err.Error())
@@ -53,7 +57,7 @@ func (h *ScopePreviewHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		}
 		return
 	}
-	preview, err := h.service.PreviewApprovalScope(r.Context(), approvalID, id.Principal(principalValue), domainapproval.ApproveRequest{ToolPattern: toolPattern, ParamsPattern: paramsPattern})
+	preview, err := h.service.PreviewApprovalScope(r.Context(), approvalID, id.Principal(principalValue), domainapproval.ApproveRequest{ParamsPattern: paramsPattern})
 	if err != nil {
 		if errors.Is(err, domainapproval.ErrApprovalInvalidPattern) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_pattern", err.Error())
