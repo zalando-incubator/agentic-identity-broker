@@ -172,6 +172,7 @@ func approvalJourneyToolCall(client extprocv3.ExternalProcessorClient, subjectTo
 		WithHeader(":method", http.MethodPost).
 		WithPath("https://api.github.com").
 		WithBearerToken(subjectToken).
+		WithTokenExchangeMetadata(subjectToken, "https://api.github.com").
 		WithHeader("Mcp-Session-Id", approvalJourneySessionID).
 		WithAgentgatewayProtocol("mcp").
 		BuildWithMetadata()
