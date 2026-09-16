@@ -2185,7 +2185,7 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 			}
 			exchanger := &mockExchanger{
 				exchangeFunc: func(_ context.Context, subjectToken, _ string) (server.ExchangeResult, error) {
-					assert.Equal(t, "subject-token", subjectToken)
+					assert.Equal(t, "test-metadata-subject-token", subjectToken)
 					return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
 				},
 			}
@@ -2235,7 +2235,7 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 			defer mu.Unlock()
 			assert.Equal(t, "verified@example.com", gotPrincipal)
 			assert.Equal(t, []string{"agent-session"}, gotSessionIDs)
-			assert.Equal(t, "subject-token", gotSubjectToken)
+			assert.Equal(t, "test-metadata-subject-token", gotSubjectToken)
 			assert.Equal(t, "deploy", gotCreate.ToolName)
 			assert.Equal(t, map[string]any{"environment": "production"}, gotCreate.Arguments)
 			assert.Equal(t, "mcp-session", gotCreate.Metadata.MCPSessionID)

@@ -548,6 +548,7 @@ func approvalRequest() *helpers.ProcessingRequestBuilder {
 	return helpers.NewRequestHeaders().
 		WithPath(fixtures.ValidResourceURI).
 		WithBearerToken(fixtures.ValidBearerToken).
+		WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 		WithHeader(":method", "POST").
 		WithAgentgatewayProtocol("mcp")
 }

@@ -1231,7 +1231,7 @@ func approvalInvocation(body []byte, state *requestState, decision *authorizatio
 	if request.Params.Arguments == nil {
 		request.Params.Arguments = map[string]any{}
 	}
-	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: request.Params.Name, Arguments: request.Params.Arguments, AgentSessionID: state.agentSessionID, MCPSessionID: configuredHeader(state.headers, "Mcp-Session-Id"), RequestID: semanticRequestID(request.ID), SubjectToken: state.bearerToken}
+	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: request.Params.Name, Arguments: request.Params.Arguments, AgentSessionID: state.agentSessionID, MCPSessionID: configuredHeader(state.headers, "Mcp-Session-Id"), RequestID: semanticRequestID(request.ID), SubjectToken: state.subjectToken}
 	if decision.ApprovalContext != nil {
 		invocation.Description = decision.ApprovalContext.Description
 		invocation.RiskLevel = decision.ApprovalContext.RiskLevel
