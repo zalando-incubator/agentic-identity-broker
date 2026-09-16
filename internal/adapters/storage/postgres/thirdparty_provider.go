@@ -19,7 +19,7 @@ import (
 )
 
 const providerColumns = `
-	s.id, s.canonical_id, s.display_name, s.client_id, s.client_secret_encrypted, s.oauth2_flavor, s.issuer_uri,
+	s.id, s.canonical_id, s.display_name, s.client_id, s.client_secret_encrypted, s.token_endpoint_auth_method, s.oauth2_flavor, s.issuer_uri,
 	s.enable_discovery, s.metadata_url, s.token_endpoint, s.authorize_endpoint, s.scopes,
 	COALESCE((SELECT array_agg(pr.resource_uri ORDER BY pr.resource_uri)
 	          FROM service_protected_resources pr WHERE pr.service_id = s.id), ARRAY[]::text[]),
@@ -50,11 +50,11 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Create(ctx context.Context,
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(execCtx, `INSERT INTO thirdparty_oauth2_services (
-		id, canonical_id, display_name, client_id, client_secret_encrypted, oauth2_flavor, issuer_uri,
+		id, canonical_id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method, oauth2_flavor, issuer_uri,
 		enable_discovery, metadata_url, token_endpoint, authorize_endpoint, scopes,
 		authorization_params, created_at, updated_at, version
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,1)`,
-		record.ID, record.CanonicalID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.Flavor, record.IssuerURI,
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1)`,
+		record.ID, record.CanonicalID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
 		record.EnableDiscovery, record.MetadataURL, record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes,
 		record.AuthorizationParams, record.CreatedAt, record.UpdatedAt)
 	if err != nil {
@@ -157,15 +157,15 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	paramsOmitted := entity.AuthorizationParams == nil
 	canonicalIDOmitted := !entity.ClearCanonicalID && record.CanonicalID == nil
 	query := `UPDATE thirdparty_oauth2_services SET display_name=$2, client_id=$3, client_secret_encrypted=$4,
-		oauth2_flavor=$5, issuer_uri=$6, enable_discovery=$7, metadata_url=$8, token_endpoint=$9,
-		authorize_endpoint=$10, scopes=$11, authorization_params=CASE WHEN $12 THEN authorization_params ELSE $13 END,
-		canonical_id=CASE WHEN $14 THEN NULL WHEN $15 THEN canonical_id ELSE $16 END,
-		updated_at=$17, version=version+1 WHERE id=$1`
-	args := []any{record.ID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.Flavor, record.IssuerURI,
+		token_endpoint_auth_method=$5, oauth2_flavor=$6, issuer_uri=$7, enable_discovery=$8, metadata_url=$9,
+		token_endpoint=$10, authorize_endpoint=$11, scopes=$12, authorization_params=CASE WHEN $13 THEN authorization_params ELSE $14 END,
+		canonical_id=CASE WHEN $15 THEN NULL WHEN $16 THEN canonical_id ELSE $17 END,
+		updated_at=$18, version=version+1 WHERE id=$1`
+	args := []any{record.ID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
 		record.EnableDiscovery, record.MetadataURL, record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes,
 		paramsOmitted, record.AuthorizationParams, entity.ClearCanonicalID, canonicalIDOmitted, record.CanonicalID, record.UpdatedAt}
 	if expectedVersion != nil {
-		query += ` AND version=$18`
+		query += ` AND version=$19`
 		args = append(args, *expectedVersion)
 	}
 	query += ` RETURNING created_at, authorization_params, version, canonical_id`
@@ -448,7 +448,7 @@ type providerResourceQuerier interface {
 
 func scanProvider(scanner providerRowScanner) (*ThirdpartyOAuth2ProviderRecord, error) {
 	var record ThirdpartyOAuth2ProviderRecord
-	err := scanner.Scan(&record.ID, &record.CanonicalID, &record.DisplayName, &record.ClientID, &record.SecretCiphertext, &record.Flavor, &record.IssuerURI, &record.EnableDiscovery, &record.MetadataURL, &record.TokenEndpoint, &record.AuthorizeEndpoint, &record.Scopes, pq.Array(&record.ProtectedResources), &record.AuthorizationParams, &record.CreatedAt, &record.UpdatedAt, &record.Version)
+	err := scanner.Scan(&record.ID, &record.CanonicalID, &record.DisplayName, &record.ClientID, &record.SecretCiphertext, &record.TokenEndpointAuthMethod, &record.Flavor, &record.IssuerURI, &record.EnableDiscovery, &record.MetadataURL, &record.TokenEndpoint, &record.AuthorizeEndpoint, &record.Scopes, pq.Array(&record.ProtectedResources), &record.AuthorizationParams, &record.CreatedAt, &record.UpdatedAt, &record.Version)
 	return &record, err
 }
 func protectedResources(ctx context.Context, db providerResourceQuerier, serviceID id.ServiceID) ([]string, error) {

@@ -259,6 +259,226 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateForCreate_FlavorDispatch(t *test
 	}
 }
 
+func TestThirdpartyOAuth2ProviderEntity_ValidateForCreateAndUpdate_TokenEndpointAuthMethod(t *testing.T) {
+	t.Parallel()
+
+	newConfidentialEntity := func() *ThirdpartyOAuth2ProviderEntity {
+		return &ThirdpartyOAuth2ProviderEntity{
+			ID:          id.MustParseServiceID("650e8400-e29b-41d4-a716-446655440001"),
+			DisplayName: "Provider",
+			ClientID:    "client-id",
+			Secret:      NewPlaintextSecret("client-secret"),
+			IssuerURI:   "https://issuer.example.com",
+			Discovery:   DiscoveryConfig{EnableDiscovery: true},
+		}
+	}
+	newPublicEntity := func() *ThirdpartyOAuth2ProviderEntity {
+		entity := newConfidentialEntity()
+		entity.TokenEndpointAuthMethod = TokenEndpointAuthMethodNone
+		entity.Secret = NewAbsentSecret()
+		return entity
+	}
+
+	tests := []struct {
+		name         string
+		newEntity    func() *ThirdpartyOAuth2ProviderEntity
+		wantErr      string
+		assertEntity func(*testing.T, *ThirdpartyOAuth2ProviderEntity)
+	}{
+		{
+			name:      "accepts a public client without a secret",
+			newEntity: newPublicEntity,
+		},
+		{
+			name: "rejects an unknown token endpoint authentication method",
+			newEntity: func() *ThirdpartyOAuth2ProviderEntity {
+				entity := newConfidentialEntity()
+				entity.TokenEndpointAuthMethod = "client_secret_basic"
+				return entity
+			},
+			wantErr: `token_endpoint_auth_method: only "none" is accepted`,
+		},
+		{
+			name: "rejects public Google before credential-derived enrichment",
+			newEntity: func() *ThirdpartyOAuth2ProviderEntity {
+				entity := newPublicEntity()
+				entity.Flavor = OAuth2FlavorGoogle
+				entity.Secret = NewPlaintextSecret(validGoogleServiceAccountJSON)
+				entity.ClientID = "operator-supplied-client-id"
+				entity.IssuerURI = ""
+				entity.Endpoints = OAuth2Endpoints{
+					TokenEndpoint:     "https://operator.example.com/token",
+					AuthorizeEndpoint: "https://operator.example.com/authorize",
+				}
+				return entity
+			},
+			wantErr: `token_endpoint_auth_method "none" is not supported for the google flavor: the client identifier is derived from the credential document`,
+			assertEntity: func(t *testing.T, entity *ThirdpartyOAuth2ProviderEntity) {
+				assert.Equal(t, id.ClientID("operator-supplied-client-id"), entity.ClientID)
+				assert.Empty(t, entity.IssuerURI)
+				assert.Equal(t, OAuth2Endpoints{
+					TokenEndpoint:     "https://operator.example.com/token",
+					AuthorizeEndpoint: "https://operator.example.com/authorize",
+				}, entity.Endpoints)
+			},
+		},
+		{
+			name: "rejects a public client with a secret",
+			newEntity: func() *ThirdpartyOAuth2ProviderEntity {
+				entity := newPublicEntity()
+				entity.Secret = NewPlaintextSecret("client-secret")
+				return entity
+			},
+			wantErr: `client_secret must not have a non-empty value when token_endpoint_auth_method is "none"`,
+		},
+		{
+			name: "rejects a public client without a client ID",
+			newEntity: func() *ThirdpartyOAuth2ProviderEntity {
+				entity := newPublicEntity()
+				entity.ClientID = ""
+				return entity
+			},
+			wantErr: "client_id is required",
+		},
+		{
+			name: "rejects a confidential client without a secret",
+			newEntity: func() *ThirdpartyOAuth2ProviderEntity {
+				entity := newConfidentialEntity()
+				entity.Secret = NewAbsentSecret()
+				return entity
+			},
+			wantErr: "client_secret is required",
+		},
+		{
+			name:      "preserves confidential client validation",
+			newEntity: newConfidentialEntity,
+		},
+	}
+
+	validations := []struct {
+		name     string
+		validate func(*ThirdpartyOAuth2ProviderEntity) error
+	}{
+		{
+			name: "create",
+			validate: func(entity *ThirdpartyOAuth2ProviderEntity) error {
+				return entity.ValidateForCreate(false)
+			},
+		},
+		{
+			name: "update",
+			validate: func(entity *ThirdpartyOAuth2ProviderEntity) error {
+				return entity.ValidateForUpdate(false)
+			},
+		},
+	}
+
+	for _, validation := range validations {
+		validation := validation
+		t.Run(validation.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, tt := range tests {
+				tt := tt
+				t.Run(tt.name, func(t *testing.T) {
+					entity := tt.newEntity()
+					err := validation.validate(entity)
+					if tt.wantErr == "" {
+						require.NoError(t, err)
+					} else {
+						require.EqualError(t, err, tt.wantErr)
+					}
+					if tt.assertEntity != nil {
+						tt.assertEntity(t, entity)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_ValidateForCreateAndUpdate_RejectsPublicOutboundCredentials(t *testing.T) {
+	t.Parallel()
+
+	newPublicEntity := func(tokenEndpoint string) *ThirdpartyOAuth2ProviderEntity {
+		entity := &ThirdpartyOAuth2ProviderEntity{
+			ID:                      id.MustParseServiceID("650e8400-e29b-41d4-a716-446655440001"),
+			DisplayName:             "Provider",
+			ClientID:                "client-id",
+			Secret:                  NewAbsentSecret(),
+			TokenEndpointAuthMethod: TokenEndpointAuthMethodNone,
+			IssuerURI:               "https://issuer.example.com",
+			Discovery:               DiscoveryConfig{EnableDiscovery: true},
+		}
+		if tokenEndpoint != "" {
+			entity.Discovery.EnableDiscovery = false
+			entity.Endpoints = OAuth2Endpoints{
+				TokenEndpoint:     tokenEndpoint,
+				AuthorizeEndpoint: "https://issuer.example.com/authorize",
+			}
+		}
+		return entity
+	}
+
+	tests := []struct {
+		name                string
+		authorizationParams map[string]string
+		tokenEndpoint       string
+		wantErr             string
+	}{
+		{
+			name:                "rejects a client assertion authorization parameter",
+			authorizationParams: map[string]string{"Client_Assertion": "assertion"},
+			wantErr:             "authorization parameter is not allowed for public clients: Client_Assertion",
+		},
+		{
+			name:                "rejects a client assertion type authorization parameter",
+			authorizationParams: map[string]string{"CLIENT_ASSERTION_TYPE": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+			wantErr:             "authorization parameter is not allowed for public clients: CLIENT_ASSERTION_TYPE",
+		},
+		{
+			name:          "rejects token endpoint userinfo",
+			tokenEndpoint: "https://username:password@issuer.example.com/token",
+			wantErr:       "token_endpoint must not include userinfo for public clients",
+		},
+		{
+			name:          "rejects a token endpoint client secret query parameter",
+			tokenEndpoint: "https://issuer.example.com/token?client_secret=secret",
+			wantErr:       "token_endpoint must not include client authentication parameter for public clients: client_secret",
+		},
+		{
+			name:          "rejects a token endpoint client assertion query parameter",
+			tokenEndpoint: "https://issuer.example.com/token?client_assertion=assertion",
+			wantErr:       "token_endpoint must not include client authentication parameter for public clients: client_assertion",
+		},
+		{
+			name:          "rejects a token endpoint malformed query",
+			tokenEndpoint: "https://issuer.example.com/token?client_secret=%zz",
+			wantErr:       "token_endpoint query parameters are invalid",
+		},
+	}
+
+	validations := []struct {
+		name     string
+		validate func(*ThirdpartyOAuth2ProviderEntity) error
+	}{
+		{name: "create", validate: func(entity *ThirdpartyOAuth2ProviderEntity) error { return entity.ValidateForCreate(false) }},
+		{name: "update", validate: func(entity *ThirdpartyOAuth2ProviderEntity) error { return entity.ValidateForUpdate(false) }},
+	}
+	for _, validation := range validations {
+		validation := validation
+		t.Run(validation.name, func(t *testing.T) {
+			for _, tt := range tests {
+				tt := tt
+				t.Run(tt.name, func(t *testing.T) {
+					entity := newPublicEntity(tt.tokenEndpoint)
+					entity.AuthorizationParams = tt.authorizationParams
+					require.EqualError(t, validation.validate(entity), tt.wantErr)
+				})
+			}
+		})
+	}
+}
 func TestThirdpartyOAuth2ProviderEntity_ValidateForCreate_AllowsEmptyScopes(t *testing.T) {
 	t.Parallel()
 

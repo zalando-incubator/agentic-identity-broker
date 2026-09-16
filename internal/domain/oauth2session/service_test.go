@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -232,6 +233,66 @@ func TestRefreshAccessToken_OmitsAuthorizationParamsForUnconfiguredService(t *te
 	assert.Empty(t, request.Get("business_partner_id"))
 }
 
+func TestRefreshAccessToken_PublicClientOmitsClientSecret(t *testing.T) {
+	service, _, _ := setupService(t)
+	provider := createTestService(id.NewServiceID())
+	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	provider.Secret = model.NewAbsentSecret()
+	provider.AuthorizationParams = map[string]string{"business_partner_id": "12345"}
+
+	var receivedBody string
+	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		receivedBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"token","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer tokenEndpoint.Close()
+
+	provider.Endpoints.TokenEndpoint = tokenEndpoint.URL
+	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	require.NoError(t, err)
+
+	expectedBody := url.Values{}
+	expectedBody.Set("grant_type", "refresh_token")
+	expectedBody.Set("refresh_token", "refresh-token")
+	expectedBody.Set("client_id", "test-client-id")
+	expectedBody.Set("business_partner_id", "12345")
+	assert.Equal(t, expectedBody.Encode(), receivedBody)
+	assert.NotContains(t, receivedBody, "client_secret")
+}
+
+func TestRefreshAccessToken_ConfidentialClientPreservesRequestBody(t *testing.T) {
+	service, _, _ := setupService(t)
+	provider := createTestService(id.NewServiceID())
+	provider.AuthorizationParams = map[string]string{"business_partner_id": "12345"}
+
+	var receivedBody string
+	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		receivedBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"token","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer tokenEndpoint.Close()
+
+	provider.Endpoints.TokenEndpoint = tokenEndpoint.URL
+	_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	require.NoError(t, err)
+
+	expectedBody := url.Values{}
+	expectedBody.Set("grant_type", "refresh_token")
+	expectedBody.Set("refresh_token", "refresh-token")
+	expectedBody.Set("client_id", "test-client-id")
+	expectedBody.Set("client_secret", "test-client-secret")
+	expectedBody.Set("business_partner_id", "12345")
+	assert.Equal(t, expectedBody.Encode(), receivedBody)
+}
+
 func TestInitiateOAuth2Flow_ServiceNotFound(t *testing.T) {
 	ctx := context.Background()
 	service, _, _ := setupService(t)
@@ -386,6 +447,119 @@ func TestInitiateOAuth2Flow_DifferentServicesScopes(t *testing.T) {
 			assert.Equal(t, tt.expectedScope, query.Get("scope"))
 		})
 	}
+}
+
+// =============================================================================
+// Tests for OAuth2 Configuration
+// =============================================================================
+
+func TestHandleCallback_BuildOAuth2Config_PublicClientUsesBodyAuthentication(t *testing.T) {
+	ctx := context.Background()
+	service, _, providerService := setupService(t)
+	principal := id.Principal("user@example.com")
+	serviceID := id.NewServiceID()
+
+	requestCount := atomic.Int64{}
+	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse token request form: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		requestCount.Add(1)
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Empty(t, r.Header.Get("Authorization"), "public clients must not use HTTP authorization")
+		assert.NotContains(t, r.URL.Query(), "client_id", "public client ID must not be sent in the query")
+		assert.NotContains(t, r.URL.Query(), "client_secret", "public client secret must not be sent in the query")
+		assert.Equal(t, "test-client-id", r.PostForm.Get("client_id"))
+		assert.NotContains(t, r.PostForm, "client_secret", "public clients must not send a client secret")
+		assert.Equal(t, "authorization-code", r.PostForm.Get("code"))
+		assert.NotEmpty(t, r.PostForm.Get("code_verifier"), "public clients must send the PKCE verifier")
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"test-access-token","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer tokenEndpoint.Close()
+
+	provider := createTestService(serviceID)
+	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	provider.Secret = model.NewAbsentSecret()
+	provider.Endpoints.TokenEndpoint = tokenEndpoint.URL
+	require.NoError(t, providerService.Create(ctx, provider))
+
+	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://example.com/sessions")
+	require.NoError(t, err)
+
+	result, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID,
+		Code:      "authorization-code",
+		State:     flow.StateToken,
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(1), requestCount.Load(), "public configuration must use body authentication without probing")
+}
+
+func TestHandleCallback_BuildOAuth2Config_ConfidentialClientUsesAutoDetectedAuthentication(t *testing.T) {
+	ctx := context.Background()
+	service, _, providerService := setupService(t)
+	principal := id.Principal("user@example.com")
+	serviceID := id.NewServiceID()
+
+	requestCount := atomic.Int64{}
+	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse token request form: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		switch requestCount.Add(1) {
+		case 1:
+			clientID, clientSecret, ok := r.BasicAuth()
+			assert.True(t, ok, "auto-detection must first try HTTP basic authentication")
+			assert.Equal(t, "test-client-id", clientID)
+			assert.Equal(t, "test-client-secret", clientSecret, "the decrypted secret must reach oauth2.Config")
+			assert.NotContains(t, r.PostForm, "client_id", "basic authentication must not duplicate credentials in the body")
+			assert.NotContains(t, r.PostForm, "client_secret", "basic authentication must not duplicate credentials in the body")
+			assert.NotEmpty(t, r.PostForm.Get("code_verifier"), "the initial authentication probe must retain the PKCE verifier")
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = fmt.Fprint(w, `{"error":"invalid_client"}`)
+		case 2:
+			assert.Empty(t, r.Header.Get("Authorization"), "the fallback must move credentials into the body")
+			assert.NotContains(t, r.URL.Query(), "client_id", "confidential client ID must not be sent in the query")
+			assert.NotContains(t, r.URL.Query(), "client_secret", "confidential client secret must not be sent in the query")
+			assert.Equal(t, "test-client-id", r.PostForm.Get("client_id"))
+			assert.Equal(t, "test-client-secret", r.PostForm.Get("client_secret"))
+			assert.NotEmpty(t, r.PostForm.Get("code_verifier"), "the fallback must retain the PKCE verifier")
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"access_token":"test-access-token","token_type":"Bearer","expires_in":3600}`)
+		default:
+			t.Errorf("unexpected token request %d", requestCount.Load())
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer tokenEndpoint.Close()
+
+	provider := createTestService(serviceID)
+	provider.Endpoints.TokenEndpoint = tokenEndpoint.URL
+	require.NoError(t, providerService.Create(ctx, provider))
+
+	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://example.com/sessions")
+	require.NoError(t, err)
+
+	result, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID,
+		Code:      "authorization-code",
+		State:     flow.StateToken,
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(2), requestCount.Load(), "default oauth2 authentication must fall back from basic to body credentials")
 }
 
 // =============================================================================
@@ -1683,6 +1857,7 @@ func TestForceRefreshSession(t *testing.T) {
 		_, err = service.ForceRefreshSession(ctx, principal, serviceID)
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, oauth2session.ErrRefreshFailed))
+		assert.ErrorContains(t, err, "upstream token endpoint returned error status 400")
 	})
 }
 
@@ -1929,7 +2104,8 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 			assert.Equal(t, principal.String(), logEntry["principal"])
 			assert.Equal(t, serviceID.String(), logEntry["service_id"])
 			assert.NotEmpty(t, logEntry["timestamp"])
-			assert.NotEmpty(t, logEntry["error"])
+			assert.Equal(t, "token_exchange_failed", logEntry["reason"])
+			assert.Equal(t, false, logEntry["public_client"])
 			assert.Equal(t, "ERROR", logEntry["level"]) // Should be ERROR level
 			break
 		}

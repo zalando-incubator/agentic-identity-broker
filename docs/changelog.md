@@ -7,6 +7,10 @@ description: Notable changes, breaking changes, and migration guidance for the A
 
 ## [NEXT VERSION] — Breaking Changes
 
+### Third-Party Public Clients (042)
+
+- **CHANGE:** The `Service` read schema no longer unconditionally requires `client_secret`; public services omit it because they hold no credential.
+
 ### Root-Mounted Consent SPA (038)
 
 - **BREAKING**: The canonical consent browser paths start at `/`. The sessions page is `/sessions`. Former `/consent` paths do not receive server-side redirects.

@@ -23,23 +23,24 @@ import (
 // This type is used exclusively within the postgres adapter; it is never exposed to
 // domain code. Conversion to/from domain entities uses entityToRecord and recordToEntity.
 type ThirdpartyOAuth2ProviderRecord struct {
-	ID                  string                      `db:"id"`
-	CanonicalID         *string                     `db:"canonical_id"`
-	DisplayName         string                      `db:"display_name"`
-	ClientID            string                      `db:"client_id"`
-	SecretCiphertext    []byte                      `db:"client_secret_encrypted"`
-	Flavor              string                      `db:"oauth2_flavor"`
-	IssuerURI           string                      `db:"issuer_uri"`
-	EnableDiscovery     bool                        `db:"enable_discovery"`
-	MetadataURL         *string                     `db:"metadata_url"`
-	TokenEndpoint       string                      `db:"token_endpoint"`
-	AuthorizeEndpoint   string                      `db:"authorize_endpoint"`
-	Scopes              providerScopeArray          `db:"scopes"`
-	ProtectedResources  []string                    `db:"-"` // scanned via pq.Array in query methods
-	AuthorizationParams providerAuthorizationParams `db:"authorization_params"`
-	CreatedAt           time.Time                   `db:"created_at"`
-	UpdatedAt           time.Time                   `db:"updated_at"`
-	Version             int64                       `db:"version"`
+	ID                      string                      `db:"id"`
+	CanonicalID             *string                     `db:"canonical_id"`
+	DisplayName             string                      `db:"display_name"`
+	ClientID                string                      `db:"client_id"`
+	SecretCiphertext        []byte                      `db:"client_secret_encrypted"`
+	TokenEndpointAuthMethod *string                     `db:"token_endpoint_auth_method"`
+	Flavor                  string                      `db:"oauth2_flavor"`
+	IssuerURI               string                      `db:"issuer_uri"`
+	EnableDiscovery         bool                        `db:"enable_discovery"`
+	MetadataURL             *string                     `db:"metadata_url"`
+	TokenEndpoint           string                      `db:"token_endpoint"`
+	AuthorizeEndpoint       string                      `db:"authorize_endpoint"`
+	Scopes                  providerScopeArray          `db:"scopes"`
+	ProtectedResources      []string                    `db:"-"` // scanned via pq.Array in query methods
+	AuthorizationParams     providerAuthorizationParams `db:"authorization_params"`
+	CreatedAt               time.Time                   `db:"created_at"`
+	UpdatedAt               time.Time                   `db:"updated_at"`
+	Version                 int64                       `db:"version"`
 }
 
 // providerScopeArray handles JSONB serialization of model.OAuthScope slices for PostgreSQL.
@@ -118,33 +119,44 @@ func (p providerAuthorizationParams) Value() (driver.Value, error) {
 }
 
 // entityToRecord converts a ThirdpartyOAuth2ProviderEntity to a ThirdpartyOAuth2ProviderRecord.
-// The entity's Secret must be in encrypted state — GetCiphertext() must succeed.
-// Returns an error if the entity is nil or the secret is not yet encrypted.
+// The entity's Secret must be encrypted or explicitly absent; plaintext secrets cannot be stored.
+// Returns an error if the entity is nil or the secret is neither absent nor encrypted.
 func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOAuth2ProviderRecord, error) {
 	if entity == nil {
 		return nil, errors.New("entity cannot be nil")
 	}
 
-	ciphertext, err := entity.Secret.GetCiphertext()
-	if err != nil {
-		return nil, fmt.Errorf("entity secret must be encrypted before storing: %w", err)
+	var ciphertext []byte
+	if !entity.Secret.IsAbsent() {
+		var err error
+		ciphertext, err = entity.Secret.GetCiphertext()
+		if err != nil {
+			return nil, fmt.Errorf("entity secret must be encrypted before storing: %w", err)
+		}
+	}
+
+	var tokenEndpointAuthMethod *string
+	if !entity.TokenEndpointAuthMethod.IsAbsent() {
+		method := string(entity.TokenEndpointAuthMethod)
+		tokenEndpointAuthMethod = &method
 	}
 
 	record := &ThirdpartyOAuth2ProviderRecord{
-		ID:                  entity.ID.String(),
-		CanonicalID:         entity.CanonicalID,
-		DisplayName:         entity.DisplayName,
-		ClientID:            entity.ClientID.String(),
-		SecretCiphertext:    ciphertext,
-		Flavor:              string(entity.Flavor),
-		IssuerURI:           entity.IssuerURI,
-		EnableDiscovery:     entity.Discovery.EnableDiscovery,
-		TokenEndpoint:       entity.Endpoints.TokenEndpoint,
-		AuthorizeEndpoint:   entity.Endpoints.AuthorizeEndpoint,
-		Scopes:              providerScopeArray(entity.Scopes),
-		CreatedAt:           entity.CreatedAt,
-		AuthorizationParams: providerAuthorizationParams(maps.Clone(entity.AuthorizationParams)),
-		UpdatedAt:           entity.UpdatedAt,
+		ID:                      entity.ID.String(),
+		CanonicalID:             entity.CanonicalID,
+		DisplayName:             entity.DisplayName,
+		ClientID:                entity.ClientID.String(),
+		SecretCiphertext:        ciphertext,
+		TokenEndpointAuthMethod: tokenEndpointAuthMethod,
+		Flavor:                  string(entity.Flavor),
+		IssuerURI:               entity.IssuerURI,
+		EnableDiscovery:         entity.Discovery.EnableDiscovery,
+		TokenEndpoint:           entity.Endpoints.TokenEndpoint,
+		AuthorizeEndpoint:       entity.Endpoints.AuthorizeEndpoint,
+		Scopes:                  providerScopeArray(entity.Scopes),
+		CreatedAt:               entity.CreatedAt,
+		AuthorizationParams:     providerAuthorizationParams(maps.Clone(entity.AuthorizationParams)),
+		UpdatedAt:               entity.UpdatedAt,
 	}
 
 	if entity.Discovery.MetadataURL != nil {
@@ -161,8 +173,8 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 }
 
 // recordToEntity converts a ThirdpartyOAuth2ProviderRecord to a ThirdpartyOAuth2ProviderEntity.
-// The resulting entity's Secret is in encrypted state. The domain service must decrypt it
-// before the entity can be used for OAuth2 operations.
+// The resulting entity's Secret is encrypted when ciphertext is stored or absent when it is NULL.
+// The domain service must decrypt encrypted secrets before they can be used for OAuth2 operations.
 // Returns an error if the stored ID is not a valid UUID (data integrity violation).
 func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	if record == nil {
@@ -179,14 +191,20 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 		)
 	}
 
+	tokenEndpointAuthMethod, secret, err := clientAuthenticationFromRecord(record)
+	if err != nil {
+		return nil, err
+	}
+
 	entity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:          serviceID,
-		CanonicalID: record.CanonicalID,
-		DisplayName: record.DisplayName,
-		ClientID:    id.ClientID(record.ClientID),
-		Secret:      model.NewEncryptedSecret(record.SecretCiphertext),
-		Flavor:      model.OAuth2Flavor(record.Flavor),
-		IssuerURI:   record.IssuerURI,
+		ID:                      serviceID,
+		CanonicalID:             record.CanonicalID,
+		DisplayName:             record.DisplayName,
+		ClientID:                id.ClientID(record.ClientID),
+		Secret:                  secret,
+		TokenEndpointAuthMethod: tokenEndpointAuthMethod,
+		Flavor:                  model.OAuth2Flavor(record.Flavor),
+		IssuerURI:               record.IssuerURI,
 		Discovery: model.DiscoveryConfig{
 			EnableDiscovery: record.EnableDiscovery,
 		},
@@ -216,4 +234,25 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 	}
 
 	return entity, nil
+}
+
+func invalidProviderRecord(message string) error {
+	return storage.NewStorageError("recordToEntity", storage.ErrorKindValidation, nil, message)
+}
+
+func clientAuthenticationFromRecord(record *ThirdpartyOAuth2ProviderRecord) (model.TokenEndpointAuthMethod, model.Secret, error) {
+	if record.TokenEndpointAuthMethod != nil {
+		method := model.TokenEndpointAuthMethod(*record.TokenEndpointAuthMethod)
+		if err := method.Validate(); err != nil || method.IsAbsent() {
+			return "", model.Secret{}, invalidProviderRecord("stored token_endpoint_auth_method is invalid")
+		}
+		if record.SecretCiphertext != nil {
+			return "", model.Secret{}, invalidProviderRecord("stored token endpoint authentication method and client secret state must agree")
+		}
+		return method, model.NewAbsentSecret(), nil
+	}
+	if len(record.SecretCiphertext) == 0 {
+		return "", model.Secret{}, invalidProviderRecord("stored confidential client secret ciphertext cannot be empty")
+	}
+	return "", model.NewEncryptedSecret(record.SecretCiphertext), nil
 }

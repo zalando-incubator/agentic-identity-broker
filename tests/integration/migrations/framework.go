@@ -211,6 +211,21 @@ func (f *MigrationTestFramework) DownAll(t *testing.T) error {
 	return nil
 }
 
+// Force clears migration dirty state for a target version.
+func (f *MigrationTestFramework) Force(t *testing.T, version uint) error {
+	t.Helper()
+
+	m, err := migrate.New("file://"+f.migrationsDir, f.connStr)
+	require.NoErrorf(t, err, "failed to create migrate instance")
+	defer func() { _, _ = m.Close() }()
+
+	if err := m.Force(int(version)); err != nil {
+		return fmt.Errorf("failed to force migration version %d: %w", version, err)
+	}
+
+	return nil
+}
+
 // Version returns the current migration version.
 func (f *MigrationTestFramework) Version(t *testing.T) (uint, bool, error) {
 	t.Helper()

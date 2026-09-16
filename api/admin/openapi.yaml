@@ -459,7 +459,7 @@ paths:
 
         Returns a direct array of service objects (no envelope).
 
-        **Security**: All `client_secret` fields are redacted as `"REDACTED"`
+        **Security**: All `client_secret` fields are redacted as `"REDACTED"` for confidential services; the property is omitted for public services, which hold no credential
       operationId: listServices
       tags:
         - Services
@@ -487,6 +487,7 @@ paths:
                       display_name: GitHub Production
                       client_id: Iv1.1234567890abcdef
                       client_secret: REDACTED
+                      token_endpoint_auth_method: null
                       issuer_uri: https://github.com
                       discovery:
                         enable_discovery: true
@@ -504,6 +505,7 @@ paths:
                       display_name: Google Cloud
                       client_id: 123456789-abcdef.apps.googleusercontent.com
                       client_secret: REDACTED
+                      token_endpoint_auth_method: null
                       issuer_uri: https://accounts.google.com
                       discovery:
                         enable_discovery: true
@@ -529,7 +531,7 @@ paths:
         **Validation Rules**:
         - `display_name`: Required, max 255 characters
         - `client_id`: Required, unique across all services
-        - `client_secret`: Required (encrypted at rest, never returned)
+        - `client_secret`: Required unless `token_endpoint_auth_method` is `none` (encrypted at rest, never returned)
         - `issuer_uri`: Required, must be HTTPS URL
         - `scopes`: Optional. Omit it or provide an empty array when the provider does not use OAuth2 scopes.
 
@@ -599,6 +601,7 @@ paths:
                 display_name: GitHub Production
                 client_id: Iv1.1234567890abcdef
                 client_secret: REDACTED
+                token_endpoint_auth_method: null
                 issuer_uri: https://github.com
                 discovery:
                   enable_discovery: true
@@ -632,7 +635,7 @@ paths:
       description: |
         Retrieve detailed configuration for a specific OAuth2 service.
 
-        **Security**: `client_secret` is always redacted as `"REDACTED"`
+        **Security**: All `client_secret` fields are redacted as `"REDACTED"` for confidential services; the property is omitted for public services, which hold no credential
       operationId: getService
       tags:
         - Services
@@ -660,6 +663,7 @@ paths:
                 display_name: GitHub Production
                 client_id: Iv1.1234567890abcdef
                 client_secret: REDACTED
+                token_endpoint_auth_method: null
                 issuer_uri: https://github.com
                 discovery:
                   enable_discovery: true
@@ -692,6 +696,8 @@ paths:
         **Update Semantics**:
         - All fields in the request body will update the service
         - Omitted optional fields are preserved from existing configuration
+        - `token_endpoint_auth_method` is evaluated from the request alone. Omit it or set it to `null` to make the service confidential, regardless of its stored value; a `client_secret` is then required.
+        - Updating a service to `token_endpoint_auth_method: none` removes the stored credential.
         - `created_at` timestamp is preserved
         - `updated_at` timestamp is set to current time
 
@@ -770,6 +776,7 @@ paths:
                 display_name: GitHub Production
                 client_id: Iv1.1234567890abcdef
                 client_secret: REDACTED
+                token_endpoint_auth_method: null
                 issuer_uri: https://github.com
                 discovery:
                   enable_discovery: true
@@ -2178,7 +2185,7 @@ components:
         - id
         - display_name
         - client_id
-        - client_secret
+        - token_endpoint_auth_method
         - oauth2_flavor
         - issuer_uri
         - discovery
@@ -2220,11 +2227,28 @@ components:
             - **standard**: Plain OAuth2 client secret string
             - **google**: Serialized Google service account JSON key document
 
-            **SECURITY**: Always returns "REDACTED" in API responses per SR-003.
+            **SECURITY**: For a confidential service this always returns "REDACTED"; the stored
+            secret is never transmitted. For a public service
+            (`token_endpoint_auth_method: none`) this property is **omitted entirely**, because no
+            credential exists — a redacted placeholder would falsely imply a stored secret.
             Client secrets are never transmitted to the frontend.
             Secrets are encrypted at rest using AES-256-GCM.
           example: REDACTED
           readOnly: true
+        token_endpoint_auth_method:
+          type: string
+          nullable: true
+          enum: [none, null]
+          readOnly: true
+          description: |
+            Client authentication method for this service's upstream token endpoint.
+
+            - `none` — the service is a **public client**. It stores no credential and transmits
+              none upstream; it authenticates the authorization-code exchange with the PKCE code
+              verifier alone.
+            - `null` — the service is a **confidential client**. It declares no method and
+              authenticates upstream with its stored client secret.
+          example: none
         oauth2_flavor:
           type: string
           enum:
@@ -2303,7 +2327,6 @@ components:
       type: object
       required:
         - display_name
-        - client_secret
         - discovery
       properties:
         canonical_id:
@@ -2347,6 +2370,7 @@ components:
           minLength: 1
         client_secret:
           type: string
+          nullable: true
           description: |
             Authentication credential for this service.
 
@@ -2359,9 +2383,34 @@ components:
 
             **SECURITY**: Encrypted at rest using AES-256-GCM.
             Never returned in API responses (always "REDACTED").
+
+            **Conditionally required**: If `token_endpoint_auth_method` is omitted or `null`,
+            `client_secret` is REQUIRED and must contain a non-empty value.
+
+            If `token_endpoint_auth_method` is `none`, this property can be omitted or set to
+            `null` or `""`. A non-empty value returns 400. The broker never stores a secret for a
+            public service.
           example: ghp_secretkey1234567890abcdef
-          minLength: 1
           writeOnly: true
+        token_endpoint_auth_method:
+          type: string
+          nullable: true
+          enum: [none, null]
+          description: |
+            Declares that the upstream token endpoint expects **no client authentication**, making
+            this service a public client (RFC 6749 §2.1, RFC 7591 `token_endpoint_auth_method`).
+
+            Omit this property, or send `null`, for a confidential client; there is no default and
+            no value is ever inferred or assigned on your behalf. `null` means exactly what omission
+            means, so the `null` this property carries in a read response can be submitted straight
+            back in an update without special handling.
+
+            When `none`:
+            - `client_secret` can be omitted, set to `null`, or set to `""`. It MUST NOT contain a non-empty value.
+            - `client_id` is still REQUIRED; it is the only identity presented upstream.
+            - `oauth2_flavor: google` is REJECTED, because the Google variant derives its client
+              identifier from the credential document and a public service has none.
+          example: none
         issuer_uri:
           type: string
           format: uri
@@ -2411,7 +2460,6 @@ components:
       type: object
       required:
         - display_name
-        - client_secret
         - discovery
       properties:
         canonical_id:
@@ -2456,6 +2504,7 @@ components:
           minLength: 1
         client_secret:
           type: string
+          nullable: true
           description: |
             Authentication credential for this service (provide new value to rotate).
 
@@ -2464,9 +2513,41 @@ components:
             - **google**: Serialized Google service account JSON key document (≤32 KB)
 
             **SECURITY**: Encrypted at rest, never returned in responses.
+
+            **Conditionally required**: If `token_endpoint_auth_method` is omitted or `null`,
+            `client_secret` is REQUIRED and must contain a non-empty value.
+
+            If `token_endpoint_auth_method` is `none`, this property can be omitted or set to
+            `null` or `""`. A non-empty value returns 400. The broker never stores a secret for a
+            public service.
           example: ghp_newsecretkey9876543210zyxwvu
-          minLength: 1
           writeOnly: true
+        token_endpoint_auth_method:
+          type: string
+          nullable: true
+          enum: [none, null]
+          description: |
+            Declares that the upstream token endpoint expects **no client authentication**, making
+            this service a public client (RFC 6749 §2.1, RFC 7591 `token_endpoint_auth_method`).
+
+            Omit this property, or send `null`, for a confidential client; there is no default and
+            no value is ever inferred or assigned on your behalf. `null` means exactly what omission
+            means, so the `null` this property carries in a read response can be submitted straight
+            back in an update without special handling.
+
+            When `none`:
+            - `client_secret` can be omitted, set to `null`, or set to `""`. It MUST NOT contain a non-empty value.
+            - `client_id` is still REQUIRED; it is the only identity presented upstream.
+            - `oauth2_flavor: google` is REJECTED, because the Google variant derives its client
+              identifier from the credential document and a public service has none.
+
+            **Full replacement**: this request replaces the service representation in full. The
+            method is evaluated from the request alone — omitting it, or sending `null`, makes the
+            updated service confidential regardless of its stored value, and the request is
+            therefore rejected unless it also supplies a `client_secret`. This mirrors the existing
+            rule that the client secret must be re-sent on every update. Updating a confidential
+            service to `none` REMOVES the stored credential, leaving no dormant secret.
+          example: none
         issuer_uri:
           type: string
           format: uri

@@ -226,3 +226,136 @@ func TestMigration029CanonicalIDs(t *testing.T) {
 		assert.False(t, exists)
 	}
 }
+
+func TestMigration031(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+
+	// Step 1: Apply migration 030 and add a confidential service predating migration 031.
+	require.NoError(t, f.Up(t, 30))
+	require.NoError(t, f.ExecuteSQL(t, `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, issuer_uri, enable_discovery, scopes)
+		VALUES
+			('30000000-0000-0000-0000-000000000001', 'pre-existing confidential service', 'client-pre',
+			 '\x01', 'https://oauth.example.com', false, '[]');
+	`))
+
+	// Step 2: Apply migration 031 without changing existing services.
+	require.NoError(t, f.Up(t, 31))
+	version, dirty, err := f.Version(t)
+	require.NoError(t, err)
+	assert.Equal(t, uint(31), version)
+	assert.False(t, dirty)
+
+	methodIsNull, err := f.QuerySQL(t, `
+		SELECT token_endpoint_auth_method IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '30000000-0000-0000-0000-000000000001';
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, "true", strings.TrimSpace(methodIsNull), "migration 031 must not backfill existing services")
+
+	// Step 3: The database rejects both invalid client-authentication combinations.
+	err = f.ExecuteSQL(t, `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method, issuer_uri, enable_discovery, scopes)
+		VALUES
+			('30000000-0000-0000-0000-000000000002', 'public service with ciphertext', 'client-invalid-public',
+			 '\x01', 'none', 'https://oauth.example.com', false, '[]');
+	`)
+	require.Error(t, err, "a public service cannot persist a client-secret ciphertext")
+
+	err = f.ExecuteSQL(t, `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method, issuer_uri, enable_discovery, scopes)
+		VALUES
+			('30000000-0000-0000-0000-000000000003', 'confidential service without ciphertext', 'client-invalid-confidential',
+			 NULL, NULL, 'https://oauth.example.com', false, '[]');
+	`)
+	require.Error(t, err, "a confidential service must persist a client-secret ciphertext")
+
+	err = f.ExecuteSQL(t, `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method, issuer_uri, enable_discovery, scopes)
+		VALUES
+			('30000000-0000-0000-0000-000000000005', 'service with unsupported authentication method', 'client-invalid-method',
+			 NULL, 'client_secret_post', 'https://oauth.example.com', false, '[]');
+	`)
+	require.Error(t, err, "an unsupported client-authentication method must not persist")
+
+	// Step 4: A public service blocks rollback and is named in the error.
+	require.NoError(t, f.ExecuteSQL(t, `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method, issuer_uri, enable_discovery, scopes)
+		VALUES
+			('30000000-0000-0000-0000-000000000004', 'public service blocking rollback', 'client-public',
+			 NULL, 'none', 'https://oauth.example.com', false, '[]');
+	`))
+	err = f.Down(t, 30)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "public service blocking rollback")
+
+	// Step 5: A failed down migration remains dirty and leaves its column in place.
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	// go-migrate marks the requested target before executing the guarded down migration.
+	assert.Equal(t, uint(30), version)
+	assert.True(t, dirty)
+	exists, err := f.ColumnExists(t, "thirdparty_oauth2_services", "token_endpoint_auth_method")
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	confidentialCiphertext, err := f.QuerySQL(t, `
+		SELECT encode(client_secret_encrypted, 'hex')
+		FROM thirdparty_oauth2_services
+		WHERE id = '30000000-0000-0000-0000-000000000001';
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, "01", strings.TrimSpace(confidentialCiphertext))
+
+	publicServiceIsIntact, err := f.QuerySQL(t, `
+		SELECT token_endpoint_auth_method = 'none' AND client_secret_encrypted IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '30000000-0000-0000-0000-000000000004';
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, "true", strings.TrimSpace(publicServiceIsIntact))
+
+	// Step 6: Clear the failed migration state, remove the public service, and roll back cleanly.
+	require.NoError(t, f.Force(t, 31))
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	assert.Equal(t, uint(31), version)
+	assert.False(t, dirty)
+	require.NoError(t, f.ExecuteSQL(t, `
+		DELETE FROM thirdparty_oauth2_services
+		WHERE id = '30000000-0000-0000-0000-000000000004';
+	`))
+	require.NoError(t, f.Down(t, 30))
+
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	assert.Equal(t, uint(30), version)
+	assert.False(t, dirty)
+	exists, err = f.ColumnExists(t, "thirdparty_oauth2_services", "token_endpoint_auth_method")
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	confidentialCiphertext, err = f.QuerySQL(t, `
+		SELECT encode(client_secret_encrypted, 'hex')
+		FROM thirdparty_oauth2_services
+		WHERE id = '30000000-0000-0000-0000-000000000001';
+	`)
+	require.NoError(t, err)
+	assert.Equal(t, "01", strings.TrimSpace(confidentialCiphertext))
+
+	err = f.ExecuteSQL(t, `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, issuer_uri, enable_discovery, scopes)
+		VALUES
+			('30000000-0000-0000-0000-000000000006', 'confidential service without ciphertext after rollback', 'client-null-after-rollback',
+			 NULL, 'https://oauth.example.com', false, '[]');
+	`)
+	require.Error(t, err, "rollback must restore the confidential client-secret constraint")
+}

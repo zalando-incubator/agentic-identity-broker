@@ -41,6 +41,8 @@ encryption safety:
 
 This immutable two-state design makes it impossible to accidentally persist a plaintext secret
 or accidentally expose ciphertext as a string.
+>
+> **Amended by ADR 036:** ADR 036 supersedes this two-state description. `Secret` now has an explicitly constructed absent state, reachable only through `NewAbsentSecret()`. Plaintext remains impossible to persist because `GetCiphertext()` errors for plaintext.
 
 ## Rationale
 

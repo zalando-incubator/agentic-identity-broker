@@ -110,6 +110,23 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 			Expect(mockServer.GetTokenCalled()).To(BeTrue())
 		})
 
+		It("should retain token requests in order", func() {
+			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
+			for _, code := range []string{"first-code", "second-code"} {
+				response, err := http.PostForm(tokenURL, url.Values{"code": {code}})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response.Body.Close()).To(Succeed())
+			}
+
+			requests := mockServer.GetTokenRequests()
+			Expect(requests).To(HaveLen(2))
+			for i, code := range []string{"first-code", "second-code"} {
+				form, err := url.ParseQuery(requests[i].Body)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(form.Get("code")).To(Equal(code))
+			}
+		})
+
 		It("should return error response when configured", func() {
 			mockServer.WithErrorResponse("invalid_grant")
 
@@ -165,6 +182,53 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 			Expect(err.Error()).To(ContainSubstring("Client.Timeout exceeded"))
 			Expect(time.Since(start)).To(BeNumerically("<", 500*time.Millisecond))
 			Expect(mockServer.GetTokenCalled()).To(BeTrue())
+		})
+		It("binds each strict PKCE verifier to its authorization code", func() {
+			mockServer.WithStrictPublicClientMode()
+			client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			}}
+			authorize := func(state, verifier string) string {
+				authorizationURL := mockServer.URL() + "/oauth/authorize?" + url.Values{
+					"client_id":             {"test-client"},
+					"redirect_uri":          {"http://localhost:9999/cb"},
+					"response_type":         {"code"},
+					"state":                 {state},
+					"code_challenge":        {helpers.GenerateCodeChallenge(verifier)},
+					"code_challenge_method": {"S256"},
+				}.Encode()
+				response, err := client.Get(authorizationURL)
+				Expect(err).NotTo(HaveOccurred())
+				defer func() { _ = response.Body.Close() }()
+				Expect(response.StatusCode).To(Equal(http.StatusFound))
+				callbackURL, err := url.Parse(response.Header.Get("Location"))
+				Expect(err).NotTo(HaveOccurred())
+				return callbackURL.Query().Get("code")
+			}
+
+			firstVerifier := "first-flow-verifier"
+			secondVerifier := "second-flow-verifier"
+			firstCode := authorize("first-flow", firstVerifier)
+			secondCode := authorize("second-flow", secondVerifier)
+			Expect(firstCode).NotTo(Equal(secondCode))
+
+			crossFlowResponse, err := http.PostForm(mockServer.URL()+"/oauth/token", url.Values{
+				"grant_type":    {"authorization_code"},
+				"code":          {firstCode},
+				"code_verifier": {secondVerifier},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = crossFlowResponse.Body.Close() }()
+			Expect(crossFlowResponse.StatusCode).To(Equal(http.StatusBadRequest))
+
+			validResponse, err := http.PostForm(mockServer.URL()+"/oauth/token", url.Values{
+				"grant_type":    {"authorization_code"},
+				"code":          {firstCode},
+				"code_verifier": {firstVerifier},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = validResponse.Body.Close() }()
+			Expect(validResponse.StatusCode).To(Equal(http.StatusOK))
 		})
 	})
 

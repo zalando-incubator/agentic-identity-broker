@@ -130,6 +130,35 @@ func ServiceWithID(svcID string) *model.ThirdpartyOAuth2ProviderEntity {
 	}
 }
 
+// PublicClientService returns a deterministic public-client OAuth2 service fixture.
+// Each call creates a fresh service ID for test isolation.
+func PublicClientService() *model.ThirdpartyOAuth2ProviderEntity {
+	now := time.Now()
+
+	return &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                      id.NewServiceID(),
+		DisplayName:             "Public Test Service",
+		ClientID:                id.ClientID("public-client-id"),
+		Secret:                  model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		Flavor:                  model.OAuth2FlavorStandard,
+		IssuerURI:               "https://public-issuer.example.com",
+		Discovery: model.DiscoveryConfig{
+			EnableDiscovery: false,
+		},
+		Endpoints: model.OAuth2Endpoints{
+			TokenEndpoint:     "https://public-issuer.example.com/token",
+			AuthorizeEndpoint: "https://public-issuer.example.com/authorize",
+		},
+		Scopes: []model.OAuthScope{
+			{ScopeValue: "read", Description: "Read access"},
+		},
+		ProtectedResources: []string{"https://public-issuer.example.com/api"},
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+}
+
 // GoogleServiceAccountFixtureJSON returns a realistic but non-functional Google service
 // account JSON document as a string. Used for E2E testing of the google OAuth2 flavor.
 // The private_key value is fake and will not pass cryptographic validation,

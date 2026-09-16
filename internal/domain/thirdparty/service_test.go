@@ -1,10 +1,13 @@
 package thirdparty
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -141,6 +144,73 @@ func newNoopBranchKeyManager() *noopBranchKeyManager {
 
 func (m *noopBranchKeyManager) Create(_ context.Context, _ domainencryption.BranchKeySubject) (string, error) {
 	return "", nil
+}
+
+type functionFieldProviderRepository struct {
+	ports.ThirdpartyOAuth2ProviderRepository
+
+	createFn func(context.Context, *model.ThirdpartyOAuth2ProviderEntity) error
+	getFn    func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error)
+	updateFn func(context.Context, *model.ThirdpartyOAuth2ProviderEntity, *int64) error
+	listFn   func(context.Context) ([]*model.ThirdpartyOAuth2ProviderEntity, error)
+}
+
+func (m *functionFieldProviderRepository) Create(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) error {
+	if m.createFn == nil {
+		return errors.New("unexpected repository Create call")
+	}
+	return m.createFn(ctx, entity)
+}
+
+func (m *functionFieldProviderRepository) Get(ctx context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	if m.getFn == nil {
+		return nil, errors.New("unexpected repository Get call")
+	}
+	return m.getFn(ctx, serviceID)
+}
+
+func (m *functionFieldProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+	if m.updateFn == nil {
+		return errors.New("unexpected repository Update call")
+	}
+	return m.updateFn(ctx, entity, expectedVersion)
+}
+
+func (m *functionFieldProviderRepository) List(ctx context.Context) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
+	if m.listFn == nil {
+		return nil, errors.New("unexpected repository List call")
+	}
+	return m.listFn(ctx)
+}
+
+type functionFieldEncryption struct {
+	encryptFn func(context.Context, []byte, map[string]string) ([]byte, error)
+	decryptFn func(context.Context, []byte, map[string]string) ([]byte, error)
+}
+
+func (m *functionFieldEncryption) Encrypt(ctx context.Context, plaintext []byte, encryptionContext map[string]string) ([]byte, error) {
+	if m.encryptFn == nil {
+		return nil, errors.New("unexpected encryption Encrypt call")
+	}
+	return m.encryptFn(ctx, plaintext, encryptionContext)
+}
+
+func (m *functionFieldEncryption) Decrypt(ctx context.Context, ciphertext []byte, encryptionContext map[string]string) ([]byte, error) {
+	if m.decryptFn == nil {
+		return nil, errors.New("unexpected encryption Decrypt call")
+	}
+	return m.decryptFn(ctx, ciphertext, encryptionContext)
+}
+
+type functionFieldBranchKeyManager struct {
+	createFn func(context.Context, domainencryption.BranchKeySubject) (string, error)
+}
+
+func (m *functionFieldBranchKeyManager) Create(ctx context.Context, subject domainencryption.BranchKeySubject) (string, error) {
+	if m.createFn == nil {
+		return "", errors.New("unexpected branch key Create call")
+	}
+	return m.createFn(ctx, subject)
 }
 
 // minimalValidEntity returns the smallest ThirdpartyOAuth2ProviderEntity that passes
@@ -467,6 +537,62 @@ func TestThirdpartyOAuth2ProviderService_Create_EncryptedSecretFails(t *testing.
 	mockRepo.AssertNotCalled(t, "Create")
 }
 
+func TestThirdpartyOAuth2ProviderService_Create_PublicClient_ProvisionsBranchKeyAndStoresAbsentSecret(t *testing.T) {
+	ctx := context.Background()
+	serviceID := id.NewServiceID()
+	entity := minimalValidEntity(serviceID, model.NewAbsentSecret())
+	entity.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	entity.AuthorizationParams = map[string]string{"audience": "sentinel-client-secret"}
+
+	var stored *model.ThirdpartyOAuth2ProviderEntity
+	repo := &functionFieldProviderRepository{
+		createFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity) error {
+			stored = provider
+			return nil
+		},
+	}
+	var branchKeySubjects []domainencryption.BranchKeySubject
+	branchKeyManager := &functionFieldBranchKeyManager{
+		createFn: func(_ context.Context, subject domainencryption.BranchKeySubject) (string, error) {
+			branchKeySubjects = append(branchKeySubjects, subject)
+			return "public-service-key", nil
+		},
+	}
+	logOutput := new(bytes.Buffer)
+	service := NewThirdpartyOAuth2ProviderService(repo, &functionFieldEncryption{}, branchKeyManager, nil, false, slog.New(slog.NewJSONHandler(logOutput, nil)))
+
+	require.NoError(t, service.Create(ctx, entity))
+	require.NotNil(t, stored)
+	assert.True(t, entity.Secret.IsAbsent())
+	assert.True(t, stored.Secret.IsAbsent())
+	assert.Equal(t, []domainencryption.BranchKeySubject{serviceSubject(serviceID)}, branchKeySubjects)
+	assertPublicClientAuditEvent(t, logOutput, "service.thirdparty.provider_created", serviceID, "sentinel-client-secret")
+}
+
+func assertPublicClientAuditEvent(t *testing.T, logs *bytes.Buffer, event string, serviceID id.ServiceID, sentinels ...string) {
+	t.Helper()
+
+	var auditEvent map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var entry map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &entry))
+		if entry["event"] == event {
+			auditEvent = entry
+			break
+		}
+	}
+
+	require.NotNil(t, auditEvent, "expected %s audit event", event)
+	assert.Equal(t, serviceID.String(), auditEvent["service_id"])
+	assert.Equal(t, true, auditEvent["public_client"])
+	for _, field := range []string{"client_secret", "client_assertion", "code", "code_verifier", "code_challenge", "access_token", "refresh_token"} {
+		assert.NotContains(t, auditEvent, field)
+	}
+	for _, sentinel := range sentinels {
+		assert.NotContains(t, logs.String(), sentinel)
+	}
+}
+
 // =============================================================================
 // Get tests
 // =============================================================================
@@ -498,6 +624,35 @@ func TestThirdpartyOAuth2ProviderService_Get_DecryptsSecret(t *testing.T) {
 	assert.Equal(t, "plaintext-secret", pt)
 	mockEnc.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
+}
+
+func TestThirdpartyOAuth2ProviderService_Get_PublicClientReturnsAbsentWithoutDecryptWarning(t *testing.T) {
+	ctx := context.Background()
+	serviceID := id.NewServiceID()
+	stored := minimalValidEntity(serviceID, model.NewAbsentSecret())
+	stored.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+
+	var logs bytes.Buffer
+	service := NewThirdpartyOAuth2ProviderService(
+		&functionFieldProviderRepository{
+			getFn: func(_ context.Context, requestedID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+				assert.Equal(t, serviceID, requestedID)
+				return stored, nil
+			},
+		},
+		&functionFieldEncryption{},
+		newNoopBranchKeyManager(),
+		nil,
+		false,
+		slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
+	)
+
+	provider, err := service.Get(ctx, serviceID)
+
+	require.NoError(t, err)
+	require.NotNil(t, provider)
+	assert.True(t, provider.Secret.IsAbsent())
+	assert.Empty(t, logs.String(), "public clients must not cause a decrypt warning or error")
 }
 
 func TestThirdpartyOAuth2ProviderService_Get_NotFound(t *testing.T) {
@@ -731,6 +886,104 @@ func TestThirdpartyOAuth2ProviderService_Update_EncryptedSecretFails(t *testing.
 	mockRepo.AssertNotCalled(t, "Update")
 }
 
+func TestThirdpartyOAuth2ProviderService_Update_PublicClient_ProvisionsBranchKeyAndStoresAbsentSecret(t *testing.T) {
+	ctx := context.Background()
+	serviceID := id.NewServiceID()
+	entity := minimalValidEntity(serviceID, model.NewAbsentSecret())
+	entity.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	entity.AuthorizationParams = map[string]string{"audience": "sentinel-client-secret"}
+
+	var stored *model.ThirdpartyOAuth2ProviderEntity
+	repo := &functionFieldProviderRepository{
+		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+			stored = provider
+			return nil
+		},
+	}
+	var branchKeySubjects []domainencryption.BranchKeySubject
+	branchKeyManager := &functionFieldBranchKeyManager{
+		createFn: func(_ context.Context, subject domainencryption.BranchKeySubject) (string, error) {
+			branchKeySubjects = append(branchKeySubjects, subject)
+			return "public-service-key", nil
+		},
+	}
+	logOutput := new(bytes.Buffer)
+	service := NewThirdpartyOAuth2ProviderService(repo, &functionFieldEncryption{}, branchKeyManager, nil, false, slog.New(slog.NewJSONHandler(logOutput, nil)))
+
+	require.NoError(t, service.Update(ctx, entity, nil))
+	require.NotNil(t, stored)
+	assert.True(t, entity.Secret.IsAbsent())
+	assert.True(t, stored.Secret.IsAbsent())
+	assert.Equal(t, []domainencryption.BranchKeySubject{serviceSubject(serviceID)}, branchKeySubjects)
+	assertPublicClientAuditEvent(t, logOutput, "service.thirdparty.provider_updated", serviceID, "sentinel-client-secret")
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_TransitionsCredentialStorage(t *testing.T) {
+	t.Run("confidential to public clears stored ciphertext", func(t *testing.T) {
+		ctx := context.Background()
+		serviceID := id.NewServiceID()
+		persisted := minimalValidEntity(serviceID, model.NewEncryptedSecret([]byte("old-ciphertext")))
+		require.True(t, persisted.Secret.IsEncrypted())
+
+		repo := &functionFieldProviderRepository{
+			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+				persisted = provider.Copy()
+				return nil
+			},
+		}
+		var encryptCalls int
+		encryption := &functionFieldEncryption{
+			encryptFn: func(_ context.Context, _ []byte, _ map[string]string) ([]byte, error) {
+				encryptCalls++
+				return nil, errors.New("public client must not encrypt a secret")
+			},
+		}
+		service := NewThirdpartyOAuth2ProviderService(repo, encryption, newNoopBranchKeyManager(), nil, false, slog.Default())
+		publicUpdate := minimalValidEntity(serviceID, model.NewAbsentSecret())
+		publicUpdate.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+
+		require.NoError(t, service.Update(ctx, publicUpdate, nil))
+		assert.Zero(t, encryptCalls)
+		assert.True(t, persisted.Secret.IsAbsent(), "repo.Update must receive the absent secret that clears stored ciphertext")
+		assert.Equal(t, model.TokenEndpointAuthMethodNone, persisted.TokenEndpointAuthMethod)
+	})
+
+	t.Run("public to confidential encrypts and stores supplied secret", func(t *testing.T) {
+		ctx := context.Background()
+		serviceID := id.NewServiceID()
+		persisted := minimalValidEntity(serviceID, model.NewAbsentSecret())
+		persisted.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+
+		repo := &functionFieldProviderRepository{
+			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+				persisted = provider.Copy()
+				return nil
+			},
+		}
+		var encryptedPlaintext []byte
+		var encryptionContext map[string]string
+		encryption := &functionFieldEncryption{
+			encryptFn: func(_ context.Context, plaintext []byte, context map[string]string) ([]byte, error) {
+				encryptedPlaintext = append([]byte(nil), plaintext...)
+				encryptionContext = context
+				return []byte("new-ciphertext"), nil
+			},
+		}
+		service := NewThirdpartyOAuth2ProviderService(repo, encryption, newNoopBranchKeyManager(), nil, false, slog.Default())
+		confidentialUpdate := minimalValidEntity(serviceID, model.NewPlaintextSecret("new-secret"))
+
+		require.NoError(t, service.Update(ctx, confidentialUpdate, nil))
+		assert.Equal(t, []byte("new-secret"), encryptedPlaintext)
+		assert.Equal(t, map[string]string{"service_id": serviceID.String()}, encryptionContext)
+		assert.True(t, confidentialUpdate.Secret.IsEncrypted())
+		assert.True(t, persisted.Secret.IsEncrypted())
+		assert.True(t, persisted.TokenEndpointAuthMethod.IsAbsent())
+		ciphertext, err := persisted.Secret.GetCiphertext()
+		require.NoError(t, err)
+		assert.Equal(t, []byte("new-ciphertext"), ciphertext)
+	})
+}
+
 // =============================================================================
 // List tests
 // =============================================================================
@@ -763,6 +1016,34 @@ func TestThirdpartyOAuth2ProviderService_List_DecryptsAll(t *testing.T) {
 	assert.Equal(t, "secret-2", pt2)
 	mockEnc.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
+}
+
+func TestThirdpartyOAuth2ProviderService_List_PublicClientReturnsAbsentWithoutDecryptWarning(t *testing.T) {
+	ctx := context.Background()
+	serviceID := id.NewServiceID()
+	stored := minimalValidEntity(serviceID, model.NewAbsentSecret())
+	stored.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+
+	var logs bytes.Buffer
+	service := NewThirdpartyOAuth2ProviderService(
+		&functionFieldProviderRepository{
+			listFn: func(context.Context) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
+				return []*model.ThirdpartyOAuth2ProviderEntity{stored}, nil
+			},
+		},
+		&functionFieldEncryption{},
+		newNoopBranchKeyManager(),
+		nil,
+		false,
+		slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
+	)
+
+	providers, err := service.List(ctx)
+
+	require.NoError(t, err)
+	require.Len(t, providers, 1)
+	assert.True(t, providers[0].Secret.IsAbsent())
+	assert.Empty(t, logs.String(), "public clients must not cause a decrypt warning or error")
 }
 
 func TestThirdpartyOAuth2ProviderService_List_GracefulDecryptionFailure(t *testing.T) {
@@ -872,6 +1153,35 @@ func TestThirdpartyOAuth2ProviderService_FindByProtectedResource_DecryptionFailu
 	assert.Equal(t, svcID, result.ID)
 	assert.True(t, result.Secret.IsEncrypted(), "secret should remain encrypted on decryption failure")
 	mockEnc.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestThirdpartyOAuth2ProviderService_FindByProtectedResource_PublicClientReturnsAbsentWithoutDecryptWarning(t *testing.T) {
+	ctx := context.Background()
+	serviceID := id.NewServiceID()
+	stored := minimalValidEntity(serviceID, model.NewAbsentSecret())
+	stored.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+
+	var logs bytes.Buffer
+	mockRepo := new(MockRepository)
+	mockEnc := new(MockEncryption)
+	mockRepo.On("FindByProtectedResource", ctx, "https://api.example.com").Return(stored, nil)
+	service := NewThirdpartyOAuth2ProviderService(
+		mockRepo,
+		mockEnc,
+		newNoopBranchKeyManager(),
+		nil,
+		false,
+		slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
+	)
+
+	provider, err := service.FindByProtectedResource(ctx, "https://api.example.com")
+
+	require.NoError(t, err)
+	require.NotNil(t, provider)
+	assert.True(t, provider.Secret.IsAbsent())
+	assert.Empty(t, logs.String(), "public clients must not cause a decrypt warning or error")
+	mockEnc.AssertNotCalled(t, "Decrypt")
 	mockRepo.AssertExpectations(t)
 }
 

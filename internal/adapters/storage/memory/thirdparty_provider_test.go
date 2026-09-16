@@ -209,3 +209,73 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ChildResourceResolverLifecyc
 	require.Error(t, err)
 	assert.True(t, tokenexchange.IsResourceNotConfigured(err))
 }
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_PublicProviderRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                      id.NewServiceID(),
+		DisplayName:             "Public Provider",
+		ClientID:                id.ClientID("public-client-id"),
+		Secret:                  model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		IssuerURI:               "https://issuer.example.com",
+	}
+
+	require.NoError(t, repo.Create(ctx, provider))
+
+	stored, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
+	assert.True(t, stored.IsPublicClient())
+	assert.True(t, stored.Secret.IsAbsent())
+}
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsInvalidClientAuthentication(t *testing.T) {
+	tests := []struct {
+		name   string
+		method model.TokenEndpointAuthMethod
+		secret model.Secret
+	}{
+		{
+			name:   "confidential service without an encrypted secret",
+			secret: model.NewAbsentSecret(),
+		},
+		{
+			name:   "public service with an encrypted secret",
+			method: model.TokenEndpointAuthMethodNone,
+			secret: model.NewEncryptedSecret([]byte("ciphertext")),
+		},
+		{
+			name:   "service with an unsupported authentication method",
+			method: "client_secret_post",
+			secret: model.NewEncryptedSecret([]byte("ciphertext")),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+			provider := testProvider(id.NewServiceID())
+			provider.TokenEndpointAuthMethod = tt.method
+			provider.Secret = tt.secret
+
+			err := repo.Create(context.Background(), provider)
+			requireStorageKind(t, err, storage.ErrorKindValidation)
+		})
+	}
+}
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsPlaintextSecret(t *testing.T) {
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:          id.NewServiceID(),
+		DisplayName: "Confidential Provider",
+		ClientID:    id.ClientID("confidential-client-id"),
+		Secret:      model.NewPlaintextSecret("plaintext-secret"),
+		IssuerURI:   "https://issuer.example.com",
+	}
+
+	err := repo.Create(context.Background(), provider)
+	requireStorageKind(t, err, storage.ErrorKindValidation)
+}

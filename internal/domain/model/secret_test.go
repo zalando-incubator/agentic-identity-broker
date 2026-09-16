@@ -234,3 +234,84 @@ func TestSecret_ZeroValue(t *testing.T) {
 		assert.Contains(t, err.Error(), "empty")
 	})
 }
+
+func TestSecret_States(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		secret        Secret
+		wantAbsent    bool
+		wantPlaintext bool
+		wantEncrypted bool
+	}{
+		{
+			name:          "explicit absent",
+			secret:        NewAbsentSecret(),
+			wantAbsent:    true,
+			wantPlaintext: false,
+			wantEncrypted: false,
+		},
+		{
+			name:          "plaintext",
+			secret:        NewPlaintextSecret("mysecret"),
+			wantAbsent:    false,
+			wantPlaintext: true,
+			wantEncrypted: false,
+		},
+		{
+			name:          "encrypted",
+			secret:        NewEncryptedSecret([]byte{0x01, 0x02}),
+			wantAbsent:    false,
+			wantPlaintext: false,
+			wantEncrypted: true,
+		},
+		{
+			name:          "zero value",
+			secret:        Secret{},
+			wantAbsent:    false,
+			wantPlaintext: true,
+			wantEncrypted: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.wantAbsent, tt.secret.IsAbsent())
+			assert.Equal(t, tt.wantPlaintext, tt.secret.IsPlaintext())
+			assert.Equal(t, tt.wantEncrypted, tt.secret.IsEncrypted())
+		})
+	}
+}
+
+func TestSecret_AbsentAccessors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		access func(Secret) error
+	}{
+		{
+			name: "GetPlaintext",
+			access: func(secret Secret) error {
+				_, err := secret.GetPlaintext()
+				return err
+			},
+		},
+		{
+			name: "GetCiphertext",
+			access: func(secret Secret) error {
+				_, err := secret.GetCiphertext()
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.access(NewAbsentSecret())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "absent state")
+		})
+	}
+}
