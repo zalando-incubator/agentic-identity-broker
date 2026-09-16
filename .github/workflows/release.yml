@@ -12,7 +12,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     # Because this workflow builds and publishes release artifacts, we
@@ -163,3 +163,24 @@ jobs:
           tags: ${{ steps.extproc-meta.outputs.tags }}
           labels: ${{ steps.extproc-meta.outputs.labels }}
           annotations: ${{ steps.extproc-meta.outputs.annotations }}
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "GitHub Release $GITHUB_REF_NAME already exists; leaving it unchanged."
+            exit 0
+          fi
+          cat <<'EOF' > release-notes.md
+          ### Container images
+
+          - Broker: `ghcr.io/${{ github.repository }}:${{ github.ref_name }}`
+          - Migrations: `ghcr.io/${{ github.repository }}-migrate:${{ github.ref_name }}`
+          - ExtProc: `ghcr.io/${{ github.repository }}-extproc:${{ github.ref_name }}`
+          EOF
+
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes-file release-notes.md
