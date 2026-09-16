@@ -2,8 +2,9 @@
 // MCP server mock. It uses the mcp-go library for full protocol compliance.
 //
 // Registered tools:
-//   - echo    — echoes the provided message back to the caller
-//   - whoami  — returns the Authorization token scheme and JWT claims visible to the MCP server
+//   - echo — echoes the provided message back to the caller
+//   - whoami — returns the Authorization token scheme and JWT claims visible to the MCP server
+//   - create_issue — simulates a GitHub issue creation after user approval
 //
 // The Authorization header is captured via HTTPContextFunc so that tool
 // handlers can inspect the token injected by ExtProc.
@@ -33,7 +34,7 @@ func Health(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-// NewMCPServer creates an MCPServer with the echo and whoami tools registered.
+// NewMCPServer creates an MCP server with the demo tools registered.
 func NewMCPServer() *server.MCPServer {
 	s := server.NewMCPServer("mock-mcp-server", "1.0.0")
 
@@ -49,8 +50,15 @@ func NewMCPServer() *server.MCPServer {
 		mcp.WithDescription("Returns the Authorization token scheme visible to the MCP server."),
 	)
 
+	createIssueTool := mcp.NewTool("create_issue",
+		mcp.WithDescription("Creates a demo GitHub issue after approval."),
+		mcp.WithString("repository", mcp.Description("Repository that receives the issue"), mcp.Required()),
+		mcp.WithString("title", mcp.Description("Issue title"), mcp.Required()),
+	)
+
 	s.AddTool(echoTool, handleEcho)
 	s.AddTool(whoamiTool, handleWhoami)
+	s.AddTool(createIssueTool, handleCreateIssue)
 	return s
 }
 
@@ -96,6 +104,11 @@ func handleWhoami(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResu
 
 	slog.Info("MCP whoami response", "auth_scheme", scheme, "claims_included", claims != nil)
 	return mcp.NewToolResultText(contentText), nil
+}
+
+// handleCreateIssue simulates the approved action in the Compose demonstration.
+func handleCreateIssue(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return mcp.NewToolResultText("Created demo issue #1"), nil
 }
 
 // extractScheme returns just the scheme word from an Authorization header value (e.g., "Bearer").

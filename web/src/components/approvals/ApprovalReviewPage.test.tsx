@@ -136,12 +136,12 @@ describe('ApprovalReviewPage', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'Approved' })).toBeVisible();
-    expect(screen.getByText('Decision recorded')).toBeVisible();
-    expect(
-      screen.getByText('This request is complete and is shown read-only.'),
-    ).toBeVisible();
-    expect(screen.getByText('You can safely close this page.')).toBeVisible();
+    expect(screen.getByText('Decision recorded.')).toBeVisible();
+    expect(screen.getByText('The next tool invocation will be allowed.')).toBeVisible();
+    expect(screen.getByText('You can return to your agent now.')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Approved' })).not.toBeInTheDocument();
+    expect(screen.queryByText('This request is complete and is shown read-only.')).not.toBeInTheDocument();
+    expect(screen.queryByText('You can safely close this page.')).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /^approve$/i }),
     ).not.toBeInTheDocument();

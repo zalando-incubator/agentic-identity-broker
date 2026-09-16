@@ -24,6 +24,18 @@ export function ApprovalConfirmation({
 
   const outcome = isApproved ? 'Approved' : 'Denied';
 
+  if (isApproved) {
+    return (
+      <div className="max-w-2xl mx-auto p-6">
+        <div className="rounded-xl border border-success-primary/30 bg-success-light p-8 text-center space-y-4">
+          <p className="text-xl font-semibold text-success-dark">Decision recorded.</p>
+          <p className="text-sm text-neutral-700">The next tool invocation will be allowed.</p>
+          <p className="text-sm text-neutral-700">You can return to your agent now.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-2xl mx-auto p-6">
       <div

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -434,8 +435,13 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 
 	toolReq := mcp.CallToolRequest{}
 	toolReq.Params.Name = body.Tool
+	toolReq.Params.Arguments = toolArguments(body.Tool)
 
 	toolResult, err := mcpClient.CallTool(ctx, toolReq)
+	if approvalURL, ok := approvalElicitationURL(err); ok {
+		writeApprovalRequired(w, approvalURL, gatewayURL)
+		return
+	}
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -481,6 +487,35 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 		"gateway_url": gatewayURL,
 		"jwt_claims":  jwtClaims,
 	})
+}
+
+func approvalElicitationURL(err error) (string, bool) {
+	var elicitation mcp.URLElicitationRequiredError
+	if !errors.As(err, &elicitation) || len(elicitation.Elicitations) != 1 || elicitation.Elicitations[0].URL == "" {
+		return "", false
+	}
+	return elicitation.Elicitations[0].URL, true
+}
+
+func writeApprovalRequired(w http.ResponseWriter, approvalURL, gatewayURL string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":             "approval_required",
+		"error_description": "Approve this tool call to continue.",
+		"approval_url":      approvalURL,
+		"gateway_url":       gatewayURL,
+	})
+}
+
+func toolArguments(tool string) map[string]any {
+	if tool != "create_issue" {
+		return nil
+	}
+	return map[string]any{
+		"repository": "acme/sample-agent",
+		"title":      "Review Compose approval",
+	}
 }
 
 // getSessionID retrieves the session ID from cookies
@@ -724,6 +759,7 @@ func renderUserPage(userInfo *UserInfo, expiresAt int64, clientType, rawToken, k
             <div class="raw">%s</div>
         </details>
         <button id="mcp-btn" class="btn-mcp" onclick="callMCPTool('whoami')">Call MCP Tool: whoami (allowed)</button>
+        <button id="mcp-approval-btn" class="btn-mcp" onclick="callMCPTool('create_issue')">Call MCP Tool: create_issue (approval required)</button>
         <button id="mcp-deny-btn" class="btn-mcp btn-mcp-deny" onclick="callMCPTool('delete_repository')">Call MCP Tool: delete_repository (denied)</button>
         <div id="mcp-result" class="mcp-result"></div>
         <div class="buttons">
@@ -732,7 +768,12 @@ func renderUserPage(userInfo *UserInfo, expiresAt int64, clientType, rawToken, k
     </div>
     <script>
     function callMCPTool(tool) {
-        var btn = document.getElementById(tool === 'whoami' ? 'mcp-btn' : 'mcp-deny-btn');
+        var labels = {
+            whoami: 'Call MCP Tool: whoami (allowed)',
+            create_issue: 'Call MCP Tool: create_issue (approval required)',
+            delete_repository: 'Call MCP Tool: delete_repository (denied)'
+        };
+        var btn = document.getElementById(tool === 'whoami' ? 'mcp-btn' : tool === 'create_issue' ? 'mcp-approval-btn' : 'mcp-deny-btn');
         var result = document.getElementById('mcp-result');
         btn.disabled = true; btn.textContent = 'Calling...';
         result.style.display = 'none'; result.className = 'mcp-result';
@@ -742,17 +783,20 @@ func renderUserPage(userInfo *UserInfo, expiresAt int64, clientType, rawToken, k
                 result.style.display = 'block';
                 if (d.success) {
                     result.classList.add('success');
-                    var html = '<strong>Token Exchange Successful!</strong><pre>Tool: whoami\nResult: ' + esc(d.tool_result) + '\nGateway: ' + esc(d.gateway_url);
+                    var html = '<strong>Token Exchange Successful!</strong><pre>Tool: ' + esc(tool) + '\nResult: ' + esc(d.tool_result) + '\nGateway: ' + esc(d.gateway_url);
                     if (d.jwt_claims && Object.keys(d.jwt_claims).length > 0) { html += '\n\nJWT Claims:\n' + formatJSON(d.jwt_claims); }
                     html += '</pre>';
                     result.innerHTML = html;
+                } else if (d.approval_url) {
+                    result.classList.add('error');
+                    result.innerHTML = '<strong>Approval Required</strong><pre>' + esc(d.error_description) + '</pre><a class="btn-mcp" href="' + esc(d.approval_url) + '">Review and approve tool call</a>';
                 } else {
                     result.classList.add('error');
                     result.innerHTML = '<strong>MCP Call Failed</strong><pre>' + esc(d.error_description || d.error) + '\nGateway: ' + esc(d.gateway_url) + '</pre>';
                 }
             })
             .catch(function(e) { result.style.display='block'; result.classList.add('error'); result.innerHTML='<strong>Request Failed</strong><pre>'+esc(String(e))+'</pre>'; })
-            .finally(function() { btn.disabled=false; btn.textContent=tool === 'whoami' ? 'Call MCP Tool: whoami (allowed)' : 'Call MCP Tool: delete_repository (denied)'; });
+            .finally(function() { btn.disabled=false; btn.textContent=labels[tool]; });
     }
     function formatJSON(obj) { return esc(JSON.stringify(obj, null, 2)); }
     function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }

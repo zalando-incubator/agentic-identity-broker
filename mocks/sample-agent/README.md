@@ -10,6 +10,8 @@ The Sample Agent showcases a realistic OAuth2 client that:
 - Receives authorization code and exchanges it for access token
 - Displays user information after successful authentication
 - Manages user sessions
+- Calls the Compose MCP mock through Agentgateway, including a Rego-gated `create_issue` demo
+  that opens a tool-approval request
 
 ## Architecture
 
@@ -117,6 +119,16 @@ You need three servers running:
 7. **User Information Page**
    - Shows subject, email, token expiry, session ID
    - Confirms successful OAuth2 flow completion
+
+### Tool Approval Demonstration
+
+With `just compose-up` running, sign in as the Proxy Client and complete the delegation flow. The
+authenticated page includes **Call MCP Tool: create_issue (approval required)**. The bundled OPA
+policy returns `approval_required` for that tool with stable `repository` and `title` arguments.
+Use the resulting review link, select **Always allow**, and expand **Approval scope**. Change each
+parameter from **This value** (exact) to **Any value** or **Custom match**. The broker validates
+custom globs such as `acme/*` before you approve. Choose **Always allow** for this browser demo:
+each button click opens a new MCP session. Click the button again to see the mock MCP result.
 
 ## API Endpoints
 

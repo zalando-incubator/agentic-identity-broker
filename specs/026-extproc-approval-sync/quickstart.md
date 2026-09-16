@@ -224,20 +224,19 @@ path emits the real request id, unlike the pre-existing re-auth elicitation whic
 ## 7. Manual end-to-end walkthrough
 
 ```bash
-just compose-extproc-up      # extproc + mcp-server-mock + agentgateway
+just compose-up
 ```
 
-1. Issue a `tools/call` for a tool the policy classifies `approval_required`.
-2. Observe the `-32042` response and copy `data.elicitations[0].url`.
-3. Open that URL in a browser and approve with **session** persistence.
-4. Within ~2 seconds, watch the ExtProc log record a `200` sync delivering the updated pair.
-5. Re-issue the identical `tools/call` — it now forwards with no broker approval round-trip.
-6. Approve a second tool with **once** persistence, call it twice: the first call forwards after a
-   `consume` `200`; the second elicits again.
-
-```bash
-just compose-extproc-down
-```
+1. Open `http://localhost:9002` and sign in as the Proxy Client.
+2. Complete the broker delegation and upstream OAuth2 approvals.
+3. Click **Call MCP Tool: create_issue (approval required)**.
+4. Select **Review and approve tool call**, choose **Always allow**, then expand **Approval scope**.
+   Change `repository` from **This value** to **Custom match** and enter `acme/*`, or select **Any
+   value** to remove that constraint.
+5. Wait for the broker to validate the scope and approve the request. Click the `create_issue`
+   button again. The mock MCP server reports `Created demo issue #1`. Use **Always allow** in this
+   demo because each button click opens a new MCP session.
+6. Stop the stack with `just compose-down`.
 
 ---
 
