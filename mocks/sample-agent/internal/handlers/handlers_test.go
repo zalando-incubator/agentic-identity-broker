@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/agentic-identity-broker/sample-agent/internal/config"
 	"github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 	"golang.org/x/oauth2"
 )
 
@@ -370,5 +372,59 @@ func TestToolArguments(t *testing.T) {
 	}
 	if arguments := toolArguments("whoami"); arguments != nil {
 		t.Fatalf("whoami arguments = %#v, want nil", arguments)
+	}
+}
+
+func TestCallMCPReusesSessionClient(t *testing.T) {
+	mcpServer := mcpserver.NewMCPServer("test-mcp-server", "1.0.0")
+	mcpServer.AddTool(mcp.NewTool("whoami"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	gateway := httptest.NewServer(mcpserver.NewStreamableHTTPServer(mcpServer))
+	defer gateway.Close()
+
+	h := New(&oauth2.Config{}, &config.Config{AgentGateway: config.AgentGatewayConfig{MCPURL: gateway.URL}})
+	sessionID := "test-session"
+	session := &Session{
+		Token:     &oauth2.Token{AccessToken: "valid-token", Expiry: time.Now().Add(time.Hour)},
+		UserInfo:  &UserInfo{Sub: "test-user"},
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	h.sessions[sessionID] = session
+
+	call := func() {
+		req := httptest.NewRequest(http.MethodPost, "/call-mcp", strings.NewReader(`{"tool":"whoami"}`))
+		req.AddCookie(&http.Cookie{Name: "session_id", Value: sessionID})
+		w := httptest.NewRecorder()
+		h.CallMCP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("CallMCP status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+		}
+	}
+
+	call()
+	firstClient := session.MCPClient
+	if firstClient == nil {
+		t.Fatal("first call did not retain an MCP client on the web session")
+	}
+	call()
+	if session.MCPClient != firstClient {
+		t.Fatal("second call created a different MCP client for the same web session")
+	}
+
+	logout := httptest.NewRequest(http.MethodGet, "/logout", nil)
+	logout.AddCookie(&http.Cookie{Name: "session_id", Value: sessionID})
+	h.Logout(httptest.NewRecorder(), logout)
+	if session.MCPClient != nil {
+		t.Fatal("logout did not close the retained MCP client")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/call-mcp", strings.NewReader(`{"tool":"whoami"}`))
+	req.AddCookie(&http.Cookie{Name: "session_id", Value: sessionID})
+	w := httptest.NewRecorder()
+	h.CallMCP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("post-logout CallMCP status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }

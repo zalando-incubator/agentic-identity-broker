@@ -230,12 +230,12 @@ just compose-up
 1. Open `http://localhost:9002` and sign in as the Proxy Client.
 2. Complete the broker delegation and upstream OAuth2 approvals.
 3. Click **Call MCP Tool: create_issue (approval required)**.
-4. Select **Review and approve tool call**, choose **Always allow**, then expand **Approval scope**.
-   Change `repository` from **This value** to **Custom match** and enter `acme/*`, or select **Any
-   value** to remove that constraint.
+4. Select **Review and approve tool call**, choose **For this session**, then expand **Approval
+   scope**. Change `repository` from **This value** to **Custom match** and enter `acme/*`, or
+   select **Any value** to remove that constraint.
 5. Wait for the broker to validate the scope and approve the request. Click the `create_issue`
-   button again. The mock MCP server reports `Created demo issue #1`. Use **Always allow** in this
-   demo because each button click opens a new MCP session.
+   button again. The mock MCP server reports `Created demo issue #1` because the Sample Agent
+   retains the MCP session for its web session.
 6. Stop the stack with `just compose-down`.
 
 ---

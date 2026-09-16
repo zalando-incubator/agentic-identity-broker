@@ -37,6 +37,9 @@ type Session struct {
 	ClientType   string         // "proxy", "local", or "cimd"
 	OAuth2Config *oauth2.Config // per-flow config (correct client_id/secret)
 	PKCEVerifier string         // non-empty for local/cimd flows that require PKCE
+	MCPClient    *mcpclient.Client
+	MCPMu        sync.Mutex
+	mcpClosed    bool
 }
 
 // Handlers handles HTTP requests
@@ -308,10 +311,13 @@ func (h *Handlers) Callback(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	sessionID := h.getSessionID(r)
 
-	if sessionID != "" {
-		h.sessionsMu.Lock()
-		delete(h.sessions, sessionID)
-		h.sessionsMu.Unlock()
+	var session *Session
+	h.sessionsMu.Lock()
+	session = h.sessions[sessionID]
+	delete(h.sessions, sessionID)
+	h.sessionsMu.Unlock()
+	if session != nil {
+		session.closeMCPClient()
 	}
 
 	// Clear session cookie
@@ -373,57 +379,26 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	// Create mcp-go streamable HTTP client with Bearer token injection
-	accessToken := session.Token.AccessToken
-	mcpClient, err := mcpclient.NewStreamableHttpClient(gatewayURL,
-		transport.WithHTTPHeaderFunc(func(_ context.Context) map[string]string {
-			return map[string]string{
-				"Authorization": fmt.Sprintf("Bearer %s", accessToken),
-			}
-		}),
-		transport.WithHTTPTimeout(15*time.Second),
-	)
+	session.MCPMu.Lock()
+	defer session.MCPMu.Unlock()
+	if session.mcpClosed {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":             "unauthorized",
+			"error_description": "session not found",
+		})
+		return
+	}
+	mcpClient, err := h.mcpClient(ctx, session, gatewayURL)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		writeJSON(w, map[string]string{
 			"error":             "mcp_call_failed",
-			"error_description": "failed to create MCP client",
+			"error_description": "failed to initialize MCP client",
 		})
-		slog.Error("Failed to create MCP client", "error", err.Error())
-		return
-	}
-	defer mcpClient.Close()
-
-	// Start the client transport
-	if err := mcpClient.Start(ctx); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		writeJSON(w, map[string]string{
-			"error":             "mcp_call_failed",
-			"error_description": "failed to start MCP client",
-		})
-		slog.Error("MCP client start failed", "error", err.Error())
-		return
-	}
-
-	// Step 1: initialize MCP session
-	initReq := mcp.InitializeRequest{}
-	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	initReq.Params.ClientInfo = mcp.Implementation{
-		Name:    "sample-agent",
-		Version: "1.0",
-	}
-
-	_, err = mcpClient.Initialize(ctx, initReq)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		writeJSON(w, map[string]string{
-			"error":             "mcp_call_failed",
-			"error_description": "initialize request failed",
-		})
-		slog.Error("MCP initialize call failed", "error", err.Error())
+		slog.Error("MCP client initialization failed", "error", err.Error())
 		return
 	}
 
@@ -487,6 +462,49 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 		"gateway_url": gatewayURL,
 		"jwt_claims":  jwtClaims,
 	})
+}
+
+func (h *Handlers) mcpClient(ctx context.Context, session *Session, gatewayURL string) (*mcpclient.Client, error) {
+	if session.MCPClient != nil {
+		return session.MCPClient, nil
+	}
+
+	accessToken := session.Token.AccessToken
+	client, err := mcpclient.NewStreamableHttpClient(gatewayURL,
+		transport.WithHTTPHeaderFunc(func(_ context.Context) map[string]string {
+			return map[string]string{"Authorization": fmt.Sprintf("Bearer %s", accessToken)}
+		}),
+		transport.WithHTTPTimeout(15*time.Second),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create MCP client: %w", err)
+	}
+	if err := client.Start(ctx); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("start MCP client: %w", err)
+	}
+
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "sample-agent", Version: "1.0"}
+	if _, err := client.Initialize(ctx, initReq); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("initialize MCP client: %w", err)
+	}
+
+	session.MCPClient = client
+	return client, nil
+}
+
+func (s *Session) closeMCPClient() {
+	s.MCPMu.Lock()
+	defer s.MCPMu.Unlock()
+	s.mcpClosed = true
+	if s.MCPClient == nil {
+		return
+	}
+	_ = s.MCPClient.Close()
+	s.MCPClient = nil
 }
 
 func approvalElicitationURL(err error) (string, bool) {
