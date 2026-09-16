@@ -22,6 +22,14 @@
   </p>
 </div>
 
+<br/>
+
+<p align="center">
+  <img src="assets/docusaurus/static/img/teaser-browser.webp" alt="Agentic Identity Broker consent interface" width="1000" />
+</p>
+
+<br/>
+
 ---
 
 ## Overview
