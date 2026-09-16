@@ -10,21 +10,23 @@ package authorization
 //
 // ExtProc adds the following top-level extension keys on top of the envoy-plugin base:
 //   - "type": discriminator string (mcp_tool_call, mcp_method, mcp_headers_only, unknown)
-//   - "mcp": parsed MCP protocol fields (MCPInput)
+//   - "mcp": MCP protocol fields plus MCP target server information from agentgateway (MCPInput)
 //   - "context": authorization context (ContextInput)
 type OPAInput = map[string]any
 
-// MCPInput contains parsed MCP JSON-RPC 2.0 protocol fields.
+// MCPInput contains MCP protocol fields plus MCP target server information
+// extracted from agentgateway.
 // Fields that are only relevant to specific request types use omitempty so that
 // mcp_headers_only inputs (session_id only) do not emit empty JSON-RPC fields.
 type MCPInput struct {
-	JSONRPC   string         `json:"jsonrpc,omitempty"`    // "2.0" for JSON-RPC requests; absent for header-only
-	Method    string         `json:"method,omitempty"`     // MCP method; absent for header-only
-	ID        any            `json:"id,omitempty"`         // JSON-RPC request ID; absent for header-only
-	ToolName  string         `json:"tool_name,omitempty"`  // Tool name (only for tools/call)
-	Arguments map[string]any `json:"arguments,omitempty"`  // Tool arguments (only for tools/call)
-	Params    map[string]any `json:"params,omitempty"`     // JSON-RPC params (for non-tools/call methods)
-	SessionID string         `json:"session_id,omitempty"` // MCP session ID (from Mcp-Session-Id header)
+	JSONRPC          string         `json:"jsonrpc,omitempty"`            // "2.0" for JSON-RPC requests; absent for header-only
+	Method           string         `json:"method,omitempty"`             // MCP method; absent for header-only
+	ID               any            `json:"id,omitempty"`                 // JSON-RPC request ID; absent for header-only
+	ToolName         string         `json:"tool_name,omitempty"`          // Tool name (only for tools/call)
+	Arguments        map[string]any `json:"arguments,omitempty"`          // Tool arguments (only for tools/call)
+	Params           map[string]any `json:"params,omitempty"`             // JSON-RPC params (for non-tools/call methods)
+	SessionID        string         `json:"session_id,omitempty"`         // MCP session ID (from Mcp-Session-Id header)
+	TargetServerName string         `json:"target_server_name,omitempty"` // agentgateway's mcp_server metadata; empty/omitted when absent
 }
 
 // ContextInput contains authorization context forwarded from the token exchange response as token-bound snapshot data.

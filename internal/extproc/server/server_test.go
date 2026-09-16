@@ -3181,3 +3181,142 @@ func TestServer_Process_TransportFailuresRetainRequestContext(t *testing.T) {
 		})
 	}
 }
+
+// tokenExchangeMetadataWithMCPServer builds valid token-exchange metadata for the "mcp"
+// protocol, additionally setting agentgateway's mcp_server field. This is agentgateway
+// routing metadata, not an MCP protocol field (spec 044).
+func tokenExchangeMetadataWithMCPServer(mcpServer string) *corev3.Metadata {
+	metadata := tokenExchangeMetadataWithProtocol(tokenExchangeMetadataFields(
+		structpb.NewStringValue(testSubjectToken),
+		structpb.NewStringValue(testResourceURI),
+	), "mcp")
+	metadata.FilterMetadata["agentgateway"].Fields["mcp_server"] = structpb.NewStringValue(mcpServer)
+	return metadata
+}
+
+// Spec 044: agentgateway's mcp_server metadata propagates to input.mcp.target_server_name
+// in the body phase.
+func TestServer_OPA_BodyPhase_MCPServerMetadata_PropagatedToOPAInput(t *testing.T) {
+	var seenTargetServerName string
+	var sawMCPInput bool
+	auth := &mockAuthorizer{
+		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
+			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			require.True(t, ok, "body-phase input must expose parsed MCP input")
+			sawMCPInput = true
+			seenTargetServerName = mcp.TargetServerName
+			return &authorization.OPADecision{Action: "allow"}, nil
+		},
+	}
+	exchanger := &mockExchanger{
+		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
+			return server.ExchangeResult{Token: "exchanged-token"}, nil
+		},
+	}
+	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+	defer cleanup()
+
+	_, bodyResp := sendHeadersThenBodyWithMetadata(t, client, map[string]string{
+		":method": "POST",
+	}, tokenExchangeMetadataWithMCPServer("github-mcp"),
+		[]byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}}`))
+
+	require.NotNil(t, bodyResp)
+	_, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
+	require.True(t, ok, "allowed request must echo a RequestBody response")
+	assert.True(t, sawMCPInput)
+	assert.Equal(t, "github-mcp", seenTargetServerName)
+}
+
+// Spec 044 FR-004: absent mcp_server metadata never rejects the request — the field is
+// simply omitted from the OPA input, unlike protocol metadata (which is mandatory).
+func TestServer_OPA_BodyPhase_MCPServerMetadataAbsent_RequestStillAllowed(t *testing.T) {
+	var seenTargetServerName string
+	auth := &mockAuthorizer{
+		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
+			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			require.True(t, ok)
+			seenTargetServerName = mcp.TargetServerName
+			return &authorization.OPADecision{Action: "allow"}, nil
+		},
+	}
+	exchanger := &mockExchanger{
+		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
+			return server.ExchangeResult{Token: "exchanged-token"}, nil
+		},
+	}
+	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+	defer cleanup()
+
+	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
+		":method": "POST",
+	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}}`))
+
+	require.NotNil(t, bodyResp)
+	_, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
+	require.True(t, ok, "absent mcp_server metadata must not cause a denial")
+	assert.Empty(t, seenTargetServerName)
+}
+
+// Spec 044: agentgateway's mcp_server metadata propagates to input.mcp.target_server_name
+// for header-only requests too.
+func TestServer_OPA_HeadersOnly_MCPServerMetadata_PropagatedToOPAInput(t *testing.T) {
+	var seenTargetServerName string
+	auth := &mockAuthorizer{
+		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
+			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			require.True(t, ok, "header-only input must expose parsed MCP input")
+			seenTargetServerName = mcp.TargetServerName
+			return &authorization.OPADecision{Action: "allow"}, nil
+		},
+	}
+	exchanger := &mockExchanger{
+		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
+			return server.ExchangeResult{Token: "exchanged-token"}, nil
+		},
+	}
+	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+	defer cleanup()
+
+	resp, err := sendRequestHeadersWithMetadata(t, client, map[string]string{
+		":method": "GET",
+	}, tokenExchangeMetadataWithMCPServer("github-mcp"), true)
+	require.NoError(t, err)
+
+	_, ok := resp.Response.(*extprocv3.ProcessingResponse_RequestHeaders)
+	require.True(t, ok, "allowed header-only request must produce a RequestHeaders response")
+	assert.Equal(t, "github-mcp", seenTargetServerName)
+}
+
+// Spec 044 Edge Case (batch requests): every element in a JSON-RPC batch must receive
+// the identical mcp.target_server_name value, sourced once from the agentgateway
+// metadata at the headers phase.
+func TestServer_OPA_BatchBodyPhase_SameTargetServerNameAcrossElements(t *testing.T) {
+	var seenServers []string
+	auth := &mockAuthorizer{
+		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
+			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			require.True(t, ok, "batch element must expose parsed MCP input")
+			seenServers = append(seenServers, mcp.TargetServerName)
+			return &authorization.OPADecision{Action: "allow"}, nil
+		},
+	}
+	exchanger := &mockExchanger{
+		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
+			return server.ExchangeResult{Token: "batch-token"}, nil
+		},
+	}
+	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+	defer cleanup()
+
+	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}},{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"read_config","arguments":{}}}]`)
+	_, bodyResp := sendHeadersThenBodyWithMetadata(t, client, map[string]string{
+		":method": "POST",
+	}, tokenExchangeMetadataWithMCPServer("github-mcp"), batch)
+
+	require.NotNil(t, bodyResp)
+	_, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
+	require.True(t, ok, "allowed batch must echo a RequestBody response")
+	assert.Equal(t, []string{"github-mcp", "github-mcp"}, seenServers,
+		"every batch element must receive the identical mcp.target_server_name value")
+}
