@@ -1,4 +1,30 @@
-# Agentic Identity Broker
+<div align="center">
+  <p>
+    <img src="assets/docusaurus/static/img/logo.svg" alt="Agentic Identity Broker logo" width="128" height="128" />
+  </p>
+  <h1>Agentic Identity Broker</h1>
+  <p>
+    <a href="https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/ci.yml">
+      <img src="https://img.shields.io/github/actions/workflow/status/zalando-incubator/agentic-identity-broker/ci.yml?label=CI&amp;style=flat-square" alt="CI status" />
+    </a>
+    <a href="LICENSE">
+      <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license" />
+    </a>
+  </p>
+  <p>
+    <a href="#overview">Overview</a> ·
+    <a href="#status">Status</a> ·
+    <a href="#use-cases">Use Cases</a> ·
+    <a href="#quick-start">Quick Start</a> ·
+    <a href="#configuration">Configuration</a> ·
+    <a href="#documentation">Documentation</a> ·
+    <a href="#contributing">Contributing</a>
+  </p>
+</div>
+
+---
+
+## Overview
 
 This project captures delegation chains for on-behalf-of flows in agentic AI, brokers between different OAuth2 infrastructures, and implements a token vault. It is designed to be used by an infrastructure gateway (like [Agentgateway](https://agentgateway.dev)) in the call path between an agent and an MCP server or between agents.
 
@@ -8,7 +34,7 @@ From a user perspective, people can consent to delegating specific permissions i
 
 ## Status
 
-We have started to use this project in production internally for several MCP servers and have seen good potential. We are coding in the open to gauge our approach. If you find it useful, let us know. If you have ideas for other features, let us know via issues. 
+We have started to use this project in production internally for several MCP servers and have seen good potential. We are coding in the open to gauge our approach. If you find it useful, let us know. If you have ideas for other features, let us know via issues.
 
 While this project was created by professionals with decades of experience in the identity space (including building multiple OIDC and OAuth2 providers), it was developed with a strong focus on agentic engineering and spec-driven development. We review every PR and prioritize sound engineering practices over convenience.
 
@@ -16,11 +42,17 @@ Major roadmap topics include: (a) centralized tool authorization with Open Polic
 
 ## Use Cases
 
-*Internal MCP Servers* Frameworks like FastMCP can implement the whole OAuth2.1 ceremonies as mandated by the MCP spec but this means that you have to configure it for every MCP Server you deploy and maintain it. You also have to configure secure storage and basically run a multitude of OAuth2 authorization servers. With the identity broker and a gateway you can dumb down MCP server development to only provide tools on the target technologie you want. OAuth2 ceremonies, token vaulting and token translation are done transparently. Because token exchange is done centrally via a gateway, this allows agents to interact with hundreds of MCP servers via one channel. 
+### Internal MCP Servers
 
-*MCP Servers for SaaS* If you want to offer an MCP server to your customers as part of your SaaS, the identity broker can provide an additional consent surface that records which agents were actually used. With centralized tool authorization, you can keep an audit trail of approvals on your side regardless of which agent the customer runs.
+Frameworks like FastMCP can implement the whole OAuth2.1 ceremonies as mandated by the MCP spec but this means that you have to configure it for every MCP Server you deploy and maintain it. You also have to configure secure storage and basically run a multitude of OAuth2 authorization servers. With the identity broker and a gateway you can dumb down MCP server development to only provide tools on the target technologie you want. OAuth2 ceremonies, token vaulting and token translation are done transparently. Because token exchange is done centrally via a gateway, this allows agents to interact with hundreds of MCP servers via one channel.
 
-*Hosted Agents* The agentic identity broker can simplify agents by requiring only a single user token that can be used with an arbitrary number of MCP servers. When paired with a portal for user interactions, token procurement can be front-loaded in the portal, and the agent's responsibility is to forward this token to upstream MCP servers via a gateway.
+### MCP Servers for SaaS
+
+If you want to offer an MCP server to your customers as part of your SaaS, the identity broker can provide an additional consent surface that records which agents were actually used. With centralized tool authorization, you can keep an audit trail of approvals on your side regardless of which agent the customer runs.
+
+### Hosted Agents
+
+The agentic identity broker can simplify agents by requiring only a single user token that can be used with an arbitrary number of MCP servers. When paired with a portal for user interactions, token procurement can be front-loaded in the portal, and the agent's responsibility is to forward this token to upstream MCP servers via a gateway.
 
 ## Key Features
 
@@ -86,7 +118,7 @@ just build-all
 
 The binary at `./bin/agentic-identity-broker` is ready for deployment.
 
-### 3b. Docker Compose Development (Complete Stack)
+### 4. Docker Compose Development (Complete Stack)
 
 For a fully orchestrated development environment with all services (broker, mock OAuth2 servers, mock agent, and frontend):
 
@@ -113,7 +145,7 @@ See [docs/docker-compose-setup.md](docs/docker-compose-setup.md) for advanced do
 
 **Configuration:** Docker Compose automatically uses `config.docker.yaml` (with container DNS names), while native development (`just run`, `just dev`) uses `config.yaml` (with localhost addresses).
 
-### 4. Run Tests & Quality Checks
+### 5. Run Tests & Quality Checks
 
 ```bash
 # Run the fast Go/package test loop
