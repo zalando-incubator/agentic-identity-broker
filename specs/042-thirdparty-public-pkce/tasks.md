@@ -135,22 +135,22 @@ carries description-only amendments
 
 **Constitution Reference**: Principle IX (Persistence & Migration Management)
 
-- [X] T013 Create `migrations/031_add_token_endpoint_auth_method.up.sql`: drop `NOT NULL` on
+- [X] T013 Create `migrations/032_add_token_endpoint_auth_method.up.sql`: drop `NOT NULL` on
       `thirdparty_oauth2_services.client_secret_encrypted`, add
       `token_endpoint_auth_method VARCHAR(32)` nullable with **no** `DEFAULT` and **no** backfill,
       and add `chk_thirdparty_oauth2_services_client_auth` enforcing
       `(method IS NULL AND ciphertext IS NOT NULL) OR (method IS NOT DISTINCT FROM 'none' AND ciphertext IS NULL)` per
       [data-model.md §6](./data-model.md#6-persistence-schema)
-- [X] T014 Create `migrations/031_add_token_endpoint_auth_method.down.sql`: a
+- [X] T014 Create `migrations/032_add_token_endpoint_auth_method.down.sql`: a
       `DO $$ … RAISE EXCEPTION` guard that aborts and names the blocking services when any row has a
       non-null `token_endpoint_auth_method`, followed by dropping the constraint, dropping the
       column, and restoring `NOT NULL` — following the guard precedent in
       `migrations/028_normalize_service_protected_resources.up.sql` (DB-006)
-- [X] T015 Verify the committed SQL in `migrations/031_add_token_endpoint_auth_method.up.sql` and
+- [X] T015 Verify the committed SQL in `migrations/032_add_token_endpoint_auth_method.up.sql` and
       `.down.sql` matches the documented column list, constraint name, and rollback guard in
       [data-model.md §6](./data-model.md#6-persistence-schema)
 
-**Checkpoint**: Migration pair `031` committed, sequential after `030`, both directions present
+**Checkpoint**: Migration pair `032` committed, sequential after `031`, both directions present
 
 ### Phase 2e: Frontend/Design System Review [NOT APPLICABLE]
 
@@ -233,12 +233,12 @@ and both storage adapters — prerequisites shared by all four user stories.
 - [X] T025 [P] Write table-driven tests in `internal/domain/model/token_endpoint_auth_method_test.go`
       for `Validate()`: `""` accepted, `"none"` accepted, every other value rejected with a message
       naming `none` as the only accepted value (FR-002); plus `IsAbsent()`
-- [X] T026 [P] Add `TestMigration031` to `tests/integration/migrations/migrations_test.go` covering
-      the six-step sequence: apply `031` on a `030` database; assert no backfill (every pre-existing
+- [X] T026 [P] Add `TestMigration032` to `tests/integration/migrations/migrations_test.go` covering
+      the six-step sequence: apply `032` on a `031` database; assert no backfill (every pre-existing
       row has `token_endpoint_auth_method IS NULL`); assert the `CHECK` rejects a direct `INSERT` in
-      both contradictory directions; `Down(30)` returns an error naming the blocking public service;
-      `Version()` reports `dirty == true` and the column still exists; `Force(31)` clears the flag;
-      after deleting the service `Down(30)` succeeds with `dirty == false` and the column gone
+      both contradictory directions; `Down(31)` returns an error naming the blocking public service;
+      `Version()` reports `dirty == true` and the column still exists; `Force(32)` clears the flag;
+      after deleting the service `Down(31)` succeeds with `dirty == false` and the column gone
 - [X] T027 [P] Extend `internal/adapters/storage/memory/thirdparty_provider_test.go` with the
       absent-credential round trip — a public entity is stored and returned with `Secret.IsAbsent()`
       true — while a plaintext secret is still rejected (DB-008)
@@ -279,13 +279,13 @@ and both storage adapters — prerequisites shared by all four user stories.
 - [X] T036 Add the absent state to the secret-state check in `Validate()` in
       `internal/domain/model/thirdparty_oauth2_provider.go`, which runs on entities loaded from
       storage
-- [X] T037 Run `just test-integration-infra` and confirm `TestMigration031` and both repository round
+- [X] T037 Run `just test-integration-infra` and confirm `TestMigration032` and both repository round
       trips are green
 - [X] T038 Run `just check` and
       `go test ./internal/domain/model/... ./internal/adapters/storage/...`
 
 **Checkpoint**: The absent credential can be constructed, validated, persisted, and read back through
-both adapters; migration `031` applies and refuses rollback correctly — user stories can begin
+both adapters; migration `032` applies and refuses rollback correctly — user stories can begin
 
 ---
 
@@ -535,8 +535,8 @@ transition
       `internal/adapters/http/handlers/admin/services_handler.go` implements both: `client_secret`
       omitted for public services, and explicit `null` accepted as equivalent to omission
       (Principle X)
-- [X] T078 Verify `migrations/031_add_token_endpoint_auth_method.{up,down}.sql` follow go-migrate
-      naming, are sequential after `030`, and both directions are present (Principle IX)
+- [X] T078 Verify `migrations/032_add_token_endpoint_auth_method.{up,down}.sql` follow go-migrate
+      naming, are sequential after `031`, and both directions are present (Principle IX)
 - [X] T079 Verify `tests/e2e/thirdparty_public_client_test.go` contains exactly 22 `It()` blocks,
       one per acceptance scenario in [spec.md](./spec.md), each with its
       `// USx-Sy from specs/042-thirdparty-public-pkce/spec.md` comment (Principle XIII)

@@ -41,7 +41,7 @@ var thirdpartyProviderMigrations = []bootstrap.SQLMigration{
 	{File: "022_add_service_authorization_params.up.sql", Version: 22},
 	{File: "028_normalize_service_protected_resources.up.sql", Version: 28},
 	{File: "029_add_canonical_ids.up.sql", Version: 29},
-	{File: "031_add_token_endpoint_auth_method.up.sql", Version: 31},
+	{File: "032_add_token_endpoint_auth_method.up.sql", Version: 32},
 }
 
 func TestAuthorizationParamsPersistence(t *testing.T) {
@@ -117,8 +117,8 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 	t.Helper()
 
 	sharedPostgres := bootstrap.RequireSharedPostgres(t)
-	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_031", func(t *testing.T, dbName string) {
-		sharedPostgres.ApplyMigrationsUpTo(t, dbName, thirdpartyProviderMigrations, 31)
+	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_032", func(t *testing.T, dbName string) {
+		sharedPostgres.ApplyMigrationsUpTo(t, dbName, thirdpartyProviderMigrations, 32)
 	})
 
 	config := &ports.StorageConfig{

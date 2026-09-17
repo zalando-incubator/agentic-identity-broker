@@ -292,12 +292,12 @@ func TestMigration031ApprovalPatterns(t *testing.T) {
 	require.NoError(t, f.UpAll(t))
 }
 
-func TestMigration031(t *testing.T) {
+func TestMigration032(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
 
-	// Step 1: Apply migration 030 and add a confidential service predating migration 031.
-	require.NoError(t, f.Up(t, 30))
+	// Step 1: Apply migrations through 031 and add a confidential service predating migration 032.
+	require.NoError(t, f.Up(t, 31))
 	require.NoError(t, f.ExecuteSQL(t, `
 		INSERT INTO thirdparty_oauth2_services
 			(id, display_name, client_id, client_secret_encrypted, issuer_uri, enable_discovery, scopes)
@@ -306,11 +306,11 @@ func TestMigration031(t *testing.T) {
 			 '\x01', 'https://oauth.example.com', false, '[]');
 	`))
 
-	// Step 2: Apply migration 031 without changing existing services.
-	require.NoError(t, f.Up(t, 31))
+	// Step 2: Apply migration 032 without changing existing services.
+	require.NoError(t, f.Up(t, 32))
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(31), version)
+	assert.Equal(t, uint(32), version)
 	assert.False(t, dirty)
 
 	methodIsNull, err := f.QuerySQL(t, `
@@ -319,7 +319,7 @@ func TestMigration031(t *testing.T) {
 		WHERE id = '30000000-0000-0000-0000-000000000001';
 	`)
 	require.NoError(t, err)
-	assert.Equal(t, "true", strings.TrimSpace(methodIsNull), "migration 031 must not backfill existing services")
+	assert.Equal(t, "true", strings.TrimSpace(methodIsNull), "migration 032 must not backfill existing services")
 
 	// Step 3: The database rejects both invalid client-authentication combinations.
 	err = f.ExecuteSQL(t, `
@@ -357,7 +357,7 @@ func TestMigration031(t *testing.T) {
 			('30000000-0000-0000-0000-000000000004', 'public service blocking rollback', 'client-public',
 			 NULL, 'none', 'https://oauth.example.com', false, '[]');
 	`))
-	err = f.Down(t, 30)
+	err = f.Down(t, 31)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "public service blocking rollback")
 
@@ -365,7 +365,7 @@ func TestMigration031(t *testing.T) {
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
 	// go-migrate marks the requested target before executing the guarded down migration.
-	assert.Equal(t, uint(30), version)
+	assert.Equal(t, uint(31), version)
 	assert.True(t, dirty)
 	exists, err := f.ColumnExists(t, "thirdparty_oauth2_services", "token_endpoint_auth_method")
 	require.NoError(t, err)
@@ -388,20 +388,20 @@ func TestMigration031(t *testing.T) {
 	assert.Equal(t, "true", strings.TrimSpace(publicServiceIsIntact))
 
 	// Step 6: Clear the failed migration state, remove the public service, and roll back cleanly.
-	require.NoError(t, f.Force(t, 31))
+	require.NoError(t, f.Force(t, 32))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(31), version)
+	assert.Equal(t, uint(32), version)
 	assert.False(t, dirty)
 	require.NoError(t, f.ExecuteSQL(t, `
 		DELETE FROM thirdparty_oauth2_services
 		WHERE id = '30000000-0000-0000-0000-000000000004';
 	`))
-	require.NoError(t, f.Down(t, 30))
+	require.NoError(t, f.Down(t, 31))
 
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(30), version)
+	assert.Equal(t, uint(31), version)
 	assert.False(t, dirty)
 	exists, err = f.ColumnExists(t, "thirdparty_oauth2_services", "token_endpoint_auth_method")
 	require.NoError(t, err)

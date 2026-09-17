@@ -201,7 +201,7 @@ absent secret — absence is a normal state, not a decryption failure.
 
 ## 6. Persistence schema
 
-**Table**: `thirdparty_oauth2_services` | **Migration**: `031_add_token_endpoint_auth_method`
+**Table**: `thirdparty_oauth2_services` | **Migration**: `032_add_token_endpoint_auth_method`
 
 | Column | Before | After |
 |---|---|---|
