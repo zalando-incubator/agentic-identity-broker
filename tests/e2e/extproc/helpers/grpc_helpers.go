@@ -21,7 +21,8 @@ import (
 // Implements the builder pattern for fluent test construction.
 type ProcessingRequestBuilder struct {
 	headers                  map[string]string
-	protocol                 string // agentgateway protocol metadata (e.g., "mcp", "a2a")
+	protocol                 string  // agentgateway protocol metadata (e.g., "mcp", "a2a")
+	mcpServer                *string // agentgateway mcp_server metadata; nil means the field is omitted entirely
 	subjectToken             string
 	resourceURI              string
 	hasTokenExchangeMetadata bool
@@ -252,6 +253,17 @@ func (b *ProcessingRequestBuilder) WithTokenExchangeMetadata(subjectToken, resou
 	return b
 }
 
+// WithAgentgatewayMCPServer adds an mcp_server field to the agentgateway filter metadata,
+// alongside protocol. Unlike WithAgentgatewayProtocol, calling this method always includes
+// the field in the built metadata (even with an empty string), so tests can distinguish
+// "mcp_server metadata absent" (method never called) from "mcp_server metadata present but
+// empty" (called with ""). This simulates the metadata agentgateway sends when it knows
+// which MCP server a request targets (spec 044).
+func (b *ProcessingRequestBuilder) WithAgentgatewayMCPServer(server string) *ProcessingRequestBuilder {
+	b.mcpServer = &server
+	return b
+}
+
 // BuildWithMetadata constructs the ProcessingRequest with all configured Agentgateway metadata.
 func (b *ProcessingRequestBuilder) BuildWithMetadata() *extprocv3.ProcessingRequest {
 	headers := make([]*corev3.HeaderValue, 0, len(b.headers))
@@ -274,11 +286,16 @@ func (b *ProcessingRequestBuilder) BuildWithMetadata() *extprocv3.ProcessingRequ
 	}
 
 	filterMetadata := make(map[string]*structpb.Struct, 2)
-	if b.protocol != "" {
+	if b.protocol != "" || b.mcpServer != nil {
+		fields := map[string]*structpb.Value{}
+		if b.protocol != "" {
+			fields["protocol"] = structpb.NewStringValue(b.protocol)
+		}
+		if b.mcpServer != nil {
+			fields["mcp_server"] = structpb.NewStringValue(*b.mcpServer)
+		}
 		filterMetadata["agentgateway"] = &structpb.Struct{
-			Fields: map[string]*structpb.Value{
-				"protocol": structpb.NewStringValue(b.protocol),
-			},
+			Fields: fields,
 		}
 	}
 	if b.hasTokenExchangeMetadata {

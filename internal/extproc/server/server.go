@@ -40,6 +40,7 @@ import (
 const (
 	agentgatewayProtocolMetadataKey = "agentgateway"
 	agentgatewayProtocolFieldKey    = "protocol"
+	agentgatewayMCPServerFieldKey   = "mcp_server"
 	tokenExchangeMetadataNamespace  = "aib.tokenexchange"
 	subjectTokenFieldKey            = "subject_token"
 	resourceURIFieldKey             = "resource_uri"
@@ -84,6 +85,7 @@ type requestState struct {
 	resourceURI           string
 	headers               map[string]string
 	protocol              string
+	targetServerName      string
 	grantedPermissionSets map[string][]string
 	requestContext        context.Context
 	finishObservation     func(outcome, resourceURI, errorType string)
@@ -487,11 +489,16 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 			map[string]string{"allow": "GET, POST"}), nil
 	}
 
+	// mcp_server metadata is optional (FR-004): absence never rejects the request,
+	// unlike the protocol metadata check above.
+	targetServerName, _ := extractMCPServerFromMetadata(req)
+
 	state := &requestState{
 		subjectToken:      input.subjectToken,
 		resourceURI:       resourceURI,
 		headers:           headerMap,
 		protocol:          protocol,
+		targetServerName:  targetServerName,
 		requestContext:    ctx,
 		finishObservation: finishObservation,
 	}
@@ -547,7 +554,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		}
 	}
 
-	opaInput, buildErr := authorization.BuildOPAInput(state.protocol, bodyBytes, state.headers, state.grantedPermissionSets)
+	opaInput, buildErr := authorization.BuildOPAInput(state.protocol, bodyBytes, state.headers, state.targetServerName, state.grantedPermissionSets)
 	if buildErr != nil {
 		logger.WarnContext(ctx, "OPA: failed to parse request body — denying", "resource", sanitizedURI, "error", buildErr)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
@@ -585,7 +592,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 	}
 	sanitizedURI := sanitizeURIForTelemetry(state.resourceURI)
 
-	opaInput, buildErr := authorization.BuildOPAInputHeadersOnly(state.protocol, state.headers)
+	opaInput, buildErr := authorization.BuildOPAInputHeadersOnly(state.protocol, state.headers, state.targetServerName)
 	if buildErr != nil {
 		outcome = "authorization_denied"
 		errorType = "invalid_request"
@@ -651,7 +658,7 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 			denyReasons = append(denyReasons, "batch element could not be evaluated")
 			continue
 		}
-		opaInput, buildErr := authorization.BuildOPAInput(state.protocol, raw, state.headers, state.grantedPermissionSets)
+		opaInput, buildErr := authorization.BuildOPAInput(state.protocol, raw, state.headers, state.targetServerName, state.grantedPermissionSets)
 		if buildErr != nil {
 			logger.WarnContext(ctx, "OPA: failed to build input for batch element — denying", "resource", sanitizedURI, "index", i, "error", buildErr)
 			denied = true
@@ -830,6 +837,41 @@ func extractProtocolFromMetadata(req *extprocv3.ProcessingRequest) (string, bool
 	}
 	// GetStringValue returns "" for non-string protobuf Values.
 	v := protoVal.GetStringValue()
+	if v == "" {
+		return "", false
+	}
+	return v, true
+}
+
+// extractMCPServerFromMetadata extracts the agentgateway mcp_server value from the
+// MetadataContext FilterMetadata. This is agentgateway routing metadata identifying
+// which downstream MCP server the request targets — not an MCP protocol field.
+//
+// Unlike extractProtocolFromMetadata, callers MUST NOT reject the request on a false
+// return — mcp_server is optional metadata and its absence never causes a 403 (FR-004).
+//
+// Returns (server, true) when the agentgateway metadata key is present and contains a
+// non-empty mcp_server string. Returns ("", false) when MetadataContext is entirely
+// nil, the "agentgateway" key is missing, or the mcp_server field is absent or empty.
+//
+// The metadata structure is: FilterMetadata["agentgateway"]["mcp_server"] = "<name>".
+func extractMCPServerFromMetadata(req *extprocv3.ProcessingRequest) (string, bool) {
+	if req.MetadataContext == nil {
+		return "", false
+	}
+	agwMeta, ok := req.MetadataContext.FilterMetadata[agentgatewayProtocolMetadataKey]
+	if !ok || agwMeta == nil {
+		return "", false
+	}
+	fields := agwMeta.GetFields()
+	if fields == nil {
+		return "", false
+	}
+	serverVal, ok := fields[agentgatewayMCPServerFieldKey]
+	if !ok || serverVal == nil {
+		return "", false
+	}
+	v := serverVal.GetStringValue()
 	if v == "" {
 		return "", false
 	}
