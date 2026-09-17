@@ -165,8 +165,9 @@ func TestSyncerRetriesWithBoundedExponentialBackoff(t *testing.T) {
 
 func TestSyncerCompletesBackoffWhenEvictionTickerFires(t *testing.T) {
 	const (
-		idleTTL = 2 * time.Millisecond
-		backoff = 50 * time.Millisecond
+		idleTTL           = 2 * time.Millisecond
+		backoff           = 500 * time.Millisecond
+		observationWindow = backoff / 2
 	)
 
 	cache := NewCache(idleTTL, time.Minute)
@@ -176,6 +177,7 @@ func TestSyncerCompletesBackoffWhenEvictionTickerFires(t *testing.T) {
 
 	firstAttempt := make(chan struct{})
 	releaseFirstAttempt := make(chan struct{})
+	firstFailureReturned := make(chan struct{}, 1)
 	secondAttempt := make(chan struct{}, 1)
 	calls := 0
 	poller := &pollerStub{poll: func(_ context.Context, _ []string, _ string, _ time.Duration) ([]Pair, string, bool, error) {
@@ -183,6 +185,7 @@ func TestSyncerCompletesBackoffWhenEvictionTickerFires(t *testing.T) {
 		if calls == 1 {
 			close(firstAttempt)
 			<-releaseFirstAttempt
+			firstFailureReturned <- struct{}{}
 		} else {
 			select {
 			case secondAttempt <- struct{}{}:
@@ -202,17 +205,16 @@ func TestSyncerCompletesBackoffWhenEvictionTickerFires(t *testing.T) {
 	}()
 	<-firstAttempt
 
-	backoffWindow := time.NewTimer(backoff)
-	defer backoffWindow.Stop()
 	close(releaseFirstAttempt)
+	<-firstFailureReturned
 	require.Eventually(t, func() bool {
 		return len(cache.ActiveSessions()) == 0
-	}, backoff/2, time.Millisecond, "eviction ticker did not fire during retry backoff")
+	}, observationWindow, time.Millisecond, "eviction ticker did not fire during retry backoff")
 
 	select {
 	case <-secondAttempt:
 		t.Fatal("syncer retried before the retry backoff elapsed")
-	case <-backoffWindow.C:
+	case <-time.After(observationWindow):
 	}
 	assert.Len(t, poller.recordedCalls(), 1, "eviction must not end the retry backoff")
 
