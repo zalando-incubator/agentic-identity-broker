@@ -3,13 +3,18 @@
 
 version: 2
 updates:
-  # Go Module Dependencies (Backend)
+  # Go Module Dependencies
   - package-ecosystem: "gomod"
-    directory: "/"
+    directories:
+      - "/"
+      - "/infra/cdk"
+      - "/mocks/*"
     schedule:
       interval: "monthly"
       day: "monday"
       time: "06:00"
+    cooldown:
+      default-days: 7
     labels:
       - "dependabot"
       - "go"
@@ -30,3 +35,15 @@ updates:
     reviewers:
       - "jan-brennenstuhl_zse"
       - "magnus-jungsbluth_zse"
+
+  # npm Dependencies
+  - package-ecosystem: "npm"
+    directories:
+      - "/web"
+      - "/assets/docusaurus"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "06:00"
+    cooldown:
+      default-days: 7
