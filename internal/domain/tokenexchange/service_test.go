@@ -318,7 +318,7 @@ func (m *MockGrantRepository) Delete(ctx context.Context, grantID id.GrantID) er
 	return nil
 }
 
-func (m *MockGrantRepository) CountAgentsByServiceID(ctx context.Context, serviceID id.ServiceID) (int, error) {
+func (m *MockGrantRepository) CountAgentsByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) (int, error) {
 	return 0, nil
 }
 
@@ -330,7 +330,7 @@ func (m *MockGrantRepository) ListByPrincipal(ctx context.Context, principal id.
 	return nil, nil
 }
 
-func (m *MockGrantRepository) ListByServiceID(ctx context.Context, serviceID id.ServiceID) ([]id.AgentID, error) {
+func (m *MockGrantRepository) ListByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) ([]id.AgentID, error) {
 	return nil, nil
 }
 

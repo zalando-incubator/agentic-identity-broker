@@ -930,7 +930,7 @@ func (s *OAuth2SessionService) ListUserSessions(
 		}
 
 		// Count dependent agents
-		agentCount, err := s.grantRepo.CountAgentsByServiceID(ctx, session.ServiceID)
+		agentCount, err := s.grantRepo.CountAgentsByPrincipalAndServiceID(ctx, principal, session.ServiceID)
 		if err != nil {
 			s.logger.Warn("failed to count agents", "service_id", session.ServiceID, "err", err)
 			agentCount = 0
@@ -1054,7 +1054,7 @@ func (s *OAuth2SessionService) GetSessionWithAgents(
 
 	// Step 3: Query dependent agent IDs using grant repository
 	// Get list of actual agent IDs that have delegated tokens for this service
-	agentIDs, err := s.grantRepo.ListByServiceID(ctx, serviceID)
+	agentIDs, err := s.grantRepo.ListByPrincipalAndServiceID(ctx, principal, serviceID)
 	if err != nil {
 		s.logger.Warn("failed to list dependent agent IDs", "service_id", serviceID, "err", err)
 		agentIDs = []id.AgentID{} // Return empty list on error
@@ -1313,7 +1313,7 @@ func (s *OAuth2SessionService) ForceRefreshSession(
 		return nil, err
 	}
 
-	agentCount, err := s.grantRepo.CountAgentsByServiceID(ctx, serviceID)
+	agentCount, err := s.grantRepo.CountAgentsByPrincipalAndServiceID(ctx, principal, serviceID)
 	if err != nil {
 		s.logger.Warn("failed to count agents after refresh", "service_id", serviceID, "err", err)
 		agentCount = 0

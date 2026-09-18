@@ -692,7 +692,7 @@ paths:
 
         - Session initiation timestamp
         - Token expiration status
-        - Number of agents depending on this session
+        - Number of agents depending on this session, derived only from grants owned by the authenticated session principal
         - Encryption status indicator
 
       tags:
@@ -928,7 +928,7 @@ paths:
       operationId: getSessionDetails
       summary: Get session details with dependent agents
       description: |
-        Returns detailed information about the user's session with a third-party service, including the list of agents that depend on this session.
+        Returns detailed information about the user's session with a third-party service, including only agents with grants owned by the authenticated session principal that depend on this session.
         Used to populate the session card and termination warning dialog.
       tags:
         - Third-Party Sessions
@@ -3264,8 +3264,10 @@ components:
         dependent_agent_count:
           type: integer
           minimum: 0
+          description: Number of distinct agents with grants owned by the authenticated session principal that reference this service
         is_encrypted:
           type: boolean
+          description: Indicates tokens are stored encrypted
     SessionStatus:
       type: object
       required:
@@ -3311,7 +3313,7 @@ components:
         dependent_agent_count:
           type: integer
           minimum: 0
-          description: Number of agents that have grants referencing this service
+          description: Number of distinct agents with grants owned by the authenticated session principal that reference this service
         tokens_encrypted:
           type: boolean
           description: Indicates tokens are stored encrypted (always true)

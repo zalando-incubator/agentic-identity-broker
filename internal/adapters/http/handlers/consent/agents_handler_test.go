@@ -370,11 +370,11 @@ func (m *mockGrantRepoForAgents) ListByPrincipal(ctx context.Context, principal 
 	return grants, nil
 }
 
-func (m *mockGrantRepoForAgents) CountAgentsByServiceID(ctx context.Context, serviceID id.ServiceID) (int, error) {
+func (m *mockGrantRepoForAgents) CountAgentsByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) (int, error) {
 	return 0, nil
 }
 
-func (m *mockGrantRepoForAgents) ListByServiceID(ctx context.Context, serviceID id.ServiceID) ([]id.AgentID, error) {
+func (m *mockGrantRepoForAgents) ListByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) ([]id.AgentID, error) {
 	return []id.AgentID{}, nil
 }
 

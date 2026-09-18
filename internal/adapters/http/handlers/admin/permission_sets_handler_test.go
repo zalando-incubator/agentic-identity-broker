@@ -120,10 +120,10 @@ func (n *nopGrantRepo) DeleteByPrincipalAndAgentID(_ context.Context, _ id.Princ
 func (n *nopGrantRepo) ListByPrincipal(_ context.Context, _ id.Principal) ([]storage.UserGrant, error) {
 	return nil, nil
 }
-func (n *nopGrantRepo) CountAgentsByServiceID(_ context.Context, _ id.ServiceID) (int, error) {
+func (n *nopGrantRepo) CountAgentsByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) (int, error) {
 	return 0, nil
 }
-func (n *nopGrantRepo) ListByServiceID(_ context.Context, _ id.ServiceID) ([]id.AgentID, error) {
+func (n *nopGrantRepo) ListByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) ([]id.AgentID, error) {
 	return nil, nil
 }
 func (n *nopGrantRepo) CountGrantsReferencingPermissionSet(ctx context.Context, psID id.PermissionSetID) (int, error) {

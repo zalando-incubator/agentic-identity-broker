@@ -121,10 +121,10 @@ func (s *stubGrantRepository) DeleteByPrincipalAndAgentID(_ context.Context, _ i
 func (s *stubGrantRepository) ListByPrincipal(_ context.Context, _ id.Principal) ([]storage.UserGrant, error) {
 	return nil, nil
 }
-func (s *stubGrantRepository) CountAgentsByServiceID(_ context.Context, _ id.ServiceID) (int, error) {
+func (s *stubGrantRepository) CountAgentsByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) (int, error) {
 	return 0, nil
 }
-func (s *stubGrantRepository) ListByServiceID(_ context.Context, _ id.ServiceID) ([]id.AgentID, error) {
+func (s *stubGrantRepository) ListByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) ([]id.AgentID, error) {
 	return nil, nil
 }
 func (s *stubGrantRepository) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {

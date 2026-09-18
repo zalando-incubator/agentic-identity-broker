@@ -593,13 +593,12 @@ func (r *UserGrantRepository) ListByPrincipal(ctx context.Context, principal id.
 	return grants, nil
 }
 
-// CountAgentsByServiceID counts how many agents have grants referencing
-// permission sets that include the given service.
-// Uses JSONB containment to check if any entry's included_service_ids contains the service ID.
-func (r *UserGrantRepository) CountAgentsByServiceID(ctx context.Context, serviceID id.ServiceID) (int, error) {
+// CountAgentsByPrincipalAndServiceID counts distinct agents for the exact principal
+// whose GrantedPermissionSets include the given service. Expired grants are included for session dependency warnings.
+func (r *UserGrantRepository) CountAgentsByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (int, error) {
 	if r.adapter.db == nil {
 		return 0, storage.NewStorageError(
-			"CountAgentsByServiceID",
+			"CountAgentsByPrincipalAndServiceID",
 			storage.ErrorKindConnection,
 			nil,
 			"database not initialized",
@@ -610,29 +609,28 @@ func (r *UserGrantRepository) CountAgentsByServiceID(ctx context.Context, servic
 		SELECT COUNT(DISTINCT ug.agent_id)
 		FROM user_grants ug,
 		     jsonb_array_elements(ug.granted_permission_sets) AS entry
-		WHERE entry->'included_service_ids' @> to_jsonb($1::text)
+		WHERE ug.principal = $1
+		  AND entry->'included_service_ids' @> to_jsonb($2::text)
 	`
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 
 	var count int
-	err := r.adapter.db.QueryRowContext(ctxTimeout, query, serviceID.String()).Scan(&count)
+	err := r.adapter.db.QueryRowContext(ctxTimeout, query, principal, serviceID.String()).Scan(&count)
 	if err != nil {
-		return 0, r.handlePostgresError("CountAgentsByServiceID", err)
+		return 0, r.handlePostgresError("CountAgentsByPrincipalAndServiceID", err)
 	}
 
 	return count, nil
 }
 
-// ListByServiceID retrieves all agent IDs that have grants referencing
-// permission sets that include the given service.
-// Returns the list of distinct agent IDs.
-// Returns empty slice if no agents have grants for the service.
-func (r *UserGrantRepository) ListByServiceID(ctx context.Context, serviceID id.ServiceID) ([]id.AgentID, error) {
+// ListByPrincipalAndServiceID returns distinct agent IDs for the exact principal
+// whose GrantedPermissionSets include the given service. Expired grants are included for session dependency warnings.
+func (r *UserGrantRepository) ListByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) ([]id.AgentID, error) {
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(
-			"ListByServiceID",
+			"ListByPrincipalAndServiceID",
 			storage.ErrorKindConnection,
 			nil,
 			"database not initialized",
@@ -643,7 +641,8 @@ func (r *UserGrantRepository) ListByServiceID(ctx context.Context, serviceID id.
 		SELECT DISTINCT ug.agent_id
 		FROM user_grants ug,
 		     jsonb_array_elements(ug.granted_permission_sets) AS entry
-		WHERE entry->'included_service_ids' @> to_jsonb($1::text)
+		WHERE ug.principal = $1
+		  AND entry->'included_service_ids' @> to_jsonb($2::text)
 		ORDER BY ug.agent_id
 	`
 
@@ -651,9 +650,9 @@ func (r *UserGrantRepository) ListByServiceID(ctx context.Context, serviceID id.
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, serviceID)
+	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, principal, serviceID.String())
 	if err != nil {
-		return nil, r.handlePostgresError("ListByServiceID", err)
+		return nil, r.handlePostgresError("ListByPrincipalAndServiceID", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -664,7 +663,7 @@ func (r *UserGrantRepository) ListByServiceID(ctx context.Context, serviceID id.
 		err := rows.Scan(&agentID)
 		if err != nil {
 			return nil, storage.NewStorageError(
-				"ListByServiceID",
+				"ListByPrincipalAndServiceID",
 				storage.ErrorKindUnknown,
 				err,
 				"failed to scan agent ID row",
@@ -675,7 +674,7 @@ func (r *UserGrantRepository) ListByServiceID(ctx context.Context, serviceID id.
 
 	if err := rows.Err(); err != nil {
 		return nil, storage.NewStorageError(
-			"ListByServiceID",
+			"ListByPrincipalAndServiceID",
 			storage.ErrorKindUnknown,
 			err,
 			"error iterating agent ID rows",

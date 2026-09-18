@@ -274,15 +274,15 @@ func (r *UserGrantRepository) ListByPrincipal(ctx context.Context, principal id.
 	return activeGrants, nil
 }
 
-// CountAgentsByServiceID counts how many agents have grants referencing
-// permission sets that include the given service.
-func (r *UserGrantRepository) CountAgentsByServiceID(ctx context.Context, serviceID id.ServiceID) (int, error) {
+// CountAgentsByPrincipalAndServiceID counts distinct agents for the exact principal
+// whose GrantedPermissionSets include the given service. Expired grants are included for session dependency warnings.
+func (r *UserGrantRepository) CountAgentsByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (int, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	agentSet := make(map[id.AgentID]bool)
 	for _, grant := range r.grants {
-		if r.grantReferencesService(ctx, grant, serviceID) {
+		if grant.Principal == principal && r.grantReferencesService(ctx, grant, serviceID) {
 			agentSet[grant.AgentID] = true
 		}
 	}
@@ -290,15 +290,15 @@ func (r *UserGrantRepository) CountAgentsByServiceID(ctx context.Context, servic
 	return len(agentSet), nil
 }
 
-// ListByServiceID retrieves all agent IDs that have grants referencing
-// permission sets that include the given service.
-func (r *UserGrantRepository) ListByServiceID(ctx context.Context, serviceID id.ServiceID) ([]id.AgentID, error) {
+// ListByPrincipalAndServiceID returns distinct agent IDs for the exact principal
+// whose GrantedPermissionSets include the given service. Expired grants are included for session dependency warnings.
+func (r *UserGrantRepository) ListByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) ([]id.AgentID, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	agentSet := make(map[id.AgentID]bool)
 	for _, grant := range r.grants {
-		if r.grantReferencesService(ctx, grant, serviceID) {
+		if grant.Principal == principal && r.grantReferencesService(ctx, grant, serviceID) {
 			agentSet[grant.AgentID] = true
 		}
 	}
@@ -334,9 +334,8 @@ func (r *UserGrantRepository) CountGrantsReferencingPermissionSet(_ context.Cont
 // grantReferencesService checks if any of the grant's permission set entries
 // include the given service ID. Unlike CountGrantsReferencingPermissionSet,
 // this helper does NOT filter by expiry — it matches all grants regardless of
-// valid_until. Callers (CountAgentsByServiceID, ListByServiceID) use it for
-// agent-association lookups, not deletion-protection, so expired grants are
-// intentionally included.
+// valid_until. Callers use it for principal-scoped agent-association lookups,
+// not deletion-protection, so expired grants are intentionally included.
 func (r *UserGrantRepository) grantReferencesService(ctx context.Context, grant *storage.UserGrant, serviceID id.ServiceID) bool {
 	for _, entry := range grant.GrantedPermissionSets {
 		for _, svcID := range entry.IncludedServiceIDs {

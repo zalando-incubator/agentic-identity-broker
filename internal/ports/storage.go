@@ -177,17 +177,15 @@ type UserGrantRepository interface {
 	// Returns StorageError for connection/timeout issues.
 	ListByPrincipal(ctx context.Context, principal id.Principal) ([]storage.UserGrant, error)
 
-	// CountAgentsByServiceID counts how many agents have delegated OAuth2 tokens for a given service.
-	// This is used to show dependent agent count when terminating a session.
-	// Returns the count of distinct agents with delegated_oauth2_tokens JSONB entries for the service.
-	CountAgentsByServiceID(ctx context.Context, serviceID id.ServiceID) (int, error)
+	// CountAgentsByPrincipalAndServiceID counts distinct agents for the exact principal whose GrantedPermissionSets include the service ID.
+	// It includes expired grants for session dependency warnings.
+	CountAgentsByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (int, error)
 
-	// ListByServiceID retrieves all agent IDs that have delegated OAuth2 tokens for a given service.
-	// This is used to show the actual dependent agents when terminating a session.
-	// Returns the list of distinct agent IDs with delegated_oauth2_tokens JSONB entries for the service.
-	// Returns empty slice if no agents have delegated tokens for the service.
+	// ListByPrincipalAndServiceID returns distinct agent IDs for the exact principal whose GrantedPermissionSets include the service ID.
+	// It includes expired grants for session dependency warnings.
+	// Returns empty slice if no matching grants exist.
 	// Returns StorageError for connection/timeout issues.
-	ListByServiceID(ctx context.Context, serviceID id.ServiceID) ([]id.AgentID, error)
+	ListByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) ([]id.AgentID, error)
 
 	// CountGrantsReferencingPermissionSet counts user grants whose granted_permission_sets
 	// array contains an entry with the given permission set ID.
