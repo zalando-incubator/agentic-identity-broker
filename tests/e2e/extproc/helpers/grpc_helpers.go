@@ -211,7 +211,11 @@ func ExtractImmediateResponseStatus(resp *extprocv3.ProcessingResponse) uint32 {
 		return 0
 	}
 
-	return uint32(immResp.ImmediateResponse.Status.Code)
+	statusCode := immResp.ImmediateResponse.Status.Code
+	if statusCode < 0 {
+		return 0
+	}
+	return uint32(statusCode) // #nosec G115 -- statusCode is non-negative and int32 cannot exceed uint32.
 }
 
 // ExtractImmediateResponseBody extracts the body from an ImmediateResponse.

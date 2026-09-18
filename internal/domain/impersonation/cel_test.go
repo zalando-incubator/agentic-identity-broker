@@ -27,6 +27,10 @@ func (p contextAwareProgram) ContextEval(ctx context.Context, _ any) (ref.Val, *
 	return nil, nil, ctx.Err()
 }
 
+func (p contextAwareProgram) ConcurrentEval(context.Context, any) <-chan cel.EvalResult {
+	panic("ConcurrentEval must not be called")
+}
+
 func TestEvaluateWithTimeout_CancelsEvaluation(t *testing.T) {
 	cancelled := make(chan struct{}, 1)
 	_, err := evaluateWithTimeout(context.Background(), contextAwareProgram{contextCancelled: cancelled}, map[string]interface{}{}, time.Nanosecond)

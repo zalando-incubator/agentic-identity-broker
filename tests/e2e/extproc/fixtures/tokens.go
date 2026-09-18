@@ -64,7 +64,7 @@ const (
 // and used as client assertions in token exchange requests.
 const (
 	// DefaultClientAssertionIDToken is the default mock ID token for client assertions.
-	DefaultClientAssertionIDToken = "mock-id-token-for-client-assertion"
+	DefaultClientAssertionIDToken = "mock-id-token-for-client-assertion" // #nosec G101 -- deterministic test-only token value.
 )
 
 // TTLValues contains time duration values for cache testing.

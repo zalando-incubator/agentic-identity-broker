@@ -42,7 +42,7 @@ func (f *fakeScreenshotPage) Screenshot(options ...playwright.PageScreenshotOpti
 func TestCaptureScreenshot_AllowsNetworkIdleTimeoutFallback(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "screenshots")
 	page := &fakeScreenshotPage{
 		waitErr: errors.New("timeout:Timeout 10000.00ms exceeded."),
 	}
@@ -57,6 +57,14 @@ func TestCaptureScreenshot_AllowsNetworkIdleTimeoutFallback(t *testing.T) {
 	data, readErr := os.ReadFile(filepath.Join(dir, "networkidle-timeout.png"))
 	require.NoError(t, readErr)
 	assert.Equal(t, []byte("fake-image"), data)
+
+	fileInfo, statErr := os.Stat(filepath.Join(dir, "networkidle-timeout.png"))
+	require.NoError(t, statErr)
+	assert.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
+
+	dirInfo, statErr := os.Stat(dir)
+	require.NoError(t, statErr)
+	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
 }
 
 func TestCaptureScreenshot_ReturnsErrorOnNonTimeoutLoadFailure(t *testing.T) {

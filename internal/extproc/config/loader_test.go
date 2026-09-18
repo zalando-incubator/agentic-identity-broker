@@ -171,6 +171,21 @@ func TestValidate(t *testing.T) {
 			mutate:  func(c *config.Config) { c.GRPC.Port = 65535 },
 			wantErr: false,
 		},
+		// Rule 1a: grpc.max_concurrent_streams
+		{
+			name:        "rule1a: negative max_concurrent_streams is invalid",
+			mutate:      func(c *config.Config) { c.GRPC.MaxConcurrentStreams = -1 },
+			wantErr:     true,
+			errContains: "grpc.max_concurrent_streams",
+		},
+		{
+			name: "rule1a: max_concurrent_streams above uint32 is invalid",
+			mutate: func(c *config.Config) {
+				c.GRPC.MaxConcurrentStreams = int(uint64(^uint32(0)) + 1)
+			},
+			wantErr:     true,
+			errContains: "grpc.max_concurrent_streams",
+		},
 		// Rule 2: grpc.bind
 		{
 			name:        "rule2: empty bind is invalid",

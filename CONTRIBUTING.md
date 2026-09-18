@@ -31,7 +31,7 @@ Thank you for contributing! This document provides guidelines for maintaining ou
 
 All contributions must comply with our specification-driven development approach:
 
-- **API-First**: Document all public APIs in OpenAPI before implementation
+- **API-First**: Document all public APIs in OpenAPI and get user confirmation before implementation
 - **Security-First**: Security controls enabled by default, never optional
 - **Architecture**: Follow hexagonal architecture patterns and ADRs
 - **Domain-Driven Design**: Clear ubiquitous language and domain isolation
@@ -44,11 +44,15 @@ See [Constitution v1.4.0](.specify/memory/constitution.md) for details.
 
 Run static checks and the full verification gate:
 ```bash
-just check    # Format, vet, lint
-just verify   # Full verification gate with E2E last
+just check    # Non-mutating format, vet, and lint checks
+just verify   # Security scanning plus test, integration, and E2E checks
 ```
 
-Both must pass before opening a PR.
+`just check` does not change source files. Use `just fmt` to apply Go formatting fixes.
+`just security` runs the focused gosec, govulncheck, and OSV-Scanner scans.
+`just verify` runs security scanning before the existing test, integration, and E2E gate.
+
+Both commands must pass before you open a pull request.
 
 ## Making Changes
 
@@ -93,7 +97,7 @@ export function MyComponent() {
 - Integration suites: `just test-integration`
 - All E2E suites: `just test-e2e`
 - Dedicated E2E performance measurement: `just test-e2e-performance` (manual; normal E2E commands exclude performance-labelled specs)
-- Full verification gate: `just verify`
+- Full verification gate, including security scanning: `just verify`
 - Coverage for the fast Go/package suite: `just test-coverage`
 
 ## Pull Request Process

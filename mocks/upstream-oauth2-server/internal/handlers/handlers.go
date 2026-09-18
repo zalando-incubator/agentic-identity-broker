@@ -12,7 +12,9 @@ import (
 func Health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status": "ok", "service": "upstream-oauth2-server"}`))
+	if _, err := w.Write([]byte(`{"status": "ok", "service": "upstream-oauth2-server"}`)); err != nil {
+		return
+	}
 }
 
 // NewUserAuthorizationHandler creates a user authorization handler for the OAuth2 server
@@ -54,8 +56,7 @@ func handleUserAuthorizationGet(w http.ResponseWriter, r *http.Request, cfg *con
 
 	// Validate required parameters
 	if clientID == "" || responseType == "" || redirectURI == "" {
-		errorMsg := fmt.Sprintf("Missing required parameters: client_id=%s, response_type=%s, redirect_uri=%s",
-			clientID, responseType, redirectURI)
+		const errorMsg = "missing required OAuth2 authorization parameters"
 		slog.Error(errorMsg)
 		http.Error(w, errorMsg, http.StatusBadRequest)
 		return "", fmt.Errorf("invalid_request: %s", errorMsg)
@@ -65,7 +66,9 @@ func handleUserAuthorizationGet(w http.ResponseWriter, r *http.Request, cfg *con
 	consentHTML := renderConsentPage(clientID, redirectURI, scope, state, codeChallenge, codeChallengeMethod, cfg.OAuth2.Scopes)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(consentHTML))
+	if _, err := w.Write([]byte(consentHTML)); err != nil {
+		return "", fmt.Errorf("write consent page: %w", err)
+	}
 
 	// Return empty string and nil to indicate we're handling the response via HTTP
 	return "", nil

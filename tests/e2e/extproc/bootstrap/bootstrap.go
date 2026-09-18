@@ -162,7 +162,7 @@ type MockOAuth2Server struct {
 
 // NewMockOAuth2Server creates a new mock OAuth2 server with default successful responses.
 func NewMockOAuth2Server() *MockOAuth2Server {
-	return &MockOAuth2Server{
+	return &MockOAuth2Server{ // #nosec G101 -- deterministic test-only token values.
 		idToken:     "mock-id-token-for-client-assertion",
 		accessToken: "mock-access-token",
 		statusCode:  http.StatusOK,

@@ -149,7 +149,7 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 	if sic.Port < 1 || sic.Port > 65535 {
 		return formatValidationError(
 			prefix+".port",
-			string(rune(sic.Port)),
+			strconv.Itoa(sic.Port),
 			"port number between 1 and 65535",
 			nil,
 		)
@@ -383,7 +383,7 @@ func validateThirdPartyOAuth2Config(cfg *ports.ThirdPartyOAuth2Config) error {
 		if cfg.PKCEVerifierLength < 32 || cfg.PKCEVerifierLength > 128 {
 			return formatValidationError(
 				"third_party_oauth2.pkce_verifier_length",
-				string(rune(cfg.PKCEVerifierLength)),
+				strconv.Itoa(cfg.PKCEVerifierLength),
 				"32-128 bytes per RFC 7636",
 				nil,
 			)

@@ -43,7 +43,7 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	log.Printf("Configuration loaded: port=%d, bind=%s, client_id=%s", cfg.Server.Port, cfg.Server.Bind, cfg.OAuth2.ClientID)
+	log.Printf("Configuration loaded: port=%d, bind=%q, client_id=%q", cfg.Server.Port, cfg.Server.Bind, cfg.OAuth2.ClientID) // #nosec G706 -- untrusted configuration strings are Go-quoted before logging.
 
 	// Create OAuth2 client server
 	srv, err := server.New(cfg)

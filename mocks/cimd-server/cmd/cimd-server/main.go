@@ -46,11 +46,11 @@ func main() {
 
 	// Write CA cert to a well-known path so the broker container can trust it.
 	caCertPath := envOrDefault("CIMD_CA_CERT_PATH", "/certs/cimd-ca.crt")
-	if err := os.MkdirAll(dirOf(caCertPath), 0755); err != nil {
+	if err := os.MkdirAll(dirOf(caCertPath), 0o755); err != nil { // #nosec G301 -- generated CA certificate directory is intentionally readable by TLS clients.
 		logger.Error("failed to create cert dir", "error", err)
 		os.Exit(1)
 	}
-	if err := os.WriteFile(caCertPath, certPEM, 0644); err != nil {
+	if err := os.WriteFile(caCertPath, certPEM, 0o644); err != nil { // #nosec G306 -- CA certificate is public trust material, not a private key.
 		logger.Error("failed to write CA cert", "error", err)
 		os.Exit(1)
 	}

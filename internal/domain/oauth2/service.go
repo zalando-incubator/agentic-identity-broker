@@ -477,7 +477,7 @@ func (s *AuthorizationService) GenerateMetadata(ctx context.Context) (*ports.Met
 		issuer = s.config.PublicURL
 	}
 
-	const tokenExchangeGrant = "urn:ietf:params:oauth:grant-type:token-exchange"
+	const tokenExchangeGrant = "urn:ietf:params:oauth:grant-type:token-exchange" // #nosec G101 -- RFC-defined grant type URI, not a credential.
 	var grantTypes []string
 	if s.config.TokenExchangeEnabled {
 		if !slices.Contains(s.config.SupportedGrantTypes, tokenExchangeGrant) {

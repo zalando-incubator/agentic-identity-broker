@@ -48,7 +48,7 @@ func (h *SPAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(h.staticPath, filePath)
 
 	// Check if the file exists
-	fileInfo, err := os.Stat(path)
+	fileInfo, err := os.Stat(path) // #nosec G703 -- request path rejects parent segments before static-root resolution.
 
 	// If the file doesn't exist or is a directory, serve index.html (History API fallback)
 	if err != nil || fileInfo.IsDir() {
@@ -70,5 +70,5 @@ func (h *SPAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// File exists, serve it directly
-	http.ServeFile(w, r, path)
+	http.ServeFile(w, r, path) // #nosec G703 -- request path rejects parent segments before static-root resolution.
 }

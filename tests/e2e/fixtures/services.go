@@ -25,7 +25,7 @@ func GitHubService() *model.ThirdpartyOAuth2ProviderEntity {
 			EnableDiscovery: true,
 			MetadataURL:     &metadataURL,
 		},
-		Endpoints: model.OAuth2Endpoints{
+		Endpoints: model.OAuth2Endpoints{ // #nosec G101 -- fixed public OAuth2 endpoint URLs, not credentials.
 			TokenEndpoint:     "https://github.com/login/oauth/access_token",
 			AuthorizeEndpoint: "https://github.com/login/oauth/authorize",
 		},
@@ -56,7 +56,7 @@ func GoogleService() *model.ThirdpartyOAuth2ProviderEntity {
 			EnableDiscovery: true,
 			MetadataURL:     &metadataURL,
 		},
-		Endpoints: model.OAuth2Endpoints{
+		Endpoints: model.OAuth2Endpoints{ // #nosec G101 -- fixed public OAuth2 endpoint URLs, not credentials.
 			TokenEndpoint:     "https://oauth2.googleapis.com/token",
 			AuthorizeEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
 		},
@@ -87,7 +87,7 @@ func MicrosoftService() *model.ThirdpartyOAuth2ProviderEntity {
 			EnableDiscovery: true,
 			MetadataURL:     &metadataURL,
 		},
-		Endpoints: model.OAuth2Endpoints{
+		Endpoints: model.OAuth2Endpoints{ // #nosec G101 -- fixed public OAuth2 endpoint URLs, not credentials.
 			TokenEndpoint:     "https://login.microsoftonline.com/common/oauth2/v2.0/token",
 			AuthorizeEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
 		},
@@ -116,7 +116,7 @@ func ServiceWithID(svcID string) *model.ThirdpartyOAuth2ProviderEntity {
 		Discovery: model.DiscoveryConfig{
 			EnableDiscovery: false,
 		},
-		Endpoints: model.OAuth2Endpoints{
+		Endpoints: model.OAuth2Endpoints{ // #nosec G101 -- deterministic test endpoint URLs, not credentials.
 			TokenEndpoint:     "https://test-issuer.example.com/token",
 			AuthorizeEndpoint: "https://test-issuer.example.com/authorize",
 		},
@@ -146,7 +146,7 @@ func PublicClientService() *model.ThirdpartyOAuth2ProviderEntity {
 		Discovery: model.DiscoveryConfig{
 			EnableDiscovery: false,
 		},
-		Endpoints: model.OAuth2Endpoints{
+		Endpoints: model.OAuth2Endpoints{ // #nosec G101 -- deterministic public test endpoint URLs, not credentials.
 			TokenEndpoint:     "https://public-issuer.example.com/token",
 			AuthorizeEndpoint: "https://public-issuer.example.com/authorize",
 		},
@@ -201,7 +201,7 @@ func ValidGitHubServiceRequest() map[string]interface{} {
 		"client_secret": "ghp_secretkey1234567890abcdef",
 		"issuer_uri":    "https://github.com",
 		"discovery":     map[string]interface{}{"enable_discovery": false},
-		"endpoints": map[string]interface{}{
+		"endpoints": map[string]interface{}{ // #nosec G101 -- fixed public GitHub OAuth2 endpoint URLs, not credentials.
 			"token_endpoint":     "https://github.com/login/oauth/access_token",
 			"authorize_endpoint": "https://github.com/login/oauth/authorize",
 		},

@@ -133,5 +133,5 @@ func redirectWithError(w http.ResponseWriter, r *http.Request, redirectURI, stat
 		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
 		return
 	}
-	http.Redirect(w, r, target, http.StatusFound)
+	http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- authorization service validates redirect_uri against registered client URIs.
 }

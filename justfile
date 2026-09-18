@@ -562,13 +562,28 @@ verify-junit:
     echo "✓ Stage 3 passed"
 
 
-# Run the full local verification gate with E2E as the final guard layer
-verify: check test web-test cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-all test-e2e
+# Run the full local verification gate with security scanning and E2E as the final guard layer
+verify: check security test web-test cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-all test-e2e
     @echo "Verification suite completed"
 
-# Run static quality checks (format, vet, lint; no tests)
-check: fmt vet lint
+# Run non-mutating format, vet, and lint checks (no tests)
+fmt-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    unformatted="$(gofmt -s -l .)"
+    if [ -n "$unformatted" ]; then
+        echo "Files need gofmt -s:"
+        printf '%s\n' "$unformatted"
+        echo "Run 'just fmt' to fix formatting."
+        exit 1
+    fi
+
+check: fmt-check vet lint
     @echo "Static quality checks passed!"
+
+# Run focused security scans across all dependency manifests
+security:
+    bash scripts/security-scan.sh .
 
 # =============================================================================
 # Web Development Targets

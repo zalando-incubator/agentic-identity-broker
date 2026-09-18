@@ -77,7 +77,7 @@ func NewFetcherInsecure(fetchTimeout time.Duration, maxResponseBytes int64) (*Fe
 
 	transport := &http.Transport{
 		DialContext:       dialer.DialContext,
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, //nolint:gosec // dev-only
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, // #nosec G402 -- insecure constructor is restricted to development and test use.
 		MaxConnsPerHost:   1,
 		DisableKeepAlives: true,
 	}

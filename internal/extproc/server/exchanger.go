@@ -644,7 +644,7 @@ func clientCredentialsScopes(configured []string) []string {
 // Returns an error if CaBundlePath is set but the file cannot be read or parsed.
 func buildHTTPClient(cfg *extprocconfig.Config) (*http.Client, error) {
 	tlsCfg := &tls.Config{
-		InsecureSkipVerify: cfg.OAuth2.TLS.InsecureSkipVerify, //nolint:gosec // controlled by explicit operator config
+		InsecureSkipVerify: cfg.OAuth2.TLS.InsecureSkipVerify, // #nosec G402 -- TLS verification is disabled only by explicit operator configuration; the default is false.
 	}
 
 	if cfg.OAuth2.TLS.CaBundlePath != "" {

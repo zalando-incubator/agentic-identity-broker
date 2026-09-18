@@ -478,7 +478,7 @@ func (h *PermissionSetsHandler) applyCanonicalServiceScopes(ctx context.Context,
 	for i, permissionSet := range permissionSets {
 		for j, scope := range permissionSet.ServiceScopes {
 			if canonicalID, exists := canonicalIDs[scope.ServiceID]; exists {
-				responses[i].ServiceScopes[j].ServiceID = canonicalID
+				responses[i].ServiceScopes[j].ServiceID = canonicalID // #nosec G602 -- private helper receives one response per permission set in the same order.
 			}
 		}
 	}

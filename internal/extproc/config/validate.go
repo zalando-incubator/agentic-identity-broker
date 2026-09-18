@@ -39,10 +39,16 @@ import (
 //  19. telemetry.exporter.timeout must be a positive duration
 func Validate(cfg *Config) error {
 	var errs []string
+	const maxUint32 = ^uint32(0)
 
 	// Rule 1: grpc.port must be 1-65535
 	if cfg.GRPC.Port < 1 || cfg.GRPC.Port > 65535 {
 		errs = append(errs, fmt.Sprintf("grpc.port must be between 1 and 65535, got %d", cfg.GRPC.Port))
+	}
+
+	// Rule 1a: grpc.max_concurrent_streams must fit grpc.MaxConcurrentStreams.
+	if cfg.GRPC.MaxConcurrentStreams < 1 || uint64(cfg.GRPC.MaxConcurrentStreams) > uint64(maxUint32) {
+		errs = append(errs, fmt.Sprintf("grpc.max_concurrent_streams must be between 1 and %d, got %d", maxUint32, cfg.GRPC.MaxConcurrentStreams))
 	}
 
 	// Rule 2: grpc.bind must not be empty
@@ -119,9 +125,9 @@ func Validate(cfg *Config) error {
 		errs = append(errs, fmt.Sprintf("oauth2.client_assertion_type must be one of id_token, access_token; got %q", cfg.OAuth2.ClientAssertionType))
 	}
 
-	// Rule 14: circuit_breaker.max_failures must be positive (only when enabled)
-	if cfg.CircuitBreaker.Enabled && cfg.CircuitBreaker.MaxFailures < 1 {
-		errs = append(errs, fmt.Sprintf("circuit_breaker.max_failures must be >= 1, got %d", cfg.CircuitBreaker.MaxFailures))
+	// Rule 14: circuit_breaker.max_failures must fit gobreaker.Settings (only when enabled).
+	if cfg.CircuitBreaker.Enabled && (cfg.CircuitBreaker.MaxFailures < 1 || uint64(cfg.CircuitBreaker.MaxFailures) > uint64(maxUint32)) {
+		errs = append(errs, fmt.Sprintf("circuit_breaker.max_failures must be between 1 and %d, got %d", maxUint32, cfg.CircuitBreaker.MaxFailures))
 	}
 
 	// Rule 15: circuit_breaker.reset_timeout must be positive (only when enabled)

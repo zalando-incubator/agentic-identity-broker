@@ -7,7 +7,7 @@ package tokenexchange
 const (
 	// TokenExchangeGrantType is the RFC 8693 grant type for token exchange requests.
 	// Used in the grant_type parameter of the token exchange request.
-	TokenExchangeGrantType = "urn:ietf:params:oauth:grant-type:token-exchange"
+	TokenExchangeGrantType = "urn:ietf:params:oauth:grant-type:token-exchange" // #nosec G101 -- RFC-defined grant type URI, not a credential.
 
 	// AuthorizationCodeGrantType is the standard OAuth2 authorization code grant type.
 	// Used to distinguish token-exchange requests from authorization_code requests.
@@ -22,16 +22,16 @@ const (
 const (
 	// AccessTokenType is the token type for access tokens.
 	// Used in subject_token_type and issued_token_type parameters.
-	AccessTokenType = "urn:ietf:params:oauth:token-type:access_token"
+	AccessTokenType = "urn:ietf:params:oauth:token-type:access_token" // #nosec G101 -- RFC-defined token type URI, not a credential.
 
 	// RefreshTokenType is the token type for refresh tokens.
-	RefreshTokenType = "urn:ietf:params:oauth:token-type:refresh_token"
+	RefreshTokenType = "urn:ietf:params:oauth:token-type:refresh_token" // #nosec G101 -- RFC-defined token type URI, not a credential.
 
 	// IDTokenType is the token type for ID tokens (OIDC).
-	IDTokenType = "urn:ietf:params:oauth:token-type:id_token"
+	IDTokenType = "urn:ietf:params:oauth:token-type:id_token" // #nosec G101 -- RFC-defined token type URI, not a credential.
 
 	// JWTTokenType is the token type for generic JWTs.
-	JWTTokenType = "urn:ietf:params:oauth:token-type:jwt"
+	JWTTokenType = "urn:ietf:params:oauth:token-type:jwt" // #nosec G101 -- RFC-defined token type URI, not a credential.
 
 	// BearerTokenType is the token_type returned in RFC 8693 responses.
 	// Indicates the access token follows the Bearer token usage defined in RFC 6750.
@@ -42,7 +42,7 @@ const (
 const (
 	// JWTBearerType is the client assertion type for JWT Bearer tokens.
 	// Used for client authentication via signed assertions (RFC 7523).
-	JWTBearerType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+	JWTBearerType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" // #nosec G101 -- RFC-defined assertion type URI, not a credential.
 )
 
 // Request Parameter Names (RFC 8693)
@@ -81,7 +81,7 @@ const (
 	AccessTokenField = "access_token"
 
 	// IssuedTokenTypeField is the RFC 8693 response issued_token_type field name.
-	IssuedTokenTypeField = "issued_token_type"
+	IssuedTokenTypeField = "issued_token_type" // #nosec G101 -- RFC-defined response field name, not a credential.
 
 	// TokenTypeField is the RFC 8693 response token_type field name.
 	TokenTypeField = "token_type"

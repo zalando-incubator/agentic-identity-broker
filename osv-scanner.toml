@@ -1,0 +1,31 @@
+ScanGoModVersion = false
+
+[[IgnoredVulns]]
+id = "GO-2026-4883"
+ignoreUntil = 2026-10-16
+reason = "OSV lists no patched Docker release; golang-migrate's PostgreSQL driver requires the Docker client."
+
+[[IgnoredVulns]]
+id = "GO-2026-4887"
+ignoreUntil = 2026-10-16
+reason = "OSV lists no patched Docker release; golang-migrate's PostgreSQL driver requires the Docker client."
+
+[[IgnoredVulns]]
+id = "GO-2026-5617"
+ignoreUntil = 2026-10-16
+reason = "OSV lists no patched Docker release; golang-migrate's PostgreSQL driver requires the Docker client."
+
+[[IgnoredVulns]]
+id = "GO-2026-5668"
+ignoreUntil = 2026-10-16
+reason = "OSV lists no patched Docker release; golang-migrate's PostgreSQL driver requires the Docker client."
+
+[[IgnoredVulns]]
+id = "GO-2026-5746"
+ignoreUntil = 2026-10-16
+reason = "OSV lists no patched Docker release; golang-migrate's PostgreSQL driver requires the Docker client."
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+ignoreUntil = 2026-10-16
+reason = "OSV lists no patched golang.org/x/crypto release; Argon2 credential hashing requires this module."

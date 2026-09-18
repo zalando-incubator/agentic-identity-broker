@@ -164,7 +164,7 @@ func run(cmd *cobra.Command, _ []string) error {
 
 	// 7. Create gRPC server with max_concurrent_streams.
 	grpcOpts := []grpc.ServerOption{
-		grpc.MaxConcurrentStreams(uint32(cfg.GRPC.MaxConcurrentStreams)),
+		grpc.MaxConcurrentStreams(uint32(cfg.GRPC.MaxConcurrentStreams)), // #nosec G115 -- Validate rejects values outside the uint32 range.
 		grpc.KeepaliveParams(keepalive.ServerParameters{}),
 	}
 	grpcSrv := grpc.NewServer(grpcOpts...)

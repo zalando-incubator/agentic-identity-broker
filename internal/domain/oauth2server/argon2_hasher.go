@@ -52,7 +52,7 @@ func (h *Argon2Hasher) Compare(phcString, secret string) error {
 		return fmt.Errorf("invalid PHC string: %w", err)
 	}
 
-	computed := argon2.IDKey([]byte(secret), salt, params.iterations, params.memory, params.parallelism, uint32(len(hash)))
+	computed := argon2.IDKey([]byte(secret), salt, params.iterations, params.memory, params.parallelism, argon2KeyLength)
 
 	if subtle.ConstantTimeCompare(hash, computed) != 1 {
 		return fosite.ErrInvalidClient
@@ -88,6 +88,9 @@ func decodePHC(phc string) (salt, hash []byte, params argon2Params, err error) {
 	hash, err = base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
 		return nil, nil, argon2Params{}, fmt.Errorf("failed to decode hash: %w", err)
+	}
+	if len(hash) != argon2KeyLength {
+		return nil, nil, argon2Params{}, fmt.Errorf("hash must be %d bytes", argon2KeyLength)
 	}
 
 	return salt, hash, argon2Params{memory: m, iterations: t, parallelism: p}, nil

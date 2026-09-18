@@ -47,7 +47,9 @@ func (h *GetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(data) //nolint:errcheck
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		return
+	}
 }
 
 type errorResponse struct {

@@ -208,7 +208,7 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 		"auth_url_domain", extractDomain(result.AuthorizationURL))
 
 	// Redirect to authorization URL
-	http.Redirect(w, r, result.AuthorizationURL, http.StatusFound)
+	http.Redirect(w, r, result.AuthorizationURL, http.StatusFound) // #nosec G710 -- domain service builds this URL from the stored provider endpoint.
 }
 
 // extractDomain extracts domain from URL for logging

@@ -519,12 +519,12 @@ func (h *AgentsHandler) applyCanonicalReferences(ctx context.Context, agents []*
 	for i, agent := range agents {
 		for j, requirement := range agent.ServiceRequirements {
 			if canonicalID, ok := serviceCanonicalIDs[requirement.ServiceID]; ok {
-				responses[i].ServiceRequirements[j].ServiceID = canonicalID
+				responses[i].ServiceRequirements[j].ServiceID = canonicalID // #nosec G602 -- private helper receives one response per agent in the same order.
 			}
 		}
 		for j, permissionSet := range agent.PermissionSets {
 			if canonicalID, ok := permissionSetCanonicalIDs[permissionSet.PermissionSetID]; ok {
-				responses[i].PermissionSets[j].PermissionSetID = canonicalID
+				responses[i].PermissionSets[j].PermissionSetID = canonicalID // #nosec G602 -- private helper receives one response per agent in the same order.
 			}
 		}
 	}

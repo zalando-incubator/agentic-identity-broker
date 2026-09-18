@@ -75,6 +75,16 @@ targets.
 See [Configure authentication](/docs/guides/configure-authentication) for how to establish the
 proxy trust boundary.
 
+## Automated security verification
+
+The `CI / security` status blocks pull requests. It runs the scanner script from the trusted base branch with read-only repository access.
+
+- `gosec` finds security defects in Go source code.
+- `govulncheck` finds known Go vulnerabilities that project code reaches.
+- OSV-Scanner finds vulnerable dependencies in all Go manifests and npm lockfiles.
+
+Run `just security` for the focused scanner command. Run `just verify` for the full verification gate.
+
 ## Reporting a vulnerability
 
 Please disclose security issues responsibly rather than opening a public issue.

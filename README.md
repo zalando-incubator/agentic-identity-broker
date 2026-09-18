@@ -17,8 +17,7 @@
     <a href="#use-cases">Use Cases</a> ·
     <a href="#quick-start">Quick Start</a> ·
     <a href="#architecture">Architecture</a> ·
-    <a href="#documentation">Documentation</a> ·
-    <a href="#contributing">Contributing</a>
+    <a href="#documentation">Documentation</a>
   </p>
 </div>
 
@@ -173,33 +172,6 @@ The application implements security-first design principles:
 
 For security concerns, please see our security policy.
 
-## Contributing
-
-We welcome contributions! Please follow these governance-compliant guidelines:
-
-1. **Review Constitution**: Read [.specify/memory/constitution.md](.specify/memory/constitution.md) for binding principles
-2. **Fork the repository**
-3. **Create a feature branch** (`git checkout -b feature/amazing-feature`)
-4. **Make your changes**:
-   - For APIs: Document in OpenAPI first, get user confirmation for design changes
-   - For backend: Follow hexagonal architecture patterns
-   - For frontend: Use design system components from `web/src/design-system/`
-5. **Run static checks and the verification gate** (`just check` and `just verify`) - both must pass
-6. **Update architecture docs** if your changes affect system design ([ARCHITECTURE.md](ARCHITECTURE.md))
-7. **Commit your changes** with clear, descriptive messages
-8. **Push to your branch** (`git push origin feature/amazing-feature`)
-9. **Open a Pull Request** with a clear description of changes and rationale
-
-### Contribution Rules
-
-- **Security-First**: Never disable security controls. If security is an issue, escalate rather than bypass.
-- **API-First**: Document APIs in OpenAPI format before implementation
-- **Tests Required**: New features must include tests. Run `just verify` before opening a PR.
-- **No Architecture Deviations**: Follow established ADRs (Architecture Decision Records). Deviations require new ADRs.
-- **Database Changes**: Use go-migrate naming conventions for all migrations
-- **Design System**: All frontend components must use the design system (web/src/design-system/)
-
-For security concerns, please refer to the project's security policy.
 
 ## Documentation
 
