@@ -8,10 +8,6 @@ name: "Copilot Setup Steps"
 
 on: workflow_dispatch
 
-# Allow network access to hosts needed for tool installation
-env:
-  COPILOT_AGENT_FIREWALL_ALLOW_LIST_ADDITIONS: "just.systems"
-
 jobs:
   copilot-setup-steps:
     runs-on: ubuntu-latest
@@ -36,7 +32,7 @@ jobs:
 
       # Set up Node.js (for web frontend)
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: "24"
           cache: 'npm'
@@ -53,10 +49,10 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
 
-      # Install just command runner
       - name: Install just
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780
+        with:
+          tool: just
 
       # Install other tools
       - name: "Install Tools via `just install-tools`"

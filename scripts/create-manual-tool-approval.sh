@@ -17,20 +17,26 @@ for command in curl python3; do
 	require_command "$command"
 done
 
-agent_id=$(curl -fsS -H 'X-Remote-User: dev@example.com' "$ADMIN_URL/api/agents" | python3 -c '
-import json, sys
-for agent in json.load(sys.stdin):
-    if agent.get("client_id") == "upstream-oauth2-client":
-        print(agent["id"])
-        break
-else:
-    raise SystemExit("the Sample Agent is not seeded")
-')
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "$tmp_dir"' EXIT
+agent_id=$(
+	curl -fsS -H 'X-Remote-User: dev@example.com' "$ADMIN_URL/api/agents" -o "$tmp_dir/agents.json"
+	python3 - "$tmp_dir/agents.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as response:
+    for agent in json.load(response):
+        if agent.get("client_id") == "upstream-oauth2-client":
+            print(agent["id"])
+            break
+    else:
+        raise SystemExit("the Sample Agent is not seeded")
+PY
+)
 
 [ -n "$agent_id" ]
 
-tmp_dir=$(mktemp -d)
-trap 'rm -rf "$tmp_dir"' EXIT
 
 code=$(
 	curl -fsS -D "$tmp_dir/headers" -o /dev/null -X POST "$UPSTREAM_URL/oauth/authorize" \
@@ -47,17 +53,37 @@ print(parse_qs(urlparse(sys.stdin.read().strip()).query)["code"][0])
 '
 )
 
-subject_token=$(curl -fsS -X POST "$UPSTREAM_URL/oauth/token" \
-	--data-urlencode 'grant_type=authorization_code' \
-	--data-urlencode "code=$code" \
-	--data-urlencode 'redirect_uri=http://localhost:9999/callback' \
-	--data-urlencode 'client_id=upstream-oauth2-client' \
-	--data-urlencode 'client_secret=upstream-oauth2-secret-xyz' | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')
+subject_token=$(
+	curl -fsS -X POST "$UPSTREAM_URL/oauth/token" \
+		--data-urlencode 'grant_type=authorization_code' \
+		--data-urlencode "code=$code" \
+		--data-urlencode 'redirect_uri=http://localhost:9999/callback' \
+		--data-urlencode 'client_id=upstream-oauth2-client' \
+		--data-urlencode 'client_secret=upstream-oauth2-secret-xyz' \
+		-o "$tmp_dir/subject-token.json"
+	python3 - "$tmp_dir/subject-token.json" <<'PY'
+import json
+import sys
 
-client_assertion=$(curl -fsS -X POST "$UPSTREAM_URL/oauth/token" \
-	--data-urlencode 'grant_type=client_credentials' \
-	--data-urlencode 'client_id=extproc-gateway' \
-	--data-urlencode 'client_secret=extproc-dev-secret' | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')
+with open(sys.argv[1], encoding="utf-8") as response:
+    print(json.load(response)["access_token"])
+PY
+)
+
+client_assertion=$(
+	curl -fsS -X POST "$UPSTREAM_URL/oauth/token" \
+		--data-urlencode 'grant_type=client_credentials' \
+		--data-urlencode 'client_id=extproc-gateway' \
+		--data-urlencode 'client_secret=extproc-dev-secret' \
+		-o "$tmp_dir/client-assertion.json"
+	python3 - "$tmp_dir/client-assertion.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as response:
+    print(json.load(response)["access_token"])
+PY
+)
 
 python3 - "$TOOL_NAME" >"$tmp_dir/request.json" <<'PY'
 import json

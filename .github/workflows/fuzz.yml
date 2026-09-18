@@ -1,0 +1,46 @@
+name: Fuzz
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: ./internal/domain/oauth2/cimd
+            target: FuzzParseDocument
+          - package: ./internal/extproc/authorization
+            target: FuzzParseMCPMessage
+          - package: ./internal/domain/impersonation
+            target: FuzzParseUnverifiedSubject
+          - package: ./internal/domain/model
+            target: FuzzParseGoogleServiceAccountKey
+          - package: ./internal/domain/impersonation
+            target: FuzzParseRequest
+          - package: ./internal/domain/urivalidation
+            target: FuzzNormalizeResourceURI
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fuzz parser
+        run: go test -run=^$ -fuzz=${{ matrix.target }} -fuzztime=1m ${{ matrix.package }}
