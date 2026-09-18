@@ -1,0 +1,2 @@
+go test fuzz v1
+string("actor_token=0&actor_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt&client_assertion=0&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&subject_token=0&subject_token_type=0")

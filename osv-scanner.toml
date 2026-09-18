@@ -1,0 +1,23 @@
+[[IgnoredVulns]]
+id = "GO-2026-4883"
+reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
+
+[[IgnoredVulns]]
+id = "GO-2026-5617"
+reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
+
+[[IgnoredVulns]]
+id = "GO-2026-5668"
+reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
+
+[[IgnoredVulns]]
+id = "GO-2026-5746"
+reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
+
+[[IgnoredVulns]]
+id = "GO-2026-4887"
+reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "The repository does not import the unmaintained golang.org/x/crypto/openpgp packages affected by this advisory."

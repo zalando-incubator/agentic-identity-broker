@@ -161,7 +161,7 @@ services:
         condition: service_healthy
 
   opa-bundle-volume-init:
-    image: alpine:latest
+    image: alpine:latest@sha256:5b02b42e375f7426f8d65c3af331ca05d9878f9989230354504e0b9dfd431f60
     user: "0:0" # Required to give the non-root builder ownership of /output.
     network_mode: none
     volumes: [opa-bundles:/output]
@@ -170,7 +170,7 @@ services:
   # Compiles mocks/opa/bundle/ into the opa-bundles volume at startup.
   # For local policy development and testing, use `just opa-check` instead.
   opa-bundle-build:
-    image: openpolicyagent/opa:latest
+    image: openpolicyagent/opa:latest@sha256:1b9ca9be95e6867ac658bfd3aa36804064c06017c7977759de68e9dd00de37fb
     container_name: aib-opa-bundle-build
     working_dir: /bundle
     volumes:
@@ -184,7 +184,7 @@ services:
 
   # Serves the compiled bundle as a static file for OPA to poll.
   opa-bundle-server:
-    image: nginx:alpine
+    image: nginx:alpine@sha256:62ff2089abf5a9ed33bd232895bef5e22f7bb4b200675cec49a5ebc48e3d4ac8
     container_name: aib-opa-bundle-server
     ports:
       - "8080:80"  # exposed for local testing only; extproc uses container-internal port 80
@@ -242,7 +242,7 @@ services:
 
   # Agentgateway routes MCP calls through ExtProc for token exchange.
   agentgateway:
-    image: ${AGENTGATEWAY_IMAGE:-cr.agentgateway.dev/agentgateway:v1.5.0}
+    image: cr.agentgateway.dev/agentgateway:v1.5.0@sha256:bf2f339ef326d32def2aaeb44b1b4549801293c19b89e764a4228667d97d9896
     container_name: aib-agentgateway
     ports:
       - "4000:4000"
