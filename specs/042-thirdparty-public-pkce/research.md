@@ -252,7 +252,7 @@ never consulted when interpreting the request.
 
 ## D6 — Schema and rollback
 
-**Decision**: One migration pair, `031_add_token_endpoint_auth_method.{up,down}.sql`.
+**Decision**: One migration pair, `032_add_token_endpoint_auth_method.{up,down}.sql`.
 
 Up:
 

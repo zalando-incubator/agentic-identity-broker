@@ -115,7 +115,7 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 
 ### 1. Standalone process — isolated ExtProc packages
 
-Do not import `internal/domain/`, `internal/ports/`, or `internal/adapters/` from `internal/extproc/`.
+Do not import `internal/domain/`, `internal/ports/`, or `internal/adapters/` from `internal/extproc/`, except `internal/domain/approval/toolpattern` as authorized by ADR 035 for shared approval-pattern semantics. No other `internal/domain/` package is permitted.
 
 The `cmd/extproc-token-exchange/` composition layer can import `internal/ports`.
 It can also import `internal/adapters/telemetry` for OpenTelemetry (ADR 027).

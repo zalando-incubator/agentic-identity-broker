@@ -1859,7 +1859,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApproveResponse"
         "400":
-          description: Invalid UUID or missing persistence field
+          description: >-
+            Invalid UUID, missing persistence, or supplied `tool_pattern`.
+            Supplied `tool_pattern` returns `invalid_request`: `tool_pattern is not allowed`.
           content:
             application/json:
               schema:
@@ -1882,8 +1884,75 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
+        "422":
+          description: Requested pattern is malformed or does not cover the reviewed tool call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
         "410":
           description: Approval expired or already actioned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+
+  /api/approvals/{id}/scope-preview:
+    post:
+      operationId: previewApprovalScope
+      summary: Validate and render an approval scope without changing state
+      tags:
+        - Approvals
+      security:
+        - PrincipalHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScopePreviewRequest"
+      responses:
+        "200":
+          description: Resolved approval scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScopePreviewResponse"
+        "400":
+          description: >-
+            Invalid UUID, invalid `params_pattern` JSON type, or supplied `tool_pattern`.
+            Supplied `tool_pattern` returns `invalid_request`: `tool_pattern is not allowed`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "401":
+          description: Missing principal header
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "403":
+          description: Acting user does not match approval principal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "404":
+          description: Approval not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+        "422":
+          description: Requested pattern is malformed or does not cover the reviewed tool call
           content:
             application/json:
               schema:
@@ -3641,70 +3710,44 @@ components:
         - agent_id
         - tool_name
         - arguments
+        - tool_pattern
+        - params_pattern
+        - pattern_preview
         - status
         - approval_url
         - created_at
         - expires_at
       properties:
-        id:
+        id: { type: string, format: uuid }
+        principal: { type: string }
+        agent_id: { type: string, format: uuid }
+        agent_display_name: { type: string }
+        mcp_session_id: { type: string, nullable: true }
+        agent_session_id: { type: string, nullable: true }
+        tool_invocation_id: { type: string, nullable: true }
+        tool_name: { type: string }
+        arguments: { type: object, additionalProperties: true }
+        tool_pattern:
           type: string
-          format: uuid
-        principal:
-          type: string
-        agent_id:
-          type: string
-          format: uuid
-        agent_display_name:
-          type: string
-        mcp_session_id:
-          type: string
-          nullable: true
-        agent_session_id:
-          type: string
-          nullable: true
-        tool_invocation_id:
-          type: string
-          nullable: true
-        tool_name:
-          type: string
-        arguments:
+          description: Server-derived exact matcher for this approval's `tool_name`.
+        params_pattern:
           type: object
-          additionalProperties: true
-        description:
+          additionalProperties: { type: string }
+          description: Constrained argument names mapped to globs; absent keys are unconstrained.
+        pattern_preview:
           type: string
-        risk_level:
-          type: string
-          enum: [low, medium, critical]
-        status:
-          type: string
-          enum: [pending, approved, denied]
-        persistence:
-          type: string
-          enum: [once, session, permanent]
-          nullable: true
-        consumed:
-          type: boolean
-        approval_url:
-          type: string
-          format: uri
-        created_at:
-          type: string
-          format: date-time
-        approved_at:
-          type: string
-          format: date-time
-          nullable: true
-        denied_at:
-          type: string
-          format: date-time
-          nullable: true
-        consumed_at:
-          type: string
-          format: date-time
-          nullable: true
-        expires_at:
-          type: string
-          format: date-time
+          description: Server-rendered representation of the approval pattern.
+        description: { type: string }
+        risk_level: { type: string, enum: [low, medium, critical] }
+        status: { type: string, enum: [pending, approved, denied] }
+        persistence: { type: string, enum: [once, session, permanent], nullable: true }
+        consumed: { type: boolean }
+        approval_url: { type: string, format: uri }
+        created_at: { type: string, format: date-time }
+        approved_at: { type: string, format: date-time, nullable: true }
+        denied_at: { type: string, format: date-time, nullable: true }
+        consumed_at: { type: string, format: date-time, nullable: true }
+        expires_at: { type: string, format: date-time }
 
     ApproveRequest:
       type: object
@@ -3714,6 +3757,41 @@ components:
         persistence:
           type: string
           enum: [once, session, permanent]
+        params_pattern:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Constrained argument names mapped to globs. Omit the field entirely to cover only
+            the reviewed argument values; send an empty object to leave every argument
+            unconstrained. The resulting pattern must cover the reviewed arguments.
+
+    ScopePreviewRequest:
+      type: object
+      properties:
+        params_pattern:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            Constrained argument names mapped to globs. Omit the field entirely to cover only
+            the reviewed argument values; send an empty object to leave every argument
+            unconstrained.
+
+    ScopePreviewResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [tool_pattern, params_pattern, preview]
+          properties:
+            tool_pattern:
+              type: string
+              description: Server-derived exact matcher for the reviewed `tool_name`.
+            params_pattern:
+              type: object
+              additionalProperties: { type: string }
+            preview: { type: string }
 
     ApproveResponse:
       type: object
@@ -3839,6 +3917,8 @@ components:
         - arguments_hash
         - status
         - consumed
+        - tool_pattern
+        - params_pattern
       properties:
         id:
           type: string
@@ -3847,6 +3927,16 @@ components:
           type: string
         arguments_hash:
           type: string
+        tool_pattern:
+          type: string
+          description: Server-derived exact matcher for this approval's `tool_name`.
+        params_pattern:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Constrained argument names mapped to globs. Argument names absent from this
+            object are unconstrained. An empty object matches any arguments.
         status:
           type: string
           enum: [pending, approved, denied]

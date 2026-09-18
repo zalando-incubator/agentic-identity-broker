@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { Button } from '@components/ui/Button';
 import { ToolCallCard } from './ToolCallCard';
 import { PersistenceSelector } from './PersistenceSelector';
+import { ApprovalScopeEditor } from './ApprovalScopeEditor';
 import { ApprovalConfirmation } from './ApprovalConfirmation';
 import { ApprovalErrorBanner } from './ApprovalErrorBanner';
 import type {
@@ -17,7 +18,10 @@ import type {
   ApprovalErrorCode,
   ApproveResponseData,
   DenyResponseData,
+  ApproveRequest,
 } from '../../types/approval';
+
+const INLINE_ERROR_CODES = new Set<ApprovalErrorCode>(['NETWORK_ERROR', 'INVALID_PATTERN']);
 
 interface ApprovalReviewPageProps {
   approval: ToolApprovalDetail;
@@ -26,7 +30,7 @@ interface ApprovalReviewPageProps {
   errorMessage: string | null;
   approveResult: ApproveResponseData | null;
   denyResult: DenyResponseData | null;
-  onApprove: (persistence: ApprovalPersistence) => Promise<void>;
+  onApprove: (request: ApproveRequest) => Promise<void>;
   onDeny: (permanent?: boolean) => Promise<void>;
   onRetry?: () => void;
 }
@@ -43,6 +47,13 @@ export function ApprovalReviewPage({
   onRetry,
 }: ApprovalReviewPageProps) {
   const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
+  const [paramsPattern, setParamsPattern] = useState(approval.params_pattern ?? {});
+  const [scopeValid, setScopeValid] = useState(false);
+
+  const handlePersistenceChange = (value: ApprovalPersistence) => {
+    setPersistence(value);
+    setParamsPattern(approval.params_pattern ?? {});
+  };
 
   if (approveResult || approval.status === 'approved') {
     return (
@@ -68,7 +79,7 @@ export function ApprovalReviewPage({
     );
   }
 
-  if (errorCode && errorCode !== 'NETWORK_ERROR') {
+  if (errorCode && !INLINE_ERROR_CODES.has(errorCode)) {
     return (
       <div className="space-y-6">
         <ApprovalErrorBanner
@@ -81,7 +92,9 @@ export function ApprovalReviewPage({
   }
 
   const handleApprove = async () => {
-    await onApprove(persistence);
+    await onApprove(
+      persistence === 'once' ? { persistence } : { persistence, params_pattern: paramsPattern },
+    );
   };
 
   const handleDeny = async () => {
@@ -92,22 +105,23 @@ export function ApprovalReviewPage({
     await onDeny(true);
   };
 
+  const scopeBlocked = persistence !== 'once' && !scopeValid;
+
   return (
-    <div className="max-w-2xl mx-auto p-6 space-y-6">
+    <div className="max-w-2xl mx-auto px-6 pt-4 pb-28 space-y-4">
       <div>
         <h1 className="text-2xl font-bold text-neutral-900">
           Tool Approval Request
         </h1>
         <p className="text-sm text-neutral-500 mt-1">
-          An agent is requesting permission to execute a tool call. Review the
-          details below and choose how to proceed.
+          Review what the agent wants to do, then choose how long to allow it.
         </p>
       </div>
 
       {/* Tool call details */}
       <ToolCallCard approval={approval} />
 
-      {errorCode === 'NETWORK_ERROR' && (
+      {errorCode && INLINE_ERROR_CODES.has(errorCode) && (
         <ApprovalErrorBanner
           errorCode={errorCode}
           message={errorMessage}
@@ -115,30 +129,44 @@ export function ApprovalReviewPage({
         />
       )}
 
-      {/* Persistence selector */}
-      <PersistenceSelector
-        value={persistence}
-        onChange={setPersistence}
-        disabled={submitting}
-      />
+      <div className="space-y-3">
+        <PersistenceSelector
+          value={persistence}
+          onChange={handlePersistenceChange}
+          disabled={submitting}
+        />
+        <ApprovalScopeEditor
+          approval={approval}
+          paramsPattern={paramsPattern}
+          onParamsPatternChange={setParamsPattern}
+          persistence={persistence}
+          disabled={submitting}
+          onScopeValidationChange={setScopeValid}
+        />
+      </div>
 
-      {/* Action buttons */}
-      <div className="flex gap-3 pt-2">
-        <Button
-          onClick={handleApprove}
-          disabled={submitting}
-          className="flex-1"
-        >
-          {submitting ? 'Processing…' : 'Approve'}
-        </Button>
-        <Button
-          onClick={handleDeny}
-          disabled={submitting}
-          variant="secondary"
-          className="flex-1"
-        >
-          Deny
-        </Button>
+      {/* Action buttons — pinned to the viewport so the decision stays reachable
+          without scrolling past the review content. */}
+      <div className="fixed inset-x-0 bottom-0 z-20 mb-0 border-t border-neutral-200 bg-white/95 px-4 py-2 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-2xl gap-3">
+          <Button
+            onClick={handleApprove}
+            disabled={submitting || scopeBlocked}
+            size="sm"
+            className="flex-1"
+          >
+            {submitting ? 'Processing…' : 'Approve'}
+          </Button>
+          <Button
+            onClick={handleDeny}
+            disabled={submitting}
+            variant="secondary"
+            size="sm"
+            className="flex-1"
+          >
+            Deny
+          </Button>
+        </div>
       </div>
 
       {/* Deny permanently option */}

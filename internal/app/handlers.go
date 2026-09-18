@@ -53,15 +53,16 @@ type EnduserHandlers struct {
 	OAuth2Metadata  *enduser.OAuth2MetadataHandler
 
 	// Approval handlers for /api/approvals routes
-	ApprovalCreate    *approval.CreateHandler
-	ApprovalGet       *approval.GetHandler
-	ApprovalApprove   *approval.ApproveHandler
-	ApprovalDeny      *approval.DenyHandler
-	ApprovalConsume   *approval.ConsumeHandler
-	ApprovalRevoke    *approval.RevokeHandler
-	ApprovalSync      *approval.SyncHandler
-	ApprovalPermanent *approval.PermanentHandler
-	ApprovalPending   *approval.PendingHandler
+	ApprovalCreate       *approval.CreateHandler
+	ApprovalGet          *approval.GetHandler
+	ApprovalApprove      *approval.ApproveHandler
+	ApprovalScopePreview *approval.ScopePreviewHandler
+	ApprovalDeny         *approval.DenyHandler
+	ApprovalConsume      *approval.ConsumeHandler
+	ApprovalRevoke       *approval.RevokeHandler
+	ApprovalSync         *approval.SyncHandler
+	ApprovalPermanent    *approval.PermanentHandler
+	ApprovalPending      *approval.PendingHandler
 
 	// JWKS handler (all OAuth2 modes — serves aggregated signing key public material)
 	JWKS *enduserHandlers.JWKSHandler

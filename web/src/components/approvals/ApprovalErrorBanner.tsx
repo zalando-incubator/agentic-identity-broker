@@ -63,6 +63,13 @@ const ERROR_CONFIG: Record<
     retryable: true,
     icon: '⚠',
   },
+  INVALID_PATTERN: {
+    title: 'Scope Not Accepted',
+    description:
+      'This approval scope does not cover the request being reviewed. Adjust the scope and try again.',
+    retryable: false,
+    icon: '✎',
+  },
 };
 
 export function ApprovalErrorBanner({

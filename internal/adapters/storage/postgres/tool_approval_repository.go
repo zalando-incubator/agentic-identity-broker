@@ -67,6 +67,9 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 			"approval cannot be nil",
 		)
 	}
+	if approval.ToolPattern == "" {
+		return nil, storage.NewStorageError("CreateToolApproval", storage.ErrorKindValidation, storage.ErrApprovalPatternMissing, "approval tool pattern is required")
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
@@ -80,6 +83,10 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 			err,
 			"failed to marshal arguments to JSON",
 		)
+	}
+	paramsPatternJSON, err := marshalParamsPattern(approval.ParamsPattern)
+	if err != nil {
+		return nil, storage.NewStorageError("CreateToolApproval", storage.ErrorKindValidation, err, "failed to marshal params pattern to JSON")
 	}
 
 	tx, err := r.adapter.db.BeginTx(execCtx, nil)
@@ -115,8 +122,8 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 			id, principal, agent_id, gateway_client_id, tool_name,
 			arguments, arguments_hash, description, risk_level,
 			mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
-			status, approval_url, created_at, expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			status, approval_url, created_at, expires_at, tool_pattern, params_pattern
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		ON CONFLICT (principal, agent_id, tool_name, arguments_hash) WHERE status = 'pending' AND consumed = FALSE
 		DO NOTHING
 	`
@@ -141,6 +148,8 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 		approval.ApprovalURL,
 		approval.CreatedAt,
 		approval.ExpiresAt,
+		approval.ToolPattern,
+		paramsPatternJSON,
 	)
 
 	if err != nil {
@@ -180,7 +189,7 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 		       arguments, arguments_hash, description, risk_level,
 		       mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		       status, persistence, consumed, approval_url,
-		       created_at, approved_at, denied_at, consumed_at, expires_at
+		       created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 		FROM tool_approvals
 		WHERE principal = $1 AND agent_id = $2 AND tool_name = $3 AND arguments_hash = $4
 		  AND status = 'pending' AND consumed = FALSE
@@ -188,6 +197,7 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 	`
 
 	var argumentsJSON []byte
+	var existingParamsPatternJSON []byte
 	existing := &storage.ToolApproval{}
 	err = tx.QueryRowContext(execCtx, selectQuery,
 		approval.Principal, approval.AgentID, approval.ToolName, approval.ArgumentsHash,
@@ -214,6 +224,8 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 		&existing.DeniedAt,
 		&existing.ConsumedAt,
 		&existing.ExpiresAt,
+		&existing.ToolPattern,
+		&existingParamsPatternJSON,
 	)
 
 	if err != nil {
@@ -234,6 +246,9 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 				"failed to unmarshal arguments from JSON",
 			)
 		}
+	}
+	if err := unmarshalParamsPattern(existingParamsPatternJSON, &existing.ParamsPattern); err != nil {
+		return nil, storage.NewStorageError("CreateToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -280,13 +295,14 @@ func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.Approval
 	defer cancel()
 
 	var argumentsJSON []byte
+	var paramsPatternJSON []byte
 
 	query := `
 		SELECT id, principal, agent_id, gateway_client_id, tool_name,
 		       arguments, arguments_hash, description, risk_level,
 		       mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		       status, persistence, consumed, approval_url,
-		       created_at, approved_at, denied_at, consumed_at, expires_at
+		       created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 		FROM tool_approvals
 		WHERE id = $1
 	`
@@ -315,6 +331,8 @@ func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.Approval
 		&approval.DeniedAt,
 		&approval.ConsumedAt,
 		&approval.ExpiresAt,
+		&approval.ToolPattern,
+		&paramsPatternJSON,
 	)
 
 	if err != nil {
@@ -352,13 +370,16 @@ func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.Approval
 			)
 		}
 	}
+	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
+		return nil, storage.NewStorageError("GetToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+	}
 
 	return approval, nil
 }
 
 // Approve transitions a pending tool approval to approved status in PostgreSQL.
 // Returns StorageError with Kind=NotFound if not found or not in pending state.
-func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.ApprovalID, persistence storage.ApprovalPersistence, approvedAt time.Time) (*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error) {
 	ctx, span := otel.Tracer("storage").Start(ctx, "storage.approve.tool_approval")
 	defer span.End()
 	span.SetAttributes(
@@ -383,25 +404,33 @@ func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.Appr
 			"approval ID cannot be empty",
 		)
 	}
+	if decision.ToolPattern == "" {
+		return nil, storage.NewStorageError("ApproveToolApproval", storage.ErrorKindValidation, storage.ErrApprovalPatternMissing, "approval tool pattern is required")
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
 	var argumentsJSON []byte
+	paramsPatternJSON, err := marshalParamsPattern(decision.ParamsPattern)
+	if err != nil {
+		return nil, storage.NewStorageError("ApproveToolApproval", storage.ErrorKindValidation, err, "failed to marshal params pattern to JSON")
+	}
 
 	query := `
 		UPDATE tool_approvals
-		SET status = 'approved', persistence = $2, approved_at = $3
+		SET status = 'approved', persistence = $2, tool_pattern = $3, params_pattern = $4, approved_at = $5
 		WHERE id = $1 AND status = 'pending' AND expires_at > NOW()
 		RETURNING id, principal, agent_id, gateway_client_id, tool_name,
 		          arguments, arguments_hash, description, risk_level,
 		          mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		          status, persistence, consumed, approval_url,
-		          created_at, approved_at, denied_at, consumed_at, expires_at
+		          created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 	`
 
 	approval := &storage.ToolApproval{}
-	err := r.adapter.db.QueryRowContext(execCtx, query, approvalID, persistence, approvedAt).Scan(
+	var storedParamsPatternJSON []byte
+	err = r.adapter.db.QueryRowContext(execCtx, query, approvalID, decision.Persistence, decision.ToolPattern, paramsPatternJSON, approvedAt).Scan(
 		&approval.ID,
 		&approval.Principal,
 		&approval.AgentID,
@@ -424,6 +453,8 @@ func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.Appr
 		&approval.DeniedAt,
 		&approval.ConsumedAt,
 		&approval.ExpiresAt,
+		&approval.ToolPattern,
+		&storedParamsPatternJSON,
 	)
 
 	if err != nil {
@@ -461,6 +492,9 @@ func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.Appr
 			)
 		}
 	}
+	if err := unmarshalParamsPattern(storedParamsPatternJSON, &approval.ParamsPattern); err != nil {
+		return nil, storage.NewStorageError("ApproveToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+	}
 
 	return approval, nil
 }
@@ -497,6 +531,7 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 	defer cancel()
 
 	var argumentsJSON []byte
+	var paramsPatternJSON []byte
 
 	query := `
 		UPDATE tool_approvals
@@ -506,7 +541,7 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 		          arguments, arguments_hash, description, risk_level,
 		          mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		          status, persistence, consumed, approval_url,
-		          created_at, approved_at, denied_at, consumed_at, expires_at
+		          created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 	`
 
 	approval := &storage.ToolApproval{}
@@ -533,6 +568,8 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 		&approval.DeniedAt,
 		&approval.ConsumedAt,
 		&approval.ExpiresAt,
+		&approval.ToolPattern,
+		&paramsPatternJSON,
 	)
 
 	if err != nil {
@@ -570,6 +607,9 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 			)
 		}
 	}
+	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
+		return nil, storage.NewStorageError("DenyToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+	}
 
 	return approval, nil
 }
@@ -606,6 +646,7 @@ func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.Appr
 	defer cancel()
 
 	var argumentsJSON []byte
+	var paramsPatternJSON []byte
 
 	query := `
 		UPDATE tool_approvals
@@ -615,7 +656,7 @@ func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.Appr
 		          arguments, arguments_hash, description, risk_level,
 		          mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		          status, persistence, consumed, approval_url,
-		          created_at, approved_at, denied_at, consumed_at, expires_at
+		          created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 	`
 
 	approval := &storage.ToolApproval{}
@@ -642,6 +683,8 @@ func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.Appr
 		&approval.DeniedAt,
 		&approval.ConsumedAt,
 		&approval.ExpiresAt,
+		&approval.ToolPattern,
+		&paramsPatternJSON,
 	)
 
 	if err != nil {
@@ -679,6 +722,9 @@ func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.Appr
 			)
 		}
 	}
+	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
+		return nil, storage.NewStorageError("ConsumeToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+	}
 
 	return approval, nil
 }
@@ -699,6 +745,7 @@ func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID
 	defer cancel()
 
 	var argumentsJSON []byte
+	var paramsPatternJSON []byte
 	query := `
 		UPDATE tool_approvals
 		SET status = 'denied', persistence = NULL, denied_at = $2
@@ -707,7 +754,7 @@ func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID
 		          arguments, arguments_hash, description, risk_level,
 		          mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		          status, persistence, consumed, approval_url,
-		          created_at, approved_at, denied_at, consumed_at, expires_at
+		          created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 	`
 
 	approval := &storage.ToolApproval{}
@@ -734,6 +781,8 @@ func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID
 		&approval.DeniedAt,
 		&approval.ConsumedAt,
 		&approval.ExpiresAt,
+		&approval.ToolPattern,
+		&paramsPatternJSON,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -748,6 +797,9 @@ func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal arguments from JSON")
 		}
+	}
+	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
+		return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
 	}
 	return approval, nil
 }
@@ -778,7 +830,7 @@ func (r *ToolApprovalRepository) ListAllActive(ctx context.Context, principalFil
 		       arguments, arguments_hash, description, risk_level,
 		       mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		       status, persistence, consumed, approval_url,
-		       created_at, approved_at, denied_at, consumed_at, expires_at
+		       created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 		FROM tool_approvals
 		WHERE consumed = FALSE
 		  AND (status != 'pending' OR expires_at > NOW())
@@ -839,7 +891,7 @@ func (r *ToolApprovalRepository) ListActiveByPrincipalAndAgent(ctx context.Conte
 		       arguments, arguments_hash, description, risk_level,
 		       mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		       status, persistence, consumed, approval_url,
-		       created_at, approved_at, denied_at, consumed_at, expires_at
+		       created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 		FROM tool_approvals
 		WHERE principal = $1 AND agent_id = $2 AND consumed = FALSE
 		  AND (status != 'pending' OR expires_at > NOW())
@@ -894,7 +946,7 @@ func (r *ToolApprovalRepository) ListPermanentByPrincipal(ctx context.Context, p
 		       arguments, arguments_hash, description, risk_level,
 		       mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		       status, persistence, consumed, approval_url,
-		       created_at, approved_at, denied_at, consumed_at, expires_at
+		       created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 		FROM tool_approvals
 		WHERE principal = $1 AND persistence = 'permanent'
 		ORDER BY created_at DESC
@@ -977,6 +1029,7 @@ func scanApprovalRows(rows *sql.Rows, operation string) ([]*storage.ToolApproval
 	var approvals []*storage.ToolApproval
 	for rows.Next() {
 		var argumentsJSON []byte
+		var paramsPatternJSON []byte
 		approval := &storage.ToolApproval{}
 		if err := rows.Scan(
 			&approval.ID,
@@ -1001,6 +1054,8 @@ func scanApprovalRows(rows *sql.Rows, operation string) ([]*storage.ToolApproval
 			&approval.DeniedAt,
 			&approval.ConsumedAt,
 			&approval.ExpiresAt,
+			&approval.ToolPattern,
+			&paramsPatternJSON,
 		); err != nil {
 			return nil, storage.NewStorageError(
 				operation,
@@ -1019,6 +1074,9 @@ func scanApprovalRows(rows *sql.Rows, operation string) ([]*storage.ToolApproval
 				)
 			}
 		}
+		if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
+			return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		}
 		approvals = append(approvals, approval)
 	}
 	if err := rows.Err(); err != nil {
@@ -1030,4 +1088,24 @@ func scanApprovalRows(rows *sql.Rows, operation string) ([]*storage.ToolApproval
 		)
 	}
 	return approvals, nil
+}
+
+func marshalParamsPattern(params map[string]string) ([]byte, error) {
+	if params == nil {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(params)
+}
+
+func unmarshalParamsPattern(data []byte, target *map[string]string) error {
+	params := make(map[string]string)
+	if len(data) == 0 || string(data) == "null" {
+		*target = params
+		return nil
+	}
+	if err := json.Unmarshal(data, &params); err != nil {
+		return err
+	}
+	*target = params
+	return nil
 }
