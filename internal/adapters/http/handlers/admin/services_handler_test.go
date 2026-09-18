@@ -475,6 +475,65 @@ func TestServicesHandler_CreateService(t *testing.T) {
 		mockRepo.AssertNotCalled(t, "Create")
 		mockRepo.AssertExpectations(t)
 	})
+	t.Run("rejects insecure token endpoint before create", func(t *testing.T) {
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+
+		reqBody := ServiceRequest{
+			DisplayName:  "Provider",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			IssuerURI:    "https://issuer.example.com",
+			Discovery:    DiscoveryConfigRequest{EnableDiscovery: false},
+			Endpoints: &OAuth2EndpointsRequest{
+				TokenEndpoint:     "http://attacker.invalid/token",
+				AuthorizeEndpoint: "https://issuer.example.com/authorize",
+			},
+		}
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+		w := httptest.NewRecorder()
+
+		handler.CreateService(w, httptest.NewRequest(http.MethodPost, "/api/services", bytes.NewReader(body)))
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		var response ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+		assert.Equal(t, "validation failed", response.Error)
+		assert.Equal(t, "token_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)", response.Message)
+		mockRepo.AssertNotCalled(t, "Create")
+	})
+
+	t.Run("rejects insecure fallback token endpoint before create", func(t *testing.T) {
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+
+		reqBody := ServiceRequest{
+			DisplayName:  "Provider",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			IssuerURI:    "https://issuer.example.com",
+			Discovery:    DiscoveryConfigRequest{EnableDiscovery: true},
+			Endpoints: &OAuth2EndpointsRequest{
+				TokenEndpoint:     "http://attacker.invalid/token",
+				AuthorizeEndpoint: "https://issuer.example.com/authorize",
+			},
+		}
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		w := httptest.NewRecorder()
+
+		handler.CreateService(w, httptest.NewRequest(http.MethodPost, "/api/services", bytes.NewReader(body)).WithContext(ctx))
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		var response ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+		assert.Equal(t, "validation failed", response.Error)
+		assert.Equal(t, "token_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)", response.Message)
+		mockRepo.AssertNotCalled(t, "Create")
+	})
 }
 
 func TestServicesHandler_CreateServiceTokenEndpointAuthMethodMapping(t *testing.T) {
@@ -1248,6 +1307,75 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 
 		mockRepo.AssertNotCalled(t, "Update")
 		mockRepo.AssertExpectations(t)
+	})
+	t.Run("rejects insecure authorization endpoint before update", func(t *testing.T) {
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+		serviceID := id.NewServiceID()
+
+		reqBody := ServiceRequest{
+			DisplayName:  "Provider",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			IssuerURI:    "https://issuer.example.com",
+			Discovery:    DiscoveryConfigRequest{EnableDiscovery: false},
+			Endpoints: &OAuth2EndpointsRequest{
+				TokenEndpoint:     "https://issuer.example.com/token",
+				AuthorizeEndpoint: "http://attacker.invalid/authorize",
+			},
+		}
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(body))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("service-id", serviceID.String())
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+
+		handler.UpdateService(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		var response ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+		assert.Equal(t, "validation failed", response.Error)
+		assert.Equal(t, "authorize_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)", response.Message)
+		mockRepo.AssertNotCalled(t, "Update")
+	})
+
+	t.Run("rejects insecure fallback authorization endpoint before update", func(t *testing.T) {
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+		serviceID := id.NewServiceID()
+
+		reqBody := ServiceRequest{
+			DisplayName:  "Provider",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			IssuerURI:    "https://issuer.example.com",
+			Discovery:    DiscoveryConfigRequest{EnableDiscovery: true},
+			Endpoints: &OAuth2EndpointsRequest{
+				TokenEndpoint:     "https://issuer.example.com/token",
+				AuthorizeEndpoint: "http://attacker.invalid/authorize",
+			},
+		}
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		req := httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(body)).WithContext(ctx)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("service-id", serviceID.String())
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+
+		handler.UpdateService(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		var response ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+		assert.Equal(t, "validation failed", response.Error)
+		assert.Equal(t, "authorize_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)", response.Message)
+		mockRepo.AssertNotCalled(t, "Update")
 	})
 }
 
