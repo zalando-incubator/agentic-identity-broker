@@ -5,10 +5,19 @@
   <h1>Agentic Identity Broker</h1>
   <p>
     <a href="https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/ci.yml">
-      <img src="https://img.shields.io/github/actions/workflow/status/zalando-incubator/agentic-identity-broker/ci.yml?label=CI&amp;style=flat-square" alt="CI status" />
+      <img src="https://img.shields.io/github/actions/workflow/status/zalando-incubator/agentic-identity-broker/ci.yml?label=CI&style=flat-square" alt="CI status" />
+    </a>
+    <a href="https://github.com/zalando-incubator/agentic-identity-broker/releases/latest">
+      <img src="https://img.shields.io/github/v/release/zalando-incubator/agentic-identity-broker?style=flat-square" alt="Release" />
+    </a>
+    <a href="https://scorecard.dev/viewer/?uri=github.com/zalando-incubator/agentic-identity-broker">
+      <img src="https://img.shields.io/ossf-scorecard/github.com/zalando-incubator/agentic-identity-broker?label=openssf+scorecard&style=flat-square" alt="OpenSSF Score" />
     </a>
     <a href="LICENSE">
       <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license" />
+    </a>
+    <a href="https://deepwiki.com/zalando-incubator/agentic-identity-broker">
+      <img src="https://img.shields.io/static/v1?label=Ask&message=DeepWiki&color=5B6EF7&style=flat-square" alt="Ask DeepWiki" />
     </a>
   </p>
   <p>
