@@ -69,6 +69,11 @@ header contains the current version.
 
 Each approval summary includes server-derived `tool_pattern` and `params_pattern`. The exact tool pattern matches only the approval's tool name. The params pattern maps constrained argument names to globs. Missing argument names are unconstrained.
 
+Each approved summary includes `approved_at` as an RFC 3339 timestamp. Pending and denied summaries omit this field.
+
+The token-exchange response can include `principal` and `agent_id`. They contain the broker-verified approval identity. ExtProc denies approval-required requests when either field is absent.
+
+
 ### Get Approval Detail
 
 ```

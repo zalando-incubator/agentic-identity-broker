@@ -81,6 +81,14 @@ func RegisterFlags(cmd *cobra.Command) {
 	cmd.Flags().String("authorization.default_decision", "", "decision when the policy result is undefined; must remain deny (default: deny)")
 	cmd.Flags().Duration("authorization.evaluation_timeout", 0, "OPA evaluation timeout (default: 100ms)")
 	cmd.Flags().Int("authorization.max_body_size", 0, "maximum request body size in bytes for OPA evaluation (default: 1048576)")
+	// Approval gating flags
+	cmd.Flags().Bool("tool_approvals.enabled", false, "enable broker approval gating (default: false)")
+	cmd.Flags().String("tool_approvals.url", "", "identity broker approval API base URL")
+	cmd.Flags().Int("tool_approvals.long_poll_timeout_seconds", 0, "approval long-poll timeout in seconds (default: 30)")
+	cmd.Flags().Duration("tool_approvals.approval_cache_idle_ttl", 0, "approval cache idle TTL (default: 5m)")
+	cmd.Flags().Duration("tool_approvals.request_timeout", 0, "approval request timeout (default: 5s)")
+	cmd.Flags().Duration("tool_approvals.max_staleness", 0, "maximum tolerated approval-cache staleness before cached approvals stop authorizing (default: 60s)")
+	cmd.Flags().String("sessions.extraction.http_header", "", "agent session HTTP header (default: Mcp-Session-Id)")
 	// Telemetry flags
 	cmd.Flags().Bool("telemetry.enabled", false, "enable OpenTelemetry (default: false)")
 	cmd.Flags().String("telemetry.service_name", "", "service name in telemetry data (default: extproc-token-exchange)")
@@ -259,6 +267,37 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 			func() interface{} { i, _ := cmd.Flags().GetInt("authorization.max_body_size"); return i },
 		},
 		{
+			"tool_approvals.enabled", "tool_approvals.enabled",
+			func() interface{} { b, _ := cmd.Flags().GetBool("tool_approvals.enabled"); return b },
+		},
+		{
+			"tool_approvals.url", "tool_approvals.url",
+			func() interface{} { s, _ := cmd.Flags().GetString("tool_approvals.url"); return s },
+		},
+		{
+			"tool_approvals.long_poll_timeout_seconds", "tool_approvals.long_poll_timeout_seconds",
+			func() interface{} { i, _ := cmd.Flags().GetInt("tool_approvals.long_poll_timeout_seconds"); return i },
+		},
+		{
+			"tool_approvals.approval_cache_idle_ttl", "tool_approvals.approval_cache_idle_ttl",
+			func() interface{} {
+				d, _ := cmd.Flags().GetDuration("tool_approvals.approval_cache_idle_ttl")
+				return d
+			},
+		},
+		{
+			"tool_approvals.request_timeout", "tool_approvals.request_timeout",
+			func() interface{} { d, _ := cmd.Flags().GetDuration("tool_approvals.request_timeout"); return d },
+		},
+		{
+			"tool_approvals.max_staleness", "tool_approvals.max_staleness",
+			func() interface{} { d, _ := cmd.Flags().GetDuration("tool_approvals.max_staleness"); return d },
+		},
+		{
+			"sessions.extraction.http_header", "sessions.extraction.http_header",
+			func() interface{} { s, _ := cmd.Flags().GetString("sessions.extraction.http_header"); return s },
+		},
+		{
 			"telemetry.enabled", "telemetry.enabled",
 			func() interface{} { b, _ := cmd.Flags().GetBool("telemetry.enabled"); return b },
 		},
@@ -330,6 +369,13 @@ func applyDefaults(v *viper.Viper) {
 	v.SetDefault("authorization.default_decision", "deny")
 	v.SetDefault("authorization.evaluation_timeout", "100ms")
 	v.SetDefault("authorization.max_body_size", 1048576)
+	v.SetDefault("tool_approvals.enabled", false)
+	v.SetDefault("tool_approvals.url", "")
+	v.SetDefault("tool_approvals.long_poll_timeout_seconds", 30)
+	v.SetDefault("tool_approvals.approval_cache_idle_ttl", "5m")
+	v.SetDefault("tool_approvals.request_timeout", "5s")
+	v.SetDefault("tool_approvals.max_staleness", "60s")
+	v.SetDefault("sessions.extraction.http_header", "Mcp-Session-Id")
 	applyTelemetryDefaults(v)
 }
 
@@ -370,6 +416,8 @@ func expandEnvVars(cfg *Config) {
 	cfg.Authorization.Policy.Package = os.ExpandEnv(cfg.Authorization.Policy.Package)
 	cfg.Authorization.Policy.Decision = os.ExpandEnv(cfg.Authorization.Policy.Decision)
 	cfg.Authorization.DefaultDecision = os.ExpandEnv(cfg.Authorization.DefaultDecision)
+	cfg.ToolApprovals.URL = os.ExpandEnv(cfg.ToolApprovals.URL)
+	cfg.Sessions.Extraction.HTTPHeader = os.ExpandEnv(cfg.Sessions.Extraction.HTTPHeader)
 	// Expand telemetry fields
 	cfg.Telemetry.ServiceName = os.ExpandEnv(cfg.Telemetry.ServiceName)
 	cfg.Telemetry.Exporter.Endpoint = os.ExpandEnv(cfg.Telemetry.Exporter.Endpoint)

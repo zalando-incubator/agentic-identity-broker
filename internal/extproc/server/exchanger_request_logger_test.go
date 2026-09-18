@@ -37,7 +37,7 @@ func TestTokenExchanger_DoExchangeUsesRequestLogger(t *testing.T) {
 	exchanger.assertion.Store(&assertionState{value: "assertion", expiresAt: time.Now().Add(time.Hour)})
 	ctx := context.WithValue(context.Background(), requestLoggerKey{}, requestLogger)
 
-	_, _, _, err := exchanger.doExchange(ctx, "subject-token", "https://api.example.com/resource")
+	_, _, err := exchanger.doExchange(ctx, "subject-token", "https://api.example.com/resource")
 
 	require.Error(t, err)
 	assert.Contains(t, requestLogs.String(), "token exchange returned broker error")

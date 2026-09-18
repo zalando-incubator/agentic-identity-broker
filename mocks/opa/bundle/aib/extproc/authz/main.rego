@@ -14,6 +14,12 @@ allow contains {"reason": "read-only tool"} if {
 	input.mcp.tool_name in {"list_repositories", "get_file_contents", "search_code", "whoami"}
 }
 
+# Require user approval before the demo issue-creation tool executes.
+approval_required contains {"reason": "issue creation requires user approval"} if {
+  input.type == "mcp_tool_call"
+  input.mcp.tool_name == "create_issue"
+}
+
 # Deny destructive tool calls
 deny contains {"reason": "destructive operations are not permitted"} if {
 	input.type == "mcp_tool_call"
@@ -25,6 +31,10 @@ deny contains {"reason": "unknown request type"} if {
 	input.type == "unknown"
 }
 
+result := {"action": "approval_required", "approval_context": {"description": "Create a demo GitHub issue", "risk_level": "medium"}} if {
+  count(deny) == 0
+  count(approval_required) > 0
+}
 result := {"action": "deny", "reasons": _deny_reasons} if {
 	count(deny) > 0
 	_deny_reasons := [r | some entry in deny; r := entry.reason]

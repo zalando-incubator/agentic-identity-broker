@@ -33,6 +33,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 )
@@ -49,6 +50,8 @@ const (
 type ExchangeResult struct {
 	Token                 string
 	GrantedPermissionSets map[string][]string
+	Principal             string
+	AgentID               string
 }
 
 // Exchanger performs RFC 8693 token exchange with in-memory caching.
@@ -62,6 +65,11 @@ type Exchanger interface {
 	Shutdown()
 }
 
+// ApprovalGate evaluates whether an approval-required MCP tool invocation may proceed.
+type ApprovalGate interface {
+	Evaluate(context.Context, approval.Invocation) approval.Outcome
+}
+
 // Server implements the Envoy ExternalProcessorServer gRPC interface.
 // It intercepts request headers, performs token exchange, and replaces
 // the Authorization header before the request reaches the upstream.
@@ -71,7 +79,8 @@ type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
 	cfg             *extprocconfig.Config
 	exchanger       Exchanger
-	authorizer      authorization.Authorizer // nil when OPA authorization is disabled
+	authorizer      authorization.Authorizer
+	approvalGate    ApprovalGate
 	logger          *slog.Logger
 	requestCounter  metric.Int64Counter
 	requestDuration metric.Float64Histogram
@@ -85,6 +94,9 @@ type requestState struct {
 	headers               map[string]string
 	protocol              string
 	grantedPermissionSets map[string][]string
+	principal             string
+	agentID               string
+	agentSessionID        string
 	requestContext        context.Context
 	finishObservation     func(outcome, resourceURI, errorType string)
 }
@@ -138,6 +150,13 @@ func NewServer(cfg *extprocconfig.Config, exchanger Exchanger, logger *slog.Logg
 func NewServerWithAuthorizer(cfg *extprocconfig.Config, exchanger Exchanger, authorizer authorization.Authorizer, logger *slog.Logger) *Server {
 	srv := NewServer(cfg, exchanger, logger)
 	srv.authorizer = authorizer
+	return srv
+}
+
+// NewServerWithApprovalGate creates a new ExtProc Server with OPA authorization and approval handling enabled.
+func NewServerWithApprovalGate(cfg *extprocconfig.Config, exchanger Exchanger, authorizer authorization.Authorizer, gate ApprovalGate, logger *slog.Logger) *Server {
+	srv := NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)
+	srv.approvalGate = gate
 	return srv
 }
 
@@ -492,6 +511,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 		resourceURI:       resourceURI,
 		headers:           headerMap,
 		protocol:          protocol,
+		agentSessionID:    configuredHeader(headerMap, s.cfg.Sessions.Extraction.HTTPHeader),
 		requestContext:    ctx,
 		finishObservation: finishObservation,
 	}
@@ -509,6 +529,8 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 		return resp, nil
 	}
 	state.grantedPermissionSets = exchangeResult.GrantedPermissionSets
+	state.principal = exchangeResult.Principal
+	state.agentID = exchangeResult.AgentID
 	logger.DebugContext(ctx, "OPA: token exchanged in headers phase, buffering body for OPA evaluation",
 		"resource", sanitizeURIForTelemetry(resourceURI))
 	return requestBodyBufferingResponseWithAuth("Bearer " + exchangeResult.Token), state
@@ -547,7 +569,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		}
 	}
 
-	opaInput, buildErr := authorization.BuildOPAInput(state.protocol, bodyBytes, state.headers, state.grantedPermissionSets)
+	opaInput, buildErr := authorization.BuildOPAInput(state.protocol, bodyBytes, state.headers, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
 	if buildErr != nil {
 		logger.WarnContext(ctx, "OPA: failed to parse request body — denying", "resource", sanitizedURI, "error", buildErr)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
@@ -561,11 +583,32 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 			`{"error":"access_denied","error_description":"authorization evaluation failed"}`)
 	}
 
-	if decision.Action != "allow" {
+	if decision.Action == authorization.ActionApprovalRequired && s.approvalGate != nil {
+		if state.protocol != "mcp" {
+			logger.WarnContext(ctx, "OPA approval-required action is not an MCP tool call", "protocol", state.protocol, "resource", sanitizedURI)
+			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
+		}
+		invocation, rawID, invocationErr := approvalInvocation(bodyBytes, state, decision)
+		if invocationErr != nil {
+			logger.WarnContext(ctx, "OPA approval-required request is not a standalone tool call", "error", invocationErr)
+			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
+		}
+		outcome := s.approvalGate.Evaluate(ctx, invocation)
+		if outcome.Proceed {
+			return echoRequestBody(body)
+		}
+		if outcome.URL != "" {
+			return urlElicitationResponse(outcome.URL, "approval required", rawID)
+		}
+		return accessDeniedResponse([]string{outcome.Reason})
+	}
+	if decision.Action == authorization.ActionApprovalRequired {
+		return accessDeniedResponse([]string{"approval_required is not yet supported"})
+	}
+	if decision.Action != authorization.ActionAllow {
 		logger.InfoContext(ctx, "OPA denied request", "reasons", decision.Reasons, "resource", sanitizedURI)
 		return accessDeniedResponse(decision.Reasons)
 	}
-
 	logger.DebugContext(ctx, "OPA allowed request, echoing body", "resource", sanitizedURI)
 	return echoRequestBody(body)
 }
@@ -592,6 +635,10 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 		logger.WarnContext(ctx, "OPA: failed to build input for header-only request — denying", "resource", sanitizedURI, "error", buildErr)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
+	}
+	if contextInput, ok := opaInput["context"].(authorization.ContextInput); ok {
+		contextInput.AgentSessionID = state.agentSessionID
+		opaInput["context"] = contextInput
 	}
 
 	decision, err := s.authorizer.Evaluate(ctx, opaInput)
@@ -651,7 +698,7 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 			denyReasons = append(denyReasons, "batch element could not be evaluated")
 			continue
 		}
-		opaInput, buildErr := authorization.BuildOPAInput(state.protocol, raw, state.headers, state.grantedPermissionSets)
+		opaInput, buildErr := authorization.BuildOPAInput(state.protocol, raw, state.headers, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
 		if buildErr != nil {
 			logger.WarnContext(ctx, "OPA: failed to build input for batch element — denying", "resource", sanitizedURI, "index", i, "error", buildErr)
 			denied = true
@@ -665,8 +712,12 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 			denyReasons = append(denyReasons, "authorization evaluation failed")
 			continue
 		}
-		if decision.Action != "allow" {
+		if decision.Action != authorization.ActionAllow {
 			denied = true
+			if decision.Action == authorization.ActionApprovalRequired {
+				denyReasons = append(denyReasons, "approval required tool calls must be re-issued as standalone requests")
+				continue
+			}
 			if len(decision.Reasons) > 0 {
 				denyReasons = append(denyReasons, decision.Reasons...)
 			} else {
@@ -729,7 +780,7 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, phase, protocol, res
 				"resource", sanitizedURI,
 				"code", brokerErr.Code,
 				"error_uri", brokerErr.ErrorURI)
-			return urlElicitationResponse(brokerErr, nil), "exchange_failure", brokerErr.Code
+			return urlElicitationResponse(brokerErr.ErrorURI, brokerErr.Description, nil), "exchange_failure", brokerErr.Code
 		}
 
 		msg := "token exchange requires re-authentication but protocol is non-MCP — returning 503"
@@ -1088,40 +1139,66 @@ func immediateResponseWithHeaders(code httpv3.StatusCode, body string, extra map
 	}
 }
 
-// urlElicitationResponse builds a ProcessingResponse_ImmediateResponse with HTTP 200 and
-// a JSON-RPC 2.0 URLElicitationRequiredError body (error code -32042).
-// Per MCP spec 2025-11-05: returned when a request cannot proceed until the user visits
-// a URL for OAuth re-authentication.
-// HTTP 200 is used because JSON-RPC errors always travel over HTTP 200.
-// rawID is the raw JSON bytes of the request ID (e.g. `42`, `"req-1"`, `null`).
-// Pass nil to emit null — correct when the request ID is unknown.
-func urlElicitationResponse(brokerErr *BrokerExchangeError, rawID json.RawMessage) *extprocv3.ProcessingResponse {
-	elicitErr := mcp.URLElicitationRequiredError{
-		Elicitations: []mcp.ElicitationParams{
-			{
-				Mode:          mcp.ElicitationModeURL,
-				ElicitationID: uuid.New().String(),
-				URL:           brokerErr.ErrorURI,
-				Message:       brokerErr.Description,
-			},
-		},
-	}
+// urlElicitationResponse builds an MCP URL elicitation JSON-RPC response.
+func urlElicitationResponse(approvalURL, message string, rawID json.RawMessage) *extprocv3.ProcessingResponse {
+	elicitErr := mcp.URLElicitationRequiredError{Elicitations: []mcp.ElicitationParams{{Mode: mcp.ElicitationModeURL, ElicitationID: uuid.New().String(), URL: approvalURL, Message: message}}}
 	jsonRPCErr := elicitErr.JSONRPCError()
-	// Set the request ID using the raw JSON token so any valid JSON-RPC ID type
-	// (string, integer, null) is preserved exactly without numeric precision loss.
-	// json.RawMessage.MarshalJSON returns its bytes verbatim, so mcp.NewRequestId
-	// will serialise the ID token unchanged.
 	if rawID != nil {
 		jsonRPCErr.ID = mcp.NewRequestId(rawID)
 	}
-	// Override the generated message with the broker-supplied description so that
-	// the client receives context about why re-authentication is required.
-	jsonRPCErr.Error.Message = brokerErr.Description
-
-	// Marshal the response. json.Marshal cannot fail for this struct: all fields are strings,
-	// ints, or slices thereof — no encoding/json.Marshaler implementations that could error.
+	jsonRPCErr.Error.Message = message
 	body, _ := json.Marshal(jsonRPCErr)
 	return immediateResponse(httpv3.StatusCode_OK, string(body))
+}
+
+func configuredHeader(headers map[string]string, name string) string {
+	for key, value := range headers {
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
+}
+
+func approvalInvocation(body []byte, state *requestState, decision *authorization.OPADecision) (approval.Invocation, json.RawMessage, error) {
+	var request struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Params struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		return approval.Invocation{}, nil, err
+	}
+	if request.Method != "tools/call" || request.Params.Name == "" {
+		return approval.Invocation{}, nil, errors.New("request is not an MCP tools/call")
+	}
+	if request.Params.Arguments == nil {
+		request.Params.Arguments = map[string]any{}
+	}
+	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: request.Params.Name, Arguments: request.Params.Arguments, AgentSessionID: state.agentSessionID, MCPSessionID: configuredHeader(state.headers, "Mcp-Session-Id"), RequestID: semanticRequestID(request.ID), SubjectToken: state.subjectToken}
+	if decision.ApprovalContext != nil {
+		invocation.Description = decision.ApprovalContext.Description
+		invocation.RiskLevel = decision.ApprovalContext.RiskLevel
+	}
+	return invocation, request.ID, nil
+}
+
+func semanticRequestID(rawID json.RawMessage) string {
+	trimmedID := bytes.TrimSpace(rawID)
+	if len(trimmedID) == 0 || bytes.Equal(trimmedID, []byte("null")) {
+		return ""
+	}
+	if trimmedID[0] != '"' {
+		return string(rawID)
+	}
+	var stringID string
+	if json.Unmarshal(trimmedID, &stringID) != nil {
+		return string(rawID)
+	}
+	return stringID
 }
 
 // passThrough builds a ProcessingResponse_RequestHeaders with no mutations,

@@ -43,6 +43,9 @@ func validConfig() *config.Config {
 			MaxFailures:  5,
 			ResetTimeout: 30 * time.Second,
 		},
+		Sessions: config.SessionsConfig{
+			Extraction: config.SessionExtractionConfig{HTTPHeader: "Mcp-Session-Id"},
+		},
 		Telemetry: config.TelemetryConfig{
 			Exporter: config.OTLPExporterConfig{
 				Timeout: 10 * time.Second,

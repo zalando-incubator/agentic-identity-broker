@@ -169,7 +169,7 @@
 - [X] T068 [P] [US1] Create `ApprovalConfirmation` component in `web/src/components/approvals/ApprovalConfirmation.tsx` (success/denial confirmation screen)
 - [X] T069 [US1] Create `ApprovalReviewPage` component in `web/src/components/approvals/ApprovalReviewPage.tsx` (compose ToolCallCard + PersistenceSelector + action buttons + error states)
 - [X] T070 [US1] Create `ApprovalPage` route-level page in `web/src/pages/ApprovalPage.tsx` (fetch approval by ID, render review page or error/loading states)
-- [X] T071 [US1] Register route `/consent/approvals/:id` in `web/src/App.tsx` pointing to `ApprovalPage`
+- [X] T071 [US1] Register route `/approvals/:id` in `web/src/App.tsx` pointing to `ApprovalPage`
 - [X] T072 [US1] Link `approval.review` (GET handler), `approval.approve`, and `approval.deny` spans to the traceparent persisted from approval creation request headers in `internal/domain/approval/service.go` — all spans are backend-side
 - [X] T072a [US1] Add structured audit logging for all approval lifecycle transitions (approved/denied/consumed/expired) in `internal/domain/approval/service.go` — each log entry MUST contain: principal, agent_id, tool_name, action, persistence (if applicable), and timestamp (SR-005)
 

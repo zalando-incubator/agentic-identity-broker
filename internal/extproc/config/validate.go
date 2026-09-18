@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Validate checks the Config for required fields and constraint violations.
@@ -188,6 +189,37 @@ func Validate(cfg *Config) error {
 		}
 	}
 
+	if cfg.ToolApprovals.Enabled {
+		if !cfg.Authorization.Enabled {
+			errs = append(errs, "tool_approvals.enabled requires authorization.enabled")
+		}
+		approvalURL, err := url.ParseRequestURI(cfg.ToolApprovals.URL)
+		if err != nil || approvalURL.Scheme == "" || approvalURL.Host == "" || (approvalURL.Scheme != "http" && approvalURL.Scheme != "https") || approvalURL.RawQuery != "" || approvalURL.Fragment != "" {
+			errs = append(errs, "tool_approvals.url must be an absolute HTTP(S) URL with a host and no query or fragment")
+		} else {
+			if approvalURL.Scheme == "http" && !cfg.OAuth2.TLS.AllowHTTP {
+				errs = append(errs, "tool_approvals.url must use https:// scheme (set oauth2.tls.allow_http: true to disable — DEV ONLY)")
+			}
+			cfg.ToolApprovals.URL = strings.TrimRight(cfg.ToolApprovals.URL, "/")
+		}
+		if cfg.ToolApprovals.LongPollTimeoutSeconds < 1 || cfg.ToolApprovals.LongPollTimeoutSeconds > 120 {
+			errs = append(errs, "tool_approvals.long_poll_timeout_seconds must be between 1 and 120")
+		}
+		if cfg.ToolApprovals.ApprovalCacheIdleTTL <= 0 {
+			errs = append(errs, "tool_approvals.approval_cache_idle_ttl must be a positive duration")
+		}
+		if cfg.ToolApprovals.RequestTimeout <= 0 {
+			errs = append(errs, "tool_approvals.request_timeout must be a positive duration")
+		}
+		if cfg.ToolApprovals.MaxStaleness <= 0 {
+			errs = append(errs, "tool_approvals.max_staleness must be a positive duration")
+		} else if cfg.ToolApprovals.MaxStaleness < time.Duration(cfg.ToolApprovals.LongPollTimeoutSeconds)*time.Second+cfg.ToolApprovals.RequestTimeout {
+			errs = append(errs, "tool_approvals.max_staleness must be at least tool_approvals.long_poll_timeout_seconds plus tool_approvals.request_timeout")
+		}
+	}
+	if !isHTTPFieldName(cfg.Sessions.Extraction.HTTPHeader) {
+		errs = append(errs, "sessions.extraction.http_header must be a non-empty valid HTTP field name")
+	}
 	// Telemetry validation only runs when telemetry.enabled is true
 	if cfg.Telemetry.Enabled {
 		// Rule 16: endpoint must not be empty
@@ -253,6 +285,19 @@ func validateURL(field, s string, requireHTTPScheme bool) error {
 		return fmt.Errorf("%s must be a valid URL with a host", field)
 	}
 	return nil
+}
+
+func isHTTPFieldName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if ('a' <= char && char <= 'z') || ('A' <= char && char <= 'Z') || ('0' <= char && char <= '9') || strings.ContainsRune("!#$%&'*+-.^_`|~", char) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // validatePolicyPath checks that a policy path does not contain path traversal

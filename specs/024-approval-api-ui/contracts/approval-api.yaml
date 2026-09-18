@@ -62,7 +62,7 @@ paths:
                 data:
                   id: "550e8400-e29b-41d4-a716-446655440000"
                   status: "pending"
-                  approval_url: "https://broker.example.com/consent/approvals/550e8400-e29b-41d4-a716-446655440000"
+                  approval_url: "https://broker.example.com/approvals/550e8400-e29b-41d4-a716-446655440000"
                   created_at: "2026-03-28T14:30:00Z"
         '200':
           description: Existing pending approval returned (idempotent)

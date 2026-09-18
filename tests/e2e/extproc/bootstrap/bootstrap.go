@@ -19,20 +19,25 @@
 package bootstrap
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
-	"log/slog"
-	"net"
-	"net/http"
-	"net/http/httptest"
-	"sync"
-
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
 	. "github.com/onsi/gomega"    //nolint:staticcheck
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
 
@@ -45,15 +50,24 @@ type TestEnvironment struct {
 	// MockOAuth2 is the mock client_credentials OAuth2 server (for obtaining client assertions)
 	MockOAuth2 *MockOAuth2Server
 
-	// MockTokenExchange is the mock token exchange endpoint (identity broker)
+	// MockTokenExchange is the mock token exchange endpoint (identity broker).
 	MockTokenExchange *MockTokenExchangeServer
 
-	// Internal state
-	grpcServer   *grpc.Server
-	grpcListener net.Listener
-	grpcAddress  string
-	logger       *slog.Logger
-	stopOnce     sync.Once
+	// MockApprovalBroker is the broker-shaped approval endpoint used when approval gating is enabled.
+	MockApprovalBroker *MockApprovalBroker
+
+	// Internal state.
+	grpcServer             *grpc.Server
+	grpcListener           net.Listener
+	grpcAddress            string
+	exchanger              *extprocserver.TokenExchanger
+	approvalCache          *approval.Cache
+	approvalClient         *approval.Client
+	approvalSyncCancel     context.CancelFunc
+	approvalSyncDone       chan struct{}
+	ownsMockApprovalBroker bool
+	logger                 *slog.Logger
+	stopOnce               sync.Once
 }
 
 // NewTestEnvironment creates a new test environment with the provided config.
@@ -66,6 +80,16 @@ func NewTestEnvironment(cfg *extprocconfig.Config, logger *slog.Logger) *TestEnv
 	}
 }
 
+// NewTestEnvironmentWithApprovalBroker uses a caller-owned approval broker fake.
+// It is useful for multi-instance tests that share one authoritative broker state.
+func NewTestEnvironmentWithApprovalBroker(cfg *extprocconfig.Config, logger *slog.Logger, broker *MockApprovalBroker) *TestEnvironment {
+	return &TestEnvironment{
+		Config:             cfg,
+		MockApprovalBroker: broker,
+		logger:             logger,
+	}
+}
+
 // Start launches all mock servers and the in-process ExtProc gRPC server.
 // Must be called before making gRPC requests. Uses Gomega Expect so it can be
 // called directly in BeforeEach blocks — test fails immediately on setup errors.
@@ -74,17 +98,37 @@ func (e *TestEnvironment) Start() {
 
 	exchanger, err := extprocserver.NewTokenExchanger(e.Config, e.logger)
 	Expect(err).NotTo(HaveOccurred(), "failed to create token exchanger")
+	e.exchanger = exchanger
 
-	var svc *extprocserver.Server
+	var authorizer authorization.Authorizer
 	if e.Config.Authorization.Enabled {
-		authorizer, authErr := NewOPAAuthorizer(e.Config, e.logger)
+		var authErr error
+		authorizer, authErr = NewOPAAuthorizer(e.Config, e.logger)
 		Expect(authErr).NotTo(HaveOccurred(), "failed to create OPA authorizer")
-		svc = extprocserver.NewServerWithAuthorizer(e.Config, exchanger, authorizer, e.logger)
-	} else {
-		svc = extprocserver.NewServer(e.Config, exchanger, e.logger)
 	}
 
+	var approvalGate extprocserver.ApprovalGate
+	if e.Config.ToolApprovals.Enabled {
+		approvalHTTPClient, err := httpclient.New(e.Config, 0)
+		Expect(err).NotTo(HaveOccurred(), "failed to create approval HTTP client")
+		client, err := approval.NewClient(e.Config.ToolApprovals.URL, e.Config.ToolApprovals.RequestTimeout, exchanger, approvalHTTPClient)
+		Expect(err).NotTo(HaveOccurred(), "failed to create approval client")
+		e.approvalClient = client
+		e.approvalCache = approval.NewCache(e.Config.ToolApprovals.ApprovalCacheIdleTTL, e.Config.ToolApprovals.MaxStaleness)
+		approvalGate = approval.NewGate(e.approvalCache, client)
+	}
+
+	var svc *extprocserver.Server
+	switch {
+	case e.Config.ToolApprovals.Enabled:
+		svc = extprocserver.NewServerWithApprovalGate(e.Config, exchanger, authorizer, approvalGate, e.logger)
+	case authorizer != nil:
+		svc = extprocserver.NewServerWithAuthorizer(e.Config, exchanger, authorizer, e.logger)
+	default:
+		svc = extprocserver.NewServer(e.Config, exchanger, e.logger)
+	}
 	e.startGRPCServer(svc)
+	e.startApprovalSync()
 }
 
 // startMockServers initializes and starts the mock OAuth2 and token exchange servers
@@ -96,7 +140,37 @@ func (e *TestEnvironment) startMockServers() {
 	e.MockTokenExchange.Start()
 	e.Config.OAuth2.ClientCredentialsEndpoint = e.MockOAuth2.URL() + "/oauth/token"
 	e.Config.OAuth2.TokenEndpoint = e.MockTokenExchange.URL() + "/oauth2/token"
+	if e.Config.ToolApprovals.Enabled {
+		if e.MockApprovalBroker == nil {
+			e.MockApprovalBroker = NewMockApprovalBroker()
+			e.MockApprovalBroker.Start()
+			e.ownsMockApprovalBroker = true
+		} else if e.MockApprovalBroker.URL() == "" {
+			e.MockApprovalBroker.Start()
+			e.ownsMockApprovalBroker = true
+		}
+		e.Config.ToolApprovals.URL = e.MockApprovalBroker.URL()
+	}
 	e.Config.OAuth2.TLS.AllowHTTP = true
+}
+
+// startApprovalSync begins the production sync lifecycle after the gRPC listener
+// is ready, so a slow bootstrap can never delay test service availability.
+func (e *TestEnvironment) startApprovalSync() {
+	if !e.Config.ToolApprovals.Enabled {
+		return
+	}
+	syncer := approval.NewSyncer(e.approvalCache, e.approvalClient, time.Duration(e.Config.ToolApprovals.LongPollTimeoutSeconds)*time.Second, e.logger)
+	e.approvalSyncDone = make(chan struct{})
+	syncContext, cancel := context.WithCancel(context.Background())
+	e.approvalSyncCancel = cancel
+	go func() {
+		defer close(e.approvalSyncDone)
+		bootstrapContext, bootstrapCancel := context.WithTimeout(syncContext, 5*time.Second)
+		syncer.Bootstrap(bootstrapContext)
+		bootstrapCancel()
+		syncer.Run(syncContext)
+	}()
 }
 
 // startGRPCServer creates and starts the gRPC server with the provided ExtProc service.
@@ -119,14 +193,30 @@ func (e *TestEnvironment) startGRPCServer(svc *extprocserver.Server) {
 // Stop shuts down all servers. Safe to call multiple times.
 func (e *TestEnvironment) Stop() {
 	e.stopOnce.Do(func() {
+		if e.approvalSyncCancel != nil {
+			e.approvalSyncCancel()
+		}
+		if e.approvalSyncDone != nil {
+			select {
+			case <-e.approvalSyncDone:
+			case <-time.After(time.Second):
+				e.logger.Warn("approval syncer did not stop before test teardown")
+			}
+		}
 		if e.grpcServer != nil {
 			e.grpcServer.GracefulStop()
+		}
+		if e.exchanger != nil {
+			e.exchanger.Shutdown()
 		}
 		if e.MockOAuth2 != nil {
 			e.MockOAuth2.Stop()
 		}
 		if e.MockTokenExchange != nil {
 			e.MockTokenExchange.Stop()
+		}
+		if e.MockApprovalBroker != nil && e.ownsMockApprovalBroker {
+			e.MockApprovalBroker.Stop()
 		}
 	})
 }
@@ -255,15 +345,19 @@ func (m *MockOAuth2Server) handleToken(w http.ResponseWriter, r *http.Request) {
 // MockTokenExchangeServer is a controllable mock for the identity broker token exchange endpoint.
 // Used to simulate the RFC 8693 token exchange endpoint (POST /oauth2/token).
 type MockTokenExchangeServer struct {
-	server             *httptest.Server
-	mu                 sync.RWMutex
-	callCount          int
-	exchangedToken     string
-	expiresIn          *int
-	statusCode         int
-	errorCode          string
-	lastBody           string
-	lastRequestHeaders http.Header
+	server                *httptest.Server
+	mu                    sync.RWMutex
+	callCount             int
+	approvalCreateCount   int
+	exchangedToken        string
+	expiresIn             *int
+	principal             string
+	agentID               string
+	grantedPermissionSets map[string][]string
+	statusCode            int
+	errorCode             string
+	lastBody              string
+	lastRequestHeaders    http.Header
 }
 
 // NewMockTokenExchangeServer creates a mock token exchange server with default responses.
@@ -272,6 +366,8 @@ func NewMockTokenExchangeServer() *MockTokenExchangeServer {
 	return &MockTokenExchangeServer{
 		exchangedToken: "exchanged-access-token-default",
 		expiresIn:      &defaultExpiry,
+		principal:      "alice@example.com",
+		agentID:        "7c9e6679-7425-40de-944b-e07fc1f90ae7",
 		statusCode:     http.StatusOK,
 	}
 }
@@ -280,6 +376,7 @@ func NewMockTokenExchangeServer() *MockTokenExchangeServer {
 func (m *MockTokenExchangeServer) Start() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/oauth2/token", m.handleExchange)
+	mux.HandleFunc("/api/approvals", m.handleApprovals)
 	m.server = httptest.NewServer(mux)
 }
 
@@ -303,6 +400,13 @@ func (m *MockTokenExchangeServer) CallCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.callCount
+}
+
+// ApprovalCreateCount returns the number of approval creation requests.
+func (m *MockTokenExchangeServer) ApprovalCreateCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.approvalCreateCount
 }
 
 // LastBody returns the last form-encoded request body received (thread-safe).
@@ -344,6 +448,24 @@ func (m *MockTokenExchangeServer) WithExpiresIn(seconds *int) *MockTokenExchange
 	return m
 }
 
+// WithApprovalIdentity configures the broker-authoritative identity returned by
+// token exchange. Empty values model a broker response that cannot resolve it.
+func (m *MockTokenExchangeServer) WithApprovalIdentity(principal, agentID string) *MockTokenExchangeServer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.principal = principal
+	m.agentID = agentID
+	return m
+}
+
+// WithGrantedPermissionSets configures the exchange snapshot used by OPA.
+func (m *MockTokenExchangeServer) WithGrantedPermissionSets(permissionSets map[string][]string) *MockTokenExchangeServer {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.grantedPermissionSets = cloneGrantedPermissionSets(permissionSets)
+	return m
+}
+
 // WithError configures the server to return an error response.
 func (m *MockTokenExchangeServer) WithError(statusCode int, errorCode string) *MockTokenExchangeServer {
 	m.mu.Lock()
@@ -376,8 +498,10 @@ func (m *MockTokenExchangeServer) handleExchange(w http.ResponseWriter, r *http.
 	statusCode := m.statusCode
 	exchangedToken := m.exchangedToken
 	expiresIn := m.expiresIn
+	principal := m.principal
+	agentID := m.agentID
+	grantedPermissionSets := cloneGrantedPermissionSets(m.grantedPermissionSets)
 	errorCode := m.errorCode
-	// Capture raw form-encoded body and request headers for assertion in tests
 	m.lastBody = r.Form.Encode()
 	m.lastRequestHeaders = capturedHeaders
 	m.mu.Unlock()
@@ -390,16 +514,55 @@ func (m *MockTokenExchangeServer) handleExchange(w http.ResponseWriter, r *http.
 		return
 	}
 
+	grantedPermissionSetsJSON, err := json.Marshal(grantedPermissionSets)
+	if err != nil {
+		http.Error(w, "failed to encode granted permission sets", http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	if expiresIn != nil && *expiresIn > 0 {
-		// Include expires_in in response (normal path)
-		fmt.Fprintf(w, `{"access_token":%q,"issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":%d}`, //nolint:errcheck
-			exchangedToken, *expiresIn)
+		fmt.Fprintf(w, `{"access_token":%q,"issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":%d,"granted_permission_sets":%s,"principal":%q,"agent_id":%q}`, exchangedToken, *expiresIn, grantedPermissionSetsJSON, principal, agentID) //nolint:errcheck
 	} else {
-		// Omit expires_in — tests the default_ttl path (FR-012)
-		fmt.Fprintf(w, `{"access_token":%q,"issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer"}`, //nolint:errcheck
-			exchangedToken)
+		fmt.Fprintf(w, `{"access_token":%q,"issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","granted_permission_sets":%s,"principal":%q,"agent_id":%q}`, exchangedToken, grantedPermissionSetsJSON, principal, agentID) //nolint:errcheck
 	}
+}
+
+func cloneGrantedPermissionSets(permissionSets map[string][]string) map[string][]string {
+	if permissionSets == nil {
+		return nil
+	}
+	cloned := make(map[string][]string, len(permissionSets))
+	for permissionSetID, serviceIDs := range permissionSets {
+		cloned[permissionSetID] = append([]string(nil), serviceIDs...)
+	}
+	return cloned
+}
+
+func (m *MockTokenExchangeServer) handleApprovals(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", `"v1"`)
+		_, _ = w.Write([]byte(`{"data":{"pairs":[]}}`))
+		return
+	}
+	if r.Method == http.MethodPost {
+		if r.Header.Get("X-Client-Assertion") == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		m.mu.Lock()
+		m.approvalCreateCount++
+		m.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"data":{"approval_url":"https://broker.example/approvals/pending"}}`))
+		return
+	}
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
 
 // NewTestLogger returns a logger that writes to GinkgoWriter for test visibility.

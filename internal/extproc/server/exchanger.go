@@ -5,8 +5,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,11 +22,11 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/sony/gobreaker/v2"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 )
 
 // tokenCacheKey uniquely identifies a cached token by subject + resource.
@@ -68,9 +65,11 @@ const reAuthCooldownTTL = 5 * time.Second
 type cachedToken struct {
 	accessToken           string
 	grantedPermissionSets map[string][]string
-	reAuthErr             *BrokerExchangeError // non-nil = rate-limit window for re-auth
+	principal             string
+	agentID               string
+	reAuthErr             *BrokerExchangeError
 	expiresAt             time.Time
-	staleUntil            time.Time // immutable upper bound for stale-token fallback; set at population
+	staleUntil            time.Time
 }
 
 // isExpired reports whether the cached entry has expired.
@@ -78,12 +77,13 @@ func (c *cachedToken) isExpired() bool {
 	return time.Now().After(c.expiresAt)
 }
 
-// tokenExchangeResponse is the JSON shape from the RFC 8693 token exchange endpoint.
 type tokenExchangeResponse struct {
 	AccessToken           string              `json:"access_token"`
 	TokenType             string              `json:"token_type"`
-	ExpiresIn             *int                `json:"expires_in"` // pointer: nil means absent
+	ExpiresIn             *int                `json:"expires_in"`
 	GrantedPermissionSets map[string][]string `json:"granted_permission_sets,omitempty"`
+	Principal             string              `json:"principal,omitempty"`
+	AgentID               string              `json:"agent_id,omitempty"`
 }
 
 func cloneGrantedPermissionSets(src map[string][]string) map[string][]string {
@@ -166,7 +166,7 @@ func NewTokenExchanger(cfg *extprocconfig.Config, logger *slog.Logger) (*TokenEx
 		return nil, fmt.Errorf("config must not be nil")
 	}
 
-	httpClient, err := buildHTTPClient(cfg)
+	httpClient, err := httpclient.New(cfg, cfg.OAuth2.ExchangeTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("building HTTP client: %w", err)
 	}
@@ -223,7 +223,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 		if entry.reAuthErr != nil {
 			return ExchangeResult{}, entry.reAuthErr
 		}
-		return ExchangeResult{Token: entry.accessToken, GrantedPermissionSets: cloneGrantedPermissionSets(entry.grantedPermissionSets)}, nil
+		return ExchangeResult{Token: entry.accessToken, GrantedPermissionSets: cloneGrantedPermissionSets(entry.grantedPermissionSets), Principal: entry.principal, AgentID: entry.agentID}, nil
 	}
 	te.cacheMu.RUnlock()
 
@@ -239,7 +239,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 			if entry.reAuthErr != nil {
 				return ExchangeResult{}, entry.reAuthErr
 			}
-			return ExchangeResult{Token: entry.accessToken, GrantedPermissionSets: cloneGrantedPermissionSets(entry.grantedPermissionSets)}, nil
+			return ExchangeResult{Token: entry.accessToken, GrantedPermissionSets: cloneGrantedPermissionSets(entry.grantedPermissionSets), Principal: entry.principal, AgentID: entry.agentID}, nil
 		}
 		te.cacheMu.RUnlock()
 
@@ -253,7 +253,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 		// correctly. The stale-token fallback for transient failures is applied by the
 		// caller AFTER Execute() returns, keeping failure accounting accurate.
 		doExchangeAndCache := func() (ExchangeResult, error) {
-			tok, permSets, ttl, err := te.doExchange(exchangeCtx, subjectToken, resourceURI)
+			result, ttl, err := te.doExchange(exchangeCtx, subjectToken, resourceURI)
 			if err != nil {
 				var brokerErr *BrokerExchangeError
 				if errors.As(err, &brokerErr) && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
@@ -267,8 +267,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 				return ExchangeResult{}, err
 			}
 
-			cachedPermSets := cloneGrantedPermissionSets(permSets)
-
+			cachedPermSets := cloneGrantedPermissionSets(result.GrantedPermissionSets)
 			te.cacheMu.Lock()
 			now := time.Now()
 			staleUntil := now.Add(ttl + reAuthCooldownTTL)
@@ -276,14 +275,16 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 				staleUntil = maxAbs
 			}
 			te.cache[key] = &cachedToken{
-				accessToken:           tok,
+				accessToken:           result.Token,
 				grantedPermissionSets: cachedPermSets,
+				principal:             result.Principal,
+				agentID:               result.AgentID,
 				expiresAt:             now.Add(ttl),
 				staleUntil:            staleUntil,
 			}
 			te.cacheMu.Unlock()
-
-			return ExchangeResult{Token: tok, GrantedPermissionSets: cloneGrantedPermissionSets(cachedPermSets)}, nil
+			result.GrantedPermissionSets = cloneGrantedPermissionSets(cachedPermSets)
+			return result, nil
 		}
 
 		// serveStaleOrErr returns the cached token (even if expired) for transient errors
@@ -298,7 +299,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 				te.cacheMu.RLock()
 				entry, ok := te.cache[key]
 				if ok && entry.accessToken != "" && time.Now().Before(entry.staleUntil) {
-					staleResult := ExchangeResult{Token: entry.accessToken, GrantedPermissionSets: cloneGrantedPermissionSets(entry.grantedPermissionSets)}
+					staleResult := ExchangeResult{Token: entry.accessToken, GrantedPermissionSets: cloneGrantedPermissionSets(entry.grantedPermissionSets), Principal: entry.principal, AgentID: entry.agentID}
 					te.cacheMu.RUnlock()
 					return staleResult, nil
 				}
@@ -391,36 +392,23 @@ func (te *TokenExchanger) Shutdown() {
 	close(te.stopCh)
 }
 
-// doExchange performs the RFC 8693 token exchange HTTP call.
-// ctx is used for trace propagation and deadline enforcement.
-// Returns the exchanged access token, any granted permission sets, and the TTL to cache it for.
-// Fails fast with ErrAssertionExpired if the stored assertion has expired.
-func (te *TokenExchanger) doExchange(ctx context.Context, subjectToken, resourceURI string) (string, map[string][]string, time.Duration, error) {
+// ClientAssertion returns the current valid assertion for approval API calls.
+func (te *TokenExchanger) ClientAssertion() (string, error) {
+	assertion := te.assertion.Load()
+	if assertion == nil || assertion.value == "" || (!assertion.expiresAt.IsZero() && time.Now().After(assertion.expiresAt)) {
+		return "", ErrAssertionExpired
+	}
+	return assertion.value, nil
+}
+
+func (te *TokenExchanger) doExchange(ctx context.Context, subjectToken, resourceURI string) (ExchangeResult, time.Duration, error) {
 	logger := loggerFromContext(ctx, te.logger)
-	s := te.assertion.Load()
-	if s == nil || s.value == "" {
-		logger.ErrorContext(ctx, "client assertion unavailable: no assertion stored")
-		return "", nil, 0, ErrAssertionExpired
+	assertion, err := te.ClientAssertion()
+	if err != nil {
+		return ExchangeResult{}, 0, err
 	}
-	if !s.expiresAt.IsZero() && time.Now().After(s.expiresAt) {
-		logger.ErrorContext(ctx, "client assertion expired: background refresh did not complete in time",
-			"expired_at", s.expiresAt.Format(time.RFC3339))
-		return "", nil, 0, ErrAssertionExpired
-	}
-	assertion := s.value
-
-	// Log the full exchange request parameters for observability.
-	logger.DebugContext(ctx, "extproc: token exchange request",
-		"token_endpoint", te.cfg.OAuth2.TokenEndpoint,
-		"grant_type", "urn:ietf:params:oauth:grant-type:token-exchange",
-		"subject_token_type", "urn:ietf:params:oauth:token-type:access_token",
-		"resource", sanitizeURIForTelemetry(resourceURI),
-		"client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-	)
-
 	exchangeCtx, cancel := context.WithTimeout(ctx, te.cfg.OAuth2.ExchangeTimeout)
 	defer cancel()
-
 	form := url.Values{
 		"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
 		"subject_token":         {subjectToken},
@@ -429,67 +417,38 @@ func (te *TokenExchanger) doExchange(ctx context.Context, subjectToken, resource
 		"client_assertion":      {assertion},
 		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
 	}
-
-	req, err := http.NewRequestWithContext(exchangeCtx, http.MethodPost,
-		te.cfg.OAuth2.TokenEndpoint, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(exchangeCtx, http.MethodPost, te.cfg.OAuth2.TokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", nil, 0, fmt.Errorf("building token exchange request: %w", err)
+		return ExchangeResult{}, 0, fmt.Errorf("building token exchange request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	otel.GetTextMapPropagator().Inject(exchangeCtx, propagation.HeaderCarrier(req.Header))
-
 	resp, err := te.client.Do(req)
 	if err != nil {
-		return "", nil, 0, fmt.Errorf("token exchange request failed: %w", err)
+		return ExchangeResult{}, 0, fmt.Errorf("token exchange request failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck
-
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", nil, 0, fmt.Errorf("reading token exchange response: %w", err)
+		return ExchangeResult{}, 0, fmt.Errorf("reading token exchange response: %w", err)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		var errBody brokerErrorBody
 		_ = json.Unmarshal(body, &errBody)
 		if errBody.Code != "" {
-			logger.WarnContext(ctx, "token exchange returned broker error",
-				"status", resp.StatusCode,
-				"code", errBody.Code,
-				"resource", sanitizeURIForTelemetry(resourceURI),
-				"has_error_uri", errBody.ErrorURI != "")
-			return "", nil, 0, &BrokerExchangeError{
-				StatusCode:  resp.StatusCode,
-				Code:        errBody.Code,
-				Description: errBody.Description,
-				ErrorURI:    errBody.ErrorURI,
-			}
+			logger.WarnContext(ctx, "token exchange returned broker error", "status", resp.StatusCode, "code", errBody.Code, "resource", sanitizeURIForTelemetry(resourceURI), "has_error_uri", errBody.ErrorURI != "")
+			return ExchangeResult{}, 0, &BrokerExchangeError{StatusCode: resp.StatusCode, Code: errBody.Code, Description: errBody.Description, ErrorURI: errBody.ErrorURI}
 		}
-		// Body is absent or not an RFC 8693 error — still return a typed error
-		// carrying the HTTP status code so isServerError can correctly classify
-		// 4xx responses without a parseable error body as client errors.
-		logger.DebugContext(ctx, "token exchange non-200 response body is not RFC 8693 JSON",
-			"status", resp.StatusCode,
-			"resource", sanitizeURIForTelemetry(resourceURI))
-		logger.WarnContext(ctx, "token exchange returned non-200",
-			"status", resp.StatusCode,
-			"resource", sanitizeURIForTelemetry(resourceURI))
-		return "", nil, 0, &BrokerExchangeError{
-			StatusCode: resp.StatusCode,
-			Code:       fmt.Sprintf("http_%d", resp.StatusCode),
-		}
+		return ExchangeResult{}, 0, &BrokerExchangeError{StatusCode: resp.StatusCode, Code: fmt.Sprintf("http_%d", resp.StatusCode)}
 	}
-
-	var exResp tokenExchangeResponse
-	if err := json.Unmarshal(body, &exResp); err != nil {
-		return "", nil, 0, fmt.Errorf("parsing token exchange response: %w", err)
+	var response tokenExchangeResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return ExchangeResult{}, 0, fmt.Errorf("parsing token exchange response: %w", err)
 	}
-	if exResp.AccessToken == "" {
-		return "", nil, 0, fmt.Errorf("token exchange response missing access_token")
+	if response.AccessToken == "" {
+		return ExchangeResult{}, 0, fmt.Errorf("token exchange response missing access_token")
 	}
-
-	ttl := te.computeTTL(exResp.ExpiresIn)
-	return exResp.AccessToken, cloneGrantedPermissionSets(exResp.GrantedPermissionSets), ttl, nil
+	return ExchangeResult{Token: response.AccessToken, GrantedPermissionSets: cloneGrantedPermissionSets(response.GrantedPermissionSets), Principal: response.Principal, AgentID: response.AgentID}, te.computeTTL(response.ExpiresIn), nil
 }
 
 // computeTTL returns the cache TTL for an exchanged token.
@@ -637,42 +596,4 @@ func clientCredentialsScopes(configured []string) []string {
 		return []string{"openid"}
 	}
 	return filtered
-}
-
-// buildHTTPClient constructs an http.Client respecting the TLS configuration.
-// Supports InsecureSkipVerify and CaBundlePath from the TLS config block.
-// Returns an error if CaBundlePath is set but the file cannot be read or parsed.
-func buildHTTPClient(cfg *extprocconfig.Config) (*http.Client, error) {
-	tlsCfg := &tls.Config{
-		InsecureSkipVerify: cfg.OAuth2.TLS.InsecureSkipVerify, //nolint:gosec // controlled by explicit operator config
-	}
-
-	if cfg.OAuth2.TLS.CaBundlePath != "" {
-		pemData, err := os.ReadFile(cfg.OAuth2.TLS.CaBundlePath)
-		if err != nil {
-			return nil, fmt.Errorf("reading ca_bundle_path %q: %w", cfg.OAuth2.TLS.CaBundlePath, err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pemData) {
-			return nil, fmt.Errorf("ca_bundle_path %q contains no valid PEM certificates", cfg.OAuth2.TLS.CaBundlePath)
-		}
-		tlsCfg.RootCAs = pool
-	}
-
-	transport := &http.Transport{
-		TLSClientConfig: tlsCfg,
-	}
-
-	// Wrap with otelhttp for automatic span creation on outbound requests.
-	// otelhttp resolves the TracerProvider lazily (from otel.GetTracerProvider() at
-	// request time, not construction time), so this transport correctly picks up
-	// provider changes made after construction — including E2E test global swaps.
-	tracedTransport := otelhttp.NewTransport(transport)
-
-	// http.Client.Timeout is the hard deadline for the entire request lifecycle.
-	// doExchange also applies context.WithTimeout per call; both use ExchangeTimeout.
-	return &http.Client{
-		Timeout:   cfg.OAuth2.ExchangeTimeout,
-		Transport: tracedTransport,
-	}, nil
 }

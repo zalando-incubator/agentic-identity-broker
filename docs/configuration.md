@@ -113,6 +113,19 @@ CLI Flags > YAML > .env Files > Defaults
 
 **Result**: `log.level=debug` (from CLI flag)
 
+## ExtProc approval configuration
+
+The standalone ExtProc service loads `EXTPROC_*` values. Its source order is CLI flags, environment variables, YAML, then defaults.
+
+Set `tool_approvals.enabled: true` only with `authorization.enabled: true`. Set `tool_approvals.url` to the broker URL. The URL must use HTTPS unless `oauth2.tls.allow_http` is true for development.
+
+`tool_approvals.long_poll_timeout_seconds` defaults to `30`. Its permitted range is 1 through 120 seconds. `tool_approvals.approval_cache_idle_ttl` defaults to `5m`. `tool_approvals.request_timeout` defaults to `5s` and does not limit long polling.
+
+`tool_approvals.max_staleness` defaults to `60s`. It limits the age of cached approval state that can authorize a request. Its value must cover `tool_approvals.long_poll_timeout_seconds` plus `tool_approvals.request_timeout`, so a successful long-poll request can complete. A smaller value causes `tool_approvals.max_staleness must be at least tool_approvals.long_poll_timeout_seconds plus tool_approvals.request_timeout`.
+
+`sessions.extraction.http_header` defaults to `Mcp-Session-Id`. ExtProc uses this value to scope session approvals.
+
+
 ## Environment-Specific Configuration
 
 Use the `GO_ENV` environment variable to control which .env files are loaded:

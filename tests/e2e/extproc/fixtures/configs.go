@@ -43,6 +43,9 @@ func DefaultConfig() *extprocconfig.Config {
 			MaxFailures:  5,
 			ResetTimeout: 30 * time.Second,
 		},
+		Sessions: extprocconfig.SessionsConfig{
+			Extraction: extprocconfig.SessionExtractionConfig{HTTPHeader: "Mcp-Session-Id"},
+		},
 		Telemetry: extprocconfig.TelemetryConfig{
 			Exporter: extprocconfig.OTLPExporterConfig{
 				Timeout: 10 * time.Second,

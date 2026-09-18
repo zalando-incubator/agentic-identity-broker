@@ -398,6 +398,62 @@ func TestIsSignalCancellation_DeadlineExceeded_ReturnsFalse(t *testing.T) {
 		"DeadlineExceeded must not be treated as signal cancellation")
 }
 
+type blockingApprovalSyncer struct {
+	bootstrapStarted chan struct{}
+	bootstrapRelease chan struct{}
+	runStarted       chan struct{}
+	stopped          chan struct{}
+	bootstrapCalls   int
+	runCalls         int
+}
+
+func (s *blockingApprovalSyncer) Bootstrap(context.Context) {
+	s.bootstrapCalls++
+	close(s.bootstrapStarted)
+	<-s.bootstrapRelease
+}
+
+func (s *blockingApprovalSyncer) Run(ctx context.Context) {
+	s.runCalls++
+	close(s.runStarted)
+	<-ctx.Done()
+	close(s.stopped)
+}
+
+func TestStartApprovalSyncer_BootstrapsAsynchronouslyAndStopsOnce(t *testing.T) {
+	syncer := &blockingApprovalSyncer{
+		bootstrapStarted: make(chan struct{}),
+		bootstrapRelease: make(chan struct{}),
+		runStarted:       make(chan struct{}),
+		stopped:          make(chan struct{}),
+	}
+
+	stop := startApprovalSyncer(context.Background(), syncer)
+	select {
+	case <-syncer.bootstrapStarted:
+	case <-time.After(time.Second):
+		t.Fatal("approval syncer bootstrap did not start asynchronously")
+	}
+	select {
+	case <-syncer.runStarted:
+		t.Fatal("syncer started polling before bootstrap completed")
+	default:
+	}
+
+	close(syncer.bootstrapRelease)
+	select {
+	case <-syncer.runStarted:
+	case <-time.After(time.Second):
+		t.Fatal("approval syncer did not start after bootstrap")
+	}
+	stop()
+	<-syncer.stopped
+	stop()
+
+	assert.Equal(t, 1, syncer.bootstrapCalls)
+	assert.Equal(t, 1, syncer.runCalls)
+}
+
 type mockGRPCServerStopper struct {
 	gracefulStarted chan struct{}
 	gracefulRelease chan struct{}

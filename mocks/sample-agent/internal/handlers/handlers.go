@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -36,6 +37,9 @@ type Session struct {
 	ClientType   string         // "proxy", "local", or "cimd"
 	OAuth2Config *oauth2.Config // per-flow config (correct client_id/secret)
 	PKCEVerifier string         // non-empty for local/cimd flows that require PKCE
+	MCPClient    *mcpclient.Client
+	MCPMu        sync.Mutex
+	mcpClosed    bool
 }
 
 // Handlers handles HTTP requests
@@ -295,10 +299,13 @@ func (h *Handlers) Callback(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	sessionID := h.getSessionID(r)
 
-	if sessionID != "" {
-		h.sessionsMu.Lock()
-		delete(h.sessions, sessionID)
-		h.sessionsMu.Unlock()
+	var session *Session
+	h.sessionsMu.Lock()
+	session = h.sessions[sessionID]
+	delete(h.sessions, sessionID)
+	h.sessionsMu.Unlock()
+	if session != nil {
+		session.closeMCPClient()
 	}
 
 	// Clear session cookie
@@ -367,57 +374,26 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	// Create mcp-go streamable HTTP client with Bearer token injection
-	accessToken := session.Token.AccessToken
-	mcpClient, err := mcpclient.NewStreamableHttpClient(gatewayURL,
-		transport.WithHTTPHeaderFunc(func(_ context.Context) map[string]string {
-			return map[string]string{
-				"Authorization": fmt.Sprintf("Bearer %s", accessToken),
-			}
-		}),
-		transport.WithHTTPTimeout(15*time.Second),
-	)
+	session.MCPMu.Lock()
+	defer session.MCPMu.Unlock()
+	if session.mcpClosed {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":             "unauthorized",
+			"error_description": "session not found",
+		})
+		return
+	}
+	mcpClient, err := h.mcpClient(ctx, session, gatewayURL)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		json.NewEncoder(w).Encode(map[string]string{
 			"error":             "mcp_call_failed",
-			"error_description": "failed to create MCP client",
+			"error_description": "failed to initialize MCP client",
 		})
-		slog.Error("Failed to create MCP client", "error", err.Error())
-		return
-	}
-	defer mcpClient.Close()
-
-	// Start the client transport
-	if err := mcpClient.Start(ctx); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error":             "mcp_call_failed",
-			"error_description": "failed to start MCP client",
-		})
-		slog.Error("MCP client start failed", "error", err.Error())
-		return
-	}
-
-	// Step 1: initialize MCP session
-	initReq := mcp.InitializeRequest{}
-	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	initReq.Params.ClientInfo = mcp.Implementation{
-		Name:    "sample-agent",
-		Version: "1.0",
-	}
-
-	_, err = mcpClient.Initialize(ctx, initReq)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error":             "mcp_call_failed",
-			"error_description": "initialize request failed",
-		})
-		slog.Error("MCP initialize call failed", "error", err.Error())
+		slog.Error("MCP client initialization failed", "error", err.Error())
 		return
 	}
 
@@ -429,8 +405,13 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 
 	toolReq := mcp.CallToolRequest{}
 	toolReq.Params.Name = body.Tool
+	toolReq.Params.Arguments = toolArguments(body.Tool)
 
 	toolResult, err := mcpClient.CallTool(ctx, toolReq)
+	if approvalURL, ok := approvalElicitationURL(err); ok {
+		writeApprovalRequired(w, approvalURL, gatewayURL)
+		return
+	}
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -476,6 +457,78 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 		"gateway_url": gatewayURL,
 		"jwt_claims":  jwtClaims,
 	})
+}
+
+func (h *Handlers) mcpClient(ctx context.Context, session *Session, gatewayURL string) (*mcpclient.Client, error) {
+	if session.MCPClient != nil {
+		return session.MCPClient, nil
+	}
+
+	accessToken := session.Token.AccessToken
+	client, err := mcpclient.NewStreamableHttpClient(gatewayURL,
+		transport.WithHTTPHeaderFunc(func(_ context.Context) map[string]string {
+			return map[string]string{"Authorization": fmt.Sprintf("Bearer %s", accessToken)}
+		}),
+		transport.WithHTTPTimeout(15*time.Second),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create MCP client: %w", err)
+	}
+	if err := client.Start(ctx); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("start MCP client: %w", err)
+	}
+
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "sample-agent", Version: "1.0"}
+	if _, err := client.Initialize(ctx, initReq); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("initialize MCP client: %w", err)
+	}
+
+	session.MCPClient = client
+	return client, nil
+}
+
+func (s *Session) closeMCPClient() {
+	s.MCPMu.Lock()
+	defer s.MCPMu.Unlock()
+	s.mcpClosed = true
+	if s.MCPClient == nil {
+		return
+	}
+	_ = s.MCPClient.Close()
+	s.MCPClient = nil
+}
+
+func approvalElicitationURL(err error) (string, bool) {
+	var elicitation mcp.URLElicitationRequiredError
+	if !errors.As(err, &elicitation) || len(elicitation.Elicitations) != 1 || elicitation.Elicitations[0].URL == "" {
+		return "", false
+	}
+	return elicitation.Elicitations[0].URL, true
+}
+
+func writeApprovalRequired(w http.ResponseWriter, approvalURL, gatewayURL string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":             "approval_required",
+		"error_description": "Approve this tool call to continue.",
+		"approval_url":      approvalURL,
+		"gateway_url":       gatewayURL,
+	})
+}
+
+func toolArguments(tool string) map[string]any {
+	if tool != "create_issue" {
+		return nil
+	}
+	return map[string]any{
+		"repository": "acme/sample-agent",
+		"title":      "Review Compose approval",
+	}
 }
 
 // getSessionID retrieves the session ID from cookies
@@ -719,6 +772,7 @@ func renderUserPage(userInfo *UserInfo, expiresAt int64, clientType, rawToken, k
             <div class="raw">%s</div>
         </details>
         <button id="mcp-btn" class="btn-mcp" onclick="callMCPTool('whoami')">Call MCP Tool: whoami (allowed)</button>
+        <button id="mcp-approval-btn" class="btn-mcp" onclick="callMCPTool('create_issue')">Call MCP Tool: create_issue (approval required)</button>
         <button id="mcp-deny-btn" class="btn-mcp btn-mcp-deny" onclick="callMCPTool('delete_repository')">Call MCP Tool: delete_repository (denied)</button>
         <div id="mcp-result" class="mcp-result"></div>
         <div class="buttons">
@@ -727,7 +781,12 @@ func renderUserPage(userInfo *UserInfo, expiresAt int64, clientType, rawToken, k
     </div>
     <script>
     function callMCPTool(tool) {
-        var btn = document.getElementById(tool === 'whoami' ? 'mcp-btn' : 'mcp-deny-btn');
+        var labels = {
+            whoami: 'Call MCP Tool: whoami (allowed)',
+            create_issue: 'Call MCP Tool: create_issue (approval required)',
+            delete_repository: 'Call MCP Tool: delete_repository (denied)'
+        };
+        var btn = document.getElementById(tool === 'whoami' ? 'mcp-btn' : tool === 'create_issue' ? 'mcp-approval-btn' : 'mcp-deny-btn');
         var result = document.getElementById('mcp-result');
         btn.disabled = true; btn.textContent = 'Calling...';
         result.style.display = 'none'; result.className = 'mcp-result';
@@ -737,17 +796,20 @@ func renderUserPage(userInfo *UserInfo, expiresAt int64, clientType, rawToken, k
                 result.style.display = 'block';
                 if (d.success) {
                     result.classList.add('success');
-                    var html = '<strong>Token Exchange Successful!</strong><pre>Tool: whoami\nResult: ' + esc(d.tool_result) + '\nGateway: ' + esc(d.gateway_url);
+                    var html = '<strong>Token Exchange Successful!</strong><pre>Tool: ' + esc(tool) + '\nResult: ' + esc(d.tool_result) + '\nGateway: ' + esc(d.gateway_url);
                     if (d.jwt_claims && Object.keys(d.jwt_claims).length > 0) { html += '\n\nJWT Claims:\n' + formatJSON(d.jwt_claims); }
                     html += '</pre>';
                     result.innerHTML = html;
+                } else if (d.approval_url) {
+                    result.classList.add('error');
+                    result.innerHTML = '<strong>Approval Required</strong><pre>' + esc(d.error_description) + '</pre><a class="btn-mcp" href="' + esc(d.approval_url) + '">Review and approve tool call</a>';
                 } else {
                     result.classList.add('error');
                     result.innerHTML = '<strong>MCP Call Failed</strong><pre>' + esc(d.error_description || d.error) + '\nGateway: ' + esc(d.gateway_url) + '</pre>';
                 }
             })
             .catch(function(e) { result.style.display='block'; result.classList.add('error'); result.innerHTML='<strong>Request Failed</strong><pre>'+esc(String(e))+'</pre>'; })
-            .finally(function() { btn.disabled=false; btn.textContent=tool === 'whoami' ? 'Call MCP Tool: whoami (allowed)' : 'Call MCP Tool: delete_repository (denied)'; });
+            .finally(function() { btn.disabled=false; btn.textContent=labels[tool]; });
     }
     function formatJSON(obj) { return esc(JSON.stringify(obj, null, 2)); }
     function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }

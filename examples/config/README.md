@@ -22,6 +22,16 @@ GO_ENV=production ./agentic-identity-broker --config ./examples/config/config.pr
 
 ## Configuration Files
 
+### `extproc-tool-approvals.yaml`
+
+This file configures OPA approval gating for the standalone ExtProc service. It contains the required approval API URL and session-header setting.
+
+Use it as a full ExtProc configuration file:
+
+```bash
+EXTPROC_CONFIG_PATH=./examples/config/extproc-tool-approvals.yaml ./extproc-token-exchange
+```
+
 ### `config.minimal.yaml`
 
 The most minimal valid configuration. Demonstrates:

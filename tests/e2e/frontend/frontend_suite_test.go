@@ -34,6 +34,9 @@ type SuiteContext struct {
 	// Browser is the Playwright browser instance (Chromium)
 	Browser playwright.Browser
 
+	// Playwright owns the driver process backing Browser.
+	Playwright *playwright.Playwright
+
 	// FrontendMode is either "built" (production build) or "dev" (Vite dev server)
 	FrontendMode string
 
@@ -174,6 +177,7 @@ var _ = BeforeSuite(func() {
 	suiteCtx = &SuiteContext{
 		Logger:         logger,
 		Browser:        browserInstance,
+		Playwright:     pw,
 		FrontendMode:   frontendMode,
 		Headless:       headless,
 		DevFrontendURL: devFrontendURL,
@@ -322,12 +326,20 @@ var _ = AfterEach(func() {
 //
 // Cleanup steps:
 // 1. Close Playwright browser
-// 2. Log suite completion
+// 2. Stop the Playwright driver process
+// 3. Log suite completion
 var _ = AfterSuite(func() {
 	if suiteCtx != nil && suiteCtx.Browser != nil {
 		err := suiteCtx.Browser.Close()
 		if err != nil {
 			suiteCtx.Logger.Error("Failed to close Playwright browser", "error", err)
+		}
+	}
+
+	if suiteCtx != nil && suiteCtx.Playwright != nil {
+		err := suiteCtx.Playwright.Stop()
+		if err != nil {
+			suiteCtx.Logger.Error("Failed to stop Playwright", "error", err)
 		}
 	}
 

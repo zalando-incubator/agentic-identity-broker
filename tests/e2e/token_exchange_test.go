@@ -1446,9 +1446,52 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 	})
 
+	// US5-S1 from specs/026-extproc-approval-sync/spec.md
+	DescribeTable("returns the verified principal and resolved canonical agent ID", func(uppercaseSubjectAgentID bool) {
+		subjectAgentID := agent.ID.String()
+		if uppercaseSubjectAgentID {
+			subjectAgentID = strings.ToUpper(subjectAgentID)
+		}
+		now := time.Now()
+		subjectToken, err := helpers.SignTestJWT(map[string]interface{}{
+			"sub": principal,
+			"azp": subjectAgentID,
+			"iss": mockUpstream.URL(),
+			"aud": "token-exchange-broker",
+			"exp": now.Add(time.Hour).Unix(),
+			"iat": now.Unix(),
+		}, mockUpstream.GetPrivateKeyPEM())
+		Expect(err).NotTo(HaveOccurred())
+
+		mockUpstream.WithSuccessfulTokenResponse().WithAccessToken("approval-identity-token")
+		formData := url.Values{
+			"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
+			"subject_token":         {subjectToken},
+			"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
+			"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+			"client_assertion":      {tokenFixtures.ClientAssertion},
+			"resource":              {"https://api.github.com"},
+		}
+		resp, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(formData.Encode()))
+		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
+
+		var tokenResponse struct {
+			Principal string `json:"principal"`
+			AgentID   string `json:"agent_id"`
+		}
+		Expect(json.NewDecoder(resp.Body).Decode(&tokenResponse)).To(Succeed())
+		Expect(tokenResponse.Principal).To(Equal(principal))
+		Expect(tokenResponse.AgentID).To(Equal(agent.ID.String()))
+	},
+		Entry("from canonical subject agent ID", false),
+		Entry("from equivalent uppercase subject agent ID", true),
+	)
+
 	// Specification Reference
-	// All tests map to acceptance scenarios from specs/013-token-exchange/spec.md and
-	// specs/021-multi-agent-clientid/spec.md
+	// All tests map to acceptance scenarios from specs/013-token-exchange/spec.md,
+	// specs/021-multi-agent-clientid/spec.md, and specs/026-extproc-approval-sync/spec.md
 	// Total: 32 acceptance test scenarios
 	// - US1: 6 scenarios (token exchange gateway)
 	// - US2: 5 scenarios (resource discovery)

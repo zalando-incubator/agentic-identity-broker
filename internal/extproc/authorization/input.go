@@ -29,10 +29,7 @@ type MCPInput struct {
 
 // ContextInput contains authorization context forwarded from the token exchange response as token-bound snapshot data.
 type ContextInput struct {
-	// GrantedPermissionSetsAvailable reports whether GrantedPermissionSets is authoritative for this request.
-	// False means the broker omitted the field or OPA evaluated before token exchange.
-	GrantedPermissionSetsAvailable bool `json:"granted_permission_sets_available"`
-	// GrantedPermissionSets inherits the same cache TTL and revocation window as the exchanged access token.
-	// When the authoritative snapshot is empty, this field is omitted by encoding/json and callers must rely on GrantedPermissionSetsAvailable.
-	GrantedPermissionSets map[string][]string `json:"granted_permission_sets,omitempty"`
+	GrantedPermissionSetsAvailable bool                `json:"granted_permission_sets_available"`
+	GrantedPermissionSets          map[string][]string `json:"granted_permission_sets,omitempty"`
+	AgentSessionID                 string              `json:"agent_session_id,omitempty"`
 }
