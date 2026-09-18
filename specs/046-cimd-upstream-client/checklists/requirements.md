@@ -51,3 +51,33 @@
 - The clarification session contains exactly three accepted decisions: all OAuth server modes, broker-global signing-key topology, and approval of the public and administrative API contract.
 - The approved contract covers the per-service metadata URL, per-service JWK Set URL, response headers and 404 behavior, and service create, update, read, and list semantics.
 - No unresolved clarification markers remain. All 16 checklist items remain passing.
+
+### Validation iteration 6 — passed (in-session checkpoint)
+
+- Recorded during the 2026-09-18 clarification session, which is still in progress; a closing iteration follows once the remaining rotation questions are answered.
+- `FR-029` was added for the CIMD key-domain separation and ES256-only rule, so the identifiers are now `FR-001` through `FR-029`, `API-001` through `API-007`, and `DB-001` through `DB-003`, each unique and contiguous.
+- Acceptance-scenario counts changed from 5, 6, 7, 3, 3 to 5, 7, 8, 3, 3 after adding US2 scenario 7 (JSON Web Key Set separation) and US3 scenario 8 (signing separation); each sequence remains contiguous.
+- The clarification record now spans two sessions: three decisions on 2026-09-17 and the key-source decision on 2026-09-18.
+- Every normative reference names the CIMD client-authentication key domain; the superseded "broker-global signing-key set" phrasing survives only in the historical 2026-09-17 bullet that the 2026-09-18 bullet refines.
+- No unresolved clarification markers remain. All 16 checklist items remain passing; no checkbox state changed.
+
+### Validation iteration 7 — passed with one open gate (2026-09-18 session not yet closed)
+
+- Supersedes the iteration 6 checkpoint. Final identifiers are `FR-001` through `FR-031`, `API-001` through `API-009`, and `DB-001` through `DB-004`, each unique and contiguous.
+- Acceptance-scenario counts are 5, 7, 8, 7, and 3; each sequence is contiguous.
+- The clarification record holds seven decisions across two sessions: three on 2026-09-17 and four on 2026-09-18 covering the key source, activation policy, rotation trigger and surface, and route placement.
+- New requirements from this session: `FR-029` key-domain separation with an ES256-only rule, `FR-030` three-path activation semantics, `FR-031` operator-triggered rotation with no scheduled rotation, `DB-004` CIMD key persistence, and `API-008`/`API-009` for the approved `/api/cimd-client-keys` surface.
+- The `/api/cimd-client-keys` paths were corrected after an earlier draft both invented them and falsely recorded them as approved. They are now approved by an explicit 2026-09-18 decision, and are deliberately not nested under `/api/oauth2-server/` or `/api/services/`.
+- All local baseline links resolve and no clarification markers remain.
+- On "No implementation details": endpoint contracts remain in scope for this repository's specifications because Constitution Principles IV and X require API contracts to be designed, documented, and confirmed before implementation. The item stays checked on that basis.
+- Open gate, deliberately not closed: `API-009` records stakeholder approval of the `/api/cimd-client-keys` paths and their four operations only. Request and response shapes, including the error representation, remain unconfirmed and must be approved and documented in the administrative OpenAPI specification before implementation. `API-008` was narrowed to behavioral constraints so it no longer fixes a response shape implicitly.
+- All 16 checklist items pass; no checkbox state changed in this session.
+
+### Validation iteration 8 — passed (closes the 2026-09-18 clarification session)
+
+- The iteration 7 gate is now closed. The stakeholder approved the CIMD key request and response shapes, so `API-009` records paths, operations, and shapes together, with no open confirmation gate remaining.
+- Final identifiers are `FR-001` through `FR-031`, `API-001` through `API-009`, and `DB-001` through `DB-004`, each unique and contiguous.
+- Acceptance-scenario counts are 5, 7, 8, 8, and 3; each sequence is contiguous. US4 scenario 8 covers the non-`ES256` rejection.
+- The approved generation contract defaults `algorithm` to `ES256` and rejects any other value, so the CIMD domain does not inherit the token-signing path's tolerance for other algorithms, consistent with `FR-029`.
+- The clarification record holds eight decisions: three on 2026-09-17 and five on 2026-09-18.
+- All 16 checklist items pass; no checkbox state changed across the session.
