@@ -59,6 +59,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer func() { _ = r.Body.Close() }()
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
