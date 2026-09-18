@@ -263,13 +263,7 @@ className = 'text-success-primary'; // Success text
 className = 'text-error-primary'; // Error text
 ```
 
-**❌ DON'T: Use extended palettes (removed)**
-
-```tsx
-className = 'bg-navy-700'; // No longer available
-className = 'bg-emerald-600'; // No longer available
-className = 'bg-gray-100'; // Use neutral-100 instead
-```
+**❌ DON'T: Use extended palette classes**
 
 ### In CSS Custom Properties
 

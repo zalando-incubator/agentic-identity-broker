@@ -33,7 +33,7 @@ token_exchange:
     #
     # IMPORTANT: Choose the correct expression based on your multi_agent_client configuration:
     #
-    # When multi_agent_client.enabled = false (default — recommended for existing deployments):
+    # When multi_agent_client.enabled = false (default):
     #   Use the resolveAgentIdByClientId() CEL helper to map upstream client_id → broker agent.id:
     #   agent_id_expression: "resolveAgentIdByClientId(subject_token.azp)"
     #
@@ -41,9 +41,6 @@ token_exchange:
     #   Use the configured agent_id_claim_name claim directly (contains agent.id UUID):
     #   agent_id_expression: "subject_token.x_agent_id"  # use configured claim name
     #
-    # DEPRECATED (no longer valid): "subject_token.azp" was previously used directly.
-    # Token exchange now resolves agents by agent.id (UUID), not agent.client_id.
-    # Operators MUST update this expression.
     agent_id_expression: "resolveAgentIdByClientId(subject_token.azp)"
 
   # Authorization configures privileged client authorization rules
@@ -89,7 +86,7 @@ token_exchange:
 
 # EXTERNAL CONFIGURATION REFERENCE
 # ================================
-# The following existing configuration is used alongside token_exchange config:
+# Upstream OAuth2 configuration:
 #
 # upstream_oauth2:
 #   issuer: "https://auth.example.com"              # Must match client_assertion and subject_token iss claim

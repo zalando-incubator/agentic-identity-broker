@@ -726,7 +726,7 @@ Retrieval flow:
 - E2E tests (24 scenarios) covering all acceptance criteria from spec
 - Unit tests for adapter error handling, context verification, DEK uniqueness
 - Integration tests with a LocalStack-compatible AWS emulator for KMS and real PostgreSQL storage
-- Backward compatibility tests for KEK rotation scenarios
+- Integration tests that cover KEK rotation and token decryption
 
 **Encryption Architecture Pattern**:
 
@@ -1313,9 +1313,9 @@ Define any project-specific terms or acronyms.)
 
 **Service Protection**: Business rule preventing deletion of an OAuth2 service if any active grants reference it (returns 409 Conflict). Ensures grants don't reference non-existent services. Requires revocation of all referencing grants before service deletion.
 
-**OAuth2Flavor**: Named enumeration on `ThirdpartyOAuth2Service` identifying the credential format and future token acquisition mechanism. Current values: `standard` (plain client secret string), `google` (Google service account JSON key). Designed for extension. Stored in the `oauth2_flavor` column of `thirdparty_oauth2_services`. Defaults to `standard` for backward compatibility.
+**OAuth2Flavor**: Named enumeration on `ThirdpartyOAuth2Service` identifying the credential format and future token acquisition mechanism. Current values: `standard` (plain client secret string), `google` (Google service account JSON key). Designed for extension. Stored in the `oauth2_flavor` column of `thirdparty_oauth2_services`. Default: `standard`.
 
-**ClientCredential**: The authentication material stored in the `client_secret` field of a confidential `ThirdpartyOAuth2Service`. Structure varies by `OAuth2Flavor`: a plain secret string for `standard`, a serialized Google service account JSON string for `google`. When present, the credential is always encrypted at rest. The field name is preserved for API backward compatibility.
+**ClientCredential**: The authentication material stored in the `client_secret` field of a confidential `ThirdpartyOAuth2Service`. Structure varies by `OAuth2Flavor`: a plain secret string for `standard`, a serialized Google service account JSON string for `google`. When present, the credential is always encrypted at rest. The API uses the field name `client_secret`.
 
 **GoogleServiceAccountKey**: Structured value object representing the parsed contents of a Google service account JSON key file. Required fields: `type` (must be `"service_account"`), `private_key`, `client_email`, `token_uri`, `client_id`. Validated structurally; cryptographic format of the private key is not verified at configuration time. Parsed exclusively during request validation; not stored as a separate entity.
 
@@ -1502,7 +1502,7 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 ### JWT Pre-Authentication
 
-**PrincipalProfile**: Enriched user identity value object containing principal identifier, display name, email, and picture URL. Extracted from pre-authentication source (JWT or plain header). Request-scoped, immutable. Stored in request context via `principal.WithProfile()` alongside the existing string principal for backward compatibility. Located in `internal/domain/principal/profile.go`.
+**PrincipalProfile**: Enriched user identity value object containing principal identifier, display name, email, and picture URL. Extracted from pre-authentication source (JWT or plain header). Request-scoped, immutable. Stored in request context via `principal.WithProfile()` alongside the string principal. Located in `internal/domain/principal/profile.go`.
 
 **JWTAuthConfig**: Configuration value object defining JWT-based pre-authentication behavior: HTTP header name, verification mode (`jwks` or `none`), JWKS endpoint, audience/issuer constraints, and CEL claim extraction expressions. Validated at startup with mutual exclusivity rules (`verification: none` + `jwks_uri` → startup error). Located in `internal/ports/config.go` as `JWTConfig`.
 

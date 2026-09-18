@@ -2259,7 +2259,7 @@ components:
           description: |
             OAuth2 authentication variant for this service.
 
-            - **standard**: Plain client secret string (default behavior, backward compatible)
+            - **standard**: Plain client secret string (default)
             - **google**: Google service account JSON key; `client_id` is derived from the credential
             - **github**: GitHub OAuth2 app; scopes in token responses are comma-separated
 

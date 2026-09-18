@@ -386,7 +386,7 @@ Examples of extension:
 **Level 1: Experimental**
 
 - New component, limited use
-- May have breaking changes
+- Public API stability is not guaranteed
 - Not recommended for production until Level 2
 
 **Level 2: Stable**
@@ -415,12 +415,11 @@ The design system evolves based on:
 4. Emerging design patterns and best practices
 5. Framework and dependency updates
 
-### Breaking Changes Policy
+### API Evolution Policy
 
-- Major version for breaking changes only
-- Deprecation period before removal (at least one major version)
-- Clear migration guides for breaking changes
-- Backwards compatibility maintained when possible
+- Use a major version for incompatible public API changes
+- Prefer additive public API changes
+- Keep public APIs stable
 
 ## Summary
 
