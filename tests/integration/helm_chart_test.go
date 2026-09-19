@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -57,4 +58,23 @@ func TestHelmTemplate_ProxyUpstreamTimeout(t *testing.T) {
 
 		require.NotContains(t, output, "upstream_timeout:")
 	})
+}
+
+func TestHelmTemplate_ManagedSecretChecksumsChangeWithKeys(t *testing.T) {
+	render := func(key string) string {
+		return renderHelmTemplate(t,
+			"--set-string", "broker.thirdPartyOauth2.jweSigningKey="+key,
+			"--set-string", "broker.encryption.memory.rawKey="+key,
+		)
+	}
+	checksum := func(output, name string) string {
+		matches := regexp.MustCompile(name + `: ([0-9a-f]{64})`).FindStringSubmatch(output)
+		require.Len(t, matches, 2)
+		return matches[1]
+	}
+
+	first := render("0123456789abcdef0123456789abcdef")
+	second := render("abcdef0123456789abcdef0123456789")
+	require.NotEqual(t, checksum(first, "checksum/jwe-secret"), checksum(second, "checksum/jwe-secret"))
+	require.NotEqual(t, checksum(first, "checksum/encryption-secret"), checksum(second, "checksum/encryption-secret"))
 }
