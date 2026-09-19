@@ -614,22 +614,22 @@ broker:
 
     claimExtraction:
       # -- CEL expression to extract the user principal from subject_token.
-      # Default: "subject_token.sub"
-      principalExpression: "subject_token.sub"
+      # Leave empty when token exchange is not configured.
+      principalExpression: ""
       # -- CEL expression to extract the agent identifier from subject_token.
       # When multiAgentClient.enabled = false (default): use resolveAgentIdByClientId to map
       # upstream client_id → broker agent.id UUID:
       #   "resolveAgentIdByClientId(subject_token.azp)"
       # When multiAgentClient.enabled = true: read the agent ID claim directly:
       #   "subject_token.x_agent_id"  (use your configured agentIdClaimName)
-      agentIdExpression: "resolveAgentIdByClientId(subject_token.azp)"
+      agentIdExpression: ""
     authorization:
       # -- Authorization type: "cel" (recommended)
       type: "cel"
       cel:
         # -- CEL boolean expression evaluated per token exchange request.
-        # Default: "true" (allow all valid clients with valid JWTs).
-        expression: "true"
+        # Leave empty when token exchange is not configured.
+        expression: ""
         # -- CEL evaluation timeout (e.g. "100ms", "5s")
         evaluationTimeout: "100ms"
 
