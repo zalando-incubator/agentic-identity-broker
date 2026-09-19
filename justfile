@@ -835,6 +835,10 @@ helm-package:
 docs-install:
     cd assets/docusaurus && npm install
 
+# Snapshot documentation for a minor release series
+docs-version version:
+    cd assets/docusaurus && npm run docusaurus docs:version "{{version}}"
+
 # Build documentation site
 docs-build: docs-install
     cd assets/docusaurus && npm run build

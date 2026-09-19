@@ -1,0 +1,79 @@
+{
+  "docs": [
+    {
+      "type": "category",
+      "label": "Introduction",
+      "collapsed": false,
+      "items": [
+        "introduction/index",
+        "introduction/use-cases",
+        "introduction/why-not-idp"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Concepts",
+      "collapsed": false,
+      "items": [
+        "concepts/index",
+        "concepts/architecture",
+        "concepts/delegation-and-consent",
+        "concepts/oauth2-server-modes",
+        "concepts/token-exchange",
+        "concepts/encryption",
+        "concepts/glossary"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Get started",
+      "collapsed": false,
+      "items": [
+        "get-started/index"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Guides",
+      "items": [
+        "guides/manage-agents-and-services",
+        "guides/configure-authentication",
+        "guides/operate-oauth2-server-modes",
+        "guides/token-exchange-gateway",
+        "guides/configure-encryption",
+        "guides/deploy-on-kubernetes",
+        "deployment/kubernetes-irsa",
+        "operations/deployment-checklist"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Reference",
+      "items": [
+        "reference/index",
+        "reference/api",
+        {
+          "type": "link",
+          "label": "End-user API (OpenAPI)",
+          "href": "/api/enduser"
+        },
+        {
+          "type": "link",
+          "label": "Admin API (OpenAPI)",
+          "href": "/api/admin"
+        },
+        "reference/token-exchange",
+        "configuration"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Resources",
+      "items": [
+        "resources/security",
+        "resources/contributing",
+        "resources/public-relations"
+      ]
+    }
+  ]
+}
