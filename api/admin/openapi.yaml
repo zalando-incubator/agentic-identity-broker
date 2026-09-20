@@ -2259,7 +2259,7 @@ components:
           description: |
             OAuth2 authentication variant for this service.
 
-            - **standard**: Plain client secret string (default behavior, backward compatible)
+            - **standard**: Plain client secret string (default)
             - **google**: Google service account JSON key; `client_id` is derived from the credential
             - **github**: GitHub OAuth2 app; scopes in token responses are comma-separated
 
@@ -2704,6 +2704,8 @@ components:
 
         **Required when** `discovery.enable_discovery = false`
         **Optional when** `discovery.enable_discovery = true` (used as fallback)
+
+        Each supplied `token_endpoint` and `authorize_endpoint` must use HTTPS. Under the default strict policy, HTTP is accepted only for `localhost`, `127.0.0.1`, or `[::1]`; HTTP is accepted for any host only when `security.skip_thirdparty_https_validation` is enabled for development/test.
       properties:
         token_endpoint:
           type: string
@@ -3045,6 +3047,11 @@ components:
               value:
                 error: validation failed
                 message: token_endpoint is required when discovery is disabled
+            insecure_token_endpoint:
+              summary: Insecure token endpoint
+              value:
+                error: validation failed
+                message: token_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)
 
     NotFoundError:
       description: Resource not found

@@ -652,7 +652,7 @@ paths:
 
         **Idempotency**: Non-idempotent — returns 404 if no grant exists. To silently
         revoke if a grant exists, use `POST /api/consent/agents/{agent-id}/grants` with
-        an empty `granted_permission_sets` object (backward-compatible path).
+        an empty `granted_permission_sets` object.
 
         **Security**: Only the grant owner may revoke. The principal is derived from the
         `X-Remote-User` authentication header. Cross-user revocation is not possible —

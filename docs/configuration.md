@@ -998,14 +998,12 @@ oauth2_authorization_server:
     agent_id_claim_name: "x_agent_id"   # expected in upstream token response JWT
 ```
 
-**Token exchange CEL expression update**: When using `multi_agent_client`, you must also update `token_exchange.claim_extraction.agent_id_expression` in your configuration:
+**Token exchange CEL expression**: Set `token_exchange.claim_extraction.agent_id_expression` according to `multi_agent_client.enabled`:
 
-| Feature mode | Required CEL expression | Notes |
+| `multi_agent_client.enabled` | CEL expression | Purpose |
 |---|---|---|
-| `enabled = false` (default) | `resolveAgentIdByClientId(subject_token.azp)` | Uses the `resolveAgentIdByClientId` helper to map upstream `client_id` → `agent.id` |
-| `enabled = true` | `subject_token.x_agent_id` (use your `agent_id_claim_name`) | Reads the agent UUID directly from the token claim |
-
-> **Breaking change**: The previous expression `subject_token.azp` is no longer valid. Token exchange resolves agents by `agent.id` (UUID), not `agent.client_id`. See the [changelog](./changelog.md) for migration instructions.
+| `false` (default) | `resolveAgentIdByClientId(subject_token.azp)` | Maps the upstream `client_id` to `agent.id`. |
+| `true` | `subject_token.x_agent_id` (use your `agent_id_claim_name`) | Reads the agent UUID from the token claim. |
 
 See `examples/config/oauth2-authorization-server.yaml` for a complete configuration example with both modes commented.
 
@@ -1045,8 +1043,6 @@ In `local` mode, set `issuer_uri` whenever token exchange or approval authentica
 - **`proxy`**: OAuth2 requests are forwarded to an upstream authorization server. The broker acts as a transparent proxy — it handles consent and delegation, then routes the final authorization to the upstream. No local token issuance; discovery and `jwks_uri` remain broker-hosted using upstream verification keys.
 - **`local`**: The broker acts as a standalone OAuth2 authorization server, minting its own JWT access tokens signed with managed asymmetric keys. Supports `client_credentials` and `authorization_code` (with PKCE) grant types, and exposes RFC 8414 discovery and JWKS endpoints.
 - **`hybrid`**: Both proxy and local paths coexist. Agents are classified by their properties: agents with an upstream `ClientID` are routed to the proxy path; local agents (no `ClientID`, no `client_uris`) and CIMD agents (`client_uris` set) are issued local tokens. Requires both `proxy` and `local` configuration sections.
-
-> **Note**: The mode name `issue_token` (used in earlier versions) is no longer valid. Use `local` instead.
 
 **Configuration block** (nested under `oauth2_authorization_server`):
 

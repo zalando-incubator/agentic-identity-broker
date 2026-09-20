@@ -401,7 +401,7 @@ All AWS KMS configuration can be set via environment variables:
 - [ ] All HIGH priority fixes implemented and tested
 - [ ] `serviceAccountSubject`, `oidcProviderArn`, and `oidcSubjectKey` enforced (panic if missing)
 - [ ] Environment validation prevents typos (dev/staging/prod only)
-- [ ] KMS key rotation backward compatibility tested
+- [ ] Test KMS key rotation and token decryption
 - [ ] Security review completed
 - [ ] Load testing performed
 

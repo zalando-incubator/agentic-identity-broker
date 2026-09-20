@@ -1,31 +1,23 @@
-ScanGoModVersion = false
-
 [[IgnoredVulns]]
 id = "GO-2026-4883"
-ignoreUntil = 2026-10-16
-reason = "OSV lists no patched Docker release; golang-migrate's PostgreSQL driver requires the Docker client."
-
-[[IgnoredVulns]]
-id = "GO-2026-4887"
-ignoreUntil = 2026-10-16
-reason = "OSV lists no patched Docker release; golang-migrate's PostgreSQL driver requires the Docker client."
+reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
 
 [[IgnoredVulns]]
 id = "GO-2026-5617"
-ignoreUntil = 2026-10-16
-reason = "OSV lists no patched Docker release; golang-migrate's PostgreSQL driver requires the Docker client."
+reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
 
 [[IgnoredVulns]]
 id = "GO-2026-5668"
-ignoreUntil = 2026-10-16
-reason = "OSV lists no patched Docker release; golang-migrate's PostgreSQL driver requires the Docker client."
+reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
 
 [[IgnoredVulns]]
 id = "GO-2026-5746"
-ignoreUntil = 2026-10-16
-reason = "OSV lists no patched Docker release; golang-migrate's PostgreSQL driver requires the Docker client."
+reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
+
+[[IgnoredVulns]]
+id = "GO-2026-4887"
+reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external tests. This repository's direct Moby API imports are test-only and it imports no affected Docker daemon symbols."
 
 [[IgnoredVulns]]
 id = "GO-2026-5932"
-ignoreUntil = 2026-10-16
-reason = "OSV lists no patched golang.org/x/crypto release; Argon2 credential hashing requires this module."
+reason = "The repository does not import the unmaintained golang.org/x/crypto/openpgp packages affected by this advisory."

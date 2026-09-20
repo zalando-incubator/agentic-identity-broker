@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 60" width="100%" height="100%">
+  <defs>
+    <style>
+      @import url('https://fonts.bunny.net/css?family=zalando-sans:300,700');
+
+      .wordmark {
+        font-family: 'Zalando Sans', sans-serif;
+        font-size: 42px;
+        letter-spacing: -0.03em;
+        text-rendering: optimizeLegibility;
+        fill: #FFFFFF;
+      }
+
+      .bold-text {
+        font-weight: 700;
+      }
+
+      .light-text {
+        font-weight: 300;
+      }
+    </style>
+  </defs>
+
+  <text class="wordmark" x="250" y="45" text-anchor="middle"><tspan class="bold-text">agenticidentity</tspan><tspan class="light-text">broker</tspan></text>
+</svg>

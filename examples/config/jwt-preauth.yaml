@@ -80,11 +80,10 @@
 # Error: "authentication.jwt: verification 'none' and jwks_uri are mutually exclusive"
 
 # =============================================================================
-# Example 4: Backward-Compatible (No JWT, Plain Header Only)
+# Example 4: Plain Header Pre-Authentication
 # =============================================================================
-# Existing deployments with only plain-header pre-auth continue to work
-# without any changes. The absence of the jwt block means JWT authentication
-# is not enabled.
+# This configuration extracts principals from the X-Remote-User header.
+# JWT authentication is not enabled.
 #
 # server:
 #   enduser:

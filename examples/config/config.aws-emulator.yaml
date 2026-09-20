@@ -99,7 +99,6 @@ encryption:
 # 4. Credential Management: Static keys, profiles, or role assumption
 # 5. Development Iteration: Shorter TTLs, custom table names
 #
-# This configuration maintains backward compatibility:
+# AWS SDK default behavior:
 # - Empty/omitted fields use AWS SDK defaults
-# - Existing configurations continue to work unchanged
-# - Port interfaces remain unchanged (hexagonal architecture preserved)
+# - Port interfaces follow the hexagonal architecture

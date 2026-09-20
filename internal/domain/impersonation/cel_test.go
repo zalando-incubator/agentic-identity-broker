@@ -28,7 +28,9 @@ func (p contextAwareProgram) ContextEval(ctx context.Context, _ any) (ref.Val, *
 }
 
 func (p contextAwareProgram) ConcurrentEval(context.Context, any) <-chan cel.EvalResult {
-	panic("ConcurrentEval must not be called")
+	results := make(chan cel.EvalResult)
+	close(results)
+	return results
 }
 
 func TestEvaluateWithTimeout_CancelsEvaluation(t *testing.T) {

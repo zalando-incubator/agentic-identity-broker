@@ -40,6 +40,9 @@ jobs:
         with:
           tool: just
 
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
+
       - name: Install web dependencies
         run: just web-ci
 
@@ -163,6 +166,17 @@ jobs:
           tags: ${{ steps.extproc-meta.outputs.tags }}
           labels: ${{ steps.extproc-meta.outputs.labels }}
           annotations: ${{ steps.extproc-meta.outputs.annotations }}
+
+      - name: Package and push Helm chart
+        run: |
+          release_version="${GITHUB_REF_NAME#v}"
+          sed -i -E "s/^version:.*/version: ${release_version}/" charts/agentic-identity-broker/Chart.yaml
+          sed -i -E "s/^appVersion:.*/appVersion: \"${release_version}\"/" charts/agentic-identity-broker/Chart.yaml
+          helm lint charts/agentic-identity-broker
+          helm package charts/agentic-identity-broker --destination dist
+          helm push "dist/agentic-identity-broker-${release_version}.tgz" \
+            "oci://ghcr.io/${{ github.repository_owner }}"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -177,6 +191,7 @@ jobs:
           - Broker: `ghcr.io/${{ github.repository }}:${{ github.ref_name }}`
           - Migrations: `ghcr.io/${{ github.repository }}-migrate:${{ github.ref_name }}`
           - ExtProc: `ghcr.io/${{ github.repository }}-extproc:${{ github.ref_name }}`
+          - Helm chart: `oci://ghcr.io/${{ github.repository_owner }}/agentic-identity-broker`
           EOF
 
           gh release create "$GITHUB_REF_NAME" \

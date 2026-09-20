@@ -264,6 +264,12 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 				return errors.New("authorize_endpoint is required when discovery is disabled")
 			}
 		}
+		if e.Endpoints.TokenEndpoint != "" && !isAllowedHTTPSScheme(e.Endpoints.TokenEndpoint, skipHTTPSValidation) {
+			return errors.New("token_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)")
+		}
+		if e.Endpoints.AuthorizeEndpoint != "" && !isAllowedHTTPSScheme(e.Endpoints.AuthorizeEndpoint, skipHTTPSValidation) {
+			return errors.New("authorize_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)")
+		}
 
 	case OAuth2FlavorGoogle:
 		// Google flavor: parse credential once, enrich derived fields, and validate host
@@ -364,6 +370,12 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 			if e.Endpoints.AuthorizeEndpoint == "" {
 				return errors.New("authorize_endpoint is required when discovery is disabled")
 			}
+		}
+		if e.Endpoints.TokenEndpoint != "" && !isAllowedHTTPSScheme(e.Endpoints.TokenEndpoint, skipHTTPSValidation) {
+			return errors.New("token_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)")
+		}
+		if e.Endpoints.AuthorizeEndpoint != "" && !isAllowedHTTPSScheme(e.Endpoints.AuthorizeEndpoint, skipHTTPSValidation) {
+			return errors.New("authorize_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)")
 		}
 
 	case OAuth2FlavorGoogle:
