@@ -3,9 +3,9 @@ module github.com/agentic-identity-broker/mock-upstream-oauth2-service
 go 1.26.8
 
 require (
-	github.com/go-oauth2/oauth2/v4 v4.5.4
-	github.com/golang-jwt/jwt/v5 v5.3.0
-	github.com/google/uuid v1.1.1
+	github.com/go-oauth2/oauth2/v4 v4.6.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/google/uuid v1.6.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
