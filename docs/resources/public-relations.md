@@ -11,7 +11,7 @@ the Agentic Identity Broker.
 
 ### 2026-09-18 AGNTCon+MCPCon Europe 2026
 
-[View the slides](/docs/presentations/2026-09-18_agntcon-mcpcon-agentic-identity-broker.pdf)
+[View the slides](https://agenticidentitybroker.dev/docs/presentations/2026-09-18_agntcon-mcpcon-agentic-identity-broker.pdf)
 
 #### Abstract
 
