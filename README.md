@@ -14,6 +14,9 @@
     <a href="https://scorecard.dev/viewer/?uri=github.com/zalando-incubator/agentic-identity-broker">
       <img src="https://img.shields.io/ossf-scorecard/github.com/zalando-incubator/agentic-identity-broker?label=openssf+scorecard&style=flat-square" alt="OpenSSF Score" />
     </a>
+    <a href="https://www.bestpractices.dev/projects/14703">
+      <img src="https://img.shields.io/cii/level/14703?style=flat-square&label=openssf+level" alt="OpenSSF Best Practises Level">
+    </a>
     <a href="LICENSE">
       <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT license" />
     </a>
