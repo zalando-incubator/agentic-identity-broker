@@ -288,24 +288,24 @@ var _ = Describe("OPA Authorization", func() {
 
 			// Scenario US3.1 from specs/044-extproc-opa-mcp-target-server/spec.md (FR-004)
 			// Given an MCP tools/call request where agentgateway sends no mcp_server metadata,
-			// When OPA evaluates the request,
-			// Then input.mcp.target_server_name is omitted entirely (not rejected, not empty string).
-			It("should omit mcp.target_server_name when agentgateway metadata is absent", func() {
+			// When ExtProc evaluates the request headers,
+			// Then the request is rejected with 403 before OPA is ever invoked (misconfiguration),
+			// mirroring how absent protocol metadata is rejected.
+			It("should reject with 403 when agentgateway sends no mcp_server metadata", func() {
 				headersReq := helpers.NewRequestHeaders().
 					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 					WithHeader(":method", "POST").
 					WithAgentgatewayProtocol("mcp").
+					WithoutAgentgatewayMCPServer().
 					BuildWithMetadata()
 
 				headersResp, bodyResp := helpers.SendHeadersAndBody(context.Background(), grpcClient, headersReq,
 					toolCallBody("list_repositories"))
 
 				Expect(headersResp).NotTo(BeNil())
-				Expect(headersResp).To(helpers.HaveReplacedAuthorizationHeader("Bearer "+fixtures.FreshExchangedToken),
-					"headers phase should perform eager token exchange before OPA evaluates the body")
-				Expect(bodyResp).NotTo(BeNil())
-				Expect(bodyResp).To(helpers.BeForwardedRequestBody(),
-					"absent target_server_name metadata should never cause a rejection (FR-004)")
+				Expect(headersResp).To(helpers.HaveImmediateResponseWithStatus(403),
+					"absent target_server_name metadata must be rejected at the headers phase (FR-004), mirroring absent protocol metadata")
+				Expect(bodyResp).To(BeNil(), "no body phase should occur once the headers phase rejects the request")
 			})
 		})
 
@@ -374,21 +374,23 @@ var _ = Describe("OPA Authorization", func() {
 
 			// Edge case from specs/044-extproc-opa-mcp-target-server/spec.md
 			// Given the same policy, When a tool call arrives with no mcp_server metadata at all,
-			// Then the request is denied by the policy's own default-deny fallback (not an
-			// ExtProc-imposed rejection) — target_server_name absence never grants an implicit allow.
-			It("should deny the tool call when target_server_name is absent entirely", func() {
+			// Then the request is rejected with 403 at the headers phase by ExtProc's mandatory
+			// mcp_server check (FR-004) — it never reaches the policy's own deny rule.
+			It("should reject with 403 when target_server_name metadata is absent entirely", func() {
 				headersReq := helpers.NewRequestHeaders().
 					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 					WithHeader(":method", "POST").
 					WithAgentgatewayProtocol("mcp").
+					WithoutAgentgatewayMCPServer().
 					BuildWithMetadata()
 
-				_, bodyResp := helpers.SendHeadersAndBody(context.Background(), grpcClient, headersReq,
+				headersResp, bodyResp := helpers.SendHeadersAndBody(context.Background(), grpcClient, headersReq,
 					toolCallBody("list_repositories"))
 
-				Expect(bodyResp).NotTo(BeNil())
-				Expect(bodyResp).To(helpers.HaveImmediateResponseWithStatus(403),
-					"absent target_server_name should fall through to the policy's default deny, not an implicit allow")
+				Expect(headersResp).NotTo(BeNil())
+				Expect(headersResp).To(helpers.HaveImmediateResponseWithStatus(403),
+					"absent target_server_name metadata must be rejected before OPA is invoked (FR-004)")
+				Expect(bodyResp).To(BeNil(), "no body phase should occur once the headers phase rejects the request")
 			})
 		})
 	})

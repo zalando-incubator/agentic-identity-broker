@@ -13,7 +13,7 @@ reviewing policies — the base contract remains the source of truth for every f
 
 ## What Changes
 
-One new optional property is added to the `mcp` object in the OPA input document JSON Schema:
+One new required-for-MCP property is added to the `mcp` object in the OPA input document JSON Schema:
 
 ```json
 {
@@ -22,21 +22,24 @@ One new optional property is added to the `mcp` object in the OPA input document
     "properties": {
       "target_server_name": {
         "type": "string",
-        "description": "MCP server identifier from agentgateway's metadataContext.agentgateway.mcp_server metadata attribute. Present only when the attribute was supplied as a non-empty string by agentgateway AND the discriminated top-level `type` is one of mcp_tool_call, mcp_method, or mcp_headers_only. Passed through unmodified — no case-folding, trimming, or allow-list validation."
+        "description": "MCP server identifier from agentgateway's metadataContext.agentgateway.mcp_server metadata attribute. Always present and non-empty when the discriminated top-level `type` is one of mcp_tool_call, mcp_method, or mcp_headers_only — ExtProc rejects the request with HTTP 403 at the headers phase before OPA ever evaluates if the attribute is absent or empty (FR-004). Passed through unmodified — no case-folding, trimming, or allow-list validation."
       }
     }
   }
 }
 ```
 
-No `required` entries change. `mcp.target_server_name` is always optional — unlike `mcp.jsonrpc`/`mcp.method`, its absence is
-never a schema violation and never causes ExtProc to reject the request (FR-004).
+No JSON Schema `required` entries change (the schema itself still describes `mcp.target_server_name` as an
+optional property of the `mcp` object, since it is never populated for non-MCP `type` values). However, unlike
+`mcp.jsonrpc`/`mcp.method` — which are genuinely optional depending on JSON-RPC message shape — `mcp.target_server_name`
+is now **mandatory** for any request that reaches OPA with an MCP `type`: its absence or emptiness causes ExtProc
+to reject the request outright (FR-004), so no MCP-typed OPA input document can ever lack it.
 
 ## Field Reference
 
 | Field | Type | Presence | Description |
 |-------|------|----------|--------------|
-| `mcp.target_server_name` | string | Optional | The MCP server identifier the request targets, sourced from `MetadataContext.FilterMetadata["agentgateway"]["mcp_server"]`. Omitted (not empty string) when the attribute is absent, empty, or `protocol != "mcp"` (i.e. `type == "unknown"`). |
+| `mcp.target_server_name` | string | Required for MCP requests | The MCP server identifier the request targets, sourced from `MetadataContext.FilterMetadata["agentgateway"]["mcp_server"]`. Absent or empty causes ExtProc to reject the request with HTTP 403 before OPA is invoked. Never populated when `protocol != "mcp"` (i.e. `type == "unknown"`), since the field has no meaning outside MCP requests. |
 
 ## Source of the Metadata Value
 
@@ -55,13 +58,13 @@ namespace.
 
 | `type` | `mcp.target_server_name` present? |
 |--------|----------------------|
-| `mcp_tool_call` | Yes, when `mcp_server` metadata is present and non-empty |
-| `mcp_method` | Yes, when `mcp_server` metadata is present and non-empty |
-| `mcp_headers_only` | Yes, when `mcp_server` metadata is present and non-empty |
+| `mcp_tool_call` | Always — ExtProc rejects with HTTP 403 before this input document is built if `mcp_server` metadata is absent or empty |
+| `mcp_method` | Always — same rejection rule as above |
+| `mcp_headers_only` | Always — same rejection rule as above |
 | `unknown` (i.e. `protocol != "mcp"`) | Never — `mcp.target_server_name` is never populated for non-MCP protocol requests, even if `mcp_server` metadata happens to be present (FR-005) |
 
-An empty-string `mcp_server` metadata value is treated identically to the attribute being entirely absent: the
-field is omitted, never emitted as `"target_server_name": ""`.
+An empty-string `mcp_server` metadata value is treated identically to the attribute being entirely absent: both
+cause ExtProc to reject the request with HTTP 403 at the headers phase (FR-004).
 
 ## Updated Examples
 
@@ -134,38 +137,20 @@ field is omitted, never emitted as `"target_server_name": ""`.
 }
 ```
 
-### MCP Tool Call — `mcp_server` Metadata Absent (no rejection, field omitted)
+### MCP Tool Call — `mcp_server` Metadata Absent (rejected with 403, request never reaches OPA)
+
+When `protocol` is `mcp` but `metadataContext.agentgateway.mcp_server` is absent or an empty string, ExtProc
+rejects the request at the headers phase — no OPA input document is built at all:
 
 ```json
 {
-  "type": "mcp_tool_call",
-  "attributes": {
-    "request": {
-      "http": {
-        "method": "POST",
-        "path": "/mcp",
-        "scheme": "https",
-        "host": "mcp-server.example.com",
-        "headers": { "content-type": "application/json", "authorization": "******" },
-        "body": "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":2,\"params\":{\"name\":\"list_repositories\",\"arguments\":{}}}"
-      }
-    }
-  },
-  "mcp": {
-    "jsonrpc": "2.0",
-    "method": "tools/call",
-    "id": 2,
-    "tool_name": "list_repositories",
-    "arguments": {}
-  },
-  "context": {
-    "granted_permission_sets_available": true,
-    "granted_permission_sets": {}
-  }
+  "error": "access_denied",
+  "error_description": "mcp_server metadata is required when authorization is enabled for MCP requests"
 }
 ```
 
-Note the absence of the `target_server_name` key entirely — not `"target_server_name": ""` — matching the FR-004 requirement.
+This mirrors the existing missing-`protocol` rejection body shape (`missing_protocol_metadata`), using error
+type `missing_target_server_metadata` internally for structured logging (FR-004).
 
 ## Unaffected: OPA Decision Result Schema and 403 Error Bodies
 

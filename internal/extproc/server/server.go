@@ -489,9 +489,18 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 			map[string]string{"allow": "GET, POST"}), nil
 	}
 
-	// mcp_server metadata is optional (FR-004): absence never rejects the request,
-	// unlike the protocol metadata check above.
-	targetServerName, _ := extractMCPServerFromMetadata(req)
+	// mcp_server metadata is mandatory for MCP requests (FR-004), mirroring the
+	// protocol metadata check above. It is not required for non-MCP protocols,
+	// since it is never populated for those requests either way (FR-005).
+	targetServerName, mcpServerOK := extractMCPServerFromMetadata(req)
+	if protocol == "mcp" && !mcpServerOK {
+		outcome = "authorization_denied"
+		errorType = "missing_target_server_metadata"
+		logger.WarnContext(ctx, "OPA: mcp_server metadata absent — rejecting with 403 (misconfiguration)",
+			"resource", sanitizeURIForTelemetry(resourceURI))
+		return immediateResponse(httpv3.StatusCode_Forbidden,
+			`{"error":"access_denied","error_description":"mcp_server metadata is required when authorization is enabled for MCP requests"}`), nil
+	}
 
 	state := &requestState{
 		subjectToken:      input.subjectToken,
@@ -847,8 +856,10 @@ func extractProtocolFromMetadata(req *extprocv3.ProcessingRequest) (string, bool
 // MetadataContext FilterMetadata. This is agentgateway routing metadata identifying
 // which downstream MCP server the request targets — not an MCP protocol field.
 //
-// Unlike extractProtocolFromMetadata, callers MUST NOT reject the request on a false
-// return — mcp_server is optional metadata and its absence never causes a 403 (FR-004).
+// Like extractProtocolFromMetadata, callers in OPA mode MUST reject the request with
+// 403 on a false return when protocol == "mcp" (FR-004) — mcp_server is mandatory for
+// MCP requests. It is not required for non-MCP protocols, since it is never populated
+// for those requests either way (FR-005).
 //
 // Returns (server, true) when the agentgateway metadata key is present and contains a
 // non-empty mcp_server string. Returns ("", false) when MetadataContext is entirely

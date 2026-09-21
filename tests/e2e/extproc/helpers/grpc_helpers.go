@@ -254,14 +254,22 @@ func (b *ProcessingRequestBuilder) WithTokenExchangeMetadata(subjectToken, resou
 }
 
 // WithAgentgatewayMCPServer adds an mcp_server field to the agentgateway filter metadata,
-// alongside protocol. Unlike WithAgentgatewayProtocol, calling this method always includes
-// the field in the built metadata (even with an empty string), so tests can distinguish
-// "mcp_server metadata absent" (method never called) from "mcp_server metadata present but
-// empty" (called with ""). This simulates the metadata agentgateway sends when it knows
-// which MCP server a request targets (spec 044).
+// alongside protocol. Calling this method always includes the field in the built metadata
+// (even with an empty string), which BuildWithMetadata's default-injection (below) treats as
+// "explicitly set" and does not override. This simulates the metadata agentgateway sends when
+// it knows which MCP server a request targets (spec 044).
 func (b *ProcessingRequestBuilder) WithAgentgatewayMCPServer(server string) *ProcessingRequestBuilder {
 	b.mcpServer = &server
 	return b
+}
+
+// WithoutAgentgatewayMCPServer explicitly opts a request out of BuildWithMetadata's
+// mcp_server default-injection, producing metadata equivalent to agentgateway never having
+// sent the field (present-but-empty and entirely-absent are handled identically by ExtProc
+// per FR-004). Named readably for tests exercising the mandatory-metadata rejection path,
+// rather than requiring callers to know that WithAgentgatewayMCPServer("") has the same effect.
+func (b *ProcessingRequestBuilder) WithoutAgentgatewayMCPServer() *ProcessingRequestBuilder {
+	return b.WithAgentgatewayMCPServer("")
 }
 
 // BuildWithMetadata constructs the ProcessingRequest with all configured Agentgateway metadata.
@@ -285,14 +293,25 @@ func (b *ProcessingRequestBuilder) BuildWithMetadata() *extprocv3.ProcessingRequ
 		},
 	}
 
+	// mcp_server is mandatory for MCP requests once OPA authorization is enabled
+	// (spec 044 FR-004). Default-inject a value for protocol=="mcp" builds so existing
+	// tests unrelated to mcp_server itself don't need to set it explicitly. Tests that
+	// exercise the true-absence rejection path call WithAgentgatewayMCPServer("") to opt
+	// out: an explicit (even empty) value is never overridden by the default below.
+	mcpServer := b.mcpServer
+	if b.protocol == "mcp" && mcpServer == nil {
+		def := "test-mcp-server"
+		mcpServer = &def
+	}
+
 	filterMetadata := make(map[string]*structpb.Struct, 2)
-	if b.protocol != "" || b.mcpServer != nil {
+	if b.protocol != "" || mcpServer != nil {
 		fields := map[string]*structpb.Value{}
 		if b.protocol != "" {
 			fields["protocol"] = structpb.NewStringValue(b.protocol)
 		}
-		if b.mcpServer != nil {
-			fields["mcp_server"] = structpb.NewStringValue(*b.mcpServer)
+		if mcpServer != nil {
+			fields["mcp_server"] = structpb.NewStringValue(*mcpServer)
 		}
 		filterMetadata["agentgateway"] = &structpb.Struct{
 			Fields: fields,

@@ -387,12 +387,22 @@ func tokenExchangeMetadata(fields map[string]*structpb.Value) *corev3.Metadata {
 	}
 }
 
+// tokenExchangeMetadataWithProtocol builds token-exchange metadata with an
+// agentgateway protocol field. When protocol == "mcp", it also sets a default
+// mcp_server field, since mcp_server is mandatory for MCP requests once OPA
+// authorization is enabled (spec 044 FR-004). Tests that need to exercise the
+// absent-mcp_server rejection path must build metadata without this helper's
+// default (see TestServer_OPA_AbsentMCPServerMetadata_Returns403).
 func tokenExchangeMetadataWithProtocol(fields map[string]*structpb.Value, protocol string) *corev3.Metadata {
 	metadata := tokenExchangeMetadata(fields)
+	agwFields := map[string]*structpb.Value{
+		"protocol": structpb.NewStringValue(protocol),
+	}
+	if protocol == "mcp" {
+		agwFields["mcp_server"] = structpb.NewStringValue("test-mcp-server")
+	}
 	metadata.FilterMetadata["agentgateway"] = &structpb.Struct{
-		Fields: map[string]*structpb.Value{
-			"protocol": structpb.NewStringValue(protocol),
-		},
+		Fields: agwFields,
 	}
 	return metadata
 }
@@ -3228,34 +3238,54 @@ func TestServer_OPA_BodyPhase_MCPServerMetadata_PropagatedToOPAInput(t *testing.
 	assert.Equal(t, "github-mcp", seenTargetServerName)
 }
 
-// Spec 044 FR-004: absent mcp_server metadata never rejects the request — the field is
-// simply omitted from the OPA input, unlike protocol metadata (which is mandatory).
-func TestServer_OPA_BodyPhase_MCPServerMetadataAbsent_RequestStillAllowed(t *testing.T) {
-	var seenTargetServerName string
+// Spec 044 FR-004: absent mcp_server metadata for an MCP-protocol request MUST be
+// rejected with 403, mirroring how absent protocol metadata is rejected (spec 020
+// FR-003). Neither the authorizer nor the exchanger must be invoked.
+func TestServer_OPA_AbsentMCPServerMetadata_Returns403(t *testing.T) {
 	auth := &mockAuthorizer{
-		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
-			require.True(t, ok)
-			seenTargetServerName = mcp.TargetServerName
-			return &authorization.OPADecision{Action: "allow"}, nil
+		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
+			t.Fatal("Evaluate must not be called when mcp_server metadata is absent")
+			return nil, nil
 		},
 	}
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			return server.ExchangeResult{Token: "exchanged-token"}, nil
+			t.Fatal("Exchange must not be called when mcp_server metadata is absent")
+			return server.ExchangeResult{}, nil
 		},
 	}
 	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
 	defer cleanup()
 
-	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method": "POST",
-	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}}`))
+	stream, err := client.Process(context.Background())
+	require.NoError(t, err)
 
-	require.NotNil(t, bodyResp)
-	_, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
-	require.True(t, ok, "absent mcp_server metadata must not cause a denial")
-	assert.Empty(t, seenTargetServerName)
+	// Deliberately built without tokenExchangeMetadataWithProtocol's default
+	// mcp_server value, to exercise the true-absent case.
+	metadata := tokenExchangeMetadata(tokenExchangeMetadataFields(
+		structpb.NewStringValue(testSubjectToken),
+		structpb.NewStringValue(testResourceURI),
+	))
+	metadata.FilterMetadata["agentgateway"] = &structpb.Struct{
+		Fields: map[string]*structpb.Value{
+			"protocol": structpb.NewStringValue("mcp"),
+		},
+	}
+
+	err = stream.Send(&extprocv3.ProcessingRequest{
+		MetadataContext: metadata,
+		Request: &extprocv3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: extProcHeaders(map[string]string{":method": "POST"}, false),
+		},
+	})
+	require.NoError(t, err)
+
+	resp, err := stream.Recv()
+	require.NoError(t, err)
+
+	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+	require.True(t, ok, "absent mcp_server metadata must produce an ImmediateResponse")
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immResp.ImmediateResponse.Status.Code))
 }
 
 // Spec 044: agentgateway's mcp_server metadata propagates to input.mcp.target_server_name
