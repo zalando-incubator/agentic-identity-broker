@@ -47,7 +47,7 @@ func (tp *ToolAuthorizationsPage) WaitForPageHeading(ctx context.Context) error 
 		Name: "Tool Authorizations",
 	})
 	err := heading.WaitFor(playwright.LocatorWaitForOptions{
-		Timeout: playwright.Float(10000),
+		Timeout: new(float64(tp.timeout.Milliseconds())),
 	})
 	if err != nil {
 		return fmt.Errorf("tool authorizations heading not found: %w", err)
@@ -62,7 +62,7 @@ func (tp *ToolAuthorizationsPage) WaitForLoaded(ctx context.Context) error {
 		return err
 	}
 	// Wait for network to settle (loading state finished)
-	timeout := float64(10000)
+	timeout := float64(tp.timeout.Milliseconds())
 	return tp.pwPage().WaitForLoadState(playwright.PageWaitForLoadStateOptions{
 		State:   playwright.LoadStateNetworkidle,
 		Timeout: &timeout,
