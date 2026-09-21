@@ -4,8 +4,8 @@ go 1.26.8
 
 require (
 	github.com/aws/aws-cdk-go/awscdk/v2 v2.269.0
-	github.com/aws/constructs-go/constructs/v10 v10.6.0
-	github.com/aws/jsii-runtime-go v1.139.0
+	github.com/aws/constructs-go/constructs/v10 v10.8.1
+	github.com/aws/jsii-runtime-go v1.140.0
 	github.com/stretchr/testify v1.12.1
 )
 
@@ -16,7 +16,7 @@ require (
 	github.com/cdklabs/cloud-assembly-schema-go/awscdkcloudassemblyschema/v54 v54.11.0 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.23 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/yuin/goldmark v1.7.17 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/lint v0.0.0-20241112194109-818c5a804067 // indirect
