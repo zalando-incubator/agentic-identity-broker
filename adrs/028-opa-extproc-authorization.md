@@ -99,7 +99,8 @@ The OPA input document (`OPAInput`) uses a protocol-namespaced layout:
     "method": "tools/call",
     "tool_name": "list_repositories",
     "arguments": {"repo": "acme/app"},
-    "session_id": "sess-abc123"
+    "session_id": "sess-abc123",
+    "target_server_name": "github-mcp"
   },
   "request": {
     "method": "POST",
@@ -116,6 +117,26 @@ The OPA input document (`OPAInput`) uses a protocol-namespaced layout:
 ```
 
 Type discriminators: `mcp_tool_call`, `mcp_method`, `unknown`.
+
+---
+
+## Amendment (2026-09-21): Mandatory `target_server_name` for MCP Requests
+
+This ADR's original Input Schema did not include `mcp.target_server_name`. This amendment extends the `mcp` object with a `target_server_name` field and makes it a mandatory input for all MCP-protocol requests when authorization is enabled.
+
+### Extension
+
+`mcp.target_server_name` carries the agentgateway-resolved target MCP server name (from the `mcp_server` dynamic metadata key, the same source as `protocol`). It is required whenever `type` is `mcp`, following the same mandatory-metadata pattern already established for `protocol` in this ADR: `processRequestHeadersOPA` rejects the request with a 403 `ImmediateResponse` before any OPA evaluation if the metadata is absent or empty.
+
+### Rationale
+
+Authorization policies that scope permissions per downstream MCP server (for example, restricting an agent's granted permission sets to a specific server) cannot make a sound decision without knowing which server is the actual target. Treating the field as optional would let requests reach OPA with an ambiguous or missing target, undermining the fail-closed posture this ADR already establishes for `protocol`. Optionality would also let a misconfigured or misspelled `mcp_server` metadata attribute silently degrade into an unintended fail-open outcome instead of surfacing the error.
+
+### Impact
+
+- The Input Schema example above now includes `target_server_name`.
+- `BuildOPAInput` and `BuildOPAInputHeadersOnly` both take a `targetServerName` parameter, populated only after the mandatory-metadata check has passed.
+- Existing non-MCP request types (`type: "unknown"`) are unaffected; the mandatory check only applies when `protocol == "mcp"`.
 
 ---
 
