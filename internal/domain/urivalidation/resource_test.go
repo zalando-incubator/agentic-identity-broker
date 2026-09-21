@@ -1,6 +1,7 @@
 package urivalidation
 
 import (
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -63,7 +64,18 @@ func TestNormalizeResourceURI(t *testing.T) {
 			got := NormalizeResourceURI(tt.input)
 
 			assert.Equal(t, tt.want, got)
+			if _, err := url.Parse(got); err != nil {
+				t.Fatalf("normalization produced invalid URI %q: %v", got, err)
+			}
 			assert.Equal(t, got, NormalizeResourceURI(got))
 		})
 	}
+}
+
+func TestNormalizeResourceURIEscapedLeadingPath(t *testing.T) {
+	normalized := NormalizeResourceURI("///%200/")
+
+	assert.Equal(t, "///%200", normalized)
+	_, err := url.Parse(normalized)
+	assert.NoError(t, err)
 }
