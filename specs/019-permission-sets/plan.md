@@ -167,7 +167,7 @@ tests/
 | US1.S6 | It("filters permission set list by service_id") |
 | US2.S1 | It("renders mandatory PS locked, optional PS togglable, PS cards filter to SR-intersecting services with per-service toggles") |
 | US2.S2 | It("displays only SR-intersecting services in PS card without raw OAuth2 scope strings") |
-| US2.S3 | It("omits connect button for service with an active session") |
+| US2.S3 | It("shows active session indicator and no connect button for service with active session") |
 | US2.S4 | It("shows connect button with Required/Optional badge for service without active session") |
 | US2.S5 | It("dynamically updates service connections when user toggles optional PS on/off") |
 | US2.S6 | It("renders single mandatory card with Approve disabled until all services connected") |

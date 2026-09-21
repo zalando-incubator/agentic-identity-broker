@@ -322,17 +322,13 @@ export function AgentGrantDetailPage() {
     return serviceIds;
   }, [agent, perPsIncludedServiceIds]);
 
-  // Filter services: show only those without active sessions
-  // When dynamicServiceIds is null (no PSes), show ALL services without active sessions
-  // When dynamicServiceIds is set, only show services in the dynamic set
-  const servicesWithoutActiveSessions = useMemo(() => {
+  // Show every dynamically selected service with its connection status.
+  const visibleServices = useMemo(() => {
     return services.filter(
       (service) =>
-        (dynamicServiceIds === null ||
-          dynamicServiceIds.has(service.serviceId)) &&
-        !agent?.active_session_service_ids?.includes(service.serviceId),
+        dynamicServiceIds === null || dynamicServiceIds.has(service.serviceId),
     );
-  }, [services, dynamicServiceIds, agent]);
+  }, [services, dynamicServiceIds]);
 
   // Compute effective requirement types for service connections badges.
   // A service is effectively mandatory if SR.requirement_type=mandatory OR any currently-active PS
@@ -672,26 +668,26 @@ export function AgentGrantDetailPage() {
             />
           )}
 
-          {/* Services section - Services without active sessions */}
-          {servicesWithoutActiveSessions.length > 0 && (
+          {/* Services section */}
+          {visibleServices.length > 0 && (
             <div className="space-y-4">
               <div>
                 <h2 className="text-xl font-semibold text-trust-deep">
-                  Connect Your Accounts
+                  Service Connections
                   <span className="ml-2 text-sm font-normal text-neutral-500">
-                    ({servicesWithoutActiveSessions.length})
+                    ({visibleServices.length})
                   </span>
                 </h2>
                 <p className="mt-1 text-sm text-neutral-600">
                   {agent.displayName} needs access to the following services.
-                  Click <strong>Login</strong> to authorise each one before
-                  approving.
+                  Services with an active session are ready. Connect the
+                  remaining services before approving.
                 </p>
               </div>
 
               {/* Single stacked card matching the Agent Permissions layout */}
               <Card padding="none" border="subtle" hover="none">
-                {servicesWithoutActiveSessions.map((service, index) => (
+                {visibleServices.map((service, index) => (
                   <React.Fragment key={service.serviceId}>
                     {index > 0 && <hr className="border-neutral-200" />}
                     <ServiceCard
@@ -708,9 +704,7 @@ export function AgentGrantDetailPage() {
                       onRevoke={() => {}}
                       inStack
                       isFirst={index === 0}
-                      isLast={
-                        index === servicesWithoutActiveSessions.length - 1
-                      }
+                      isLast={index === visibleServices.length - 1}
                     />
                   </React.Fragment>
                 ))}

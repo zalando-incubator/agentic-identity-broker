@@ -124,43 +124,37 @@ export function ServiceCard({
       </Stack>
 
       {/* Action button */}
-      <div className="flex-shrink-0" data-testid={`service-actions-${service.serviceId}`}>
-        {!isConnected ? (
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => onDelegate?.(service.serviceId)}
-            disabled={isLoading}
-            title="Connect to this service"
-            className="bg-success-primary hover:bg-success-hover text-white"
-            data-testid="service-login-button"
-          >
-            Login
-          </Button>
-        ) : isDelegated ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onRevoke?.(service.serviceId)}
-            disabled={isLoading}
-            title="Revoke delegation for this service"
-            data-testid="service-revoke-button"
-          >
-            Revoke
-          </Button>
-        ) : (
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => onDelegate?.(service.serviceId)}
-            disabled={isLoading}
-            title="Delegate this service"
-            data-testid="service-delegate-button"
-          >
-            Delegate
-          </Button>
-        )}
-      </div>
+      {(!isConnected || isDelegated) && (
+        <div
+          className="flex-shrink-0"
+          data-testid={`service-actions-${service.serviceId}`}
+        >
+          {!isConnected ? (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => onDelegate?.(service.serviceId)}
+              disabled={isLoading}
+              title="Connect to this service"
+              className="bg-success-primary hover:bg-success-hover text-white"
+              data-testid="service-login-button"
+            >
+              Login
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onRevoke?.(service.serviceId)}
+              disabled={isLoading}
+              title="Revoke delegation for this service"
+              data-testid="service-revoke-button"
+            >
+              Revoke
+            </Button>
+          )}
+        </div>
+      )}
     </Stack>
   );
 

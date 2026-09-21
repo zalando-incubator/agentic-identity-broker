@@ -313,8 +313,8 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 		GetLogger().Info("Test passed: Service connections update dynamically with optional PS toggle")
 	})
 
-	// Scenario 6: Service already connected shows satisfied indicator, no connect button
-	It("should show satisfied indicator for already connected services", func() {
+	// US2.S3 from specs/019-permission-sets/spec.md
+	It("should show active session for already connected services", func() {
 		// Create a user session for GitHub (simulating an existing OAuth2 connection)
 		principal := fixtures.DefaultPrincipal().String()
 
@@ -337,28 +337,15 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 		err = consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 
-		page := consentPage.GetPlaywrightPage()
-
-		// Connected service should show a satisfied/connected indicator
-		// Look for visual indicators like checkmarks, "Connected" text, or success styling
-		connectedIndicator := page.GetByText("Connected").First()
-		if cnt, _ := connectedIndicator.Count(); cnt > 0 {
-			visible, err := connectedIndicator.IsVisible()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(visible).To(BeTrue(), "Connected indicator should be visible for GitHub")
-		}
-
-		// The connected service should NOT have a "Login" or "Connect" button
-		githubArticle := page.Locator(`article[aria-label="Service: GitHub"]`).First()
-		if articleCnt, _ := githubArticle.Count(); articleCnt > 0 {
-			loginBtn := githubArticle.Locator("[data-testid='service-login-button']")
-			loginCount, _ := loginBtn.Count()
-			Expect(loginCount).To(Equal(0), "Connected service should not show Login button")
-		}
+		connection, err := consentPage.GetServiceConnectionState(ctx, "GitHub")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(connection.Present).To(BeTrue(), "GitHub should remain visible in service connections when it has an active session")
+		Expect(connection.HasActiveSession).To(BeTrue(), "GitHub should show an Active Session indicator")
+		Expect(connection.HasLoginButton).To(BeFalse(), "GitHub should not show a Login button when it has an active session")
 
 		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_service_already_connected")).NotTo(HaveOccurred())
 
-		GetLogger().Info("Test passed: Connected service shows satisfied indicator without connect button")
+		GetLogger().Info("Test passed: active service shows an indicator without a login action")
 	})
 
 	// Scenario 7: Approve button disabled until all displayed services connected

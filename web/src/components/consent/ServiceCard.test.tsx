@@ -90,6 +90,27 @@ describe('ServiceCard', () => {
     expect(screen.getByText('write')).toBeInTheDocument();
   });
 
+  it('shows an active session without connection actions', () => {
+    const connectedService: ThirdpartyService = {
+      kind: 'requirement',
+      serviceId: 'github',
+      serviceName: 'GitHub',
+      requirementType: 'mandatory',
+      requiredScopes: [],
+      connectionStatus: 'connected',
+    };
+
+    render(<ServiceCard service={connectedService} />);
+
+    expect(screen.getByText('Active Session')).toBeInTheDocument();
+    expect(
+      screen.queryByTestId('service-login-button'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('service-delegate-button'),
+    ).not.toBeInTheDocument();
+  });
+
   it('expands and collapses scope list on button click', () => {
     const { container } = render(<ServiceCard service={mockService} />);
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mxschmitt/playwright-go"
@@ -71,4 +72,14 @@ func TestCaptureScreenshot_ReturnsErrorOnNonTimeoutLoadFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "failed waiting for network idle before screenshot load-failure")
 	assert.Equal(t, 0, page.screenshotCalls)
+}
+
+func TestTruncateNavigationDiagnosticBody(t *testing.T) {
+	t.Parallel()
+
+	shortBody := "response body"
+	assert.Equal(t, shortBody, truncateNavigationDiagnosticBody(shortBody))
+
+	longBody := strings.Repeat("x", navigationDiagnosticBodyLimit+1)
+	assert.Equal(t, strings.Repeat("x", navigationDiagnosticBodyLimit)+"…", truncateNavigationDiagnosticBody(longBody))
 }

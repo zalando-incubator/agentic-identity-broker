@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mxschmitt/playwright-go"
@@ -18,9 +19,10 @@ import (
 // Route constants for navigation.
 // The React app serves the overview at /delegations and the agent detail page at /agents/:agentId.
 const (
-	agentDetailPath   = "/agents/%s"
-	overviewPath      = "/delegations"
-	revokeDialogTitle = "Revoke All Access"
+	agentDetailPath               = "/agents/%s"
+	overviewPath                  = "/delegations"
+	revokeDialogTitle             = "Revoke All Access"
+	navigationDiagnosticBodyLimit = 4 * 1024
 )
 
 // ConsentPage represents the OAuth2 consent flow page where users grant
@@ -39,7 +41,18 @@ const (
 //	consentPage.SelectScope(ctx, "user:read")
 //	consentPage.SubmitConsent(ctx)
 type ConsentPage struct {
-	*Page // Embed Page for method forwarding
+	*Page                 // Embed Page for method forwarding
+	navigationDiagnostics *agentNavigationDiagnostics
+}
+
+type agentNavigationDiagnostics struct {
+	mu       sync.Mutex
+	requests []consentRequestDiagnostic
+}
+
+type consentRequestDiagnostic struct {
+	path   string
+	detail string
 }
 
 // NewConsentPage creates a new ConsentPage instance.
@@ -56,8 +69,13 @@ type ConsentPage struct {
 //	page := GetTestPage()
 //	consentPage := NewConsentPage(page, GetFrontendURL())
 func NewConsentPage(page playwright.Page, baseURL string) *ConsentPage {
+	diagnostics := &agentNavigationDiagnostics{}
+	page.OnRequestFinished(diagnostics.recordRequestFinished)
+	page.OnRequestFailed(diagnostics.recordRequestFailed)
+
 	return &ConsentPage{
-		Page: NewPage(page, baseURL),
+		Page:                  NewPage(page, baseURL),
+		navigationDiagnostics: diagnostics,
 	}
 }
 
@@ -93,15 +111,85 @@ func (cp *ConsentPage) NavigateToAgent(ctx context.Context, agentID string) erro
 	// Route: /agents/:agentId (defined in React Router App.tsx)
 	path := fmt.Sprintf(agentDetailPath, agentID)
 	if err := cp.Navigate(ctx, path); err != nil {
-		return fmt.Errorf("failed to navigate to agent consent page: %w", err)
+		return fmt.Errorf("failed to navigate to agent consent page; %s: %w", cp.agentNavigationDiagnostics(agentID), err)
 	}
 
 	// Wait for agent name heading to ensure page is interactive
 	if err := cp.waitForAgentNameHeading(ctx); err != nil {
-		return fmt.Errorf("agent name heading not found (page may not have loaded): %w", err)
+		return fmt.Errorf("agent name heading not found (page may not have loaded); %s: %w", cp.agentNavigationDiagnostics(agentID), err)
 	}
 
 	return nil
+}
+
+func (cp *ConsentPage) agentNavigationDiagnostics(agentID string) string {
+	paths := map[string]struct{}{
+		fmt.Sprintf("/api/consent/agents/%s", agentID):        {},
+		fmt.Sprintf("/api/consent/agents/%s/grants", agentID): {},
+	}
+	diagnostics := []string{fmt.Sprintf("current URL: %s", cp.page().URL())}
+
+	for _, request := range cp.navigationDiagnostics.forPaths(paths) {
+		diagnostics = append(diagnostics, request.detail)
+	}
+	if len(diagnostics) == 1 {
+		diagnostics = append(diagnostics, "no consent API requests recorded")
+	}
+
+	return strings.Join(diagnostics, "; ")
+}
+
+func (d *agentNavigationDiagnostics) recordRequestFinished(request playwright.Request) {
+	response, err := request.Response()
+	if err != nil {
+		d.record(request, fmt.Sprintf("response lookup failed: %v", err))
+		return
+	}
+
+	body, err := response.Text()
+	if err != nil {
+		d.record(request, fmt.Sprintf("-> %d; failed to read response body: %v", response.Status(), err))
+		return
+	}
+	d.record(request, fmt.Sprintf("-> %d body=%q", response.Status(), truncateNavigationDiagnosticBody(body)))
+}
+
+func (d *agentNavigationDiagnostics) recordRequestFailed(request playwright.Request) {
+	d.record(request, fmt.Sprintf("failed: %v", request.Failure()))
+}
+
+func (d *agentNavigationDiagnostics) record(request playwright.Request, detail string) {
+	requestURL, err := url.Parse(request.URL())
+	if err != nil || !strings.HasPrefix(requestURL.Path, "/api/consent/agents/") {
+		return
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.requests = append(d.requests, consentRequestDiagnostic{
+		path:   requestURL.Path,
+		detail: fmt.Sprintf("%s %s", request.Method(), detail),
+	})
+}
+
+func (d *agentNavigationDiagnostics) forPaths(paths map[string]struct{}) []consentRequestDiagnostic {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	requests := make([]consentRequestDiagnostic, 0, len(d.requests))
+	for _, request := range d.requests {
+		if _, ok := paths[request.path]; ok {
+			requests = append(requests, request)
+		}
+	}
+	return requests
+}
+
+func truncateNavigationDiagnosticBody(body string) string {
+	if len(body) <= navigationDiagnosticBodyLimit {
+		return body
+	}
+	return body[:navigationDiagnosticBodyLimit] + "…"
 }
 
 // NavigateToAgentWithRedirectURI navigates to the consent page for a specific agent
@@ -759,11 +847,7 @@ func (cp *ConsentPage) DelegateService(ctx context.Context, serviceDisplayName s
 		return fmt.Errorf("service %q not found on page", serviceDisplayName)
 	}
 
-	// Step 2: Find the article parent (semantic role wrapper added in React)
-	// Use aria-label attribute for semantic, accessible selector
-	serviceArticle := cp.page().Locator(
-		fmt.Sprintf(`article[aria-label="Service: %s"]`, serviceDisplayName),
-	).First()
+	serviceArticle := cp.serviceArticle(serviceDisplayName)
 
 	articleCount, err := serviceArticle.Count()
 	if err != nil || articleCount == 0 {
@@ -790,6 +874,48 @@ func (cp *ConsentPage) DelegateService(ctx context.Context, serviceDisplayName s
 	}
 
 	return fmt.Errorf("action button (Login or Delegate) not found for service %q", serviceDisplayName)
+}
+
+func (cp *ConsentPage) serviceArticle(serviceDisplayName string) playwright.Locator {
+	return cp.page().Locator(fmt.Sprintf(`article[aria-label="Service: %s"]`, serviceDisplayName)).First()
+}
+
+// ServiceConnectionState reports a service card's visible connection state.
+type ServiceConnectionState struct {
+	Present          bool
+	HasActiveSession bool
+	HasLoginButton   bool
+}
+
+// GetServiceConnectionState returns the visible connection state for a service.
+func (cp *ConsentPage) GetServiceConnectionState(_ context.Context, serviceDisplayName string) (ServiceConnectionState, error) {
+	if serviceDisplayName == "" {
+		return ServiceConnectionState{}, fmt.Errorf("serviceDisplayName cannot be empty")
+	}
+
+	article := cp.serviceArticle(serviceDisplayName)
+	present, err := article.Count()
+	if err != nil {
+		return ServiceConnectionState{}, fmt.Errorf("failed to find service connection for %q: %w", serviceDisplayName, err)
+	}
+	if present == 0 {
+		return ServiceConnectionState{}, nil
+	}
+
+	activeSessions, err := article.GetByText("Active Session").Count()
+	if err != nil {
+		return ServiceConnectionState{}, fmt.Errorf("failed to find active session status for %q: %w", serviceDisplayName, err)
+	}
+	loginButtons, err := article.Locator("[data-testid='service-login-button']").Count()
+	if err != nil {
+		return ServiceConnectionState{}, fmt.Errorf("failed to find service login button for %q: %w", serviceDisplayName, err)
+	}
+
+	return ServiceConnectionState{
+		Present:          true,
+		HasActiveSession: activeSessions > 0,
+		HasLoginButton:   loginButtons > 0,
+	}, nil
 }
 
 // TogglePermissionSet changes an optional permission set's selection by name.
@@ -834,11 +960,7 @@ func (cp *ConsentPage) RevokeService(ctx context.Context, serviceDisplayName str
 		return fmt.Errorf("service %q not found on page", serviceDisplayName)
 	}
 
-	// Find the article parent (semantic role wrapper)
-	// Use aria-label attribute for semantic, accessible selector
-	serviceArticle := cp.page().Locator(
-		fmt.Sprintf(`article[aria-label="Service: %s"]`, serviceDisplayName),
-	).First()
+	serviceArticle := cp.serviceArticle(serviceDisplayName)
 
 	if articleCount, _ := serviceArticle.Count(); articleCount == 0 {
 		return fmt.Errorf("service article wrapper not found for %q", serviceDisplayName)

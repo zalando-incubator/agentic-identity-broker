@@ -40,8 +40,8 @@ paths:
         with their `requirement_type`, in agent-declaration order. This is rendered as the
         "Agent Permissions" section above the service connections section.
 
-        Active session service IDs are also included so the frontend can determine which
-        service connection action items to show (only services without an active session).
+        Active session service IDs are also included so the frontend can show each
+        service's connection status and omit connection actions for active services.
       parameters:
         - name: id
           in: path
