@@ -14,8 +14,9 @@ on:
   push:
     branches: [ "main" ]
 
-# Declare default permissions as read only.
-permissions: read-all
+# Checkout requires read access to repository contents.
+permissions:
+  contents: read
 
 jobs:
   analysis:

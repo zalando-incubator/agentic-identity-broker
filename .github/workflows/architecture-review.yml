@@ -6,6 +6,9 @@ on:
   issue_comment:
     types: [created]
 
+permissions:
+  contents: read
+
 jobs:
   announce:
     # Skip forked PRs — GITHUB_TOKEN is read-only there
