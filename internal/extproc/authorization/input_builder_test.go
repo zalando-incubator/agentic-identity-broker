@@ -306,7 +306,7 @@ func TestBuildOPAInputHeadersOnly_GrantedPermissionSetsUnavailable(t *testing.T)
 
 func TestBuildOPAInput_PreservesAgentSessionContext(t *testing.T) {
 	body := mustMarshal(t, map[string]any{"jsonrpc": "2.0", "method": "tools/call", "id": 1, "params": map[string]any{"name": "list_files", "arguments": map[string]any{}}})
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{"Mcp-Session-Id": "mcp-session"}, authorization.ContextInput{AgentSessionID: "agent-session"})
+	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{"Mcp-Session-Id": "mcp-session"}, testTargetServerName, authorization.ContextInput{AgentSessionID: "agent-session"})
 	require.NoError(t, err)
 	contextInput, ok := input["context"].(authorization.ContextInput)
 	require.True(t, ok)
@@ -341,7 +341,7 @@ func TestBuildOPAInput_TargetServerName_Propagated(t *testing.T) {
 		"params":  map[string]any{"name": "list_files", "arguments": map[string]any{}},
 	})
 
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, "github-mcp", nil)
+	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, "github-mcp", authorization.ContextInput{})
 	require.NoError(t, err)
 
 	mcp, ok := input["mcp"].(*authorization.MCPInput)
@@ -360,7 +360,7 @@ func TestBuildOPAInput_TargetServerName_AbsentOmitted(t *testing.T) {
 		"params":  map[string]any{},
 	})
 
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, noTargetServerName, nil)
+	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, noTargetServerName, authorization.ContextInput{})
 	require.NoError(t, err)
 
 	mcp, ok := input["mcp"].(*authorization.MCPInput)
@@ -380,7 +380,7 @@ func TestBuildOPAInput_TargetServerName_AbsentOmitted(t *testing.T) {
 func TestBuildOPAInput_TargetServerName_NotSetForNonMCPProtocol(t *testing.T) {
 	body := []byte(`{"action":"run"}`)
 
-	input, err := authorization.BuildOPAInput("a2a", body, map[string]string{}, "github-mcp", nil)
+	input, err := authorization.BuildOPAInput("a2a", body, map[string]string{}, "github-mcp", authorization.ContextInput{})
 	require.NoError(t, err)
 
 	assert.Equal(t, "unknown", input["type"])

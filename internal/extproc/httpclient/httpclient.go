@@ -19,7 +19,7 @@ import (
 // Returns an error if CaBundlePath is set but the file cannot be read or parsed.
 func New(cfg *extprocconfig.Config, timeout time.Duration) (*http.Client, error) {
 	tlsCfg := &tls.Config{
-		InsecureSkipVerify: cfg.OAuth2.TLS.InsecureSkipVerify, //nolint:gosec // controlled by explicit operator config
+		InsecureSkipVerify: cfg.OAuth2.TLS.InsecureSkipVerify, // #nosec G402 -- explicit operator-controlled development TLS option.
 	}
 
 	if cfg.OAuth2.TLS.CaBundlePath != "" {

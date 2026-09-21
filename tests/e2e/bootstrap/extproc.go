@@ -85,6 +85,11 @@ func NewExtProcEnvironment(brokerBaseURL, clientAssertion, policyPath string, lo
 	}
 	cfg.Sessions.Extraction.HTTPHeader = "Mcp-Session-Id"
 
+	if cfg.GRPC.MaxConcurrentStreams < 1 || uint64(cfg.GRPC.MaxConcurrentStreams) > uint64(^uint32(0)) {
+		issuer.Close()
+		return nil, fmt.Errorf("invalid grpc.max_concurrent_streams: %d", cfg.GRPC.MaxConcurrentStreams)
+	}
+
 	environment := &ExtProcEnvironment{issuer: issuer, logger: logger}
 	exchanger, err := extprocserver.NewTokenExchanger(cfg, logger)
 	if err != nil {
@@ -121,7 +126,7 @@ func NewExtProcEnvironment(brokerBaseURL, clientAssertion, policyPath string, lo
 	}
 
 	grpcServer := grpc.NewServer(
-		grpc.MaxConcurrentStreams(uint32(cfg.GRPC.MaxConcurrentStreams)),
+		grpc.MaxConcurrentStreams(uint32(cfg.GRPC.MaxConcurrentStreams)), // #nosec G115 -- bounds are verified immediately before server construction.
 		grpc.KeepaliveParams(keepalive.ServerParameters{}),
 	)
 	extprocv3.RegisterExternalProcessorServer(grpcServer, svc)

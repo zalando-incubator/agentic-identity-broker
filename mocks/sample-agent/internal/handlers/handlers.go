@@ -384,7 +384,7 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	if session.mcpClosed {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, map[string]string{
 			"error":             "unauthorized",
 			"error_description": "session not found",
 		})
@@ -518,7 +518,7 @@ func approvalElicitationURL(err error) (string, bool) {
 func writeApprovalRequired(w http.ResponseWriter, approvalURL, gatewayURL string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusConflict)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, map[string]interface{}{
 		"error":             "approval_required",
 		"error_description": "Approve this tool call to continue.",
 		"approval_url":      approvalURL,
