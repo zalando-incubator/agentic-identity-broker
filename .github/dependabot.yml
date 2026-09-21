@@ -36,14 +36,34 @@ updates:
       - "jan-brennenstuhl_zse"
       - "magnus-jungsbluth_zse"
 
-  # npm Dependencies
+  # Web npm Dependencies
   - package-ecosystem: "npm"
-    directories:
-      - "/web"
-      - "/assets/docusaurus"
+    directory: "/web"
     schedule:
       interval: "monthly"
-      day: "monday"
-      time: "06:00"
     cooldown:
       default-days: 7
+    open-pull-requests-limit: 2
+    groups:
+      web-patch-updates:
+        applies-to: "version-updates"
+        update-types:
+          - "patch"
+        patterns:
+          - "*"
+
+  # Documentation npm Dependencies
+  - package-ecosystem: "npm"
+    directory: "/assets/docusaurus"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    groups:
+      documentation-patch-updates:
+        applies-to: "version-updates"
+        update-types:
+          - "patch"
+        patterns:
+          - "*"
