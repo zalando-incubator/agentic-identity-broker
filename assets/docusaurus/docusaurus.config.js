@@ -13,6 +13,7 @@ const githubBranch = process.env.DOCS_GITHUB_BRANCH ?? 'main';
 const githubRepoUrl = `https://github.com/${githubOrg}/${githubRepo}`;
 const githubIssuesUrl = `${githubRepoUrl}/issues`;
 const editUrl = ({docPath}) => `${githubRepoUrl}/edit/${githubBranch}/docs/${docPath}`;
+const githubIcon = `<img class="navbar__github-icon navbar__github-icon--light" src="${baseUrl}img/GitHub_Invertocat_Black.svg" alt=""><img class="navbar__github-icon navbar__github-icon--dark" src="${baseUrl}img/GitHub_Invertocat_White.svg" alt="">`;
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
@@ -134,10 +135,10 @@ const config = {
         },
       },
       navbar: {
-        title: 'Agentic Identity Broker',
         logo: {
-          alt: 'Agentic Identity Broker logo',
-          src: 'img/logo.svg',
+          alt: 'Agentic Identity Broker',
+          src: 'img/AIB_Wordmark_Black.svg',
+          srcDark: 'img/AIB_Wordmark_White.svg',
         },
         items: [
           {
@@ -156,14 +157,21 @@ const config = {
             ],
           },
           {
-            href: githubRepoUrl,
-            label: 'GitHub',
+            type: 'html',
+            value: `<a class="navbar__link navbar__github-link" href="${githubRepoUrl}" aria-label="GitHub" title="GitHub">${githubIcon}</a>`,
             position: 'right',
           },
         ],
       },
       footer: {
-        style: 'dark',
+        style: 'light',
+        logo: {
+          alt: 'Zalando Engineering',
+          src: 'img/Zalando_Wordmark_Black_RGB.png',
+          srcDark: 'img/Zalando_Wordmark_White_RGB.png',
+          href: 'https://engineering.zalando.com/',
+          width: 180,
+        },
         links: [
           {
             title: 'Learn',
