@@ -1,9 +1,11 @@
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
-import HomepageFeatures from '@site/src/components/HomepageFeatures';
+import ThemedImage from '@theme/ThemedImage';
 import Heading from '@theme/Heading';
+import HomepageFeatures from '@site/src/components/HomepageFeatures';
 import styles from './index.module.css';
 
 const heroLinks = [
@@ -25,7 +27,10 @@ const heroLinks = [
 ];
 
 function HomepageHeader() {
-  const {siteConfig} = useDocusaurusContext();
+  const wordmarkSources = {
+    light: useBaseUrl('/img/AIB_Wordmark_Black.svg'),
+    dark: useBaseUrl('/img/AIB_Wordmark_White.svg'),
+  };
 
   return (
     <header className={clsx('hero', styles.heroBanner)}>
@@ -33,7 +38,11 @@ function HomepageHeader() {
         <div className={styles.heroContent}>
           <span className={styles.eyebrow}>Open source · OAuth2 · Delegated access</span>
           <Heading as="h1" className={styles.heroTitle}>
-            {siteConfig.title}
+            <ThemedImage
+              alt="Agentic Identity Broker"
+              className={styles.heroWordmark}
+              sources={wordmarkSources}
+            />
           </Heading>
           <p className={styles.heroTagline}>
             Let users delegate scoped, revocable access to AI agents — without
