@@ -7,7 +7,7 @@
  * - Reset functionality
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import type { UserGrant, GrantValidityState } from '../types/consent';
 
 interface UseUpdateValidityReturn {
@@ -32,21 +32,26 @@ interface UseUpdateValidityReturn {
 export function useUpdateValidity(
   grant: UserGrant | null = null,
 ): UseUpdateValidityReturn {
-  // Initialize from existing grant if provided
+  const grantID = grant?.id;
+  const validUntil = grant?.valid_until ?? null;
   const initialState = useMemo<GrantValidityState>(() => {
-    return grant?.valid_until
+    return validUntil
       ? {
           noExpiration: false,
-          expiresAt: new Date(grant.valid_until),
+          expiresAt: new Date(validUntil),
         }
       : {
           noExpiration: true,
           expiresAt: undefined,
         };
-  }, [grant]);
+  }, [grantID, validUntil]);
 
   const [validityState, setValidityStateInternal] =
     useState<GrantValidityState>(initialState);
+
+  useEffect(() => {
+    setValidityStateInternal(initialState);
+  }, [initialState]);
 
   /**
    * Update validity state.
@@ -76,15 +81,15 @@ export function useUpdateValidity(
       return null;
     }
 
-    // Must have expiration date if checkbox is checked
+    // An end date is required when the checkbox is checked.
     if (!validityState.expiresAt) {
-      return 'Expiration date is required when grant has expiration';
+      return 'Enter an end date when Specific end date is selected.';
     }
 
-    // Date must be in the future
+    // End date must be in the future
     const now = new Date();
     if (validityState.expiresAt <= now) {
-      return 'Expiration date must be in the future';
+      return 'End date must be in the future';
     }
 
     return null;

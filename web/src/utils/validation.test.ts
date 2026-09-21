@@ -234,14 +234,16 @@ describe('validateExpirationDate', () => {
   it('should reject past dates', () => {
     const pastDate = new Date();
     pastDate.setDate(pastDate.getDate() - 1);
-    expect(validateExpirationDate(pastDate)).toContain('must be in the future');
+    expect(validateExpirationDate(pastDate)).toBe(
+      'End date must be in the future',
+    );
   });
 
   it('should reject dates more than 10 years in future', () => {
     const farFutureDate = new Date();
     farFutureDate.setFullYear(farFutureDate.getFullYear() + 11);
-    expect(validateExpirationDate(farFutureDate)).toContain(
-      'cannot be more than 10 years',
+    expect(validateExpirationDate(farFutureDate)).toBe(
+      'End date cannot be more than 10 years in the future',
     );
   });
 });

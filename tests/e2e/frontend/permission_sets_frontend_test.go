@@ -397,8 +397,8 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 		GetLogger().Info("Test passed: Approve button disabled when mandatory services not connected")
 	})
 
-	// Scenario 8: Approve button enabled when all services connected
-	It("should enable approve button when all mandatory services are connected", func() {
+	// Scenario 8: Save action enabled when all services connected
+	It("should enable Save when all mandatory services are connected", func() {
 		principal := fixtures.DefaultPrincipal().String()
 
 		// Create user session for GitHub (the mandatory service)
@@ -420,28 +420,13 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 		err = consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 
-		page := consentPage.GetPlaywrightPage()
-
-		// Approve button should be enabled when all mandatory services are connected
-		approveBtn := page.GetByRole("button", playwright.PageGetByRoleOptions{
-			Name: "Approve & Delegate",
-		})
-		btnCount, err := approveBtn.Count()
+		enabled, err := consentPage.IsSaveButtonEnabled(ctx)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(btnCount).To(BeNumerically(">=", 1), "Approve button should exist")
+		Expect(enabled).To(BeTrue(), "Save button should be enabled when all mandatory services are connected")
 
-		enabled, err := approveBtn.IsEnabled()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(enabled).To(BeTrue(), "Approve button should be enabled when all mandatory services are connected")
+		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_save_button_enabled")).NotTo(HaveOccurred())
 
-		// Also verify via page object method
-		isEnabled, err := consentPage.IsConsentButtonEnabled(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(isEnabled).To(BeTrue(), "Approve button should report as enabled via page object")
-
-		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_approve_button_enabled")).NotTo(HaveOccurred())
-
-		GetLogger().Info("Test passed: Approve button enabled when all mandatory services connected")
+		GetLogger().Info("Test passed: Save button enabled when all mandatory services connected")
 	})
 })
 
