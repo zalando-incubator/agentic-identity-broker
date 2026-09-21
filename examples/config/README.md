@@ -171,7 +171,7 @@ RFC 8693 OAuth 2.0 Token Exchange configuration. Demonstrates:
 - Automatic token refresh configuration
 - Security-first design with mandatory JWT validation
 - Support for both minimal and complex authorization scenarios
-- Both `multi_agent_client` modes for `agent_id_expression` (Feature 021)
+- Both `multi_agent_client` modes for `agent_id_expression`
 
 **Usage:**
 ```bash
@@ -182,9 +182,9 @@ RFC 8693 OAuth 2.0 Token Exchange configuration. Demonstrates:
 token_exchange:
   claim_extraction:
     principal_expression: "subject_token.sub"
-    # Feature disabled (default): resolve upstream client_id → agent.id UUID
+    # multi_agent_client disabled (default): resolve upstream client_id → agent.id UUID
     agent_id_expression: "resolveAgentIdByClientId(subject_token.azp)"
-    # Feature enabled: use the agent ID claim name from multi_agent_client.agent_id_claim_name
+    # multi_agent_client enabled: use the agent ID claim name from multi_agent_client.agent_id_claim_name
     # agent_id_expression: "subject_token.x_agent_id"
   authorization:
     type: "cel"
@@ -202,9 +202,7 @@ token_exchange:
 - Automatic token refresh with configurable behavior
 - Support for custom claim extraction expressions
 - Complete audit logging of token exchange events
-- `resolveAgentIdByClientId(clientId)` CEL helper (Feature 021, feature-disabled mode) to map upstream `client_id` → `agent.id` UUID
-
-> **Breaking change (Feature 021)**: `agent_id_expression: "subject_token.azp"` is no longer valid. Update to `resolveAgentIdByClientId(subject_token.azp)`. See [docs/changelog.md](../../docs/changelog.md).
+- `resolveAgentIdByClientId(clientId)` CEL helper when `multi_agent_client` is disabled to map upstream `client_id` → `agent.id` UUID
 
 ### `request-context.yaml`
 
@@ -304,7 +302,7 @@ OAuth2 Authorization Server proxy configuration. Demonstrates:
 - Upstream request timeout configuration
 - Upstream JWKS refresh floor/ceiling configuration
 - TLS certificate validation (enforced by default)
-- `multi_agent_client` block (Feature 021) — enabled and disabled examples
+- `multi_agent_client` block — enabled and disabled examples
 - **Note**: The broker's public URL used for RFC 8414 metadata/issuer is configured via `server.enduser.public_url` (not inside the `oauth2_authorization_server` block)
 
 **Usage:**
@@ -335,25 +333,23 @@ OAuth2 Authorization Server proxy configuration. Demonstrates:
 - Agent registry validation (Feature 006)
 - TLS certificate validation enforced (no self-signed certificates)
 - Audit logging for authorization requests
-- Multi-agent client sharing (Feature 021): optional `multi_agent_client` block allows multiple agents to share one upstream OAuth2 application
+- Multi-agent client sharing: optional `multi_agent_client` block allows multiple agents to share one upstream OAuth2 application
 
 **Multi-agent client configuration** (`multi_agent_client` block):
 
 ```yaml
-# Feature disabled (default) — each agent must have a unique client_id
+# multi_agent_client disabled (default): each agent must have a unique client_id
 multi_agent_client:
   enabled: false
 
-# Feature enabled — multiple agents may share one upstream client_id
+# multi_agent_client enabled: multiple agents may share one upstream client_id
 multi_agent_client:
   enabled: true
   agent_id_param_name: "x_agent_id"   # query param injected into upstream authorize redirect
   agent_id_claim_name: "x_agent_id"   # JWT claim verified in upstream token response
 ```
 
-> **Important**: When `multi_agent_client.enabled = true`, you must also update `token_exchange.claim_extraction.agent_id_expression` in your token exchange configuration. See `token-exchange.yaml` for both modes.
-
-> **Breaking change (Feature 021)**: The `agent_id_expression: "subject_token.azp"` expression is no longer valid. Update to `resolveAgentIdByClientId(subject_token.azp)` (feature disabled) or `subject_token.<claim_name>` (feature enabled). See [docs/changelog.md](../../docs/changelog.md).
+> **Token exchange configuration**: Set `token_exchange.claim_extraction.agent_id_expression` to `resolveAgentIdByClientId(subject_token.azp)` when `multi_agent_client.enabled = false`. Set it to `subject_token.<claim_name>` when `multi_agent_client.enabled = true`.
 
 ### `cimd.yaml` — Client ID Metadata Document (CIMD) Configuration
 

@@ -9,13 +9,13 @@ import (
 )
 
 // ThirdpartyOAuth2ProviderRepository defines storage operations for third-party OAuth2
-// provider entities. All methods operate on ThirdpartyOAuth2ProviderEntity with Secret
-// in encrypted state.
+// provider entities. Stored entities carry Secret in encrypted state or an explicitly
+// absent state for public clients.
 //
 // IMPORTANT CONTRACT (Encryption Invariant):
-//   - Input (Create/Update): Entity must have Secret in encrypted state (Secret.IsEncrypted() == true)
-//   - Output (Get/List/Find): Entity has Secret in encrypted state; the domain service decrypts it
-//   - The repository is unaware of encryption mechanics; it treats Secret as opaque ciphertext
+//   - Input (Create/Update): Entity must have an encrypted or absent Secret
+//   - Output (Get/List/Find): Entity has an encrypted or absent Secret; the domain service decrypts encrypted values
+//   - The repository is unaware of encryption mechanics; it treats Secret as opaque ciphertext or explicit absence
 //
 // All third-party OAuth2 provider storage operations use ThirdpartyOAuth2ProviderEntity.
 

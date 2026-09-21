@@ -38,14 +38,26 @@ func sharedKeyPair() (string, string, map[string]interface{}) {
 	return sharedRSAKeyPair.privateKeyPEM, sharedRSAKeyPair.publicKeyPEM, sharedRSAKeyPair.jwksSet
 }
 
+type pkceChallenge struct {
+	value  string
+	method string
+}
+
+// CapturedTokenRequest is an immutable snapshot of a token request received by the mock upstream.
+type CapturedTokenRequest struct {
+	Header http.Header
+	Body   string
+}
+
 // MockUpstreamOAuth2Server provides a mock upstream OAuth2 server using httptest.Server.
 // It captures requests for assertion and supports both successful and error responses.
 // This is stable because it only depends on HTTP contract, not internal implementation.
 type MockUpstreamOAuth2Server struct {
-	Server       *httptest.Server
-	LastRequest  *http.Request
-	LastBody     string
-	requestMutex sync.RWMutex
+	Server        *httptest.Server
+	LastRequest   *http.Request
+	LastBody      string
+	requestMutex  sync.RWMutex
+	tokenRequests []CapturedTokenRequest
 
 	// Response configuration
 	authorizeCalled         bool
@@ -61,6 +73,8 @@ type MockUpstreamOAuth2Server struct {
 	refreshToken            string
 	tokenType               string
 	expiresIn               int
+	strictPublicClientMode  bool
+	codeChallengesByCode    map[string]pkceChallenge
 
 	// RSA key pair for JWT signing (generated on init)
 	privateKeyPEM string
@@ -162,6 +176,17 @@ func (m *MockUpstreamOAuth2Server) WithTokenHangUntilCanceled() *MockUpstreamOAu
 	return m
 }
 
+// WithStrictPublicClientMode makes the token endpoint reject client credentials
+// and require a verifier matching an authorization request's PKCE challenge.
+func (m *MockUpstreamOAuth2Server) WithStrictPublicClientMode() *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
+	m.strictPublicClientMode = true
+	m.codeChallengesByCode = make(map[string]pkceChallenge)
+	return m
+}
+
 // WithExpiresIn sets the token expiration time in seconds.
 func (m *MockUpstreamOAuth2Server) WithExpiresIn(seconds int) *MockUpstreamOAuth2Server {
 	m.expiresIn = seconds
@@ -199,6 +224,21 @@ func (m *MockUpstreamOAuth2Server) GetLastBody() string {
 	m.requestMutex.RLock()
 	defer m.requestMutex.RUnlock()
 	return m.LastBody
+}
+
+// GetTokenRequests returns the token requests received by the mock upstream in order.
+func (m *MockUpstreamOAuth2Server) GetTokenRequests() []CapturedTokenRequest {
+	m.requestMutex.RLock()
+	defer m.requestMutex.RUnlock()
+
+	requests := make([]CapturedTokenRequest, len(m.tokenRequests))
+	for i, request := range m.tokenRequests {
+		requests[i] = CapturedTokenRequest{
+			Header: request.Header.Clone(),
+			Body:   request.Body,
+		}
+	}
+	return requests
 }
 
 // GetAuthorizeCalled returns whether authorize endpoint was called.
@@ -246,10 +286,12 @@ func (m *MockUpstreamOAuth2Server) Reset() {
 
 	m.LastRequest = nil
 	m.LastBody = ""
+	m.tokenRequests = nil
 	m.authorizeCalled = false
 	m.tokenCalled = false
 	m.metadataCalled = false
 	m.jwksCalled = false
+	clear(m.codeChallengesByCode)
 }
 
 // handleAuthorize handles the /oauth/authorize endpoint.
@@ -292,9 +334,20 @@ func (m *MockUpstreamOAuth2Server) handleAuthorize(w http.ResponseWriter, r *htt
 		return
 	}
 
+	authorizationCode := "mock-auth-code-123"
+	m.requestMutex.Lock()
+	if m.strictPublicClientMode {
+		authorizationCode = fmt.Sprintf("mock-auth-code-%d", len(m.codeChallengesByCode)+1)
+		m.codeChallengesByCode[authorizationCode] = pkceChallenge{
+			value:  r.FormValue("code_challenge"),
+			method: r.FormValue("code_challenge_method"),
+		}
+	}
+	m.requestMutex.Unlock()
+
 	// Return authorization code
 	params := url.Values{}
-	params.Set("code", "mock-auth-code-123")
+	params.Set("code", authorizationCode)
 	params.Set("state", state)
 
 	w.Header().Set("Location", redirectURI+"?"+params.Encode())
@@ -310,11 +363,23 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	body := r.Form.Encode()
 	m.requestMutex.Lock()
 	m.LastRequest = r
-	m.LastBody = r.Form.Encode()
+	m.LastBody = body
+	m.tokenRequests = append(m.tokenRequests, CapturedTokenRequest{
+		Header: r.Header.Clone(),
+		Body:   body,
+	})
 	m.tokenCalled = true
 	m.requestMutex.Unlock()
+
+	if status, errorCode := m.strictPublicClientTokenError(r); errorCode != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": errorCode})
+		return
+	}
 
 	if m.blockTokenUntilCanceled {
 		<-r.Context().Done()
@@ -357,6 +422,36 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	}
 
 	_ = json.NewEncoder(w).Encode(tokenResp)
+}
+
+func (m *MockUpstreamOAuth2Server) strictPublicClientTokenError(r *http.Request) (int, string) {
+	m.requestMutex.RLock()
+	strictPublicClientMode := m.strictPublicClientMode
+	m.requestMutex.RUnlock()
+	if !strictPublicClientMode {
+		return 0, ""
+	}
+	if len(r.Header.Values("Authorization")) > 0 {
+		return http.StatusUnauthorized, "invalid_client"
+	}
+	if _, hasClientSecret := r.Form["client_secret"]; hasClientSecret {
+		return http.StatusUnauthorized, "invalid_client"
+	}
+	if r.FormValue("grant_type") != "authorization_code" {
+		return 0, ""
+	}
+	if m.matchesPKCEVerifier(r.FormValue("code"), r.FormValue("code_verifier")) {
+		return 0, ""
+	}
+	return http.StatusBadRequest, "invalid_grant"
+}
+
+func (m *MockUpstreamOAuth2Server) matchesPKCEVerifier(code, verifier string) bool {
+	verifierChallenge := GenerateCodeChallenge(verifier)
+	m.requestMutex.RLock()
+	defer m.requestMutex.RUnlock()
+	challenge, ok := m.codeChallengesByCode[code]
+	return ok && challenge.method == "S256" && verifierChallenge == challenge.value
 }
 
 // handleMetadata handles the /.well-known/openid-configuration endpoint.

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -204,7 +205,8 @@ func TestServicesHandler_CreateService(t *testing.T) {
 		assert.NotEmpty(t, resp.ID)
 		assert.Equal(t, "GitHub", resp.DisplayName)
 		assert.Equal(t, "github-client-id", resp.ClientID)
-		assert.Equal(t, "REDACTED", resp.ClientSecret) // Secret must be redacted
+		require.NotNil(t, resp.ClientSecret)
+		assert.Equal(t, "REDACTED", *resp.ClientSecret) // Secret must be redacted
 		assert.False(t, resp.Discovery.EnableDiscovery)
 		assert.Len(t, resp.Scopes, 1)
 
@@ -473,8 +475,374 @@ func TestServicesHandler_CreateService(t *testing.T) {
 		mockRepo.AssertNotCalled(t, "Create")
 		mockRepo.AssertExpectations(t)
 	})
+	t.Run("rejects insecure token endpoint before create", func(t *testing.T) {
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+
+		reqBody := ServiceRequest{
+			DisplayName:  "Provider",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			IssuerURI:    "https://issuer.example.com",
+			Discovery:    DiscoveryConfigRequest{EnableDiscovery: false},
+			Endpoints: &OAuth2EndpointsRequest{
+				TokenEndpoint:     "http://attacker.invalid/token",
+				AuthorizeEndpoint: "https://issuer.example.com/authorize",
+			},
+		}
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+		w := httptest.NewRecorder()
+
+		handler.CreateService(w, httptest.NewRequest(http.MethodPost, "/api/services", bytes.NewReader(body)))
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		var response ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+		assert.Equal(t, "validation failed", response.Error)
+		assert.Equal(t, "token_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)", response.Message)
+		mockRepo.AssertNotCalled(t, "Create")
+	})
+
+	t.Run("rejects insecure fallback token endpoint before create", func(t *testing.T) {
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+
+		reqBody := ServiceRequest{
+			DisplayName:  "Provider",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			IssuerURI:    "https://issuer.example.com",
+			Discovery:    DiscoveryConfigRequest{EnableDiscovery: true},
+			Endpoints: &OAuth2EndpointsRequest{
+				TokenEndpoint:     "http://attacker.invalid/token",
+				AuthorizeEndpoint: "https://issuer.example.com/authorize",
+			},
+		}
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		w := httptest.NewRecorder()
+
+		handler.CreateService(w, httptest.NewRequest(http.MethodPost, "/api/services", bytes.NewReader(body)).WithContext(ctx))
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		var response ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+		assert.Equal(t, "validation failed", response.Error)
+		assert.Equal(t, "token_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)", response.Message)
+		mockRepo.AssertNotCalled(t, "Create")
+	})
 }
 
+func TestServicesHandler_CreateServiceTokenEndpointAuthMethodMapping(t *testing.T) {
+	tests := []struct {
+		name          string
+		includeMethod bool
+		method        any
+		includeSecret bool
+		secret        any
+		wantPublic    bool
+		wantError     string
+	}{
+		{
+			name:          "omitted method creates a confidential service",
+			includeSecret: true,
+			secret:        "confidential-secret",
+		},
+		{
+			name:          "null method creates a confidential service",
+			includeMethod: true,
+			method:        nil,
+			includeSecret: true,
+			secret:        "confidential-secret",
+		},
+		{
+			name:      "omitted method without a secret is rejected",
+			wantError: "client_secret is required",
+		},
+		{
+			name:          "null method without a secret is rejected",
+			includeMethod: true,
+			method:        nil,
+			wantError:     "client_secret is required",
+		},
+		{
+			name:          "none method with an omitted secret creates a public service",
+			includeMethod: true,
+			method:        "none",
+			wantPublic:    true,
+		},
+		{
+			name:          "none method with an empty secret creates a public service",
+			includeMethod: true,
+			method:        "none",
+			includeSecret: true,
+			secret:        "",
+			wantPublic:    true,
+		},
+		{
+			name:          "none method with a null secret creates a public service",
+			includeMethod: true,
+			method:        "none",
+			includeSecret: true,
+			secret:        nil,
+			wantPublic:    true,
+		},
+		{
+			name:          "none method with a non-empty secret is rejected",
+			includeMethod: true,
+			method:        "none",
+			includeSecret: true,
+			secret:        "must-not-be-stored",
+			wantError:     `client_secret must not have a non-empty value when token_endpoint_auth_method is "none"`,
+		},
+		{
+			name:          "empty method is rejected",
+			includeMethod: true,
+			method:        "",
+			includeSecret: true,
+			secret:        "confidential-secret",
+			wantError:     `token_endpoint_auth_method: only "none" is accepted`,
+		},
+		{
+			name:          "unknown method is rejected",
+			includeMethod: true,
+			method:        "client_secret_post",
+			includeSecret: true,
+			secret:        "confidential-secret",
+			wantError:     `token_endpoint_auth_method: only "none" is accepted`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRepo := new(MockProviderRepository)
+			handler := setupHandler(t, mockRepo)
+			requestBody := map[string]any{
+				"display_name": "Provider",
+				"client_id":    "provider-client-id",
+				"issuer_uri":   "https://provider.example.com",
+				"discovery": map[string]any{
+					"enable_discovery": false,
+				},
+				"endpoints": map[string]any{
+					"token_endpoint":     "https://provider.example.com/token",
+					"authorize_endpoint": "https://provider.example.com/authorize",
+				},
+			}
+			if tt.includeMethod {
+				requestBody["token_endpoint_auth_method"] = tt.method
+			}
+			if tt.includeSecret {
+				requestBody["client_secret"] = tt.secret
+			}
+
+			body, err := json.Marshal(requestBody)
+			require.NoError(t, err)
+
+			if tt.wantError == "" {
+				mockRepo.On("Create", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
+					if tt.wantPublic {
+						return entity.TokenEndpointAuthMethod == model.TokenEndpointAuthMethodNone && entity.Secret.IsAbsent()
+					}
+					return entity.TokenEndpointAuthMethod.IsAbsent() && !entity.Secret.IsAbsent()
+				})).Return(nil).Once()
+			}
+			if tt.wantError != "" {
+				mockRepo.On("Create", mock.Anything, mock.Anything).Return(nil)
+			}
+
+			w := httptest.NewRecorder()
+			handler.CreateService(w, httptest.NewRequest(http.MethodPost, "/api/services", bytes.NewReader(body)))
+
+			if tt.wantError != "" {
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				var response ErrorResponse
+				require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+				assert.Equal(t, "validation failed", response.Error)
+				assert.Equal(t, tt.wantError, response.Message)
+				mockRepo.AssertNotCalled(t, "Create")
+				return
+			}
+
+			require.Equal(t, http.StatusCreated, w.Code)
+			var response map[string]json.RawMessage
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+			method, methodPresent := response["token_endpoint_auth_method"]
+			require.True(t, methodPresent)
+
+			if tt.wantPublic {
+				assert.JSONEq(t, `"none"`, string(method))
+				assert.NotContains(t, response, "client_secret")
+			} else {
+				assert.JSONEq(t, "null", string(method))
+				secret, secretPresent := response["client_secret"]
+				require.True(t, secretPresent)
+				assert.JSONEq(t, `"REDACTED"`, string(secret))
+			}
+
+			mockRepo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestServicesHandler_RejectsInvalidClientAuthenticationBeforeDiscovery(t *testing.T) {
+	var discoveryRequests atomic.Int32
+	discoveryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		discoveryRequests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer discoveryServer.Close()
+
+	tests := []struct {
+		name        string
+		requestBody map[string]any
+		wantError   string
+	}{
+		{
+			name: "contradictory public secret",
+			requestBody: map[string]any{
+				"display_name":               "Provider",
+				"client_id":                  "provider-client-id",
+				"client_secret":              "must-not-be-stored",
+				"token_endpoint_auth_method": "none",
+				"issuer_uri":                 discoveryServer.URL,
+				"discovery":                  map[string]any{"enable_discovery": true},
+			},
+			wantError: `client_secret must not have a non-empty value when token_endpoint_auth_method is "none"`,
+		},
+		{
+			name: "missing public client ID",
+			requestBody: map[string]any{
+				"display_name":               "Provider",
+				"token_endpoint_auth_method": "none",
+				"issuer_uri":                 discoveryServer.URL,
+				"discovery":                  map[string]any{"enable_discovery": true},
+			},
+			wantError: "client_id is required",
+		},
+	}
+
+	assertRejected := func(t *testing.T, request *http.Request, handler http.Handler, repo *MockProviderRepository, wantError string) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+
+		require.Equal(t, http.StatusBadRequest, response.Code)
+		var body ErrorResponse
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+		assert.Equal(t, "validation failed", body.Error)
+		assert.Equal(t, wantError, body.Message)
+		assert.Zero(t, discoveryRequests.Load())
+		repo.AssertNotCalled(t, "Create")
+		repo.AssertNotCalled(t, "Update")
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			requestBody, err := json.Marshal(tt.requestBody)
+			require.NoError(t, err)
+
+			t.Run("create", func(t *testing.T) {
+				discoveryRequests.Store(0)
+				repo := new(MockProviderRepository)
+				handler := setupHandler(t, repo)
+				request := httptest.NewRequest(http.MethodPost, "/api/services", bytes.NewReader(requestBody))
+
+				assertRejected(t, request, http.HandlerFunc(handler.CreateService), repo, tt.wantError)
+			})
+
+			t.Run("update", func(t *testing.T) {
+				discoveryRequests.Store(0)
+				repo := new(MockProviderRepository)
+				handler := setupHandler(t, repo)
+				serviceID := id.NewServiceID()
+				request := httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(requestBody))
+				routeContext := chi.NewRouteContext()
+				routeContext.URLParams.Add("service-id", serviceID.String())
+				request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+
+				assertRejected(t, request, http.HandlerFunc(handler.UpdateService), repo, tt.wantError)
+			})
+		})
+	}
+}
+
+func TestServicesHandler_RejectsCredentialedDiscoveredPublicTokenEndpoint(t *testing.T) {
+	tests := []struct {
+		name          string
+		tokenEndpoint string
+		wantError     string
+	}{
+		{
+			name:          "userinfo",
+			tokenEndpoint: "https://username:password@issuer.example.com/token",
+			wantError:     "token_endpoint must not include userinfo for public clients",
+		},
+		{
+			name:          "client secret query parameter",
+			tokenEndpoint: "https://issuer.example.com/token?client_secret=secret",
+			wantError:     "token_endpoint must not include client authentication parameter for public clients: client_secret",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			var discoveryRequests atomic.Int32
+			discoveryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				discoveryRequests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"token_endpoint":         tt.tokenEndpoint,
+					"authorization_endpoint": "https://issuer.example.com/authorize",
+				})
+			}))
+			defer discoveryServer.Close()
+
+			requestBody, err := json.Marshal(map[string]any{
+				"display_name":               "Provider",
+				"client_id":                  "provider-client-id",
+				"token_endpoint_auth_method": "none",
+				"issuer_uri":                 discoveryServer.URL,
+				"discovery":                  map[string]any{"enable_discovery": true},
+			})
+			require.NoError(t, err)
+
+			repo := new(MockProviderRepository)
+			handler := setupHandler(t, repo)
+			response := httptest.NewRecorder()
+			handler.CreateService(response, httptest.NewRequest(http.MethodPost, "/api/services", bytes.NewReader(requestBody)))
+
+			require.Equal(t, http.StatusBadRequest, response.Code)
+			var body ErrorResponse
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+			assert.Equal(t, tt.wantError, body.Message)
+			assert.Equal(t, int32(1), discoveryRequests.Load())
+			repo.AssertNotCalled(t, "Create")
+
+			updateRepo := new(MockProviderRepository)
+			updateHandler := setupHandler(t, updateRepo)
+			serviceID := id.NewServiceID()
+			updateRequest := httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(requestBody))
+			routeContext := chi.NewRouteContext()
+			routeContext.URLParams.Add("service-id", serviceID.String())
+			updateRequest = updateRequest.WithContext(context.WithValue(updateRequest.Context(), chi.RouteCtxKey, routeContext))
+			updateResponse := httptest.NewRecorder()
+			updateHandler.UpdateService(updateResponse, updateRequest)
+
+			require.Equal(t, http.StatusBadRequest, updateResponse.Code)
+			var updateBody ErrorResponse
+			require.NoError(t, json.NewDecoder(updateResponse.Body).Decode(&updateBody))
+			assert.Equal(t, tt.wantError, updateBody.Message)
+			assert.Equal(t, int32(2), discoveryRequests.Load())
+			updateRepo.AssertNotCalled(t, "Update")
+		})
+	}
+}
 func TestServicesHandler_GetService(t *testing.T) {
 	t.Run("successful get", func(t *testing.T) {
 		mockRepo := new(MockProviderRepository)
@@ -503,7 +871,8 @@ func TestServicesHandler_GetService(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, serviceID.String(), resp.ID)
 		assert.Equal(t, "GitHub", resp.DisplayName)
-		assert.Equal(t, "REDACTED", resp.ClientSecret) // Secret must be redacted
+		require.NotNil(t, resp.ClientSecret)
+		assert.Equal(t, "REDACTED", *resp.ClientSecret) // Secret must be redacted
 	})
 
 	t.Run("service not found", func(t *testing.T) {
@@ -595,7 +964,8 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 		err := json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, "GitHub Updated", resp.DisplayName)
-		assert.Equal(t, "REDACTED", resp.ClientSecret)
+		require.NotNil(t, resp.ClientSecret)
+		assert.Equal(t, "REDACTED", *resp.ClientSecret)
 
 		mockRepo.AssertExpectations(t)
 	})
@@ -938,6 +1308,237 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 		mockRepo.AssertNotCalled(t, "Update")
 		mockRepo.AssertExpectations(t)
 	})
+	t.Run("rejects insecure authorization endpoint before update", func(t *testing.T) {
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+		serviceID := id.NewServiceID()
+
+		reqBody := ServiceRequest{
+			DisplayName:  "Provider",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			IssuerURI:    "https://issuer.example.com",
+			Discovery:    DiscoveryConfigRequest{EnableDiscovery: false},
+			Endpoints: &OAuth2EndpointsRequest{
+				TokenEndpoint:     "https://issuer.example.com/token",
+				AuthorizeEndpoint: "http://attacker.invalid/authorize",
+			},
+		}
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(body))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("service-id", serviceID.String())
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+
+		handler.UpdateService(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		var response ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+		assert.Equal(t, "validation failed", response.Error)
+		assert.Equal(t, "authorize_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)", response.Message)
+		mockRepo.AssertNotCalled(t, "Update")
+	})
+
+	t.Run("rejects insecure fallback authorization endpoint before update", func(t *testing.T) {
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+		serviceID := id.NewServiceID()
+
+		reqBody := ServiceRequest{
+			DisplayName:  "Provider",
+			ClientID:     "client-id",
+			ClientSecret: "client-secret",
+			IssuerURI:    "https://issuer.example.com",
+			Discovery:    DiscoveryConfigRequest{EnableDiscovery: true},
+			Endpoints: &OAuth2EndpointsRequest{
+				TokenEndpoint:     "https://issuer.example.com/token",
+				AuthorizeEndpoint: "http://attacker.invalid/authorize",
+			},
+		}
+		body, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		req := httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(body)).WithContext(ctx)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("service-id", serviceID.String())
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+
+		handler.UpdateService(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		var response ErrorResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+		assert.Equal(t, "validation failed", response.Error)
+		assert.Equal(t, "authorize_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)", response.Message)
+		mockRepo.AssertNotCalled(t, "Update")
+	})
+}
+
+func TestServicesHandler_UpdateServiceTokenEndpointAuthMethodMapping(t *testing.T) {
+	tests := []struct {
+		name          string
+		includeMethod bool
+		method        any
+		includeSecret bool
+		secret        any
+		wantPublic    bool
+		wantError     string
+	}{
+		{
+			name:          "omitted method with a secret keeps the service confidential",
+			includeSecret: true,
+			secret:        "confidential-secret",
+		},
+		{
+			name:          "null method from a read response keeps the service confidential",
+			includeMethod: true,
+			method:        nil,
+			includeSecret: true,
+			secret:        "confidential-secret",
+		},
+		{
+			name:      "public service update omitting method and secret is rejected",
+			wantError: "client_secret is required",
+		},
+		{
+			name:          "null method without a secret is rejected",
+			includeMethod: true,
+			method:        nil,
+			wantError:     "client_secret is required",
+		},
+		{
+			name:          "none method with an omitted secret makes the service public",
+			includeMethod: true,
+			method:        "none",
+			wantPublic:    true,
+		},
+		{
+			name:          "none method with an empty secret makes the service public",
+			includeMethod: true,
+			method:        "none",
+			includeSecret: true,
+			secret:        "",
+			wantPublic:    true,
+		},
+		{
+			name:          "none method with a null secret makes the service public",
+			includeMethod: true,
+			method:        "none",
+			includeSecret: true,
+			secret:        nil,
+			wantPublic:    true,
+		},
+		{
+			name:          "empty method is rejected",
+			includeMethod: true,
+			method:        "",
+			includeSecret: true,
+			secret:        "confidential-secret",
+			wantError:     `token_endpoint_auth_method: only "none" is accepted`,
+		},
+		{
+			name:          "none method with a non-empty secret is rejected",
+			includeMethod: true,
+			method:        "none",
+			includeSecret: true,
+			secret:        "must-not-be-stored",
+			wantError:     `client_secret must not have a non-empty value when token_endpoint_auth_method is "none"`,
+		},
+		{
+			name:          "unknown method is rejected",
+			includeMethod: true,
+			method:        "client_secret_post",
+			includeSecret: true,
+			secret:        "confidential-secret",
+			wantError:     `token_endpoint_auth_method: only "none" is accepted`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRepo := new(MockProviderRepository)
+			handler := setupHandler(t, mockRepo)
+			serviceID := id.NewServiceID()
+			requestBody := map[string]any{
+				"display_name": "Provider Updated",
+				"client_id":    "provider-client-id",
+				"issuer_uri":   "https://provider.example.com",
+				"discovery": map[string]any{
+					"enable_discovery": false,
+				},
+				"endpoints": map[string]any{
+					"token_endpoint":     "https://provider.example.com/token",
+					"authorize_endpoint": "https://provider.example.com/authorize",
+				},
+			}
+			if tt.includeMethod {
+				requestBody["token_endpoint_auth_method"] = tt.method
+			}
+			if tt.includeSecret {
+				requestBody["client_secret"] = tt.secret
+			}
+
+			body, err := json.Marshal(requestBody)
+			require.NoError(t, err)
+
+			if tt.wantError == "" {
+				mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
+					if tt.wantPublic {
+						return entity.ID == serviceID &&
+							entity.TokenEndpointAuthMethod == model.TokenEndpointAuthMethodNone &&
+							entity.Secret.IsAbsent()
+					}
+					return entity.ID == serviceID &&
+						entity.TokenEndpointAuthMethod.IsAbsent() &&
+						entity.Secret.IsEncrypted()
+				}), (*int64)(nil)).Return(nil).Once()
+			}
+			if tt.wantError != "" {
+				mockRepo.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+			}
+
+			req := httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(body))
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("service-id", serviceID.String())
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
+
+			handler.UpdateService(w, req)
+
+			if tt.wantError != "" {
+				require.Equal(t, http.StatusBadRequest, w.Code)
+				var response ErrorResponse
+				require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+				assert.Equal(t, "validation failed", response.Error)
+				assert.Equal(t, tt.wantError, response.Message)
+				mockRepo.AssertNotCalled(t, "Update")
+				return
+			}
+
+			require.Equal(t, http.StatusOK, w.Code)
+			var response map[string]json.RawMessage
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+			method, methodPresent := response["token_endpoint_auth_method"]
+			require.True(t, methodPresent)
+
+			if tt.wantPublic {
+				assert.JSONEq(t, `"none"`, string(method))
+				assert.NotContains(t, response, "client_secret")
+			} else {
+				assert.JSONEq(t, "null", string(method))
+				secret, secretPresent := response["client_secret"]
+				require.True(t, secretPresent)
+				assert.JSONEq(t, `"REDACTED"`, string(secret))
+			}
+
+			mockRepo.AssertExpectations(t)
+		})
+	}
 }
 
 func TestServicesHandler_DeleteService(t *testing.T) {
@@ -1041,8 +1642,10 @@ func TestServicesHandler_ListServices(t *testing.T) {
 		assert.Len(t, resp, 2)
 		assert.Equal(t, "GitHub", resp[0].DisplayName)
 		assert.Equal(t, "Google", resp[1].DisplayName)
-		assert.Equal(t, "REDACTED", resp[0].ClientSecret)
-		assert.Equal(t, "REDACTED", resp[1].ClientSecret)
+		require.NotNil(t, resp[0].ClientSecret)
+		require.NotNil(t, resp[1].ClientSecret)
+		assert.Equal(t, "REDACTED", *resp[0].ClientSecret)
+		assert.Equal(t, "REDACTED", *resp[1].ClientSecret)
 
 		mockRepo.AssertExpectations(t)
 	})
@@ -1095,8 +1698,9 @@ func TestServicesHandler_SecretRedaction(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify secret is redacted, not the actual value
-		assert.Equal(t, "REDACTED", resp.ClientSecret)
-		assert.NotEqual(t, "super-secret-value", resp.ClientSecret)
+		require.NotNil(t, resp.ClientSecret)
+		assert.Equal(t, "REDACTED", *resp.ClientSecret)
+		assert.NotEqual(t, "super-secret-value", *resp.ClientSecret)
 	})
 }
 
@@ -1142,7 +1746,8 @@ func TestServicesHandler_UpdateServiceProtectedResourcesETag(t *testing.T) {
 		assert.Equal(t, `"8"`, recorder.Header().Get("ETag"))
 		var response ServiceResponse
 		require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
-		assert.Equal(t, "REDACTED", response.ClientSecret)
+		require.NotNil(t, response.ClientSecret)
+		assert.Equal(t, "REDACTED", *response.ClientSecret)
 		mockRepo.AssertExpectations(t)
 	})
 

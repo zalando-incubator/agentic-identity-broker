@@ -17,14 +17,22 @@ type thirdpartyOAuth2ProviderRecord struct {
 }
 
 // providerEntityCopy creates a deep copy for internal storage and verifies that
-// the client secret is encrypted before it is retained by the repository.
+// the client-authentication state satisfies the persistence invariant.
 func providerEntityCopy(entity *model.ThirdpartyOAuth2ProviderEntity) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	if entity == nil {
 		return nil, errors.New("entity cannot be nil")
 	}
 
-	if _, err := entity.Secret.GetCiphertext(); err != nil {
-		return nil, fmt.Errorf("entity secret must be encrypted with non-empty ciphertext: %w", err)
+	if err := entity.TokenEndpointAuthMethod.Validate(); err != nil {
+		return nil, err
+	}
+	if entity.IsPublicClient() != entity.Secret.IsAbsent() {
+		return nil, errors.New("token_endpoint_auth_method and client_secret state must agree")
+	}
+	if !entity.IsPublicClient() {
+		if _, err := entity.Secret.GetCiphertext(); err != nil {
+			return nil, fmt.Errorf("entity secret must be encrypted with non-empty ciphertext: %w", err)
+		}
 	}
 
 	return entity.Copy(), nil

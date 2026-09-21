@@ -73,8 +73,8 @@ encryption:
     # Option 1: AWS Profile (for EC2 instances with multiple profiles)
     # profile: ${IDENTITY_BROKER_ENCRYPTION_AWS_KMS_PROFILE:production}
 
-    # Option 2: Static credentials (NOT recommended for production)
-    # Only use for testing or legacy environments
+    # Option 2: Static credentials (not for production)
+    # Use static credentials for testing only
     # access_key_id: ${IDENTITY_BROKER_ENCRYPTION_AWS_KMS_ACCESS_KEY_ID}
     # secret_access_key: ${IDENTITY_BROKER_ENCRYPTION_AWS_KMS_SECRET_ACCESS_KEY}
 

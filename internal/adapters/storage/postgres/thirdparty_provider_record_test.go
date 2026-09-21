@@ -7,6 +7,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -176,6 +177,65 @@ func TestRecordToEntity_SecretIsEncryptedState(t *testing.T) {
 	require.NotNil(t, entity)
 	assert.True(t, entity.Secret.IsEncrypted())
 	assert.False(t, entity.Secret.IsPlaintext())
+}
+
+func TestRecordToEntity_RejectsInvalidClientAuthenticationStates(t *testing.T) {
+	none := "none"
+	empty := ""
+	unknown := "client_secret_post"
+	tests := []struct {
+		name   string
+		record *ThirdpartyOAuth2ProviderRecord
+	}{
+		{
+			name: "public service with ciphertext",
+			record: &ThirdpartyOAuth2ProviderRecord{
+				ID:                      "550e8400-e29b-41d4-a716-446655440099",
+				SecretCiphertext:        []byte("ciphertext"),
+				TokenEndpointAuthMethod: &none,
+			},
+		},
+		{
+			name: "confidential service without ciphertext",
+			record: &ThirdpartyOAuth2ProviderRecord{
+				ID: "550e8400-e29b-41d4-a716-446655440099",
+			},
+		},
+		{
+			name: "empty stored authentication method",
+			record: &ThirdpartyOAuth2ProviderRecord{
+				ID:                      "550e8400-e29b-41d4-a716-446655440099",
+				SecretCiphertext:        []byte("ciphertext"),
+				TokenEndpointAuthMethod: &empty,
+			},
+		},
+		{
+			name: "unknown stored authentication method",
+			record: &ThirdpartyOAuth2ProviderRecord{
+				ID:                      "550e8400-e29b-41d4-a716-446655440099",
+				TokenEndpointAuthMethod: &unknown,
+			},
+		},
+		{
+			name: "empty confidential ciphertext",
+			record: &ThirdpartyOAuth2ProviderRecord{
+				ID:               "550e8400-e29b-41d4-a716-446655440099",
+				SecretCiphertext: []byte{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entity, err := recordToEntity(tt.record)
+			require.Error(t, err)
+			assert.Nil(t, entity)
+
+			var storageErr *storage.StorageError
+			require.ErrorAs(t, err, &storageErr)
+			assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+		})
+	}
 }
 
 func TestProviderScopeArray_ScanAndValue_RoundTrip(t *testing.T) {

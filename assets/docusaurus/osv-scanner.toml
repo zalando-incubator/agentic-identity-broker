@@ -1,0 +1,12 @@
+[[IgnoredVulns]]
+id = "GHSA-5p2g-fcmc-qvqq"
+reason = "No patched image-size release exists. It processes only repository-controlled documentation images during the static-site build."
+
+[[IgnoredVulns]]
+id = "GHSA-w3rx-r6r6-pgpr"
+reason = "No patched image-size release exists. It processes only repository-controlled documentation images during the static-site build."
+
+
+[[IgnoredVulns]]
+id = "GHSA-w5hq-g745-h8pq"
+reason = "SockJS requires the vulnerable uuid 8.x release. The development server does not pass caller-controlled output buffers to UUID v3, v5, or v6."

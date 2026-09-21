@@ -41,6 +41,7 @@ var thirdpartyProviderMigrations = []bootstrap.SQLMigration{
 	{File: "022_add_service_authorization_params.up.sql", Version: 22},
 	{File: "028_normalize_service_protected_resources.up.sql", Version: 28},
 	{File: "029_add_canonical_ids.up.sql", Version: 29},
+	{File: "031_add_token_endpoint_auth_method.up.sql", Version: 31},
 }
 
 func TestAuthorizationParamsPersistence(t *testing.T) {
@@ -99,9 +100,25 @@ func setupThirdpartyProviderTestHarness(
 ) (context.Context, *postgres.PostgresThirdpartyOAuth2ProviderRepository, *thirdparty.ThirdpartyOAuth2ProviderService, func()) {
 	t.Helper()
 
+	ctx, repo, providerService, _, _, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	return ctx, repo, providerService, cleanup
+}
+
+func setupThirdpartyProviderTestHarnessWithDatabase(
+	t *testing.T,
+) (
+	context.Context,
+	*postgres.PostgresThirdpartyOAuth2ProviderRepository,
+	*thirdparty.ThirdpartyOAuth2ProviderService,
+	*bootstrap.SharedPostgres,
+	string,
+	func(),
+) {
+	t.Helper()
+
 	sharedPostgres := bootstrap.RequireSharedPostgres(t)
-	_, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_029", func(t *testing.T, dbName string) {
-		sharedPostgres.ApplyMigrationsUpTo(t, dbName, thirdpartyProviderMigrations, 29)
+	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_031", func(t *testing.T, dbName string) {
+		sharedPostgres.ApplyMigrationsUpTo(t, dbName, thirdpartyProviderMigrations, 31)
 	})
 
 	config := &ports.StorageConfig{
@@ -126,7 +143,7 @@ func setupThirdpartyProviderTestHarness(
 		cleanupDB()
 	}
 
-	return ctx, repo, providerService, cleanup
+	return ctx, repo, providerService, sharedPostgres, dbName, cleanup
 }
 
 // createTestService is a helper to create a test service entity with specified properties.
@@ -531,4 +548,90 @@ func TestFindByProtectedResource_GINIndexQuery(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, found)
 	require.Equal(t, servicesByName["Service 1"].ID, found.ID)
+}
+
+func TestPublicServicePersistence(t *testing.T) {
+	ctx, repo, _, sharedPostgres, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+
+	entity := createTestService("public-service-persistence", "Public Service Persistence", nil)
+	entity.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	entity.Secret = model.NewAbsentSecret()
+	require.NoError(t, repo.Create(ctx, entity))
+
+	assert.Equal(t, string(model.TokenEndpointAuthMethodNone), sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT token_endpoint_auth_method
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, entity.ID)))
+	assert.Equal(t, "t", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT client_secret_encrypted IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, entity.ID)))
+
+	stored, err := repo.Get(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
+	assert.True(t, stored.Secret.IsAbsent())
+}
+
+func TestPublicToConfidentialUpdateStoresCiphertext(t *testing.T) {
+	ctx, repo, providerService, sharedPostgres, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+
+	public := createTestService("public-to-confidential", "Public Service", nil)
+	public.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	public.Secret = model.NewAbsentSecret()
+	require.NoError(t, providerService.Create(ctx, public))
+
+	confidential := createTestService(public.ID.String(), "Confidential Service", nil)
+	require.NoError(t, providerService.Update(ctx, confidential, nil))
+
+	assert.Equal(t, "f", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT client_secret_encrypted IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, confidential.ID)))
+	assert.Equal(t, "t", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT token_endpoint_auth_method IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, confidential.ID)))
+
+	stored, err := repo.Get(ctx, confidential.ID)
+	require.NoError(t, err)
+	assert.True(t, stored.TokenEndpointAuthMethod.IsAbsent())
+	assert.True(t, stored.Secret.IsEncrypted())
+}
+
+func TestConfidentialToPublicUpdateClearsCiphertext(t *testing.T) {
+	ctx, repo, providerService, sharedPostgres, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+
+	confidential := createTestService("confidential-to-public", "Confidential Service", nil)
+	require.NoError(t, providerService.Create(ctx, confidential))
+	assert.Equal(t, "f", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT client_secret_encrypted IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, confidential.ID)))
+	assert.Equal(t, "t", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT token_endpoint_auth_method IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, confidential.ID)))
+
+	public := createTestService(confidential.ID.String(), "Public Service", nil)
+	public.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	public.Secret = model.NewAbsentSecret()
+	require.NoError(t, repo.Update(ctx, public, nil))
+
+	assert.Equal(t, string(model.TokenEndpointAuthMethodNone), sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT token_endpoint_auth_method
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, public.ID)))
+	assert.Equal(t, "t", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT client_secret_encrypted IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, public.ID)))
+
+	stored, err := repo.Get(ctx, public.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
+	assert.True(t, stored.Secret.IsAbsent())
 }

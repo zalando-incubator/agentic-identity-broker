@@ -2,7 +2,7 @@
 # Enables hot-reload with Air during development
 # Built for use with docker-compose volume mounts
 
-FROM golang:1.26.8-alpine
+FROM golang:1.26.8-alpine@sha256:51a7c389a5ddaf82f527191a1e9bff9928655130a44e4975dd1d7e0acf59f1ae
 
 WORKDIR /app
 ENV GOEXPERIMENT=jsonv2
@@ -11,7 +11,7 @@ ENV GOEXPERIMENT=jsonv2
 RUN apk add --no-cache bash git ca-certificates curl jq
 
 # Install Air for hot-reload development
-RUN go install github.com/air-verse/air@latest
+RUN go install github.com/air-verse/air@v1.67.4
 
 # Copy go module files
 COPY go.mod go.sum ./

@@ -40,6 +40,43 @@ var reservedAuthorizationParamNames = map[string]struct{}{
 	"nonce": {}, "request": {}, "request_uri": {}, "refresh_token": {},
 }
 
+func isPublicClientCredentialParameter(name string) bool {
+	switch strings.ToLower(name) {
+	case "client_assertion", "client_assertion_type", "client_secret":
+		return true
+	}
+	return false
+}
+
+func validatePublicClientOutboundConfiguration(params map[string]string, tokenEndpoint string) error {
+	for name := range params {
+		if isPublicClientCredentialParameter(name) {
+			return fmt.Errorf("authorization parameter is not allowed for public clients: %s", name)
+		}
+	}
+
+	if tokenEndpoint == "" {
+		return nil
+	}
+	endpoint, err := url.Parse(tokenEndpoint)
+	if err != nil {
+		return fmt.Errorf("token_endpoint is invalid: %w", err)
+	}
+	if endpoint.User != nil {
+		return errors.New("token_endpoint must not include userinfo for public clients")
+	}
+	query, err := url.ParseQuery(endpoint.RawQuery)
+	if err != nil {
+		return errors.New("token_endpoint query parameters are invalid")
+	}
+	for name := range query {
+		if isPublicClientCredentialParameter(name) {
+			return fmt.Errorf("token_endpoint must not include client authentication parameter for public clients: %s", name)
+		}
+	}
+	return nil
+}
+
 // IsReservedAuthorizationParamName reports whether name is controlled by the broker.
 func IsReservedAuthorizationParamName(name string) bool {
 	_, reserved := reservedAuthorizationParamNames[strings.ToLower(name)]
@@ -64,31 +101,38 @@ func validateAuthorizationParams(params map[string]string) error {
 // ThirdpartyOAuth2ProviderEntity is the domain entity for an external OAuth2 provider that
 // agents can access on behalf of users (e.g., GitHub, Google, Databricks).
 //
-// The Secret field uses the Secret value object with two mutually exclusive states:
-//   - Plaintext state: used when creating/updating a provider, and when returned from Get/List
-//     (the domain service decrypts the raw ciphertext before returning the entity to callers).
-//   - Encrypted state: used internally by the repository layer. Callers (handlers, other domain
-//     services) never observe an entity in encrypted state.
+// The Secret field uses the Secret value object with three mutually exclusive states:
+//   - Plaintext state: used when creating or updating a confidential provider and
+//     returned by Get/List after successful decryption.
+//   - Encrypted state: used internally by the repository and returned when confidential
+//     decryption fails.
+//   - Absent state: carried by public providers, which have no client credential.
 //
 // Encryption and decryption happens exclusively in domain services, not in this entity.
 type ThirdpartyOAuth2ProviderEntity struct {
-	ID                  id.ServiceID
-	CanonicalID         *string
-	ClearCanonicalID    bool
-	DisplayName         string
-	ClientID            id.ClientID
-	Secret              Secret
-	Flavor              OAuth2Flavor // defaults to OAuth2FlavorStandard when zero
-	IssuerURI           string
-	Discovery           DiscoveryConfig
-	Endpoints           OAuth2Endpoints
-	Scopes              []OAuthScope
-	AuthorizationParams map[string]string
-	ProtectedResources  []string
-	Version             int64
-	ServiceRequirements []ServiceRequirement
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                      id.ServiceID
+	CanonicalID             *string
+	ClearCanonicalID        bool
+	DisplayName             string
+	ClientID                id.ClientID
+	Secret                  Secret
+	TokenEndpointAuthMethod TokenEndpointAuthMethod
+	Flavor                  OAuth2Flavor // defaults to OAuth2FlavorStandard when zero
+	IssuerURI               string
+	Discovery               DiscoveryConfig
+	Endpoints               OAuth2Endpoints
+	Scopes                  []OAuthScope
+	AuthorizationParams     map[string]string
+	ProtectedResources      []string
+	Version                 int64
+	ServiceRequirements     []ServiceRequirement
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+}
+
+// IsPublicClient reports whether the provider uses no token-endpoint client authentication.
+func (e *ThirdpartyOAuth2ProviderEntity) IsPublicClient() bool {
+	return e.TokenEndpointAuthMethod == TokenEndpointAuthMethodNone
 }
 
 // Validate performs basic validation on the entity.
@@ -114,14 +158,16 @@ func (e *ThirdpartyOAuth2ProviderEntity) Validate() error {
 		return errors.New("client_id is required")
 	}
 
-	// Secret must be in a valid state (either plaintext or encrypted)
-	if e.Secret.IsPlaintext() {
-		if _, err := e.Secret.GetPlaintext(); err != nil {
-			return err
-		}
-	} else if e.Secret.IsEncrypted() {
-		if _, err := e.Secret.GetCiphertext(); err != nil {
-			return err
+	// Secret must be in a valid state (absent, plaintext, or encrypted)
+	if !e.Secret.IsAbsent() {
+		if e.Secret.IsPlaintext() {
+			if _, err := e.Secret.GetPlaintext(); err != nil {
+				return err
+			}
+		} else if e.Secret.IsEncrypted() {
+			if _, err := e.Secret.GetCiphertext(); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -130,6 +176,31 @@ func (e *ThirdpartyOAuth2ProviderEntity) Validate() error {
 	}
 
 	return nil
+}
+
+func (e *ThirdpartyOAuth2ProviderEntity) validateClientAuthentication(flavor OAuth2Flavor) (bool, error) {
+	if err := e.TokenEndpointAuthMethod.Validate(); err != nil {
+		return false, err
+	}
+
+	isPublicClient := e.IsPublicClient()
+	if isPublicClient {
+		if flavor == OAuth2FlavorGoogle {
+			return false, errors.New(`token_endpoint_auth_method "none" is not supported for the google flavor: the client identifier is derived from the credential document`)
+		}
+		if !e.Secret.IsAbsent() {
+			return false, errors.New(`client_secret must not have a non-empty value when token_endpoint_auth_method is "none"`)
+		}
+		if e.ClientID == "" {
+			return false, errors.New("client_id is required")
+		}
+		return true, nil
+	}
+
+	if e.Secret.IsAbsent() {
+		return false, errors.New("client_secret is required")
+	}
+	return false, nil
 }
 
 // ValidateForCreate validates the entity for a create operation.
@@ -147,31 +218,36 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 		return fmt.Errorf("display_name exceeds 255 characters (got %d)", len(e.DisplayName))
 	}
 
-	// Validate flavor first; reject unknown values before other checks.
 	flavor := e.Flavor
 	if flavor == "" {
 		flavor = DefaultOAuth2Flavor
+	}
+	isPublicClient, err := e.validateClientAuthentication(flavor)
+	if err != nil {
+		return err
 	}
 	if err := flavor.Validate(); err != nil {
 		return err
 	}
 
-	// Secret must be in plaintext for create (before encryption)
-	if !e.Secret.IsPlaintext() {
-		return errors.New("client_secret is required for create")
-	}
-	credential, err := e.Secret.GetPlaintext()
-	if err != nil {
-		return fmt.Errorf("client_secret is invalid: %w", err)
+	credential := ""
+	if !isPublicClient {
+		if !e.Secret.IsPlaintext() {
+			return errors.New("client_secret is required for create")
+		}
+		credential, err = e.Secret.GetPlaintext()
+		if err != nil {
+			return errors.New("client_secret is required")
+		}
 	}
 
 	switch flavor {
 	case OAuth2FlavorStandard, OAuth2FlavorGitHub:
-		// Standard/GitHub flavor: client_id required, credential non-empty, issuer_uri required+HTTPS.
+		// Standard/GitHub flavor: client_id and issuer_uri are required; confidential clients require a credential.
 		if e.ClientID == "" {
 			return errors.New("client_id is required")
 		}
-		if credential == "" {
+		if !isPublicClient && credential == "" {
 			return errors.New("client_secret is required")
 		}
 		if e.IssuerURI == "" {
@@ -187,6 +263,12 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 			if e.Endpoints.AuthorizeEndpoint == "" {
 				return errors.New("authorize_endpoint is required when discovery is disabled")
 			}
+		}
+		if e.Endpoints.TokenEndpoint != "" && !isAllowedHTTPSScheme(e.Endpoints.TokenEndpoint, skipHTTPSValidation) {
+			return errors.New("token_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)")
+		}
+		if e.Endpoints.AuthorizeEndpoint != "" && !isAllowedHTTPSScheme(e.Endpoints.AuthorizeEndpoint, skipHTTPSValidation) {
+			return errors.New("authorize_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)")
 		}
 
 	case OAuth2FlavorGoogle:
@@ -216,13 +298,18 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 	if err := validateAuthorizationParams(e.AuthorizationParams); err != nil {
 		return err
 	}
+	if isPublicClient {
+		if err := validatePublicClientOutboundConfiguration(e.AuthorizationParams, e.Endpoints.TokenEndpoint); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
 
 // ValidateForUpdate validates the entity for an update operation.
 // skipHTTPSValidation allows HTTP URLs for development/testing.
-// Requires ID and plaintext Secret (callers must always supply the new secret in plaintext).
+// Requires ID. Confidential clients must supply the new secret in plaintext.
 func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation bool) error {
 	if err := canonical.Validate(e.CanonicalID); err != nil {
 		return err
@@ -238,33 +325,36 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 		return fmt.Errorf("display_name exceeds 255 characters (got %d)", len(e.DisplayName))
 	}
 
-	// Validate flavor first; reject unknown values before other checks.
 	flavor := e.Flavor
 	if flavor == "" {
 		flavor = DefaultOAuth2Flavor
+	}
+	isPublicClient, err := e.validateClientAuthentication(flavor)
+	if err != nil {
+		return err
 	}
 	if err := flavor.Validate(); err != nil {
 		return err
 	}
 
-	// Secret must be in plaintext for update (will be re-encrypted by the domain service).
-	// Passing an already-encrypted secret is rejected to prevent silent bypass of re-encryption
-	// (e.g. during key rotation) and to enforce a single, predictable Update contract.
-	if !e.Secret.IsPlaintext() {
-		return errors.New("client_secret is required for update")
-	}
-	credential, err := e.Secret.GetPlaintext()
-	if err != nil {
-		return fmt.Errorf("client_secret is invalid: %w", err)
+	credential := ""
+	if !isPublicClient {
+		if !e.Secret.IsPlaintext() {
+			return errors.New("client_secret is required for update")
+		}
+		credential, err = e.Secret.GetPlaintext()
+		if err != nil {
+			return errors.New("client_secret is required")
+		}
 	}
 
 	switch flavor {
 	case OAuth2FlavorStandard, OAuth2FlavorGitHub:
-		// Standard/GitHub flavor: client_id required, credential non-empty, issuer_uri required+HTTPS.
+		// Standard/GitHub flavor: client_id and issuer_uri are required; confidential clients require a credential.
 		if e.ClientID == "" {
 			return errors.New("client_id is required")
 		}
-		if credential == "" {
+		if !isPublicClient && credential == "" {
 			return errors.New("client_secret is required")
 		}
 		if e.IssuerURI == "" {
@@ -280,6 +370,12 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 			if e.Endpoints.AuthorizeEndpoint == "" {
 				return errors.New("authorize_endpoint is required when discovery is disabled")
 			}
+		}
+		if e.Endpoints.TokenEndpoint != "" && !isAllowedHTTPSScheme(e.Endpoints.TokenEndpoint, skipHTTPSValidation) {
+			return errors.New("token_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)")
+		}
+		if e.Endpoints.AuthorizeEndpoint != "" && !isAllowedHTTPSScheme(e.Endpoints.AuthorizeEndpoint, skipHTTPSValidation) {
+			return errors.New("authorize_endpoint must be a valid HTTPS URL (HTTP allowed only for localhost in dev mode)")
 		}
 
 	case OAuth2FlavorGoogle:
@@ -308,6 +404,11 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 	}
 	if err := validateAuthorizationParams(e.AuthorizationParams); err != nil {
 		return err
+	}
+	if isPublicClient {
+		if err := validatePublicClientOutboundConfiguration(e.AuthorizationParams, e.Endpoints.TokenEndpoint); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -435,12 +536,13 @@ func (e *ThirdpartyOAuth2ProviderEntity) Copy() *ThirdpartyOAuth2ProviderEntity 
 	}
 
 	result := &ThirdpartyOAuth2ProviderEntity{
-		ID:          e.ID,
-		DisplayName: e.DisplayName,
-		ClientID:    e.ClientID,
-		Secret:      e.Secret, // Value type; internal ciphertext slice independently copied by Secret
-		Flavor:      e.Flavor,
-		IssuerURI:   e.IssuerURI,
+		ID:                      e.ID,
+		DisplayName:             e.DisplayName,
+		ClientID:                e.ClientID,
+		Secret:                  e.Secret, // Value type; internal ciphertext slice independently copied by Secret
+		TokenEndpointAuthMethod: e.TokenEndpointAuthMethod,
+		Flavor:                  e.Flavor,
+		IssuerURI:               e.IssuerURI,
 		Discovery: DiscoveryConfig{
 			EnableDiscovery: e.Discovery.EnableDiscovery,
 		},

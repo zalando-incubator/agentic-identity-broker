@@ -26,20 +26,24 @@ func NormalizeResourceURI(uri string) string {
 	if trimmedEscapedPath == "" {
 		parsed.Path = ""
 		parsed.RawPath = ""
-		return parsed.String()
+	} else {
+		trimmedPath, err := url.PathUnescape(trimmedEscapedPath)
+		if err != nil {
+			return uri
+		}
+
+		parsed.Path = trimmedPath
+		if trimmedEscapedPath != trimmedPath {
+			parsed.RawPath = trimmedEscapedPath
+		} else {
+			parsed.RawPath = ""
+		}
 	}
 
-	trimmedPath, err := url.PathUnescape(trimmedEscapedPath)
-	if err != nil {
+	normalized := parsed.String()
+	if _, err := url.Parse(normalized); err != nil {
 		return uri
 	}
 
-	parsed.Path = trimmedPath
-	if trimmedEscapedPath != trimmedPath {
-		parsed.RawPath = trimmedEscapedPath
-	} else {
-		parsed.RawPath = ""
-	}
-
-	return parsed.String()
+	return normalized
 }

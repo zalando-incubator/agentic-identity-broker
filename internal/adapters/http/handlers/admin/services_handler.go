@@ -44,17 +44,18 @@ func NewServicesHandler(providerService *thirdparty.ThirdpartyOAuth2ProviderServ
 
 // ServiceRequest represents the request body for creating/updating a service.
 type ServiceRequest struct {
-	CanonicalID         *string                 `json:"canonical_id,omitempty"`
-	DisplayName         string                  `json:"display_name"`
-	ClientID            string                  `json:"client_id"`
-	ClientSecret        string                  `json:"client_secret"`
-	OAuth2Flavor        string                  `json:"oauth2_flavor,omitempty"`
-	IssuerURI           string                  `json:"issuer_uri"`
-	Discovery           DiscoveryConfigRequest  `json:"discovery"`
-	Endpoints           *OAuth2EndpointsRequest `json:"endpoints,omitempty"`
-	Scopes              []OAuthScopeRequest     `json:"scopes"`
-	ProtectedResources  []string                `json:"protected_resources,omitempty"` // RFC 8693 resource URIs
-	AuthorizationParams map[string]string       `json:"authorization_params,omitempty"`
+	CanonicalID             *string                 `json:"canonical_id,omitempty"`
+	DisplayName             string                  `json:"display_name"`
+	ClientID                string                  `json:"client_id"`
+	ClientSecret            string                  `json:"client_secret"`
+	TokenEndpointAuthMethod *string                 `json:"token_endpoint_auth_method,omitempty"`
+	OAuth2Flavor            string                  `json:"oauth2_flavor,omitempty"`
+	IssuerURI               string                  `json:"issuer_uri"`
+	Discovery               DiscoveryConfigRequest  `json:"discovery"`
+	Endpoints               *OAuth2EndpointsRequest `json:"endpoints,omitempty"`
+	Scopes                  []OAuthScopeRequest     `json:"scopes"`
+	ProtectedResources      []string                `json:"protected_resources,omitempty"` // RFC 8693 resource URIs
+	AuthorizationParams     map[string]string       `json:"authorization_params,omitempty"`
 }
 
 // DiscoveryConfigRequest represents the discovery configuration in requests.
@@ -76,22 +77,23 @@ type OAuthScopeRequest struct {
 }
 
 // ServiceResponse represents the response body for service operations.
-// Client secret is always redacted in responses per SR-003.
+// Client secrets are redacted for confidential services and omitted for public services per SR-003.
 type ServiceResponse struct {
-	ID                  string                  `json:"id"`
-	CanonicalID         *string                 `json:"canonical_id"`
-	DisplayName         string                  `json:"display_name"`
-	ClientID            string                  `json:"client_id"`
-	ClientSecret        string                  `json:"client_secret"` // Always "REDACTED"
-	OAuth2Flavor        string                  `json:"oauth2_flavor"`
-	IssuerURI           string                  `json:"issuer_uri"`
-	Discovery           DiscoveryConfigResponse `json:"discovery"`
-	Endpoints           OAuth2EndpointsResponse `json:"endpoints"`
-	Scopes              []OAuthScopeResponse    `json:"scopes"`
-	ProtectedResources  []string                `json:"protected_resources,omitempty"` // RFC 8693 resource URIs
-	AuthorizationParams map[string]string       `json:"authorization_params,omitempty"`
-	CreatedAt           string                  `json:"created_at"`
-	UpdatedAt           string                  `json:"updated_at"`
+	ID                      string                  `json:"id"`
+	CanonicalID             *string                 `json:"canonical_id"`
+	DisplayName             string                  `json:"display_name"`
+	ClientID                string                  `json:"client_id"`
+	ClientSecret            *string                 `json:"client_secret,omitempty"`
+	TokenEndpointAuthMethod *string                 `json:"token_endpoint_auth_method"`
+	OAuth2Flavor            string                  `json:"oauth2_flavor"`
+	IssuerURI               string                  `json:"issuer_uri"`
+	Discovery               DiscoveryConfigResponse `json:"discovery"`
+	Endpoints               OAuth2EndpointsResponse `json:"endpoints"`
+	Scopes                  []OAuthScopeResponse    `json:"scopes"`
+	ProtectedResources      []string                `json:"protected_resources,omitempty"` // RFC 8693 resource URIs
+	AuthorizationParams     map[string]string       `json:"authorization_params,omitempty"`
+	CreatedAt               string                  `json:"created_at"`
+	UpdatedAt               string                  `json:"updated_at"`
 }
 
 // DiscoveryConfigResponse represents the discovery configuration in responses.
@@ -112,6 +114,21 @@ type OAuthScopeResponse struct {
 	Description string `json:"description"`
 }
 
+func serviceClientAuthentication(req ServiceRequest) (model.TokenEndpointAuthMethod, model.Secret, error) {
+	if req.TokenEndpointAuthMethod != nil && *req.TokenEndpointAuthMethod == "" {
+		return "", model.Secret{}, errors.New(`token_endpoint_auth_method: only "none" is accepted`)
+	}
+
+	method := model.TokenEndpointAuthMethod("")
+	if req.TokenEndpointAuthMethod != nil {
+		method = model.TokenEndpointAuthMethod(*req.TokenEndpointAuthMethod)
+	}
+	if method == model.TokenEndpointAuthMethodNone && req.ClientSecret == "" {
+		return method, model.NewAbsentSecret(), nil
+	}
+	return method, model.NewPlaintextSecret(req.ClientSecret), nil
+}
+
 // CreateService handles POST /api/third-party/oauth2/clients
 func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -120,6 +137,13 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Warn("failed to decode request body", "error", err)
 		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	tokenEndpointAuthMethod, secret, err := serviceClientAuthentication(req)
+	if err != nil {
+		h.logger.Warn("service validation failed", "error", err)
+		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -142,18 +166,19 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	// Build entity from request
 	now := time.Now().UTC()
 	entity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:                  id.NewServiceID(),
-		CanonicalID:         req.CanonicalID,
-		DisplayName:         req.DisplayName,
-		ClientID:            id.ClientID(req.ClientID),
-		Secret:              model.NewPlaintextSecret(req.ClientSecret),
-		Flavor:              flavor,
-		IssuerURI:           req.IssuerURI,
-		Discovery:           model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL},
-		ProtectedResources:  req.ProtectedResources,
-		AuthorizationParams: req.AuthorizationParams,
-		CreatedAt:           now,
-		UpdatedAt:           now,
+		ID:                      id.NewServiceID(),
+		CanonicalID:             req.CanonicalID,
+		DisplayName:             req.DisplayName,
+		ClientID:                id.ClientID(req.ClientID),
+		Secret:                  secret,
+		TokenEndpointAuthMethod: tokenEndpointAuthMethod,
+		Flavor:                  flavor,
+		IssuerURI:               req.IssuerURI,
+		Discovery:               model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL},
+		ProtectedResources:      req.ProtectedResources,
+		AuthorizationParams:     req.AuthorizationParams,
+		CreatedAt:               now,
+		UpdatedAt:               now,
 	}
 
 	// Convert scopes
@@ -162,45 +187,47 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		entity.Scopes[i] = model.OAuthScope{ScopeValue: scope.ScopeValue, Description: scope.Description}
 	}
 
-	// For Google flavor, ValidateForCreate will call enrichForGoogleFlavor internally
-	// (parsing the credential once and populating ClientID, Endpoints, IssuerURI).
-	// For standard flavor, set endpoints from discovery or the request.
-	if flavor != model.OAuth2FlavorGoogle {
-		// If discovery is enabled, attempt to discover endpoints
-		if req.Discovery.EnableDiscovery {
-			endpoints, err := storage.DiscoverOAuth2Endpoints(ctx, req.IssuerURI, req.Discovery.MetadataURL, skipHTTPSValidation)
-			if err != nil {
-				h.logger.Warn("OAuth2 endpoint discovery failed, falling back to manual endpoints",
-					"issuer_uri", req.IssuerURI,
-					"error", err)
-				// Fall back to manually provided endpoints
-				if req.Endpoints != nil {
-					entity.Endpoints = model.OAuth2Endpoints{
-						TokenEndpoint:     req.Endpoints.TokenEndpoint,
-						AuthorizeEndpoint: req.Endpoints.AuthorizeEndpoint,
-					}
-				}
-			} else {
-				entity.Endpoints = model.OAuth2Endpoints{
-					TokenEndpoint:     endpoints.TokenEndpoint,
-					AuthorizeEndpoint: endpoints.AuthorizeEndpoint,
-				}
-			}
-		} else if req.Endpoints != nil {
-			entity.Endpoints = model.OAuth2Endpoints{
-				TokenEndpoint:     req.Endpoints.TokenEndpoint,
-				AuthorizeEndpoint: req.Endpoints.AuthorizeEndpoint,
-			}
+	if flavor != model.OAuth2FlavorGoogle && !req.Discovery.EnableDiscovery && req.Endpoints != nil {
+		entity.Endpoints = model.OAuth2Endpoints{
+			TokenEndpoint:     req.Endpoints.TokenEndpoint,
+			AuthorizeEndpoint: req.Endpoints.AuthorizeEndpoint,
 		}
 	}
 
-	// Validate entity (for Google flavor, this also enriches ClientID, Endpoints, IssuerURI).
 	if err := entity.ValidateForCreate(skipHTTPSValidation); err != nil {
 		h.logger.Warn("service validation failed",
 			"client_id", entity.ClientID,
 			"error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
+	}
+
+	if flavor != model.OAuth2FlavorGoogle && req.Discovery.EnableDiscovery {
+		endpoints, err := storage.DiscoverOAuth2Endpoints(ctx, req.IssuerURI, req.Discovery.MetadataURL, skipHTTPSValidation)
+		if err != nil {
+			h.logger.Warn("OAuth2 endpoint discovery failed, falling back to manual endpoints",
+				"issuer_uri", req.IssuerURI,
+				"error", err)
+			if req.Endpoints != nil {
+				entity.Endpoints = model.OAuth2Endpoints{
+					TokenEndpoint:     req.Endpoints.TokenEndpoint,
+					AuthorizeEndpoint: req.Endpoints.AuthorizeEndpoint,
+				}
+			}
+		} else {
+			entity.Endpoints = model.OAuth2Endpoints{
+				TokenEndpoint:     endpoints.TokenEndpoint,
+				AuthorizeEndpoint: endpoints.AuthorizeEndpoint,
+			}
+		}
+
+		if err := entity.ValidateForCreate(skipHTTPSValidation); err != nil {
+			h.logger.Warn("service validation failed",
+				"client_id", entity.ClientID,
+				"error", err)
+			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+			return
+		}
 	}
 
 	// Defense-in-depth: normalize and validate protected_resources here so the duplicate
@@ -225,7 +252,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Return created service with redacted secret
+	// Return the created service without exposing its secret.
 	resp := h.toResponse(entity.RedactedCopy())
 	h.writeJSON(w, http.StatusCreated, resp)
 }
@@ -253,7 +280,7 @@ func (h *ServicesHandler) GetService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return service with redacted secret
+	// Return the service without exposing its secret.
 	w.Header().Set("ETag", strongETag(entity.Version))
 	resp := h.toResponse(entity.RedactedCopy())
 	h.writeJSON(w, http.StatusOK, resp)
@@ -289,8 +316,10 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	canonicalID, canonicalIDPresent := rawRequest["canonical_id"]
 	protectedResourcesProvided := protectedResourcesPresent && !isJSONNull(protectedResources)
 
-	if req.ClientSecret == "" {
-		h.writeError(w, http.StatusBadRequest, "validation failed", "client_secret is required")
+	tokenEndpointAuthMethod, secret, err := serviceClientAuthentication(req)
+	if err != nil {
+		h.logger.Warn("service validation failed", "error", err)
+		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -318,18 +347,19 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 
 	// created_at is not set here; repo.Update() populates it from storage (no KMS decrypt needed).
 	entity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:                  parsedSvcID,
-		CanonicalID:         req.CanonicalID,
-		DisplayName:         req.DisplayName,
-		ClearCanonicalID:    canonicalIDPresent && isJSONNull(canonicalID),
-		ClientID:            id.ClientID(req.ClientID),
-		Secret:              model.NewPlaintextSecret(req.ClientSecret),
-		Flavor:              flavor,
-		IssuerURI:           req.IssuerURI,
-		Discovery:           model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL},
-		ProtectedResources:  req.ProtectedResources,
-		AuthorizationParams: req.AuthorizationParams,
-		UpdatedAt:           time.Now().UTC(),
+		ID:                      parsedSvcID,
+		CanonicalID:             req.CanonicalID,
+		DisplayName:             req.DisplayName,
+		ClearCanonicalID:        canonicalIDPresent && isJSONNull(canonicalID),
+		ClientID:                id.ClientID(req.ClientID),
+		Secret:                  secret,
+		TokenEndpointAuthMethod: tokenEndpointAuthMethod,
+		Flavor:                  flavor,
+		IssuerURI:               req.IssuerURI,
+		Discovery:               model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL},
+		ProtectedResources:      req.ProtectedResources,
+		AuthorizationParams:     req.AuthorizationParams,
+		UpdatedAt:               time.Now().UTC(),
 	}
 
 	// Convert scopes
@@ -338,44 +368,47 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		entity.Scopes[i] = model.OAuthScope{ScopeValue: scope.ScopeValue, Description: scope.Description}
 	}
 
-	// For Google flavor, ValidateForUpdate will call enrichForGoogleFlavor internally
-	// (parsing the credential once and populating ClientID, Endpoints, IssuerURI).
-	// For standard flavor, set endpoints from discovery or the request.
-	if flavor != model.OAuth2FlavorGoogle {
-		// If discovery is enabled, attempt to discover endpoints
-		if req.Discovery.EnableDiscovery {
-			endpoints, err := storage.DiscoverOAuth2Endpoints(ctx, req.IssuerURI, req.Discovery.MetadataURL, skipHTTPSValidation)
-			if err != nil {
-				h.logger.Warn("OAuth2 endpoint discovery failed, falling back to manual endpoints",
-					"issuer_uri", req.IssuerURI,
-					"error", err)
-				if req.Endpoints != nil {
-					entity.Endpoints = model.OAuth2Endpoints{
-						TokenEndpoint:     req.Endpoints.TokenEndpoint,
-						AuthorizeEndpoint: req.Endpoints.AuthorizeEndpoint,
-					}
-				}
-			} else {
-				entity.Endpoints = model.OAuth2Endpoints{
-					TokenEndpoint:     endpoints.TokenEndpoint,
-					AuthorizeEndpoint: endpoints.AuthorizeEndpoint,
-				}
-			}
-		} else if req.Endpoints != nil {
-			entity.Endpoints = model.OAuth2Endpoints{
-				TokenEndpoint:     req.Endpoints.TokenEndpoint,
-				AuthorizeEndpoint: req.Endpoints.AuthorizeEndpoint,
-			}
+	if flavor != model.OAuth2FlavorGoogle && !req.Discovery.EnableDiscovery && req.Endpoints != nil {
+		entity.Endpoints = model.OAuth2Endpoints{
+			TokenEndpoint:     req.Endpoints.TokenEndpoint,
+			AuthorizeEndpoint: req.Endpoints.AuthorizeEndpoint,
 		}
 	}
 
-	// Validate entity (for Google flavor, this also enriches ClientID, Endpoints, IssuerURI).
 	if err := entity.ValidateForUpdate(skipHTTPSValidation); err != nil {
 		h.logger.Warn("service validation failed",
 			"client_id", entity.ClientID,
 			"error", err)
 		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 		return
+	}
+
+	if flavor != model.OAuth2FlavorGoogle && req.Discovery.EnableDiscovery {
+		endpoints, err := storage.DiscoverOAuth2Endpoints(ctx, req.IssuerURI, req.Discovery.MetadataURL, skipHTTPSValidation)
+		if err != nil {
+			h.logger.Warn("OAuth2 endpoint discovery failed, falling back to manual endpoints",
+				"issuer_uri", req.IssuerURI,
+				"error", err)
+			if req.Endpoints != nil {
+				entity.Endpoints = model.OAuth2Endpoints{
+					TokenEndpoint:     req.Endpoints.TokenEndpoint,
+					AuthorizeEndpoint: req.Endpoints.AuthorizeEndpoint,
+				}
+			}
+		} else {
+			entity.Endpoints = model.OAuth2Endpoints{
+				TokenEndpoint:     endpoints.TokenEndpoint,
+				AuthorizeEndpoint: endpoints.AuthorizeEndpoint,
+			}
+		}
+
+		if err := entity.ValidateForUpdate(skipHTTPSValidation); err != nil {
+			h.logger.Warn("service validation failed",
+				"client_id", entity.ClientID,
+				"error", err)
+			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+			return
+		}
 	}
 
 	var expectedVersion *int64
@@ -531,7 +564,7 @@ func (h *ServicesHandler) ListServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert to response format with redacted secrets
+	// Convert to response format without exposing secrets.
 	responses := make([]ServiceResponse, len(entities))
 	for i, entity := range entities {
 		responses[i] = h.toResponse(entity.RedactedCopy())
@@ -556,12 +589,11 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		flavor = model.DefaultOAuth2Flavor
 	}
 
-	return ServiceResponse{
+	response := ServiceResponse{
 		ID:           entity.ID.String(),
 		CanonicalID:  entity.CanonicalID,
 		DisplayName:  entity.DisplayName,
 		ClientID:     entity.ClientID.String(),
-		ClientSecret: entity.Secret.Redacted(),
 		OAuth2Flavor: flavor.String(),
 		IssuerURI:    entity.IssuerURI,
 		Discovery: DiscoveryConfigResponse{
@@ -578,6 +610,17 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		CreatedAt:           entity.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:           entity.UpdatedAt.Format(time.RFC3339),
 	}
+
+	if !entity.TokenEndpointAuthMethod.IsAbsent() {
+		tokenEndpointAuthMethod := string(entity.TokenEndpointAuthMethod)
+		response.TokenEndpointAuthMethod = &tokenEndpointAuthMethod
+	}
+	if !entity.IsPublicClient() {
+		clientSecret := entity.Secret.Redacted()
+		response.ClientSecret = &clientSecret
+	}
+
+	return response
 }
 
 // handleStorageError converts storage errors to HTTP responses.

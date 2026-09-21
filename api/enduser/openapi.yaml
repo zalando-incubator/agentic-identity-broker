@@ -652,7 +652,7 @@ paths:
 
         **Idempotency**: Non-idempotent — returns 404 if no grant exists. To silently
         revoke if a grant exists, use `POST /api/consent/agents/{agent-id}/grants` with
-        an empty `granted_permission_sets` object (backward-compatible path).
+        an empty `granted_permission_sets` object.
 
         **Security**: Only the grant owner may revoke. The principal is derived from the
         `X-Remote-User` authentication header. Cross-user revocation is not possible —
@@ -755,13 +755,15 @@ paths:
       description: |
         Initiates an OAuth2 authorization code flow with PKCE for the specified third-party service. Redirects the user to the third-party's authorization endpoint.
 
+        PKCE applies to every service; the authorization-code exchange presents a client credential only for confidential services.
+
         The flow:
 
         1. Generates PKCE code verifier and challenge
         2. Creates JWE state token containing principal, PKCE verifier, service ID, redirect_uri
         3. Redirects user to third-party authorization endpoint
 
-        redirect_uri must have the same origin (scheme, host, and port) as the configured public URL.
+        The redirect_uri parameter must match the host of the incoming request (same-origin validation).
       tags:
         - Third-Party Sessions
       security:
@@ -780,7 +782,7 @@ paths:
           required: true
           description: |
             URI to redirect user after OAuth2 flow completes.
-            redirect_uri must have the same origin (scheme, host, and port) as the configured public URL.
+            Must match the host of the incoming request (same-origin validation).
           schema:
             type: string
             format: uri
@@ -795,14 +797,14 @@ paths:
                 type: string
                 format: uri
         "400":
-          description: Invalid request (missing or malformed redirect_uri, or configured-origin mismatch)
+          description: Invalid request (missing redirect_uri or origin mismatch)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               example:
                 error: invalid_redirect_uri
-                message: redirect_uri must be on the same origin as the configured public URL
+                message: redirect_uri must match the host of the request
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -822,6 +824,8 @@ paths:
       summary: Handle OAuth2 callback from third-party
       description: |
         Processes the OAuth2 callback after user authorization at the third-party.
+
+        PKCE applies to every service; the authorization-code exchange presents a client credential only for confidential services.
 
         Validates:
 

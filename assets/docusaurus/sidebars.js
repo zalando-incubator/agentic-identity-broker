@@ -76,7 +76,7 @@ const sidebars = {
       items: [
         'resources/security',
         'resources/contributing',
-        'changelog',
+        'resources/public-relations',
       ],
     },
   ],

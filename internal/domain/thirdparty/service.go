@@ -15,17 +15,17 @@ import (
 )
 
 // ThirdpartyOAuth2ProviderService manages external OAuth2 providers, coordinating
-// encryption, decryption, and branch key provisioning across provider lifecycle
-// operations.
+// conditional encryption and decryption with branch-key provisioning across provider
+// lifecycle operations.
 //
-// Encryption lifecycle:
-//   - Create: validates entity, provisions the branch key,
-//     encrypts Secret{plaintext} → Secret{ciphertext}, stores entity
-//   - Get/List/Find: retrieves entity with Secret{ciphertext}, decrypts to Secret{plaintext}
-//   - Update: validates entity (requires plaintext Secret), provisions the branch key
-//     idempotently, encrypts Secret{plaintext} → Secret{ciphertext}, stores entity.
-//     Encrypted state is rejected to ensure re-encryption always runs (e.g. during
-//     key rotation or after switching encryption backends).
+// Credential lifecycle:
+//   - Create: validates entity, provisions the branch key, encrypts a confidential
+//     Secret{plaintext} → Secret{ciphertext}, or stores a public Secret{absent} unchanged.
+//   - Get/List: retrieve confidential entities with Secret{ciphertext} and decrypt them,
+//     or return public entities with Secret{absent} unchanged.
+//   - Update: validates entity, provisions the branch key idempotently, encrypts a
+//     confidential Secret{plaintext} → Secret{ciphertext}, or stores a public
+//     Secret{absent} unchanged.
 //
 // The repository (ThirdpartyOAuth2ProviderRepository) is unaware of encryption mechanics
 // and treats Secret ciphertext as opaque binary data.
@@ -96,9 +96,9 @@ func (s *ThirdpartyOAuth2ProviderService) CanonicalIDs(ctx context.Context, ids 
 	return map[id.ServiceID]string{}, nil
 }
 
-// Create validates, optionally provisions a branch key, encrypts the secret, and stores the entity.
-// entity.Secret must be in plaintext state on entry.
-// On success, entity.Secret is in encrypted state.
+// Create validates, provisions a branch key, conditionally encrypts the secret, and stores the entity.
+// A confidential entity.Secret must be in plaintext state on entry and is encrypted on success.
+// A public entity.Secret is absent and remains unchanged.
 func (s *ThirdpartyOAuth2ProviderService) Create(
 	ctx context.Context,
 	entity *model.ThirdpartyOAuth2ProviderEntity,
@@ -133,44 +133,48 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 		"service_id", entity.ID,
 		"branch_key_id", branchKeyID)
 
-	// Extract plaintext secret
-	plaintext, err := entity.Secret.GetPlaintext()
-	if err != nil {
-		return fmt.Errorf("entity secret must be in plaintext state for create: %w", err)
+	if !entity.IsPublicClient() {
+		// Extract plaintext secret.
+		plaintext, err := entity.Secret.GetPlaintext()
+		if err != nil {
+			return fmt.Errorf("entity secret must be in plaintext state for create: %w", err)
+		}
+
+		// Encrypt secret.
+		ciphertext, err := s.encryption.Encrypt(ctx, []byte(plaintext), serviceSubject.EncryptionContext())
+		if err != nil {
+			s.logger.Error("encryption_failed",
+				"operation", "create_provider",
+				"service_id", entity.ID,
+				"reason", err)
+			return fmt.Errorf("failed to encrypt client secret: %w", err)
+		}
+
+		// Transition secret from plaintext to encrypted state.
+		entity.Secret = model.NewEncryptedSecret(ciphertext)
+
+		s.logger.Info("service_secret_encrypted",
+			"operation", "create",
+			"service_id", entity.ID)
 	}
-
-	// Encrypt secret
-	ciphertext, err := s.encryption.Encrypt(ctx, []byte(plaintext), serviceSubject.EncryptionContext())
-	if err != nil {
-		s.logger.Error("encryption_failed",
-			"operation", "create_provider",
-			"service_id", entity.ID,
-			"reason", err)
-		return fmt.Errorf("failed to encrypt client secret: %w", err)
-	}
-
-	// Transition secret from plaintext to encrypted state
-	entity.Secret = model.NewEncryptedSecret(ciphertext)
-
-	s.logger.Info("service_secret_encrypted",
-		"operation", "create",
-		"service_id", entity.ID)
 
 	if err := s.repo.Create(ctx, entity); err != nil {
 		return fmt.Errorf("failed to store provider: %w", err)
 	}
 
 	s.logger.Info("provider_created",
+		"event", "service.thirdparty.provider_created",
 		"service_id", entity.ID,
-		"display_name", entity.DisplayName)
+		"display_name", entity.DisplayName,
+		"public_client", entity.IsPublicClient())
 
 	return nil
 }
 
-// Get retrieves a provider by ID and decrypts its secret.
-// Returns entity with Secret in plaintext state when decryption succeeds.
-// If decryption fails (e.g. after switching encryption backends), the entity
-// is returned with its Secret still in encrypted state and a nil error.
+// Get retrieves a provider by ID and decrypts its confidential secret.
+// Public providers are returned with their Secret in absent state.
+// If confidential-secret decryption fails (e.g. after switching encryption backends),
+// the entity is returned with its Secret still in encrypted state and a nil error.
 // This enables admin workflows (list, view, update) to continue operating
 // even when the encryption backend has changed and old ciphertexts cannot
 // be decrypted. Callers that require the plaintext secret (e.g. OAuth2
@@ -192,6 +196,10 @@ func (s *ThirdpartyOAuth2ProviderService) Get(
 		return nil, fmt.Errorf("provider ID mismatch: expected %s, got %s", serviceID, entity.ID)
 	}
 
+	if entity.IsPublicClient() {
+		return entity, nil
+	}
+
 	dec, decErr := s.decryptSecret(ctx, entity)
 	if decErr != nil {
 		s.logger.Warn("secret_decryption_failed_returning_encrypted",
@@ -203,10 +211,9 @@ func (s *ThirdpartyOAuth2ProviderService) Get(
 	return dec, nil
 }
 
-// Update validates, encrypts the secret, and stores the updated entity.
-// entity.Secret must be in plaintext state — the HTTP contract requires callers to
-// always supply the secret. Passing encrypted state is rejected by ValidateForUpdate.
-// On success, entity.Secret is in encrypted state.
+// Update validates, provisions a branch key, conditionally encrypts the secret, and stores the entity.
+// A confidential entity.Secret must be in plaintext state on entry and is encrypted on success.
+// A public entity.Secret is absent and remains unchanged.
 //
 // Update provisions the branch key before encrypting. This handles the migration case
 // where a service was originally created with a different encryption backend (e.g. raw
@@ -244,33 +251,46 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 		"service_id", entity.ID,
 		"branch_key_id", branchKeyID)
 
-	plaintext, err := entity.Secret.GetPlaintext()
-	if err != nil {
-		return fmt.Errorf("failed to read plaintext secret for update: %w", err)
+	if !entity.IsPublicClient() {
+		plaintext, err := entity.Secret.GetPlaintext()
+		if err != nil {
+			return fmt.Errorf("failed to read plaintext secret for update: %w", err)
+		}
+
+		ciphertext, err := s.encryption.Encrypt(ctx, []byte(plaintext), serviceSubject.EncryptionContext())
+		if err != nil {
+			s.logger.Error("encryption_failed",
+				"operation", "update_provider",
+				"service_id", entity.ID,
+				"reason", err)
+			return fmt.Errorf("failed to encrypt client secret: %w", err)
+		}
+
+		entity.Secret = model.NewEncryptedSecret(ciphertext)
+		s.logger.Info("service_secret_encrypted",
+			"operation", "update",
+			"service_id", entity.ID)
 	}
 
-	ciphertext, err := s.encryption.Encrypt(ctx, []byte(plaintext), serviceSubject.EncryptionContext())
-	if err != nil {
-		s.logger.Error("encryption_failed",
-			"operation", "update_provider",
-			"service_id", entity.ID,
-			"reason", err)
-		return fmt.Errorf("failed to encrypt client secret: %w", err)
+	if err := s.repo.Update(ctx, entity, expectedVersion); err != nil {
+		return err
 	}
 
-	entity.Secret = model.NewEncryptedSecret(ciphertext)
-	s.logger.Info("service_secret_encrypted",
-		"operation", "update",
-		"service_id", entity.ID)
+	s.logger.Info("provider_updated",
+		"event", "service.thirdparty.provider_updated",
+		"service_id", entity.ID,
+		"display_name", entity.DisplayName,
+		"public_client", entity.IsPublicClient())
 
-	return s.repo.Update(ctx, entity, expectedVersion)
+	return nil
 }
 
-// List retrieves all providers and decrypts their secrets.
-// If decryption fails for individual entities (e.g. after switching encryption
-// backends), those entities are returned with their Secret still in encrypted
-// state. A warning is logged for each decryption failure. This enables admin
-// workflows to continue operating even when old ciphertexts cannot be decrypted.
+// List retrieves all providers and decrypts confidential secrets.
+// Public providers are returned with their Secret in absent state. If decryption fails
+// for individual confidential entities (e.g. after switching encryption backends),
+// those entities are returned with their Secret still in encrypted state. A warning is
+// logged for each decryption failure. This enables admin workflows to continue operating
+// even when old ciphertexts cannot be decrypted.
 func (s *ThirdpartyOAuth2ProviderService) List(
 	ctx context.Context,
 ) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
@@ -281,6 +301,10 @@ func (s *ThirdpartyOAuth2ProviderService) List(
 
 	result := make([]*model.ThirdpartyOAuth2ProviderEntity, 0, len(entities))
 	for _, entity := range entities {
+		if entity.IsPublicClient() {
+			result = append(result, entity)
+			continue
+		}
 		dec, err := s.decryptSecret(ctx, entity)
 		if err != nil {
 			s.logger.Warn("secret_decryption_failed_returning_encrypted",
@@ -327,11 +351,11 @@ func (s *ThirdpartyOAuth2ProviderService) Delete(
 	return nil
 }
 
-// FindByProtectedResource retrieves a provider by resource URI and decrypts its secret.
-// If decryption fails (e.g. after switching encryption backends), the entity is
-// returned with its Secret still in encrypted state. This ensures that callers
-// performing existence/ID checks (such as duplicate resource URI detection in
-// PUT/POST handlers) continue to work even when old ciphertexts cannot be decrypted.
+// FindByProtectedResource retrieves a provider by resource URI and decrypts confidential secrets.
+// Public providers are returned with their Secret in absent state. If decryption fails (e.g. after
+// switching encryption backends), the entity is returned with its Secret still in encrypted state.
+// This ensures that callers performing existence/ID checks (such as duplicate resource URI detection
+// in PUT/POST handlers) continue to work even when old ciphertexts cannot be decrypted.
 func (s *ThirdpartyOAuth2ProviderService) FindByProtectedResource(
 	ctx context.Context,
 	resourceURI string,
@@ -339,6 +363,10 @@ func (s *ThirdpartyOAuth2ProviderService) FindByProtectedResource(
 	entity, err := s.repo.FindByProtectedResource(ctx, resourceURI)
 	if err != nil {
 		return nil, err
+	}
+
+	if entity.IsPublicClient() {
+		return entity, nil
 	}
 
 	dec, decErr := s.decryptSecret(ctx, entity)

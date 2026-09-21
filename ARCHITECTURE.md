@@ -674,7 +674,7 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 
 - **OAuth2SessionService**: Transparently encrypts tokens on CreateSession, decrypts on retrieval
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
-- **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption/decryption of provider `client_secret` via the `Secret` value object (see below). No other layer touches `EncryptionPort` for provider secrets.
+- **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of confidential provider `client_secret` values via the `Secret` value object. Public services have no client secret. No other layer touches `EncryptionPort` for provider secrets.
 - No manual encryption steps required in calling code - encryption is transparent
 
 **Secret Value Object** (`internal/domain/model/secret.go`):
@@ -695,6 +695,13 @@ Retrieval flow:
   ThirdpartyOAuth2ProviderService.Get():
     → Secret.GetCiphertext() → decrypt via EncryptionPort → NewPlaintextSecret(plaintext)
     → return entity  ← plaintext available to caller only through service boundary
+  Public service flow:
+  Handler → ThirdpartyOAuth2ProviderEntity{Secret: NewAbsentSecret()}
+  ThirdpartyOAuth2ProviderService.Create():
+    → skip client-secret encryption → repo.Create(entity)  ← no credential is stored
+  Repository adapter → NewAbsentSecret() when the stored credential is absent
+  ThirdpartyOAuth2ProviderService.Get():
+    → return entity  ← no credential is decrypted
 ```
 
 **Mandatory Encryption**: Encryption is required in all environments. Builder returns a startup error if no encryption configuration is provided — there is no NoOp fallback. This is enforced in `internal/app/builder.go`.
@@ -719,7 +726,7 @@ Retrieval flow:
 - E2E tests (24 scenarios) covering all acceptance criteria from spec
 - Unit tests for adapter error handling, context verification, DEK uniqueness
 - Integration tests with a LocalStack-compatible AWS emulator for KMS and real PostgreSQL storage
-- Backward compatibility tests for KEK rotation scenarios
+- Integration tests that cover KEK rotation and token decryption
 
 **Encryption Architecture Pattern**:
 
@@ -831,9 +838,7 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **Name**: extproc-token-exchange
 
-**Purpose**: Standalone gRPC microservice that performs transparent RFC 8693 token exchange. Agentgateway provides token-exchange inputs through dynamic metadata. After a successful exchange, the service replaces the `Authorization` header. In-memory caching with singleflight deduplicates exchanges.
-
-**Token-Exchange Input Source of Truth**: [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) defines the fixed dynamic-metadata contract. ExtProc reads only that contract and has no header or pseudo-header fallback.
+**Purpose**: Standalone gRPC microservice that implements the Envoy External Processor protocol for transparent OAuth2 token exchange. When deployed alongside agentgateway, the service intercepts incoming HTTP requests via Envoy's ExtProc filter, extracts Bearer tokens from request headers, performs RFC 8693 token exchange against the identity broker, and replaces the Authorization header with the exchanged token. Exchanged tokens are cached in-memory with singleflight deduplication to optimize performance.
 
 **Architecture**: Hexagonal (ports and adapters)
 
@@ -872,34 +877,28 @@ The gates compose as fail-closed AND: ExtProc OPA can only further restrict a re
 **Server**: Implements Envoy's `ExternalProcessorServer` interface with:
 
 - **Process RPC**: Streaming bidirectional RPC handling all Envoy ExtProc phases (RequestHeaders, RequestBody, ResponseHeaders, ResponseBody, RequestTrailers, ResponseTrailers)
-- **RequestHeaders Phase**: Primary processing phase where ExtProc reads token-exchange metadata and performs the exchange
+- **RequestHeaders Phase**: Primary processing phase where Bearer token extraction and exchange occurs
 - **Other Phases**: Pass-through responses with phase-specific response types
-- **ImmediateResponse**: Fail-closed error response mechanism. Invalid token-exchange metadata returns a 503 JSON response. Token-exchange failure behavior is unchanged.
+- **ImmediateResponse**: Error response mechanism (500 on exchange failure, 503 on invalid URI)
 
 #### 3.2.3. Request Processing
 
 **RequestHeaders Processing**:
 
-**Agentgateway Producer and Trust Boundary**: Agentgateway runs `jwtAuth` with `mode: strict` before the `extProc` policy. It sets `preserveToken: false`, which removes the raw `Authorization` header. Agentgateway's validated claims extension retains the raw token for `jwt.rawToken.unredacted()`. The policy projects that value as `subject_token` and a configured absolute HTTP(S) URI as `resource_uri`.
-
-Agentgateway places both values in `MetadataContext.FilterMetadata["aib.tokenexchange"]`. The namespace is a literal flat map key. Its validated claims extension stays in Agentgateway, and only this metadata projection crosses the gRPC boundary.
-
-1. Read `subject_token` and `resource_uri` only from `aib.tokenexchange` metadata.
-2. Validate `subject_token` first. It must be a non-blank string with no case-insensitive `Bearer ` prefix.
-3. Validate `resource_uri`. It must be a non-blank string containing an absolute HTTP or HTTPS URI with a host.
-4. Call `Exchanger.Exchange()` with the accepted values unchanged.
-5. On success, replace the `Authorization` header with `Bearer <exchanged token>`.
-6. On invalid metadata, return a 503 JSON `ImmediateResponse` with `invalid_subject_token` or `invalid_resource`. The subject-token error takes precedence.
-
-ExtProc does not read the raw `Authorization` header or request pseudo-headers. It has no alternate input source, compatibility path, or configuration toggle.
+1. Extract Bearer token from Authorization header (pass through if absent or non-Bearer)
+2. Extract resource URI from `:path` pseudo-header
+3. Validate URI (absolute, http/https scheme, non-empty host) — SSRF mitigation
+4. Call `Exchanger.Exchange()` with (token, uri)
+5. On success: replace Authorization header with `"Bearer " + exchangedToken`
+6. On failure: return 500 ImmediateResponse, reject request, log failure
 
 **Helper Functions**:
 
-- `extractTokenExchangeInput()`: Reads `aib.tokenexchange` metadata and validates both fields in the required order
-- `metadataStringField()`: Requires each metadata field to be a protobuf string value
-- `validateResourceURI()`: Validates the resource URI format, scheme, and host
-- `replaceAuthorizationHeader()`: Builds a HeadersResponse with the successful credential mutation
-- `immediateResponse()`: Builds an ImmediateResponse with a status code and JSON body
+- `extractBearerToken()`: Parse "Bearer <token>" format
+- `extractHeader()`: Case-insensitive header lookup
+- `validateResourceURI()`: URI parsing and scheme validation
+- `replaceAuthorizationHeader()`: Build HeadersResponse with header mutation
+- `immediateResponse()`: Build ImmediateResponse with status code and JSON body
 
 #### 3.2.4. Configuration
 
@@ -947,13 +946,11 @@ ExtProc does not read the raw `Authorization` header or request pseudo-headers. 
 
 #### 3.2.5. Security Features
 
-**Fail-Closed**: Invalid token-exchange metadata returns a 503 JSON `ImmediateResponse`. ExtProc does not exchange or forward the original credential.
+**Fail-Closed**: Exchange failures return 500 ImmediateResponse; original bearer token is never forwarded.
 
-**Metadata Trust Boundary**: ExtProc accepts only `aib.tokenexchange.subject_token` and `aib.tokenexchange.resource_uri`. It never derives either input from HTTP headers or pseudo-headers. [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) defines this clean cutover.
+**SSRF Mitigation**: `validateResourceURI()` enforces absolute URIs with http/https schemes only.
 
-**SSRF Mitigation**: `validateResourceURI()` accepts only absolute HTTP or HTTPS URIs with a non-empty host.
-
-**Token Redaction**: Subject tokens and exchanged tokens never appear in diagnostics or error responses. ExtProc does not expose an unvalidated resource URI.
+**Token Redaction**: Bearer tokens and exchanged tokens absent from all logs and error responses.
 
 **Client Secret Protection**: client_secret stored in memory only (config), never logged (logged as `[REDACTED]`), redacted from error responses.
 
@@ -1160,7 +1157,6 @@ This section lists all architectural decisions made for this project. ADRs docum
 ### RFC 8693 Token Exchange
 
 - [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
-- [ADR 036: ExtProc Metadata Token-Exchange Input](adrs/036-extproc-metadata-token-exchange-input.md) - Fixed dynamic-metadata input contract with no HTTP attribute fallback
 
 ### Security & Encryption
 
@@ -1279,11 +1275,17 @@ Define any project-specific terms or acronyms.)
 
 **Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization flow - if user lacks session or scopes, authorization proceeds anyway. Allows agents to degrade gracefully when optional integrations unavailable.
 
-**ThirdpartyOAuth2Provider**: External OAuth2 provider (e.g., GitHub, Google, Microsoft) registered in the system. Each provider defines a set of OAuth scopes that can be delegated to agents. Providers have a client_id, client_secret (stored as a `Secret` value object — encrypted at rest, redacted in API responses), and display name. Represented as `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. All encryption and decryption of the client secret is owned exclusively by `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/`.
+**ThirdpartyOAuth2Provider**: External OAuth2 provider (e.g., GitHub, Google, Microsoft) registered in the system. Each provider defines a set of OAuth scopes that can be delegated to agents. Providers have a client_id and, when confidential, a client_secret stored as a `Secret` value object. They also have a display name. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
 
 **Provider Authorization Parameters**: Static provider-defined authorization request parameters owned by a `ThirdpartyOAuth2Provider`. They are administrator-managed service configuration, not end-user input, and are appended only when the broker constructs the upstream authorization URL.
 
-**Secret**: Immutable value object in `internal/domain/model/` with two mutually exclusive states: plaintext (`NewPlaintextSecret(value)`) and encrypted (`NewEncryptedSecret(ciphertext)`). `GetPlaintext()` fails on encrypted state; `GetCiphertext()` fails on plaintext state. `Redacted()` always returns `"REDACTED"` regardless of state. Prevents accidental plaintext leakage at the type level — storage adapters can never accidentally persist unencrypted secrets because `GetCiphertext()` will error if encryption was not performed first.
+**TokenEndpointAuthMethod**: Optional attribute of a `ThirdpartyOAuth2Service`. Its only accepted value is `none`. Absence makes the service confidential and retains its existing upstream authentication. `none` makes the service public and prohibits stored or upstream credentials.
+
+**Public client**: A `ThirdpartyOAuth2Service` that declares `token_endpoint_auth_method: none`. It stores no client credential. At the upstream token endpoint, it sends its client identifier and PKCE code verifier but no client credential.
+
+**Confidential client**: A `ThirdpartyOAuth2Service` that declares no token endpoint authentication method. It stores an encrypted client credential. It uses the existing upstream client-authentication negotiation for code exchange and token refresh.
+
+**Secret**: Immutable value object in `internal/domain/` with exclusive plaintext, encrypted, or absent state. `NewPlaintextSecret(value)`, `NewEncryptedSecret(ciphertext)`, and `NewAbsentSecret()` construct these states. The absent state represents a public service with no credential. `GetPlaintext()` fails on encrypted or absent state. `GetCiphertext()` fails on plaintext or absent state. `Redacted()` always returns `"REDACTED"`. The zero value remains plaintext-uninitialized, never absent. This prevents accidental plaintext persistence because `GetCiphertext()` errors until encryption occurs.
 
 **OAuth Scope**: A specific permission defined by an OAuth2 provider (e.g., "repo", "user:email"). Each scope has a scope_value (the OAuth scope string) and a human-readable description. Scopes are defined per service and validated during grant creation.
 
@@ -1311,9 +1313,9 @@ Define any project-specific terms or acronyms.)
 
 **Service Protection**: Business rule preventing deletion of an OAuth2 service if any active grants reference it (returns 409 Conflict). Ensures grants don't reference non-existent services. Requires revocation of all referencing grants before service deletion.
 
-**OAuth2Flavor**: Named enumeration on `ThirdpartyOAuth2Service` identifying the credential format and future token acquisition mechanism. Current values: `standard` (plain client secret string), `google` (Google service account JSON key). Designed for extension. Stored in the `oauth2_flavor` column of `thirdparty_oauth2_services`. Defaults to `standard` for backward compatibility.
+**OAuth2Flavor**: Named enumeration on `ThirdpartyOAuth2Service` identifying the credential format and future token acquisition mechanism. Current values: `standard` (plain client secret string), `google` (Google service account JSON key). Designed for extension. Stored in the `oauth2_flavor` column of `thirdparty_oauth2_services`. Default: `standard`.
 
-**ClientCredential**: The authentication material stored in the `client_secret` field of a `ThirdpartyOAuth2Service`. Structure varies by `OAuth2Flavor`: a plain secret string for `standard`, a serialized Google service account JSON string for `google`. Always encrypted at rest. Field name preserved for API backward compatibility.
+**ClientCredential**: The authentication material stored in the `client_secret` field of a confidential `ThirdpartyOAuth2Service`. Structure varies by `OAuth2Flavor`: a plain secret string for `standard`, a serialized Google service account JSON string for `google`. When present, the credential is always encrypted at rest. The API uses the field name `client_secret`.
 
 **GoogleServiceAccountKey**: Structured value object representing the parsed contents of a Google service account JSON key file. Required fields: `type` (must be `"service_account"`), `private_key`, `client_email`, `token_uri`, `client_id`. Validated structurally; cryptographic format of the private key is not verified at configuration time. Parsed exclusively during request validation; not stored as a separate entity.
 
@@ -1346,6 +1348,13 @@ Define any project-specific terms or acronyms.)
 **AuthorizationSessionToken**: A JWE-encrypted ephemeral token that binds a consent session to the initiating authorization request (ADR 016). Contains agent_id, principal, original authorize URL, and optional CIMD metadata snapshot. Short-lived (10 min TTL). Prevents consent screen spoofing by ensuring all displayed metadata originates from server-attested claims. Used for all authorization modes (local, proxy, CIMD).
 
 **PKCE**: Proof Key for Code Exchange (RFC 7636). Security extension for OAuth2 that prevents authorization code interception attacks. Uses code_verifier (random 32-128 byte secret, base64url-encoded) and code_challenge (SHA256 hash of verifier). Mandatory for all OAuth2 flows with no bypass allowed.
+
+**Upstream Client Authentication**: Third-party OAuth2 services use one of two modes:
+
+- **Confidential clients** leave `Endpoint.AuthStyle` at `AuthStyleAutoDetect` and keep the existing client-secret negotiation.
+- **Public clients** use an empty `ClientSecret` and pin `Endpoint.AuthStyle` to `AuthStyleInParams`. This sends `client_id` in the request body and sends no client credential.
+
+Every third-party authorization request uses PKCE with `code_challenge_method=S256`. This is unconditional for public and confidential clients. Every code exchange sends the flow-bound code verifier.
 
 **Token Vault**: Secure storage for encrypted OAuth2 tokens. Tokens are encrypted using AES-GCM with encryption context binding them to principal, service_id, and session_id. Uses EncryptionPort for all cryptographic operations. All tokens stored as ciphertext (BYTEA in PostgreSQL).
 
@@ -1395,11 +1404,9 @@ Define any project-specific terms or acronyms.)
 
 ### ExtProc (Envoy External Processor) Domain
 
-**ExtProc**: Envoy's External Processor (ExtProc) gRPC protocol allows a standalone microservice to intercept and modify HTTP requests and responses. The extproc-token-exchange service uses the protocol for OAuth2 token exchange. It accepts token-exchange input only through the dynamic metadata defined by [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md).
+**ExtProc**: Envoy's External Processor (ExtProc) gRPC protocol allowing a standalone microservice to intercept and modify HTTP requests/responses in real-time. The extproc-token-exchange service implements this protocol to transparently exchange OAuth2 tokens.
 
-**agentgateway**: Envoy-based reverse proxy deployed alongside the identity broker and ExtProc service. It validates JWTs through `jwtAuth` before the `extProc` policy projects token-exchange input into dynamic metadata.
-
-**Token-Exchange Metadata Input**: The `subject_token` and `resource_uri` protobuf string fields in `MetadataContext.FilterMetadata["aib.tokenexchange"]`. Agentgateway supplies the fields after strict JWT validation. ExtProc has no raw-header or pseudo-header fallback.
+**agentgateway**: Envoy-based reverse proxy deployed alongside the identity broker and ExtProc service. Configures Envoy's ExtProc filter to delegate token exchange decisions to the extproc-token-exchange microservice. Routes requests from agents through the ExtProc filter before forwarding to upstream services.
 
 **Exchanged Token**: OAuth2 access token obtained via RFC 8693 token exchange, scoped to a specific downstream service (resource URI). Replaces the original Bearer token in request headers. Used by agents to access third-party services without exposing their original credentials.
 
@@ -1495,7 +1502,7 @@ Define any project-specific terms or acronyms.)
 
 ### JWT Pre-Authentication
 
-**PrincipalProfile**: Enriched user identity value object containing principal identifier, display name, email, and picture URL. Extracted from pre-authentication source (JWT or plain header). Request-scoped, immutable. Stored in request context via `principal.WithProfile()` alongside the existing string principal for backward compatibility. Located in `internal/domain/principal/profile.go`.
+**PrincipalProfile**: Enriched user identity value object containing principal identifier, display name, email, and picture URL. Extracted from pre-authentication source (JWT or plain header). Request-scoped, immutable. Stored in request context via `principal.WithProfile()` alongside the string principal. Located in `internal/domain/principal/profile.go`.
 
 **JWTAuthConfig**: Configuration value object defining JWT-based pre-authentication behavior: HTTP header name, verification mode (`jwks` or `none`), JWKS endpoint, audience/issuer constraints, and CEL claim extraction expressions. Validated at startup with mutual exclusivity rules (`verification: none` + `jwks_uri` → startup error). Located in `internal/ports/config.go` as `JWTConfig`.
 

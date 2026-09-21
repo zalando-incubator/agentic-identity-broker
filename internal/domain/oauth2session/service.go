@@ -20,6 +20,7 @@ package oauth2session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -48,8 +49,9 @@ func addProviderAuthorizationParams(values url.Values, params map[string]string)
 }
 
 // OAuth2SessionService orchestrates OAuth2 authorization flows and session management.
-// Uses ThirdpartyOAuth2ProviderService to retrieve third-party services with decrypted client secrets,
-// ensuring OAuth2 configurations always have valid credentials for token exchange.
+// It retrieves confidential services with client secrets decrypted when available. Public
+// services intentionally retain an absent Secret, so their OAuth2 configurations omit a client
+// secret.
 type OAuth2SessionService struct {
 	providerService *thirdparty.ThirdpartyOAuth2ProviderService // Domain service that handles encryption/decryption
 	sessionRepo     ports.UserSessionRepository
@@ -108,8 +110,8 @@ func NewConfigFromPorts(portsCfg ports.ThirdPartyOAuth2Config, callbackBaseURL s
 }
 
 // NewOAuth2SessionService creates a new OAuth2SessionService.
-// Requires a ThirdpartyOAuth2ProviderService which handles encryption/decryption of client secrets.
-// This ensures OAuth2 configurations always receive decrypted credentials needed for token exchange.
+// Requires a ThirdpartyOAuth2ProviderService that conditionally decrypts confidential client
+// secrets. Public providers retain an absent Secret and require no client credential.
 func NewOAuth2SessionService(
 	providerService *thirdparty.ThirdpartyOAuth2ProviderService,
 	sessionRepo ports.UserSessionRepository,
@@ -282,8 +284,8 @@ func (s *OAuth2SessionService) ValidateStateToken(
 // GROUP 2: OAuth2 Helpers
 // =============================================================================
 
-// buildOAuth2Config creates an oauth2.Config from third-party provider entity.
-// entity.Secret must be in plaintext state (decrypted by ThirdpartyOAuth2ProviderService.Get).
+// buildOAuth2Config creates an oauth2.Config from a third-party provider entity.
+// Confidential client secrets must be in plaintext state (decrypted by ThirdpartyOAuth2ProviderService.Get).
 func (s *OAuth2SessionService) buildOAuth2Config(
 	entity *model.ThirdpartyOAuth2ProviderEntity,
 	callbackURL string,
@@ -294,23 +296,49 @@ func (s *OAuth2SessionService) buildOAuth2Config(
 		scopes = append(scopes, scope.ScopeValue)
 	}
 
-	// Get plaintext secret (already decrypted by ThirdpartyOAuth2ProviderService)
-	clientSecret, err := entity.Secret.GetPlaintext()
-	if err != nil {
-		return nil, fmt.Errorf("provider secret not in plaintext state; ensure entity was fetched via ThirdpartyOAuth2ProviderService.Get: %w", err)
-	}
-
-	// Create OAuth2 config
-	return &oauth2.Config{
+	config := &oauth2.Config{
 		ClientID:     entity.ClientID.String(),
-		ClientSecret: clientSecret,
+		ClientSecret: "",
 		RedirectURL:  callbackURL,
 		Scopes:       scopes,
 		Endpoint: oauth2.Endpoint{
 			AuthURL:  entity.Endpoints.AuthorizeEndpoint,
 			TokenURL: entity.Endpoints.TokenEndpoint,
 		},
-	}, nil
+	}
+	if entity.IsPublicClient() {
+		config.Endpoint.AuthStyle = oauth2.AuthStyleInParams
+		return config, nil
+	}
+
+	clientSecret, err := entity.Secret.GetPlaintext()
+	if err != nil {
+		return nil, fmt.Errorf("provider secret not in plaintext state; ensure entity was fetched via ThirdpartyOAuth2ProviderService.Get: %w", err)
+	}
+	config.ClientSecret = clientSecret
+
+	return config, nil
+}
+
+func safeTokenExchangeError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+
+	var retrieveErr *oauth2.RetrieveError
+	if errors.As(err, &retrieveErr) {
+		switch retrieveErr.ErrorCode {
+		case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope":
+			return fmt.Errorf("%w: %s", ErrTokenExchange, retrieveErr.ErrorCode)
+		}
+	}
+
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		return fmt.Errorf("%w: %w", ErrTokenExchange, urlErr.Err)
+	}
+
+	return fmt.Errorf("%w: upstream token request failed", ErrTokenExchange)
 }
 
 // exchangeCodeWithRetry exchanges authorization code for tokens with exponential backoff retry.
@@ -321,7 +349,7 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 	verifier string,
 	authorizationParams map[string]string,
 ) (*oauth2.Token, error) {
-	var lastErr error
+	lastErr := ErrTokenExchange
 
 	for attempt := 0; attempt < s.config.MaxRetries; attempt++ {
 		// Try to exchange code for token
@@ -336,8 +364,7 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 		if err == nil {
 			return token, nil
 		}
-
-		lastErr = err
+		lastErr = safeTokenExchangeError(err)
 
 		// If this was the last attempt, break
 		if attempt == s.config.MaxRetries-1 {
@@ -349,7 +376,8 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 		s.logger.Warn("token exchange failed, retrying",
 			"attempt", attempt+1,
 			"delay", delay,
-			"error", err)
+			"reason", "token_exchange_failed",
+			"error", lastErr)
 
 		// Sleep with context cancellation support
 		select {
@@ -360,7 +388,7 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 		}
 	}
 
-	return nil, fmt.Errorf("token exchange failed after %d attempts: %w", s.config.MaxRetries, lastErr)
+	return nil, lastErr
 }
 
 // =============================================================================
@@ -432,6 +460,7 @@ func (s *OAuth2SessionService) InitiateOAuth2Flow(
 		"event", "session.oauth2.flow_initiated",
 		"principal", principal,
 		"service_id", serviceID,
+		"public_client", service.IsPublicClient(),
 		"timestamp", now.Unix())
 
 	return &InitiateFlowResult{
@@ -587,7 +616,9 @@ func (s *OAuth2SessionService) HandleCallback(
 			"event", "session.oauth2.pkce_validation_failed",
 			"principal", principal,
 			"service_id", req.ServiceID,
-			"error", err.Error(),
+			"public_client", service.IsPublicClient(),
+			"reason", "token_exchange_failed",
+			"error", err,
 			"timestamp", time.Now().Unix())
 		return nil, fmt.Errorf("failed to exchange authorization code: %w", err)
 	}
@@ -624,6 +655,7 @@ func (s *OAuth2SessionService) HandleCallback(
 		"event", "session.oauth2.session_established",
 		"principal", principal,
 		"service_id", req.ServiceID,
+		"public_client", service.IsPublicClient(),
 		"session_id", session.ID,
 		"timestamp", time.Now().Unix())
 
@@ -649,7 +681,7 @@ func (s *OAuth2SessionService) HandleCallback(
 //   - grant_type=refresh_token
 //   - refresh_token=<the provided refresh token>
 //   - client_id=<from service config>
-//   - client_secret=<from service config>
+//   - client_secret=<from service config, confidential clients only>
 func (s *OAuth2SessionService) RefreshAccessToken(
 	ctx context.Context,
 	entity *model.ThirdpartyOAuth2ProviderEntity,
@@ -663,18 +695,25 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		return nil, fmt.Errorf("refresh token cannot be empty")
 	}
 
-	// Get plaintext secret (already decrypted by ThirdpartyOAuth2ProviderService)
-	clientSecret, err := entity.Secret.GetPlaintext()
-	if err != nil {
-		return nil, fmt.Errorf("provider secret not in plaintext state for refresh: %w", err)
+	isPublicClient := entity.IsPublicClient()
+	var clientSecret string
+	if !isPublicClient {
+		// Get plaintext secret (already decrypted by ThirdpartyOAuth2ProviderService).
+		var err error
+		clientSecret, err = entity.Secret.GetPlaintext()
+		if err != nil {
+			return nil, fmt.Errorf("provider secret not in plaintext state for refresh: %w", err)
+		}
 	}
 
-	// Prepare refresh token request per RFC 6749 Section 6
+	// Prepare refresh token request per RFC 6749 Section 6.
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
 	data.Set("client_id", entity.ClientID.String())
-	data.Set("client_secret", clientSecret)
+	if !isPublicClient {
+		data.Set("client_secret", clientSecret)
+	}
 	addProviderAuthorizationParams(data, entity.AuthorizationParams)
 
 	// Create POST request to token endpoint
@@ -1177,9 +1216,11 @@ func (s *OAuth2SessionService) refreshSessionTokens(
 			"event", "session.oauth2.refresh_failed",
 			"principal", principal,
 			"service_id", serviceID,
-			"error", err.Error(),
+			"public_client", service.IsPublicClient(),
+			"reason", "token_refresh_failed",
+			"error", err,
 			"timestamp", time.Now().Unix())
-		return fmt.Errorf("%w: %v", ErrRefreshFailed, err)
+		return fmt.Errorf("%w: %w", ErrRefreshFailed, err)
 	}
 
 	if newToken == nil {
@@ -1198,6 +1239,8 @@ func (s *OAuth2SessionService) refreshSessionTokens(
 		"event", "session.oauth2.token_refreshed",
 		"principal", principal,
 		"service_id", serviceID,
+		"public_client", service.IsPublicClient(),
+		"reason", "token_refresh_succeeded",
 		"timestamp", time.Now().Unix())
 
 	return nil

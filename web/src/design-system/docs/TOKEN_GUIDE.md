@@ -30,12 +30,7 @@ Semantic tokens provide meaning-driven color naming that improves code readabili
 </div>
 ```
 
-**❌ DON'T: Use extended palettes (removed)**
-
-```tsx
-<button className="bg-navy-700">...</button>    {/* No longer available */}
-<div className="bg-gray-100">...</div>          {/* Use neutral-100 */}
-```
+**❌ DON'T: Use extended palette classes**
 
 ### Semantic Color Tokens
 
