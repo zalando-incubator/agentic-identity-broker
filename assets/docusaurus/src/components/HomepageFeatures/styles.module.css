@@ -1,63 +1,94 @@
 .overviewSection {
-  padding: 1rem 0 5rem;
+  padding: 4rem 0 6rem;
 }
 
 .sectionHeader {
-  margin: 0 auto 2rem;
-  max-width: 48rem;
-  text-align: center;
+  margin: 0 0 2.5rem;
+  max-width: 42rem;
 }
 
 .sectionEyebrow {
-  display: inline-block;
-  margin-bottom: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--ifm-color-emphasis-200);
   border-radius: 999px;
-  background: var(--ifm-color-emphasis-200);
+  background: var(--ifm-background-surface-color);
   color: var(--ifm-color-emphasis-800);
   font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 1rem;
   padding: 0.35rem 0.8rem;
-  text-transform: uppercase;
 }
 
 .sectionTitle {
-  margin-bottom: 0.75rem;
   font-size: clamp(2rem, 4vw, 3rem);
+  letter-spacing: -0.03em;
+  margin-bottom: 0.75rem;
 }
 
 .sectionDescription {
   color: var(--ifm-color-emphasis-700);
   font-size: 1.05rem;
+  line-height: 1.65;
 }
 
 .capabilityGrid {
   display: grid;
-  gap: 1rem;
+  gap: 1.25rem;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .card {
   border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 1rem;
+  border-radius: 1.5rem;
   background: var(--ifm-background-surface-color);
-  box-shadow: var(--ifm-global-shadow-lw);
-  height: 100%;
-  padding: 1.5rem;
+  min-height: 17rem;
+  overflow: hidden;
+  padding: 1.75rem;
+  position: relative;
+}
+
+.card::before {
+  background: radial-gradient(ellipse at 50% 100%, var(--feature-glow), transparent 68%);
+  content: '';
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.card:nth-child(1) {
+  --feature-glow: rgba(37, 99, 235, 0.16);
+}
+
+.card:nth-child(2) {
+  --feature-glow: rgba(20, 184, 166, 0.16);
+}
+
+.card:nth-child(3) {
+  --feature-glow: rgba(225, 29, 72, 0.14);
+}
+
+.cardTitle,
+.cardDescription {
+  position: relative;
 }
 
 .cardTitle {
+  font-size: 1.35rem;
   margin-bottom: 0.75rem;
-  font-size: 1.2rem;
 }
 
 .cardDescription {
-  margin: 0;
   color: var(--ifm-color-emphasis-700);
+  line-height: 1.6;
+  margin: 0;
 }
 
 .pathSection {
-  margin-top: 4rem;
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+  margin-top: 5rem;
+  padding-top: 4rem;
 }
 
 .pathGrid {
@@ -67,22 +98,20 @@
 }
 
 .pathCard {
-  display: block;
   border: 1px solid var(--ifm-color-emphasis-200);
   border-radius: 1rem;
   background: var(--ifm-background-surface-color);
-  box-shadow: var(--ifm-global-shadow-lw);
   color: inherit;
+  display: block;
   padding: 1.5rem;
   text-decoration: none;
-  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+  transition: border-color 150ms ease, background-color 150ms ease;
 }
 
 .pathCard:hover {
   border-color: var(--ifm-color-primary);
-  box-shadow: var(--ifm-global-shadow-md);
+  background: var(--ifm-color-emphasis-100);
   text-decoration: none;
-  transform: translateY(-2px);
 }
 
 .pathTitle {
@@ -98,12 +127,30 @@
 }
 
 .pathAction {
+  align-items: center;
   color: var(--ifm-color-primary);
+  display: inline-flex;
   font-size: 0.95rem;
   font-weight: 700;
+  gap: 0.4rem;
+}
+
+.pathAction::after {
+  content: '→';
+  transition: transform 150ms ease;
+}
+
+.pathCard:hover .pathAction::after {
+  transform: translateX(0.2rem);
 }
 
 @media screen and (max-width: 996px) {
+  .capabilityGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media screen and (max-width: 640px) {
   .capabilityGrid,
   .pathGrid {
     grid-template-columns: 1fr;
