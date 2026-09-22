@@ -32,7 +32,7 @@ jobs:
 
       # Set up Node.js (for web frontend)
       - name: Set up Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "24"
           cache: 'npm'
@@ -40,7 +40,7 @@ jobs:
 
       # Cache Go tool binaries, golangci-lint results, and Playwright browsers
       - name: Cache dev tools
-        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             ~/go/bin
@@ -50,7 +50,7 @@ jobs:
           restore-keys: tools-${{ runner.os }}-
 
       - name: Install just
-        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3
         with:
           tool: just
 
