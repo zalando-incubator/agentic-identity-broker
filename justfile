@@ -8,6 +8,10 @@ NUM_CPUS := num_cpus()
 VERSION := env_var_or_default("VERSION", `git describe --tags --always 2>/dev/null || echo "latest"`)
 REVISION := env_var_or_default("REVISION", `git rev-parse HEAD 2>/dev/null || echo "unknown"`)
 CREATED := env_var_or_default("CREATED", `git show -s --format=%cI HEAD 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ"`)
+# Base image for release Docker builds. Defaults to the public pinned digest
+# each Dockerfile declares; internal release pipelines override this to an
+# internally-mirrored/allowed base image (see delivery.yaml).
+BASE_IMAGE := env_var_or_default("BASE_IMAGE", "alpine:3@sha256:5b02b42e375f7426f8d65c3af331ca05d9878f9989230354504e0b9dfd431f60")
 GO_FAST_TEST_PACKAGES := `go list -e ./... | grep -Ev '(/assets/docusaurus/build/|/specs/|/web/node_modules/|/tests/e2e$|/tests/e2e/frontend$|/tests/e2e/extproc$|/tests/integration($|/))' | tr '\n' ' '`
 INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/infra/... ./tests/integration/migrations/... ./tests/integration/storage/infra/... ./internal/adapters/storage/postgres/..."
 INTEGRATION_INFRA_PACKAGE_PROCS := env_var_or_default("INTEGRATION_INFRA_PACKAGE_PROCS", "2")
@@ -642,9 +646,9 @@ build-all: build web-build
 # Create and push multi-architecture Docker images to registry.
 # Builds broker, migrate, and extproc images for linux/amd64 and linux/arm64.
 docker-push: build-linux-amd64 build-linux-arm64 extproc-build-linux-amd64 extproc-build-linux-arm64 web-build
-    docker buildx build --rm -t "{{IMAGE_NAME}}:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --push .
-    docker buildx build --rm -t "{{IMAGE_NAME}}-migrate:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.migrate --push .
-    docker buildx build --rm -t "{{IMAGE_NAME}}-extproc:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.extproc --push .
+    docker buildx build --rm -t "{{IMAGE_NAME}}:{{VERSION}}" --build-arg BASE_IMAGE="{{BASE_IMAGE}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --push .
+    docker buildx build --rm -t "{{IMAGE_NAME}}-migrate:{{VERSION}}" --build-arg BASE_IMAGE="{{BASE_IMAGE}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.migrate --push .
+    docker buildx build --rm -t "{{IMAGE_NAME}}-extproc:{{VERSION}}" --build-arg BASE_IMAGE="{{BASE_IMAGE}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.extproc --push .
     @echo "✓ Multi-architecture images pushed:"
     @echo "  - {{IMAGE_NAME}}:{{VERSION}}"
     @echo "  - {{IMAGE_NAME}}-migrate:{{VERSION}}"
@@ -660,19 +664,19 @@ docker-promote:
 # Build multi-architecture migrate Docker image (validates both platforms, no output).
 docker-build-migrate:
     @echo "Building migrate image: {{IMAGE_NAME}}-migrate:{{VERSION}}..."
-    docker buildx build --rm -t "{{IMAGE_NAME}}-migrate:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.migrate .
+    docker buildx build --rm -t "{{IMAGE_NAME}}-migrate:{{VERSION}}" --build-arg BASE_IMAGE="{{BASE_IMAGE}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.migrate .
     @echo "✓ Migrate image validated: {{IMAGE_NAME}}-migrate:{{VERSION}}"
 
 # Build multi-architecture broker Docker image (validates both platforms, no output).
 docker-build-broker: build-linux-amd64 build-linux-arm64 web-build
     @echo "Building broker image: {{IMAGE_NAME}}:{{VERSION}}..."
-    docker buildx build --rm -t "{{IMAGE_NAME}}:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 .
+    docker buildx build --rm -t "{{IMAGE_NAME}}:{{VERSION}}" --build-arg BASE_IMAGE="{{BASE_IMAGE}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 .
     @echo "✓ Broker image validated: {{IMAGE_NAME}}:{{VERSION}}"
 
 # Build multi-architecture extproc Docker image (validates both platforms, no output).
 docker-build-extproc: extproc-build-linux-amd64 extproc-build-linux-arm64
     @echo "Building extproc image: {{IMAGE_NAME}}-extproc:{{VERSION}}..."
-    docker buildx build --rm -t "{{IMAGE_NAME}}-extproc:{{VERSION}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.extproc .
+    docker buildx build --rm -t "{{IMAGE_NAME}}-extproc:{{VERSION}}" --build-arg BASE_IMAGE="{{BASE_IMAGE}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file Dockerfile.extproc .
     @echo "✓ ExtProc image validated: {{IMAGE_NAME}}-extproc:{{VERSION}}"
 
 # Build broker and migrate multi-architecture images and smoke-test ExtProc's native release image
