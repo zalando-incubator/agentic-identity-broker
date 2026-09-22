@@ -597,4 +597,3 @@ func clientCredentialsScopes(configured []string) []string {
 	}
 	return filtered
 }
-
