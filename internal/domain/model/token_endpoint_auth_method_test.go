@@ -15,6 +15,7 @@ func TestTokenEndpointAuthMethod_Validate(t *testing.T) {
 	}{
 		{"absent method is valid", "", false},
 		{"none is valid", TokenEndpointAuthMethodNone, false},
+		{"private key JWT is valid", TokenEndpointAuthMethod("private_key_jwt"), false},
 		{"client secret basic is invalid", "client_secret_basic", true},
 		{"client secret post is invalid", "client_secret_post", true},
 		{"case variant is invalid", "NONE", true},
@@ -27,8 +28,7 @@ func TestTokenEndpointAuthMethod_Validate(t *testing.T) {
 			err := tt.method.Validate()
 			if tt.wantErr {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), `only "none" is accepted`)
-				assert.Contains(t, err.Error(), string(TokenEndpointAuthMethodNone))
+				assert.ErrorContains(t, err, "token_endpoint_auth_method")
 				return
 			}
 
@@ -45,6 +45,7 @@ func TestTokenEndpointAuthMethod_IsAbsent(t *testing.T) {
 	}{
 		{"empty method is absent", "", true},
 		{"none method is not absent", TokenEndpointAuthMethodNone, false},
+		{"private key JWT method is not absent", TokenEndpointAuthMethod("private_key_jwt"), false},
 		{"unknown method is not absent", "client_secret_basic", false},
 	}
 

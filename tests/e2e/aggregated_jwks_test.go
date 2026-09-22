@@ -2,7 +2,12 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,6 +22,9 @@ import (
 	. "github.com/onsi/gomega"
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	domstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
@@ -82,6 +90,17 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			kids := extractKids(jwks)
 			Expect(kids).To(HaveLen(1))
 			Expect(kids).ToNot(ContainElement("test-key"))
+		})
+
+		// FR-029 from specs/046-cimd-upstream-client/spec.md
+		It("excludes CIMD client-authentication keys while retaining token-signing keys", func() {
+			cimdKID := seedCIMDClientAuthenticationKey(testStorage)
+			tokenSigningKey, err := testStorage.SigningKeys().GetCurrentInDomain(context.Background(), domstorage.KeyDomainTokenSigning)
+			Expect(err).ToNot(HaveOccurred())
+
+			jwks := fetchJWKSJSON(server.BaseURL() + "/oauth2/jwks.json")
+			Expect(extractKids(jwks)).To(ConsistOf(tokenSigningKey.KID.String()))
+			Expect(extractKids(jwks)).ToNot(ContainElement(cimdKID))
 		})
 
 		// Scenario 1.7 from specs/032-aggregated-jwks/spec.md
@@ -308,6 +327,17 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			Expect(err).ToNot(HaveOccurred())
 
 			Expect(validateJWTWithJWKS(upstreamToken, fetchBrokerJWKS(server.BaseURL()))).To(Succeed())
+		})
+
+		// FR-029 from specs/046-cimd-upstream-client/spec.md
+		It("retains token and upstream keys while excluding CIMD client-authentication keys", func() {
+			cimdKID := seedCIMDClientAuthenticationKey(testStorage)
+			tokenSigningKey, err := testStorage.SigningKeys().GetCurrentInDomain(context.Background(), domstorage.KeyDomainTokenSigning)
+			Expect(err).ToNot(HaveOccurred())
+
+			jwks := fetchJWKSJSON(server.BaseURL() + "/oauth2/jwks.json")
+			Expect(extractKids(jwks)).To(ConsistOf(tokenSigningKey.KID.String(), "test-key"))
+			Expect(extractKids(jwks)).ToNot(ContainElement(cimdKID))
 		})
 	})
 
@@ -881,4 +911,34 @@ func extractKeyByKid(jwks map[string]any, kid string) map[string]any {
 		}
 	}
 	return nil
+}
+
+func seedCIMDClientAuthenticationKey(store *storageadapter.Adapter) string {
+	kid := id.NewKeyID("cimd-client-authentication-jwks-test-key")
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	Expect(err).ToNot(HaveOccurred())
+	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	Expect(err).ToNot(HaveOccurred())
+	privateKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyDER})
+	Expect(privateKeyPEM).ToNot(BeNil())
+
+	encryptedPrivateKey, err := testutil.NewPanicTestEncryptionAdapter().Encrypt(
+		context.Background(),
+		privateKeyPEM,
+		map[string]string{"kid": kid.String()},
+	)
+	Expect(err).ToNot(HaveOccurred())
+
+	now := time.Now().UTC()
+	Expect(store.SigningKeys().Create(context.Background(), &domstorage.SigningKey{
+		ID:                  id.NewSigningKeyID(),
+		KID:                 kid,
+		KeyDomain:           domstorage.KeyDomainCIMDClientAuthentication,
+		Algorithm:           "ES256",
+		PrivateKeyEncrypted: encryptedPrivateKey,
+		ActivatesAt:         now,
+		CreatedAt:           now,
+	})).To(Succeed())
+
+	return kid.String()
 }

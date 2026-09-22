@@ -38,14 +38,14 @@ func NewSigningKeyRepo(adapter *Adapter) *SigningKeyRepo {
 	return &SigningKeyRepo{adapter: adapter}
 }
 
-func (r *SigningKeyRepo) lockActiveSigningKeys(ctx context.Context, tx *sqlx.Tx) ([]lockedSigningKeyRow, error) {
+func (r *SigningKeyRepo) lockActiveSigningKeysInDomain(ctx context.Context, tx *sqlx.Tx, domain storage.KeyDomain) ([]lockedSigningKeyRow, error) {
 	var rows []lockedSigningKeyRow
 	err := tx.SelectContext(ctx, &rows,
 		`SELECT kid, is_current, activates_at
 		 FROM signing_keys
-		 WHERE removed_at IS NULL
+		 WHERE key_domain = $1 AND removed_at IS NULL
 		 ORDER BY kid
-		 FOR UPDATE`)
+		 FOR UPDATE`, domain)
 	if err != nil {
 		return nil, err
 	}
@@ -70,14 +70,17 @@ func (r *SigningKeyRepo) Create(ctx context.Context, key *storage.SigningKey) er
 	if r.adapter.db == nil {
 		return storage.NewStorageError("SigningKeyRepo.Create", storage.ErrorKindConnection, nil, "database not initialized")
 	}
+	if err := key.KeyDomain.Validate(); err != nil {
+		return storage.NewStorageError("SigningKeyRepo.Create", storage.ErrorKindValidation, err, "key_domain is invalid")
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
 	_, err := r.adapter.db.ExecContext(execCtx,
-		`INSERT INTO signing_keys (id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		key.ID, key.KID, key.Algorithm, key.PrivateKeyEncrypted,
+		`INSERT INTO signing_keys (id, kid, key_domain, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		key.ID, key.KID, key.KeyDomain, key.Algorithm, key.PrivateKeyEncrypted,
 		key.IsCurrent, key.ActivatesAt, key.CreatedAt, key.RemovedAt,
 	)
 	if err != nil {
@@ -90,6 +93,9 @@ func (r *SigningKeyRepo) CreateAndSetCurrent(ctx context.Context, key *storage.S
 	if r.adapter.db == nil {
 		return storage.NewStorageError("SigningKeyRepo.CreateAndSetCurrent", storage.ErrorKindConnection, nil, "database not initialized")
 	}
+	if err := key.KeyDomain.Validate(); err != nil {
+		return storage.NewStorageError("SigningKeyRepo.CreateAndSetCurrent", storage.ErrorKindValidation, err, "key_domain is invalid")
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
@@ -100,16 +106,15 @@ func (r *SigningKeyRepo) CreateAndSetCurrent(ctx context.Context, key *storage.S
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	// Demote all existing current keys before inserting the new one.
-	_, err = tx.ExecContext(execCtx, `UPDATE signing_keys SET is_current = false WHERE is_current = true`)
+	_, err = tx.ExecContext(execCtx, `UPDATE signing_keys SET is_current = false WHERE key_domain = $1 AND is_current = true`, key.KeyDomain)
 	if err != nil {
 		return classifySigningKeyRepoError("SigningKeyRepo.CreateAndSetCurrent", err, "failed to demote existing keys")
 	}
 
 	_, err = tx.ExecContext(execCtx,
-		`INSERT INTO signing_keys (id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at)
-		 VALUES ($1, $2, $3, $4, true, $5, $6, $7)`,
-		key.ID, key.KID, key.Algorithm, key.PrivateKeyEncrypted,
+		`INSERT INTO signing_keys (id, kid, key_domain, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at)
+		 VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8)`,
+		key.ID, key.KID, key.KeyDomain, key.Algorithm, key.PrivateKeyEncrypted,
 		key.ActivatesAt, key.CreatedAt, key.RemovedAt,
 	)
 	if err != nil {
@@ -122,9 +127,9 @@ func (r *SigningKeyRepo) CreateAndSetCurrent(ctx context.Context, key *storage.S
 	return nil
 }
 
-func (r *SigningKeyRepo) GetByKID(ctx context.Context, kid id.KeyID) (*storage.SigningKey, error) {
+func (r *SigningKeyRepo) GetByKIDInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) (*storage.SigningKey, error) {
 	if r.adapter.db == nil {
-		return nil, storage.NewStorageError("SigningKeyRepo.GetByKID", storage.ErrorKindConnection, nil, "database not initialized")
+		return nil, storage.NewStorageError("SigningKeyRepo.GetByKIDInDomain", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
@@ -132,16 +137,16 @@ func (r *SigningKeyRepo) GetByKID(ctx context.Context, kid id.KeyID) (*storage.S
 
 	var key storage.SigningKey
 	err := r.adapter.db.GetContext(queryCtx, &key,
-		`SELECT id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at
-		 FROM signing_keys WHERE kid = $1 AND removed_at IS NULL`, kid)
+		`SELECT id, kid, key_domain, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at
+		 FROM signing_keys WHERE kid = $1 AND key_domain = $2 AND removed_at IS NULL`, kid, domain)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return nil, storage.NewStorageError("SigningKeyRepo.GetByKID", storage.ErrorKindNotFound, err, "signing key not found")
+			return nil, storage.NewStorageError("SigningKeyRepo.GetByKIDInDomain", storage.ErrorKindNotFound, err, "signing key not found")
 		}
 		if isContextTimeoutOrCanceled(err) {
-			return nil, storage.NewStorageError("SigningKeyRepo.GetByKID", storage.ErrorKindTimeout, err, "operation exceeded timeout")
+			return nil, storage.NewStorageError("SigningKeyRepo.GetByKIDInDomain", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
-		return nil, storage.NewStorageError("SigningKeyRepo.GetByKID", storage.ErrorKindConnection, err, "failed to query signing key")
+		return nil, storage.NewStorageError("SigningKeyRepo.GetByKIDInDomain", storage.ErrorKindConnection, err, "failed to query signing key")
 	}
 	return &key, nil
 }
@@ -150,9 +155,10 @@ func (r *SigningKeyRepo) GetByKID(ctx context.Context, kid id.KeyID) (*storage.S
 // as is_current provided its activates_at has passed. If the current key is still in its
 // grace period, it falls back to the most recently activated key, keeping token issuance
 // uninterrupted while JWKS caches learn about the new key.
-func (r *SigningKeyRepo) GetCurrent(ctx context.Context) (*storage.SigningKey, error) {
+
+func (r *SigningKeyRepo) GetCurrentInDomain(ctx context.Context, domain storage.KeyDomain) (*storage.SigningKey, error) {
 	if r.adapter.db == nil {
-		return nil, storage.NewStorageError("SigningKeyRepo.GetCurrent", storage.ErrorKindConnection, nil, "database not initialized")
+		return nil, storage.NewStorageError("SigningKeyRepo.GetCurrentInDomain", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
@@ -160,28 +166,28 @@ func (r *SigningKeyRepo) GetCurrent(ctx context.Context) (*storage.SigningKey, e
 
 	var key storage.SigningKey
 	err := r.adapter.db.GetContext(queryCtx, &key,
-		`SELECT id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at
+		`SELECT id, kid, key_domain, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at
 		 FROM signing_keys
-		 WHERE removed_at IS NULL AND activates_at <= NOW()
+		 WHERE key_domain = $1 AND removed_at IS NULL AND activates_at <= NOW()
 		 ORDER BY
 		   CASE WHEN is_current THEN 0 ELSE 1 END,
 		   activates_at DESC
-		 LIMIT 1`)
+		 LIMIT 1`, domain)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-			return nil, storage.NewStorageError("SigningKeyRepo.GetCurrent", storage.ErrorKindNotFound, err, "no current signing key")
+			return nil, storage.NewStorageError("SigningKeyRepo.GetCurrentInDomain", storage.ErrorKindNotFound, err, "no current signing key")
 		}
 		if isContextTimeoutOrCanceled(err) {
-			return nil, storage.NewStorageError("SigningKeyRepo.GetCurrent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
+			return nil, storage.NewStorageError("SigningKeyRepo.GetCurrentInDomain", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
-		return nil, storage.NewStorageError("SigningKeyRepo.GetCurrent", storage.ErrorKindConnection, err, "failed to query current signing key")
+		return nil, storage.NewStorageError("SigningKeyRepo.GetCurrentInDomain", storage.ErrorKindConnection, err, "failed to query current signing key")
 	}
 	return &key, nil
 }
 
-func (r *SigningKeyRepo) ListActive(ctx context.Context) ([]*storage.SigningKey, error) {
+func (r *SigningKeyRepo) ListActiveInDomain(ctx context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error) {
 	if r.adapter.db == nil {
-		return nil, storage.NewStorageError("SigningKeyRepo.ListActive", storage.ErrorKindConnection, nil, "database not initialized")
+		return nil, storage.NewStorageError("SigningKeyRepo.ListActiveInDomain", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
@@ -189,19 +195,20 @@ func (r *SigningKeyRepo) ListActive(ctx context.Context) ([]*storage.SigningKey,
 
 	var keys []*storage.SigningKey
 	err := r.adapter.db.SelectContext(queryCtx, &keys,
-		`SELECT id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at
-		 FROM signing_keys WHERE removed_at IS NULL ORDER BY created_at DESC`)
+		`SELECT id, kid, key_domain, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at
+		 FROM signing_keys WHERE key_domain = $1 AND removed_at IS NULL ORDER BY created_at DESC`, domain)
 	if err != nil {
-		return nil, classifySigningKeyRepoError("SigningKeyRepo.ListActive", err, "failed to list signing keys")
+		return nil, classifySigningKeyRepoError("SigningKeyRepo.ListActiveInDomain", err, "failed to list signing keys")
 	}
 	return keys, nil
 }
 
 // SetCurrent promotes a key to be the current signing key using the domain-supplied
 // activation timestamp.
-func (r *SigningKeyRepo) SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
+
+func (r *SigningKeyRepo) SetCurrentInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
 	if r.adapter.db == nil {
-		return nil, storage.NewStorageError("SigningKeyRepo.SetCurrent", storage.ErrorKindConnection, nil, "database not initialized")
+		return nil, storage.NewStorageError("SigningKeyRepo.SetCurrentInDomain", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
@@ -209,13 +216,13 @@ func (r *SigningKeyRepo) SetCurrent(ctx context.Context, kid id.KeyID, activates
 
 	tx, err := r.adapter.db.BeginTxx(execCtx, nil)
 	if err != nil {
-		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrent", err, "failed to begin transaction")
+		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrentInDomain", err, "failed to begin transaction")
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	lockedRows, err := r.lockActiveSigningKeys(execCtx, tx)
+	lockedRows, err := r.lockActiveSigningKeysInDomain(execCtx, tx, domain)
 	if err != nil {
-		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrent", err, "failed to lock active signing keys")
+		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrentInDomain", err, "failed to lock active signing keys")
 	}
 
 	foundTarget := false
@@ -226,35 +233,33 @@ func (r *SigningKeyRepo) SetCurrent(ctx context.Context, kid id.KeyID, activates
 		}
 	}
 	if !foundTarget {
-		return nil, storage.NewStorageError("SigningKeyRepo.SetCurrent", storage.ErrorKindNotFound, nil, "signing key not found")
+		return nil, storage.NewStorageError("SigningKeyRepo.SetCurrentInDomain", storage.ErrorKindNotFound, nil, "signing key not found")
 	}
 
-	// Demote all current keys.
-	_, err = tx.ExecContext(execCtx, `UPDATE signing_keys SET is_current = false WHERE is_current = true`)
+	_, err = tx.ExecContext(execCtx, `UPDATE signing_keys SET is_current = false WHERE key_domain = $1 AND is_current = true`, domain)
 	if err != nil {
-		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrent", err, "failed to demote keys")
+		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrentInDomain", err, "failed to demote keys")
 	}
 
-	// Promote the target key using the activation timestamp chosen by the domain service.
 	var key storage.SigningKey
 	err = tx.GetContext(execCtx, &key,
 		`UPDATE signing_keys
-		 SET is_current = true, activates_at = $2
-		 WHERE kid = $1 AND removed_at IS NULL
-		 RETURNING id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at`, kid, activatesAt)
+		 SET is_current = true, activates_at = $3
+		 WHERE kid = $2 AND key_domain = $1 AND removed_at IS NULL
+		 RETURNING id, kid, key_domain, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at`, domain, kid, activatesAt)
 	if err != nil {
-		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrent", err, "failed to promote key")
+		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrentInDomain", err, "failed to promote key")
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrent", err, "failed to commit transaction")
+		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrentInDomain", err, "failed to commit transaction")
 	}
 	return &key, nil
 }
 
-func (r *SigningKeyRepo) Delete(ctx context.Context, kid id.KeyID) error {
+func (r *SigningKeyRepo) DeleteInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) error {
 	if r.adapter.db == nil {
-		return storage.NewStorageError("SigningKeyRepo.Delete", storage.ErrorKindConnection, nil, "database not initialized")
+		return storage.NewStorageError("SigningKeyRepo.DeleteInDomain", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
@@ -262,13 +267,13 @@ func (r *SigningKeyRepo) Delete(ctx context.Context, kid id.KeyID) error {
 
 	tx, err := r.adapter.db.BeginTxx(execCtx, nil)
 	if err != nil {
-		return classifySigningKeyRepoError("SigningKeyRepo.Delete", err, "failed to begin transaction")
+		return classifySigningKeyRepoError("SigningKeyRepo.DeleteInDomain", err, "failed to begin transaction")
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	lockedRows, err := r.lockActiveSigningKeys(execCtx, tx)
+	lockedRows, err := r.lockActiveSigningKeysInDomain(execCtx, tx, domain)
 	if err != nil {
-		return classifySigningKeyRepoError("SigningKeyRepo.Delete", err, "failed to lock active signing keys")
+		return classifySigningKeyRepoError("SigningKeyRepo.DeleteInDomain", err, "failed to lock active signing keys")
 	}
 
 	activeCount := len(lockedRows)
@@ -281,9 +286,8 @@ func (r *SigningKeyRepo) Delete(ctx context.Context, kid id.KeyID) error {
 			break
 		}
 	}
-
 	if !foundTarget {
-		return storage.NewStorageError("SigningKeyRepo.Delete", storage.ErrorKindNotFound, nil, "signing key not found")
+		return storage.NewStorageError("SigningKeyRepo.DeleteInDomain", storage.ErrorKindNotFound, nil, "signing key not found")
 	}
 	if activeCount <= 1 {
 		return ports.ErrLastActiveKey
@@ -297,19 +301,19 @@ func (r *SigningKeyRepo) Delete(ctx context.Context, kid id.KeyID) error {
 		return ports.ErrEffectiveCurrentKey
 	}
 	result, err := tx.ExecContext(execCtx,
-		`UPDATE signing_keys SET removed_at = $1 WHERE kid = $2 AND removed_at IS NULL`, now, kid)
+		`UPDATE signing_keys SET removed_at = $3 WHERE kid = $2 AND key_domain = $1 AND removed_at IS NULL`, domain, kid, now)
 	if err != nil {
-		return classifySigningKeyRepoError("SigningKeyRepo.Delete", err, "failed to delete signing key")
+		return classifySigningKeyRepoError("SigningKeyRepo.DeleteInDomain", err, "failed to delete signing key")
 	}
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return storage.NewStorageError("SigningKeyRepo.Delete", storage.ErrorKindUnknown, err, "failed to determine rows affected")
+		return storage.NewStorageError("SigningKeyRepo.DeleteInDomain", storage.ErrorKindUnknown, err, "failed to determine rows affected")
 	}
 	if rowsAffected != 1 {
-		return storage.NewStorageError("SigningKeyRepo.Delete", storage.ErrorKindUnknown, nil, "invariant violation: locked signing key was not updated")
+		return storage.NewStorageError("SigningKeyRepo.DeleteInDomain", storage.ErrorKindUnknown, nil, "invariant violation: locked signing key was not updated")
 	}
 	if err := tx.Commit(); err != nil {
-		return classifySigningKeyRepoError("SigningKeyRepo.Delete", err, "failed to commit transaction")
+		return classifySigningKeyRepoError("SigningKeyRepo.DeleteInDomain", err, "failed to commit transaction")
 	}
 	return nil
 }
@@ -345,9 +349,9 @@ func (r *SigningKeyRepo) WithBootstrapLock(ctx context.Context, fn func(context.
 	return nil
 }
 
-func (r *SigningKeyRepo) CountActive(ctx context.Context) (int, error) {
+func (r *SigningKeyRepo) CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error) {
 	if r.adapter.db == nil {
-		return 0, storage.NewStorageError("SigningKeyRepo.CountActive", storage.ErrorKindConnection, nil, "database not initialized")
+		return 0, storage.NewStorageError("SigningKeyRepo.CountActiveInDomain", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
@@ -355,12 +359,12 @@ func (r *SigningKeyRepo) CountActive(ctx context.Context) (int, error) {
 
 	var count int
 	err := r.adapter.db.GetContext(queryCtx, &count,
-		`SELECT COUNT(*) FROM signing_keys WHERE removed_at IS NULL`)
+		`SELECT COUNT(*) FROM signing_keys WHERE key_domain = $1 AND removed_at IS NULL`, domain)
 	if err != nil {
 		if isContextTimeoutOrCanceled(err) {
-			return 0, storage.NewStorageError("SigningKeyRepo.CountActive", storage.ErrorKindTimeout, err, "operation exceeded timeout")
+			return 0, storage.NewStorageError("SigningKeyRepo.CountActiveInDomain", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
-		return 0, storage.NewStorageError("SigningKeyRepo.CountActive", storage.ErrorKindConnection, err, "failed to count signing keys")
+		return 0, storage.NewStorageError("SigningKeyRepo.CountActiveInDomain", storage.ErrorKindConnection, err, "failed to count signing keys")
 	}
 	return count, nil
 }

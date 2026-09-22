@@ -1158,56 +1158,6 @@ func TestAgentsHandler_ClientURIsValidation(t *testing.T) {
 	})
 }
 
-// T043: Unit tests for agent permission_sets validation
-// These tests document the validation behavior is correct in the handler implementation.
-// Full integration testing happens in E2E tests (T045).
-func TestAgentsHandler_CreateAgent_PermissionSets_RedPhase(t *testing.T) {
-	logger := slog.Default()
-
-	// Note: These tests are placeholder documentation for T043 red phase.
-	// The actual PermissionSetService validation is tested via E2E tests (T045) which
-	// exercise the full flow with a real service instance.
-	// The handler implementation already includes the validation logic for:
-	// - Empty permission_sets list validation
-	// - Non-existent permission_set_id validation via psService.ValidateIDs
-	// - Preservation of declaration order in JSONB storage
-
-	t.Run("handler accepts permission_sets in request (red phase)", func(t *testing.T) {
-		mockRepo := new(MockAgentRepository)
-		mockServiceRepo := new(MockProviderRepository)
-		handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger)
-
-		psID1 := id.NewPermissionSetID()
-		reqBody := AgentRequest{
-			ClientID:    ptr.To("test-client"),
-			DisplayName: "Test Agent",
-			Description: "Test description",
-			PermissionSets: []PermissionSetRequest{
-				{
-					PermissionSetID: psID1.String(),
-					RequirementType: "mandatory",
-				},
-			},
-		}
-		bodyBytes, _ := json.Marshal(reqBody)
-
-		mockRepo.On("Create", mock.Anything, mock.MatchedBy(func(a *storage.Agent) bool {
-			// Verify permission sets field is populated (even with nil psService, validation is skipped)
-			return a.ClientID != nil && string(*a.ClientID) == "test-client" && len(a.PermissionSets) == 1
-		})).Return(nil)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/agents", bytes.NewReader(bodyBytes))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		handler.CreateAgent(w, req)
-
-		// With nil psService, handler skips validation but still parses and stores permission_sets
-		assert.Equal(t, http.StatusCreated, w.Code)
-		mockRepo.AssertExpectations(t)
-	})
-}
-
 // MockPermissionSetValidator is a mock implementation of PermissionSetValidator.
 type MockPermissionSetValidator struct {
 	mock.Mock

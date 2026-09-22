@@ -115,6 +115,7 @@ func (s *SigningKeyService) generateAndStore(ctx context.Context, algorithm stri
 	key := &storage.SigningKey{
 		ID:                  id.NewSigningKeyID(),
 		KID:                 kid,
+		KeyDomain:           storage.KeyDomainTokenSigning,
 		Algorithm:           algorithm,
 		PrivateKeyEncrypted: encrypted,
 		IsCurrent:           makeCurrent,
@@ -142,7 +143,7 @@ func (s *SigningKeyService) generateAndStore(ctx context.Context, algorithm stri
 // All active keys are included regardless of activates_at, so new keys appear in the
 // JWKS during the grace period and clients can cache them before they start signing.
 func (s *SigningKeyService) BuildJWKS(ctx context.Context) (jwk.Set, error) {
-	keys, err := s.repo.ListActive(ctx)
+	keys, err := s.repo.ListActiveInDomain(ctx, storage.KeyDomainTokenSigning)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list active keys: %w", err)
 	}
@@ -199,24 +200,24 @@ func (s *SigningKeyService) BuildJWKS(ctx context.Context) (jwk.Set, error) {
 
 // ListKeys returns all active signing keys for admin listing.
 func (s *SigningKeyService) ListKeys(ctx context.Context) ([]*storage.SigningKey, error) {
-	return s.repo.ListActive(ctx)
+	return s.repo.ListActiveInDomain(ctx, storage.KeyDomainTokenSigning)
 }
 
 // PromoteKey promotes a signing key and returns the updated key metadata.
 // Admin-driven promotion takes effect immediately because the target key is already
 // present in JWKS and the operator explicitly requested activation now.
 func (s *SigningKeyService) PromoteKey(ctx context.Context, kid id.KeyID) (*storage.SigningKey, error) {
-	return s.repo.SetCurrent(ctx, kid, time.Now().UTC())
+	return s.repo.SetCurrentInDomain(ctx, storage.KeyDomainTokenSigning, kid, time.Now().UTC())
 }
 
 // GetCurrent returns the active signing key used for token signing.
 func (s *SigningKeyService) GetCurrent(ctx context.Context) (*storage.SigningKey, error) {
-	return s.repo.GetCurrent(ctx)
+	return s.repo.GetCurrentInDomain(ctx, storage.KeyDomainTokenSigning)
 }
 
 // CountActive returns the number of non-removed signing keys.
 func (s *SigningKeyService) CountActive(ctx context.Context) (int, error) {
-	return s.repo.CountActive(ctx)
+	return s.repo.CountActiveInDomain(ctx, storage.KeyDomainTokenSigning)
 }
 
 // EnsureInitialKey creates a single immediately-active signing key when none exist.
@@ -229,7 +230,7 @@ func (s *SigningKeyService) EnsureInitialKey(ctx context.Context, algorithm stri
 	var created *storage.SigningKey
 
 	err := s.bootstrapCoordinator.WithBootstrapLock(ctx, func(lockCtx context.Context) error {
-		count, err := s.repo.CountActive(lockCtx)
+		count, err := s.repo.CountActiveInDomain(lockCtx, storage.KeyDomainTokenSigning)
 		if err != nil {
 			return fmt.Errorf("failed to count active keys: %w", err)
 		}
@@ -251,7 +252,7 @@ func (s *SigningKeyService) EnsureInitialKey(ctx context.Context, algorithm stri
 			recoveryCtx, cancel := context.WithTimeout(context.Background(), bootstrapRecoveryProbeTimeout)
 			defer cancel()
 
-			count, countErr := s.repo.CountActive(recoveryCtx)
+			count, countErr := s.repo.CountActiveInDomain(recoveryCtx, storage.KeyDomainTokenSigning)
 			if countErr != nil {
 				s.logger.Warn("bootstrap recovery count probe failed",
 					"created_locally", created != nil,
@@ -274,12 +275,12 @@ func (s *SigningKeyService) EnsureInitialKey(ctx context.Context, algorithm stri
 // domain service. Repository implementations still enforce the same rules
 // atomically as a fail-closed backstop for concurrent delete/promotion races.
 func (s *SigningKeyService) DeleteKey(ctx context.Context, kid id.KeyID) error {
-	key, err := s.repo.GetByKID(ctx, kid)
+	key, err := s.repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, kid)
 	if err != nil {
 		return fmt.Errorf("failed to get signing key: %w", err)
 	}
 
-	count, err := s.repo.CountActive(ctx)
+	count, err := s.repo.CountActiveInDomain(ctx, storage.KeyDomainTokenSigning)
 	if err != nil {
 		return fmt.Errorf("failed to count active keys: %w", err)
 	}
@@ -290,7 +291,7 @@ func (s *SigningKeyService) DeleteKey(ctx context.Context, kid id.KeyID) error {
 		return ports.ErrCurrentKey
 	}
 
-	keys, err := s.repo.ListActive(ctx)
+	keys, err := s.repo.ListActiveInDomain(ctx, storage.KeyDomainTokenSigning)
 	if err != nil {
 		return fmt.Errorf("failed to list active keys: %w", err)
 	}
@@ -298,7 +299,7 @@ func (s *SigningKeyService) DeleteKey(ctx context.Context, kid id.KeyID) error {
 		return ports.ErrEffectiveCurrentKey
 	}
 
-	return s.repo.Delete(ctx, kid)
+	return s.repo.DeleteInDomain(ctx, storage.KeyDomainTokenSigning, kid)
 }
 
 // DecryptPrivateKey decrypts the private key material of a signing key.

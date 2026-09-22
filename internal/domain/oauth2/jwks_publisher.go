@@ -17,7 +17,7 @@ import (
 const upstreamFailureRelogEvery = 10
 
 type JWKSPublisherService struct {
-	localKeys                  ports.SigningKeyManager
+	tokenSigningKeys           ports.SigningKeyManager
 	upstreamKeys               ports.JWKSPort
 	requiresUpstream           bool
 	logger                     *slog.Logger
@@ -27,17 +27,17 @@ type JWKSPublisherService struct {
 var _ ports.JWKSPublisherPort = (*JWKSPublisherService)(nil)
 var _ ports.JWKSPublisherHealthPort = (*JWKSPublisherService)(nil)
 
-// NewLocalJWKSPublisher creates a publisher that serves only local signing keys.
+// NewLocalJWKSPublisher creates a publisher that serves only broker token-signing keys.
 // Used in local mode where no upstream key source exists.
-func NewLocalJWKSPublisher(localKeys ports.SigningKeyManager, logger *slog.Logger) *JWKSPublisherService {
-	if localKeys == nil {
-		panic("BUG: NewLocalJWKSPublisher requires non-nil localKeys")
+func NewLocalJWKSPublisher(tokenSigningKeys ports.SigningKeyManager, logger *slog.Logger) *JWKSPublisherService {
+	if tokenSigningKeys == nil {
+		panic("BUG: NewLocalJWKSPublisher requires non-nil tokenSigningKeys")
 	}
 	if logger == nil {
 		panic("BUG: NewLocalJWKSPublisher requires non-nil logger")
 	}
 	return &JWKSPublisherService{
-		localKeys:        localKeys,
+		tokenSigningKeys: tokenSigningKeys,
 		requiresUpstream: false,
 		logger:           logger,
 	}
@@ -58,10 +58,10 @@ func NewProxyJWKSPublisher(upstreamKeys ports.JWKSPort, logger *slog.Logger) *JW
 	}
 }
 
-// NewHybridJWKSPublisher creates a publisher that aggregates local and upstream keys.
-func NewHybridJWKSPublisher(localKeys ports.SigningKeyManager, upstreamKeys ports.JWKSPort, logger *slog.Logger) *JWKSPublisherService {
-	if localKeys == nil {
-		panic("BUG: NewHybridJWKSPublisher requires non-nil localKeys")
+// NewHybridJWKSPublisher creates a publisher that aggregates token-signing and upstream keys.
+func NewHybridJWKSPublisher(tokenSigningKeys ports.SigningKeyManager, upstreamKeys ports.JWKSPort, logger *slog.Logger) *JWKSPublisherService {
+	if tokenSigningKeys == nil {
+		panic("BUG: NewHybridJWKSPublisher requires non-nil tokenSigningKeys")
 	}
 	if upstreamKeys == nil {
 		panic("BUG: NewHybridJWKSPublisher requires non-nil upstreamKeys")
@@ -70,7 +70,7 @@ func NewHybridJWKSPublisher(localKeys ports.SigningKeyManager, upstreamKeys port
 		panic("BUG: NewHybridJWKSPublisher requires non-nil logger")
 	}
 	return &JWKSPublisherService{
-		localKeys:        localKeys,
+		tokenSigningKeys: tokenSigningKeys,
 		upstreamKeys:     upstreamKeys,
 		requiresUpstream: true,
 		logger:           logger,
@@ -89,9 +89,9 @@ func (s *JWKSPublisherService) PublishJWKS(ctx context.Context) (jwk.Set, error)
 	}
 
 	var local jwk.Set
-	if s.localKeys != nil {
+	if s.tokenSigningKeys != nil {
 		var err error
-		local, err = s.localKeys.BuildJWKS(ctx)
+		local, err = s.tokenSigningKeys.BuildJWKS(ctx)
 		if err != nil {
 			s.logger.Error("failed to build local JWKS", "error", err)
 			return nil, fmt.Errorf("failed to build local JWKS: %w", err)

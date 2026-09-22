@@ -166,6 +166,13 @@ func SetupEnduserRoutes(r chi.Router, h *app.EnduserHandlers, cfg EnduserRouteCo
 		}
 	})
 
+	if h.CIMDMetadata != nil {
+		r.Route("/.well-known/oauth-client", func(cimdRouter chi.Router) {
+			cimdRouter.Get("/{service-id}/jwks.json", h.CIMDMetadata.JWKS)
+			cimdRouter.Get("/{service-id}", h.CIMDMetadata.Metadata)
+		})
+	}
+
 	// RFC 8414 discovery endpoint — single handler serves both modes.
 	// The OAuth2Service.GenerateMetadata() includes JWKS URI in local mode.
 	r.Route("/.well-known", func(discoveryRouter chi.Router) {

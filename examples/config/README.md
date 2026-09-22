@@ -125,10 +125,14 @@ Third-party OAuth2 session management configuration. Demonstrates:
 - PKCE code verifier length configuration (32-128 bytes)
 - Security-focused comments explaining each setting
 - Environment variable substitution for sensitive keys
+- A stable public HTTPS `server.enduser.public_url` for CIMD confidential services
+
 
 This configuration is required when enabling OAuth2 session management with third-party
 services (GitHub, Google, Microsoft, etc.). It controls how the broker orchestrates
 OAuth2 authorization flows and stores encrypted tokens.
+See [`third-party-oauth2.yaml`](third-party-oauth2.yaml) for the HTTPS `server.enduser.public_url` example and CIMD confidential-service precondition.
+
 
 **Usage:**
 ```bash

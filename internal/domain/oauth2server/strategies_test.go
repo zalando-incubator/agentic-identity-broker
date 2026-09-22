@@ -72,7 +72,9 @@ func (s *strategySigningKeyStore) CreateAndSetCurrent(_ context.Context, key *st
 	}
 
 	for _, existing := range s.byID {
-		existing.IsCurrent = false
+		if existing.KeyDomain == key.KeyDomain {
+			existing.IsCurrent = false
+		}
 	}
 
 	clone := cloneStrategySigningKey(key)
@@ -82,76 +84,62 @@ func (s *strategySigningKeyStore) CreateAndSetCurrent(_ context.Context, key *st
 	return nil
 }
 
-func (s *strategySigningKeyStore) GetByKID(_ context.Context, kid id.KeyID) (*storage.SigningKey, error) {
+func (s *strategySigningKeyStore) GetByKIDInDomain(_ context.Context, domain storage.KeyDomain, kid id.KeyID) (*storage.SigningKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	key, exists := s.byKID[kid]
-	if !exists || key.RemovedAt != nil {
-		return nil, storage.NewStorageError("strategySigningKeyStore.GetByKID", storage.ErrorKindNotFound, nil, "signing key not found")
+	if !exists || key.RemovedAt != nil || key.KeyDomain != domain {
+		return nil, storage.NewStorageError("strategySigningKeyStore.GetByKIDInDomain", storage.ErrorKindNotFound, nil, "signing key not found")
 	}
 	return cloneStrategySigningKey(key), nil
 }
 
-func (s *strategySigningKeyStore) GetCurrent(_ context.Context) (*storage.SigningKey, error) {
+func (s *strategySigningKeyStore) GetCurrentInDomain(_ context.Context, domain storage.KeyDomain) (*storage.SigningKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	now := time.Now()
-	for _, key := range s.byID {
-		if key.IsCurrent && key.RemovedAt == nil && !key.ActivatesAt.After(now) {
-			return cloneStrategySigningKey(key), nil
-		}
+	if current := currentUsableStrategySigningKeyInDomain(s.byID, domain, time.Now()); current != nil {
+		return cloneStrategySigningKey(current), nil
 	}
-
-	var best *storage.SigningKey
-	for _, key := range s.byID {
-		if key.RemovedAt == nil && !key.ActivatesAt.After(now) {
-			if best == nil || key.ActivatesAt.After(best.ActivatesAt) {
-				best = key
-			}
-		}
-	}
-	if best != nil {
-		return cloneStrategySigningKey(best), nil
-	}
-
-	return nil, storage.NewStorageError("strategySigningKeyStore.GetCurrent", storage.ErrorKindNotFound, nil, "no current signing key")
+	return nil, storage.NewStorageError("strategySigningKeyStore.GetCurrentInDomain", storage.ErrorKindNotFound, nil, "no current signing key")
 }
 
-func (s *strategySigningKeyStore) ListActive(_ context.Context) ([]*storage.SigningKey, error) {
+func (s *strategySigningKeyStore) ListActiveInDomain(_ context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	keys := make([]*storage.SigningKey, 0, len(s.byID))
 	for _, key := range s.byID {
-		if key.RemovedAt == nil {
+		if key.KeyDomain == domain && key.RemovedAt == nil {
 			keys = append(keys, cloneStrategySigningKey(key))
 		}
 	}
 	return keys, nil
 }
 
-func (s *strategySigningKeyStore) SetCurrent(_ context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
+func (s *strategySigningKeyStore) SetCurrentInDomain(_ context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	target, exists := s.byKID[kid]
-	if !exists || target.RemovedAt != nil {
-		return nil, storage.NewStorageError("strategySigningKeyStore.SetCurrent", storage.ErrorKindNotFound, nil, "signing key not found")
+	if !exists || target.RemovedAt != nil || target.KeyDomain != domain {
+		return nil, storage.NewStorageError("strategySigningKeyStore.SetCurrentInDomain", storage.ErrorKindNotFound, nil, "signing key not found")
 	}
 	for _, key := range s.byID {
-		key.IsCurrent = false
+		if key.KeyDomain == domain {
+			key.IsCurrent = false
+		}
 	}
 	target.IsCurrent = true
 	target.ActivatesAt = activatesAt
 	return cloneStrategySigningKey(target), nil
 }
 
-func currentUsableStrategySigningKey(keys map[id.SigningKeyID]*storage.SigningKey, now time.Time) *storage.SigningKey {
+func currentUsableStrategySigningKeyInDomain(keys map[id.SigningKeyID]*storage.SigningKey, domain storage.KeyDomain, now time.Time) *storage.SigningKey {
 	var best *storage.SigningKey
 	for _, key := range keys {
-		if key.RemovedAt != nil || key.ActivatesAt.After(now) {
+		if key.KeyDomain != domain || key.RemovedAt != nil || key.ActivatesAt.After(now) {
 			continue
 		}
 		if best == nil || (!best.IsCurrent && key.IsCurrent) || (best.IsCurrent == key.IsCurrent && key.ActivatesAt.After(best.ActivatesAt)) {
@@ -161,18 +149,18 @@ func currentUsableStrategySigningKey(keys map[id.SigningKeyID]*storage.SigningKe
 	return best
 }
 
-func (s *strategySigningKeyStore) Delete(_ context.Context, kid id.KeyID) error {
+func (s *strategySigningKeyStore) DeleteInDomain(_ context.Context, domain storage.KeyDomain, kid id.KeyID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	key, exists := s.byKID[kid]
-	if !exists || key.RemovedAt != nil {
-		return storage.NewStorageError("strategySigningKeyStore.Delete", storage.ErrorKindNotFound, nil, "signing key not found")
+	if !exists || key.RemovedAt != nil || key.KeyDomain != domain {
+		return storage.NewStorageError("strategySigningKeyStore.DeleteInDomain", storage.ErrorKindNotFound, nil, "signing key not found")
 	}
 
 	activeCount := 0
 	for _, existing := range s.byID {
-		if existing.RemovedAt == nil {
+		if existing.KeyDomain == domain && existing.RemovedAt == nil {
 			activeCount++
 		}
 	}
@@ -182,12 +170,11 @@ func (s *strategySigningKeyStore) Delete(_ context.Context, kid id.KeyID) error 
 	if key.IsCurrent {
 		return ports.ErrCurrentKey
 	}
-
-	now := time.Now()
-	if current := currentUsableStrategySigningKey(s.byID, now); current != nil && current.KID == kid {
+	if current := currentUsableStrategySigningKeyInDomain(s.byID, domain, time.Now()); current != nil && current.KID == kid {
 		return ports.ErrEffectiveCurrentKey
 	}
 
+	now := time.Now()
 	key.RemovedAt = &now
 	return nil
 }
@@ -198,13 +185,13 @@ func (s *strategySigningKeyStore) WithBootstrapLock(ctx context.Context, fn func
 	return fn(ctx)
 }
 
-func (s *strategySigningKeyStore) CountActive(_ context.Context) (int, error) {
+func (s *strategySigningKeyStore) CountActiveInDomain(_ context.Context, domain storage.KeyDomain) (int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	count := 0
 	for _, key := range s.byID {
-		if key.RemovedAt == nil {
+		if key.KeyDomain == domain && key.RemovedAt == nil {
 			count++
 		}
 	}
@@ -580,7 +567,7 @@ func TestJWXAccessTokenStrategy_ValidateAccessToken(t *testing.T) {
 	})
 
 	t.Run("expired token rejected", func(t *testing.T) {
-		key, err := repo.GetCurrent(ctx)
+		key, err := repo.GetCurrentInDomain(ctx, storage.KeyDomainTokenSigning)
 		require.NoError(t, err)
 		privPEM, err := svc.DecryptPrivateKey(ctx, key)
 		require.NoError(t, err)
@@ -624,18 +611,18 @@ type connectionErrorSigningKeyRepo struct {
 
 var _ ports.SigningKeyRepository = (*connectionErrorSigningKeyRepo)(nil)
 
-func (r *connectionErrorSigningKeyRepo) GetCurrent(_ context.Context) (*storage.SigningKey, error) {
+func (r *connectionErrorSigningKeyRepo) GetCurrentInDomain(_ context.Context, _ storage.KeyDomain) (*storage.SigningKey, error) {
 	return nil, storage.NewStorageError(
-		"SigningKeyRepo.GetCurrent",
+		"SigningKeyRepo.GetCurrentInDomain",
 		storage.ErrorKindConnection,
 		nil,
 		"connection refused",
 	)
 }
 
-func (r *connectionErrorSigningKeyRepo) GetByKID(_ context.Context, _ id.KeyID) (*storage.SigningKey, error) {
+func (r *connectionErrorSigningKeyRepo) GetByKIDInDomain(_ context.Context, _ storage.KeyDomain, _ id.KeyID) (*storage.SigningKey, error) {
 	return nil, storage.NewStorageError(
-		"SigningKeyRepo.GetByKID",
+		"SigningKeyRepo.GetByKIDInDomain",
 		storage.ErrorKindConnection,
 		nil,
 		"connection refused",

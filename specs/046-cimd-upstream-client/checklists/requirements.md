@@ -41,7 +41,7 @@
 - Mechanical validation confirms that `FR-001` through `FR-026`, `API-001` through `API-007`, and `DB-001` through `DB-003` are each unique and contiguous. Each of the five user stories has a contiguous acceptance-scenario sequence; no clarification markers remain.
 - No clarification markers remain. The specification records the stable HTTPS public URL, existing signing-key lifecycle, and upstream-provider compatibility as explicit assumptions.
 - Refresh validation confirms that all mandatory headings are present, both local baseline links resolve, the two CIMD normative references are present, all requirement identifiers and acceptance scenarios are contiguous, and no template or clarification placeholders remain.
-- The API contract explicitly defines the generated metadata and public-key URL shapes, required response fields and headers, non-active-service 404 behavior, and administrative fields; recorded stakeholder confirmation remains required before implementation.
+- The API contract explicitly defines the generated metadata and public-key URL shapes, required response fields and headers, unavailable-service 404 behavior, and administrative fields; recorded stakeholder confirmation remains required before implementation.
 - Post-annotation validation confirms 26 functional, 7 API, and 3 persistence requirement identifiers remain unique and contiguous; the five scenario sequences remain contiguous; mandatory headings and local baseline links resolve; and no template or clarification markers exist.
 
 ### Validation iteration 5 — passed

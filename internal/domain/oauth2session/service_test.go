@@ -235,6 +235,8 @@ func TestRefreshAccessToken_OmitsAuthorizationParamsForUnconfiguredService(t *te
 
 func TestRefreshAccessToken_PublicClientOmitsClientSecret(t *testing.T) {
 	service, _, _ := setupService(t)
+	signer := &cimdAssertionSignerSpy{}
+	service = service.WithCIMDAssertionSigner(signer)
 	provider := createTestService(id.NewServiceID())
 	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
 	provider.Secret = model.NewAbsentSecret()
@@ -262,10 +264,13 @@ func TestRefreshAccessToken_PublicClientOmitsClientSecret(t *testing.T) {
 	expectedBody.Set("business_partner_id", "12345")
 	assert.Equal(t, expectedBody.Encode(), receivedBody)
 	assert.NotContains(t, receivedBody, "client_secret")
+	assert.Zero(t, assertionSignerCallCount(signer), "public refresh behavior must not invoke the CIMD signer")
 }
 
 func TestRefreshAccessToken_ConfidentialClientPreservesRequestBody(t *testing.T) {
 	service, _, _ := setupService(t)
+	signer := &cimdAssertionSignerSpy{}
+	service = service.WithCIMDAssertionSigner(signer)
 	provider := createTestService(id.NewServiceID())
 	provider.AuthorizationParams = map[string]string{"business_partner_id": "12345"}
 
@@ -291,6 +296,108 @@ func TestRefreshAccessToken_ConfidentialClientPreservesRequestBody(t *testing.T)
 	expectedBody.Set("client_secret", "test-client-secret")
 	expectedBody.Set("business_partner_id", "12345")
 	assert.Equal(t, expectedBody.Encode(), receivedBody)
+	assert.Zero(t, assertionSignerCallCount(signer), "static confidential refresh behavior must not invoke the CIMD signer")
+}
+
+// T057: CIMD refreshes authenticate every request with one newly signed JWT-bearer assertion.
+func TestRefreshAccessToken_CIMDClientUsesFreshAssertionForEachRequest(t *testing.T) {
+	service, _, _ := setupService(t)
+	signer := &cimdAssertionSignerSpy{}
+	service = service.WithCIMDAssertionSigner(signer)
+	serviceID := id.NewServiceID()
+
+	var requests []capturedTokenExchangeRequest
+	tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		form, parseErr := url.ParseQuery(string(body))
+		requests = append(requests, capturedTokenExchangeRequest{
+			method: r.Method,
+			body:   form,
+			header: r.Header.Clone(),
+			query:  r.URL.Query(),
+			err:    errorsJoin(readErr, parseErr),
+		})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"token","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer tokenEndpoint.Close()
+
+	provider := createCIMDTestProvider(serviceID, tokenEndpoint.URL)
+	for range 2 {
+		_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+		require.NoError(t, err)
+	}
+
+	require.Len(t, requests, 2)
+	for _, request := range requests {
+		require.NoError(t, request.err)
+		assert.Equal(t, http.MethodPost, request.method)
+		assert.Equal(t, "refresh_token", request.body.Get("grant_type"))
+		assert.Equal(t, cimdClientIDForService(serviceID), request.body.Get("client_id"))
+		assert.Equal(t, []string{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}, request.body["client_assertion_type"])
+		require.Len(t, request.body["client_assertion"], 1)
+		assert.NotEmpty(t, request.body.Get("client_assertion"))
+		assert.NotContains(t, request.body, "client_secret")
+		assert.Empty(t, request.header.Values("Authorization"))
+		assert.Empty(t, request.query)
+	}
+
+	assert.Len(t, map[string]struct{}{
+		requests[0].body.Get("client_assertion"): {},
+		requests[1].body.Get("client_assertion"): {},
+	}, 2, "each refresh request must carry a freshly signed assertion")
+
+	signedRequests := signer.Requests()
+	require.Len(t, signedRequests, 2)
+	for _, signedRequest := range signedRequests {
+		assert.Equal(t, id.ClientID(cimdClientIDForService(serviceID)), signedRequest.clientID)
+		assert.Equal(t, tokenEndpoint.URL, signedRequest.tokenEndpoint)
+	}
+}
+
+// T057: A missing or rejected CIMD signer must prevent refresh token-endpoint traffic.
+func TestRefreshAccessToken_CIMDClientFailsClosedBeforeTokenRequestWhenSigningUnavailable(t *testing.T) {
+	tests := []struct {
+		name      string
+		signer    *cimdAssertionSignerSpy
+		wantCalls int
+	}{
+		{
+			name:      "missing signer",
+			wantCalls: 0,
+		},
+		{
+			name: "signer rejects assertion",
+			signer: &cimdAssertionSignerSpy{
+				err: fmt.Errorf("assertion signing unavailable"),
+			},
+			wantCalls: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service, _, _ := setupService(t)
+			if tt.signer != nil {
+				service = service.WithCIMDAssertionSigner(tt.signer)
+			}
+
+			serviceID := id.NewServiceID()
+			var tokenRequests atomic.Int64
+			tokenEndpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tokenRequests.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer tokenEndpoint.Close()
+
+			provider := createCIMDTestProvider(serviceID, tokenEndpoint.URL)
+			token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+			require.Error(t, err)
+			assert.Nil(t, token)
+			assert.Equal(t, tt.wantCalls, assertionSignerCallCount(tt.signer))
+			assert.Zero(t, tokenRequests.Load(), "signing must fail before a refresh token request can leave the broker")
+		})
+	}
 }
 
 func TestInitiateOAuth2Flow_ServiceNotFound(t *testing.T) {
@@ -504,6 +611,8 @@ func TestHandleCallback_BuildOAuth2Config_PublicClientUsesBodyAuthentication(t *
 func TestHandleCallback_BuildOAuth2Config_ConfidentialClientUsesAutoDetectedAuthentication(t *testing.T) {
 	ctx := context.Background()
 	service, _, providerService := setupService(t)
+	signer := &cimdAssertionSignerSpy{}
+	service = service.WithCIMDAssertionSigner(signer)
 	principal := id.Principal("user@example.com")
 	serviceID := id.NewServiceID()
 
@@ -560,6 +669,7 @@ func TestHandleCallback_BuildOAuth2Config_ConfidentialClientUsesAutoDetectedAuth
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, int64(2), requestCount.Load(), "default oauth2 authentication must fall back from basic to body credentials")
+	assert.Zero(t, assertionSignerCallCount(signer), "static confidential code exchange behavior must not invoke the CIMD signer")
 }
 
 // =============================================================================
@@ -1355,6 +1465,10 @@ func setupService(t *testing.T) (*oauth2session.OAuth2SessionService, *memory.In
 	return service, serviceRepo, providerService
 }
 
+type readyCIMDKeyReadiness struct{}
+
+func (readyCIMDKeyReadiness) RequirePublishedKey(context.Context) error { return nil }
+
 func setupServiceWithConfig(
 	t *testing.T,
 	configure func(*oauth2session.Config),
@@ -1393,7 +1507,7 @@ func setupServiceWithConfig(
 		nil,
 		false,
 		slog.Default(),
-	)
+	).WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
 
 	svc := oauth2session.NewOAuth2SessionService(
 		providerService,

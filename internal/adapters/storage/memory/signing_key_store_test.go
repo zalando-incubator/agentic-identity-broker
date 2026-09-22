@@ -18,12 +18,19 @@ func testSigningKey(kid string, isCurrent bool) *storage.SigningKey {
 	return &storage.SigningKey{
 		ID:                  id.NewSigningKeyID(),
 		KID:                 id.NewKeyID(kid),
+		KeyDomain:           storage.KeyDomainTokenSigning,
 		Algorithm:           "ES256",
 		PrivateKeyEncrypted: []byte("ciphertext"),
 		IsCurrent:           isCurrent,
 		ActivatesAt:         now,
 		CreatedAt:           now,
 	}
+}
+
+func testSigningKeyInDomain(kid string, domain storage.KeyDomain, isCurrent bool) *storage.SigningKey {
+	key := testSigningKey(kid, isCurrent)
+	key.KeyDomain = domain
+	return key
 }
 
 func TestSigningKeyStore_WithBootstrapLock(t *testing.T) {
@@ -87,7 +94,7 @@ func TestSigningKeyStore_WithBootstrapLock(t *testing.T) {
 
 		go func() {
 			bootstrapDone <- store.WithBootstrapLock(context.Background(), func(lockCtx context.Context) error {
-				count, err := store.CountActive(lockCtx)
+				count, err := store.CountActiveInDomain(lockCtx, storage.KeyDomainTokenSigning)
 				if err != nil {
 					return err
 				}
@@ -128,11 +135,11 @@ func TestSigningKeyStore_SetCurrent(t *testing.T) {
 		require.NoError(t, store.Create(ctx, other))
 
 		activatesAt := time.Now().UTC().Add(-2 * time.Minute).Round(time.Second)
-		promoted, err := store.SetCurrent(ctx, other.KID, activatesAt)
+		promoted, err := store.SetCurrentInDomain(ctx, storage.KeyDomainTokenSigning, other.KID, activatesAt)
 		require.NoError(t, err)
 		assert.Equal(t, activatesAt, promoted.ActivatesAt)
 
-		stored, err := store.GetByKID(ctx, other.KID)
+		stored, err := store.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, other.KID)
 		require.NoError(t, err)
 		assert.Equal(t, activatesAt, stored.ActivatesAt)
 	})
@@ -145,7 +152,7 @@ func TestSigningKeyStore_Delete(t *testing.T) {
 		key := testSigningKey("current-kid", true)
 		require.NoError(t, store.Create(ctx, key))
 
-		err := store.Delete(ctx, key.KID)
+		err := store.DeleteInDomain(ctx, storage.KeyDomainTokenSigning, key.KID)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ports.ErrLastActiveKey)
 	})
@@ -158,7 +165,7 @@ func TestSigningKeyStore_Delete(t *testing.T) {
 		require.NoError(t, store.Create(ctx, current))
 		require.NoError(t, store.Create(ctx, other))
 
-		err := store.Delete(ctx, current.KID)
+		err := store.DeleteInDomain(ctx, storage.KeyDomainTokenSigning, current.KID)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ports.ErrCurrentKey)
 	})
@@ -173,7 +180,7 @@ func TestSigningKeyStore_Delete(t *testing.T) {
 		require.NoError(t, store.Create(ctx, fallback))
 		require.NoError(t, store.Create(ctx, replacement))
 
-		err := store.Delete(ctx, fallback.KID)
+		err := store.DeleteInDomain(ctx, storage.KeyDomainTokenSigning, fallback.KID)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ports.ErrEffectiveCurrentKey)
 	})
@@ -186,11 +193,118 @@ func TestSigningKeyStore_Delete(t *testing.T) {
 		require.NoError(t, store.Create(ctx, current))
 		require.NoError(t, store.Create(ctx, other))
 
-		err := store.Delete(ctx, other.KID)
+		err := store.DeleteInDomain(ctx, storage.KeyDomainTokenSigning, other.KID)
 		require.NoError(t, err)
 
-		_, err = store.GetByKID(ctx, other.KID)
+		_, err = store.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, other.KID)
 		require.Error(t, err)
 		assert.True(t, ports.IsNotFoundErr(err))
+	})
+}
+
+func TestSigningKeyStore_KeyDomainIsolation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("filters lookup, active keys, and counts by key domain", func(t *testing.T) {
+		store := NewSigningKeyStore()
+		tokenKey := testSigningKeyInDomain("token-key", storage.KeyDomainTokenSigning, false)
+		cimdKey := testSigningKeyInDomain("cimd-key", storage.KeyDomainCIMDClientAuthentication, false)
+		require.NoError(t, store.Create(ctx, tokenKey))
+		require.NoError(t, store.Create(ctx, cimdKey))
+
+		got, err := store.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, tokenKey.KID)
+		require.NoError(t, err)
+		assert.Equal(t, tokenKey.KID, got.KID)
+		assert.Equal(t, storage.KeyDomainTokenSigning, got.KeyDomain)
+
+		_, err = store.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, cimdKey.KID)
+		require.Error(t, err)
+		assert.True(t, ports.IsNotFoundErr(err))
+
+		tokenKeys, err := store.ListActiveInDomain(ctx, storage.KeyDomainTokenSigning)
+		require.NoError(t, err)
+		require.Len(t, tokenKeys, 1)
+		assert.Equal(t, tokenKey.KID, tokenKeys[0].KID)
+
+		count, err := store.CountActiveInDomain(ctx, storage.KeyDomainCIMDClientAuthentication)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	t.Run("only promotes a key from the requested key domain", func(t *testing.T) {
+		store := NewSigningKeyStore()
+		tokenCurrent := testSigningKeyInDomain("token-current", storage.KeyDomainTokenSigning, true)
+		cimdCandidate := testSigningKeyInDomain("cimd-candidate", storage.KeyDomainCIMDClientAuthentication, false)
+		require.NoError(t, store.Create(ctx, tokenCurrent))
+		require.NoError(t, store.Create(ctx, cimdCandidate))
+
+		_, err := store.SetCurrentInDomain(ctx, storage.KeyDomainTokenSigning, cimdCandidate.KID, time.Now().UTC())
+		require.Error(t, err)
+		assert.True(t, ports.IsNotFoundErr(err))
+
+		current, err := store.GetCurrentInDomain(ctx, storage.KeyDomainTokenSigning)
+		require.NoError(t, err)
+		assert.Equal(t, tokenCurrent.KID, current.KID)
+	})
+
+	t.Run("does not delete a key from another key domain", func(t *testing.T) {
+		store := NewSigningKeyStore()
+		tokenCurrent := testSigningKeyInDomain("token-current", storage.KeyDomainTokenSigning, true)
+		cimdKey := testSigningKeyInDomain("cimd-key", storage.KeyDomainCIMDClientAuthentication, false)
+		require.NoError(t, store.Create(ctx, tokenCurrent))
+		require.NoError(t, store.Create(ctx, cimdKey))
+
+		err := store.DeleteInDomain(ctx, storage.KeyDomainTokenSigning, cimdKey.KID)
+		require.Error(t, err)
+		assert.True(t, ports.IsNotFoundErr(err))
+
+		remaining, err := store.GetByKIDInDomain(ctx, storage.KeyDomainCIMDClientAuthentication, cimdKey.KID)
+		require.NoError(t, err)
+		assert.Equal(t, cimdKey.KID, remaining.KID)
+	})
+
+	t.Run("keeps grace-period fallback selection within the requested key domain", func(t *testing.T) {
+		store := NewSigningKeyStore()
+		now := time.Now().UTC()
+		tokenFallback := testSigningKeyInDomain("token-fallback", storage.KeyDomainTokenSigning, false)
+		tokenFallback.ActivatesAt = now.Add(-2 * time.Minute)
+		tokenPending := testSigningKeyInDomain("token-pending", storage.KeyDomainTokenSigning, true)
+		tokenPending.ActivatesAt = now.Add(time.Hour)
+		cimdKey := testSigningKeyInDomain("cimd-key", storage.KeyDomainCIMDClientAuthentication, false)
+		cimdKey.ActivatesAt = now.Add(-time.Minute)
+		require.NoError(t, store.Create(ctx, tokenFallback))
+		require.NoError(t, store.Create(ctx, tokenPending))
+		require.NoError(t, store.Create(ctx, cimdKey))
+
+		current, err := store.GetCurrentInDomain(ctx, storage.KeyDomainTokenSigning)
+		require.NoError(t, err)
+		assert.Equal(t, tokenFallback.KID, current.KID)
+	})
+
+	t.Run("observes an empty domain while bootstrapping under the lock", func(t *testing.T) {
+		store := NewSigningKeyStore()
+		tokenKey := testSigningKeyInDomain("token-key", storage.KeyDomainTokenSigning, true)
+		require.NoError(t, store.Create(ctx, tokenKey))
+
+		err := store.WithBootstrapLock(ctx, func(lockCtx context.Context) error {
+			count, err := store.CountActiveInDomain(lockCtx, storage.KeyDomainCIMDClientAuthentication)
+			require.NoError(t, err)
+			assert.Zero(t, count)
+			return nil
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("rejects duplicate kids across key domains", func(t *testing.T) {
+		store := NewSigningKeyStore()
+		tokenKey := testSigningKeyInDomain("shared-kid", storage.KeyDomainTokenSigning, true)
+		cimdKey := testSigningKeyInDomain("shared-kid", storage.KeyDomainCIMDClientAuthentication, true)
+		require.NoError(t, store.Create(ctx, tokenKey))
+
+		err := store.Create(ctx, cimdKey)
+		require.Error(t, err)
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
 	})
 }
