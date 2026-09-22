@@ -26,10 +26,10 @@ func providerEntityCopy(entity *model.ThirdpartyOAuth2ProviderEntity) (*model.Th
 	if err := entity.TokenEndpointAuthMethod.Validate(); err != nil {
 		return nil, err
 	}
-	if entity.IsPublicClient() != entity.Secret.IsAbsent() {
+	if (entity.IsPublicClient() || entity.IsCIMDConfidentialClient()) != entity.Secret.IsAbsent() {
 		return nil, errors.New("token_endpoint_auth_method and client_secret state must agree")
 	}
-	if !entity.IsPublicClient() {
+	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
 		if _, err := entity.Secret.GetCiphertext(); err != nil {
 			return nil, fmt.Errorf("entity secret must be encrypted with non-empty ciphertext: %w", err)
 		}

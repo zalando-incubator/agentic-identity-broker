@@ -137,14 +137,14 @@ type recoveryCountContextRepo struct {
 	sawRecoveryCount           bool
 }
 
-func (r *recoveryCountContextRepo) CountActive(ctx context.Context) (int, error) {
+func (r *recoveryCountContextRepo) CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error) {
 	if r.rejectCanceledCountContext {
 		r.sawRecoveryCount = true
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
 	}
-	return r.testSigningKeyStore.CountActive(ctx)
+	return r.testSigningKeyStore.CountActiveInDomain(ctx, domain)
 }
 
 type recoveryCountProbeRepo struct {
@@ -155,7 +155,7 @@ type recoveryCountProbeRepo struct {
 	recoveryCountErr         error
 }
 
-func (r *recoveryCountProbeRepo) CountActive(ctx context.Context) (int, error) {
+func (r *recoveryCountProbeRepo) CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error) {
 	r.countCalls++
 	if r.countCalls > 1 {
 		r.sawRecoveryCount = true
@@ -164,14 +164,14 @@ func (r *recoveryCountProbeRepo) CountActive(ctx context.Context) (int, error) {
 			return 0, r.recoveryCountErr
 		}
 	}
-	return r.testSigningKeyStore.CountActive(ctx)
+	return r.testSigningKeyStore.CountActiveInDomain(ctx, domain)
 }
 
-func (r *bootstrapContextCheckingRepo) CountActive(ctx context.Context) (int, error) {
+func (r *bootstrapContextCheckingRepo) CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error) {
 	if ctx.Value(bootstrapContextKey{}) == r.marker {
 		r.sawCountActive = true
 	}
-	return r.testSigningKeyStore.CountActive(ctx)
+	return r.testSigningKeyStore.CountActiveInDomain(ctx, domain)
 }
 
 func (r *bootstrapContextCheckingRepo) CreateAndSetCurrent(ctx context.Context, key *storage.SigningKey) error {
@@ -297,7 +297,7 @@ func TestSigningKeyService_GenerateAndStoreKey(t *testing.T) {
 		require.NoError(t, err)
 
 		// Key is stored as is_current=true even though it is in the grace period.
-		stored, err := repo.GetByKID(context.Background(), key.KID)
+		stored, err := repo.GetByKIDInDomain(context.Background(), storage.KeyDomainTokenSigning, key.KID)
 		require.NoError(t, err)
 		assert.True(t, stored.IsCurrent)
 	})
@@ -308,13 +308,13 @@ func TestSigningKeyService_GenerateAndStoreKey(t *testing.T) {
 		key, err := svc.GenerateAndStoreKey(context.Background(), "ES256", true)
 		require.NoError(t, err)
 
-		stored, err := repo.GetByKID(context.Background(), key.KID)
+		stored, err := repo.GetByKIDInDomain(context.Background(), storage.KeyDomainTokenSigning, key.KID)
 		require.NoError(t, err)
 		assert.True(t, stored.ActivatesAt.After(before.Add(jwksGracePeriod-time.Second)),
 			"activates_at should be approximately now+jwksGracePeriod")
 
 		// GetCurrent must not return this key while it is in its grace period.
-		_, err = repo.GetCurrent(context.Background())
+		_, err = repo.GetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		assert.Error(t, err, "key should not be available for signing during grace period")
 	})
 
@@ -401,6 +401,7 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		err = repo.Create(ctx, &storage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 kid,
+			KeyDomain:           storage.KeyDomainTokenSigning,
 			Algorithm:           "BOGUS",
 			PrivateKeyEncrypted: encrypted,
 			IsCurrent:           true,
@@ -422,6 +423,7 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		err := repo.Create(ctx, &storage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 kid,
+			KeyDomain:           storage.KeyDomainTokenSigning,
 			Algorithm:           "ES256",
 			PrivateKeyEncrypted: []byte("ciphertext-that-will-fail-decrypt"),
 			IsCurrent:           true,
@@ -446,6 +448,7 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		err = repo.Create(ctx, &storage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 fallbackKID,
+			KeyDomain:           storage.KeyDomainTokenSigning,
 			Algorithm:           "BOGUS",
 			PrivateKeyEncrypted: append([]byte("ENC:"), privPEM...),
 			IsCurrent:           false,
@@ -457,6 +460,7 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		err = repo.Create(ctx, &storage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 futureCurrentKID,
+			KeyDomain:           storage.KeyDomainTokenSigning,
 			Algorithm:           "ES256",
 			PrivateKeyEncrypted: append([]byte("ENC:"), privPEM...),
 			IsCurrent:           true,
@@ -481,6 +485,7 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		err = repo.Create(ctx, &storage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 goodKID,
+			KeyDomain:           storage.KeyDomainTokenSigning,
 			Algorithm:           "ES256",
 			PrivateKeyEncrypted: append([]byte("ENC:"), privPEM...),
 			IsCurrent:           false,
@@ -493,6 +498,7 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		err = repo.Create(ctx, &storage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 badKID,
+			KeyDomain:           storage.KeyDomainTokenSigning,
 			Algorithm:           "BOGUS",
 			PrivateKeyEncrypted: append([]byte("ENC:"), privPEM...),
 			IsCurrent:           true,
@@ -517,9 +523,9 @@ type countingJWKSRepo struct {
 	listCalls int
 }
 
-func (r *countingJWKSRepo) ListActive(ctx context.Context) ([]*storage.SigningKey, error) {
+func (r *countingJWKSRepo) ListActiveInDomain(ctx context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error) {
 	r.listCalls++
-	return r.testSigningKeyStore.ListActive(ctx)
+	return r.testSigningKeyStore.ListActiveInDomain(ctx, domain)
 }
 
 func TestSigningKeyService_BuildJWKS_CachesActiveKeys(t *testing.T) {
@@ -748,7 +754,7 @@ func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 
 		generated, err := svc.GenerateAndStoreKey(ctx, "ES256", true)
 		require.NoError(t, err)
-		stored, err := repo.GetByKID(ctx, generated.KID)
+		stored, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, generated.KID)
 		require.NoError(t, err)
 		publicKey := requirePublishedPublicJWK(t, stored.PublicJWK)
 		kid, ok := publicKey.KeyID()
@@ -774,6 +780,7 @@ func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 		legacy := &storage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 id.NewKeyID(uuid.NewString()),
+			KeyDomain:           storage.KeyDomainTokenSigning,
 			Algorithm:           "ES256",
 			PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
 			IsCurrent:           true,
@@ -788,7 +795,7 @@ func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, 1, encryptor.DecryptCalls())
 
-		stored, err := repo.GetByKID(ctx, legacy.KID)
+		stored, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, legacy.KID)
 		require.NoError(t, err)
 		require.NotEmpty(t, stored.PublicJWK)
 		requirePublishedPublicJWK(t, stored.PublicJWK)
@@ -807,6 +814,7 @@ func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 		key := &storage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 id.NewKeyID(uuid.NewString()),
+			KeyDomain:           storage.KeyDomainTokenSigning,
 			Algorithm:           "ES256",
 			PrivateKeyEncrypted: []byte("ENC:must-not-decrypt"),
 			PublicJWK:           []byte("not a JWK"),
@@ -836,6 +844,7 @@ func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 		key := &storage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 id.NewKeyID(uuid.NewString()),
+			KeyDomain:           storage.KeyDomainTokenSigning,
 			Algorithm:           "ES256",
 			PrivateKeyEncrypted: []byte("must-not-decrypt"),
 			PublicJWK:           privateJWK,
@@ -870,6 +879,7 @@ func TestSigningKeyService_BuildJWKS_AuditsTrustAnchorBackfill(t *testing.T) {
 	legacy := &storage.SigningKey{
 		ID:                  id.NewSigningKeyID(),
 		KID:                 id.NewKeyID(uuid.NewString()),
+		KeyDomain:           storage.KeyDomainTokenSigning,
 		Algorithm:           "ES256",
 		PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
 		IsCurrent:           true,
@@ -894,7 +904,7 @@ func TestSigningKeyService_BuildJWKS_AuditsTrustAnchorBackfill(t *testing.T) {
 	assert.Equal(t, "written", event.Outcome)
 	assert.False(t, event.At.Before(before))
 	assert.False(t, event.At.After(time.Now().UTC()))
-	stored, err := repo.GetByKID(ctx, legacy.KID)
+	stored, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, legacy.KID)
 	require.NoError(t, err)
 	publicKey := requirePublishedPublicJWK(t, stored.PublicJWK)
 	thumbprint, err := publicKey.Thumbprint(crypto.SHA256)
@@ -916,6 +926,7 @@ func TestSigningKeyService_BuildJWKS_AuditsConcurrentBackfillWinner(t *testing.T
 	require.NoError(t, repo.Create(ctx, &storage.SigningKey{
 		ID:                  id.NewSigningKeyID(),
 		KID:                 kid,
+		KeyDomain:           storage.KeyDomainTokenSigning,
 		Algorithm:           "ES256",
 		PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
 		IsCurrent:           true,
@@ -964,6 +975,7 @@ func TestSigningKeyService_BuildJWKS_BackfillFailure(t *testing.T) {
 			legacy := &storage.SigningKey{
 				ID:                  id.NewSigningKeyID(),
 				KID:                 id.NewKeyID(uuid.NewString()),
+				KeyDomain:           storage.KeyDomainTokenSigning,
 				Algorithm:           "ES256",
 				PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
 				IsCurrent:           true,
@@ -980,7 +992,7 @@ func TestSigningKeyService_BuildJWKS_BackfillFailure(t *testing.T) {
 			} else {
 				require.ErrorContains(t, err, "current signing key")
 			}
-			stored, err := store.GetByKID(ctx, legacy.KID)
+			stored, err := store.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, legacy.KID)
 			require.NoError(t, err)
 			assert.Empty(t, stored.PublicJWK)
 		})
@@ -1148,8 +1160,8 @@ type blockingJWKSRepo struct {
 	releaseFirstList chan struct{}
 }
 
-func (r *blockingJWKSRepo) ListActive(ctx context.Context) ([]*storage.SigningKey, error) {
-	keys, err := r.testSigningKeyStore.ListActive(ctx)
+func (r *blockingJWKSRepo) ListActiveInDomain(ctx context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error) {
+	keys, err := r.testSigningKeyStore.ListActiveInDomain(ctx, domain)
 	if err != nil {
 		return nil, err
 	}
@@ -1365,6 +1377,7 @@ func TestJWXAccessTokenStrategy_LegacyCachedSignerFailsWhenJWKSUnavailable(t *te
 	legacy := &storage.SigningKey{
 		ID:                  id.NewSigningKeyID(),
 		KID:                 id.NewKeyID(uuid.New().String()),
+		KeyDomain:           storage.KeyDomainTokenSigning,
 		Algorithm:           "ES256",
 		PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
 		IsCurrent:           true,
@@ -1510,11 +1523,11 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 		require.True(t, created)
 		require.NotNil(t, key)
 
-		count, err := repo.CountActive(context.Background())
+		count, err := repo.CountActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, err)
 		assert.Equal(t, 1, count)
 
-		current, err := repo.GetCurrent(context.Background())
+		current, err := repo.GetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, err)
 		assert.Equal(t, key.KID, current.KID)
 		assert.False(t, current.ActivatesAt.After(time.Now().Add(time.Second)))
@@ -1530,11 +1543,11 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 		assert.False(t, created)
 		assert.Nil(t, key)
 
-		count, err := repo.CountActive(context.Background())
+		count, err := repo.CountActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, err)
 		assert.Equal(t, 1, count)
 
-		current, err := repo.GetCurrent(context.Background())
+		current, err := repo.GetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, err)
 		assert.Equal(t, existing.KID, current.KID)
 	})
@@ -1548,7 +1561,7 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 		assert.Nil(t, key)
 		assert.False(t, created)
 
-		count, countErr := repo.CountActive(context.Background())
+		count, countErr := repo.CountActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, countErr)
 		assert.Equal(t, 0, count)
 	})
@@ -1567,7 +1580,7 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 		assert.Nil(t, key)
 		assert.False(t, created)
 
-		keys, listErr := repo.ListActive(context.Background())
+		keys, listErr := repo.ListActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, listErr)
 		assert.Empty(t, keys)
 	})
@@ -1592,7 +1605,7 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 		require.NotNil(t, key)
 		assert.True(t, repo.sawRecoveryCount)
 
-		count, countErr := repo.testSigningKeyStore.CountActive(context.Background())
+		count, countErr := repo.CountActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, countErr)
 		assert.Equal(t, 1, count)
 		assert.Contains(t, logBuf.String(), "bootstrap lock")
@@ -1758,11 +1771,11 @@ func TestSigningKeyService_EnsureInitialKey(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		count, err := repo.CountActive(context.Background())
+		count, err := repo.CountActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, err)
 		assert.Equal(t, 1, count)
 		assert.Equal(t, 1, createdCount)
-		current, err := repo.GetCurrent(context.Background())
+		current, err := repo.GetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, err)
 		assert.False(t, current.ActivatesAt.After(time.Now().Add(time.Second)))
 	})
@@ -1782,12 +1795,12 @@ func TestSigningKeyService_GenerateAndStoreKey_Atomic(t *testing.T) {
 		require.True(t, key2.IsCurrent)
 
 		// key1 must no longer be current.
-		stored1, err := repo.GetByKID(ctx, key1.KID)
+		stored1, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, key1.KID)
 		require.NoError(t, err)
 		assert.False(t, stored1.IsCurrent, "previous key must be demoted")
 
 		// key2 is flagged is_current but still in grace period — GetCurrent falls back to key1.
-		stored2, err := repo.GetByKID(ctx, key2.KID)
+		stored2, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, key2.KID)
 		require.NoError(t, err)
 		assert.True(t, stored2.IsCurrent, "key2 must be flagged is_current")
 	})
@@ -1820,12 +1833,12 @@ func TestSigningKeyService_AdminOperations(t *testing.T) {
 		require.NoError(t, err)
 
 		// key1 should no longer be current
-		k1, err := repo.GetByKID(ctx, key1.KID)
+		k1, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, key1.KID)
 		require.NoError(t, err)
 		assert.False(t, k1.IsCurrent, "key1 should no longer be current after key2 is added as current")
 
 		// key2 should be current
-		k2, err := repo.GetByKID(ctx, key2.KID)
+		k2, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, key2.KID)
 		require.NoError(t, err)
 		assert.True(t, k2.IsCurrent, "key2 should be current")
 	})
@@ -1873,11 +1886,11 @@ func TestSigningKeyService_AdminOperations(t *testing.T) {
 		assert.Equal(t, key1.KID, promoted.KID)
 		assert.True(t, promoted.IsCurrent)
 
-		k1, err := repo.GetByKID(ctx, key1.KID)
+		k1, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, key1.KID)
 		require.NoError(t, err)
 		assert.True(t, k1.IsCurrent, "key1 should be current after promotion")
 
-		k2, err := repo.GetByKID(ctx, key2.KID)
+		k2, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, key2.KID)
 		require.NoError(t, err)
 		assert.False(t, k2.IsCurrent, "key2 should no longer be current")
 	})
@@ -1894,7 +1907,7 @@ func TestSigningKeyService_AdminOperations(t *testing.T) {
 		err = svc.DeleteKey(ctx, key2.KID)
 		require.NoError(t, err)
 
-		keys, err := repo.ListActive(ctx)
+		keys, err := repo.ListActiveInDomain(ctx, storage.KeyDomainTokenSigning)
 		require.NoError(t, err)
 		require.Len(t, keys, 1, "only one key should remain after deletion")
 
@@ -1928,7 +1941,7 @@ func TestSigningKeyService_AdminOperations(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEqual(t, fallback.KID, replacement.KID)
 
-		current, err := repo.GetCurrent(ctx)
+		current, err := repo.GetCurrentInDomain(ctx, storage.KeyDomainTokenSigning)
 		require.NoError(t, err)
 		assert.Equal(t, fallback.KID, current.KID)
 
@@ -1936,7 +1949,7 @@ func TestSigningKeyService_AdminOperations(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ports.ErrEffectiveCurrentKey)
 
-		stored, err := repo.GetByKID(ctx, fallback.KID)
+		stored, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, fallback.KID)
 		require.NoError(t, err)
 		assert.Nil(t, stored.RemovedAt)
 	})
@@ -2119,7 +2132,7 @@ func TestSigningKeyService_BranchKeyProvisioning(t *testing.T) {
 		assert.Equal(t, key.KID.String(), bkm.lastSubject.Identifier())
 
 		// Key was stored in the repo.
-		stored, err := repo.GetByKID(context.Background(), key.KID)
+		stored, err := repo.GetByKIDInDomain(context.Background(), storage.KeyDomainTokenSigning, key.KID)
 		require.NoError(t, err)
 		assert.Equal(t, key.KID, stored.KID)
 
@@ -2144,7 +2157,7 @@ func TestSigningKeyService_BranchKeyProvisioning(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to provision branch key")
 
 		// Nothing should have been stored.
-		count, countErr := repo.CountActive(context.Background())
+		count, countErr := repo.CountActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, countErr)
 		assert.Equal(t, 0, count)
 	})
@@ -2189,12 +2202,12 @@ type promoteKeyReadbackFailingRepo struct {
 	*testSigningKeyStore
 }
 
-func (r *promoteKeyReadbackFailingRepo) GetByKID(_ context.Context, _ id.KeyID) (*storage.SigningKey, error) {
+func (r *promoteKeyReadbackFailingRepo) GetByKIDInDomain(_ context.Context, _ storage.KeyDomain, _ id.KeyID) (*storage.SigningKey, error) {
 	return nil, errors.New("readback failed")
 }
 
-func (r *promoteKeyReadbackFailingRepo) SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
-	return r.testSigningKeyStore.SetCurrent(ctx, kid, activatesAt)
+func (r *promoteKeyReadbackFailingRepo) SetCurrentInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
+	return r.testSigningKeyStore.SetCurrentInDomain(ctx, domain, kid, activatesAt)
 }
 
 type promoteKeyActivationSpyRepo struct {
@@ -2202,9 +2215,9 @@ type promoteKeyActivationSpyRepo struct {
 	lastActivatesAt time.Time
 }
 
-func (r *promoteKeyActivationSpyRepo) SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
+func (r *promoteKeyActivationSpyRepo) SetCurrentInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
 	r.lastActivatesAt = activatesAt
-	return r.testSigningKeyStore.SetCurrent(ctx, kid, activatesAt)
+	return r.testSigningKeyStore.SetCurrentInDomain(ctx, domain, kid, activatesAt)
 }
 
 type countActiveFailingRepo struct {
@@ -2212,7 +2225,7 @@ type countActiveFailingRepo struct {
 	countErr error
 }
 
-func (r *countActiveFailingRepo) CountActive(_ context.Context) (int, error) {
+func (r *countActiveFailingRepo) CountActiveInDomain(_ context.Context, _ storage.KeyDomain) (int, error) {
 	return 0, r.countErr
 }
 
@@ -2235,24 +2248,27 @@ func (r *deleteValidationSpyRepo) CreateAndSetCurrent(context.Context, *storage.
 	return nil
 }
 
-func (r *deleteValidationSpyRepo) GetByKID(_ context.Context, _ id.KeyID) (*storage.SigningKey, error) {
-	if r.key == nil {
-		return nil, storage.NewStorageError("deleteValidationSpyRepo.GetByKID", storage.ErrorKindNotFound, nil, "signing key not found")
+func (r *deleteValidationSpyRepo) GetByKIDInDomain(_ context.Context, domain storage.KeyDomain, _ id.KeyID) (*storage.SigningKey, error) {
+	if domain != storage.KeyDomainTokenSigning || r.key == nil {
+		return nil, storage.NewStorageError("deleteValidationSpyRepo.GetByKIDInDomain", storage.ErrorKindNotFound, nil, "signing key not found")
 	}
 	return r.key, nil
 }
 
-func (r *deleteValidationSpyRepo) GetCurrent(context.Context) (*storage.SigningKey, error) {
+func (r *deleteValidationSpyRepo) GetCurrentInDomain(_ context.Context, domain storage.KeyDomain) (*storage.SigningKey, error) {
 	if r.currentErr != nil {
 		return nil, r.currentErr
 	}
-	if r.current == nil {
-		return nil, storage.NewStorageError("deleteValidationSpyRepo.GetCurrent", storage.ErrorKindNotFound, nil, "no current signing key")
+	if domain != storage.KeyDomainTokenSigning || r.current == nil {
+		return nil, storage.NewStorageError("deleteValidationSpyRepo.GetCurrentInDomain", storage.ErrorKindNotFound, nil, "no current signing key")
 	}
 	return r.current, nil
 }
 
-func (r *deleteValidationSpyRepo) ListActive(context.Context) ([]*storage.SigningKey, error) {
+func (r *deleteValidationSpyRepo) ListActiveInDomain(_ context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error) {
+	if domain != storage.KeyDomainTokenSigning {
+		return nil, nil
+	}
 	if r.listActiveErr != nil {
 		return nil, r.listActiveErr
 	}
@@ -2263,7 +2279,7 @@ func (r *deleteValidationSpyRepo) KeySetVersion(context.Context) (int64, error) 
 	return 0, nil
 }
 
-func (r *deleteValidationSpyRepo) SetCurrent(context.Context, id.KeyID, time.Time) (*storage.SigningKey, error) {
+func (r *deleteValidationSpyRepo) SetCurrentInDomain(_ context.Context, _ storage.KeyDomain, _ id.KeyID, _ time.Time) (*storage.SigningKey, error) {
 	return nil, nil
 }
 
@@ -2271,12 +2287,18 @@ func (r *deleteValidationSpyRepo) SetPublicJWK(context.Context, id.KeyID, []byte
 	return false, nil
 }
 
-func (r *deleteValidationSpyRepo) Delete(_ context.Context, _ id.KeyID) error {
+func (r *deleteValidationSpyRepo) DeleteInDomain(_ context.Context, domain storage.KeyDomain, _ id.KeyID) error {
+	if domain != storage.KeyDomainTokenSigning {
+		return storage.NewStorageError("deleteValidationSpyRepo.DeleteInDomain", storage.ErrorKindNotFound, nil, "signing key not found")
+	}
 	r.deleteCalled = true
 	return r.deleteErr
 }
 
-func (r *deleteValidationSpyRepo) CountActive(context.Context) (int, error) {
+func (r *deleteValidationSpyRepo) CountActiveInDomain(_ context.Context, domain storage.KeyDomain) (int, error) {
+	if domain != storage.KeyDomainTokenSigning {
+		return 0, nil
+	}
 	return r.count, nil
 }
 
@@ -2413,7 +2435,7 @@ func TestSigningKeyService_OrphanedBranchKeyWarning(t *testing.T) {
 		_, err := svc.GenerateAndStoreKey(context.Background(), "ES256", false)
 		require.NoError(t, err)
 
-		count, countErr := repo.CountActive(context.Background())
+		count, countErr := repo.CountActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, countErr)
 		assert.Equal(t, 1, count)
 	})
@@ -2440,6 +2462,77 @@ func TestSigningKeyEncCtx(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, kid, extractedKID)
 	})
+}
+
+func TestSigningKeyService_KeyDomainIsolation(t *testing.T) {
+	t.Run("selects and lists token signing keys independently", func(t *testing.T) {
+		ctx := context.Background()
+		repo := newTestSigningKeyStore()
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		now := time.Now().UTC()
+
+		newKey := func(kidValue string, domain storage.KeyDomain, isCurrent bool, activatesAt time.Time) *storage.SigningKey {
+			return &storage.SigningKey{
+				ID:                  id.NewSigningKeyID(),
+				KID:                 id.NewKeyID(kidValue),
+				KeyDomain:           domain,
+				Algorithm:           "ES256",
+				PrivateKeyEncrypted: []byte("ciphertext"),
+				IsCurrent:           isCurrent,
+				ActivatesAt:         activatesAt,
+				CreatedAt:           now,
+			}
+		}
+
+		fallback := newKey("token-fallback", storage.KeyDomainTokenSigning, false, now.Add(-time.Minute))
+		pending := newKey("token-pending", storage.KeyDomainTokenSigning, true, now.Add(time.Hour))
+		cimdCurrent := newKey("cimd-current", storage.KeyDomainCIMDClientAuthentication, true, now)
+		require.NoError(t, repo.Create(ctx, fallback))
+		require.NoError(t, repo.Create(ctx, pending))
+		require.NoError(t, repo.Create(ctx, cimdCurrent))
+
+		current, err := repo.GetCurrentInDomain(ctx, storage.KeyDomainTokenSigning)
+		require.NoError(t, err)
+		assert.Equal(t, fallback.KID, current.KID)
+
+		serviceCurrent, err := svc.GetCurrent(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, fallback.KID, serviceCurrent.KID)
+
+		keys, err := repo.ListActiveInDomain(ctx, storage.KeyDomainTokenSigning)
+		require.NoError(t, err)
+		assert.Len(t, keys, 2)
+	})
+
+	t.Run("keeps key identifiers globally unique", func(t *testing.T) {
+		ctx := context.Background()
+		repo := newTestSigningKeyStore()
+		now := time.Now().UTC()
+		tokenKey := &storage.SigningKey{
+			ID:                  id.NewSigningKeyID(),
+			KID:                 id.NewKeyID("shared-kid"),
+			KeyDomain:           storage.KeyDomainTokenSigning,
+			Algorithm:           "ES256",
+			PrivateKeyEncrypted: []byte("ciphertext"),
+			IsCurrent:           true,
+			ActivatesAt:         now,
+			CreatedAt:           now,
+		}
+		cimdKey := *tokenKey
+		cimdKey.ID = id.NewSigningKeyID()
+		cimdKey.KeyDomain = storage.KeyDomainCIMDClientAuthentication
+
+		require.NoError(t, repo.Create(ctx, tokenKey))
+		assert.Error(t, repo.Create(ctx, &cimdKey))
+	})
+}
+
+func TestSigningKeyService_GeneratedTokenKeysUseTokenDomain(t *testing.T) {
+	svc, _ := newTestSigningKeyService()
+
+	key, err := svc.GenerateAndStoreKey(context.Background(), "ES256", false)
+	require.NoError(t, err)
+	assert.Equal(t, storage.KeyDomainTokenSigning, key.KeyDomain)
 }
 
 func TestSigningKeyService_ListKeys(t *testing.T) {
@@ -2475,7 +2568,7 @@ func TestSigningKeyService_PromoteKey(t *testing.T) {
 		assert.Equal(t, candidate.KID, promoted.KID)
 		assert.True(t, promoted.IsCurrent)
 
-		storedCurrent, err := repo.GetByKID(ctx, current.KID)
+		storedCurrent, err := repo.GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, current.KID)
 		require.NoError(t, err)
 		assert.False(t, storedCurrent.IsCurrent)
 	})

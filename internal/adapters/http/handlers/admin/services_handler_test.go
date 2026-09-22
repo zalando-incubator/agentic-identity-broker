@@ -30,6 +30,9 @@ import (
 // testConfig creates a minimal config for tests with HTTPS validation enabled (strict mode).
 func testConfig() *ports.Config {
 	return &ports.Config{
+		Server: ports.ServerConfig{
+			EndUser: ports.ServerInstanceConfig{PublicURL: "https://broker.example.com"},
+		},
 		Security: ports.SecurityConfig{
 			SkipThirdpartyHTTPSValidation: false,
 		},
@@ -124,11 +127,19 @@ func newTestEncryption() ports.EncryptionPort {
 	return testutil.NewPanicTestEncryptionAdapter()
 }
 
+type readyCIMDKeyReadiness struct{}
+
+func (readyCIMDKeyReadiness) RequirePublishedKey(context.Context) error { return nil }
+
 // setupHandler creates a handler backed by a mock repository and test encryption.
 func setupHandler(t *testing.T, mockRepo *MockProviderRepository) *ServicesHandler {
+	return setupHandlerWithConfig(t, mockRepo, testConfig())
+}
+
+func setupHandlerWithConfig(t *testing.T, mockRepo *MockProviderRepository, config *ports.Config) *ServicesHandler {
 	t.Helper()
-	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
-	return NewServicesHandler(svc, testConfig(), slog.Default())
+	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default()).WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
+	return NewServicesHandler(svc, config, slog.Default())
 }
 
 // encryptSecretForTest encrypts a plaintext secret using the test encryption adapter.
@@ -604,7 +615,7 @@ func TestServicesHandler_CreateServiceTokenEndpointAuthMethodMapping(t *testing.
 			method:        "",
 			includeSecret: true,
 			secret:        "confidential-secret",
-			wantError:     `token_endpoint_auth_method: only "none" is accepted`,
+			wantError:     `token_endpoint_auth_method: only "none" and "private_key_jwt" are accepted`,
 		},
 		{
 			name:          "unknown method is rejected",
@@ -612,7 +623,7 @@ func TestServicesHandler_CreateServiceTokenEndpointAuthMethodMapping(t *testing.
 			method:        "client_secret_post",
 			includeSecret: true,
 			secret:        "confidential-secret",
-			wantError:     `token_endpoint_auth_method: only "none" is accepted`,
+			wantError:     `token_endpoint_auth_method: only "none" and "private_key_jwt" are accepted`,
 		},
 	}
 
@@ -843,6 +854,163 @@ func TestServicesHandler_RejectsCredentialedDiscoveredPublicTokenEndpoint(t *tes
 		})
 	}
 }
+func TestServicesHandler_CreateCIMDConfidentialService(t *testing.T) {
+	mockRepo := new(MockProviderRepository)
+	handler := setupHandler(t, mockRepo)
+
+	mockRepo.On("Create", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
+		return entity.TokenEndpointAuthMethod == model.TokenEndpointAuthMethod("private_key_jwt") &&
+			entity.Secret.IsAbsent() &&
+			entity.ClientID == id.ClientID("https://broker.example.com/.well-known/oauth-client/"+entity.ID.String())
+	})).Return(nil).Once()
+
+	body, err := json.Marshal(map[string]any{
+		"display_name":               "CIMD Provider",
+		"token_endpoint_auth_method": "private_key_jwt",
+		"issuer_uri":                 "https://issuer.example.com",
+		"discovery":                  map[string]any{"enable_discovery": false},
+		"endpoints": map[string]any{
+			"token_endpoint":     "https://issuer.example.com/token",
+			"authorize_endpoint": "https://issuer.example.com/authorize",
+		},
+	})
+	require.NoError(t, err)
+
+	response := httptest.NewRecorder()
+	handler.CreateService(response, httptest.NewRequest(http.MethodPost, "/api/services", bytes.NewReader(body)))
+
+	require.Equal(t, http.StatusCreated, response.Code)
+	var payload map[string]json.RawMessage
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
+	assert.JSONEq(t, `"private_key_jwt"`, string(payload["token_endpoint_auth_method"]))
+	assert.NotContains(t, payload, "client_secret")
+
+	var serviceID, clientID string
+	require.NoError(t, json.Unmarshal(payload["id"], &serviceID))
+	require.NoError(t, json.Unmarshal(payload["client_id"], &clientID))
+	assert.Equal(t, "https://broker.example.com/.well-known/oauth-client/"+serviceID, clientID)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestServicesHandler_RejectsCIMDCallerCredentialsBeforeDiscovery(t *testing.T) {
+	var discoveryRequests atomic.Int32
+	discoveryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		discoveryRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"token_endpoint":         "https://issuer.example.com/token",
+			"authorization_endpoint": "https://issuer.example.com/authorize",
+		})
+	}))
+	defer discoveryServer.Close()
+
+	tests := []struct {
+		name         string
+		requestField string
+		requestValue string
+	}{
+		{name: "caller client ID", requestField: "client_id", requestValue: "operator-client-id"},
+		{name: "caller shared secret", requestField: "client_secret", requestValue: "operator-secret"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{
+				"display_name":               "CIMD Provider",
+				"token_endpoint_auth_method": "private_key_jwt",
+				"issuer_uri":                 discoveryServer.URL,
+				"discovery":                  map[string]any{"enable_discovery": true},
+				tt.requestField:              tt.requestValue,
+			})
+			require.NoError(t, err)
+
+			for _, operation := range []string{"create", "update"} {
+				operation := operation
+				t.Run(operation, func(t *testing.T) {
+					discoveryRequests.Store(0)
+					repo := new(MockProviderRepository)
+					config := testConfig()
+					config.Security.SkipThirdpartyHTTPSValidation = true
+					handler := setupHandlerWithConfig(t, repo, config)
+					request := httptest.NewRequest(http.MethodPost, "/api/services", bytes.NewReader(body))
+					if operation == "update" {
+						serviceID := id.NewServiceID()
+						request = httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(body))
+						routeContext := chi.NewRouteContext()
+						routeContext.URLParams.Add("service-id", serviceID.String())
+						request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+					}
+
+					response := httptest.NewRecorder()
+					if operation == "create" {
+						handler.CreateService(response, request)
+					} else {
+						handler.UpdateService(response, request)
+					}
+
+					require.Equal(t, http.StatusBadRequest, response.Code)
+					var errorResponse ErrorResponse
+					require.NoError(t, json.NewDecoder(response.Body).Decode(&errorResponse))
+					assert.Equal(t, "validation failed", errorResponse.Error)
+					assert.Contains(t, errorResponse.Message, tt.requestField)
+					assert.Contains(t, errorResponse.Message, "private_key_jwt")
+					assert.Zero(t, discoveryRequests.Load())
+					repo.AssertNotCalled(t, "Create")
+					repo.AssertNotCalled(t, "Update")
+				})
+			}
+		})
+	}
+}
+
+func TestServicesHandler_RejectsCIMDForGoogleFlavor(t *testing.T) {
+	body, err := json.Marshal(map[string]any{
+		"display_name":               "Google",
+		"token_endpoint_auth_method": "private_key_jwt",
+		"oauth2_flavor":              "google",
+		"issuer_uri":                 "https://accounts.google.com",
+		"discovery":                  map[string]any{"enable_discovery": false},
+		"endpoints": map[string]any{
+			"token_endpoint":     "https://oauth2.googleapis.com/token",
+			"authorize_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+		},
+	})
+	require.NoError(t, err)
+
+	for _, operation := range []string{"create", "update"} {
+		operation := operation
+		t.Run(operation, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			handler := setupHandler(t, repo)
+			request := httptest.NewRequest(http.MethodPost, "/api/services", bytes.NewReader(body))
+			if operation == "update" {
+				serviceID := id.NewServiceID()
+				request = httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(body))
+				routeContext := chi.NewRouteContext()
+				routeContext.URLParams.Add("service-id", serviceID.String())
+				request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+			}
+
+			response := httptest.NewRecorder()
+			if operation == "create" {
+				handler.CreateService(response, request)
+			} else {
+				handler.UpdateService(response, request)
+			}
+
+			require.Equal(t, http.StatusBadRequest, response.Code)
+			var errorResponse ErrorResponse
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&errorResponse))
+			assert.Equal(t, "validation failed", errorResponse.Error)
+			assert.Contains(t, errorResponse.Message, "google")
+			assert.Contains(t, errorResponse.Message, "private_key_jwt")
+			repo.AssertNotCalled(t, "Create")
+			repo.AssertNotCalled(t, "Update")
+		})
+	}
+}
+
 func TestServicesHandler_GetService(t *testing.T) {
 	t.Run("successful get", func(t *testing.T) {
 		mockRepo := new(MockProviderRepository)
@@ -899,6 +1067,80 @@ func TestServicesHandler_GetService(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "service not found", resp.Error)
 	})
+}
+
+func TestServicesHandler_GetServiceAuthenticationPostures(t *testing.T) {
+	now := time.Now().UTC()
+	staticID := id.NewServiceID()
+	publicID := id.NewServiceID()
+	cimdID := id.NewServiceID()
+	staticService := encryptedEntity(staticID, "Static provider", "static-client-id", "static-secret", "https://static.example.com", nil)
+	publicService := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                      publicID,
+		DisplayName:             "Public provider",
+		ClientID:                "public-client-id",
+		Secret:                  model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		IssuerURI:               "https://public.example.com",
+		Endpoints:               model.OAuth2Endpoints{TokenEndpoint: "https://public.example.com/token", AuthorizeEndpoint: "https://public.example.com/authorize"},
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	cimdClientID := "https://broker.example.com/.well-known/oauth-client/" + cimdID.String()
+	cimdService := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                      cimdID,
+		DisplayName:             "CIMD provider",
+		ClientID:                id.ClientID(cimdClientID),
+		Secret:                  model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethod("private_key_jwt"),
+		IssuerURI:               "https://issuer.example.com",
+		Endpoints:               model.OAuth2Endpoints{TokenEndpoint: "https://issuer.example.com/token", AuthorizeEndpoint: "https://issuer.example.com/authorize"},
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+
+	tests := []struct {
+		name             string
+		service          *model.ThirdpartyOAuth2ProviderEntity
+		wantMethod       string
+		wantClientID     string
+		wantClientSecret bool
+	}{
+		{name: "static confidential", service: staticService, wantMethod: "null", wantClientID: "static-client-id", wantClientSecret: true},
+		{name: "public", service: publicService, wantMethod: `"none"`, wantClientID: "public-client-id"},
+		{name: "CIMD confidential", service: cimdService, wantMethod: `"private_key_jwt"`, wantClientID: cimdClientID},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			handler := setupHandler(t, repo)
+			repo.On("Get", mock.Anything, tt.service.ID).Return(tt.service, nil).Once()
+
+			request := httptest.NewRequest(http.MethodGet, "/api/services/"+tt.service.ID.String(), nil)
+			routeContext := chi.NewRouteContext()
+			routeContext.URLParams.Add("service-id", tt.service.ID.String())
+			request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+			response := httptest.NewRecorder()
+
+			handler.GetService(response, request)
+
+			require.Equal(t, http.StatusOK, response.Code)
+			var payload map[string]json.RawMessage
+			require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
+			assert.JSONEq(t, tt.wantMethod, string(payload["token_endpoint_auth_method"]))
+			var clientID string
+			require.NoError(t, json.Unmarshal(payload["client_id"], &clientID))
+			assert.Equal(t, tt.wantClientID, clientID)
+			if tt.wantClientSecret {
+				assert.JSONEq(t, `"REDACTED"`, string(payload["client_secret"]))
+			} else {
+				assert.NotContains(t, payload, "client_secret")
+			}
+			repo.AssertExpectations(t)
+		})
+	}
 }
 
 func TestServicesHandler_GetServiceETag(t *testing.T) {
@@ -1379,6 +1621,47 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 	})
 }
 
+func TestServicesHandler_UpdateCIMDConfidentialService(t *testing.T) {
+	repo := new(MockProviderRepository)
+	handler := setupHandler(t, repo)
+	serviceID := id.NewServiceID()
+	clientID := "https://broker.example.com/.well-known/oauth-client/" + serviceID.String()
+
+	repo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
+		return entity.ID == serviceID &&
+			entity.TokenEndpointAuthMethod == model.TokenEndpointAuthMethod("private_key_jwt") &&
+			entity.ClientID == id.ClientID(clientID) &&
+			entity.Secret.IsAbsent()
+	}), (*int64)(nil)).Return(nil).Once()
+
+	body, err := json.Marshal(map[string]any{
+		"display_name":               "CIMD Provider",
+		"token_endpoint_auth_method": "private_key_jwt",
+		"issuer_uri":                 "https://issuer.example.com",
+		"discovery":                  map[string]any{"enable_discovery": false},
+		"endpoints": map[string]any{
+			"token_endpoint":     "https://issuer.example.com/token",
+			"authorize_endpoint": "https://issuer.example.com/authorize",
+		},
+	})
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(body))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("service-id", serviceID.String())
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+	response := httptest.NewRecorder()
+
+	handler.UpdateService(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	var payload map[string]json.RawMessage
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
+	assert.JSONEq(t, `"private_key_jwt"`, string(payload["token_endpoint_auth_method"]))
+	assert.JSONEq(t, `"`+clientID+`"`, string(payload["client_id"]))
+	assert.NotContains(t, payload, "client_secret")
+	repo.AssertExpectations(t)
+}
+
 func TestServicesHandler_UpdateServiceTokenEndpointAuthMethodMapping(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -1439,7 +1722,7 @@ func TestServicesHandler_UpdateServiceTokenEndpointAuthMethodMapping(t *testing.
 			method:        "",
 			includeSecret: true,
 			secret:        "confidential-secret",
-			wantError:     `token_endpoint_auth_method: only "none" is accepted`,
+			wantError:     `token_endpoint_auth_method: only "none" and "private_key_jwt" are accepted`,
 		},
 		{
 			name:          "none method with a non-empty secret is rejected",
@@ -1455,7 +1738,7 @@ func TestServicesHandler_UpdateServiceTokenEndpointAuthMethodMapping(t *testing.
 			method:        "client_secret_post",
 			includeSecret: true,
 			secret:        "confidential-secret",
-			wantError:     `token_endpoint_auth_method: only "none" is accepted`,
+			wantError:     `token_endpoint_auth_method: only "none" and "private_key_jwt" are accepted`,
 		},
 	}
 

@@ -9,12 +9,14 @@ import (
 )
 
 const (
-	servicePrefix    = "service_"
-	signingKeyPrefix = "key_"
-	suffix           = "_branch_key"
+	servicePrefix                     = "service_"
+	signingKeyPrefix                  = "key_"
+	cimdClientAuthenticationKeyPrefix = "cimd_key_"
+	suffix                            = "_branch_key"
 
-	serviceIDFormat    = servicePrefix + "%s" + suffix
-	signingKeyIDFormat = signingKeyPrefix + "%s" + suffix
+	serviceIDFormat                     = servicePrefix + "%s" + suffix
+	signingKeyIDFormat                  = signingKeyPrefix + "%s" + suffix
+	cimdClientAuthenticationKeyIDFormat = cimdClientAuthenticationKeyPrefix + "%s" + suffix
 )
 
 func generateServiceBranchKeyID(serviceID string) string {
@@ -23,6 +25,10 @@ func generateServiceBranchKeyID(serviceID string) string {
 
 func generateSigningKeyBranchKeyID(signingKeyID string) string {
 	return fmt.Sprintf(signingKeyIDFormat, signingKeyID)
+}
+
+func generateCIMDClientAuthenticationBranchKeyID(keyID string) string {
+	return fmt.Sprintf(cimdClientAuthenticationKeyIDFormat, keyID)
 }
 
 // GenerateBranchKeyId generates a deterministic branch key ID from a typed branch key subject.
@@ -38,6 +44,9 @@ func GenerateBranchKeyId(subject domainencryption.BranchKeySubject) (string, err
 	case domainencryption.BranchKeySubjectKindSigningKey:
 		keyID, _ := subject.KeyID()
 		return generateSigningKeyBranchKeyID(keyID.String()), nil
+	case domainencryption.BranchKeySubjectKindCIMDClientAuthenticationKey:
+		keyID, _ := subject.KeyID()
+		return generateCIMDClientAuthenticationBranchKeyID(keyID.String()), nil
 	default:
 		return "", fmt.Errorf("unsupported branch key subject kind: %q", subject.Kind())
 	}
@@ -49,6 +58,10 @@ func extractServiceID(branchKeyID string) (string, error) {
 
 func extractSigningKeyID(branchKeyID string) (string, error) {
 	return extractIdentifier(branchKeyID, signingKeyPrefix, signingKeyIDFormat, "signing key ID")
+}
+
+func extractCIMDClientAuthenticationKeyID(branchKeyID string) (string, error) {
+	return extractIdentifier(branchKeyID, cimdClientAuthenticationKeyPrefix, cimdClientAuthenticationKeyIDFormat, "CIMD client-authentication key ID")
 }
 
 // ExtractSubject parses a branch key ID back into its typed branch key subject.
@@ -64,6 +77,12 @@ func ExtractSubject(branchKeyID string) (domainencryption.BranchKeySubject, erro
 			return domainencryption.BranchKeySubject{}, fmt.Errorf("invalid service subject in branch key ID %q: %w", branchKeyID, err)
 		}
 		return domainencryption.NewServiceBranchKeySubject(parsed), nil
+	case strings.HasPrefix(branchKeyID, cimdClientAuthenticationKeyPrefix):
+		keyID, err := extractCIMDClientAuthenticationKeyID(branchKeyID)
+		if err != nil {
+			return domainencryption.BranchKeySubject{}, err
+		}
+		return domainencryption.NewCIMDClientAuthenticationKeyBranchKeySubject(id.NewKeyID(keyID)), nil
 	case strings.HasPrefix(branchKeyID, signingKeyPrefix):
 		signingKeyID, err := extractSigningKeyID(branchKeyID)
 		if err != nil {
@@ -72,10 +91,11 @@ func ExtractSubject(branchKeyID string) (domainencryption.BranchKeySubject, erro
 		return domainencryption.NewSigningKeyBranchKeySubject(id.NewKeyID(signingKeyID)), nil
 	default:
 		return domainencryption.BranchKeySubject{}, fmt.Errorf(
-			"invalid branch key ID format: %q (expected format: %s or %s)",
+			"invalid branch key ID format: %q (expected format: %s, %s, or %s)",
 			branchKeyID,
 			serviceIDFormat,
 			signingKeyIDFormat,
+			cimdClientAuthenticationKeyIDFormat,
 		)
 	}
 }

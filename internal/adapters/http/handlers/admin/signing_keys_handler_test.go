@@ -35,48 +35,44 @@ func (m *MockSigningKeyRepository) CreateAndSetCurrent(ctx context.Context, key 
 	return m.Called(ctx, key).Error(0)
 }
 
-func (m *MockSigningKeyRepository) GetByKID(ctx context.Context, kid id.KeyID) (*storage.SigningKey, error) {
-	args := m.Called(ctx, kid)
+func (m *MockSigningKeyRepository) GetByKIDInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) (*storage.SigningKey, error) {
+	args := m.Called(ctx, domain, kid)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*storage.SigningKey), args.Error(1)
 }
 
-func (m *MockSigningKeyRepository) GetCurrent(ctx context.Context) (*storage.SigningKey, error) {
-	args := m.Called(ctx)
+func (m *MockSigningKeyRepository) GetCurrentInDomain(ctx context.Context, domain storage.KeyDomain) (*storage.SigningKey, error) {
+	args := m.Called(ctx, domain)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*storage.SigningKey), args.Error(1)
 }
 
-func (m *MockSigningKeyRepository) ListActive(ctx context.Context) ([]*storage.SigningKey, error) {
-	args := m.Called(ctx)
+func (m *MockSigningKeyRepository) ListActiveInDomain(ctx context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error) {
+	args := m.Called(ctx, domain)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*storage.SigningKey), args.Error(1)
 }
 
-func (m *MockSigningKeyRepository) SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
-	args := m.Called(ctx, kid, activatesAt)
+func (m *MockSigningKeyRepository) SetCurrentInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
+	args := m.Called(ctx, domain, kid, activatesAt)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*storage.SigningKey), args.Error(1)
 }
 
-func (m *MockSigningKeyRepository) Delete(ctx context.Context, kid id.KeyID) error {
-	return m.Called(ctx, kid).Error(0)
+func (m *MockSigningKeyRepository) DeleteInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) error {
+	return m.Called(ctx, domain, kid).Error(0)
 }
 
-func (m *MockSigningKeyRepository) WithBootstrapLock(ctx context.Context, fn func(context.Context) error) error {
-	return fn(ctx)
-}
-
-func (m *MockSigningKeyRepository) CountActive(ctx context.Context) (int, error) {
-	args := m.Called(ctx)
+func (m *MockSigningKeyRepository) CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error) {
+	args := m.Called(ctx, domain)
 	return args.Int(0), args.Error(1)
 }
 

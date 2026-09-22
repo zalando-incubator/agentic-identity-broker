@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -116,17 +117,40 @@ type OAuthScopeResponse struct {
 
 func serviceClientAuthentication(req ServiceRequest) (model.TokenEndpointAuthMethod, model.Secret, error) {
 	if req.TokenEndpointAuthMethod != nil && *req.TokenEndpointAuthMethod == "" {
-		return "", model.Secret{}, errors.New(`token_endpoint_auth_method: only "none" is accepted`)
+		return "", model.Secret{}, errors.New(`token_endpoint_auth_method: only "none" and "private_key_jwt" are accepted`)
 	}
 
 	method := model.TokenEndpointAuthMethod("")
 	if req.TokenEndpointAuthMethod != nil {
 		method = model.TokenEndpointAuthMethod(*req.TokenEndpointAuthMethod)
 	}
+	if err := method.Validate(); err != nil {
+		return "", model.Secret{}, err
+	}
+	if method.IsCIMDConfidential() {
+		if req.ClientID != "" {
+			return "", model.Secret{}, errors.New(`client_id must be absent when token_endpoint_auth_method is "private_key_jwt"`)
+		}
+		if req.ClientSecret != "" {
+			return "", model.Secret{}, errors.New(`client_secret must be absent when token_endpoint_auth_method is "private_key_jwt"`)
+		}
+		return method, model.NewAbsentSecret(), nil
+	}
 	if method == model.TokenEndpointAuthMethodNone && req.ClientSecret == "" {
 		return method, model.NewAbsentSecret(), nil
 	}
 	return method, model.NewPlaintextSecret(req.ClientSecret), nil
+}
+
+func (h *ServicesHandler) cimdClientID(serviceID id.ServiceID) (id.ClientID, error) {
+	if h.config == nil {
+		return "", errors.New("server.enduser.public_url is required for CIMD confidential services")
+	}
+	publicURL, err := url.Parse(h.config.Server.EndUser.PublicURL)
+	if err != nil || publicURL.Scheme != "https" || publicURL.Host == "" || publicURL.User != nil || publicURL.RawQuery != "" || publicURL.Fragment != "" {
+		return "", errors.New("server.enduser.public_url must be a public HTTPS URL for CIMD confidential services")
+	}
+	return id.ClientID(strings.TrimRight(h.config.Server.EndUser.PublicURL, "/") + "/.well-known/oauth-client/" + serviceID.String()), nil
 }
 
 // CreateService handles POST /api/third-party/oauth2/clients
@@ -165,8 +189,9 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 
 	// Build entity from request
 	now := time.Now().UTC()
+	serviceID := id.NewServiceID()
 	entity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:                      id.NewServiceID(),
+		ID:                      serviceID,
 		CanonicalID:             req.CanonicalID,
 		DisplayName:             req.DisplayName,
 		ClientID:                id.ClientID(req.ClientID),
@@ -179,6 +204,15 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		AuthorizationParams:     req.AuthorizationParams,
 		CreatedAt:               now,
 		UpdatedAt:               now,
+	}
+	if entity.IsCIMDConfidentialClient() {
+		clientID, err := h.cimdClientID(serviceID)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+			return
+		}
+		entity.ClientID = clientID
+		entity.CIMDClientIDBrokerAssigned = true
 	}
 
 	// Convert scopes
@@ -360,6 +394,15 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		ProtectedResources:      req.ProtectedResources,
 		AuthorizationParams:     req.AuthorizationParams,
 		UpdatedAt:               time.Now().UTC(),
+	}
+	if entity.IsCIMDConfidentialClient() {
+		clientID, err := h.cimdClientID(parsedSvcID)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+			return
+		}
+		entity.ClientID = clientID
+		entity.CIMDClientIDBrokerAssigned = true
 	}
 
 	// Convert scopes
@@ -615,7 +658,7 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		tokenEndpointAuthMethod := string(entity.TokenEndpointAuthMethod)
 		response.TokenEndpointAuthMethod = &tokenEndpointAuthMethod
 	}
-	if !entity.IsPublicClient() {
+	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
 		clientSecret := entity.Secret.Redacted()
 		response.ClientSecret = &clientSecret
 	}
