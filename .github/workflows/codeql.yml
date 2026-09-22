@@ -1,0 +1,85 @@
+# CodeQL — static application security testing (SAST).
+#
+# Runs on every PR because GitHub code scanning is inherently diff-aware:
+# on a PR it only surfaces alerts that the PR *introduces*; the baseline of
+# main is reported on the Security tab instead. That makes it the one
+# security check that can run on PRs without echoing pre-existing findings.
+#
+# It is also the only SAST tool the OpenSSF Scorecard recognises, and the
+# SAST check wants it on (nearly) every merged PR, so there is no path filter.
+# It is intentionally NOT a required status check; its severity threshold for
+# failing a PR is configured under Settings → Code security → Code scanning.
+
+name: CodeQL
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 4 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # JWX v4 requires jsonv2 on Go 1.26 (mirrors the justfile export).
+      - name: Enable Go 1.26 jsonv2 experiment
+        if: matrix.language == 'go'
+        run: |
+          case "$(go env GOVERSION)" in
+            go1.26.*) echo "GOEXPERIMENT=jsonv2" >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+          config: |
+            paths-ignore:
+              - web/node_modules
+              - web/dist
+              - assets/docusaurus/build
+              - assets/docusaurus/node_modules
+              - tests/e2e/screenshots
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          category: /language:${{ matrix.language }}
