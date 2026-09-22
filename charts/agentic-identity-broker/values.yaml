@@ -399,12 +399,12 @@ broker:
 
   # OAuth2 configuration
   thirdPartyOauth2:
-    # -- JWE signing key for state tokens (required, load from secret)
-    # Raw 32-byte key material; this value will be base64-encoded by the chart when creating the Secret.
+    # -- Raw 32-byte JWE signing key for state tokens (required, load from secret)
+    # The chart base64-encodes this value before storing it as the broker-facing Secret string.
     # Set via environment variable or Kubernetes Secret
     jweSigningKey: ""
-    # -- Base64-encoded JWE signing key (used directly if set; do not provide raw bytes here)
-    # This value must already be base64-encoded, as it is written to stringData without additional encoding.
+    # -- Base64-encoded 32-byte JWE signing key (used directly if set; do not provide raw bytes here)
+    # The chart writes this value to stringData without additional encoding.
     # Precedence order (highest to lowest): jweSigningKeyBase64 > jweSigningKey > jweSigningKeySecret
     jweSigningKeyBase64: ""
     # -- Secret reference for JWE signing key (alternative to jweSigningKey)
@@ -417,6 +417,7 @@ broker:
     # -- In-memory encryption backend configuration
     memory:
       # -- Base64-encoded 32-byte key for the in-memory encryption backend
+      # The chart writes this value to stringData without additional encoding.
       rawKey: ""
     # -- AWS KMS encryption backend configuration
     awsKms:
