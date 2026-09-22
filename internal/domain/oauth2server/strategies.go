@@ -232,9 +232,11 @@ func (s *RandomCodeStrategy) AuthorizeCodeSignature(_ context.Context, code stri
 	return sha256Hex(code)
 }
 
-// ValidateAuthorizeCode validates an authorization code.
-// Validation happens in storage (expiry, single-use), not in the strategy.
-func (s *RandomCodeStrategy) ValidateAuthorizeCode(_ context.Context, _ fosite.Requester, _ string) error {
+// ValidateAuthorizeCode enforces the expiry hydrated from the stored authorization code.
+func (s *RandomCodeStrategy) ValidateAuthorizeCode(_ context.Context, req fosite.Requester, _ string) error {
+	if !req.GetSession().GetExpiresAt(fosite.AuthorizeCode).After(time.Now()) {
+		return fosite.ErrTokenExpired
+	}
 	return nil
 }
 
