@@ -43,7 +43,7 @@ func (s *MetadataService) Metadata(ctx context.Context, serviceID id.ServiceID) 
 	}
 
 	clientID := service.ClientID.String()
-	return &ports.CIMDClientMetadata{
+	return &ports.CIMDClientMetadata{ // #nosec G101 -- RFC-defined public Client ID Metadata fields, not credentials.
 		ClientID:                     clientID,
 		RedirectURIs:                 []string{s.publicURL + "/api/third-party/" + serviceID.String() + "/oauth2/callback"},
 		GrantTypes:                   []string{"authorization_code", "refresh_token"},

@@ -111,7 +111,7 @@ func newCIMDClientService(
 		Discovery: model.DiscoveryConfig{
 			EnableDiscovery: false,
 		},
-		Endpoints: model.OAuth2Endpoints{
+		Endpoints: model.OAuth2Endpoints{ // #nosec G101 -- fixed endpoint URLs are E2E fixture data, not credentials.
 			AuthorizeEndpoint: "https://cimd-upstream.e2e.test/oauth/authorize",
 			TokenEndpoint:     "https://cimd-upstream.e2e.test/oauth/token",
 		},

@@ -7,7 +7,7 @@ type TokenEndpointAuthMethod string
 
 const (
 	TokenEndpointAuthMethodNone          TokenEndpointAuthMethod = "none"
-	TokenEndpointAuthMethodPrivateKeyJWT TokenEndpointAuthMethod = "private_key_jwt"
+	TokenEndpointAuthMethodPrivateKeyJWT TokenEndpointAuthMethod = "private_key_jwt" // #nosec G101 -- OAuth2 authentication-method identifier, not a credential.
 )
 
 func (m TokenEndpointAuthMethod) Validate() error {

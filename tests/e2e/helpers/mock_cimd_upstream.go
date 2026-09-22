@@ -298,7 +298,7 @@ func (m *MockCIMDUpstream) handleAuthorize(w http.ResponseWriter, r *http.Reques
 	params.Set("code", code)
 	params.Set("state", state)
 	callback.RawQuery = params.Encode()
-	http.Redirect(w, r, callback.String(), http.StatusFound)
+	http.Redirect(w, r, callback.String(), http.StatusFound) // #nosec G710 -- redirect URI was matched against the validated client metadata before code issuance.
 }
 
 func (m *MockCIMDUpstream) handleToken(w http.ResponseWriter, r *http.Request) {
@@ -394,7 +394,7 @@ func (m *MockCIMDUpstream) handleToken(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{ // #nosec G101 -- deterministic token values belong to the E2E-only conformant upstream double.
 		"access_token":  "cimd-upstream-access-token",
 		"token_type":    "Bearer",
 		"expires_in":    3600,
@@ -469,12 +469,12 @@ func (m *MockCIMDUpstream) refreshClientMetadata(ctx context.Context, clientID s
 }
 
 func (m *MockCIMDUpstream) getJSON(ctx context.Context, endpoint string) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil) // #nosec G704 -- endpoint is a validated CIMD metadata or JWKS URL in the E2E upstream double.
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("Accept", "application/json")
-	response, err := m.brokerHTTPClient.Do(request)
+	response, err := m.brokerHTTPClient.Do(request) // #nosec G704 -- test client fetches only the validated broker metadata and JWK routes.
 	if err != nil {
 		return nil, err
 	}
