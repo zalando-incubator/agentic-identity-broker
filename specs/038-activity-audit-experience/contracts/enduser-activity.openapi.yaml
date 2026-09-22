@@ -1,0 +1,481 @@
+# Activity & Auditing API — end-user endpoints (Phase 1 contract, rev. 2026-09-22)
+# Feature: 038-activity-audit-experience
+#
+# OpenAPI 3.0.3 fragment. Paths and schemas here are merged into
+# api/enduser/openapi.yaml during implementation. Conventions mirror the existing
+# enduser API: {data: ...} success envelope, {error, message} errors, RFC3339
+# timestamps, X-Remote-User principal (SessionAuth | PrincipalHeader), Zalando
+# resource-oriented design. No sensitive value ever appears in a response (FR-011, SC-007).
+#
+# Revision notes (plan review 2026-09-22):
+#  - added `q`, `before`, window `30d`; cursor is bound to the filter set (400 invalid_cursor)
+#  - removed per-event `needs_attention` (live state lives on /attention only)
+#  - added `occurrence_count`, `first_occurred_at` (roll-ups), `client_id` in related_refs
+#  - threads are derived on read; `thread_key` removed from events; threads carry
+#    `total_events` + `truncated`; detail `sequence` is bounded with `sequence_truncated`
+#  - `explanation` is structured {trigger, basis, consequence}
+#  - target_route values come from a server-side allowlist matching the current SPA router
+#    (basename "/": /agents/{id}, /sessions, /approvals, /approvals/{id}, /activity/{id})
+#  - attention items carry `group_key` for UI grouping
+
+openapi: 3.0.3
+info:
+  title: Agentic Identity Broker - End-User API (Activity fragment)
+  version: 1.0.0
+
+tags:
+  - name: Activity
+    description: Per-user activity and auditing experience (read-only)
+
+paths:
+  /api/activity:
+    get:
+      tags: [Activity]
+      summary: List curated activity events for the current user
+      description: |
+        Returns a reverse-chronological, cursor-paginated page of curated business-/security-
+        significant events for the authenticated principal, plus narrative threads derived from
+        the page's events. Routine high-frequency internals are rolled up into one event per
+        bucket with an `occurrence_count`, not surfaced individually. Supports combinable,
+        clearable filters (agent, service, grant, time window, jump-to-date, outcome, category,
+        keyword, needs-attention).
+      operationId: listActivity
+      security:
+        - SessionAuth: []
+        - PrincipalHeader: []
+      parameters:
+        - name: agent_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Narrow to a single agent's activity.
+        - name: service_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Narrow to activity involving one connected service.
+        - name: grant_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Narrow to a permission/grant context.
+        - name: window
+          in: query
+          required: false
+          schema: { type: string, enum: [24h, 7d, 30d, all], default: all }
+          description: Relative time-window preset; `all` means everything within retention.
+        - name: before
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Upper bound on occurred_at (exclusive). Enables "jump to date" without a range picker.
+        - name: outcome
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/Outcome' }
+        - name: category
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/ActivityCategory' }
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 100 }
+          description: Keyword matched (case-insensitive, trigram) against summary and actor/subject labels.
+        - name: needs_attention
+          in: query
+          required: false
+          schema: { type: boolean }
+          description: When true, return only events whose related refs point at the subject of a current needs-attention item.
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+          description: Opaque cursor from a previous response's next_cursor. Bound to the filter set it was issued for.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        '200':
+          description: A page of events and derived threads.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [events, threads, next_cursor, retention_days]
+                    properties:
+                      events:
+                        type: array
+                        items: { $ref: '#/components/schemas/ActivityEvent' }
+                      threads:
+                        type: array
+                        description: Threads derived from this page's events (US5). event_ids reference events in this page.
+                        items: { $ref: '#/components/schemas/ActivityThreadResponse' }
+                      next_cursor:
+                        type: string
+                        nullable: true
+                        description: Cursor for the next page; null when no more events.
+                      retention_days:
+                        type: integer
+                        description: Configured retention so the UI can explain where history ends (FR-014 cliff message).
+              examples:
+                populated:
+                  summary: Mixed feed with a roll-up, a thread and a next page
+                  value:
+                    data:
+                      events:
+                        - id: 4f1c2e00-0000-4000-8000-000000000001
+                          category: approval
+                          type: approval.denied
+                          actor: { kind: agent, id: 7f0a…, display_label: "Research Agent" }
+                          subject: { kind: tool, id: t9, display_label: "delete_repo" }
+                          outcome: blocked
+                          significance: security
+                          summary: "Research Agent's request to run delete_repo was denied."
+                          related_refs: { agent_id: "7f0a…", approval_id: "p7", service_id: "github" }
+                          occurrence_count: 1
+                          first_occurred_at: "2026-09-04T10:31:00Z"
+                          occurred_at: "2026-09-04T10:31:00Z"
+                          redacted: true
+                        - id: 4f1c2e00-0000-4000-8000-000000000003
+                          category: agent_action
+                          type: agent.acted_via_service
+                          actor: { kind: agent, id: 7f0a…, display_label: "Research Agent" }
+                          subject: { kind: service, id: github, display_label: "GitHub" }
+                          outcome: succeeded
+                          significance: business
+                          summary: "Research Agent used GitHub on your behalf."
+                          related_refs: { agent_id: "7f0a…", service_id: "github" }
+                          occurrence_count: 41
+                          first_occurred_at: "2026-09-04T09:02:11Z"
+                          occurred_at: "2026-09-04T09:58:40Z"
+                          redacted: false
+                        - id: 4f1c2e00-0000-4000-8000-000000000002
+                          category: session
+                          type: session.expired
+                          actor: { kind: service, id: github, display_label: "GitHub" }
+                          subject: { kind: session, id: se4, display_label: "GitHub session" }
+                          outcome: failed
+                          significance: business
+                          summary: "Your GitHub connection expired and needs to be reconnected."
+                          related_refs: { service_id: "github", session_id: "se4" }
+                          occurrence_count: 1
+                          first_occurred_at: "2026-09-04T09:05:00Z"
+                          occurred_at: "2026-09-04T09:05:00Z"
+                          redacted: false
+                      threads:
+                        - thread_key: "service:github"
+                          kind: service_lifecycle
+                          title: "GitHub connection"
+                          latest_outcome: failed
+                          total_events: 6
+                          truncated: true
+                          event_ids: [4f1c2e00-0000-4000-8000-000000000002]
+                        - thread_key: "agent:7f0a…"
+                          kind: agent_journey
+                          title: "Research Agent"
+                          latest_outcome: blocked
+                          total_events: 2
+                          truncated: false
+                          event_ids: [4f1c2e00-0000-4000-8000-000000000003, 4f1c2e00-0000-4000-8000-000000000001]
+                      next_cursor: "b2NjdXJyZWQ6MjAyNi0wOS0wNFQwOTowNTowMFo="
+                      retention_days: 30
+                empty:
+                  summary: No activity yet (first-time user)
+                  value: { data: { events: [], threads: [], next_cursor: null, retention_days: 30 } }
+        '400':
+          description: Invalid filter, or a cursor presented with a different filter set than it was issued for.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                filter: { value: { error: invalid_argument, message: "unknown outcome 'maybe'" } }
+                cursor: { value: { error: invalid_cursor, message: "cursor does not match the current filters" } }
+        '401':
+          description: Missing or invalid principal.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/activity/attention:
+    # Registered before /api/activity/{event-id}; a routing test asserts precedence.
+    get:
+      tags: [Activity]
+      summary: List live needs-attention items for the current user
+      description: |
+        Returns items derived purely from current unresolved state (a connected service requiring
+        reconnection, a tool call awaiting approval). Unlike historical activity, unresolved items
+        remain visible regardless of the activity-retention window. They clear automatically when
+        the underlying flow completes; there is no dismissal. Non-actionable notable events are
+        NOT included here. Cheap to compute; the SPA polls it while the tab is visible.
+      operationId: listActivityAttention
+      security:
+        - SessionAuth: []
+        - PrincipalHeader: []
+      responses:
+        '200':
+          description: Live needs-attention items (possibly empty = settled state).
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: "`no-store`; the SPA polls this endpoint."
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        description: Ordered by `since` ascending (oldest unresolved first).
+                        items: { $ref: '#/components/schemas/NeedsAttentionItem' }
+              examples:
+                reconnect:
+                  value:
+                    data:
+                      items:
+                        - kind: reconnect_required
+                          title: "GitHub needs to be reconnected"
+                          summary: "Your GitHub connection expired, so agents can no longer act through it."
+                          subject: { kind: service, id: github, display_label: "GitHub" }
+                          next_step: { label: "Reconnect GitHub", target_route: "/sessions" }
+                          since: "2026-09-04T09:05:00Z"
+                          group_key: "reconnect_required"
+                        - kind: approval_pending
+                          title: "Research Agent wants to run delete_repo"
+                          summary: "The agent is waiting for your decision."
+                          subject: { kind: tool, id: t9, display_label: "delete_repo" }
+                          next_step: { label: "Review request", target_route: "/approvals/p7" }
+                          since: "2026-09-04T10:30:00Z"
+                          group_key: "approval_pending"
+                settled:
+                  summary: Nothing needs attention
+                  value: { data: { items: [] } }
+
+  /api/activity/{event-id}:
+    get:
+      tags: [Activity]
+      summary: Get a single activity event with full context and related sequence
+      description: |
+        Returns the full, redacted detail of one event owned by the current principal: the
+        structured explanation of why it happened, a bounded ordered related sequence, and
+        single-action links back to the related consent/session/agent context. Pending events are
+        reported honestly.
+      operationId: getActivityEvent
+      security:
+        - SessionAuth: []
+        - PrincipalHeader: []
+      parameters:
+        - name: event-id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: sequence_limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+          description: Maximum related events returned around this event.
+      responses:
+        '200':
+          description: The event, its detail, and its related sequence.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/ActivityEvent'
+                      - type: object
+                        required: [detail, sequence, sequence_truncated]
+                        properties:
+                          detail: { $ref: '#/components/schemas/ActivityDetail' }
+                          sequence:
+                            type: array
+                            description: Ordered related events (ascending occurred_at) around this event, including it (US4).
+                            items: { $ref: '#/components/schemas/ActivityEvent' }
+                          sequence_truncated:
+                            type: boolean
+                            description: True when more related events exist than sequence_limit.
+        '404':
+          description: No such event in the current principal's scope (also returned to prevent cross-user probing).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: not_found, message: "activity event not found" }
+
+components:
+  schemas:
+    Outcome:
+      type: string
+      enum: [succeeded, failed, blocked, pending]
+      description: Distinguished in UI by label + icon + text, never color alone (FR-019).
+
+    ActivityCategory:
+      type: string
+      enum: [delegation, session, agent_action, policy_decision, approval, revocation, reconnect, failure]
+
+    Significance:
+      type: string
+      enum: [security, business]
+
+    ActorRef:
+      type: object
+      required: [kind, display_label]
+      properties:
+        kind: { type: string, enum: [agent, service, user, broker] }
+        id: { type: string, nullable: true, description: "Historical id; may reference a since-removed entity." }
+        display_label: { type: string, description: "Human name captured at event time (renders even if the entity was revoked/removed — FR-015)." }
+
+    SubjectRef:
+      type: object
+      required: [kind, display_label]
+      properties:
+        kind: { type: string, enum: [grant, permission_set, service, session, tool, resource] }
+        id: { type: string, nullable: true }
+        display_label: { type: string }
+
+    RelatedRefs:
+      type: object
+      description: Foreign ids used for filtering, read-time threading, and outbound links (never sensitive).
+      properties:
+        agent_id: { type: string, nullable: true }
+        service_id: { type: string, nullable: true }
+        grant_id: { type: string, nullable: true }
+        session_id: { type: string, nullable: true }
+        approval_id: { type: string, nullable: true }
+        client_id: { type: string, nullable: true, description: "OAuth client that mediated the action, for 'which client did this' context." }
+        resource_uri: { type: string, nullable: true }
+
+    RelatedLink:
+      type: object
+      required: [label, target_route]
+      properties:
+        label: { type: string }
+        target_route:
+          type: string
+          pattern: '^/(agents/[^/]+|sessions|approvals(/[^/]+)?|activity/[^/]+)$'
+          description: In-app relative route generated from the server-side allowlist (data-model §3.3). Never absolute.
+
+    Basis:
+      type: object
+      required: [kind, label]
+      description: What decided the outcome; doubles as the FR-008 back-link.
+      properties:
+        kind: { type: string, enum: [grant, permission_set, policy, approval, provider, user, broker] }
+        id: { type: string, nullable: true }
+        label: { type: string }
+        target_route: { type: string, nullable: true, description: "Same allowlist as RelatedLink.target_route." }
+
+    Explanation:
+      type: object
+      required: [trigger, basis, consequence]
+      description: Structured plain-language "why" (FR-009), rendered as three lines.
+      properties:
+        trigger: { type: string, description: "What asked for this, e.g. 'Research Agent called delete_repo'." }
+        basis: { $ref: '#/components/schemas/Basis' }
+        consequence: { type: string, description: "What it means now, e.g. 'The agent cannot run delete_repo until you approve it.'" }
+
+    ActivityDetail:
+      type: object
+      required: [explanation, pending]
+      properties:
+        explanation: { $ref: '#/components/schemas/Explanation' }
+        context:
+          type: object
+          additionalProperties: { type: string }
+          description: Approved key/value context only (SafeFields registry). Never contains secrets, tokens, or sensitive parameters (FR-011).
+        related_links:
+          type: array
+          items: { $ref: '#/components/schemas/RelatedLink' }
+        pending:
+          type: boolean
+          description: True when the action has no final outcome yet (honest in-flight rendering).
+
+    ActivityEvent:
+      type: object
+      required: [id, category, type, actor, subject, outcome, significance, summary, related_refs, occurrence_count, first_occurred_at, occurred_at, redacted]
+      properties:
+        id: { type: string, format: uuid }
+        category: { $ref: '#/components/schemas/ActivityCategory' }
+        type: { type: string, description: "Finer sub-kind, e.g. session.refreshed." }
+        actor: { $ref: '#/components/schemas/ActorRef' }
+        subject: { $ref: '#/components/schemas/SubjectRef' }
+        outcome: { $ref: '#/components/schemas/Outcome' }
+        significance: { $ref: '#/components/schemas/Significance' }
+        summary:
+          type: string
+          description: Human-readable, redacted sentence answering what/who/what-affected/outcome (FR-002, FR-010).
+        related_refs: { $ref: '#/components/schemas/RelatedRefs' }
+        occurrence_count:
+          type: integer
+          minimum: 1
+          description: ">1 for rolled-up routine milestones (e.g. 41 uses of GitHub within one bucket)."
+        first_occurred_at: { type: string, format: date-time, description: "Start of the roll-up bucket; equals occurred_at for single events." }
+        occurred_at: { type: string, format: date-time, description: "Latest occurrence; the ordering key." }
+        redacted:
+          type: boolean
+          description: True if any sensitive value was abstracted in this event.
+
+    ActivityThreadResponse:
+      type: object
+      description: Thread derived on read from related_refs. event_ids identify events in this response page.
+      required: [thread_key, kind, title, latest_outcome, total_events, truncated, event_ids]
+      properties:
+        thread_key: { type: string, description: "Stable derived key, e.g. service:{service_id}, agent:{agent_id}, toolflow:{approval_id}." }
+        kind: { type: string, enum: [service_lifecycle, agent_journey, tool_flow] }
+        title: { type: string }
+        latest_outcome: { $ref: '#/components/schemas/Outcome' }
+        total_events: { type: integer, description: "Events in this thread within retention, across all pages." }
+        truncated: { type: boolean, description: "True when total_events exceeds the events present on this page." }
+        event_ids:
+          type: array
+          description: Ordered (ascending by occurred_at) ids of this thread's events present in the page.
+          items: { type: string, format: uuid }
+
+    NeedsAttentionItem:
+      type: object
+      required: [kind, title, summary, subject, next_step, since, group_key]
+      properties:
+        kind: { type: string, enum: [reconnect_required, approval_pending] }
+        title: { type: string }
+        summary: { type: string }
+        subject: { $ref: '#/components/schemas/SubjectRef' }
+        next_step:
+          type: object
+          required: [label, target_route]
+          properties:
+            label: { type: string }
+            target_route:
+              type: string
+              pattern: '^/(agents/[^/]+|sessions|approvals(/[^/]+)?)$'
+              description: Route into the existing consent/session/approval flow that resolves it (FR-004).
+        since: { type: string, format: date-time }
+        group_key: { type: string, description: "Items sharing a group_key may be collapsed by the UI ('4 tool calls waiting → Review all')." }
+
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string, description: "Machine-readable error code." }
+        message: { type: string, description: "Human-readable description." }
+
+  securitySchemes:
+    SessionAuth:
+      type: apiKey
+      in: cookie
+      name: session
+    PrincipalHeader:
+      type: apiKey
+      in: header
+      name: X-Remote-User
