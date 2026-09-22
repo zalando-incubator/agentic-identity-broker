@@ -606,11 +606,11 @@
           "properties": {
             "jweSigningKey": {
               "type": "string",
-              "description": "Raw 32-byte JWE signing key for state tokens"
+              "description": "Raw 32-byte JWE signing key; the chart base64-encodes it into the broker-facing Secret string"
             },
             "jweSigningKeyBase64": {
               "type": "string",
-              "description": "Base64-encoded JWE signing key (highest precedence)"
+              "description": "Base64-encoded 32-byte JWE signing key written to Secret stringData without additional encoding (highest precedence)"
             },
             "jweSigningKeySecret": {
               "type": "object",
@@ -641,7 +641,7 @@
               "properties": {
                 "rawKey": {
                   "type": "string",
-                  "description": "Base64-encoded 32-byte key for the in-memory encryption backend"
+                  "description": "Base64-encoded 32-byte key written to Secret stringData without additional encoding for the in-memory encryption backend"
                 }
               }
             },
