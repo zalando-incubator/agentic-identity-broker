@@ -1,18 +1,25 @@
-<svg width="64" height="64" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
-    <linearGradient id="favicon-body" x1="34" y1="38" x2="94" y2="90" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0F172A" />
-      <stop offset="1" stop-color="#1E293B" />
-    </linearGradient>
+    <style>
+      @import url('https://fonts.bunny.net/css?family=zalando-sans:300,700');
+
+      .monogram {
+        font-family: 'Zalando Sans', sans-serif;
+        font-size: 38px;
+        letter-spacing: -0.07em;
+        text-rendering: optimizeLegibility;
+        fill: #000000;
+      }
+
+      .bold-text {
+        font-weight: 700;
+      }
+
+      .light-text {
+        font-weight: 300;
+      }
+    </style>
   </defs>
-  <path d="M64 28V38" stroke="#94A3B8" stroke-width="8" stroke-linecap="round" />
-  <path d="M32 78L44 71" stroke="#94A3B8" stroke-width="8" stroke-linecap="round" />
-  <path d="M96 71L108 78" stroke="#94A3B8" stroke-width="8" stroke-linecap="round" />
-  <circle cx="64" cy="18" r="10" fill="#E11D48" />
-  <circle cx="20" cy="84" r="12" fill="#0EA5E9" />
-  <circle cx="108" cy="84" r="12" fill="#14B8A6" />
-  <path d="M64 34L92 50V82L64 98L36 82V50L64 34Z" fill="url(#favicon-body)" />
-  <path d="M48 64H80" stroke="white" stroke-width="9" stroke-linecap="round" />
-  <path d="M71 54L81 64L71 74" stroke="white" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
-  <path d="M57 54L47 64L57 74" stroke="white" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+  <rect width="64" height="64" fill="#ffffff" />
+  <text class="monogram" x="32" y="45" text-anchor="middle"><tspan class="bold-text">ai</tspan><tspan class="light-text">b</tspan></text>
 </svg>

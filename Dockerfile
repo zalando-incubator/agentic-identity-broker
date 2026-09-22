@@ -1,6 +1,9 @@
 # Agentic Identity Broker - Production Docker Image
 # This Dockerfile packages pre-built backend and frontend artifacts
-FROM alpine:3@sha256:5b02b42e375f7426f8d65c3af331ca05d9878f9989230354504e0b9dfd431f60
+# BASE_IMAGE lets internal release pipelines override the public default
+# with an internally-mirrored/allowed base image (see delivery.yaml).
+ARG BASE_IMAGE=alpine:3@sha256:5b02b42e375f7426f8d65c3af331ca05d9878f9989230354504e0b9dfd431f60
+FROM ${BASE_IMAGE}
 
 # Build arguments for multi-architecture support via docker buildx
 # When using: docker buildx build --platform linux/amd64,linux/arm64 ...
