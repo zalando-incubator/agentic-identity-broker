@@ -67,6 +67,22 @@ describe('useUpdateValidity', () => {
     expect(result.current.getValidUntil()).toBe('2032-03-17T00:00:00.000Z');
   });
 
+  it('resets to no expiration when the saved validity is cleared', () => {
+    const { result, rerender } = renderHook(
+      ({ currentGrant }: { currentGrant: UserGrant }) =>
+        useUpdateValidity(currentGrant),
+      { initialProps: { currentGrant: grant } },
+    );
+
+    rerender({ currentGrant: { ...grant, valid_until: null } });
+
+    expect(result.current.validityState).toEqual({
+      noExpiration: true,
+      expiresAt: undefined,
+    });
+    expect(result.current.getValidUntil()).toBeNull();
+  });
+
   it('explains how to correct a missing selected end date', () => {
     const { result } = renderHook(() => useUpdateValidity());
 

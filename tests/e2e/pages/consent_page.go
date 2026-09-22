@@ -269,6 +269,21 @@ func (cp *ConsentPage) SubmitConsent(ctx context.Context) error {
 	return nil
 }
 
+func (cp *ConsentPage) endDateInput() (playwright.Locator, error) {
+	input := cp.page().GetByLabel("End date", playwright.PageGetByLabelOptions{
+		Exact: playwright.Bool(true),
+	})
+	count, err := input.Count()
+	if err != nil {
+		return nil, fmt.Errorf("failed to count expiration input: %w", err)
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("expiration input not found")
+	}
+
+	return input, nil
+}
+
 // SetExpiration sets the grant expiration days using the expiration input.
 //
 // Parameters:
@@ -290,16 +305,9 @@ func (cp *ConsentPage) SetExpiration(ctx context.Context, expirationDays int) er
 		return fmt.Errorf("expirationDays must be positive")
 	}
 
-	// Find expiration input by label
-	input := cp.page().GetByLabel("Expiration")
-
-	// Check if element exists
-	count, err := input.Count()
+	input, err := cp.endDateInput()
 	if err != nil {
-		return fmt.Errorf("failed to count expiration input: %w", err)
-	}
-	if count == 0 {
-		return fmt.Errorf("expiration input not found")
+		return err
 	}
 
 	// Calculate expiration date
@@ -311,6 +319,13 @@ func (cp *ConsentPage) SetExpiration(ctx context.Context, expirationDays int) er
 	}
 
 	return nil
+}
+
+// EnableSpecificEndDate selects the specific end date option.
+func (cp *ConsentPage) EnableSpecificEndDate(_ context.Context) error {
+	return cp.page().GetByRole("checkbox", playwright.PageGetByRoleOptions{
+		Name: "Specific end date",
+	}).Check()
 }
 
 // SetExpirationDate sets the grant expiration to a specific date.
@@ -330,16 +345,9 @@ func (cp *ConsentPage) SetExpiration(ctx context.Context, expirationDays int) er
 //	err := consentPage.SetExpirationDate(ctx, tomorrow)
 //	Expect(err).NotTo(HaveOccurred())
 func (cp *ConsentPage) SetExpirationDate(ctx context.Context, date time.Time) error {
-	// Find expiration input by label
-	input := cp.page().GetByLabel("Expiration")
-
-	// Check if element exists
-	count, err := input.Count()
+	input, err := cp.endDateInput()
 	if err != nil {
-		return fmt.Errorf("failed to count expiration input: %w", err)
-	}
-	if count == 0 {
-		return fmt.Errorf("expiration input not found")
+		return err
 	}
 
 	// Format date as ISO 8601
@@ -684,16 +692,9 @@ func (cp *ConsentPage) WaitForNoValidationError(ctx context.Context, timeoutMs i
 //	Expect(err).NotTo(HaveOccurred())
 //	Expect(date).To(Equal("2026-02-15"))
 func (cp *ConsentPage) GetExpirationDate(ctx context.Context) (string, error) {
-	// Find expiration input by label
-	input := cp.page().GetByLabel("Expiration")
-
-	// Check if element exists
-	count, err := input.Count()
+	input, err := cp.endDateInput()
 	if err != nil {
-		return "", fmt.Errorf("failed to count expiration input: %w", err)
-	}
-	if count == 0 {
-		return "", fmt.Errorf("expiration input not found")
+		return "", err
 	}
 
 	// Get the value attribute
