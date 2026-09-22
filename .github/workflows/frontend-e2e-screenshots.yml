@@ -5,12 +5,14 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   frontend-e2e:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     # Skip forked PRs — can't push back and token is read-only
     if: github.event.pull_request.head.repo.full_name == github.repository
 
