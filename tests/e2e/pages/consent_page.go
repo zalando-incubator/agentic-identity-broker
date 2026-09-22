@@ -152,13 +152,29 @@ func (cp *ConsentPage) page() playwright.Page {
 	return cp.GetPlaywrightPage()
 }
 
-// getApproveButton returns the "Approve & Delegate" button locator.
-// This private helper prevents duplication across SubmitConsent and IsConsentButtonEnabled.
-func (cp *ConsentPage) getApproveButton(ctx context.Context) playwright.Locator {
+func (cp *ConsentPage) getConsentActionButton(label string) playwright.Locator {
 	return cp.page().GetByRole(
 		"button",
-		playwright.PageGetByRoleOptions{Name: "Approve & Delegate"},
+		playwright.PageGetByRoleOptions{Name: label},
 	)
+}
+
+func (cp *ConsentPage) isConsentActionEnabled(label string) (bool, error) {
+	button := cp.getConsentActionButton(label)
+	count, err := button.Count()
+	if err != nil {
+		return false, fmt.Errorf("failed to locate consent action button: %w", err)
+	}
+	if count == 0 {
+		return false, fmt.Errorf("consent action button not found")
+	}
+
+	enabled, err := button.IsEnabled()
+	if err != nil {
+		return false, fmt.Errorf("failed to check consent action button enabled state: %w", err)
+	}
+
+	return enabled, nil
 }
 
 // waitForAgentNameHeading waits for the main h1 heading (agent name) to appear.
@@ -219,47 +235,53 @@ func (cp *ConsentPage) ClearScope(ctx context.Context, scopeName string) error {
 	return fmt.Errorf("scope clearing is not available in current UI; scopes are determined by service requirements. Use RevokeService() to revoke all scopes for a service")
 }
 
-// SubmitConsent finds the "Approve & Delegate" button and clicks it.
+// SubmitConsent clicks the "Approve & Delegate" action for a new grant.
 //
 // Parameters:
 //   - ctx: Context for cancellation
 //
 // Returns:
-//   - error: If button not found or not clickable
+//   - error: If the button is not found or not clickable
 //
 // The button may be disabled if mandatory requirements are not met.
-//
-// Example:
-//
-//	err := consentPage.SubmitConsent(ctx)
-//	Expect(err).NotTo(HaveOccurred())
 func (cp *ConsentPage) SubmitConsent(ctx context.Context) error {
-	button := cp.getApproveButton(ctx)
-
-	// Check if button exists
+	button := cp.getConsentActionButton("Approve & Delegate")
 	count, err := button.Count()
 	if err != nil {
-		return fmt.Errorf("failed to count submit button: %w", err)
+		return fmt.Errorf("failed to locate consent submit button: %w", err)
 	}
 	if count == 0 {
-		return fmt.Errorf("approve & delegate button not found")
+		return fmt.Errorf("approve and delegate button not found")
 	}
 
-	// Check if button is enabled
 	enabled, err := button.IsEnabled()
 	if err != nil {
 		return fmt.Errorf("failed to check button enabled state: %w", err)
 	}
 	if !enabled {
-		return fmt.Errorf("approve & delegate button not enabled (may require mandatory services to be connected)")
+		return fmt.Errorf("approve and delegate button is not enabled (mandatory services may not be connected)")
 	}
 
-	// Click the button
 	if err := button.Click(); err != nil {
-		return fmt.Errorf("failed to click Approve & Delegate button: %w", err)
+		return fmt.Errorf("failed to click approve and delegate button: %w", err)
 	}
 
 	return nil
+}
+
+func (cp *ConsentPage) endDateInput() (playwright.Locator, error) {
+	input := cp.page().GetByLabel("End date", playwright.PageGetByLabelOptions{
+		Exact: playwright.Bool(true),
+	})
+	count, err := input.Count()
+	if err != nil {
+		return nil, fmt.Errorf("failed to count expiration input: %w", err)
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("expiration input not found")
+	}
+
+	return input, nil
 }
 
 // SetExpiration sets the grant expiration days using the expiration input.
@@ -283,16 +305,9 @@ func (cp *ConsentPage) SetExpiration(ctx context.Context, expirationDays int) er
 		return fmt.Errorf("expirationDays must be positive")
 	}
 
-	// Find expiration input by label
-	input := cp.page().GetByLabel("Expiration")
-
-	// Check if element exists
-	count, err := input.Count()
+	input, err := cp.endDateInput()
 	if err != nil {
-		return fmt.Errorf("failed to count expiration input: %w", err)
-	}
-	if count == 0 {
-		return fmt.Errorf("expiration input not found")
+		return err
 	}
 
 	// Calculate expiration date
@@ -304,6 +319,13 @@ func (cp *ConsentPage) SetExpiration(ctx context.Context, expirationDays int) er
 	}
 
 	return nil
+}
+
+// EnableSpecificEndDate selects the specific end date option.
+func (cp *ConsentPage) EnableSpecificEndDate(_ context.Context) error {
+	return cp.page().GetByRole("checkbox", playwright.PageGetByRoleOptions{
+		Name: "Specific end date",
+	}).Check()
 }
 
 // SetExpirationDate sets the grant expiration to a specific date.
@@ -323,16 +345,9 @@ func (cp *ConsentPage) SetExpiration(ctx context.Context, expirationDays int) er
 //	err := consentPage.SetExpirationDate(ctx, tomorrow)
 //	Expect(err).NotTo(HaveOccurred())
 func (cp *ConsentPage) SetExpirationDate(ctx context.Context, date time.Time) error {
-	// Find expiration input by label
-	input := cp.page().GetByLabel("Expiration")
-
-	// Check if element exists
-	count, err := input.Count()
+	input, err := cp.endDateInput()
 	if err != nil {
-		return fmt.Errorf("failed to count expiration input: %w", err)
-	}
-	if count == 0 {
-		return fmt.Errorf("expiration input not found")
+		return err
 	}
 
 	// Format date as ISO 8601
@@ -516,39 +531,14 @@ func (cp *ConsentPage) GetSelectedScopes(ctx context.Context) ([]string, error) 
 	return selected, nil
 }
 
-// IsConsentButtonEnabled checks if the "Approve & Delegate" button is enabled.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//
-// Returns:
-//   - bool: True if button is enabled, false otherwise
-//   - error: If button not found
-//
-// Example:
-//
-//	enabled, err := consentPage.IsConsentButtonEnabled(ctx)
-//	Expect(err).NotTo(HaveOccurred())
-//	Expect(enabled).To(BeFalse()) // Still loading mandatory requirements
+// IsConsentButtonEnabled checks if the new-grant consent action is enabled.
 func (cp *ConsentPage) IsConsentButtonEnabled(ctx context.Context) (bool, error) {
-	button := cp.getApproveButton(ctx)
+	return cp.isConsentActionEnabled("Approve & Delegate")
+}
 
-	// Check if button exists
-	count, err := button.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to count submit button: %w", err)
-	}
-	if count == 0 {
-		return false, fmt.Errorf("approve & delegate button not found")
-	}
-
-	// Check if enabled
-	enabled, err := button.IsEnabled()
-	if err != nil {
-		return false, fmt.Errorf("failed to check button enabled state: %w", err)
-	}
-
-	return enabled, nil
+// IsSaveButtonEnabled checks if the existing-grant Save action is enabled.
+func (cp *ConsentPage) IsSaveButtonEnabled(ctx context.Context) (bool, error) {
+	return cp.isConsentActionEnabled("Save")
 }
 
 // GetSuccessMessage retrieves the success message after form submission.
@@ -702,16 +692,9 @@ func (cp *ConsentPage) WaitForNoValidationError(ctx context.Context, timeoutMs i
 //	Expect(err).NotTo(HaveOccurred())
 //	Expect(date).To(Equal("2026-02-15"))
 func (cp *ConsentPage) GetExpirationDate(ctx context.Context) (string, error) {
-	// Find expiration input by label
-	input := cp.page().GetByLabel("Expiration")
-
-	// Check if element exists
-	count, err := input.Count()
+	input, err := cp.endDateInput()
 	if err != nil {
-		return "", fmt.Errorf("failed to count expiration input: %w", err)
-	}
-	if count == 0 {
-		return "", fmt.Errorf("expiration input not found")
+		return "", err
 	}
 
 	// Get the value attribute

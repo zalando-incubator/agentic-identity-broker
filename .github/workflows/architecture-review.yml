@@ -1,27 +1,17 @@
 name: Architecture Review
 
+# On-demand only: a maintainer comments `/architecture-review` on a PR.
+# (The former "review available" comment on every new PR was removed — it
+# added a bot comment to every PR without carrying information.)
+
 on:
-  pull_request:
-    types: [opened]
   issue_comment:
     types: [created]
 
-jobs:
-  announce:
-    # Skip forked PRs — GITHUB_TOKEN is read-only there
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Post availability notice
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr comment "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" \
-            --body "🏗️ **Architectural review available** — comment \`/architecture-review\` to trigger a structural analysis of this PR (concept overlap, hexagonal compliance, coupling, e2e coverage)."
+permissions:
+  contents: read
 
+jobs:
   review:
     if: >
       github.event_name == 'issue_comment' &&
@@ -58,7 +48,7 @@ jobs:
 
       - name: Checkout repository
         if: steps.fork-check.outputs.is_fork == 'false'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
@@ -79,13 +69,9 @@ jobs:
 
       - name: Set up Node.js
         if: steps.fork-check.outputs.is_fork == 'false'
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-
-      - name: Install Copilot CLI
-        if: steps.fork-check.outputs.is_fork == 'false'
-        run: npm install -g @github/copilot@1.0.86
 
       - name: Verify token
         if: steps.fork-check.outputs.is_fork == 'false'
@@ -97,7 +83,7 @@ jobs:
             exit 1
           fi
           echo "COPILOT_CLI_TOKEN is set (${#COPILOT_GITHUB_TOKEN} chars)"
-          copilot --version
+          npx --yes @github/copilot@1.0.86 --version
 
       - name: Run architecture review
         if: steps.fork-check.outputs.is_fork == 'false'
@@ -107,7 +93,7 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
         run: |
           set +e
-          copilot -p "You are an architectural reviewer. Read the agent instructions at .github/agents/architecture-review.agent.md for your full review rubric. The PR diff is in pr.diff and metadata in pr-details.json — read these files using the read tool. The full repository is checked out in the current directory, so read any existing source file directly with the read tool. Do not run shell commands or git commands — use only the read, write, and task tools. Follow the sub-agent delegation strategy described in the agent instructions. When finished, write your complete architectural review in markdown format to the file review-output.md using the write tool. PR #${PR_NUMBER} in ${GITHUB_REPOSITORY}." \
+          npx --yes @github/copilot@1.0.86 -p "You are an architectural reviewer. Read the agent instructions at .github/agents/architecture-review.agent.md for your full review rubric. The PR diff is in pr.diff and metadata in pr-details.json — read these files using the read tool. The full repository is checked out in the current directory, so read any existing source file directly with the read tool. Do not run shell commands or git commands — use only the read, write, and task tools. Follow the sub-agent delegation strategy described in the agent instructions. When finished, write your complete architectural review in markdown format to the file review-output.md using the write tool. PR #${PR_NUMBER} in ${GITHUB_REPOSITORY}." \
             --model claude-opus-5 \
             --allow-tool=read \
             --allow-tool=write \
@@ -153,10 +139,12 @@ jobs:
         if: always() && github.event_name == 'issue_comment'
         env:
           GH_TOKEN: ${{ github.token }}
+          IS_FORK: ${{ steps.fork-check.outputs.is_fork }}
+          SUCCESS: ${{ steps.review.outputs.success }}
         run: |
-          if [ "${{ steps.fork-check.outputs.is_fork }}" = "true" ]; then
+          if [ "$IS_FORK" = "true" ]; then
             REACTION="confused"
-          elif [ "${{ steps.review.outputs.success }}" = "true" ]; then
+          elif [ "$SUCCESS" = "true" ]; then
             REACTION="rocket"
           else
             REACTION="-1"

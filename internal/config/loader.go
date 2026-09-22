@@ -337,7 +337,7 @@ func (l *Loader) loadEnvFile(filename string) error {
 	}
 
 	// Check if file exists
-	if _, err := os.Stat(absPath); err != nil {
+	if _, err := os.Stat(absPath); err != nil { // #nosec G703 -- env file names are local operator configuration paths.
 		return err
 	}
 
@@ -394,7 +394,7 @@ func (l *Loader) loadYAML() error {
 	}
 
 	// Check if file exists
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+	if _, err := os.Stat(configPath); os.IsNotExist(err) { // #nosec G703 -- config path is local operator configuration, not an HTTP input.
 		// Config file is optional
 		return nil
 	}

@@ -226,7 +226,7 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 		return
 	}
 
-	body, err := json.Marshal(response)
+	body, err := json.Marshal(response) // #nosec G117 -- OAuth2 token response is serialized for its direct HTTP response, not logging.
 	if err != nil {
 		if h.Logger != nil {
 			h.Logger.ErrorContext(ctx, "failed to encode token exchange response", "error", err)
@@ -276,7 +276,7 @@ func (h *OAuth2TokenHandler) handleImpersonation(w http.ResponseWriter, r *http.
 	}
 	span.SetAttributes(attribute.String("impersonation.outcome", outcome.Audit.Outcome))
 
-	body, marshalErr := json.Marshal(outcome.Response)
+	body, marshalErr := json.Marshal(outcome.Response) // #nosec G117 -- OAuth2 token response is serialized for its direct HTTP response, not logging.
 	if marshalErr != nil {
 		if h.Logger != nil {
 			h.Logger.Error("failed to encode impersonation response", "error", marshalErr)

@@ -369,6 +369,71 @@ describe('AgentGrantDetailPage', () => {
     expect(screen.getByText('Google Drive')).toBeInTheDocument();
   });
 });
+describe('AgentGrantDetailPage action labels', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(useConsentModule, 'useConsent').mockReturnValue({
+      delegations: [],
+      userInfo: {
+        principal: 'user@example.com',
+        displayName: 'Test User',
+        pictureUrl: 'https://example.com/avatar.png',
+      },
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+  });
+
+  it('shows Save and an End Date heading for an existing grant', () => {
+    vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockReturnValue({
+      agent: mockAgent,
+      services: mockServices,
+      cimdMeta: null,
+      grants: mockGrant,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    render(
+      <RouterWrapper>
+        <AgentGrantDetailPage />
+      </RouterWrapper>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'End Date', level: 2 }),
+    ).toBeInTheDocument();
+
+    expect(screen.getByText(/before saving\./)).toBeInTheDocument();
+  });
+
+  it('shows Approve & Delegate when no grant exists', () => {
+    vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockReturnValue({
+      agent: mockAgent,
+      services: mockServices,
+      cimdMeta: null,
+      grants: null,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    render(
+      <RouterWrapper>
+        <AgentGrantDetailPage />
+      </RouterWrapper>,
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Approve & Delegate' }),
+    ).toBeInTheDocument();
+
+    expect(screen.getByText(/before approving\./)).toBeInTheDocument();
+  });
+});
 
 describe('AgentGrantDetailPage - User Story 5: Simplified UI Without Edit Mode (T091-T099)', () => {
   beforeEach(() => {
@@ -736,7 +801,11 @@ describe('AgentGrantDetailPage - Revoke All Access (T017)', () => {
 describe('AgentGrantDetailPage - CIMD session_token flow', () => {
   const mockUseConsentReturn = {
     delegations: [],
-    userInfo: { principal: 'user@example.com', displayName: 'Test User', pictureUrl: '' },
+    userInfo: {
+      principal: 'user@example.com',
+      displayName: 'Test User',
+      pictureUrl: '',
+    },
     loading: false,
     error: null,
     refetch: vi.fn(),
@@ -744,19 +813,23 @@ describe('AgentGrantDetailPage - CIMD session_token flow', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(useConsentModule, 'useConsent').mockReturnValue(mockUseConsentReturn);
+    vi.spyOn(useConsentModule, 'useConsent').mockReturnValue(
+      mockUseConsentReturn,
+    );
   });
 
   it('forwards session_token from URL to useAgentGrants', () => {
-    const useAgentGrantsSpy = vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockReturnValue({
-      agent: mockAgent,
-      services: mockServices,
-      cimdMeta: null,
-      grants: mockGrant,
-      loading: false,
-      error: null,
-      refetch: vi.fn(),
-    });
+    const useAgentGrantsSpy = vi
+      .spyOn(useAgentGrantsModule, 'useAgentGrants')
+      .mockReturnValue({
+        agent: mockAgent,
+        services: mockServices,
+        cimdMeta: null,
+        grants: mockGrant,
+        loading: false,
+        error: null,
+        refetch: vi.fn(),
+      });
 
     render(
       <MemoryRouterWrapper initialEntry="/agents/agent-123?session_token=test-session-abc">
@@ -764,10 +837,9 @@ describe('AgentGrantDetailPage - CIMD session_token flow', () => {
       </MemoryRouterWrapper>,
     );
 
-    expect(useAgentGrantsSpy).toHaveBeenCalledWith(
-      'agent-123',
-      { sessionToken: 'test-session-abc' },
-    );
+    expect(useAgentGrantsSpy).toHaveBeenCalledWith('agent-123', {
+      sessionToken: 'test-session-abc',
+    });
   });
 
   it('renders CIMDConsentSummary and domain badge when cimdMeta is present', () => {

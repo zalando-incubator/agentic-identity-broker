@@ -23,7 +23,7 @@ type PostgresFixture struct {
 
 func CanAccessContainerRuntime() error {
 	for _, runtime := range []string{"docker", "podman"} {
-		if err := exec.Command(runtime, "ps").Run(); err == nil {
+		if err := exec.Command(runtime, "ps").Run(); err == nil { // #nosec G204 -- runtime is selected only from the fixed docker/podman list above.
 			return nil
 		}
 	}

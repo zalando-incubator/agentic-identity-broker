@@ -26,8 +26,12 @@ import (
 //   - "mcp": parses body as JSON-RPC 2.0, sets type discriminator, extracts MCP fields
 //   - any other value: type="unknown", body stored as raw string
 //
+// targetServerName populates mcp.target_server_name when protocol == "mcp" and
+// non-empty; it is agentgateway routing metadata, not an MCP protocol field, so it
+// is never set for other protocols.
+//
 // The returned OPAInput (map[string]any) is safe for direct use as the OPA input document.
-func BuildOPAInput(protocol string, body []byte, headers map[string]string, grantedPermissionSets map[string][]string) (OPAInput, error) {
+func BuildOPAInput(protocol string, body []byte, headers map[string]string, targetServerName string, grantedPermissionSets map[string][]string) (OPAInput, error) {
 	// Build an ext_authz v3 CheckRequest from the ExtProc data so we can delegate
 	// the base input construction to the opa-envoy-plugin library.
 	checkReq := buildCheckRequest(headers, body)
@@ -53,7 +57,7 @@ func BuildOPAInput(protocol string, body []byte, headers map[string]string, gran
 
 	switch protocol {
 	case "mcp":
-		return buildMCPInput(input, body, headers)
+		return buildMCPInput(input, body, headers, targetServerName)
 	default:
 		input["type"] = "unknown"
 		return input, nil
@@ -95,11 +99,12 @@ func buildCheckRequest(headers map[string]string, body []byte) *ext_authz_v3.Che
 // Header-only requests are evaluated before token exchange, so
 // context.granted_permission_sets is unavailable and omitted by design.
 // The explicit availability bit lets policies deny on unavailable context.
-// For "mcp" protocol: type="mcp_headers_only" with session ID. This lets OPA policies
-// distinguish MCP header-only requests (SSE/WebSocket upgrades, GET /mcp) from
-// non-MCP traffic rather than mapping both to type="unknown".
+// For "mcp" protocol: type="mcp_headers_only" with session ID and target_server_name
+// (agentgateway routing metadata, present regardless of header-only status). This lets
+// OPA policies distinguish MCP header-only requests (SSE/WebSocket upgrades, GET /mcp)
+// from non-MCP traffic rather than mapping both to type="unknown".
 // For any other protocol: type="unknown".
-func BuildOPAInputHeadersOnly(protocol string, headers map[string]string) (OPAInput, error) {
+func BuildOPAInputHeadersOnly(protocol string, headers map[string]string, targetServerName string) (OPAInput, error) {
 	checkReq := buildCheckRequest(headers, nil)
 	input, err := envoyauth.RequestToInput(checkReq, nopLogger{}, nil, true)
 	if err != nil {
@@ -111,7 +116,7 @@ func BuildOPAInputHeadersOnly(protocol string, headers map[string]string) (OPAIn
 
 	if protocol == "mcp" {
 		input["type"] = "mcp_headers_only"
-		input["mcp"] = &MCPInput{SessionID: extractSessionID(headers)}
+		input["mcp"] = &MCPInput{SessionID: extractSessionID(headers), TargetServerName: targetServerName}
 	} else {
 		input["type"] = "unknown"
 	}
@@ -121,17 +126,18 @@ func BuildOPAInputHeadersOnly(protocol string, headers map[string]string) (OPAIn
 // buildMCPInput adds MCP-specific fields to the OPA input map.
 // For tools/call: type="mcp_tool_call", populates mcp.tool_name + mcp.arguments.
 // For other methods: type="mcp_method", populates mcp.method + mcp.params.
-func buildMCPInput(input OPAInput, body []byte, headers map[string]string) (OPAInput, error) {
+func buildMCPInput(input OPAInput, body []byte, headers map[string]string, targetServerName string) (OPAInput, error) {
 	msg, err := ParseMCPMessage(body)
 	if err != nil {
 		return nil, fmt.Errorf("input builder: %w", err)
 	}
 
 	mcpInput := &MCPInput{
-		JSONRPC:   msg.JSONRPC,
-		Method:    msg.Method,
-		ID:        msg.ID,
-		SessionID: extractSessionID(headers),
+		JSONRPC:          msg.JSONRPC,
+		Method:           msg.Method,
+		ID:               msg.ID,
+		SessionID:        extractSessionID(headers),
+		TargetServerName: targetServerName,
 	}
 
 	if msg.Method == "tools/call" {

@@ -687,9 +687,12 @@ func (m *mockGrantRepository) ListByPrincipal(ctx context.Context, principal id.
 	return grants, nil
 }
 
-func (m *mockGrantRepository) CountAgentsByServiceID(ctx context.Context, serviceID id.ServiceID) (int, error) {
+func (m *mockGrantRepository) CountAgentsByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (int, error) {
 	agents := make(map[id.AgentID]bool)
 	for _, grant := range m.grants {
+		if grant.Principal != principal {
+			continue
+		}
 		for _, entry := range grant.GrantedPermissionSets {
 			for _, svcID := range entry.IncludedServiceIDs {
 				if svcID == serviceID {
@@ -724,9 +727,12 @@ func (n *noopSessionRepository) CountByService(_ context.Context, _ id.ServiceID
 	return 0, nil
 }
 
-func (m *mockGrantRepository) ListByServiceID(ctx context.Context, serviceID id.ServiceID) ([]id.AgentID, error) {
+func (m *mockGrantRepository) ListByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) ([]id.AgentID, error) {
 	agents := make(map[id.AgentID]bool)
 	for _, grant := range m.grants {
+		if grant.Principal != principal {
+			continue
+		}
 		for _, entry := range grant.GrantedPermissionSets {
 			for _, svcID := range entry.IncludedServiceIDs {
 				if svcID == serviceID {

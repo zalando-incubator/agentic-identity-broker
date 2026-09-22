@@ -481,4 +481,64 @@ func TestUserGrantRepository(t *testing.T) {
 			assert.Equal(t, grantB.ID, found.ID)
 		})
 	})
+
+	t.Run("ListByPrincipalAndServiceID", func(t *testing.T) {
+		principalA := id.Principal("list-principal-a@example.com")
+		principalB := id.Principal("list-principal-b@example.com")
+		targetServiceID := id.NewServiceID()
+		nonTargetServiceID := id.NewServiceID()
+		activeAgent := createUserGrantTestAgent(t, agentRepo, "list-active")
+		otherPrincipalAgent := createUserGrantTestAgent(t, agentRepo, "list-other-principal")
+		nonTargetAgent := createUserGrantTestAgent(t, agentRepo, "list-non-target")
+		expiredAgent := createUserGrantTestAgent(t, agentRepo, "list-expired")
+
+		require.NoError(t, grantRepo.Create(ctx, newUserGrant(principalA, activeAgent.ID, newGrantedPermissionSetEntry(t, adapter, targetServiceID))))
+		require.NoError(t, grantRepo.Create(ctx, newUserGrant(principalB, otherPrincipalAgent.ID, newGrantedPermissionSetEntry(t, adapter, targetServiceID))))
+		require.NoError(t, grantRepo.Create(ctx, newUserGrant(principalA, nonTargetAgent.ID, newGrantedPermissionSetEntry(t, adapter, nonTargetServiceID))))
+
+		expiredEntry := newGrantedPermissionSetEntry(t, adapter, targetServiceID)
+		pastTime := time.Now().Add(-time.Hour).UTC()
+		grantedPS := fmt.Sprintf(`[{"permission_set_id":"%s","included_service_ids":["%s"]}]`, expiredEntry.PermissionSetID, targetServiceID)
+		_, err := adapter.db.ExecContext(ctx,
+			`INSERT INTO user_grants (id, principal, agent_id, valid_until, granted_permission_sets, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
+			id.NewGrantID().String(), string(principalA), expiredAgent.ID.String(), pastTime, grantedPS, pastTime, pastTime,
+		)
+		require.NoError(t, err)
+
+		agentIDs, err := grantRepo.ListByPrincipalAndServiceID(ctx, principalA, targetServiceID)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []id.AgentID{activeAgent.ID, expiredAgent.ID}, agentIDs)
+		assert.NotContains(t, agentIDs, otherPrincipalAgent.ID)
+		assert.NotContains(t, agentIDs, nonTargetAgent.ID)
+	})
+
+	t.Run("CountAgentsByPrincipalAndServiceID", func(t *testing.T) {
+		principalA := id.Principal("count-principal-a@example.com")
+		principalB := id.Principal("count-principal-b@example.com")
+		targetServiceID := id.NewServiceID()
+		nonTargetServiceID := id.NewServiceID()
+		activeAgent := createUserGrantTestAgent(t, agentRepo, "count-active")
+		otherPrincipalAgent := createUserGrantTestAgent(t, agentRepo, "count-other-principal")
+		nonTargetAgent := createUserGrantTestAgent(t, agentRepo, "count-non-target")
+		expiredAgent := createUserGrantTestAgent(t, agentRepo, "count-expired")
+
+		require.NoError(t, grantRepo.Create(ctx, newUserGrant(principalA, activeAgent.ID, newGrantedPermissionSetEntry(t, adapter, targetServiceID))))
+		require.NoError(t, grantRepo.Create(ctx, newUserGrant(principalB, otherPrincipalAgent.ID, newGrantedPermissionSetEntry(t, adapter, targetServiceID))))
+		require.NoError(t, grantRepo.Create(ctx, newUserGrant(principalA, nonTargetAgent.ID, newGrantedPermissionSetEntry(t, adapter, nonTargetServiceID))))
+
+		expiredEntry := newGrantedPermissionSetEntry(t, adapter, targetServiceID)
+		pastTime := time.Now().Add(-time.Hour).UTC()
+		grantedPS := fmt.Sprintf(`[{"permission_set_id":"%s","included_service_ids":["%s"]}]`, expiredEntry.PermissionSetID, targetServiceID)
+		_, err := adapter.db.ExecContext(ctx,
+			`INSERT INTO user_grants (id, principal, agent_id, valid_until, granted_permission_sets, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
+			id.NewGrantID().String(), string(principalA), expiredAgent.ID.String(), pastTime, grantedPS, pastTime, pastTime,
+		)
+		require.NoError(t, err)
+
+		count, err := grantRepo.CountAgentsByPrincipalAndServiceID(ctx, principalA, targetServiceID)
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
+	})
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -30,7 +31,7 @@ func CIMDTestHTTPClient(server *httptest.Server, fakeHostname string) *http.Clie
 	serverAddr := parsed.Host
 	return &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- fake-host test routing uses an httptest certificate issued only for 127.0.0.1.
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, _, _ := net.SplitHostPort(addr)
 				if host == fakeHostname {
@@ -106,7 +107,7 @@ func NewCIMDEndUserTestServer(storage interface{}, sf *ServerFactory, cimdFetche
 
 	testServer := &httptest.Server{
 		Listener: listener,
-		Config:   &http.Server{Handler: router},
+		Config:   &http.Server{Handler: router, ReadHeaderTimeout: 5 * time.Second},
 	}
 	testServer.Start()
 

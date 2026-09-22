@@ -1,0 +1,88 @@
+# Security — the absolute security posture of `main`.
+#
+# Principle: whole-tree scanners (gosec, govulncheck, osv-scanner) answer
+# "is main healthy right now?", not "did this PR make things worse?". Run on
+# a PR they inevitably report findings that already exist on main, which is
+# noise for the author and blocks unrelated work. So they run:
+#   - daily, so a newly published advisory surfaces within a day, and
+#   - on pushes to main that touch dependency manifests or the scanner itself.
+# A failing run is the signal to open a fix PR — that PR then passes CI
+# because CI only checks its own diff (see ci.yml → dependency-review).
+#
+# PR-time protection against *newly introduced* vulnerable dependencies is
+# handled by actions/dependency-review-action in ci.yml.
+
+name: Security
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "**/go.mod"
+      - "**/go.sum"
+      - "web/package-lock.json"
+      - "assets/docusaurus/package-lock.json"
+      - "osv-scanner.toml"
+      - "scripts/security-scan.sh"
+      - ".github/workflows/security.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: gosec · govulncheck · osv-scanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Enable Go 1.26 jsonv2 experiment
+        run: |
+          case "$(go env GOVERSION)" in
+            go1.26.*) echo "GOEXPERIMENT=jsonv2" >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: Scan repository
+        run: bash scripts/security-scan.sh .
+
+      # Scheduled failures only notify the last editor of this file. Keep one
+      # self-updating tracking issue instead so a red main is never missed.
+      - name: Open or update tracking issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Security scan failing on main"
+          body="The scheduled security scan (gosec / govulncheck / osv-scanner) failed: $RUN_URL"
+          existing="$(gh issue list --repo "$REPO" --label security-scan --state open --search "$title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "Still failing: $RUN_URL"
+          else
+            gh label create security-scan --repo "$REPO" --color B60205 --description "Automated security scan failures" --force
+            gh issue create --repo "$REPO" --title "$title" --label security-scan --body "$body"
+          fi

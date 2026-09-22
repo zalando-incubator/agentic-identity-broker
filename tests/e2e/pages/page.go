@@ -85,7 +85,7 @@ func NewPage(page playwright.Page, baseURL string) *Page {
 
 	// Prepare screenshot directory
 	screenshotDir := filepath.Join("coverage", "screenshots")
-	_ = os.MkdirAll(screenshotDir, 0o755) // Best effort; don't fail if it fails
+	_ = os.MkdirAll(screenshotDir, 0o700) // Best effort; don't fail if it fails
 
 	return &Page{
 		page:          page,
@@ -304,7 +304,7 @@ func captureScreenshot(page screenshotPage, screenshotDir, name string) error {
 		return fmt.Errorf("screenshot name cannot be empty")
 	}
 
-	if err := os.MkdirAll(screenshotDir, 0o755); err != nil {
+	if err := os.MkdirAll(screenshotDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create screenshot directory %s: %w", screenshotDir, err)
 	}
 
@@ -333,7 +333,7 @@ func captureScreenshot(page screenshotPage, screenshotDir, name string) error {
 		return fmt.Errorf("failed to take screenshot %s: %w", filePath, err)
 	}
 
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
+	if err := os.WriteFile(filePath, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write screenshot to %s: %w", filePath, err)
 	}
 
@@ -352,7 +352,7 @@ func (p *Page) TakeLocatorScreenshot(ctx context.Context, name string, locator p
 		return fmt.Errorf("screenshot name cannot be empty")
 	}
 
-	if err := os.MkdirAll(p.screenshotDir, 0o755); err != nil {
+	if err := os.MkdirAll(p.screenshotDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create screenshot directory %s: %w", p.screenshotDir, err)
 	}
 
@@ -369,7 +369,7 @@ func (p *Page) TakeLocatorScreenshot(ctx context.Context, name string, locator p
 		return fmt.Errorf("failed to take locator screenshot %s: %w", filePath, err)
 	}
 
-	if err := os.WriteFile(filePath, data, 0o644); err != nil {
+	if err := os.WriteFile(filePath, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write screenshot to %s: %w", filePath, err)
 	}
 

@@ -193,7 +193,7 @@ func (pg *SharedPostgres) ApplyMigration(t *testing.T, dbName, filename string) 
 	require.NoError(t, err, "Failed to find project root")
 
 	migrationPath := filepath.Join(projectRoot, "migrations", filename)
-	data, err := os.ReadFile(migrationPath)
+	data, err := os.ReadFile(migrationPath) // #nosec G304 -- test helper reads repository-owned migration filenames.
 	require.NoErrorf(t, err, "Failed to read migration file %s", filename)
 
 	pg.ExecuteSQL(t, dbName, string(data))

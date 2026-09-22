@@ -99,6 +99,17 @@ func TestArgon2Hasher_HashAndCompare(t *testing.T) {
 		err := hasher.Compare("not-a-valid-phc-string", "secret")
 		assert.Error(t, err)
 	})
+
+	t.Run("PHC hash length must match the configured key length", func(t *testing.T) {
+		hash, err := hasher.Hash("test-secret")
+		require.NoError(t, err)
+
+		parts := strings.Split(hash, "$")
+		parts[5] = parts[5][:len(parts[5])-1]
+
+		err = hasher.Compare(strings.Join(parts, "$"), "test-secret")
+		assert.ErrorContains(t, err, "hash must be 32 bytes")
+	})
 }
 
 func TestClientAuthService_GenerateCredentials(t *testing.T) {

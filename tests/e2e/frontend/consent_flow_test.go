@@ -5,6 +5,8 @@ package e2e_test
 import (
 	"context"
 
+	"time"
+
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -164,6 +166,23 @@ var _ = Describe("Consent Flow", func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to take screenshot")
 
 		GetLogger().Info("Test passed: Consent page renders correctly with UI elements visible")
+	})
+
+	// Scenario 10 from specs/007-consent-frontend/spec.md
+	It("allows a user to set and read a future end date", func() {
+		err := consentPage.NavigateToAgent(ctx, testAgentID)
+		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
+
+		err = consentPage.EnableSpecificEndDate(ctx)
+		Expect(err).NotTo(HaveOccurred(), "Failed to enable a specific end date")
+
+		endDate := time.Now().AddDate(0, 1, 0)
+		err = consentPage.SetExpirationDate(ctx, endDate)
+		Expect(err).NotTo(HaveOccurred(), "Failed to set end date")
+
+		actualEndDate, err := consentPage.GetExpirationDate(ctx)
+		Expect(err).NotTo(HaveOccurred(), "Failed to get end date")
+		Expect(actualEndDate).To(Equal(endDate.Format("2006-01-02")))
 	})
 
 	// Test: Verify scopes are displayed correctly

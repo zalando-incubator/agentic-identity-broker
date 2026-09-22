@@ -75,7 +75,7 @@ func buildAWSConfig(ctx context.Context, cfg *ports.AWSKMSConfig) (aws.Config, e
 		httpClient := &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+					InsecureSkipVerify: true, // #nosec G402 -- cfg.DisableSSL is reserved for explicitly configured AWS emulator tests.
 				},
 			},
 		}

@@ -914,7 +914,7 @@ func TestHandleCallback_RetryExhausted(t *testing.T) {
 func TestHandleCallback_ContextCancellationDuringRetry(t *testing.T) {
 	// Use production-like retry delays here so the request fails once, then the
 	// context expires while waiting for the next retry.
-	service, _, providerService := setupServiceWithConfig(t, func(config *oauth2session.Config) {
+	service, _, _, _, _, providerService := setupServiceWithConfig(t, func(config *oauth2session.Config) {
 		config.RetryBaseDelay = 250 * time.Millisecond
 	})
 
@@ -1349,15 +1349,16 @@ func newTestEncryption(t *testing.T) ports.EncryptionPort {
 
 func setupService(t *testing.T) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
-	return setupServiceWithConfig(t, func(config *oauth2session.Config) {
+	service, serviceRepo, _, _, _, providerService := setupServiceWithConfig(t, func(config *oauth2session.Config) {
 		config.RetryBaseDelay = 10 * time.Millisecond
 	})
+	return service, serviceRepo, providerService
 }
 
 func setupServiceWithConfig(
 	t *testing.T,
 	configure func(*oauth2session.Config),
-) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
+) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
 
 	// Create test JWE key
@@ -1406,7 +1407,7 @@ func setupServiceWithConfig(
 		slog.Default(),
 	)
 
-	return svc, serviceRepo, providerService
+	return svc, serviceRepo, sessionRepo, grantRepo, agentRepo, providerService
 }
 
 func createTestService(serviceID id.ServiceID) *model.ThirdpartyOAuth2ProviderEntity {
@@ -1865,92 +1866,6 @@ func TestForceRefreshSession(t *testing.T) {
 // Tests for GetSessionWithAgents (T064)
 // =============================================================================
 
-func TestGetSessionWithAgents_ReturnsSessionWithEmptyAgentListWhenNoGrants(t *testing.T) {
-	ctx := context.Background()
-	service, _, providerService := setupService(t)
-
-	// Setup: Create service and session with no grants
-	principal := id.Principal("user@example.com")
-	serviceID := id.NewServiceID()
-
-	thirdPartyService := createTestService(serviceID)
-	err := providerService.Create(ctx, thirdPartyService)
-	require.NoError(t, err)
-
-	// No session exists for this principal+serviceID pair
-	result, err := service.GetSessionWithAgents(ctx, principal, serviceID)
-
-	// Should return error for non-existent session
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, oauth2session.ErrSessionNotFound), "error should be ErrSessionNotFound")
-	assert.Nil(t, result)
-}
-
-func TestGetSessionWithAgents_ReturnsSessionWithAgentListWhenGrantsExist(t *testing.T) {
-	ctx := context.Background()
-	service, _, providerService := setupService(t)
-
-	// Setup: Create service, session, and grants
-	principal := id.Principal("user@example.com")
-	serviceID := id.NewServiceID()
-
-	thirdPartyService := createTestService(serviceID)
-	err := providerService.Create(ctx, thirdPartyService)
-	require.NoError(t, err)
-
-	// No session exists for this principal+serviceID pair
-	result, err := service.GetSessionWithAgents(ctx, principal, serviceID)
-
-	// Should return error for non-existent session
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, oauth2session.ErrSessionNotFound), "error should be ErrSessionNotFound")
-	assert.Nil(t, result)
-}
-
-func TestGetSessionWithAgents_UsesGrantRepositoryCountAgentsByServiceID(t *testing.T) {
-	ctx := context.Background()
-	service, _, providerService := setupService(t)
-
-	// Setup: Create service
-	principal := id.Principal("user@example.com")
-	serviceID := id.NewServiceID()
-
-	thirdPartyService := createTestService(serviceID)
-	err := providerService.Create(ctx, thirdPartyService)
-	require.NoError(t, err)
-
-	result, err := service.GetSessionWithAgents(ctx, principal, serviceID)
-
-	// Should return error for non-existent session
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, oauth2session.ErrSessionNotFound), "error should be ErrSessionNotFound")
-	assert.Nil(t, result)
-}
-
-func TestGetSessionWithAgents_QueriesGrantsByServiceID(t *testing.T) {
-	ctx := context.Background()
-	service, _, providerService := setupService(t)
-
-	// Setup
-	principal := id.Principal("user@example.com")
-	serviceID := id.NewServiceID()
-
-	thirdPartyService := createTestService(serviceID)
-	err := providerService.Create(ctx, thirdPartyService)
-	require.NoError(t, err)
-
-	result, err := service.GetSessionWithAgents(ctx, principal, serviceID)
-
-	// Should return error for non-existent session
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, oauth2session.ErrSessionNotFound), "error should be ErrSessionNotFound")
-	assert.Nil(t, result)
-
-	// - Queries grants filtered by serviceID
-	// - Extracts agent IDs from grants' delegated_oauth2_tokens JSONB
-	// - Returns correct agent IDs in DependentAgents list
-}
-
 func TestGetSessionWithAgents_ReturnsErrorWhenSessionNotFound(t *testing.T) {
 	ctx := context.Background()
 	service, _, _ := setupService(t)
@@ -1966,34 +1881,6 @@ func TestGetSessionWithAgents_ReturnsErrorWhenSessionNotFound(t *testing.T) {
 	// Error should be the session not found error
 	assert.True(t, errors.Is(err, oauth2session.ErrSessionNotFound),
 		"expected ErrSessionNotFound, got %v", err)
-}
-
-func TestGetSessionWithAgents_ValidatesPrincipalOwnership(t *testing.T) {
-	ctx := context.Background()
-	service, _, providerService := setupService(t)
-
-	// Setup: Create service
-	// Note: To test principal ownership validation, we need a session first,
-	// which requires completing an OAuth2 flow via callback
-	principal2 := id.Principal("user2@example.com")
-	serviceID := id.NewServiceID()
-
-	thirdPartyService := createTestService(serviceID)
-	err := providerService.Create(ctx, thirdPartyService)
-	require.NoError(t, err)
-
-	// Try to get session as different user (no session exists yet)
-	result, err := service.GetSessionWithAgents(ctx, principal2, serviceID)
-
-	// Since no session exists, should return session not found error
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.True(t, errors.Is(err, oauth2session.ErrSessionNotFound),
-		"expected ErrSessionNotFound, got %v", err)
-
-	// When tested with actual sessions in integration tests, verify:
-	// - Only the session owner can view session details
-	// - Returns unauthorized error for principal mismatch
 }
 
 // =============================================================================

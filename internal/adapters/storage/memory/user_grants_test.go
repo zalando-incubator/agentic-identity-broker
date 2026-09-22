@@ -638,3 +638,71 @@ func TestUserGrantRepository_CountGrantsReferencingPermissionSet(t *testing.T) {
 		assert.Equal(t, 0, count)
 	})
 }
+
+func TestUserGrantRepository_ListByPrincipalAndServiceID(t *testing.T) {
+	ctx := context.Background()
+	repo := NewUserGrantRepository()
+	principalA := id.Principal("principal-a@example.com")
+	principalB := id.Principal("principal-b@example.com")
+	targetServiceID := id.NewServiceID()
+	nonTargetServiceID := id.NewServiceID()
+	activeAgentID := id.NewAgentID()
+	otherPrincipalAgentID := id.NewAgentID()
+	nonTargetAgentID := id.NewAgentID()
+	expiredAgentID := id.NewAgentID()
+
+	for _, grant := range []*storage.UserGrant{
+		{Principal: principalA, AgentID: activeAgentID, GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{targetServiceID}}}},
+		{Principal: principalB, AgentID: otherPrincipalAgentID, GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{targetServiceID}}}},
+		{Principal: principalA, AgentID: nonTargetAgentID, GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{nonTargetServiceID}}}},
+	} {
+		require.NoError(t, repo.Create(ctx, grant))
+	}
+
+	past := time.Now().Add(-time.Hour)
+	repo.grants[id.NewGrantID()] = &storage.UserGrant{
+		Principal:             principalA,
+		AgentID:               expiredAgentID,
+		ValidUntil:            &past,
+		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{targetServiceID}}},
+	}
+
+	agentIDs, err := repo.ListByPrincipalAndServiceID(ctx, principalA, targetServiceID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []id.AgentID{activeAgentID, expiredAgentID}, agentIDs)
+	assert.NotContains(t, agentIDs, otherPrincipalAgentID)
+	assert.NotContains(t, agentIDs, nonTargetAgentID)
+}
+
+func TestUserGrantRepository_CountAgentsByPrincipalAndServiceID(t *testing.T) {
+	ctx := context.Background()
+	repo := NewUserGrantRepository()
+	principalA := id.Principal("principal-a@example.com")
+	principalB := id.Principal("principal-b@example.com")
+	targetServiceID := id.NewServiceID()
+	nonTargetServiceID := id.NewServiceID()
+	activeAgentID := id.NewAgentID()
+	otherPrincipalAgentID := id.NewAgentID()
+	nonTargetAgentID := id.NewAgentID()
+	expiredAgentID := id.NewAgentID()
+
+	for _, grant := range []*storage.UserGrant{
+		{Principal: principalA, AgentID: activeAgentID, GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{targetServiceID}}}},
+		{Principal: principalB, AgentID: otherPrincipalAgentID, GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{targetServiceID}}}},
+		{Principal: principalA, AgentID: nonTargetAgentID, GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{nonTargetServiceID}}}},
+	} {
+		require.NoError(t, repo.Create(ctx, grant))
+	}
+
+	past := time.Now().Add(-time.Hour)
+	repo.grants[id.NewGrantID()] = &storage.UserGrant{
+		Principal:             principalA,
+		AgentID:               expiredAgentID,
+		ValidUntil:            &past,
+		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{targetServiceID}}},
+	}
+
+	count, err := repo.CountAgentsByPrincipalAndServiceID(ctx, principalA, targetServiceID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+}

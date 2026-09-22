@@ -85,11 +85,11 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | `OPAAuthorizer` struct | Production `Authorizer`. It has two backends: PreparedEvalQuery (path) or sdk.OPA (config_file) |
 | `NewOPAAuthorizer(cfg, logger)` | Path mode compiles Rego at startup. Config-file mode denies access until the bundle is ready. |
 | `OPAInput` map alias | OPA document from the opa-envoy-plugin-compatible base, with top-level `type`, `mcp`, and `context` keys |
-| `MCPInput` struct | MCP protocol fields: `JSONRPC`, `Method`, `ToolName`, `Arguments`, `SessionID` |
+| `MCPInput` struct | MCP protocol fields plus agentgateway routing metadata: `JSONRPC`, `Method`, `ToolName`, `Arguments`, `SessionID`, `TargetServerName` |
 | `ContextInput` struct | Authorization context fields, including `granted_permission_sets_available` and token-bound `granted_permission_sets` when present |
 | `OPADecision` struct | Policy output: `Action string` (`"allow"` or `"deny"`), `Reasons []string` |
 | `ParseDecision(any)` | Type-safe extraction of `action` and `reasons` from the OPA result map |
-| `BuildOPAInput(protocol, body, headers, grantedPermissionSets)` | Builds the OPA input document with protocol-specific parsing |
+| `BuildOPAInput(protocol, body, headers, targetServerName, grantedPermissionSets)` | Builds the OPA input document with protocol-specific parsing |
 | `ParseMCPMessage(body)` | Parses a JSON-RPC 2.0 single message → `*MCPMessage` |
 | `ParseMCPBatch(body)` | Finds and parses JSON-RPC 2.0 batch messages (FR-023) |
 
@@ -150,14 +150,14 @@ Body-bearing requests:
 RequestHeaders → validate subject metadata → validate resource metadata
                → protocol and transport checks → Exchanger.Exchange(subject, resource)
                → Authorization header mutation + BUFFERED body
-RequestBody    → BuildOPAInput(protocol, body, headers, grantedPermissionSets)
+RequestBody    → BuildOPAInput(protocol, body, headers, targetServerName, grantedPermissionSets)
                → OPAAuthorizer.Evaluate(ctx, opaInput) → allow: echo body
                                                       → deny: 403 ImmediateResponse {"error":"access_denied","error_description":"...reasons..."}
 
 Header-only requests:
 RequestHeaders(end_of_stream=true) → validate subject metadata → validate resource metadata
                                   → protocol and transport checks
-                                  → authorization.BuildOPAInputHeadersOnly(protocol, headers)
+                                  → authorization.BuildOPAInputHeadersOnly(protocol, headers, targetServerName)
                                   → OPAAuthorizer.Evaluate(ctx, opaInput) → allow: Exchanger.Exchange(subject, resource) + Authorization header mutation
                                                                          → deny: 403 ImmediateResponse `{"error":"access_denied","error_description":"...reasons..."}`
 ```

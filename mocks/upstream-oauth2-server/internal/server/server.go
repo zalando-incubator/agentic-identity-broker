@@ -110,7 +110,7 @@ func New(cfg *config.Config) (*Server, error) {
 		"refresh_token_ttl", cfg.OAuth2.RefreshTokenTTL)
 
 	// Also register ExtProc client for token exchange service (Phase 7)
-	extprocClient := &models.Client{
+	extprocClient := &models.Client{ // #nosec G101 -- fixed development-only mock client credentials.
 		ID:     "extproc-gateway",
 		Secret: "extproc-dev-secret",
 		Domain: "localhost",

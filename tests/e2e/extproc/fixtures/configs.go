@@ -17,7 +17,7 @@ func DefaultConfig() *extprocconfig.Config {
 			Port:                 50051,
 			MaxConcurrentStreams: 100,
 		},
-		OAuth2: extprocconfig.OAuth2Config{
+		OAuth2: extprocconfig.OAuth2Config{ // #nosec G101 -- test-only placeholders and fake OAuth client credentials.
 			TokenEndpoint:             "http://placeholder/oauth2/token",
 			Issuer:                    "http://placeholder",
 			ClientID:                  "test-extproc-client",

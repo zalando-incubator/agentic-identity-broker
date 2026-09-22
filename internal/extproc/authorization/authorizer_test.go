@@ -295,6 +295,91 @@ func TestOPAAuthorizer_Evaluate_CreatesTraceSpanWithDecisionAttributes(t *testin
 	assert.True(t, found, "span 'extproc.opa.evaluate' must exist")
 }
 
+// TestOPAAuthorizer_Evaluate_TraceSpanIncludesTargetServerName verifies that a
+// non-empty MCPInput.TargetServerName is included in the trace span and audit log
+// as authorization.target_server_name / target_server_name (SR-004).
+func TestOPAAuthorizer_Evaluate_TraceSpanIncludesTargetServerName(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prevTP)
+		_ = tp.Shutdown(context.Background())
+	})
+
+	path := writePolicy(t, allowAllPolicy)
+	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), nil)
+	require.NoError(t, err)
+	defer auth.Stop(context.Background())
+
+	input := authorization.OPAInput{
+		"type": "mcp_tool_call",
+		"mcp":  &authorization.MCPInput{ToolName: "list_files", TargetServerName: "github-mcp"},
+	}
+	decision, err := auth.Evaluate(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, "allow", decision.Action)
+
+	require.NoError(t, tp.ForceFlush(context.Background()))
+	spans := spanRecorder.Ended()
+
+	var found bool
+	for _, s := range spans {
+		if s.Name() != "extproc.opa.evaluate" {
+			continue
+		}
+		found = true
+		attrs := attributeMap(s.Attributes())
+		assert.Equal(t, "github-mcp", attrs["authorization.target_server_name"])
+		break
+	}
+	assert.True(t, found, "span 'extproc.opa.evaluate' must exist")
+}
+
+// TestOPAAuthorizer_Evaluate_TraceSpanOmitsTargetServerNameWhenAbsent verifies
+// that the target_server_name span attribute is omitted (not set to "") when
+// MCPInput.TargetServerName is empty.
+func TestOPAAuthorizer_Evaluate_TraceSpanOmitsTargetServerNameWhenAbsent(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prevTP)
+		_ = tp.Shutdown(context.Background())
+	})
+
+	path := writePolicy(t, allowAllPolicy)
+	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), nil)
+	require.NoError(t, err)
+	defer auth.Stop(context.Background())
+
+	input := authorization.OPAInput{
+		"type": "mcp_tool_call",
+		"mcp":  &authorization.MCPInput{ToolName: "list_files"},
+	}
+	decision, err := auth.Evaluate(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, "allow", decision.Action)
+
+	require.NoError(t, tp.ForceFlush(context.Background()))
+	spans := spanRecorder.Ended()
+
+	var found bool
+	for _, s := range spans {
+		if s.Name() != "extproc.opa.evaluate" {
+			continue
+		}
+		found = true
+		attrs := attributeMap(s.Attributes())
+		_, hasTargetServerName := attrs["authorization.target_server_name"]
+		assert.False(t, hasTargetServerName, "target_server_name attribute must be omitted when absent")
+		break
+	}
+	assert.True(t, found, "span 'extproc.opa.evaluate' must exist")
+}
+
 func TestOPAAuthorizer_Allow(t *testing.T) {
 	// Scenario: policy returns allow → decision is allow
 	path := writePolicy(t, allowAllPolicy)

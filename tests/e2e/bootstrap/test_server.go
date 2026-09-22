@@ -243,7 +243,7 @@ func currentProviderRepo(providerService any) (ports.ThirdpartyOAuth2ProviderRep
 		return nil, false
 	}
 
-	repo, ok := reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Interface().(ports.ThirdpartyOAuth2ProviderRepository)
+	repo, ok := reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Interface().(ports.ThirdpartyOAuth2ProviderRepository) // #nosec G103 -- test-only reflection seam reads the verified unexported repository field.
 	return repo, ok
 }
 
@@ -260,7 +260,7 @@ func setProviderRepo(providerService any, repo ports.ThirdpartyOAuth2ProviderRep
 		return false
 	}
 
-	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(repo))
+	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(repo)) // #nosec G103 -- test-only reflection seam writes the verified unexported repository field.
 	return true
 }
 
@@ -469,7 +469,7 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 		}
 		server = &httptest.Server{
 			Listener: listener,
-			Config:   &http.Server{Handler: router},
+			Config:   &http.Server{Handler: router, ReadHeaderTimeout: 5 * time.Second},
 		}
 		server.Start()
 		logger.Info("Test server listening on fixed port",
@@ -910,7 +910,7 @@ func (b *TestServerBuilderImpl) Build() (*TestServer, error) {
 
 	testServer := &httptest.Server{
 		Listener: listener,
-		Config:   &http.Server{Handler: router},
+		Config:   &http.Server{Handler: router, ReadHeaderTimeout: 5 * time.Second},
 	}
 	testServer.Start()
 

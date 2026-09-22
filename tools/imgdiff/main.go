@@ -112,7 +112,7 @@ func diffPercent(a, b image.Image) float64 {
 }
 
 func loadPNG(path string) (img image.Image, err error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304,G703 -- command accepts user-selected image paths and has no privileged file root.
 	if err != nil {
 		return nil, err
 	}

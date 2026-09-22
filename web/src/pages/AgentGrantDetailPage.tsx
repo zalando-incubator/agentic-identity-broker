@@ -109,13 +109,15 @@ export function AgentGrantDetailPage() {
     clearError,
   } = useToggleGrant(resolvedAgentId);
 
-  // Validity hook (initialized from grant if exists)
+  const hasExistingGrant = grants !== null;
+
+  // Validity hook (initialized from grant if it exists)
   const {
     validityState,
     setValidityState,
     getValidUntil,
     validate: validateValidity,
-  } = useUpdateValidity(grants || null);
+  } = useUpdateValidity(grants);
 
   // Track per-PS per-service inclusion from PermissionSetsList (FR-008, FR-011)
   const [perPsIncludedServiceIds, setPerPsIncludedServiceIds] = useState<
@@ -640,16 +642,16 @@ export function AgentGrantDetailPage() {
             <InlineError error={submitError} onRetry={handleSubmit} />
           )}
 
-          {/* Grant validity control */}
-          <Card padding="default">
-            <h3 className="text-lg font-display font-semibold text-trust-deep mb-4">
-              Grant Validity
-            </h3>
+          {/* End date section */}
+          <div>
+            <h2 className="text-xl font-semibold text-trust-deep mb-4">
+              End Date
+            </h2>
             <GrantValidityControl
               value={validityState}
               onChange={handleValidityChange}
             />
-          </Card>
+          </div>
 
           {/* Permission Sets section */}
           {agent?.permission_sets && agent.permission_sets.length > 0 && (
@@ -684,8 +686,8 @@ export function AgentGrantDetailPage() {
                 </h2>
                 <p className="mt-1 text-sm text-neutral-600">
                   {agent.displayName} needs access to the following services.
-                  Click <strong>Login</strong> to authorise each one before
-                  approving.
+                  Click <strong>Login</strong> to authorize each one before{' '}
+                  {hasExistingGrant ? 'saving.' : 'approving.'}
                 </p>
               </div>
 
@@ -738,11 +740,15 @@ export function AgentGrantDetailPage() {
               disabled={isApproveDisabled}
               title={
                 isApproveDisabled
-                  ? 'Connect all required services before approving'
-                  : 'Approve and delegate these permissions'
+                  ? hasExistingGrant
+                    ? 'Connect all required services before saving'
+                    : 'Connect all required services before approving'
+                  : hasExistingGrant
+                    ? 'Save changes to these permissions'
+                    : 'Approve and delegate these permissions'
               }
             >
-              Approve & Delegate
+              {hasExistingGrant ? 'Save' : 'Approve & Delegate'}
             </Button>
           </div>
         </div>

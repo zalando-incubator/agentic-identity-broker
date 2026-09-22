@@ -123,14 +123,14 @@ export function validateExpirationDate(date: Date): string | null {
   // Must be in the future
   const now = new Date();
   if (date <= now) {
-    return 'Expiration date must be in the future';
+    return 'End date must be in the future';
   }
 
   // Should not be more than 10 years in the future (sanity check)
   const tenYearsFromNow = new Date();
   tenYearsFromNow.setFullYear(tenYearsFromNow.getFullYear() + 10);
   if (date > tenYearsFromNow) {
-    return 'Expiration date cannot be more than 10 years in the future';
+    return 'End date cannot be more than 10 years in the future';
   }
 
   return null;

@@ -14,5 +14,5 @@ type HealthResponse struct {
 func Health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+	json.NewEncoder(w).Encode(HealthResponse{Status: "ok"}) // #nosec G104 -- response is committed and a client-disconnect error cannot be recovered.
 }

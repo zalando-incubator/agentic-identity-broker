@@ -46,7 +46,7 @@ func isServerError(err error) bool {
 // because they represent client errors (e.g., invalid subject tokens), not
 // infrastructure failures.
 func newGobreakerCB(cfg *extprocconfig.Config, logger *slog.Logger) *gobreaker.CircuitBreaker[ExchangeResult] {
-	maxFail := uint32(cfg.CircuitBreaker.MaxFailures) //nolint:gosec // validated positive by config.Validate
+	maxFail := uint32(cfg.CircuitBreaker.MaxFailures) // #nosec G115 -- Validate rejects values outside the uint32 range.
 	timeout := cfg.CircuitBreaker.ResetTimeout
 
 	st := gobreaker.Settings{

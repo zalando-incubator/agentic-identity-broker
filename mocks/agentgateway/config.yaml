@@ -39,6 +39,7 @@ binds:
           metadataContext:
             agentgateway:
               protocol: "'mcp'"
+              mcp_server: "'mcp-server-mock'"
             aib.tokenexchange:
               subject_token: "jwt.rawToken.unredacted()"
               resource_uri: "'http://agentgateway:4000/mcp'"

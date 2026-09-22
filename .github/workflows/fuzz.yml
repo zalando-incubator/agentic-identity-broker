@@ -1,18 +1,31 @@
+# Fuzz — continuous fuzzing of the parsers, off the PR hot path.
+#
+# Every Fuzz* function's seed corpus already executes as an ordinary unit
+# test inside `just verify-junit`, so PRs are covered for regressions. Only
+# the open-ended, time-boxed *exploration* runs here, on a schedule, with a
+# longer budget than a PR could afford. Scorecard's Fuzzing check is satisfied
+# by the presence of Go fuzz targets in the tree, not by running them on PRs.
+
 name: Fuzz
 
 on:
-  pull_request:
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Fuzz budget per target (Go duration)"
+        default: "10m"
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   parser:
+    name: ${{ matrix.target }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -31,13 +44,13 @@ jobs:
             target: FuzzNormalizeResourceURI
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -48,5 +61,19 @@ jobs:
             go1.26.*) echo "GOEXPERIMENT=jsonv2" >> "$GITHUB_ENV" ;;
           esac
 
-      - name: Fuzz parser
-        run: go test -run=^$ -fuzz=${{ matrix.target }} -fuzztime=1m ${{ matrix.package }}
+      - name: Fuzz ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+          PACKAGE: ${{ matrix.package }}
+          FUZZTIME: ${{ inputs.fuzztime || '10m' }}
+        run: go test -run='^$' -fuzz="^${TARGET}\$" -fuzztime="$FUZZTIME" "$PACKAGE"
+
+      # A crash writes a reproducer to testdata/fuzz/<Target>/; keep it so it
+      # can be committed as a permanent regression test.
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crashers-${{ matrix.target }}
+          path: ${{ matrix.package }}/testdata/fuzz/
+          if-no-files-found: ignore

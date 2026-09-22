@@ -49,7 +49,7 @@ func Load(configDir string) (*Config, error) {
 	configPath := fmt.Sprintf("%s/config.yaml", configDir)
 
 	// Read the config file
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath) // #nosec G304 -- local mock configuration path is selected by its operator.
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}

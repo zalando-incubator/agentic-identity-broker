@@ -39,7 +39,7 @@ For users, it provides a simple way to manage consent, granting agents granular 
 
 - **Secure Identity Management**<br>
   Agent registration, principal authentication, and session management
-  
+
 - **OAuth2 Delegation & Consent**<br>
   Manage OAuth2 scopes and user consent for third-party service integrations
 
@@ -48,7 +48,7 @@ For users, it provides a simple way to manage consent, granting agents granular 
 
 - **Rich Consent Experience**<br>
   Modern UX for managing OAuth2 delegations with design system compliance
-  
+
 - **Comprehensive Audit Logging**<br>
   Structured JSON logging for compliance and security monitoring
 

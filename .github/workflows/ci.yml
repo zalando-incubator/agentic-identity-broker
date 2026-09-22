@@ -1,36 +1,132 @@
+# CI — the single merge gate.
+#
+# Principle: a PR is checked for "does this change make the repository worse?"
+# Everything here is deterministic, diff-scoped and fast enough to wait for.
+# Absolute "state of the world" checks (vulnerability posture, fuzzing,
+# Scorecard) live in their own scheduled workflows and never block a PR.
+#
+# Exactly one status check is required by the branch ruleset: "CI / gate".
+# Every other job is either path-scoped (skipped when unrelated) or optional,
+# and the gate collapses their results into one verdict, so a docs-only PR
+# never gets stuck on an "expected" check that will never run.
+
 name: CI
 
 on:
-  workflow_dispatch:
   pull_request:
-    branches: [main, dev]
+    branches: [main]
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-jobs:
-  verify:
-    runs-on: ubuntu-latest
+# Supersede an in-flight run when a PR is updated; never cancel main.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Classify what the change touches. On push/merge_group everything runs.
+  # Deliberately implemented with git instead of a third-party action: one
+  # fewer dependency to pin, and the negative match ("everything that is not
+  # documentation") is easy to reason about.
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      docs: ${{ steps.classify.outputs.docs }}
+      helm: ${{ steps.classify.outputs.helm }}
+      workflows: ${{ steps.classify.outputs.workflows }}
+      deps: ${{ steps.classify.outputs.deps }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The PR merge commit plus its first parent (the base branch tip).
+          fetch-depth: 2
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Non-PR event: running everything."
+            for k in code docs helm workflows deps; do echo "$k=true" >> "$GITHUB_OUTPUT"; done
+            exit 0
+          fi
+
+          # Files changed by the PR relative to the base branch tip.
+          git diff --name-only HEAD^1 HEAD > changed.txt
+          echo "Changed files:"; sed 's/^/  /' changed.txt
+
+          match() { grep -Eq "$1" changed.txt && echo true || echo false; }
+
+          DOCS_ONLY='^(docs/|assets/docusaurus/|adrs/|specs/|plans/|\.github/(agents|instructions|prompts)/|\.github/CODEOWNERS$|\.claude/|\.agents/|\.specify/|LICENSE$|MAINTAINERS$)|\.md$'
+
+          {
+            echo "docs=$(match '^(docs/|api/|assets/docusaurus/)')"
+            echo "helm=$(match '^charts/')"
+            echo "workflows=$(match '^\.github/(workflows/|dependabot\.yml)')"
+            echo "deps=$(match '(^|/)(go\.mod|go\.sum|package(-lock)?\.json)$')"
+            # "code" = anything that is not purely documentation.
+            if grep -Evq "$DOCS_ONLY" changed.txt; then echo "code=true"; else echo "code=false"; fi
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Build, lint and test — identical to `just check && just verify-junit`
+  # locally, so a green local run predicts a green CI run.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Verify
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      - name: Cache development tools
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        with:
+          path: |
+            ~/go/bin
+            ~/.cache/golangci-lint
+            ~/.cache/ms-playwright
+            ~/.cache/ms-playwright-go
+          key: tools-${{ runner.os }}-${{ hashFiles('justfile', 'scripts/golangci-lint-install.sh') }}
+          restore-keys: tools-${{ runner.os }}-
+
       - name: Install just
-        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780
+        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2.86.1
         with:
           tool: just
 
@@ -40,10 +136,10 @@ jobs:
       - name: Install web dependencies
         run: just web-ci
 
-      - name: Run static checks
+      - name: Static checks (fmt, vet, lint)
         run: just check
 
-      - name: Run verification suite
+      - name: Verification suite (unit, integration, e2e)
         run: just verify-junit
 
       - name: Build artifacts
@@ -53,8 +149,129 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results
           path: test-results/
           if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Documentation site builds (was docs-check.yml).
+  # ---------------------------------------------------------------------------
+  docs:
+    name: Docs build
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: assets/docusaurus
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: assets/docusaurus/package-lock.json
+      - run: npm ci
+      - name: Build documentation
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Helm chart lints (the chart is only otherwise validated at release time).
+  # ---------------------------------------------------------------------------
+  helm:
+    name: Helm lint
+    needs: changes
+    if: needs.changes.outputs.helm == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      - name: Lint chart
+        run: helm lint charts/agentic-identity-broker
+
+  # ---------------------------------------------------------------------------
+  # The pipeline lints itself: syntax (actionlint) and security posture
+  # (zizmor: unpinned actions, template injection, credential leaks, ...).
+  # ---------------------------------------------------------------------------
+  workflows:
+    name: Workflow lint
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -color
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+          min-severity: medium
+
+  # ---------------------------------------------------------------------------
+  # Diff-aware dependency check: fails only if THIS PR introduces a dependency
+  # with a known vulnerability or a disallowed license. Baseline problems on
+  # main are reported by the Security workflow instead, so this never
+  # complains about things the PR author did not touch.
+  # ---------------------------------------------------------------------------
+  dependency-review:
+    name: Dependency review
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: never
+
+  # ---------------------------------------------------------------------------
+  # The one required status check. Succeeds when every job above either
+  # succeeded or was skipped as not applicable.
+  # ---------------------------------------------------------------------------
+  gate:
+    name: CI gate
+    if: always()
+    needs: [changes, verify, docs, helm, workflows, dependency-review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Evaluate results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$RESULTS" | jq -e '[.[] | .result] | any(. == "failure" or . == "cancelled")' > /dev/null; then
+            echo "::error::At least one CI job failed or was cancelled."
+            exit 1
+          fi
+          echo "All applicable CI jobs passed."

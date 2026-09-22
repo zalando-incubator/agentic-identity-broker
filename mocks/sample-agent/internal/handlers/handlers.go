@@ -55,14 +55,33 @@ func New(oauth2Config *oauth2.Config, cfg *config.Config) *Handlers {
 	}
 }
 
+func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- mock supports HTTP-only local development; Secure is set when TLS is used.
+		Name:     "session_id",
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   maxAge,
+	})
+}
+
 // Health returns a health check response
 func (h *Handlers) Health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	writeJSON(w, map[string]string{
 		"status":  "ok",
 		"service": "sample-oauth2-client",
 	})
+}
+
+func writeJSON(w http.ResponseWriter, value any) {
+	encoder := json.NewEncoder(w)
+	if err := encoder.Encode(value); err != nil {
+		return
+	}
 }
 
 // Home renders the home page with login or user info
@@ -152,14 +171,7 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	h.sessionsMu.Unlock()
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_id",
-		Value:    sessionID,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   86400,
-	})
+	setSessionCookie(w, r, sessionID, 86400)
 
 	var authURL string
 	if pkceVerifier != "" {
@@ -302,14 +314,7 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear session cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_id",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
+	setSessionCookie(w, r, "", -1)
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -321,7 +326,7 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, map[string]string{
 			"error": "method_not_allowed",
 		})
 		return
@@ -332,7 +337,7 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	if sessionID == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, map[string]string{
 			"error":             "unauthorized",
 			"error_description": "session not found",
 		})
@@ -346,7 +351,7 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	if !exists || !session.Token.Valid() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, map[string]string{
 			"error":             "unauthorized",
 			"error_description": "session token invalid or expired",
 		})
@@ -358,7 +363,7 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	if gatewayURL == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, map[string]string{
 			"error": "gateway_not_configured",
 		})
 		return
@@ -380,7 +385,7 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, map[string]string{
 			"error":             "mcp_call_failed",
 			"error_description": "failed to create MCP client",
 		})
@@ -393,7 +398,7 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	if err := mcpClient.Start(ctx); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, map[string]string{
 			"error":             "mcp_call_failed",
 			"error_description": "failed to start MCP client",
 		})
@@ -413,7 +418,7 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, map[string]string{
 			"error":             "mcp_call_failed",
 			"error_description": "initialize request failed",
 		})
@@ -434,7 +439,7 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]string{
+		writeJSON(w, map[string]string{
 			"error":             "mcp_call_failed",
 			"error_description": "tools/call request failed",
 		})
@@ -470,7 +475,7 @@ func (h *Handlers) CallMCP(w http.ResponseWriter, r *http.Request) {
 	// Return success response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, map[string]interface{}{
 		"success":     true,
 		"tool_result": toolResultText,
 		"gateway_url": gatewayURL,

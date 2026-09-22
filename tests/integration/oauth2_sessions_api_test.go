@@ -40,6 +40,7 @@ func TestListSessions_Success(t *testing.T) {
 
 	principal := "user@example.com"
 	serviceUUID := id.NewServiceID()
+	otherPrincipal := "other@example.com"
 
 	// Create service first
 	service := &model.ThirdpartyOAuth2ProviderEntity{
@@ -72,6 +73,8 @@ func TestListSessions_Success(t *testing.T) {
 	}
 	err = sessionRepo.Create(ctx, session)
 	assert.NoError(t, err)
+
+	seedOtherPrincipalSessionAndGrants(t, sessionRepo, grantRepo, serviceUUID, principal, otherPrincipal)
 
 	// Create service with dependencies
 	service2 := createOAuth2SessionService(
@@ -113,6 +116,7 @@ func TestListSessions_Success(t *testing.T) {
 	assert.Equal(t, serviceUUID.String(), sessionData["service_id"])
 	assert.Equal(t, "GitHub", sessionData["service_display_name"])
 	assert.Equal(t, "Bearer", sessionData["token_type"])
+	assert.Equal(t, float64(1), sessionData["dependent_agent_count"])
 }
 
 func TestListSessions_MissingPrincipal(t *testing.T) {
@@ -1246,6 +1250,8 @@ func TestRefreshSession_ReturnsRefreshedSummary(t *testing.T) {
 	}
 	require.NoError(t, sessionRepo.Create(ctx, session))
 
+	seedOtherPrincipalSessionAndGrants(t, sessionRepo, grantRepo, serviceUUID, principal, "other@example.com")
+
 	service := createOAuth2SessionService(t,
 		serviceRepo,
 		sessionRepo,
@@ -1269,6 +1275,7 @@ func TestRefreshSession_ReturnsRefreshedSummary(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, serviceUUID.String(), resp.Data["service_id"])
+	assert.Equal(t, float64(1), resp.Data["dependent_agent_count"])
 	assert.Equal(t, true, resp.Data["has_refresh_token"])
 	require.Len(t, requests, 1)
 	assert.Equal(t, "refresh_token", requests[0].Get("grant_type"))
@@ -1456,354 +1463,74 @@ func TestRefreshSession_ReturnsBadGatewayWhenProviderRefreshFails(t *testing.T) 
 // Tests for GET /api/third-party/{serviceId}/session (T066)
 // =============================================================================
 
-func TestGetSession_ReturnsSessionDetailsWithDependentAgentList(t *testing.T) {
-	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
-
-	// Create service
-	serviceUUID := id.NewServiceID()
-	thirdPartyService := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:          serviceUUID,
-		DisplayName: "GitHub",
-		ClientID:    id.NewClientID("test-client-id"),
-		Secret:      model.NewEncryptedSecret(encryptSecretForTest(t, serviceUUID.String(), "test-secret")),
-		IssuerURI:   "https://github.com",
-		Endpoints: model.OAuth2Endpoints{
-			AuthorizeEndpoint: "https://github.com/login/oauth/authorize",
-			TokenEndpoint:     "https://github.com/login/oauth/access_token",
-		},
-		Scopes: []model.OAuthScope{
-			{ScopeValue: "repo", Description: "Repository access"},
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	err := serviceRepo.Create(ctx, thirdPartyService)
-	assert.NoError(t, err)
-
-	// Create session
-	principal := "user@example.com"
-	session := &storage.UserSession{
-		ID:                   id.NewSessionID(),
-		Principal:            id.Principal(principal),
-		ServiceID:            serviceUUID,
-		EncryptedAccessToken: []byte("encrypted-token"),
-		TokenType:            "Bearer",
-		Scope:                []string{"repo"},
-		InitiatedAt:          time.Now(),
-		CreatedAt:            time.Now(),
-	}
-	err = sessionRepo.Create(ctx, session)
-	assert.NoError(t, err)
-
-	// TODO: Create grants with delegated tokens for this service
-
-	jweKey := createTestJWEKey(t)
-	service := createOAuth2SessionService(t,
-		serviceRepo,
-		sessionRepo,
-		grantRepo,
-		nil,
-		jweKey,
-		oauth2session.DefaultConfig(),
-	)
-
-	handler := oauth2_sessions.NewHandler(service)
-	router := setupTestRouter(handler)
-
-	// Make GET request
-	reqURL := "/api/third-party/" + serviceUUID.String() + "/session"
-	req := httptest.NewRequest("GET", reqURL, nil)
-	req.Header.Set("X-Remote-User", principal)
+func TestGetSession_ReturnsOnlyRequestingPrincipalDependentAgents(t *testing.T) {
+	fixture := newSessionDetailIsolationFixture(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/third-party/"+fixture.serviceID.String()+"/session", nil)
+	req.Header.Set("X-Remote-User", fixture.principalA.String())
 	w := httptest.NewRecorder()
 
-	router.ServeHTTP(w, req)
+	fixture.router.ServeHTTP(w, req)
 
-	// TDD: Expected to fail until handler is implemented
-	// When implemented, verify:
-	// - Status: 200 OK
-	// - Body contains session + dependent_agents list
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Data struct {
+			DependentAgents     []oauth2session.AgentInfo `json:"dependent_agents"`
+			DependentAgentCount int                       `json:"dependent_agent_count"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Data.DependentAgents, 1)
+	assert.Equal(t, fixture.agentA.ID, resp.Data.DependentAgents[0].ID)
+	assert.Equal(t, fixture.agentA.DisplayName, resp.Data.DependentAgents[0].DisplayName)
+	assert.NotEqual(t, fixture.agentB.ID, resp.Data.DependentAgents[0].ID)
+	assert.NotEqual(t, fixture.agentB.DisplayName, resp.Data.DependentAgents[0].DisplayName)
+	assert.Equal(t, 1, resp.Data.DependentAgentCount)
 }
 
 func TestGetSession_ReturnsNotFoundWhenSessionDoesntExist(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
-	jweKey := createTestJWEKey(t)
-
-	service := createOAuth2SessionService(t,
-		serviceRepo,
-		sessionRepo,
-		grantRepo,
-		nil,
-		jweKey,
-		oauth2session.DefaultConfig(),
-	)
-
-	handler := oauth2_sessions.NewHandler(service)
-	router := setupTestRouter(handler)
-
-	principal := "user@example.com"
-	serviceID := "00000000-0000-0000-0000-000000000000"
-	reqURL := "/api/third-party/" + serviceID + "/session"
-
-	req := httptest.NewRequest("GET", reqURL, nil)
-	req.Header.Set("X-Remote-User", principal)
+	router, _ := newSessionTestRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/third-party/00000000-0000-0000-0000-000000000000/session", nil)
+	req.Header.Set("X-Remote-User", "user@example.com")
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
 
-	// TDD: Expected to fail until handler is implemented
-	// When implemented, verify:
-	// - Status: 404 Not Found
-	// - Body contains error message
+	assertSessionError(t, w, http.StatusNotFound, "not_found")
 }
 
 func TestGetSession_ReturnsUnauthorizedWhenXRemoteUserMissing(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
-
-	service := createOAuth2SessionService(t,
-		serviceRepo,
-		sessionRepo,
-		grantRepo,
-		nil,
-		nil,
-		oauth2session.DefaultConfig(),
-	)
-
-	handler := oauth2_sessions.NewHandler(service)
-	router := setupTestRouter(handler)
-
-	serviceID := uuid.New().String()
-	reqURL := "/api/third-party/" + serviceID + "/session"
-
-	req := httptest.NewRequest("GET", reqURL, nil)
-	// No X-Remote-User header
+	router, _ := newSessionTestRouter(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/third-party/"+uuid.New().String()+"/session", nil)
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
 
-	// TDD: Expected to fail until handler is implemented
-	// When implemented, verify:
-	// - Status: 401 Unauthorized
-	// - Body contains error message
+	assertSessionError(t, w, http.StatusUnauthorized, "unauthorized")
 }
 
-func TestGetSession_ReturnsForbiddenWhenPrincipalDoesntMatch(t *testing.T) {
+func TestGetSession_ReturnsNotFoundWhenSessionBelongsToAnotherPrincipal(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
-
-	// Create service
-	serviceUUID := id.NewServiceID()
-	thirdPartyService := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:          serviceUUID,
-		DisplayName: "GitHub",
-		ClientID:    id.NewClientID("test-client-id"),
-		Secret:      model.NewEncryptedSecret(encryptSecretForTest(t, serviceUUID.String(), "test-secret")),
-		IssuerURI:   "https://github.com",
-		Endpoints: model.OAuth2Endpoints{
-			AuthorizeEndpoint: "https://github.com/login/oauth/authorize",
-			TokenEndpoint:     "https://github.com/login/oauth/access_token",
-		},
-		Scopes: []model.OAuthScope{
-			{ScopeValue: "repo", Description: "Repository access"},
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	err := serviceRepo.Create(ctx, thirdPartyService)
-	assert.NoError(t, err)
-
-	// Create session for user1
+	router, sessionRepo := newSessionTestRouter(t)
+	serviceID := id.NewServiceID()
 	owner := "owner@example.com"
 	session := &storage.UserSession{
 		ID:                   id.NewSessionID(),
 		Principal:            id.Principal(owner),
-		ServiceID:            serviceUUID,
+		ServiceID:            serviceID,
 		EncryptedAccessToken: []byte("encrypted-token"),
 		TokenType:            "Bearer",
 		Scope:                []string{"repo"},
 		InitiatedAt:          time.Now(),
 		CreatedAt:            time.Now(),
 	}
-	err = sessionRepo.Create(ctx, session)
-	assert.NoError(t, err)
-
-	jweKey := createTestJWEKey(t)
-	service := createOAuth2SessionService(t,
-		serviceRepo,
-		sessionRepo,
-		grantRepo,
-		nil,
-		jweKey,
-		oauth2session.DefaultConfig(),
-	)
-
-	handler := oauth2_sessions.NewHandler(service)
-	router := setupTestRouter(handler)
-
-	// Try to get session as different user
-	attacker := "attacker@example.com"
-	reqURL := "/api/third-party/" + serviceUUID.String() + "/session"
-
-	req := httptest.NewRequest("GET", reqURL, nil)
-	req.Header.Set("X-Remote-User", attacker)
+	require.NoError(t, sessionRepo.Create(ctx, session))
+	req := httptest.NewRequest(http.MethodGet, "/api/third-party/"+serviceID.String()+"/session", nil)
+	req.Header.Set("X-Remote-User", "attacker@example.com")
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
 
-	// TDD: Expected to fail until handler is implemented
-	// When implemented, verify:
-	// - Status: 403 Forbidden
-	// - Body contains error message
-}
-
-func TestGetSession_IncludesAgentCountInResponse(t *testing.T) {
-	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
-
-	// Create service
-	serviceUUID := id.NewServiceID()
-	thirdPartyService := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:          serviceUUID,
-		DisplayName: "GitHub",
-		ClientID:    id.NewClientID("test-client-id"),
-		Secret:      model.NewEncryptedSecret(encryptSecretForTest(t, serviceUUID.String(), "test-secret")),
-		IssuerURI:   "https://github.com",
-		Endpoints: model.OAuth2Endpoints{
-			AuthorizeEndpoint: "https://github.com/login/oauth/authorize",
-			TokenEndpoint:     "https://github.com/login/oauth/access_token",
-		},
-		Scopes: []model.OAuthScope{
-			{ScopeValue: "repo", Description: "Repository access"},
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	err := serviceRepo.Create(ctx, thirdPartyService)
-	assert.NoError(t, err)
-
-	// Create session
-	principal := "user@example.com"
-	session := &storage.UserSession{
-		ID:                   id.NewSessionID(),
-		Principal:            id.Principal(principal),
-		ServiceID:            serviceUUID,
-		EncryptedAccessToken: []byte("encrypted-token"),
-		TokenType:            "Bearer",
-		Scope:                []string{"repo"},
-		InitiatedAt:          time.Now(),
-		CreatedAt:            time.Now(),
-	}
-	err = sessionRepo.Create(ctx, session)
-	assert.NoError(t, err)
-
-	// TODO: Create 2 grants with delegated tokens for this service
-
-	jweKey := createTestJWEKey(t)
-	service := createOAuth2SessionService(t,
-		serviceRepo,
-		sessionRepo,
-		grantRepo,
-		nil,
-		jweKey,
-		oauth2session.DefaultConfig(),
-	)
-
-	handler := oauth2_sessions.NewHandler(service)
-	router := setupTestRouter(handler)
-
-	// Make GET request
-	reqURL := "/api/third-party/" + serviceUUID.String() + "/session"
-	req := httptest.NewRequest("GET", reqURL, nil)
-	req.Header.Set("X-Remote-User", principal)
-	w := httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-
-	// TDD: Expected to fail until handler is implemented
-	// When implemented, verify:
-	// - Status: 200 OK
-	// - Response JSON includes "dependent_agent_count": 2
-}
-
-func TestGetSession_ValidatesJSONStructureMatchesSessionWithAgents(t *testing.T) {
-	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
-
-	// Create service
-	serviceUUID := id.NewServiceID()
-	thirdPartyService := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:          serviceUUID,
-		DisplayName: "GitHub",
-		ClientID:    id.NewClientID("test-client-id"),
-		Secret:      model.NewEncryptedSecret(encryptSecretForTest(t, serviceUUID.String(), "test-secret")),
-		IssuerURI:   "https://github.com",
-		Endpoints: model.OAuth2Endpoints{
-			AuthorizeEndpoint: "https://github.com/login/oauth/authorize",
-			TokenEndpoint:     "https://github.com/login/oauth/access_token",
-		},
-		Scopes: []model.OAuthScope{
-			{ScopeValue: "repo", Description: "Repository access"},
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	err := serviceRepo.Create(ctx, thirdPartyService)
-	assert.NoError(t, err)
-
-	// Create session
-	principal := "user@example.com"
-	session := &storage.UserSession{
-		ID:                   id.NewSessionID(),
-		Principal:            id.Principal(principal),
-		ServiceID:            serviceUUID,
-		EncryptedAccessToken: []byte("encrypted-token"),
-		TokenType:            "Bearer",
-		Scope:                []string{"repo"},
-		InitiatedAt:          time.Now(),
-		CreatedAt:            time.Now(),
-	}
-	err = sessionRepo.Create(ctx, session)
-	assert.NoError(t, err)
-
-	jweKey := createTestJWEKey(t)
-	service := createOAuth2SessionService(t,
-		serviceRepo,
-		sessionRepo,
-		grantRepo,
-		nil,
-		jweKey,
-		oauth2session.DefaultConfig(),
-	)
-
-	handler := oauth2_sessions.NewHandler(service)
-	router := setupTestRouter(handler)
-
-	// Make GET request
-	reqURL := "/api/third-party/" + serviceUUID.String() + "/session"
-	req := httptest.NewRequest("GET", reqURL, nil)
-	req.Header.Set("X-Remote-User", principal)
-	w := httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-
-	// TDD: Expected to fail until handler is implemented
-	// When implemented, verify:
-	// - Status: 200 OK
-	// - Response has fields: session (object), dependent_agents (array)
-	// - Session object has: id, service_id, principal, token_type, scope, initiated_at
-	// - dependent_agents is array of strings (agent IDs)
+	assertSessionError(t, w, http.StatusNotFound, "not_found")
 }
 
 // =============================================================================
@@ -1827,6 +1554,92 @@ func setupTestRouter(handler *oauth2_sessions.Handler) *chi.Mux {
 	return router
 }
 
+func newSessionTestRouter(t *testing.T) (*chi.Mux, ports.UserSessionRepository) {
+	t.Helper()
+	sessionRepo := memory.NewInMemoryUserSessionRepository()
+	service := createOAuth2SessionService(
+		t,
+		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
+		sessionRepo,
+		memory.NewUserGrantRepository(),
+		nil,
+		nil,
+		oauth2session.DefaultConfig(),
+	)
+	return setupTestRouter(oauth2_sessions.NewHandler(service)), sessionRepo
+}
+
+type sessionDetailIsolationFixture struct {
+	router     *chi.Mux
+	serviceID  id.ServiceID
+	principalA id.Principal
+	agentA     *storage.Agent
+	agentB     *storage.Agent
+}
+
+func newSessionDetailIsolationFixture(t *testing.T) sessionDetailIsolationFixture {
+	t.Helper()
+	ctx := context.Background()
+	sessionRepo := memory.NewInMemoryUserSessionRepository()
+	grantRepo := memory.NewUserGrantRepository()
+	agentRepo := memory.NewAgentRepository()
+	serviceID := id.NewServiceID()
+	principalA := id.Principal("principal-a@example.com")
+	principalB := id.Principal("principal-b@example.com")
+	now := time.Now()
+	for _, session := range []*storage.UserSession{
+		{ID: id.NewSessionID(), Principal: principalA, ServiceID: serviceID, EncryptedAccessToken: []byte("token-a"), TokenType: "Bearer", Scope: []string{"repo"}, InitiatedAt: now, CreatedAt: now},
+		{ID: id.NewSessionID(), Principal: principalB, ServiceID: serviceID, EncryptedAccessToken: []byte("token-b"), TokenType: "Bearer", Scope: []string{"repo"}, InitiatedAt: now, CreatedAt: now},
+	} {
+		require.NoError(t, sessionRepo.Create(ctx, session))
+	}
+	permissionSetAID := id.NewPermissionSetID()
+	permissionSetBID := id.NewPermissionSetID()
+	agentA := &storage.Agent{
+		ID:          id.NewAgentID(),
+		DisplayName: "Agent A",
+		Description: "Principal A agent",
+		PermissionSets: []storage.AgentPermissionSetEntry{{
+			PermissionSetID: permissionSetAID,
+			RequirementType: storage.RequirementTypeMandatory,
+		}},
+	}
+	agentB := &storage.Agent{
+		ID:          id.NewAgentID(),
+		DisplayName: "Agent B",
+		Description: "Principal B agent",
+		PermissionSets: []storage.AgentPermissionSetEntry{{
+			PermissionSetID: permissionSetBID,
+			RequirementType: storage.RequirementTypeMandatory,
+		}},
+	}
+	require.NoError(t, agentRepo.Create(ctx, agentA))
+	require.NoError(t, agentRepo.Create(ctx, agentB))
+	for _, grant := range []*storage.UserGrant{
+		{Principal: principalA, AgentID: agentA.ID, GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: permissionSetAID, IncludedServiceIDs: []id.ServiceID{serviceID}}}},
+		{Principal: principalB, AgentID: agentB.ID, GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: permissionSetBID, IncludedServiceIDs: []id.ServiceID{serviceID}}}},
+	} {
+		require.NoError(t, grantRepo.Create(ctx, grant))
+	}
+	service := createOAuth2SessionServiceWithAgentRepository(
+		t,
+		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
+		sessionRepo,
+		grantRepo,
+		agentRepo,
+		nil,
+		createTestJWEKey(t),
+		oauth2session.DefaultConfig(),
+	)
+	return sessionDetailIsolationFixture{
+		router:     setupTestRouter(oauth2_sessions.NewHandler(service)),
+		serviceID:  serviceID,
+		principalA: principalA,
+		agentA:     agentA,
+		agentB:     agentB,
+	}
+}
+
 // newTestEncryption creates a real encryption adapter using a deterministic test key.
 func newTestEncryption(t *testing.T) ports.EncryptionPort {
 	t.Helper()
@@ -1843,6 +1656,43 @@ func encryptSecretForTest(t *testing.T, serviceID, secret string) []byte {
 	return ciphertext
 }
 
+func seedOtherPrincipalSessionAndGrants(
+	t *testing.T,
+	sessionRepo ports.UserSessionRepository,
+	grantRepo ports.UserGrantRepository,
+	serviceID id.ServiceID,
+	principal, otherPrincipal string,
+) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now()
+	otherSession := &storage.UserSession{
+		ID:                   id.NewSessionID(),
+		Principal:            id.Principal(otherPrincipal),
+		ServiceID:            serviceID,
+		EncryptedAccessToken: []byte("other-token"),
+		TokenType:            "Bearer",
+		Scope:                []string{"repo"},
+		InitiatedAt:          now,
+		CreatedAt:            now,
+	}
+	require.NoError(t, sessionRepo.Create(ctx, otherSession))
+	for _, grant := range []*storage.UserGrant{
+		{Principal: id.Principal(principal), AgentID: id.NewAgentID(), GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{serviceID}}}},
+		{Principal: id.Principal(otherPrincipal), AgentID: id.NewAgentID(), GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{serviceID}}}},
+	} {
+		require.NoError(t, grantRepo.Create(ctx, grant))
+	}
+}
+
+func assertSessionError(t *testing.T, w *httptest.ResponseRecorder, status int, expectedError string) {
+	t.Helper()
+	require.Equal(t, status, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, expectedError, resp["error"])
+}
+
 func createOAuth2SessionService(
 	t *testing.T,
 	serviceRepo ports.ThirdpartyOAuth2ProviderRepository,
@@ -1853,11 +1703,22 @@ func createOAuth2SessionService(
 	config oauth2session.Config,
 ) *oauth2session.OAuth2SessionService {
 	t.Helper()
-
 	agentRepo := memory.NewAgentRepository()
+	return createOAuth2SessionServiceWithAgentRepository(t, serviceRepo, sessionRepo, grantRepo, agentRepo, encryption, jweKey, config)
+}
 
-	// Create ServiceManager for handling encryption/decryption of client secrets
-	// Use test encryption if not provided
+func createOAuth2SessionServiceWithAgentRepository(
+	t *testing.T,
+	serviceRepo ports.ThirdpartyOAuth2ProviderRepository,
+	sessionRepo ports.UserSessionRepository,
+	grantRepo ports.UserGrantRepository,
+	agentRepo ports.AgentRepository,
+	encryption ports.EncryptionPort,
+	jweKey jwk.Key,
+	config oauth2session.Config,
+) *oauth2session.OAuth2SessionService {
+	t.Helper()
+
 	if encryption == nil {
 		encryption = newTestEncryption(t)
 	}

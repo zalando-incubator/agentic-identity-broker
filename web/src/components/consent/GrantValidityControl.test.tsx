@@ -30,8 +30,12 @@ describe('GrantValidityControl', () => {
     const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
 
-    // Date picker should not be visible
-    expect(screen.queryByLabelText('Expiration date')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('checkbox', { name: 'Specific end date' }),
+    ).toBeInTheDocument();
+
+    // End date picker should not be visible
+    expect(screen.queryByLabelText('End date')).not.toBeInTheDocument();
   });
 
   it('should show date picker when checkbox is checked', () => {
@@ -67,8 +71,8 @@ describe('GrantValidityControl', () => {
       />,
     );
 
-    // Date picker should be visible
-    expect(screen.getByLabelText('Expiration date')).toBeInTheDocument();
+    // End date picker should be visible
+    expect(screen.getByLabelText('End date')).toBeInTheDocument();
 
     // Uncheck
     const checkbox = screen.getByRole('checkbox');
@@ -96,9 +100,7 @@ describe('GrantValidityControl', () => {
       />,
     );
 
-    const dateInput = screen.getByLabelText(
-      'Expiration date',
-    ) as HTMLInputElement;
+    const dateInput = screen.getByLabelText('End date') as HTMLInputElement;
 
     // Change to a different future date
     const newFutureDate = new Date(futureDate);
@@ -170,12 +172,16 @@ describe('GrantValidityControl', () => {
     expect(screen.getByText(/Today:/)).toBeInTheDocument();
   });
 
-  it('should show indefinite message when no expiration', () => {
+  it('should explain that permissions remain available until revoked', () => {
     render(
       <GrantValidityControl value={defaultState} onChange={mockOnChange} />,
     );
 
-    expect(screen.getByText(/remain active indefinitely/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'After saving, the agent can use your permissions until revoked',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('should validate future dates', () => {
@@ -192,6 +198,8 @@ describe('GrantValidityControl', () => {
       />,
     );
 
-    expect(screen.getByText(/must be in the future/)).toBeInTheDocument();
+    expect(
+      screen.getByText('End date must be in the future'),
+    ).toBeInTheDocument();
   });
 });

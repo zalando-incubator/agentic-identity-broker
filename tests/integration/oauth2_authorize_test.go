@@ -574,9 +574,12 @@ func (r *inMemoryGrantRepo) ListByPrincipal(ctx context.Context, principal id.Pr
 	return grants, nil
 }
 
-func (r *inMemoryGrantRepo) CountAgentsByServiceID(ctx context.Context, serviceID id.ServiceID) (int, error) {
+func (r *inMemoryGrantRepo) CountAgentsByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (int, error) {
 	agents := make(map[id.AgentID]bool)
 	for _, grant := range r.grants {
+		if grant.Principal != principal {
+			continue
+		}
 		for _, entry := range grant.GrantedPermissionSets {
 			for _, svcID := range entry.IncludedServiceIDs {
 				if svcID == serviceID {
@@ -589,9 +592,12 @@ func (r *inMemoryGrantRepo) CountAgentsByServiceID(ctx context.Context, serviceI
 	return len(agents), nil
 }
 
-func (r *inMemoryGrantRepo) ListByServiceID(ctx context.Context, serviceID id.ServiceID) ([]id.AgentID, error) {
+func (r *inMemoryGrantRepo) ListByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) ([]id.AgentID, error) {
 	agents := make(map[id.AgentID]bool)
 	for _, grant := range r.grants {
+		if grant.Principal != principal {
+			continue
+		}
 		for _, entry := range grant.GrantedPermissionSets {
 			for _, svcID := range entry.IncludedServiceIDs {
 				if svcID == serviceID {

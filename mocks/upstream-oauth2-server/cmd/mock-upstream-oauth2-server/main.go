@@ -43,7 +43,7 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	log.Printf("Configuration loaded: port=%d, bind=%s", cfg.Server.Port, cfg.Server.Bind)
+	log.Printf("Configuration loaded: port=%d, bind=%q", cfg.Server.Port, cfg.Server.Bind) // #nosec G706 -- configuration bind value is Go-quoted before logging.
 
 	// Create OAuth2 server
 	srv, err := server.New(cfg)

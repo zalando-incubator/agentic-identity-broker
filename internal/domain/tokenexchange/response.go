@@ -135,7 +135,7 @@ func (resp *TokenExchangeResponse) Validate() error {
 // Per SR-005, token values are present in JSON (required for client use)
 // but not in logging/String representations.
 func (resp *TokenExchangeResponse) ToJSON() ([]byte, error) {
-	return json.Marshal(resp)
+	return json.Marshal(resp) // #nosec G117 -- RFC 8693 token response is serialized for its direct HTTP response, not logging.
 }
 
 // String returns a string representation suitable for logging.

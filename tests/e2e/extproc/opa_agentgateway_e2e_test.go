@@ -869,6 +869,7 @@ func opaAgentgwStartContainer(ctx context.Context, extprocPort, mcpPort int, jwt
               resource_uri: %q
             agentgateway:
               protocol: "'mcp'"
+              mcp_server: "'mcp-server-mock'"
       backends:
       - mcp:
           targets:

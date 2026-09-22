@@ -21,7 +21,8 @@ import (
 // Implements the builder pattern for fluent test construction.
 type ProcessingRequestBuilder struct {
 	headers                  map[string]string
-	protocol                 string // agentgateway protocol metadata (e.g., "mcp", "a2a")
+	protocol                 string  // agentgateway protocol metadata (e.g., "mcp", "a2a")
+	mcpServer                *string // agentgateway mcp_server metadata; nil means the field is omitted entirely
 	subjectToken             string
 	resourceURI              string
 	hasTokenExchangeMetadata bool
@@ -211,7 +212,11 @@ func ExtractImmediateResponseStatus(resp *extprocv3.ProcessingResponse) uint32 {
 		return 0
 	}
 
-	return uint32(immResp.ImmediateResponse.Status.Code)
+	statusCode := immResp.ImmediateResponse.Status.Code
+	if statusCode < 0 {
+		return 0
+	}
+	return uint32(statusCode) // #nosec G115 -- statusCode is non-negative and int32 cannot exceed uint32.
 }
 
 // ExtractImmediateResponseBody extracts the body from an ImmediateResponse.
@@ -252,6 +257,25 @@ func (b *ProcessingRequestBuilder) WithTokenExchangeMetadata(subjectToken, resou
 	return b
 }
 
+// WithAgentgatewayMCPServer adds an mcp_server field to the agentgateway filter metadata,
+// alongside protocol. Calling this method always includes the field in the built metadata
+// (even with an empty string), which BuildWithMetadata's default-injection (below) treats as
+// "explicitly set" and does not override. This simulates the metadata agentgateway sends when
+// it knows which MCP server a request targets (spec 044).
+func (b *ProcessingRequestBuilder) WithAgentgatewayMCPServer(server string) *ProcessingRequestBuilder {
+	b.mcpServer = &server
+	return b
+}
+
+// WithoutAgentgatewayMCPServer explicitly opts a request out of BuildWithMetadata's
+// mcp_server default-injection, producing metadata equivalent to agentgateway never having
+// sent the field (present-but-empty and entirely-absent are handled identically by ExtProc
+// per FR-004). Named readably for tests exercising the mandatory-metadata rejection path,
+// rather than requiring callers to know that WithAgentgatewayMCPServer("") has the same effect.
+func (b *ProcessingRequestBuilder) WithoutAgentgatewayMCPServer() *ProcessingRequestBuilder {
+	return b.WithAgentgatewayMCPServer("")
+}
+
 // BuildWithMetadata constructs the ProcessingRequest with all configured Agentgateway metadata.
 func (b *ProcessingRequestBuilder) BuildWithMetadata() *extprocv3.ProcessingRequest {
 	headers := make([]*corev3.HeaderValue, 0, len(b.headers))
@@ -273,12 +297,28 @@ func (b *ProcessingRequestBuilder) BuildWithMetadata() *extprocv3.ProcessingRequ
 		},
 	}
 
+	// mcp_server is mandatory for MCP requests once OPA authorization is enabled
+	// (spec 044 FR-004). Default-inject a value for protocol=="mcp" builds so existing
+	// tests unrelated to mcp_server itself don't need to set it explicitly. Tests that
+	// exercise the true-absence rejection path call WithAgentgatewayMCPServer("") to opt
+	// out: an explicit (even empty) value is never overridden by the default below.
+	mcpServer := b.mcpServer
+	if b.protocol == "mcp" && mcpServer == nil {
+		def := "test-mcp-server"
+		mcpServer = &def
+	}
+
 	filterMetadata := make(map[string]*structpb.Struct, 2)
-	if b.protocol != "" {
+	if b.protocol != "" || mcpServer != nil {
+		fields := map[string]*structpb.Value{}
+		if b.protocol != "" {
+			fields["protocol"] = structpb.NewStringValue(b.protocol)
+		}
+		if mcpServer != nil {
+			fields["mcp_server"] = structpb.NewStringValue(*mcpServer)
+		}
 		filterMetadata["agentgateway"] = &structpb.Struct{
-			Fields: map[string]*structpb.Value{
-				"protocol": structpb.NewStringValue(b.protocol),
-			},
+			Fields: fields,
 		}
 	}
 	if b.hasTokenExchangeMetadata {

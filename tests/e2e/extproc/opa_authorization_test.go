@@ -192,6 +192,210 @@ var _ = Describe("OPA Authorization", func() {
 	})
 
 	// -------------------------------------------------------------------------
+	// Spec 044: MCP Target Server Name in OPA Authorization Input
+	// specs/044-extproc-opa-mcp-target-server/spec.md — US1, US2, US3
+	// -------------------------------------------------------------------------
+	Describe("Spec 044: MCP Target Server Name", func() {
+
+		Context("US1/US2: input.mcp.target_server_name shape across request types", func() {
+			var (
+				env        *bootstrap.TestEnvironment
+				grpcClient extprocv3.ExternalProcessorClient
+				conn       *grpc.ClientConn
+			)
+
+			BeforeEach(func() {
+				cfg := opaEnabledConfig(policyPath("assert_target_server_name_input.rego"))
+				env = bootstrap.NewTestEnvironment(cfg, opaLogger)
+				env.Start()
+
+				env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken)
+				expiresIn := fixtures.StandardExpiresIn
+				env.MockTokenExchange.WithExpiresIn(&expiresIn)
+
+				grpcClient, conn = env.NewExtProcClient()
+			})
+
+			AfterEach(func() {
+				conn.Close() //nolint:errcheck
+				env.Stop()
+			})
+
+			// Scenario US1.1 from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Given an MCP tools/call request with agentgateway mcp_server="github-mcp",
+			// When OPA evaluates the request,
+			// Then input.mcp.target_server_name == "github-mcp".
+			It("should build OPA input with mcp.target_server_name for tools/call", func() {
+				headersReq := helpers.NewRequestHeaders().
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					WithHeader(":method", "POST").
+					WithAgentgatewayProtocol("mcp").
+					WithAgentgatewayMCPServer("github-mcp").
+					BuildWithMetadata()
+
+				headersResp, bodyResp := helpers.SendHeadersAndBody(context.Background(), grpcClient, headersReq,
+					toolCallBody("list_repositories"))
+
+				Expect(headersResp).NotTo(BeNil())
+				Expect(headersResp).To(helpers.HaveReplacedAuthorizationHeader("Bearer "+fixtures.FreshExchangedToken),
+					"headers phase should perform eager token exchange before OPA evaluates the body")
+				Expect(bodyResp).NotTo(BeNil())
+				Expect(bodyResp).To(helpers.BeForwardedRequestBody(),
+					"tools/call with matching target_server_name should be allowed in the body phase")
+			})
+
+			// Scenario US1.1 (mcp_method variant) from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Given an MCP initialize request with agentgateway mcp_server="github-mcp",
+			// When OPA evaluates the request,
+			// Then input.mcp.target_server_name == "github-mcp" alongside input.mcp.method.
+			It("should build OPA input with mcp.target_server_name for non-tool-call methods", func() {
+				headersReq := helpers.NewRequestHeaders().
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					WithHeader(":method", "POST").
+					WithAgentgatewayProtocol("mcp").
+					WithAgentgatewayMCPServer("github-mcp").
+					BuildWithMetadata()
+
+				headersResp, bodyResp := helpers.SendHeadersAndBody(context.Background(), grpcClient, headersReq, initializeBody())
+
+				Expect(headersResp).NotTo(BeNil())
+				Expect(headersResp).To(helpers.HaveReplacedAuthorizationHeader("Bearer "+fixtures.FreshExchangedToken),
+					"headers phase should perform eager token exchange before OPA evaluates the body")
+				Expect(bodyResp).NotTo(BeNil())
+				Expect(bodyResp).To(helpers.BeForwardedRequestBody(),
+					"initialize with matching target_server_name should be allowed in the body phase")
+			})
+
+			// Scenario US2.1 from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Given a header-only MCP request (end_of_stream=true) with agentgateway
+			// mcp_server="github-mcp", When OPA evaluates the mcp_headers_only input,
+			// Then input.mcp.target_server_name == "github-mcp".
+			It("should build OPA input with mcp.target_server_name for headers-only requests", func() {
+				headersReq := helpers.NewRequestHeaders().
+					WithHeader(":method", "GET").
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					WithAgentgatewayProtocol("mcp").
+					WithAgentgatewayMCPServer("github-mcp").
+					WithEndOfStream(true).
+					BuildWithMetadata()
+
+				resp := helpers.SendRequestHeaders(context.Background(), grpcClient, headersReq)
+
+				Expect(resp).NotTo(BeNil())
+				Expect(resp).To(helpers.HaveReplacedAuthorizationHeader("Bearer "+fixtures.FreshExchangedToken),
+					"mcp_headers_only request with matching target_server_name should be allowed and token-exchanged")
+			})
+
+			// Scenario US3.1 from specs/044-extproc-opa-mcp-target-server/spec.md (FR-004)
+			// Given an MCP tools/call request where agentgateway sends no mcp_server metadata,
+			// When ExtProc evaluates the request headers,
+			// Then the request is rejected with 403 before OPA is ever invoked (misconfiguration),
+			// mirroring how absent protocol metadata is rejected.
+			It("should reject with 403 when agentgateway sends no mcp_server metadata", func() {
+				headersReq := helpers.NewRequestHeaders().
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					WithHeader(":method", "POST").
+					WithAgentgatewayProtocol("mcp").
+					WithoutAgentgatewayMCPServer().
+					BuildWithMetadata()
+
+				headersResp, bodyResp := helpers.SendHeadersAndBody(context.Background(), grpcClient, headersReq,
+					toolCallBody("list_repositories"))
+
+				Expect(headersResp).NotTo(BeNil())
+				Expect(headersResp).To(helpers.HaveImmediateResponseWithStatus(403),
+					"absent target_server_name metadata must be rejected at the headers phase (FR-004), mirroring absent protocol metadata")
+				Expect(bodyResp).To(BeNil(), "no body phase should occur once the headers phase rejects the request")
+			})
+		})
+
+		Context("US1: per-MCP-server policy scoping", func() {
+			var (
+				env        *bootstrap.TestEnvironment
+				grpcClient extprocv3.ExternalProcessorClient
+				conn       *grpc.ClientConn
+			)
+
+			BeforeEach(func() {
+				cfg := opaEnabledConfig(policyPath("allow_by_target_server_name.rego"))
+				env = bootstrap.NewTestEnvironment(cfg, opaLogger)
+				env.Start()
+
+				env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken)
+				expiresIn := fixtures.StandardExpiresIn
+				env.MockTokenExchange.WithExpiresIn(&expiresIn)
+
+				grpcClient, conn = env.NewExtProcClient()
+			})
+
+			AfterEach(func() {
+				conn.Close() //nolint:errcheck
+				env.Stop()
+			})
+
+			// Scenario US1.1 from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Given a policy that allows tool calls only when target_server_name=="github-mcp",
+			// When a tool call arrives with mcp_server="github-mcp",
+			// Then the request is allowed.
+			It("should allow the tool call when target_server_name matches the authorized server", func() {
+				headersReq := helpers.NewRequestHeaders().
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					WithHeader(":method", "POST").
+					WithAgentgatewayProtocol("mcp").
+					WithAgentgatewayMCPServer("github-mcp").
+					BuildWithMetadata()
+
+				_, bodyResp := helpers.SendHeadersAndBody(context.Background(), grpcClient, headersReq,
+					toolCallBody("list_repositories"))
+
+				Expect(bodyResp).NotTo(BeNil())
+				Expect(bodyResp).To(helpers.BeForwardedRequestBody(),
+					"tool call targeting the authorized MCP server should be allowed")
+			})
+
+			// Scenario US1.2 from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Given the same policy, When a tool call arrives with mcp_server="salesforce-mcp"
+			// (a different, unauthorized server), Then the request is denied with 403.
+			It("should deny the tool call when target_server_name targets a different server", func() {
+				headersReq := helpers.NewRequestHeaders().
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					WithHeader(":method", "POST").
+					WithAgentgatewayProtocol("mcp").
+					WithAgentgatewayMCPServer("salesforce-mcp").
+					BuildWithMetadata()
+
+				_, bodyResp := helpers.SendHeadersAndBody(context.Background(), grpcClient, headersReq,
+					toolCallBody("list_repositories"))
+
+				Expect(bodyResp).NotTo(BeNil())
+				Expect(bodyResp).To(helpers.HaveImmediateResponseWithStatus(403),
+					"tool call targeting an unauthorized MCP server should be denied")
+			})
+
+			// Edge case from specs/044-extproc-opa-mcp-target-server/spec.md
+			// Given the same policy, When a tool call arrives with no mcp_server metadata at all,
+			// Then the request is rejected with 403 at the headers phase by ExtProc's mandatory
+			// mcp_server check (FR-004) — it never reaches the policy's own deny rule.
+			It("should reject with 403 when target_server_name metadata is absent entirely", func() {
+				headersReq := helpers.NewRequestHeaders().
+					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+					WithHeader(":method", "POST").
+					WithAgentgatewayProtocol("mcp").
+					WithoutAgentgatewayMCPServer().
+					BuildWithMetadata()
+
+				headersResp, bodyResp := helpers.SendHeadersAndBody(context.Background(), grpcClient, headersReq,
+					toolCallBody("list_repositories"))
+
+				Expect(headersResp).NotTo(BeNil())
+				Expect(headersResp).To(helpers.HaveImmediateResponseWithStatus(403),
+					"absent target_server_name metadata must be rejected before OPA is invoked (FR-004)")
+				Expect(bodyResp).To(BeNil(), "no body phase should occur once the headers phase rejects the request")
+			})
+		})
+	})
+
+	// -------------------------------------------------------------------------
 	// User Story 3: Local Rego File for Quick Setup (P3)
 	// specs/020-extproc-opa-authorization/spec.md — US3
 	// -------------------------------------------------------------------------

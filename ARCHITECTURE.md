@@ -1116,7 +1116,7 @@ Authorization: [e.g., RBAC, ACLs]
 
 Data Encryption: [e.g., TLS in transit, AES-256 at rest]
 
-Key Security Tools/Practices: [e.g., WAF, regular security audits]
+Key Security Tools/Practices: The read-only, trusted-base `CI / security` PR job runs gosec for Go source, govulncheck for reachable Go vulnerabilities, and OSV-Scanner for Go/npm manifests and lockfiles.
 
 ## 8. Development & Testing Environment
 
