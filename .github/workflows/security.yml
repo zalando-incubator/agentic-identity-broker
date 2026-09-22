@@ -58,12 +58,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Enable Go 1.26 jsonv2 experiment
-        run: |
-          case "$(go env GOVERSION)" in
-            go1.26.*) echo "GOEXPERIMENT=jsonv2" >> "$GITHUB_ENV" ;;
-          esac
-
       - name: Scan repository
         run: bash scripts/security-scan.sh .
 

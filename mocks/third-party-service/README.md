@@ -18,7 +18,7 @@ This mock service implements the standard OAuth2 Authorization Code Flow with PK
 
 ### Prerequisites
 
-- Go 1.26.8+
+- Go 1.27.1+
 - Broker running on http://localhost:8000 (or localhost:14000 for admin API)
 - `curl` or similar for testing
 
