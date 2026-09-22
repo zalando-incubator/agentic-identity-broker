@@ -1,26 +1,52 @@
-name: Frontend E2E Screenshots
+# Screenshots — refresh the tracked frontend E2E screenshots on a PR.
+#
+# The frontend E2E suite itself already runs inside CI (`just verify-junit`,
+# stage 3); this workflow exists only to regenerate the committed screenshots
+# and embed them in the PR description. It therefore runs only when the
+# frontend or its E2E tests change, and only for same-repository PRs (a fork
+# PR cannot be pushed to).
+#
+# Pushing with the default GITHUB_TOKEN does NOT trigger workflows, which
+# leaves the new head commit without a CI run — and a required "CI / gate"
+# check that never arrives. So the push uses a GitHub App token when one is
+# configured (vars.SCREENSHOT_BOT_APP_ID + secrets.SCREENSHOT_BOT_PRIVATE_KEY)
+# and falls back to GITHUB_TOKEN with a warning otherwise.
+
+name: Screenshots
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+    paths:
+      - "web/**"
+      - "tests/e2e/frontend/**"
+      - "tests/e2e/pages/**"
+      - "tests/e2e/screenshots/**"
+      - "tools/imgdiff/**"
+      - ".github/workflows/screenshots.yml"
 
 permissions:
   contents: read
 
+concurrency:
+  group: screenshots-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   frontend-e2e:
+    name: Refresh screenshots
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
       pull-requests: write
-    # Skip forked PRs — can't push back and token is read-only
     if: github.event.pull_request.head.repo.full_name == github.repository
 
     steps:
       - name: Checkout PR branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -38,10 +64,11 @@ jobs:
 
       - name: Set up Go
         if: steps.skip-check.outputs.skip != 'true'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
+
       - name: Enable Go 1.26 jsonv2 experiment
         if: steps.skip-check.outputs.skip != 'true'
         run: |
@@ -51,17 +78,19 @@ jobs:
 
       - name: Set up Node.js
         if: steps.skip-check.outputs.skip != 'true'
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
-          cache: "npm"
+          cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Cache Playwright browsers
         if: steps.skip-check.outputs.skip != 'true'
-        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
-          path: ~/.cache/ms-playwright
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/ms-playwright-go
           key: playwright-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: playwright-${{ runner.os }}-
 
@@ -160,21 +189,37 @@ jobs:
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Mint push token
+        id: app-token
+        if: steps.skip-check.outputs.skip != 'true' && steps.sync-screenshots.outputs.has_changes == 'true' && vars.SCREENSHOT_BOT_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.SCREENSHOT_BOT_APP_ID }}
+          private-key: ${{ secrets.SCREENSHOT_BOT_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Commit and push screenshot changes
         if: steps.skip-check.outputs.skip != 'true' && steps.sync-screenshots.outputs.has_changes == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          USING_APP: ${{ steps.app-token.outputs.token != '' }}
         run: |
+          set -euo pipefail
+          if [ "$USING_APP" != "true" ]; then
+            echo "::warning::Pushing with GITHUB_TOKEN — CI will not re-run for the screenshot commit. Configure SCREENSHOT_BOT_APP_ID / SCREENSHOT_BOT_PRIVATE_KEY to fix this."
+          fi
           git add tests/e2e/screenshots/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
           git commit -m "Update frontend E2E screenshots"
-          git push
+          git push origin "HEAD:refs/heads/${HEAD_REF}"
 
       - name: Upload screenshots as artifact
         if: steps.skip-check.outputs.skip != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-screenshots
           path: tests/e2e/screenshots/*.png
@@ -182,7 +227,7 @@ jobs:
 
       - name: Update PR description with screenshots
         if: steps.skip-check.outputs.skip != 'true' && steps.sync-screenshots.outputs.has_changes == 'true'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const pr = context.payload.pull_request;

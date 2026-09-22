@@ -17,8 +17,6 @@ updates:
       default-days: 7
     labels:
       - "dependabot"
-      - "go"
-      - "backend"
       - "minor"
     groups:
       go-dependencies:
@@ -32,15 +30,15 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
-    reviewers:
-      - "jan-brennenstuhl_zse"
-      - "magnus-jungsbluth_zse"
 
   # Web npm Dependencies
   - package-ecosystem: "npm"
     directory: "/web"
     schedule:
       interval: "monthly"
+    labels:
+      - "dependabot"
+      - "minor"
     cooldown:
       default-days: 7
     open-pull-requests-limit: 2
@@ -59,6 +57,9 @@ updates:
       interval: "monthly"
     cooldown:
       default-days: 7
+    labels:
+      - "dependabot"
+      - "minor"
     open-pull-requests-limit: 2
     groups:
       documentation-patch-updates:
@@ -67,3 +68,40 @@ updates:
           - "patch"
         patterns:
           - "*"
+
+  # GitHub Actions — every `uses:` is pinned to a commit SHA, so this is the
+  # only way those pins ever move. Grouped into one PR per week.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    cooldown:
+      default-days: 3
+    labels:
+      - "dependabot"
+      - "minor"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+
+  # Container base images — pinned by digest in every Dockerfile.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependabot"
+      - "minor"
+    groups:
+      base-images:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore"
