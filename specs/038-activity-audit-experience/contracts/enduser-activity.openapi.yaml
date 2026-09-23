@@ -36,9 +36,11 @@ paths:
         Returns a reverse-chronological, cursor-paginated page of curated business-/security-
         significant events for the authenticated principal, plus narrative threads derived from
         the page's events. Routine high-frequency internals are rolled up into one event per
-        bucket with an `occurrence_count`, not surfaced individually. Supports combinable,
-        clearable filters (agent, service, grant, time window, jump-to-date, outcome, category,
-        keyword, needs-attention).
+        bucket with an `occurrence_count`, not surfaced individually. Broker access counts mean
+        successful token exchanges, not downstream service uses. All events and thread counts
+        are limited to the configured activity-retention window. Supports combinable, clearable
+        filters (agent, service, grant, time window, jump-to-date, outcome, category, keyword,
+        needs-attention).
       operationId: listActivity
       security:
         - SessionAuth: []
@@ -142,12 +144,12 @@ paths:
                           occurred_at: "2026-09-04T10:31:00Z"
                           redacted: true
                         - id: 4f1c2e00-0000-4000-8000-000000000003
-                          category: agent_action
-                          type: agent.acted_via_service
-                          actor: { kind: agent, id: 7f0a…, display_label: "Research Agent" }
+                          category: agent_access
+                          type: agent.access_issued
+                          actor: { kind: broker, id: null, display_label: "Identity broker" }
                           subject: { kind: service, id: github, display_label: "GitHub" }
                           outcome: succeeded
-                          summary: "Research Agent used GitHub on your behalf."
+                          summary: "Broker issued GitHub access for Research Agent."
                           related_refs: { agent_id: "7f0a…", service_id: "github" }
                           occurrence_count: 41
                           first_occurred_at: "2026-09-04T09:02:11Z"
@@ -159,7 +161,7 @@ paths:
                           actor: { kind: service, id: github, display_label: "GitHub" }
                           subject: { kind: session, id: se4, display_label: "GitHub session" }
                           outcome: failed
-                          summary: "Your GitHub connection expired and needs to be reconnected."
+                          summary: "Your GitHub connection expired."
                           related_refs: { service_id: "github", session_id: "se4" }
                           occurrence_count: 1
                           first_occurred_at: "2026-09-04T09:05:00Z"
@@ -205,11 +207,12 @@ paths:
       tags: [Activity]
       summary: List live needs-attention items for the current user
       description: |
-        Returns items derived purely from current unresolved state (a connected service requiring
-        reconnection, a tool call awaiting approval). Unlike historical activity, unresolved items
-        remain visible regardless of the activity-retention window. They clear automatically when
-        the underlying flow completes; there is no dismissal. Non-actionable notable events are
-        NOT included here. Cheap to compute; the SPA polls it while the tab is visible.
+        Returns items derived from current unresolved state (a session past refresh expiry or
+        marked as requiring reconnection, or a tool call awaiting approval). Historical activity
+        events do not determine live reconnect state. Unresolved items remain visible regardless
+        of the activity-retention window and clear when the underlying state resolves. There is
+        no dismissal. Non-actionable notable events are NOT included here. The SPA polls this
+        endpoint while the tab is visible.
       operationId: listActivityAttention
       security:
         - SessionAuth: []
@@ -263,10 +266,11 @@ paths:
       tags: [Activity]
       summary: Get a single activity event with full context and related sequence
       description: |
-        Returns the full, redacted detail of one event owned by the current principal: the
-        structured explanation of why it happened, a bounded ordered related sequence, and
-        single-action links back to the related consent/session/agent context. Pending events are
-        reported honestly.
+        Returns the full, redacted detail of a retained event owned by the current principal:
+        the structured explanation of why it happened, a bounded ordered related sequence, and
+        links back to consent/session/agent context. The event and every related sequence entry
+        must have occurred within the configured retention window. Pending events are reported
+        honestly. An older event returns 404 even while its row awaits pruning.
       operationId: getActivityEvent
       security:
         - SessionAuth: []
@@ -299,13 +303,13 @@ paths:
                           detail: { $ref: '#/components/schemas/ActivityDetail' }
                           sequence:
                             type: array
-                            description: Ordered related events (ascending occurred_at) around this event, including it (US4).
+                            description: Ordered related events (ascending occurred_at) around this event, including it; excludes events before the retention cutoff (US4).
                             items: { $ref: '#/components/schemas/ActivityEvent' }
                           sequence_truncated:
                             type: boolean
                             description: True when more related events exist than sequence_limit.
         '404':
-          description: No such event in the current principal's scope (also returned to prevent cross-user probing).
+          description: No event in the current principal's scope and retention window; also returned for other users' events and unpruned older events.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -320,7 +324,8 @@ components:
 
     ActivityCategory:
       type: string
-      enum: [delegation, session, agent_action, policy_decision, approval, revocation, reconnect, failure]
+      enum: [delegation, session, agent_access, policy_decision, approval, revocation, reconnect, failure]
+      description: agent_access reports successful broker access issuance, not downstream service use.
 
 
     ActorRef:
@@ -413,7 +418,7 @@ components:
         occurrence_count:
           type: integer
           minimum: 1
-          description: ">1 for rolled-up routine milestones (e.g. 41 uses of GitHub within one bucket)."
+          description: ">1 for rolled-up routine milestones; for agent.access_issued, counts successful broker token exchanges, not downstream actions."
         first_occurred_at: { type: string, format: date-time, description: "Start of the roll-up bucket; equals occurred_at for single events." }
         occurred_at: { type: string, format: date-time, description: "Latest occurrence; the ordering key." }
         redacted:

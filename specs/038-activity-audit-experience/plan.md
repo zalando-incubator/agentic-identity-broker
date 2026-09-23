@@ -32,9 +32,9 @@ seams do not exist (no expiry detection job, no denial reason codes, `TokenIssue
 RFC 8693, idempotent approval creation), that FR-016b (one event per action) and FR-001
 ("summarize into milestones") had no mechanism, that no scheduler exists for the prune, and that
 the SPA routes referenced were stale. The plan now: adds a **Phase 0 seam-preparation** step;
-introduces `dedup_key` + roll-up counters; makes the recorder transactional where possible and
-async-with-drop-metrics elsewhere; coordinates prune with an advisory lock; computes threads at
-read time; drops per-event `needs_attention`; structures the "why"; adds an approved-field
+introduces `dedup_key` + roll-up counters; records events best-effort after successful writes
+without sharing mutation transactions; coordinates prune with an advisory lock; computes threads
+at read time; drops per-event `needs_attention`; structures the "why"; adds an approved-field
 registry; adds `q=`/`before=` so SC-005 is reachable; raises default retention to 30 days; polls
 the attention endpoint; and corrects all routes to the root-mounted SPA (`/delegations`,
 `/agents/:agentId`, `/sessions`, `/approvals[/:id]`). See research Decisions 11–13 and
@@ -58,8 +58,8 @@ findable in under 30 seconds with ≥10,000 events. The separate storage experim
 10,000-event-per-principal stress fixture, 2,000 active principals, and a 330 significant-event-writes/s
 burst. It captures p50/p95/p99 and execution plans on a warm isolated PostgreSQL database; it is
 exploratory, not a product load, quota, or latency commitment. Cursor pagination uses `(principal, occurred_at
-DESC, id DESC)` with the cursor bound to its filter set. Roll-ups (data-model §1.2) keep feed
-volume proportional to distinct actions, not MCP traffic.
+DESC, id DESC)` with the cursor bound to its filter set. Roll-ups (data-model §1.2) group
+successful broker access issuances; their counts do not represent downstream actions.
 **Constraints**: read-only experience (no new mutation surface); 30-day rolling retention default
 for historical activity (configurable; spec clarification 2026-09-22); unresolved needs-attention
 items remain visible until the underlying state resolves; exactly one visible event per underlying
@@ -105,7 +105,8 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
   `migrations/032_create_activity_events.{up,down}.sql` with the §10 indexes, the
   `UNIQUE (principal, dedup_key)` constraint, and `CREATE EXTENSION IF NOT EXISTS pg_trgm`
   (verify the managed-PostgreSQL offering allows it; fall back to `ILIKE` on `summary` if not).
-  Do not add a DynamoDB application table.
+  Add `user_sessions.token_revision` and `user_sessions.reconnect_required_at` in the same
+  migration. Do not add a DynamoDB application table.
 - [ ] **E2E Acceptance Tests**: Add one `It()` per spec scenario in
   `tests/e2e/activity_test.go`, using the mapping in Testing Strategy.
 - [x] **E2E Test Mapping**: 1:1 scenario→`It()` mapping table populated in Testing Strategy.
@@ -163,8 +164,10 @@ implementation and must be requested against the **revised** contract.
   `useSearchParams`. The names match the OpenAPI contract and make per-agent/service views
   linkable from other pages (US3). `cursor` is never in the URL.
 - **Outbound links only for actions**: needs-attention next steps and back-links navigate to the
-  existing `/sessions`, `/approvals`, `/approvals/:id`, `/agents/:agentId` flows via a server-side
-  route allowlist (data-model §3.3); the activity experience adds no mutation of its own.
+  existing `/sessions`, `/approvals`, `/approvals/:id`, `/agents/:agentId` routes via the server
+  allowlist (data-model §3.3). The session page must add a "Reconnect" action for the matching
+  `/api/activity/attention` service. This action starts its existing OAuth authorize endpoint;
+  the activity experience adds no mutation of its own.
 - **Inbound links**: `AgentGrantDetailPage` and `ThirdPartySessionsPage` get a "View activity"
   link to `/activity?agent_id=…` / `/activity?service_id=…` (one line each; makes SC-002's
   two-interaction path real from where users already are).
@@ -190,9 +193,9 @@ implementation and must be requested against the **revised** contract.
 3. **Activity feed** — reverse-chronological, grouped by day in the browser timezone (Today /
    Yesterday / date) as `<section aria-labelledby>` with an `<h2>` date heading. Each item is a
    narrative **ActivityCard** (`Card as="article"` + `OutcomeStatus` + humanized summary answering
-   what/when/who/what-affected/outcome). Roll-up cards show the count and local time span
-   ("Research Agent used GitHub · 41 times, 09:00–10:00"). Cards for `agent_action` /
-   `policy_decision` carry a secondary link "Don't recognise this? Review this agent's access" →
+   what/when/who/what-affected/outcome). Roll-up cards show broker access issuances and the
+   local time span ("Broker issued GitHub access for Research Agent · 41 times, 09:00–10:00").
+   Cards for `agent_access` / `policy_decision` carry a secondary link "Don't recognise this? Review this agent's access" →
    `/agents/:id` (where revoke already lives; zero new mutation surface). Not a table (FR-007).
    Incremental "Load more" via `next_cursor` (SC-005, FR-013). A footer line explains the cliff:
    "Activity older than {retention_days} days isn't kept."
@@ -210,17 +213,16 @@ FR-008 back-link), approved context fields (e.g. scope delta for `grant.updated`
 for tool calls), the bounded related **sequence** as a `Timeline` with "N more" when
 `sequence_truncated`, redacted values shown as shape ("3 arguments, redacted"), honest pending
 state, and single-action links back to related consent/session/agent context (US4,
-FR-005/008/009/011).
+FR-005/008/009/011). An event older than retention returns 404, even before prune removes it;
+its related sequence also excludes events beyond retention.
 
 **Event grouping model** (categories → domain seams; full table in
-[data-model.md](./data-model.md) §4): `delegation`, `session`, `agent_action`, `policy_decision`,
+[data-model.md](./data-model.md) §4): `delegation`, `session`, `agent_access`, `policy_decision`,
 `approval`, `revocation`, `reconnect`, `failure`. **Outcome**: `succeeded | failed | blocked |
-pending`. **Roll-ups** (data-model §1.2): `agent.acted_via_service` and `session.refreshed` are
-Seed one principal with 10,000 events for SC-005 and issue keyset feed pages plus every single
-filter and representative combined filters. Capture p50/p95/p99 and execution plans on a warm
-isolated PostgreSQL database. The benchmark records storage behaviour; SC-005 itself remains the
-user finding a recent event in under 30 seconds, not an API latency promise.
-retention, and clears automatically when the underlying state resolves.
+pending`. **Roll-ups** (data-model §1.2): `agent.access_issued` counts successful broker token
+exchanges; `session.refreshed` groups routine refreshes. A broker exchange does not prove that a
+downstream action occurred. **Needs-attention** derives from live session reconnect state and
+pending approvals. It outlives activity retention and clears when the source state resolves.
 
 **Wording templates**: one template per event `type` (data-model §3.1/§3.2) is written in the
 Phase 2 design PR — before any code — so SC-003 wording can be reviewed with stakeholders.
@@ -235,7 +237,7 @@ New read-only enduser endpoints (full schema:
 |---|---|---|
 | `GET` | `/api/activity` | Cursor-paginated, filterable curated feed (`agent_id`, `service_id`, `grant_id`, `window`, `before`, `outcome`, `category`, `q`, `needs_attention`) + read-derived threads + `retention_days` |
 | `GET` | `/api/activity/attention` | Live-derived needs-attention items (`group_key`, oldest first), unaffected by historical retention, `Cache-Control: no-store`, polled |
-| `GET` | `/api/activity/{event-id}` | Single event detail: structured explanation, approved context, bounded related sequence (`sequence_limit`), redacted, back-links |
+| `GET` | `/api/activity/{event-id}` | Retained single-event detail: structured explanation, approved context, bounded retained sequence (`sequence_limit`), redacted, back-links; 404 beyond retention |
 
 Conventions match the existing API (`{data}` envelope, `{error,message}`, RFC3339,
 `X-Remote-User`). This introduces the **first cursor-pagination pattern** in the enduser API
@@ -270,17 +272,23 @@ events" when truncated. `ActivityEvent` no longer carries `thread_key` or `needs
   variants/empty/loading/reduced-motion. Barrel export updated. Semantic tokens only.
 - **App components (additional)**: `ActiveFilterChips`, `RollupCard` variant of `ActivityCard`,
   `RetentionFooter`; `web/src/utils/inAppRoute.ts` (route allowlist guard, unit-tested).
-- **Existing pages (one line each)**: `AgentGrantDetailPage`, `ThirdPartySessionsPage` gain a
-  "View activity" link into the filtered feed.
+- **Existing pages**: `AgentGrantDetailPage` and `ThirdPartySessionsPage` gain "View activity"
+  links into the filtered feed. `ThirdPartySessionsPage` also uses `useNeedsAttention` to show a
+  "Reconnect" control for a marked service, even when its existing `is_expired` field is false.
+  That control starts the existing third-party OAuth authorization route.
 - **Backend**: new bounded context
   `internal/domain/activity/{event.go,service.go,recorder.go,safefields.go,templates.go,threads.go,prune.go}`;
   `ActivityEventRepository` in `internal/ports/storage.go`; memory and PostgreSQL adapters in
   `internal/adapters/storage/{memory,postgres}/activity_events.go`; principal/keyset, unique
   dedup, selective `related_refs` expression, trigram, and prune indexes in migration `032`;
-  handler `internal/adapters/http/handlers/activity/handler.go`; wiring in
-  `internal/app/handlers.go` + `internal/app/builder.go` (recorder drainer goroutine tied to app
-  lifecycle); routes in `internal/adapters/http/routing/enduser.go`; recorder calls at the
-  transition seams listed in [data-model.md](./data-model.md) §11. OTel counter
+  the same migration adds `UserSession.token_revision` and `reconnect_required_at`. The session
+  repository fills the session with the committed ID and revision on each write. A small status
+  port conditionally marks refresh failure against that revision; refresh success/reconnection
+  clears the marker with its token write. Add handler
+  `internal/adapters/http/handlers/activity/handler.go`; wire the activity service/repo/handler
+  and async recorder in `internal/app/handlers.go` + `internal/app/builder.go` (drainer tied to app
+  lifecycle); routes in `internal/adapters/http/routing/enduser.go`; recorder calls at the seams
+  listed in [data-model.md](./data-model.md) §11. OTel counter
   `activity_events_dropped_total`. No DynamoDB application adapter or resource is added.
 - **Phase 0 touchpoints (existing code)**: `internal/domain/tokenexchange/service.go` — typed
   `DenialReason` on exchange errors and a success hook after `Exchange` returns; the approval
@@ -315,14 +323,15 @@ internal/
 │   │   ├── threads.go                  # read-time thread derivation from related_refs
 │   │   ├── safefields.go               # approved-field registry per event type (SC-007 oracle)
 │   │   ├── templates.go                # summary + structured-explanation wording templates
-│   │   ├── recorder.go                 # ActivityRecorder: tx mode + async bounded queue + drop metric
+│   │   ├── recorder.go                 # ActivityRecorder: post-write bounded queue + drop metric
 │   │   └── prune.go                    # advisory-lock coordinated bounded prune
+│   ├── storage/user_session.go           # live reconnect marker + token revision
 │   ├── tokenexchange/service.go        # Phase 0: DenialReason + success hook
 │   └── id/
 │       ├── gen_ids.go                  # + ActivityEventID row
 │       └── uuid_ids_gen.go             # regenerated
 ├── ports/
-│   ├── storage.go                      # + ActivityEventRepository
+│   ├── storage.go                      # + ActivityEventRepository and session status port
 │   └── config.go                       # + Activity config section
 ├── adapters/
 │   ├── storage/{memory,postgres}/activity_events.go   # NEW adapters
@@ -331,12 +340,11 @@ internal/
 │       └── routing/enduser.go                         # register /api/activity*
 └── app/
     ├── handlers.go                     # + Activity handler field
-    └── builder.go                      # wire activity service/repo/handler + recorder into seams
+    └── builder.go                      # wire activity service/repo/handler + post-write recorder
 
 migrations/
-├── 032_create_activity_events.up.sql
+├── 032_create_activity_events.up.sql    # activity table + user_sessions reconnect fields
 └── 032_create_activity_events.down.sql
-
 adrs/
 └── 037-activity-event-storage.md       # Proposed activity storage decision (renumbered from 035)
 
@@ -348,7 +356,7 @@ web/src/
 ├── App.tsx                             # + /activity, /activity/:eventId
 ├── components/layout/AppLayout.tsx     # + Activity navLink; prefix-based active match
 ├── pages/activity/ActivityPage.tsx     # NEW
-├── pages/{AgentGrantDetailPage,ThirdPartySessionsPage}.tsx   # + "View activity" link
+├── pages/{AgentGrantDetailPage,ThirdPartySessionsPage}.tsx   # + activity links; sessions reconnect control
 ├── components/activity/*               # NEW app components (incl. ActiveFilterChips, RollupCard, RetentionFooter)
 ├── hooks/{useActivity,useActivityEvent,useNeedsAttention}.ts   # NEW (useNeedsAttention polls while visible)
 ├── services/api/activity.ts            # NEW
@@ -405,10 +413,10 @@ second principal for isolation).
 | US1 #4 empty state | no events → `{events:[],threads:[],next_cursor:null,retention_days:N}` |
 | US1 #5 revoked reference | since-deleted actor renders with historical label |
 | US1 #6 top-level reachability | (frontend) nav single-action — Playwright |
-| US1 #7 one canonical event | same action reported twice (replayed exchange, repeated lazy expiry, idempotent approval create) → one event; roll-up increments `occurrence_count` |
-| US2 #1–#6 needs-attention | attention list present/settled; clears after resolve; blocked stays history-only; refresh-failure (not just expiry) yields `reconnect_required`; `target_route` values match the allowlist |
+| US1 #7 one canonical event | same transition reported twice → one event; two grant updates within one second and two reconnections on one session → distinct events; roll-ups count broker issuances, not downstream uses |
+| US2 #1–#6 needs-attention | attention list present/settled; clears after resolve; blocked stays history-only; rejected refresh or no usable refresh token yields `reconnect_required` even if its history event is dropped or pruned; `/sessions` offers OAuth reconnection despite `is_expired=false` |
 | US3 #1–#7 exploration | each filter (incl. `q`, `before`, `30d`) + combination + clear + no-match; cursor with changed filters → `400 invalid_cursor` |
-| US4 #1–#5 detail | structured explanation, bounded sequence + `sequence_truncated`, back-links, redaction via SafeFields (unknown context key is stripped), pending honesty |
+| US4 #1–#5 detail | structured explanation, bounded sequence + `sequence_truncated`, back-links, redaction via SafeFields (unknown context key is stripped), pending honesty; 404 for an owned event past retention while pruning is pending; retained sequence excludes old events |
 | US5 #1–#4 threads | service lifecycle + agent journey threads derived on read; an approval event appears in tool_flow **and** agent_journey; `truncated` across pages; high volume scannable; drill-down |
 | FR-016a operational error | recorder with a failing repository: primary op succeeds, `activity_events_dropped_total` increments, ERROR log emitted |
 
@@ -469,7 +477,9 @@ harness (no a11y E2E exists today):
   — record (idempotent upsert incl. concurrent roll-up increments), list, related, prune under
   `pg_try_advisory_lock` with two competing connections, `032` migration apply + rollback +
   repeat, principal/keyset ordering, selective `related_refs` filters, trigram `q`, and
-  cross-principal isolation.
+  cross-principal isolation. Also prove that an unpruned expired event returns 404 by ID and
+  cannot enter the related sequence. A session refresh rejection must persist its marker even
+  when the history insert fails, and a later token write must clear it without a stale retry.
 - **Exploratory storage benchmark** (manual, isolated PostgreSQL; not normal CI or a product SLO):
   `BenchmarkActivityEventRepository` seeds the SC-005 10,000-event principal and measures all
   filters/threads; it separately exercises the 2,000-principal, 20-million-event, 3-KiB stress

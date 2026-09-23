@@ -182,12 +182,11 @@ remaining shareable/deep-linkable.
 **Decision**: Keep the new `internal/domain/activity` bounded context and its append-only
 `ActivityEvent` aggregate, `ActivityEventRepository` port (`internal/ports/storage.go`), memory
 adapter for development/testing, PostgreSQL adapter for production, and migration
-`032_create_activity_events`. Domain services emit only curated significant events at their
-existing transition seams through the narrow `ActivityRecorder` port, each with a deterministic
-`dedup_key` (Decision 11). The read-side `ActivityService` windows the store by retention,
-derives needs-attention from current `UserSession`/`UserGrant`/`ToolApproval` state **and**
-recent refresh-failure events, assembles threads on read from `related_refs`, and shapes DTOs
-through the `SafeFields` registry (Decision 13).
+`032_create_activity_events`. Domain services emit curated events after successful transition seams
+through the narrow `ActivityRecorder` port, each with a stable `dedup_key` (Decision 11). The
+read-side `ActivityService` windows every historical query by retention, derives needs-attention
+from current `UserSession`/`UserGrant`/`ToolApproval` state, assembles threads on read from
+`related_refs`, and shapes DTOs through the `SafeFields` registry (Decision 13).
 
 PostgreSQL remains the production store. DynamoDB is not introduced as an application-data
 backend, and the existing DynamoDB branch-key cache is not reused. Proposed
@@ -197,8 +196,8 @@ operational model all implement the accepted storage decision.
 
 **Rationale**: Aggregate-on-read cannot reconstruct historical state after updates, expiry,
 revocation, or deletion, so an append-only curated record remains necessary for FR-001, FR-013,
-FR-015, and US5. The curated model explicitly excludes routine token exchanges and policy allows,
-so it avoids treating MCP request volume as activity-event volume. PostgreSQL fits the existing
+FR-015, and US5. Routine token exchanges appear only as bucketed broker-access milestones,
+not as completed downstream actions or individual activity cards. PostgreSQL fits the existing
 hexagonal repository pattern and can express principal-scoped, keyset-ordered feed queries plus
 the feature's arbitrary combinations of agent, service, grant, outcome, category, and time
 filters without new infrastructure.
@@ -317,34 +316,35 @@ contract documents it explicitly for reuse.
 
 ### Decision 6 — Needs-attention as a live-derived, separate read
 
-**Decision**: `GET /api/activity/attention` returns the live needs-attention items derived from
-current unresolved state (`reconnect_required` from sessions past refresh-expiry **or** whose
-latest `session.refresh_failed` event is newer than their latest successful refresh/connect,
-with an active grant; `approval_pending` from non-expired `pending` `ToolApproval`s), each
-carrying a plain-language summary, a `group_key`, and a `next_step` (label + allowlisted route).
-It is computed from live repositories (plus the refresh-failure events) and remains visible until
-resolution regardless of historical event retention. Because a pending approval typically
-expires within minutes, the SPA **polls this endpoint every 30 s while the tab is visible** and
-revalidates on window focus (`Cache-Control: no-store`); the history feed stays on-load/manual.
-The band shows at most three items and groups same-kind items.
+**Decision**: `GET /api/activity/attention` derives `reconnect_required` from session refresh
+expiry or `UserSession.reconnect_required_at`, with an active grant. It derives `approval_pending`
+from non-expired, pending `ToolApproval`s. Each item carries a summary, `group_key`, and
+allowlisted `next_step`. An upstream refresh rejection or no usable refresh token after access
+expiry sets `reconnect_required_at` on the live session before the historical event is enqueued.
+A successful refresh or OAuth callback clears the marker with the token write. A conditional
+session update compares the revision read before failure to prevent a late failure from
+overwriting a later success. This endpoint never queries activity history. Unresolved items
+remain visible beyond history retention.
 
-**Rationale**: FR-003 requires needs-attention to be purely derived from current unresolved
-state, to clear automatically, and to never be user-dismissed. Computing it from live repos (not
-from stored events) guarantees it clears the instant the underlying flow completes, with no
-acknowledgment store (matches the "read-mostly, no new mutation surface" assumption). A separate
-endpoint keeps the derived semantics clean and cheap and lets the UI render the needs-attention
-band before the (paginated) history loads.
+The SPA polls this endpoint every 30 s while the tab is visible and revalidates on focus
+(`Cache-Control: no-store`). The history feed stays on-load/manual. The band shows at most three
+items and groups same-kind items.
+
+**Rationale**: FR-003 requires attention from current unresolved state, with no dismissal. A
+refresh-failure event can be dropped by the async recorder or pruned while the session remains
+unusable. A session with no refresh expiry also reports `IsExpired() == false`, even when it
+cannot refresh. Persisting the marker with the session keeps the alert live without a separate
+attention/read-state table.
 
 **Alternatives considered**:
 - *A `needs_attention=true` filter on the main feed* — kept as a convenience filter for US3
-  (defined as "events whose `related_refs` reference a current attention subject"), but the
-  authoritative attention band uses the dedicated derived endpoint so it never shows stale or
-  non-actionable items. A per-event `needs_attention` boolean was **removed**: it would require
-  a live join for every row of every page and had no defined meaning for historical events.
-- *No polling (on-load only)* — rejected for the attention band: the next step for a pending
-  approval would routinely be dead by the time the user clicks it.
-- *Persist a needs-attention/read-state table* — rejected: violates FR-003 (no dismissal) and
-  the read-mostly assumption.
+  (events whose `related_refs` reference a current attention subject). The separate band remains
+  authoritative when the historical event is absent.
+- *No polling (on-load only)* — rejected: the next step for a pending approval can expire.
+- *Derive reconnect state from historical refresh-failure events* — rejected: async loss and
+  retention can hide an unresolved failure.
+- *Persist a separate needs-attention/read-state table* — rejected: the session already owns its
+  reconnect state; attention items remain derived and cannot be dismissed.
 
 ### Decision 7 — Server-side redaction and human-readable rendering
 
@@ -370,10 +370,11 @@ the API response body (E2E can assert absence of known-sensitive substrings).
 **Decision**: Add an `activity` config section to `internal/ports/config.go`
 (`retention_window` default `720h`, `page_size` 25, `rollup_bucket` `1h`, `queue_size` 1024,
 `prune_interval` `10m`, `prune_batch` 5000, `attention_poll_interval_seconds` 30; durations are
-Go duration strings). Every historical activity-event list query applies `occurred_at >= now -
-retention`; the separate live needs-attention read is not retention-limited. The feed response
-carries `retention_days` so the UI can say where history ends. Add
-`examples/config/activity.yaml`, document the settings in `docs/configuration.md`, and update
+Go duration strings). Every historical activity-event query (feed, detail, related sequence,
+and thread count) applies `occurred_at >= now - retention` with one cutoff per request. Detail
+returns 404 before that cutoff, even while a row awaits pruning. Live needs-attention has no
+retention cutoff. The feed response includes `retention_days` so the UI can explain the boundary.
+Add `examples/config/activity.yaml`, document settings in `docs/configuration.md`, and update
 the Helm chart (`values.yaml`, ConfigMap template, README) per Principle VII.
 
 **Prune**: the app has no scheduler and no cross-replica coordination. The recorder's async
@@ -424,15 +425,16 @@ keyboard/zoom/reduced-motion assertions cover what axe cannot.
 
 ### Decision 10 — Event category & outcome model
 
-**Decision**: Curated categories: `delegation`, `session`, `agent_action`, `policy_decision`,
-`approval`, `revocation`, `reconnect`, `failure`. Outcome enum: `succeeded | failed | blocked |
+**Decision**: Curated categories: `delegation`, `session`, `agent_access`, `policy_decision`,
+`approval`, `revocation`, `reconnect`, `failure`. `agent_access` means a successful broker token
+exchange for an agent, not a downstream action. Outcome enum: `succeeded | failed | blocked |
 pending`. Each event carries `category`, `type` (finer sub-kind, e.g. `session.refreshed`),
 `actor` (agent | service | user | broker), `subject` (grant | permission_set | service |
 session | tool | resource), `occurred_at`, `first_occurred_at`, `occurrence_count`, `outcome`,
 `summary`, `redacted`, and `related_refs` (agent/service/grant/session/approval/client IDs used
-for filtering, read-time threading, and outbound links). Threads are **derived on read** from
+for filtering, read-time threading, and outbound links). Threads are derived on read from
 `related_refs` (service lifecycle by service, agent journey by agent within the window, tool flow
-by approval); an event may belong to several threads.
+by approval); an event can belong to several threads.
 
 **Alternatives considered (threads)**:
 - *Persisted single `thread_key` assigned at emit time* — rejected: an approval event belongs
@@ -457,56 +459,53 @@ delegations, agent activity, policy decisions, failures, revocations, reconnect)
 
 ### Decision 11 — Deduplication keys and roll-ups (FR-016b, FR-001)
 
-**Decision**: Every event carries a deterministic `dedup_key` derived per `type` (data-model
-§1.1) and the store enforces `UNIQUE (principal, dedup_key)`; `Record` is an idempotent
-`INSERT … ON CONFLICT DO NOTHING`. Routine successes — `agent.acted_via_service`,
-`session.refreshed` — and bucketed failures/denials are **roll-ups**: one event per
-`(principal, dedup_key)` per `rollup_bucket` (default 1 h) whose `occurrence_count` and
-`occurred_at` are incremented via `ON CONFLICT DO UPDATE`. The card reads "Research Agent used
-GitHub · 41 times, 09:00–10:00". Lazily detected expiries use `occurred_at = expires_at` and a
-key containing that timestamp, so repeated detection collapses to one event.
-`approval.requested` is emitted only when `CreateApprovalResult.IsNew`.
+**Decision**: Every event carries a stable `dedup_key` derived per `type` (data-model §1.1).
+The store enforces `UNIQUE (principal, dedup_key)`. Creation uses the new grant/session ID;
+grant updates use a UUID minted once per successful update, and reconnect events use the
+committed session token revision. Thus two updates in one second and two OAuth callbacks on one
+session remain distinct. Repeated reports of one transition reuse its key.
 
-**Rationale**: FR-016b ("one canonical event per action") had no mechanism, and the same action
-demonstrably reaches the broker several times (per-replica extproc caches, TTL evictions, the
-5 s re-auth retry, lazy expiry detection on every read, idempotent approval creation). FR-001
-("summarize into milestones") was asserted but undefined; without roll-ups a busy agent produces
-hundreds of identical cards per day — precisely the plain log FR-007 forbids — and the 10,000
-events/principal benchmark figure was a symptom. Commercial audit-log ingestion APIs carry an
-idempotency key for the same reason, and every notification-centre guideline collapses repeats
-with a count. Feed volume becomes proportional to distinct things that happened, which is what
-makes SC-005 reachable.
+Routine broker access issuances (`agent.access_issued`), session refreshes, and bucketed
+failures/denials roll up into one row per principal/key/bucket. `occurrence_count` and
+`occurred_at` update on a new occurrence. A card can say "Broker issued GitHub access for
+Research Agent · 41 times". It counts successful broker token exchanges, not completed GitHub
+actions. ExtProc can reuse an exchanged token without another broker call. Lazily detected
+expiries use a key with the session's token revision, even if no refresh expiry is set.
+
+**Rationale**: FR-016b needs stable identity for repeated reports of the same transition, while
+FR-001 needs roll-ups for routine broker observations. The key cannot use a Unix-second
+timestamp or the session ID alone for a reconnect. Grouping broker exchanges by bucket limits
+feed volume without claiming that the broker observed downstream actions.
 
 **Alternatives considered**:
-- *Separate `activity_rollups` counter table* — viable, but a second table for one card variant
-  is more surface than an `occurrence_count` column with an upsert.
-- *Emit only the first exchange per session and drop the rest* — loses the count, which is the
-  most useful trust signal ("how much is this agent using my GitHub?").
-- *Client-side collapsing* — rejected: the client only sees one page; volume would still defeat
-  pagination and SC-005.
+- *Separate `activity_rollups` counter table* — viable, but a second table is not needed for a
+  bucketed broker milestone.
+- *Emit only the first exchange per session* — loses the number of broker issuances.
+- *Client-side collapsing* — rejected: the client only sees one page.
 
-### Decision 12 — Recorder durability: transactional where possible, async with drop metrics elsewhere
+### Decision 12 — Recorder durability: best-effort after successful writes
 
-**Decision**: The `ActivityRecorder` has two modes. Seams that already run inside a PostgreSQL
-transaction (grant upsert/revoke, approval transitions, session store/terminate) call `Record`
-with the same `sqlx.Tx`, so the state change and its event commit or roll back together. The
-token-exchange hot path and lazy-expiry detections enqueue to a bounded in-process channel
-(`queue_size`, default 1024) drained by one goroutine per instance. A full queue or a failed
-insert increments the OTel counter `activity_events_dropped_total{type}` and logs at `ERROR`. In
-no mode does recording block or fail the primary security operation.
+**Decision**: All seams enqueue into a bounded in-process queue (`queue_size`, default 1024).
+Grant upsert/revoke, approval transitions, and session store/terminate enqueue only after their
+repository writes succeed. Grant and approval repositories commit their own transactions; the
+session repository executes its own statement. No caller-owned transaction exists for the event
+insert. The recorder drains the queue using an application-lifecycle context. A full queue or
+insert error increments `activity_events_dropped_total{type}` and logs at `ERROR`. Recording
+never changes the primary operation's result. Existing structured security audit logs remain
+independent of optional user-facing activity events.
 
-**Rationale**: "Fail-open, log and swallow" as originally planned meant a grant could be written
-and its `grant.created` event silently lost, and FR-016a asks for a *recorded* operational
-error, not a log line. Transactions cost nothing extra where they already exist and make the
-event store trustworthy for the security-significant transitions. A synchronous insert inside
-the exchange path would add latency to every cache miss across replicas; the async queue keeps
-the hot path unchanged and makes loss measurable.
+**Rationale**: FR-016a requires the action to complete even when an event insert fails. A failed
+PostgreSQL insert inside a shared transaction would abort that transaction unless isolated by a
+savepoint. Current repository methods do not expose such a transaction. Post-write enqueueing
+preserves the primary action and keeps the exchange hot path free of synchronous inserts, but
+the event and its source mutation cannot commit atomically.
 
 **Alternatives considered**:
-- *Synchronous fail-open everywhere* — rejected: unobservable loss and hot-path latency.
-- *Transactional outbox with a relay* — rejected: no second consumer and no scheduler; the
-  in-transaction insert already gives atomicity for the seams that matter.
-- *Fully async everywhere* — rejected: loses atomicity for grants/approvals for no benefit.
+- *Shared transaction with no savepoint* — rejected: an event insert failure would abort the
+  primary mutation, contrary to FR-016a.
+- *Transaction-aware repository boundary with an event savepoint* — possible, but it changes the
+  current storage contracts and still permits event loss when the insert fails.
+- *Unobserved fire-and-forget recording* — rejected: FR-016a requires an operational error.
 
 ### Decision 13 — `SafeFields` registry and structured explanation
 

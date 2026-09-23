@@ -47,8 +47,9 @@ filters is rejected with `400 invalid_cursor` (research Decision 5).
 **Validation / invariants**:
 - `principal` non-empty; a query MUST NOT return events for any other principal (FR-012).
 - `category`, `actor_kind`, `subject_kind`, and `outcome` MUST be valid enum members.
-- `dedup_key` non-empty and deterministic for the underlying action (§1.1). A second `Record`
-  with the same `(principal, dedup_key)` is a no-op (or a counter increment for roll-up types).
+- Non-roll-up `dedup_key`s MUST remain stable for repeated reports of one transition and unique
+  for separate transitions. A second `Record` with the same key is a no-op. Roll-ups intentionally
+  share a bucket key; each new source observation increments its count once (§1.2).
 - `summary` MUST NOT be empty and MUST NOT contain a raw token/secret or a bare UUID where a label exists (FR-010, FR-011).
 - `detail.context` MAY contain only keys allowed for the event's `type` (§3.1).
 - `outcome=pending` events MUST NOT be rendered as succeeded/failed anywhere.
@@ -63,35 +64,41 @@ redacted"), never the clear value.
 
 ### 1.1 Deduplication keys (FR-016b)
 
-The same underlying action can reach the recorder more than once: each extproc replica keeps its
-own token cache and re-exchanges on eviction/TTL; the 5 s re-auth cooldown retries; expiry of
-sessions and approvals is detected lazily on every read; approval creation is itself idempotent
-(`CreateApprovalResult.IsNew == false` on a repeated request). The recorder therefore derives a
-deterministic `dedup_key` per `type` and inserts with `ON CONFLICT (principal, dedup_key) DO
-NOTHING` (or `DO UPDATE` for roll-ups). Keys:
+The same transition can reach the recorder more than once, and session/approval expiry can be
+detected on repeated reads. Non-roll-up keys stay stable across reports of one transition and
+differ for distinct transitions, even within one second. Roll-ups share one key per bucket.
+The recorder inserts with `ON CONFLICT (principal, dedup_key) DO NOTHING` (or `DO UPDATE` for
+roll-ups). Keys:
 
 | `type` | `dedup_key` |
 |---|---|
-| `grant.created` / `grant.updated` | `grant:{grant_id}:{updated_at_unix}` |
+| `grant.created` | `grant.created:{grant_id}` |
+| `grant.updated` | `grant.updated:{grant_id}:{transition_id}` |
 | `grant.revoked` | `grant.revoked:{grant_id}` |
 | `session.connected` | `session.connected:{session_id}` |
+| `session.reconnected` | `session.reconnected:{session_id}:{token_revision}` |
 | `session.refreshed` (roll-up) | `session.refreshed:{session_id}:{bucket}` |
-| `session.refresh_failed` | `session.refresh_failed:{session_id}:{bucket}` |
-| `session.expired` | `session.expired:{session_id}:{refresh_expires_at_unix}` |
+| `session.refresh_failed` | `session.refresh_failed:{session_id}:{token_revision}:{bucket}` |
+| `session.expired` | `session.expired:{session_id}:{token_revision}` |
 | `session.terminated` | `session.terminated:{session_id}` |
-| `agent.acted_via_service` (roll-up) | `agent.acted:{agent_id}:{service_id}:{bucket}` |
+| `agent.access_issued` (roll-up) | `agent.access_issued:{agent_id}:{service_id}:{bucket}` |
 | `policy.denied` / `policy.blocked` | `policy:{agent_id}:{service_id}:{reason}:{bucket}` |
 | `approval.requested` | `approval.requested:{approval_id}` (emit only when `IsNew`) |
 | `approval.approved` / `.denied` / `.consumed` / `.revoked` | `approval.{state}:{approval_id}` |
 | `approval.expired` | `approval.expired:{approval_id}` |
 | `token.issue_failed` | `token.issue_failed:{client_id}:{reason}:{bucket}` |
 
+`transition_id` is a UUID created once for a successful grant update, not once per recorder
+attempt. `token_revision` is the session's committed token revision (§8); it increases on each
+successful token write. A new connection emits `session.connected` once. Each later OAuth callback
+emits `session.reconnected` with its new revision, even when the session ID is unchanged.
+
 `bucket` = `occurred_at` truncated to `activity.rollup_bucket` (default `1h`, config §10).
 
 ### 1.2 Roll-ups (FR-001 "summarize into milestones")
 
 Routine, high-frequency successes are not stored individually. For roll-up types
-(`agent.acted_via_service`, `session.refreshed`, and the bucketed failure/denial types) the
+(`agent.access_issued`, `session.refreshed`, and the bucketed failure/denial types) the
 recorder upserts one event per `(principal, dedup_key)` bucket:
 
 ```sql
@@ -101,10 +108,14 @@ ON CONFLICT (principal, dedup_key) DO UPDATE
        occurred_at      = GREATEST(activity_events.occurred_at, EXCLUDED.occurred_at);
 ```
 
-The card reads "Research Agent used GitHub · 41 times between 09:00 and 10:00". This keeps the
-feed proportional to *distinct* things that happened rather than to MCP traffic, which is what
-makes SC-005 reachable. The bucket is UTC-aligned in storage; the client renders the bucket span
-in the user's local time.
+The producer enqueues each successful broker exchange or refresh once. The worker does not retry
+a failed insert. A retry of the same roll-up occurrence would increment the count again, so it
+must not be enqueued as a new observation.
+
+The card reads "Broker issued GitHub access for Research Agent · 41 times between 09:00 and
+10:00". The count means successful broker token exchanges, not downstream requests or completed
+actions. ExtProc can reuse a cached token without another broker exchange. The bucket is
+UTC-aligned in storage; the client renders the time span in the user's local time.
 
 ---
 
@@ -195,6 +206,12 @@ current router (`web/src/App.tsx`, `basename="/"`):
 
 The client renders only relative paths starting with `/` and no scheme/host.
 
+`/sessions` currently shows expiry text but has no re-authentication control. The session page
+must read `/api/activity/attention` and match reconnect items by service ID. It then offers
+"Reconnect" for those sessions, even when `is_expired` is false. The action starts the existing
+`GET /api/third-party/{serviceId}/oauth2/authorize` flow and returns to `/sessions` after the
+OAuth callback. Do not change the existing `is_expired` API meaning (refresh expiry only).
+
 ---
 
 ## 4. ActivityCategory (enum)
@@ -206,11 +223,11 @@ real domain seams (§11).
 |---|---|---|
 | `delegation` | `UserGrant` create/update | `grant.created`, `grant.updated` (with scope delta) |
 | `session` | `UserSession` lifecycle | `session.connected`, `session.refreshed` (roll-up), `session.expired`, `session.terminated` |
-| `agent_action` | Token-exchange milestone (roll-up) | `agent.acted_via_service` |
+| `agent_access` | Successful broker token exchange (roll-up), not downstream use | `agent.access_issued` |
 | `policy_decision` | Token-exchange denial with `DenialReason` | `policy.denied`, `policy.blocked` |
 | `approval` | `ToolApproval` transitions | `approval.requested`, `approval.approved`, `approval.denied`, `approval.consumed`, `approval.expired` |
 | `revocation` | grant/session/approval revoke | `grant.revoked`, `session.terminated`, `approval.revoked` |
-| `reconnect` | live reconnect-required derivation | `service.reconnect_required` |
+| `reconnect` | Successful OAuth callback for an existing session | `session.reconnected` |
 | `failure` | token issuance / refresh failure | `token.issue_failed`, `session.refresh_failed` |
 
 ---
@@ -244,8 +261,8 @@ reconstructed on read from a `grant.revoked` event for the same `(agent, service
 ## 8. NeedsAttentionItem (derived live, NOT persisted)
 
 Spec **Needs-Attention Item**. Computed from current unresolved state on each request (research
-Decision 6; FR-003, FR-004). Never stored or dismissed; it clears automatically. History retention
-does not suppress unresolved items.
+Decision 6; FR-003, FR-004). The item is never stored or dismissed. It clears when its source
+state resolves. History retention does not suppress unresolved items.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -258,10 +275,10 @@ does not suppress unresolved items.
 | `group_key` | `string` | Same-kind items sharing a subject collapse in the UI ("4 tool calls waiting → Review all" → `/approvals`). |
 
 **Derivation rules**:
-- `reconnect_required`: for a `UserSession` of the principal, **either** it is past refresh
-  expiry (`UserSession.IsExpired`) **or** the most recent `session.refresh_failed` event for that
-  service is newer than the most recent `session.connected`/`session.refreshed` — **and** an
-  active `UserGrant` covers that service. Clears when the session is re-authenticated.
+- `reconnect_required`: for a `UserSession` of the principal, either it is past refresh expiry
+  (`UserSession.IsExpired`) or its `reconnect_required_at` is set, and an active `UserGrant`
+  covers that service. Use the expiry or marker time for `since`. A successful refresh or OAuth
+  reconnection clears the marker; an activity event is never the source of this live state.
 - `approval_pending`: a `ToolApproval` for the principal with `status=pending` and not expired.
   Clears when approved/denied/consumed/expired.
 
@@ -271,6 +288,27 @@ and MUST NOT produce a `NeedsAttentionItem` (FR-003).
 Per-event `needs_attention` is **not** part of `ActivityEvent`. The feed filter
 `needs_attention=true` is defined as "events whose `related_refs` reference the subject of a
 current attention item" and is implemented as a subquery over that small set.
+
+**Live session state**: add `reconnect_required_at *time.Time` and a monotonically increasing
+`token_revision` to `UserSession`, its memory/PostgreSQL adapters, and the `user_sessions` table
+(migration `032`). Existing sessions start at revision 1. A new session insert has revision 1;
+each later successful token write (OAuth callback or refresh) increments it and clears the marker
+in the same repository write. `UserSessionRepository.Create` fills the passed session with its
+committed ID and revision. A callback with revision 1 emits `session.connected`, otherwise
+`session.reconnected`.
+
+When an upstream refresh is rejected or no usable refresh token exists after access expiry,
+the session-status port sets `reconnect_required_at` to the first failure time. It does this
+only if the stored session ID and token revision match those read before the attempt. Both
+adapters implement the conditional update. A late failure cannot reinstate the marker after
+a new token write. Persist this state before enqueueing a historical failure or expiry event.
+The marker is live session state, not an activity event; a failed event insert cannot undo it.
+`ListActiveByPrincipal` excludes marked sessions.
+
+**Status port**: `SessionReconnectStatusRepository` in `internal/ports/storage.go` provides
+`MarkReconnectRequired(ctx, principal, sessionID, expectedRevision, at) (bool, error)`.
+`false` means a newer token write or deletion won. The PostgreSQL adapter makes this a
+conditional update; the memory adapter checks the revision under its session lock.
 
 ---
 
@@ -291,6 +329,9 @@ Filter dimensions for `GET /api/activity` (US3, FR-006). Combinable and clearabl
 | Needs-attention | `needs_attention` | `true` (see §8) |
 | Pagination | `cursor`, `limit` | opaque cursor bound to the filter set; `limit` bounded by config |
 
+`ActivityQuery` also carries a server-computed `retention_cutoff`. The client cannot supply it.
+The effective feed lower bound is the later of this cutoff and the selected window's start.
+
 Empty result of a filter combination → "no matches" state (FR-014); no filters + no events →
 "no activity yet" state.
 
@@ -299,21 +340,25 @@ Empty result of a filter combination → "no matches" state (FR-014); no filters
 ## 10. Persistence & storage mapping (Principle IX, ADR 004, ADR 037)
 
 **Port** `ActivityEventRepository` in `internal/ports/storage.go` (ISP, ≤7 methods):
-`Record(ctx, ActivityEvent) error` (idempotent upsert per §1.1/§1.2),
-`ListByPrincipal(ctx, principal, q ActivityQuery) ([]ActivityEvent, Cursor, error)`,
-`GetByID(ctx, principal, id) (ActivityEvent, error)`,
-`ListRelated(ctx, principal, ref RelatedRefSelector, window, limit) ([]ActivityEvent, int, error)`
-(thread assembly; returns total count), `PruneOlderThan(ctx, cutoff, batch) (int, error)`.
+`Record(ctx, ActivityEvent) error` (deduplicates single events, increments roll-ups per new observation; §1.1/§1.2),
+`ListByPrincipal(ctx, principal, q ActivityQuery) ([]ActivityEvent, Cursor, error)` (query carries the retention cutoff),
+`GetByID(ctx, principal, id, cutoff time.Time) (ActivityEvent, error)`,
+`ListRelated(ctx, principal, ref RelatedRefSelector, windowStart, cutoff time.Time, limit int) ([]ActivityEvent, int, error)`
+(thread assembly; returns the retained total count), `PruneOlderThan(ctx, cutoff, batch) (int, error)`.
+The read service computes one `occurred_at >= now - retention_window` cutoff per request and
+applies it to the feed, the detail lookup, every related sequence, and thread counts. The
+effective related-sequence lower bound is `max(windowStart, cutoff)`. An owned event before
+the cutoff is not found even when pruning has not deleted its row.
 
-**Recorder durability (two modes, research Decision 12)**:
-- *Transactional*: seams that already run inside a PostgreSQL transaction (grant upsert/revoke,
-  approval transitions, session store/terminate) call `Record` with the same `sqlx.Tx`, so the
-  state change and its event commit or roll back together.
-- *Async*: the token-exchange hot path and lazy-expiry detections enqueue to a bounded channel
-  (`activity.queue_size`, default 1024) drained by one goroutine per instance. On a full queue or
-  insert error the recorder increments the OTel counter `activity_events_dropped_total{type}` and
-  logs at `ERROR` — this is the "operational error" FR-016a requires. It never blocks or fails the
-  primary operation.
+**Recorder durability (best-effort after the primary write, research Decision 12)**:
+- Grant upsert/revoke, approval transitions, and session store/terminate enqueue only after the
+  repository write succeeds (including its internal transaction commit). The recorder does not
+  share a transaction with these writes. It captures labels and related IDs before deletion.
+- All seams use a bounded, non-blocking queue (`activity.queue_size`, default 1024) drained by
+  one goroutine per instance. The worker uses an application-lifecycle context, not a completed
+  request context. On a full queue or insert error, it increments the OTel counter
+  `activity_events_dropped_total{type}` and logs at `ERROR`. Recording never changes the result
+  of the primary operation. Successful state changes and events are not atomic.
 
 **Prune (research Decision 8)**: no scheduler exists in the app. The async drainer, every
 `activity.prune_interval` (default `10m`), attempts `pg_try_advisory_lock(hashtext('activity_prune'))`;
@@ -383,17 +428,17 @@ created in the plan's Phase 0.
 
 | Seam (existing code) | Emitted event | Mode | Notes |
 |---|---|---|---|
-| `consent` service `UserGrant` upsert | `delegation` / `grant.created`\|`grant.updated` | tx | Include `scope_added`/`scope_removed` delta in context. |
-| `consent` service revoke / empty-set (`internal/domain/consent/service.go` ~`:675`) | `revocation` / `grant.revoked` | tx | Revocation deletes the grant; the event is the only durable record of it. |
-| `oauth2session` store (new session) | `session` / `session.connected` | tx | |
-| `oauth2session` refresh success / failure | `session.refreshed` (roll-up) / `failure` `session.refresh_failed` | async | |
-| `oauth2session.GetValidAccessToken` → `ErrSessionExpired` (`service.go` ~`:1155`) **lazy** | `session` / `session.expired` | async | `occurred_at = refresh_expires_at`; dedup key makes repeated detection a no-op. |
-| `oauth2session` terminate | `revocation` / `session.terminated` | tx | |
-| `TokenExchangeService.Exchange` success (`internal/domain/tokenexchange/service.go:170`) **(Phase 0 hook)** | `agent_action` / `agent.acted_via_service` (roll-up) | async | `TokenIssued` does **not** cover RFC 8693; hook `Exchange` directly. |
+| `consent` service `UserGrant` upsert | `delegation` / `grant.created`\|`grant.updated` | post-write async | Include `scope_added`/`scope_removed` delta in context; skip unchanged grants. |
+| `consent` service revoke / empty-set (`internal/domain/consent/service.go` ~`:675`) | `revocation` / `grant.revoked` | post-write async | Capture labels before deletion; enqueue only after a successful delete. |
+| `oauth2session` store (new session or OAuth callback reconnect) | `session` / `session.connected` or `reconnect` / `session.reconnected` | post-write async | Select the type from committed revision (1 = new); use the returned session ID. |
+| `oauth2session` refresh success / failure | `session.refreshed` (roll-up) / `failure` `session.refresh_failed` | async | Persist live reconnect state on failure; clear it with a successful token write, independently of event recording. |
+| `oauth2session.GetValidAccessToken` → `ErrSessionExpired` (`service.go` ~`:1155`) **lazy** | `session` / `session.expired` | async | Mark the live session before enqueueing; use access or refresh expiry for `occurred_at` when available, otherwise detection time. |
+| `oauth2session` terminate | `revocation` / `session.terminated` | post-write async | |
+| `TokenExchangeService.Exchange` success (`internal/domain/tokenexchange/service.go:170`) **(Phase 0 hook)** | `agent_access` / `agent.access_issued` (roll-up) | async | Counts successful broker exchanges, not downstream actions or ExtProc cache hits. |
 | `TokenExchangeService.Exchange` failure with `DenialReason` **(Phase 0)** | `policy_decision` / `policy.denied`\|`policy.blocked` | async | `policy_denied` → `blocked`; others → `failed`/`blocked` per §7. |
 | oauth2 grant strategies `TokenRequestFailed` (`token_grant_strategy.go`) | `failure` / `token.issue_failed` | async | Local grants only. |
-| `approval.Create` when `IsNew` (`internal/domain/approval/service.go:360-378`) | `approval` / `approval.requested` | tx | **Do not emit on the idempotent hit.** |
-| `approval.Approve/Deny/Consume/Revoke` | `approval.*` | tx | Consume is already idempotent. |
+| `approval.Create` when `IsNew` (`internal/domain/approval/service.go:360-378`) | `approval` / `approval.requested` | post-write async | **Do not emit on the idempotent hit.** |
+| `approval.Approve/Deny/Consume/Revoke` | `approval.*` | post-write async | Consume is already idempotent. |
 | `approval` lazy expiry detection (`service.go` ~`:190`) | `approval.expired` | async | `occurred_at = expires_at`. |
 
 Emission never blocks or fails the primary security operation (fail-open on recording,

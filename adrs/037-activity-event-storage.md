@@ -14,9 +14,13 @@ The Activity feature needs curated, deduplicated events. It must retain history 
 
 The feature needs per-principal keyset pages. It also needs combined filters for agents, services, grants, outcomes, categories, keywords, and time windows, and threads derived from related identifiers.
 
-The same underlying action can reach the broker more than once: each extproc replica keeps its own token cache and re-exchanges on eviction; expiry of sessions and approvals is detected lazily on every read; approval creation is idempotent. The spec requires exactly one visible event per action (FR-016b) and that routine internals be summarized into milestones (FR-001).
+Repeated reports of one transition need one event; separate transitions need different identities.
+Session and approval expiry can be detected on repeated reads. ExtProc replicas cache tokens and
+can exchange them again. The spec requires one visible event per transition (FR-016b) and
+summarized milestones for routine broker observations (FR-001).
 
-The application has no job scheduler, leader election, or distributed lock. Several emission seams already run inside a PostgreSQL transaction; the token-exchange path does not.
+The application has no activity scheduler or caller-owned transaction spanning grant, approval,
+session, and activity repositories. Grant writes commit inside their repository methods.
 
 ADR 004 requires memory storage for development and tests. It requires PostgreSQL storage for production.
 
@@ -32,15 +36,31 @@ Add `ActivityEventRepository` to `internal/ports/storage.go`. Provide memory and
 
 Store only curated business-significant and security-significant events. Do not store every token exchange or policy allow operation.
 
-**Deduplicate and roll up.** Every event carries a deterministic `dedup_key`; the table enforces `UNIQUE (principal, dedup_key)` and `Record` is an idempotent upsert. Routine successes (`agent.acted_via_service`, `session.refreshed`) and bucketed failures are one row per `(principal, dedup_key)` per configured bucket with an `occurrence_count`.
+**Deduplicate and roll up.** Every event has a `dedup_key` stable across reports of one transition.
+Grant updates use a UUID created once per mutation. Reconnections use the session's committed
+token revision because the session ID survives reconnects. The table enforces `UNIQUE (principal,
+dedup_key)`. Routine broker access issuances (`agent.access_issued`), session refreshes, and
+bucketed failures roll up per principal/key/bucket with an `occurrence_count`. The access count
+measures successful broker token exchanges, not downstream service uses.
 
-**Two recorder modes.** Seams already inside a PostgreSQL transaction record the event in that transaction. Other seams enqueue to a bounded in-process queue drained by one goroutine per instance. A dropped or failed recording increments `activity_events_dropped_total` and logs at ERROR. Recording never blocks or fails the primary security operation; the security operation stays fail-closed on its own result.
+**Best-effort post-write recording.** Grant, approval, and session seams enqueue after their
+repository writes succeed. All seams use a bounded in-process queue drained by an application
+worker. A full queue or failed event insert increments `activity_events_dropped_total` and logs
+at `ERROR`. Recording never blocks or fails the primary operation. The event and source mutation
+do not commit atomically; existing structured security audit logs remain independent.
 
 Use PostgreSQL for the production event store. Do not add DynamoDB as an activity-data backend.
 
 Use `(principal, occurred_at DESC, id DESC)` for the feed and cursor; the cursor is bound to its filter set. Add partial expression indexes for `agent_id`, `service_id`, `grant_id`, and `approval_id` in `related_refs`; these also serve read-time thread assembly. Add a `pg_trgm` GIN index on `summary` for keyword search, with an `ILIKE` fallback if the extension is unavailable. Do not persist a thread key.
 
-Apply the configured retention window (default 30 days) to historical activity-event queries. Derive live needs-attention items from unresolved current state plus recent refresh-failure events, regardless of event retention. Prune old events in bounded batches under `pg_try_advisory_lock` so only one replica prunes at a time.
+Apply the configured retention window (default 30 days) to feed, detail, related-sequence, and
+thread-count reads, even when pruning is pending. Return 404 for details outside the window.
+Derive reconnect attention from session refresh expiry or a persisted `reconnect_required_at`,
+never from activity events. A rejected refresh or absent usable refresh token marks the observed
+token revision; a successful refresh or callback clears the marker with the next token write.
+A delayed failure must not overwrite a newer token revision. Derive pending-approval attention
+from current approval state.
+Prune old events in bounded batches under `pg_try_advisory_lock`.
 
 Only fields approved in the `SafeFields` registry are stored in `detail.context`; every route the API emits comes from a server-side allowlist. A `correlation_id` (trace id) is stored and never returned to the browser.
 
@@ -56,15 +76,17 @@ The 2,000-principal, 10,000-events-per-principal, 330-writes-per-second workload
 
 The feature keeps historical labels and context after a referenced object is deleted. It can meet FR-001, FR-013, FR-015, FR-016b, and US5.
 
-Feed volume is proportional to distinct actions, not to MCP traffic or extproc replica count.
+The feed rolls up broker token issuances; it does not imply a count of downstream actions.
 
-Security-significant transitions (grants, approvals, sessions) and their events commit atomically. Loss on the async path is measurable.
+Failed activity recording cannot roll back a committed grant, approval, or session write. Loss
+on the async path is measurable, and live reconnect state is independent of history retention.
 
 The repository follows the current storage architecture. The production service reuses PostgreSQL migrations, SQLx, connection pooling, backups, and multi-instance operations. The prune is multi-replica safe without new infrastructure.
 
 ### Negative
 
-Activity recording on the async path can be lost during a PostgreSQL outage or queue saturation; the counter makes this visible but does not recover it.
+Post-write activity recording can be lost during a PostgreSQL outage or queue saturation; the
+counter makes this visible but does not recover the missing event.
 
 Roll-up upserts concentrate writes on a small number of rows per principal per bucket; the benchmark must confirm this does not contend under burst.
 
@@ -81,6 +103,8 @@ Phase 0 changes to `tokenexchange` (typed denial reasons, success hook) are a pr
 1. **Aggregate on read**: Rejected. Current repositories cannot recover expired, revoked, or deleted historical state.
 2. **DynamoDB activity store**: Rejected. It needs a new storage backend, table, IAM policy, configuration, and operational model. Combined filters need GSIs or duplicate index items. DynamoDB TTL does not replace the retention predicate because expiry is asynchronous.
 3. **Structured log or telemetry query**: Rejected. Logs and spans are not a stable, retention-scoped per-principal product contract.
-4. **Fire-and-forget synchronous recording everywhere**: Rejected. Unobservable loss for security-significant transitions and added latency on the exchange hot path.
+4. **Synchronous event insertion in the source mutation transaction**: Rejected. Current
+   repositories expose no shared transaction. An insert failure would abort the mutation unless
+   isolated with a savepoint, which requires a transaction-boundary redesign.
 5. **Persisted single thread key per event**: Rejected. Events belong to several narratives; the related-ref indexes already serve read-time assembly.
 6. **A generic job scheduler for pruning**: Rejected. One advisory-locked batch delete does not justify new infrastructure.

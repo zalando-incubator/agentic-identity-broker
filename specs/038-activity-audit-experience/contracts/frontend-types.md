@@ -15,7 +15,7 @@ export type Outcome = 'succeeded' | 'failed' | 'blocked' | 'pending';
 export type ActivityCategory =
   | 'delegation'
   | 'session'
-  | 'agent_action'
+  | 'agent_access'
   | 'policy_decision'
   | 'approval'
   | 'revocation'
@@ -90,7 +90,7 @@ export interface ActivityEvent {
   outcome: Outcome;
   summary: string;
   related_refs: RelatedRefs;
-  /** >1 for rolled-up routine milestones. */
+  /** >1 for roll-ups; agent.access_issued counts broker token exchanges, not downstream actions. */
   occurrence_count: number;
   first_occurred_at: string; // RFC3339
   occurred_at: string; // RFC3339 (latest occurrence; ordering key)

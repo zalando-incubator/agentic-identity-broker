@@ -25,7 +25,7 @@
 
 - Q: Is a 7-day default retention sufficient for the trust goal? → A: Proposed default raised to **30 days** (still configurable). Seven days truncates the history of any user who checks in less than weekly and leaves the end of history unexplained; consumer security-activity pages retain 28–180 days. The experience MUST also state where history ends (see FR-014).
 - Q: How is "one canonical event per action" (FR-016b) achieved when the same action is reported repeatedly (replica caches, retries, lazy expiry detection)? → A: Each event carries a deterministic idempotency key; duplicate reports are absorbed, never shown.
-- Q: How are routine high-frequency successes "summarized into milestones" (FR-001)? → A: One event per actor/service/time-bucket carrying an occurrence count ("used GitHub · 41 times, 09:00–10:00").
+- Q: How are routine high-frequency successes "summarized into milestones" (FR-001)? → A: One event per agent/service/time bucket counts successful broker access issuances ("Broker issued GitHub access for Research Agent · 41 times"). This is not a count of downstream uses.
 - Q: Does an event belong to exactly one narrative thread? → A: No; an event may appear in several threads (a tool call belongs to its approval flow, the agent's journey, and the service's lifecycle).
 - Q: Is on-load freshness sufficient for needs-attention items? → A: No; a pending approval expires within minutes, so the needs-attention area refreshes periodically while visible. Historical activity stays on-load/manual.
 
@@ -41,15 +41,24 @@
 
 ### User Story 1 - Understand recent activity at a glance (Priority: P1)
 
-A user opens the dedicated activity experience — a first-class destination in the end-user application, reachable directly from the primary navigation as a sibling to consent and session management rather than nested inside them — and immediately sees a scannable, plain-language summary of the significant things that recently happened on their behalf: an agent was delegated new access, a connected service was reconnected, an agent acted through a service, a tool call was approved or denied, an authorization was blocked by policy, a session expired. Without opening any detail, the user can tell, for each item, **what happened**, **when**, **who or what was involved**, **what was affected**, and **whether it succeeded, failed, or was blocked**.
+A user opens the dedicated activity experience — a first-class destination in the end-user
+application, reachable from primary navigation alongside consent and session management. The
+user sees a scannable summary of recent significant events: an agent received new access, a
+service was reconnected, the broker issued delegated access for an agent, a tool call was approved
+or denied, an authorization was blocked, or a session expired. Without opening a detail, the
+user can tell **what happened**, **when**, **who or what was involved**, **what was affected**,
+and **whether it succeeded, failed, or was blocked**.
 
 **Why this priority**: This is the core of the feature. Delegation without visibility erodes trust; a comprehensible, at-a-glance account of activity is the minimum that delivers trust value. Every other story builds on this surface.
 
-**Independent Test**: Seed a mix of significant events for a user (a new grant, a session reconnect, an agent action, an approved tool call, a policy denial), including duplicate reports for one underlying action. Open the activity experience and confirm that each underlying action is shown once with a plain-language summary answering what/when/who/what-affected/outcome, and that the surface is scannable without opening details.
+**Independent Test**: Seed significant events for a user (a grant, a reconnect, a broker access
+issuance, an approval, a policy denial), including duplicate reports for one transition. Open
+the activity experience. Confirm that each transition appears once with a plain-language
+summary, a time, an actor, a subject, and an outcome.
 
 **Acceptance Scenarios**:
 
-1. **Given** a user has recent activity across grants, sessions, agent actions, and policy decisions, **When** they open the activity experience, **Then** they see a visually summarized, plain-language account of those events ordered by recency, each stating what happened, when, who/what was involved, what was affected, and the outcome.
+1. **Given** a user has recent activity across grants, sessions, broker access issuances, and policy decisions, **When** they open the activity experience, **Then** they see those events ordered by recency, each with what happened, when, the actor, the subject, and the outcome.
 2. **Given** an event describes a technical operation (for example a token exchange or a policy evaluation), **When** it is shown, **Then** it is expressed in human-readable language rather than internal system jargon or raw identifiers.
 3. **Given** an event has a clear outcome, **When** it is displayed, **Then** success, failure, and blocked outcomes are each distinguishable without relying on color alone (for example by label, icon, and text).
 4. **Given** the user has never had any activity, **When** they open the experience, **Then** they see a clear, reassuring empty state that explains what will appear here, with no error.
@@ -80,7 +89,7 @@ A user needs to know, without hunting, which events require follow-up: a connect
 
 ### User Story 3 - Explore activity by agent, service, grant, time, and outcome (Priority: P2)
 
-A user wants to answer targeted questions: "What has this agent done?", "What happened with my GitHub connection?", "What was blocked this week?", "What still needs attention?". The experience lets the user narrow the activity by agent, by connected service, by permission/grant context, by time window, by outcome (succeeded/failed/blocked), and by needs-attention state, and combine those dimensions.
+A user wants to answer targeted questions: "When did the broker issue GitHub access for this agent?", "What happened with my GitHub connection?", "What was blocked this week?", "What still needs attention?". The experience lets the user narrow activity by agent, connected service, grant, time window, outcome, and needs-attention state, and combine those dimensions.
 
 **Why this priority**: Once the overview exists, exploration makes it genuinely useful for investigation and for building confidence about a specific agent or service. It is high value but depends on Story 1 being in place.
 
@@ -100,11 +109,16 @@ A user wants to answer targeted questions: "What has this agent done?", "What ha
 
 ### User Story 4 - Inspect a single event in depth (Priority: P2)
 
-For an event that matters, the user opens it to see the full picture through progressive disclosure: the complete context of what happened, the related sequence of events around it (for example a tool call that was requested, approved, then executed), and links back to the related consent, session, or agent context. Sensitive details are redacted or abstracted so inspection never exposes secrets.
+An event detail shows the full context and related broker-observed transitions. For example, it
+shows that a tool approval was requested, approved, then consumed. It does not claim that the
+downstream tool finished. Links lead back to consent, session, or agent context. Sensitive
+details remain redacted or abstracted.
 
 **Why this priority**: Deeper inspection turns a summary into a trustworthy audit trail. It relies on the overview and adds the "why" and the connective tissue, but is not required for the initial scannable value.
 
-**Independent Test**: Seed a multi-step flow (tool call requested, approved, executed) plus standalone events carrying sensitive parameters and fields not approved as safe for user display. Open each event's detail and confirm the full context, the related sequence, and working links back to the related agent/session/grant context, and confirm unapproved values are not exposed.
+**Independent Test**: Seed an approval flow (requested, approved, consumed) and standalone events
+with sensitive or unapproved fields. Open the event details and confirm the context, ordered
+sequence, related links, and absence of unapproved values.
 
 **Acceptance Scenarios**:
 
@@ -122,12 +136,14 @@ Rather than reading rows one by one, the user can follow activity as coherent st
 
 **Why this priority**: Narrative grouping and timelines are what make the experience comprehensible at moderate and high volume and differentiate it from a plain log. It is valuable polish that depends on the earlier stories and the underlying event structure.
 
-**Independent Test**: Seed a connected service that was linked, refreshed several times, expired, and reconnected, plus an agent with a day of activity. Confirm the experience presents these as coherent grouped timelines/sequences that remain readable, and that the grouping still holds under a high event count.
+**Independent Test**: Seed a service that was connected, refreshed, expired, and reconnected.
+Seed broker access milestones and approvals for one agent. Confirm the sequences remain readable
+as the number of events increases.
 
 **Acceptance Scenarios**:
 
 1. **Given** a connected service with a lifecycle of connect, refresh, expire, and reconnect events, **When** the user views its activity, **Then** those events are presented as a single coherent timeline rather than scattered independent rows.
-2. **Given** an agent with many related actions, **When** the user views its activity, **Then** the actions are grouped into a readable narrative sequence.
+2. **Given** an agent has many broker-observed milestones, **When** the user views its activity, **Then** the milestones form a readable narrative without implying that downstream actions completed.
 3. **Given** a large volume of events, **When** the user opens the experience, **Then** grouping and summarization keep it scannable and a specific recent event remains findable without overwhelming the user.
 4. **Given** a grouped timeline, **When** the user drills into any point, **Then** progressive disclosure reveals that point's detail without losing the surrounding narrative.
 
@@ -150,7 +166,12 @@ Rather than reading rows one by one, the user can follow activity as coherent st
 
 ### Functional Requirements
 
-- **FR-001**: The system MUST provide an end-user activity experience that surfaces business-significant and security-significant events for the current user, spanning at minimum: sessions, grants, delegations, agent activity, policy/authorization decisions, failures, revocations, and reconnect flows. The experience surfaces a curated set of significant events; routine, high-frequency internal operations (for example individual token exchanges or per-request policy allow evaluations) MUST be summarized into their significant milestones rather than surfaced as individual events.
+- **FR-001**: The system MUST provide an end-user activity experience for business-significant
+  and security-significant events for the current user. It MUST cover sessions, grants,
+  delegations, broker-observed agent access, policy/authorization decisions, failures,
+  revocations, and reconnect flows. Routine token exchanges and policy allows MUST appear as
+  summarized milestones, not individual events. A successful broker token exchange MUST NOT be
+  described or counted as a completed downstream action.
 - **FR-002**: For every surfaced event, the experience MUST let the user determine **what happened**, **when it happened**, **who or what was involved**, **what was affected**, and **the outcome** (succeeded, failed, blocked, or pending).
 - **FR-003**: Each event MUST indicate whether follow-up action is needed. The needs-attention set MUST be derived purely from current unresolved state: only events with a live resolution path (for example a required reconnect or a pending approval) appear as needing attention, and they MUST remain visible until the underlying flow completes, regardless of the activity-retention window — with no user dismissal or acknowledgment. Notable but non-actionable events (for example a blocked or denied action, or a completed revocation) remain visible as informational history and MUST NOT occupy the needs-attention area. Events needing attention MUST be distinguishable and locatable without scanning the entire history.
 - **FR-004**: For each event that needs attention and has a resolution path, the experience MUST offer a clear next step that leads into the existing consent, session, or approval flow that resolves it.
@@ -179,8 +200,12 @@ Rather than reading rows one by one, the user can follow activity as coherent st
 
 ### Key Entities *(include if feature involves data)*
 
-- **Activity Event**: A single business-significant or security-significant occurrence within the current user's scope. Each underlying action corresponds to no more than one visible Activity Event, even when duplicate reports arrive. Key attributes: category/type, timestamp, actor, affected subject, outcome (succeeded, failed, blocked, or pending), a human-readable summary, redaction state, and references to related context. Corresponds to occurrences such as grant/delegation changes, session lifecycle changes, agent actions, policy/authorization decisions, token exchanges, revocations, reconnect prompts, failures.
-- **Activity Category**: The taxonomy that groups events into user-comprehensible kinds (for example: delegation & grants, connected-service sessions, agent activity, policy decisions, approvals, revocations, reconnect, failures).
+- **Activity Event**: One significant occurrence within the current user's scope. Duplicate
+  reports of one transition produce no more than one visible event; distinct transitions retain
+  distinct identities. Attributes include category, type, time, actor, subject, outcome, summary,
+  redaction state, and related references. Events include grant changes, session lifecycle,
+  broker access issuances for agents, policy decisions, revocations, and failures.
+- **Activity Category**: A user-comprehensible event kind, such as delegation, session, broker-issued agent access, policy decision, approval, revocation, completed reconnection, or failure.
 - **Actor**: The party responsible for an event — an authorized agent, a connected service, the user (principal), or the broker/system itself.
 - **Affected Subject**: The thing an event acted on or changed — a grant, a permission set, a connected service, a session, a tool, or a protected resource.
 - **Activity Thread**: An ordered grouping of related events that forms a narrative or timeline (for example a tool-call flow, a connected-service lifecycle, or an agent's journey over a period).

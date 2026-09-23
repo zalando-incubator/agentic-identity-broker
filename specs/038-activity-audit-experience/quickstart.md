@@ -39,29 +39,32 @@ ginkgo -v ./tests/e2e/ --focus "Activity & Auditing"
 Validates, per the enduser API contract, with a seeded principal:
 - **US1**: `GET /api/activity` returns events with `summary`, `occurred_at`, `actor`, `subject`,
   `outcome`, `occurrence_count`; jargon-free summaries; empty state returns
-  `{data:{events:[],threads:[],next_cursor:null,retention_days:30}}`; the same action recorded
-  twice (replayed exchange, repeated lazy expiry, idempotent approval create) yields one event
-  (US1 #7); 41 exchanges within one bucket yield one `agent.acted_via_service` event with
-  `occurrence_count: 41`.
+  `{data:{events:[],threads:[],next_cursor:null,retention_days:30}}`. A reported grant update
+  recorded twice yields one event, while two updates within one second yield two events. Two
+  OAuth callbacks on one session produce distinct connection/reconnection events. Forty-one
+  successful broker token exchanges in one bucket yield one `agent.access_issued` event with
+  `occurrence_count: 41`. They do not prove 41 downstream service uses.
 - **US2**: `GET /api/activity/attention` returns live items with an allowlisted
-  `next_step.target_route` (`/sessions`, `/approvals/{id}`); a refresh failure (not only refresh
-  expiry) yields `reconnect_required`; an unresolved item remains visible even if its historical
-  event has aged out of retention, then clears after the underlying session is reconnected or
-  approval decided (re-query returns empty).
+  `next_step.target_route` (`/sessions`, `/approvals/{id}`). A rejected refresh or absent usable
+  refresh token sets the session marker even without refresh expiry. The alert persists if its
+  activity event is dropped or pruned. It clears after a successful refresh or reconnection;
+  approval attention clears after the decision.
 - **US3**: filter params (`agent_id`, `service_id`, `grant_id`, `window` incl. `30d`, `before`,
   `outcome`, `category`, `q`, `needs_attention`) narrow results; combined filters intersect; a
   no-match combination returns an empty page; clearing filters restores the full feed; a cursor
   reused with different filters returns `400 invalid_cursor`.
 - **US4**: `GET /api/activity/{event-id}` returns `detail.explanation.{trigger,basis,consequence}`,
-  a bounded `sequence` with `sequence_truncated`, and `detail.related_links`; a seeded event
-  carrying sensitive parameters returns `redacted:true` with no clear-text secret anywhere in the
-  body, and a seeded event with an unregistered `context` key returns without that key (SC-007).
+  a bounded `sequence` with `sequence_truncated`, and `detail.related_links`. An owned event
+  outside retention returns 404 even if its row awaits pruning; a retained event's sequence
+  excludes old events. A seeded event carrying sensitive parameters returns `redacted:true`
+  without the clear-text secret. Unregistered `context` keys do not appear (SC-007).
 - **US5**: a service seeded with connect→refresh→expire→reconnect returns a single
-  `service_lifecycle` thread; an agent with many actions returns an `agent_journey` thread; an
+  `service_lifecycle` thread. An agent's broker-access milestones appear in an `agent_journey`
+  thread; an
   approval event appears in both `tool_flow` and `agent_journey`; a thread spanning two pages is
   `truncated: true` with the correct `total_events`.
-- **FR-016a**: with the repository failing, the primary operation still succeeds and
-  `activity_events_dropped_total` increments.
+- **FR-016a**: with the event repository failing after a successful grant write, the grant
+  remains committed and `activity_events_dropped_total` increments with an `ERROR` log.
 - **FR-015**: an event whose agent/service was deleted still renders with its historical
   `display_label`.
 - **FR-012**: a second principal's events are never returned to the first.
@@ -76,11 +79,12 @@ E2E_CAPTURE_SCREENSHOTS=true ginkgo -v ./tests/e2e/frontend/ --focus "Activity"
 Exercises the `/activity` UI (page object `tests/e2e/pages/activity_page.go`) and captures the
 state list in the plan. Verifies: first-class nav destination reachable in one action (SC-010)
 and the nav item stays active on `/activity/:eventId`; needs-attention band (max three visible,
-grouped, polled) with working next-step links into `/sessions` and `/approvals/:id`; filter
+grouped, polled) with working next-step links into `/sessions` and `/approvals/:id`; the marked
+session on `/sessions` offers "Reconnect" despite `is_expired=false`; filter
 narrowing via controls, active-filter chips, and click-to-filter on a card label, plus clear;
-roll-up card with count and local time span; detail panel with three-line explanation, bounded
-sequence, and redaction; collapsed timeline threads with "N earlier events"; retention footer;
-empty and no-match states.
+broker-access roll-up card with a count of successful exchanges and local time span; detail
+panel with a three-line explanation, bounded sequence, and redaction; collapsed timeline
+threads with "N earlier events"; retention footer; empty and no-match states.
 
 ## Accessibility validation (WCAG 2.1 AA — SC-006)
 
@@ -119,11 +123,13 @@ workload and storage design.
 ## Manual smoke walkthrough
 
 1. Open `http://localhost:8000/activity` from the header nav (single click).
-2. Confirm the needs-attention band shows any expired session / pending approval with a next step;
-   with none, it shows the settled "nothing needs your attention" state. Approve a pending
-   request in another tab and confirm the band clears within ~30 s without a reload.
+2. Confirm the band shows expired or reconnect-required sessions and pending approvals with next steps.
+   With none, it shows "nothing needs your attention". Approve a pending request in another tab.
+   Confirm the band clears within ~30 s without reload.
+   Follow a reconnect item to `/sessions` and start its OAuth authorization flow. After the
+   callback, confirm the attention item clears without waiting for history to be pruned.
 3. Scan the grouped feed: each card states what/when/who/what-affected/outcome without opening it;
-   a busy agent shows one card with "· N times, HH:MM–HH:MM", not N cards.
+   broker-issued agent access shows one card with "· N times, HH:MM–HH:MM", not N use claims.
 4. Click an agent's name on a card; confirm the feed narrows, a removable chip appears, and the
    URL carries `agent_id=`. Add `blocked`; type a keyword; clear all.
 5. Open an event with sensitive data; confirm no secret/token is shown (arguments appear as
