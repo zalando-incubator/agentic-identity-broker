@@ -36,6 +36,7 @@ func StartWithOPAConfig(cfg *extprocconfig.Config, logger *slog.Logger) error {
 // StartWithAuthorizer starts the test environment using a pre-built authorizer.
 // The mock OAuth2 and token exchange servers are started as in Start(), but the
 // authorizer is provided directly instead of being created from config.
+// The caller retains ownership of the supplied authorizer and must stop it.
 func (e *TestEnvironment) StartWithAuthorizer(auth authorization.Authorizer) {
 	e.startMockServers()
 
