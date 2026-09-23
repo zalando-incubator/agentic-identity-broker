@@ -32,7 +32,7 @@ incremented within its bucket (§1.2). Nothing else is ever updated. Corresponds
 | `outcome` | `Outcome` enum | `succeeded` \| `failed` \| `blocked` \| `pending` (§7). |
 | `summary` | `string` | Server-composed, human-readable, redacted sentence answering what/who/what-affected/outcome (FR-002, FR-010), produced from the per-`type` wording template (§3.2). |
 | `detail` | `ActivityDetail` (value object, JSONB) | Structured explanation, approved context, related links (§3). |
-| `related_refs` | `RelatedRefs` (value object, JSONB) | Foreign IDs for filtering, read-time threading, and outbound links: `agent_id?`, `service_id?`, `grant_id?`, `session_id?`, `approval_id?`, `client_id?`, `resource_uri?`. |
+| `related_refs` | `RelatedRefs` (value object, JSONB) | Approved foreign IDs for filtering, read-time threading, and links: `agent_id?`, `service_id?`, `grant_id?`, `session_id?`, `approval_id?`, `client_id?`. Never store a raw resource URI. |
 | `occurrence_count` | `int` | ≥1. >1 only for roll-up types (§1.2). |
 | `first_occurred_at` | `time.Time` | Domain time of the first occurrence in the bucket (= `occurred_at` for non-roll-ups). |
 | `occurred_at` | `time.Time` (RFC3339) | Domain event time; for roll-ups the **latest** occurrence (ordering key). |
@@ -62,6 +62,11 @@ flagged sensitive) are never placed into any field. Where a value existed, it is
 abstracted marker (`redacted: true` and/or `"•••"`) or by a *shape* description ("3 arguments,
 redacted"), never the clear value.
 
+Protected-resource URIs can contain credentials, query strings, fragments, or sensitive path
+segments. Resolve the service on the server, then record its ID and approved display label. Do not
+copy the raw URI into the event, its actor/subject ID or label, templates, context, or the browser
+DTO. Build the response from the approved fields rather than serializing stored event JSONB.
+
 ### 1.1 Deduplication keys (FR-016b)
 
 The same transition can reach the recorder more than once, and session/approval expiry can be
@@ -86,12 +91,16 @@ roll-ups). Keys:
 | `approval.requested` | `approval.requested:{approval_id}` (emit only when `IsNew`) |
 | `approval.approved` / `.denied` / `.consumed` / `.revoked` | `approval.{state}:{approval_id}` |
 | `approval.expired` | `approval.expired:{approval_id}` |
-| `token.issue_failed` | `token.issue_failed:{client_id}:{reason}:{bucket}` |
 
 `transition_id` is a UUID created once for a successful grant update, not once per recorder
 attempt. `token_revision` is the session's committed token revision (§8); it increases on each
 successful token write. A new connection emits `session.connected` once. Each later OAuth callback
 emits `session.reconnected` with its new revision, even when the session ID is unchanged.
+
+The expiry observer (§10) and lazy request seams reuse these keys. An OAuth callback captures
+the expired session's old revision before replacement. After a successful token write, it
+enqueues `session.expired:{session_id}:{token_revision}` with the old revision, followed by
+`session.reconnected`. The approval observer uses `approval.expired:{approval_id}` without detail access.
 
 `bucket` = `occurred_at` truncated to `activity.rollup_bucket` (default `1h`, config §10).
 
@@ -162,7 +171,9 @@ Progressive-disclosure payload for the detail view (US4, FR-009). All values pre
 | `explanation` | `Explanation` | Structured "why" (§3.2). |
 | `context` | `map[string]string` | Approved key/value context only (§3.1). Never sensitive values. |
 | `related_links` | `[]RelatedLink` | `{label, target_route}`; `target_route` MUST match one of the route templates in §3.3. |
-| `pending` | `bool` | Mirror of `outcome=pending` for honest rendering. |
+
+The detail view derives its pending state from the event's `outcome=pending`; no separate
+`detail.pending` field is persisted or returned.
 
 ### 3.1 `SafeFields` registry (approved-for-display fields — clarification 2026-09-21)
 
@@ -228,7 +239,7 @@ real domain seams (§11).
 | `approval` | `ToolApproval` transitions | `approval.requested`, `approval.approved`, `approval.denied`, `approval.consumed`, `approval.expired` |
 | `revocation` | grant/session/approval revoke | `grant.revoked`, `session.terminated`, `approval.revoked` |
 | `reconnect` | Successful OAuth callback for an existing session | `session.reconnected` |
-| `failure` | token issuance / refresh failure | `token.issue_failed`, `session.refresh_failed` |
+| `failure` | Principal-bound refresh failure | `session.refresh_failed` |
 
 ---
 
@@ -285,9 +296,17 @@ state resolves. History retention does not suppress unresolved items.
 **Non-actionable notable events** (blocked/denied actions, completed revocations) are history only
 and MUST NOT produce a `NeedsAttentionItem` (FR-003).
 
-Per-event `needs_attention` is **not** part of `ActivityEvent`. The feed filter
-`needs_attention=true` is defined as "events whose `related_refs` reference the subject of a
-current attention item" and is implemented as a subquery over that small set.
+Per-event `needs_attention` is **not** part of `ActivityEvent`. For `needs_attention=true`,
+derive the principal's unresolved items from current state before querying retained events:
+- A pending, unexpired approval matches only its `approval.requested` event by `approval_id`.
+  A tool name or display subject cannot identify an approval.
+- A reconnect-required session matches only its `session.expired` and `session.refresh_failed`
+  transitions by `session_id` and the current `token_revision`. Match the exact expiry
+  `dedup_key` or the refresh-failure key prefix for that revision, not `service_id` alone.
+
+Apply this predicate with every other selected filter and the retention cutoff. An unresolved
+item whose event is missing or outside retention stays visible on `/api/activity/attention`;
+it does not cause unrelated historical events to enter the filtered feed.
 
 **Live session state**: add `reconnect_required_at *time.Time` and a monotonically increasing
 `token_revision` to `UserSession`, its memory/PostgreSQL adapters, and the `user_sessions` table
@@ -366,6 +385,21 @@ if acquired it deletes `activity.prune_batch` (default 5000) rows with `recorded
 retention` and releases. Multi-replica safe; read-window filtering stays authoritative so lag is
 harmless. The memory adapter prunes inline.
 
+**Expiry observation (US5)**: on the worker's existing periodic tick, scan bounded batches of
+the current session revisions that need reconnection and approvals still pending past
+`expires_at`. A session qualifies after refresh expiry, or after access expiry when it has no
+usable refresh token. Access expiry alone does not qualify when refresh remains available.
+Use refresh/access expiry or `expires_at` as `occurred_at`; do not need a token exchange or
+approval-detail request. A small expiry-read port in `internal/ports/storage.go` selects due
+sessions and pending approvals with their principals, IDs, and session revisions. Both storage
+adapters implement bounded, indexed queries. Limit to transitions inside retention and exclude
+keys already recorded; this prevents old pending rows from starving new expiries. Resume each
+batch on the next tick. Concurrent replicas may observe the same expiry: the unique
+`(principal, dedup_key)` constraint absorbs duplicate reports. Before an OAuth callback
+overwrites an expired session, capture its old revision. After the successful token write,
+enqueue expiry ahead of reconnection. This closes the gap between worker ticks. The recorder
+remains best-effort; the source session and approval state stays authoritative.
+
 **Config** (`internal/ports/config.go`, `activity` section): `retention_window` (Go duration,
 default `720h` = 30 days), `page_size` (25), `rollup_bucket` (`1h`), `queue_size` (1024),
 `prune_interval` (`10m`), `prune_batch` (5000), `attention_poll_interval_seconds` (30; surfaced
@@ -409,6 +443,10 @@ to the SPA via the existing config endpoint or a build-time constant).
 6. `outcome`/`category` deliberately have no standalone index until the exploratory benchmark
    shows one is needed.
 
+Add due-time indexes for current session expiry and pending approval `expires_at` in migration
+`032`. The due-query port excludes already recorded `(principal, dedup_key)` keys through the
+activity-event unique index; expired source rows older than retention do not enter the scan.
+
 `DOWN` drops the table (and leaves `pg_trgm` in place if it pre-existed). No foreign keys reference
 agents, services, or sessions: events must survive deletion of the referenced entity (FR-015).
 
@@ -432,14 +470,18 @@ created in the plan's Phase 0.
 | `consent` service revoke / empty-set (`internal/domain/consent/service.go` ~`:675`) | `revocation` / `grant.revoked` | post-write async | Capture labels before deletion; enqueue only after a successful delete. |
 | `oauth2session` store (new session or OAuth callback reconnect) | `session` / `session.connected` or `reconnect` / `session.reconnected` | post-write async | Select the type from committed revision (1 = new); use the returned session ID. |
 | `oauth2session` refresh success / failure | `session.refreshed` (roll-up) / `failure` `session.refresh_failed` | async | Persist live reconnect state on failure; clear it with a successful token write, independently of event recording. |
-| `oauth2session.GetValidAccessToken` → `ErrSessionExpired` (`service.go` ~`:1155`) **lazy** | `session` / `session.expired` | async | Mark the live session before enqueueing; use access or refresh expiry for `occurred_at` when available, otherwise detection time. |
+| `oauth2session` expired session on periodic observation, lazy `ErrSessionExpired`, or successful OAuth callback that replaced an expired revision | `session` / `session.expired` | async | Use the old session ID and token revision. Worker/lazy detection marks only a current revision. Callback captures the old one before its token write, then enqueues expiry after success, without restoring the marker. |
 | `oauth2session` terminate | `revocation` / `session.terminated` | post-write async | |
 | `TokenExchangeService.Exchange` success (`internal/domain/tokenexchange/service.go:170`) **(Phase 0 hook)** | `agent_access` / `agent.access_issued` (roll-up) | async | Counts successful broker exchanges, not downstream actions or ExtProc cache hits. |
 | `TokenExchangeService.Exchange` failure with `DenialReason` **(Phase 0)** | `policy_decision` / `policy.denied`\|`policy.blocked` | async | `policy_denied` → `blocked`; others → `failed`/`blocked` per §7. |
-| oauth2 grant strategies `TokenRequestFailed` (`token_grant_strategy.go`) | `failure` / `token.issue_failed` | async | Local grants only. |
 | `approval.Create` when `IsNew` (`internal/domain/approval/service.go:360-378`) | `approval` / `approval.requested` | post-write async | **Do not emit on the idempotent hit.** |
 | `approval.Approve/Deny/Consume/Revoke` | `approval.*` | post-write async | Consume is already idempotent. |
-| `approval` lazy expiry detection (`service.go` ~`:190`) | `approval.expired` | async | `occurred_at = expires_at`. |
+| `approval` pending past `expires_at`, observed by the periodic worker or lazy detail access | `approval.expired` | async | `occurred_at = expires_at`; emit once by approval ID without requiring a detail request. |
+
+Local `/oauth2/token` grant failures remain in structured operational audit logs. The public
+token route and its `TokenRequestFailed` log do not establish a user principal. Never infer the
+owner from `client_id`, an unverified authorization code, or a caller-supplied header; without a
+verified principal, no `ActivityEvent` is emitted.
 
 Emission never blocks or fails the primary security operation (fail-open on recording,
 fail-closed remains on the operation itself); see §10 for how drops are made observable.

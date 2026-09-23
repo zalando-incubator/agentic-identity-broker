@@ -50,24 +50,35 @@ Validates, per the enduser API contract, with a seeded principal:
   activity event is dropped or pruned. It clears after a successful refresh or reconnection;
   approval attention clears after the decision.
 - **US3**: filter params (`agent_id`, `service_id`, `grant_id`, `window` incl. `30d`, `before`,
-  `outcome`, `category`, `q`, `needs_attention`) narrow results; combined filters intersect; a
-  no-match combination returns an empty page; clearing filters restores the full feed; a cursor
-  reused with different filters returns `400 invalid_cursor`.
+  `outcome`, `category`, `q`, `needs_attention`) narrow results; combined filters intersect.
+  A pending approval matches only its own `approval.requested` event, even when another approval
+  has the same tool name. A reconnect matches expiry/failure for its current session revision,
+  not earlier events for the same service. If history was pruned, the live attention item remains
+  on `/api/activity/attention` without adding unrelated events to the filtered feed. Clearing
+  filters restores the full feed; a cursor reused with different filters returns `400 invalid_cursor`.
 - **US4**: `GET /api/activity/{event-id}` returns `detail.explanation.{trigger,basis,consequence}`,
-  a bounded `sequence` with `sequence_truncated`, and `detail.related_links`. An owned event
-  outside retention returns 404 even if its row awaits pruning; a retained event's sequence
-  excludes old events. A seeded event carrying sensitive parameters returns `redacted:true`
-  without the clear-text secret. Unregistered `context` keys do not appear (SC-007).
+  a bounded `sequence` with `sequence_truncated`, and `detail.related_links`. Derive pending
+  state from `outcome=pending`, not `detail.pending`. An owned event outside retention returns
+  404 even if its row awaits pruning; a retained event's sequence excludes old events. Seed a
+  protected resource URI with credentials and a `?access_token=SECRET` query. Neither the feed,
+  detail, nor related sequence response contains the raw URI or `SECRET`. A seeded sensitive
+  event returns `redacted:true` without the clear-text value. Unregistered `context` keys and
+  sensitive arguments are absent from all browser response fields (SC-007).
 - **US5**: a service seeded with connect→refresh→expire→reconnect returns a single
-  `service_lifecycle` thread. An agent's broker-access milestones appear in an `agent_journey`
-  thread; an
-  approval event appears in both `tool_flow` and `agent_journey`; a thread spanning two pages is
-  `truncated: true` with the correct `total_events`.
+  `service_lifecycle` thread. Let its session expire without a token exchange, then reconnect
+  before the next periodic sweep; the history still includes expiry before reconnection.
+  Let another session and a pending approval expire while idle; the periodic worker records both
+  without token exchange or approval-detail access. Repeated scans create one expiry event per
+  session revision or approval ID. Agent broker-access milestones appear in `agent_journey`;
+  an approval event appears in both `tool_flow` and `agent_journey`; a thread spanning two pages
+  is `truncated: true` with the correct `total_events`.
 - **FR-016a**: with the event repository failing after a successful grant write, the grant
   remains committed and `activity_events_dropped_total` increments with an `ERROR` log.
 - **FR-015**: an event whose agent/service was deleted still renders with its historical
   `display_label`.
 - **FR-012**: a second principal's events are never returned to the first.
+- **Principal boundary**: local `client_credentials` and invalid-code token failures without
+  a verified user remain operational audit logs; they create no user activity event.
 
 ## Frontend acceptance (Playwright via `playwright-go`) + screenshots
 
@@ -77,22 +88,24 @@ E2E_CAPTURE_SCREENSHOTS=true ginkgo -v ./tests/e2e/frontend/ --focus "Activity"
 ```
 
 Exercises the `/activity` UI (page object `tests/e2e/pages/activity_page.go`) and captures the
-state list in the plan. Verifies: first-class nav destination reachable in one action (SC-010)
-and the nav item stays active on `/activity/:eventId`; needs-attention band (max three visible,
-grouped, polled) with working next-step links into `/sessions` and `/approvals/:id`; the marked
-session on `/sessions` offers "Reconnect" despite `is_expired=false`; filter
-narrowing via controls, active-filter chips, and click-to-filter on a card label, plus clear;
-broker-access roll-up card with a count of successful exchanges and local time span; detail
-panel with a three-line explanation, bounded sequence, and redaction; collapsed timeline
-threads with "N earlier events"; retention footer; empty and no-match states.
+state list in the plan. Verifies a visible, single-action Activity link on desktop, narrow
+mobile, and at 200% zoom (SC-010); Activity remains active on `/activity/:eventId`.
+The needs-attention band shows at most three visible items, groups related items, polls for
+changes, and links to `/sessions` or `/approvals/:id`. A marked session on `/sessions` offers
+"Reconnect" despite `is_expired=false`. Filters narrow the feed through controls or a card label,
+show active chips, and clear correctly. The broker-access card shows a count of successful
+exchanges and a local time span. Detail shows a three-line explanation, bounded sequence, and
+redacted data. Collapsed threads expose "N earlier events". The retention footer and the empty
+and no-match states remain visible when needed.
 
 ## Accessibility validation (WCAG 2.1 AA — SC-006)
 
 Run inside the same frontend suite (`--focus "Activity accessibility"`):
 - Keyboard-only traversal of nav, filters, tabs, accordion, timeline, load-more, detail links.
 - `axe-core` injected on the main states asserts zero critical/serious violations.
-- Outcome conveyed by icon + text (not color alone); reduced-motion suppresses animation;
-  content and function preserved at 200% zoom.
+- Outcome conveyed by icon + text (not color alone); reduced-motion suppresses animation.
+- At narrow widths and 200% zoom, the Activity link and content remain visible and keyboard
+  operable without a menu opener, horizontal page scroll, or clipping.
 
 ## Exploratory storage benchmark (not a feature acceptance SLA)
 
@@ -122,7 +135,8 @@ workload and storage design.
 
 ## Manual smoke walkthrough
 
-1. Open `http://localhost:8000/activity` from the header nav (single click).
+1. Open `http://localhost:8000/activity` from the primary Activity link in one activation,
+   including on a narrow viewport and at 200% zoom.
 2. Confirm the band shows expired or reconnect-required sessions and pending approvals with next steps.
    With none, it shows "nothing needs your attention". Approve a pending request in another tab.
    Confirm the band clears within ~30 s without reload.

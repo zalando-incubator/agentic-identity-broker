@@ -88,7 +88,11 @@ paths:
           in: query
           required: false
           schema: { type: boolean }
-          description: When true, return only events whose related refs point at the subject of a current needs-attention item.
+          description: >-
+            When true, return retained events for current unresolved approval or session
+            transitions only. Match approval_id or session_id plus its current token revision,
+            not a tool label or service_id alone. Other filters still apply. The /attention
+            endpoint remains authoritative beyond retention.
         - name: cursor
           in: query
           required: false
@@ -135,10 +139,10 @@ paths:
                           category: approval
                           type: approval.denied
                           actor: { kind: agent, id: 7f0a…, display_label: "Research Agent" }
-                          subject: { kind: tool, id: t9, display_label: "delete_repo" }
+                          subject: { kind: tool, id: null, display_label: "delete_repo" }
                           outcome: blocked
                           summary: "Research Agent's request to run delete_repo was denied."
-                          related_refs: { agent_id: "7f0a…", approval_id: "p7", service_id: "github" }
+                          related_refs: { agent_id: "7f0a…", approval_id: "p8", service_id: "github" }
                           occurrence_count: 1
                           first_occurred_at: "2026-09-04T10:31:00Z"
                           occurred_at: "2026-09-04T10:31:00Z"
@@ -253,7 +257,7 @@ paths:
                         - kind: approval_pending
                           title: "Research Agent wants to run delete_repo"
                           summary: "The agent is waiting for your decision."
-                          subject: { kind: tool, id: t9, display_label: "delete_repo" }
+                          subject: { kind: tool, id: null, display_label: "delete_repo" }
                           next_step: { label: "Review request", target_route: "/approvals/p7" }
                           since: "2026-09-04T10:30:00Z"
                           group_key: "approval_pending"
@@ -346,7 +350,7 @@ components:
 
     RelatedRefs:
       type: object
-      description: Foreign ids used for filtering, read-time threading, and outbound links (never sensitive).
+      description: Approved browser-visible identifiers for filtering, threading, and links. Raw resource URIs and internal correlation IDs are never returned.
       properties:
         agent_id: { type: string, nullable: true }
         service_id: { type: string, nullable: true }
@@ -354,7 +358,6 @@ components:
         session_id: { type: string, nullable: true }
         approval_id: { type: string, nullable: true }
         client_id: { type: string, nullable: true, description: "OAuth client that mediated the action, for 'which client did this' context." }
-        resource_uri: { type: string, nullable: true }
 
     RelatedLink:
       type: object
@@ -387,7 +390,7 @@ components:
 
     ActivityDetail:
       type: object
-      required: [explanation, pending]
+      required: [explanation]
       properties:
         explanation: { $ref: '#/components/schemas/Explanation' }
         context:
@@ -397,9 +400,6 @@ components:
         related_links:
           type: array
           items: { $ref: '#/components/schemas/RelatedLink' }
-        pending:
-          type: boolean
-          description: True when the action has no final outcome yet (honest in-flight rendering).
 
     ActivityEvent:
       type: object
@@ -443,6 +443,7 @@ components:
 
     NeedsAttentionItem:
       type: object
+      description: The live source approval or session ID determines matching; subject is for display only.
       required: [kind, title, summary, subject, next_step, since, group_key]
       properties:
         kind: { type: string, enum: [reconnect_required, approval_pending] }

@@ -64,7 +64,8 @@ successful broker access issuances; their counts do not represent downstream act
 for historical activity (configurable; spec clarification 2026-09-22); unresolved needs-attention
 items remain visible until the underlying state resolves; exactly one visible event per underlying
 action via `dedup_key` (FR-016b); no sensitive value in any response or view (FR-011, SC-007) —
-enforced by the `SafeFields` registry; WCAG 2.1 AA (SC-006); per-principal isolation (FR-012);
+enforced by server-side approved-field response projection and the `SafeFields` registry;
+raw resource URIs never enter activity events or browser DTOs; WCAG 2.1 AA (SC-006); per-principal isolation (FR-012);
 recording never blocks or fails the primary security operation, and a dropped recording is
 observable as an operational error (FR-016a)
 **Scale/Scope**: per-user scope only (no admin/tenant view); ~8 event categories; one new SPA
@@ -119,10 +120,12 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
 
 **Implementation Considerations**:
 
-- [x] **Security Design**: The plan is read-only and per-principal. It specifies server-side
-  redaction through an approved-field registry, a server-side allowlist for every `target_route`
-  (no open-redirect surface), and a recorder that never changes fail-closed primary security
-  operations. `correlation_id` is stored but never returned to the browser.
+- [x] **Security Design**: The plan is read-only and per-principal. It excludes raw resource
+  URIs from activity events and browser DTOs, and projects only approved related identifiers.
+  The approved-field registry shapes display text and context. Every `target_route` uses a
+  server-side allowlist, and recording does not change fail-closed security operations.
+  `correlation_id` stays server-side. Public local token failures without a verified user
+  remain in operational audit logs, not the per-user feed.
 - [ ] **Architecture Documentation**: Add the Activity glossary terms and bounded-context description to
   `ARCHITECTURE.md` in the implementation PR. Document the recorder seam. Link to ADR 037 when that ADR is accepted.
 - [x] **ADR**: Proposed [ADR 037: Activity Event Storage](../../adrs/037-activity-event-storage.md)
@@ -153,10 +156,14 @@ implementation and must be requested against the **revised** contract.
 - **New top-level destination**: `Activity` at path `/activity` (the SPA is root-mounted,
   `basename="/"`), a sibling of Agent Delegations (`/delegations`), Tool Authorizations
   (`/approvals`), and Third-Party Sessions (`/sessions`) (FR-016, SC-010).
-- **Wiring**: add a lazy `ActivityPage` route in `web/src/App.tsx` and a `navLinks` entry in
-  `web/src/components/layout/AppLayout.tsx` (the real primary nav). Change the active-link test
-  from exact `pathname ===` to a prefix match so `/activity/:eventId` keeps "Activity" active. Do
-  **not** touch the orphan `web/src/components/layout/Header.tsx`.
+- **Wiring**: add a lazy `ActivityPage` route in `web/src/App.tsx`. Add `Activity` to the
+  shared `navLinks` in `web/src/components/layout/AppLayout.tsx`. Today those links are inside
+  `hidden md:flex` and the wrapper provides no sidebar. Render the same primary links in a
+  visible, wrapping mobile row below the header. At small widths and 200% zoom, Activity must
+  remain visible and reachable in one link activation, with no menu opener or horizontal scroll.
+  Mark a link active on exact path or a child path starting with `${href}/`, not an arbitrary
+  string prefix. This keeps Activity active at `/activity/:eventId` without matching a peer
+  route. Do not touch the orphan `web/src/components/layout/Header.tsx`.
 - **Detail**: deep-linkable child route `/activity/:eventId`, rendered as a detail panel **within**
   the activity shell so the surrounding feed/thread stays in view (US4/US5).
 - **Filters in URL**: exploration state uses
@@ -185,7 +192,8 @@ implementation and must be requested against the **revised** contract.
    the user's hands except on poll, and a polite live region would re-announce every 30 s.
 2. **Filter bar** — `<form role="search">`: `Select` for category/outcome, `Tabs` (`pill`) for
    the relative time-window presets `24h | 7d | 30d | all`, a keyword `Input` (`q`), a
-   needs-attention toggle, and a clear-all control. Agent/service/grant are **facets** rendered as
+   needs-attention toggle (only the unresolved approval/session transitions are shown in the
+   retained feed), and a clear-all control. Agent/service/grant are **facets** rendered as
    removable chips from the current page's `related_refs` labels plus **click-to-filter** on any
    card's actor/subject label (adds `agent_id=`/`service_id=`). Active filters render as removable
    chips above the feed with an `aria-live="polite"` result count ("12 events match"). All synced
@@ -206,6 +214,8 @@ implementation and must be requested against the **revised** contract.
 5. **Empty/no-match states** — `EmptyState` "no activity yet" with a concrete pointer ("Delegate
    access to an agent to see its activity here → Agent Delegations") and "no matches for these
    filters" with a reset action (FR-014, SC-009).
+   With `needs_attention=true`, an empty retained feed does not hide live attention items;
+   explain that their history is unavailable while keeping their next steps visible above.
 
 **Detail view (`/activity/:eventId`)** — full context (actor, subject, timing, outcome), the
 structured **why** rendered as three lines (*trigger* → *basis* → *consequence*; the basis is the
@@ -244,7 +254,9 @@ Conventions match the existing API (`{data}` envelope, `{error,message}`, RFC333
 (documented for reuse); the cursor is bound to the filter set and a mismatch is `400
 invalid_cursor`. `/api/activity/attention` is registered **before** `/api/activity/{event-id}`
 and a routing test asserts precedence. All responses are per-principal scoped and pre-redacted
-server-side. The change **requires stakeholder confirmation** (Principle X) before implementation.
+server-side. The browser DTO omits raw resource URIs, even in `related_refs` and related
+sequences; `detail.pending` is not returned because `outcome=pending` supplies the state.
+The change **requires stakeholder confirmation** (Principle X) before implementation.
 
 **Thread response mapping**: threads are derived on read from `related_refs`. The API exposes an
 `ActivityThreadResponse` with ordered `event_ids` (present on this page), `total_events` and
@@ -253,8 +265,8 @@ events" when truncated. `ActivityEvent` no longer carries `thread_key` or `needs
 
 ## Frontend Architecture Touchpoints
 
-- **Routing/nav**: `web/src/App.tsx` (+2 routes), `web/src/components/layout/AppLayout.tsx` (+1
-  navLink).
+- **Routing/nav**: `web/src/App.tsx` (+2 routes), `web/src/components/layout/AppLayout.tsx`
+  (shared primary links visible as a wrapping row on mobile and in the desktop header).
 - **Pages**: `web/src/pages/activity/ActivityPage.tsx` (summary), `ActivityDetailPanel` (child
   route).
 - **App components** `web/src/components/activity/`: `NeedsAttentionPanel`, `ActivityFilterBar`,
@@ -281,15 +293,20 @@ events" when truncated. `ActivityEvent` no longer carries `thread_key` or `needs
   `ActivityEventRepository` in `internal/ports/storage.go`; memory and PostgreSQL adapters in
   `internal/adapters/storage/{memory,postgres}/activity_events.go`; principal/keyset, unique
   dedup, selective `related_refs` expression, trigram, and prune indexes in migration `032`;
-  the same migration adds `UserSession.token_revision` and `reconnect_required_at`. The session
-  repository fills the session with the committed ID and revision on each write. A small status
-  port conditionally marks refresh failure against that revision; refresh success/reconnection
-  clears the marker with its token write. Add handler
-  `internal/adapters/http/handlers/activity/handler.go`; wire the activity service/repo/handler
-  and async recorder in `internal/app/handlers.go` + `internal/app/builder.go` (drainer tied to app
-  lifecycle); routes in `internal/adapters/http/routing/enduser.go`; recorder calls at the seams
-  listed in [data-model.md](./data-model.md) §11. OTel counter
-  `activity_events_dropped_total`. No DynamoDB application adapter or resource is added.
+  the same migration adds `UserSession.token_revision`, `reconnect_required_at`, and due-time
+  indexes for sessions and pending approvals. An expiry-read port supplies bounded due queries
+  through both storage adapters. The session repository fills the session with its committed ID
+  and revision on each write. A small status port conditionally
+  marks refresh failure against that revision; refresh success/reconnection clears the marker
+  with its token write. Wire the activity worker to observe due expiries in bounded batches on
+  its existing periodic tick, and observe an expired session's prior revision before reconnection
+  overwrites it. Add handler `internal/adapters/http/handlers/activity/handler.go`; wire the
+  activity service/repo/handler and async recorder in `internal/app/handlers.go` +
+  `internal/app/builder.go` (drainer tied to app lifecycle); routes in
+  `internal/adapters/http/routing/enduser.go`; recorder calls at [data-model.md](./data-model.md)
+  §11. Public local token-grant failures without a verified principal stay in structured
+  operational audit logs. OTel counter `activity_events_dropped_total`. No DynamoDB
+  application adapter or resource is added.
 - **Phase 0 touchpoints (existing code)**: `internal/domain/tokenexchange/service.go` — typed
   `DenialReason` on exchange errors and a success hook after `Exchange` returns; the approval
   service's `CreateApprovalResult.IsNew` is respected by the seam (no change needed in
@@ -412,13 +429,14 @@ second principal for isolation).
 | US1 #3 outcome not color-alone | outcome exposed as label+icon+text in payload |
 | US1 #4 empty state | no events → `{events:[],threads:[],next_cursor:null,retention_days:N}` |
 | US1 #5 revoked reference | since-deleted actor renders with historical label |
-| US1 #6 top-level reachability | (frontend) nav single-action — Playwright |
+| US1 #6 top-level reachability | (frontend) Activity link visible and single-action on desktop, narrow mobile, and 200% zoom — Playwright |
 | US1 #7 one canonical event | same transition reported twice → one event; two grant updates within one second and two reconnections on one session → distinct events; roll-ups count broker issuances, not downstream uses |
 | US2 #1–#6 needs-attention | attention list present/settled; clears after resolve; blocked stays history-only; rejected refresh or no usable refresh token yields `reconnect_required` even if its history event is dropped or pruned; `/sessions` offers OAuth reconnection despite `is_expired=false` |
-| US3 #1–#7 exploration | each filter (incl. `q`, `before`, `30d`) + combination + clear + no-match; cursor with changed filters → `400 invalid_cursor` |
-| US4 #1–#5 detail | structured explanation, bounded sequence + `sequence_truncated`, back-links, redaction via SafeFields (unknown context key is stripped), pending honesty; 404 for an owned event past retention while pruning is pending; retained sequence excludes old events |
-| US5 #1–#4 threads | service lifecycle + agent journey threads derived on read; an approval event appears in tool_flow **and** agent_journey; `truncated` across pages; high volume scannable; drill-down |
+| US3 #1–#7 exploration | each filter (incl. `q`, `before`, `30d`) + combination + clear + no-match; pending approval with a shared tool name selects only its own `approval.requested`, and a reconnect selects only the current session revision's expiry/failure, not older service history; cursor with changed filters → `400 invalid_cursor` |
+| US4 #1–#5 detail | structured explanation, bounded sequence + `sequence_truncated`, back-links, redaction via SafeFields (unknown context key is stripped), pending derived from `outcome`; feed/detail/related sequence never serialize a raw resource URI with embedded credentials or query secrets; 404 for an owned event past retention while pruning is pending; retained sequence excludes old events |
+| US5 #1–#4 threads | service lifecycle + agent journey threads derived on read; idle expiry before reconnect without exchange between worker ticks; pending approval expiry without detail access; repeated observations yield one event per session revision/approval ID; approval event in tool_flow **and** agent_journey; `truncated` across pages; high volume scannable; drill-down |
 | FR-016a operational error | recorder with a failing repository: primary op succeeds, `activity_events_dropped_total` increments, ERROR log emitted |
+| FR-012 unaffiliated token failure | client-credentials and invalid-code failures without a verified principal remain operational logs and produce no user activity event |
 
 **Red phase**: assertions target concrete contract values (status codes, `data.events[…].summary`,
 `redacted:true`, `next_step.target_route`), compile, and fail semantically before implementation.
@@ -443,8 +461,10 @@ harness (no a11y E2E exists today):
 - **Status without color (FR-019)**: assert each outcome shows icon + text, not color alone.
 - **Reduced motion (FR-020)**: `context.EmulateMedia(prefers-reduced-motion: reduce)`; assert
   timeline/summary animation suppressed, no information lost.
-- **High zoom / small viewport (FR-021)**: scaled viewport / CSS zoom to 200%; assert key content
-  and controls remain visible and operable.
+- **High zoom / small viewport (FR-021)**: at 200% zoom and narrow mobile width, assert the
+  primary Activity link stays visible, keyboard-operable, and opens `/activity` with one
+  activation, without opening a menu or scrolling horizontally. Key content and controls
+  remain usable without overlap or clipping.
 
 ### Playwright Screenshot State List (`tests/e2e/screenshots/`)
 

@@ -15,9 +15,10 @@ The Activity feature needs curated, deduplicated events. It must retain history 
 The feature needs per-principal keyset pages. It also needs combined filters for agents, services, grants, outcomes, categories, keywords, and time windows, and threads derived from related identifiers.
 
 Repeated reports of one transition need one event; separate transitions need different identities.
-Session and approval expiry can be detected on repeated reads. ExtProc replicas cache tokens and
-can exchange them again. The spec requires one visible event per transition (FR-016b) and
-summarized milestones for routine broker observations (FR-001).
+Session and approval expiry can occur without a token exchange or approval-detail request.
+An idle session can expire and reconnect before a periodic worker sees it. The spec requires one
+visible event per transition (FR-016b) and summarized milestones for routine broker observations
+(FR-001).
 
 The application has no activity scheduler or caller-owned transaction spanning grant, approval,
 session, and activity repositories. Grant writes commit inside their repository methods.
@@ -62,7 +63,18 @@ A delayed failure must not overwrite a newer token revision. Derive pending-appr
 from current approval state.
 Prune old events in bounded batches under `pg_try_advisory_lock`.
 
-Only fields approved in the `SafeFields` registry are stored in `detail.context`; every route the API emits comes from a server-side allowlist. A `correlation_id` (trace id) is stored and never returned to the browser.
+The same worker periodically scans bounded batches of due session and pending-approval expiries.
+It emits `session.expired:{session_id}:{token_revision}` or
+`approval.expired:{approval_id}` through the recorder. A reconnection snapshots an expired
+session before its token write and enqueues expiry after success, ahead of reconnection.
+Repeated and multi-replica observations share the dedup key. No general scheduler is added.
+
+Only approved fields are used in display text and `detail.context`. Resolve protected resources
+server-side. Never copy a raw resource URI into an activity event, its `related_refs`, or a
+browser DTO. Build responses by projecting approved identifiers rather than serializing stored
+JSONB. Every emitted route comes from a server-side allowlist. A `correlation_id` (trace id)
+stays server-side. Local token-grant failures without a verified principal remain in
+operational audit logs.
 
 SC-005 remains a user task. A user must find a recent event within 30 seconds among 10,000 events; keyword and jump-to-date filters exist so this does not depend on paging.
 

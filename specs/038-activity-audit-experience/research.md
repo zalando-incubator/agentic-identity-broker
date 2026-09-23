@@ -21,12 +21,13 @@ per-user activity record that the current codebase does not yet have.
   `ThirdPartySessionsPage`; `/approvals/:id` → `ApprovalPage`; `/approvals` →
   `ToolAuthorizationsPage`; `*` → `ErrorPage`. (An earlier draft of this document cited
   `/consent`, `/agent/:agentId`, `/oauth2/sessions` — those are stale.)
-- **Primary navigation**: `web/src/components/layout/AppLayout.tsx` Header (`navLinks` at
-  `:28-32`: `/delegations`, `/approvals`, `/sessions`). Active state is an **exact** `pathname ===`
-  match (`:71`), which will not highlight a parent for `/activity/:eventId` — change to prefix
-  match. `web/src/components/layout/Header.tsx` is an **orphan** second nav with no importers —
-  do not touch. A duplicate `components/ui/EmptyState.tsx` exists beside the design-system one;
-  use the design-system `EmptyState`.
+- **Primary navigation**: `web/src/components/layout/AppLayout.tsx` owns `navLinks` for
+  `/delegations`, `/approvals`, and `/sessions`. Its link container is `hidden md:flex`, and the
+  wrapper passes no sidebar to the design-system layout. At small widths, no primary links are
+  visible. Use those same links in a visible wrapping mobile row; adding `/activity` to the
+  desktop list alone cannot meet US1 #6. The current exact pathname match must also allow
+  `/activity/:eventId` to highlight Activity. `components/layout/Header.tsx` is an orphan and
+  is not part of the fix. Use the design-system `EmptyState`, not the duplicate UI component.
 - **Data hook shape** (canonical): `web/src/hooks/useSessions.ts:55-120` — `useState {data,
   loading, error}`, `fetchData` `useCallback` (sets loading/error, calls typed service), a
   `refetch` callback, `useEffect` on mount. Parallel loads use `Promise.all`
@@ -97,11 +98,12 @@ per-user activity record that the current codebase does not yet have.
   slog/OTel logs. Event-like seams already present but not persisted — **re-verified
   2026-09-22, with corrections**:
   - oauth2 `TokenIssued` / `TokenRequestFailed` are slog lines in
-    `internal/adapters/http/enduser/token_grant_strategy.go` for the *local* client_credentials /
-    authorization_code / refresh_token grants only. **The RFC 8693 exchange
-    (`TokenExchangeService.Exchange`, `internal/domain/tokenexchange/service.go:170`) does not
-    emit `TokenIssued`**; the caller logs `token_exchange_succeeded`. The recorder must hook
-    `Exchange` directly.
+    `internal/adapters/http/enduser/token_grant_strategy.go` for local client_credentials /
+    authorization_code / refresh_token grants. The public `/oauth2/token` route has no
+    authenticated user principal; these failures remain operational audit events rather than
+    per-user activity. **The RFC 8693 exchange** (`TokenExchangeService.Exchange`,
+    `internal/domain/tokenexchange/service.go:170`) does not emit `TokenIssued`;
+    the activity recorder must hook `Exchange` directly.
   - Token-exchange failures are `access_denied` / `invalid_grant` **with free-text detail only**;
     there is no structured reason. Revocation **deletes** the grant
     (`internal/domain/consent/service.go` ~`:675`), so "revoked" and "never granted" are
@@ -163,10 +165,11 @@ and `/agents/:agentId` flows, generated only from a server-side route allowlist 
 §3.3). The agent and sessions pages gain a one-line "View activity" inbound link.
 
 **Rationale**: FR-016 and SC-010 require a first-class, single-action destination that is not
-nested inside agent/consent/session views. The SPA already composes top-level routes exactly
-this way; adding a `navLinks` entry + lazy route is the established mechanism. A child detail
-route keeps US4 progressive disclosure "without leaving the activity experience" while
-remaining shareable/deep-linkable.
+nested inside agent/consent/session views. Add the lazy route and a shared `navLinks` entry,
+then render primary links directly on both desktop and mobile. The current `hidden md:flex`
+container leaves small and zoomed viewports without any link. A menu drawer needs an extra action
+and does not meet the single-action acceptance scenario. A child detail route keeps US4 within
+the activity shell and allows deep links.
 
 **Alternatives considered**:
 - *Embed activity inside existing session/agent pages* — rejected: violates FR-016 (would make
@@ -337,9 +340,11 @@ cannot refresh. Persisting the marker with the session keeps the alert live with
 attention/read-state table.
 
 **Alternatives considered**:
-- *A `needs_attention=true` filter on the main feed* — kept as a convenience filter for US3
-  (events whose `related_refs` reference a current attention subject). The separate band remains
-  authoritative when the historical event is absent.
+- *A `needs_attention=true` filter on the main feed* — kept as a convenience view of
+  retained events for current unresolved transitions only. Match `approval.requested` by
+  pending `approval_id`, or `session.expired` / `session.refresh_failed` by `session_id` and
+  current `token_revision`. Never match by tool name or service ID alone. Apply other feed
+  filters and retention; the live band remains authoritative if no matching event is retained.
 - *No polling (on-load only)* — rejected: the next step for a pending approval can expire.
 - *Derive reconnect state from historical refresh-failure events* — rejected: async loss and
   retention can hide an unresolved failure.
@@ -350,11 +355,12 @@ attention/read-state table.
 
 **Decision**: The recorder produces already-redacted, already-humanized events through the
 `SafeFields` registry (Decision 13). Sensitive fields (secrets, raw tokens,
-`ToolApproval.Arguments`, parameters flagged sensitive) are never serialized; where a value
-existed it is represented as an abstracted marker (`"redacted": true`, `"•••"`) or a *shape*
-("3 arguments, redacted") so two tool calls stay distinguishable. Summaries and the structured
-explanation (`trigger` → `basis` → `consequence`) are composed server-side from a fixed wording
-template per event `type` using human-readable actor/subject labels, not raw IDs.
+`ToolApproval.Arguments`, parameters flagged sensitive) are not serialized. Values that existed
+can appear as an abstracted marker (`redacted: true`, `•••`) or a shape ("3 arguments,
+redacted"). Summaries and structured explanations use safe historical labels, not raw IDs.
+Resolve protected-resource URIs to a service before recording activity. Do not put the raw URI
+in `related_refs`, the actor/subject, summaries, or detail. The response projects approved IDs
+instead of serializing stored JSONB; the browser receives no raw URI even in a related sequence.
 
 **Rationale**: SC-007/FR-011 require that no sensitive value appears anywhere, and FR-010
 requires human-readable defaults. Doing redaction and humanization server-side means the browser
@@ -377,10 +383,13 @@ retention cutoff. The feed response includes `retention_days` so the UI can expl
 Add `examples/config/activity.yaml`, document settings in `docs/configuration.md`, and update
 the Helm chart (`values.yaml`, ConfigMap template, README) per Principle VII.
 
-**Prune**: the app has no scheduler and no cross-replica coordination. The recorder's async
-drainer (Decision 12) attempts `pg_try_advisory_lock(hashtext('activity_prune'))` every
-`prune_interval`; the holder deletes one `prune_batch` of rows older than the window and
-releases. Replicas that fail to acquire skip. The memory adapter prunes inline.
+**Periodic worker**: the app has no general scheduler. The activity recorder's drainer
+attempts `pg_try_advisory_lock(hashtext('activity_prune'))` every `prune_interval`; the holder
+deletes one `prune_batch` of rows older than the window. The same periodic tick also observes
+bounded batches of due session and pending-approval expiries with their current identities and
+dedup keys. Before a callback overwrites an expired session, it observes the previous token
+revision so a quick reconnection does not erase its expiry. The memory adapter applies the same
+observation and dedup semantics.
 
 **Rationale**: Seven days (the earlier clarification) undermines the feature's purpose — a user
 who checks in every other week sees a truncated history with no explanation, and consumer
@@ -397,8 +406,8 @@ spec's Assumptions and Clarifications are updated accordingly (2026-09-22).
   system).
 - *Read-window only, never prune* — rejected: correct responses but unbounded physical growth.
 - *Keep 7 days* — rejected: see rationale; remains available via configuration.
-- *A generic job scheduler* — rejected: one advisory-locked batch delete does not justify new
-  infrastructure; revisit if a second periodic job appears.
+- *A generic job scheduler* — rejected: the existing activity worker handles the bounded
+  prune and expiry-observation ticks without separate scheduling infrastructure.
 - *DynamoDB TTL as the retention mechanism* — rejected: expiry is asynchronous and does not
   replace the application read window or PostgreSQL production decision.
 ### Decision 9 — Accessibility verification extends the `playwright-go` harness
@@ -469,8 +478,9 @@ Routine broker access issuances (`agent.access_issued`), session refreshes, and 
 failures/denials roll up into one row per principal/key/bucket. `occurrence_count` and
 `occurred_at` update on a new occurrence. A card can say "Broker issued GitHub access for
 Research Agent · 41 times". It counts successful broker token exchanges, not completed GitHub
-actions. ExtProc can reuse an exchanged token without another broker call. Lazily detected
-expiries use a key with the session's token revision, even if no refresh expiry is set.
+actions. Expiry observations (worker, lazy request, and pre-reconnection check) reuse
+`session.expired:{session_id}:{token_revision}` or `approval.expired:{approval_id}`. The
+store's unique key collapses repeated reports, even across replicas.
 
 **Rationale**: FR-016b needs stable identity for repeated reports of the same transition, while
 FR-001 needs roll-ups for routine broker observations. The key cannot use a Unix-second
@@ -485,14 +495,15 @@ feed volume without claiming that the broker observed downstream actions.
 
 ### Decision 12 — Recorder durability: best-effort after successful writes
 
-**Decision**: All seams enqueue into a bounded in-process queue (`queue_size`, default 1024).
-Grant upsert/revoke, approval transitions, and session store/terminate enqueue only after their
-repository writes succeed. Grant and approval repositories commit their own transactions; the
-session repository executes its own statement. No caller-owned transaction exists for the event
-insert. The recorder drains the queue using an application-lifecycle context. A full queue or
-insert error increments `activity_events_dropped_total{type}` and logs at `ERROR`. Recording
-never changes the primary operation's result. Existing structured security audit logs remain
-independent of optional user-facing activity events.
+**Decision**: All transition seams enqueue into a bounded in-process queue (`queue_size`,
+default 1024). Grant upsert/revoke, approval transitions, and session store/terminate enqueue
+only after their repository writes succeed. Their repositories commit their own transactions;
+the session repository writes its own statement. The same worker observes due expiries on its
+periodic tick. A callback captures the expired old session before writing tokens. After a
+successful token write, it enqueues expiry ahead of reconnection. The recorder drains the queue
+using an application-lifecycle context. A full queue or insert error increments
+`activity_events_dropped_total{type}` and logs at `ERROR`. Recording never changes the primary
+operation's result. Existing structured security audit logs remain independent.
 
 **Rationale**: FR-016a requires the action to complete even when an event insert fails. A failed
 PostgreSQL insert inside a shared transaction would abort that transaction unless isolated by a
@@ -512,12 +523,12 @@ the event and its source mutation cannot commit atomically.
 **Decision**: `internal/domain/activity/safefields.go` declares, per event `type`, the allowed
 `detail.context` keys with formatters, the summary wording template, and the structured
 explanation template (`trigger`, `basis {kind,id,label}`, `consequence`). The recorder strips
-any key not in the registry; a unit test asserts every `type` has an entry and that no key
-matches the deny list (`token`, `secret`, `arguments`, `authorization`, `assertion`, `code`,
-`password`, `refresh`). `target_route` values in `related_links`, `basis`, and `next_step` are
-generated only from a server-side allowlist of route templates and validated client-side before
-rendering as a `<Link>`. A `correlation_id` (`trace_id` / oauth2 `X-Request-ID`) is stored for
-support but never serialized to the browser.
+unapproved context keys. It never copies a raw resource URI into activity events, including
+`related_refs` and the actor/subject. The browser DTO projects approved identifiers rather than
+serializing stored event JSONB. A unit test checks every `type` has an entry and that no context
+key matches `token`, `secret`, `arguments`, `authorization`, `assertion`, `code`, `password`, or
+`refresh`. Server-side route templates allow only in-app `target_route` values, and the client
+validates routes before rendering a `<Link>`. A `correlation_id` stays server-side.
 
 **Rationale**: The 2026-09-21 clarification ("display only pre-approved user-display fields")
 had no plan artifact; a free-form `map[string]string` pushed the discipline onto each future

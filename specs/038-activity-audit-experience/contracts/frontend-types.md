@@ -39,6 +39,7 @@ export interface SubjectRef {
   display_label: string;
 }
 
+/** Browser-visible identifiers only. Raw resource URIs and internal correlation IDs are not returned. */
 export interface RelatedRefs {
   agent_id?: string | null;
   service_id?: string | null;
@@ -46,7 +47,6 @@ export interface RelatedRefs {
   session_id?: string | null;
   approval_id?: string | null;
   client_id?: string | null;
-  resource_uri?: string | null;
 }
 
 /** Relative in-app route from the server allowlist: /agents/:id, /sessions, /approvals, /approvals/:id, /activity/:id */
@@ -78,7 +78,6 @@ export interface ActivityDetail {
   /** Approved key/value context only; never secrets/tokens/sensitive params (FR-011). */
   context?: Record<string, string>;
   related_links?: RelatedLink[];
-  pending: boolean;
 }
 
 export interface ActivityEvent {
