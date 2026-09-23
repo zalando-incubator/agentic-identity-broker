@@ -33,6 +33,11 @@ Every mode uses these security rules:
   the broker. It is not an upstream OAuth2 client ID. The broker uses the UUID to select
   request handling.
 
+In local and hybrid modes, broker-issued authorization codes expire after 60 seconds.
+An expired code returns `invalid_grant`, even with valid client credentials and a valid PKCE verifier.
+The broker removes expired authorization codes, PKCE sessions, and refresh-token sessions at startup and every minute.
+Cleanup errors do not extend code validity.
+
 ## The three modes
 
 ```mermaid

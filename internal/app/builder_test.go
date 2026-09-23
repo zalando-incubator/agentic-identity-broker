@@ -193,6 +193,7 @@ func TestBuilderMinimalConfiguration(t *testing.T) {
 	if app == nil {
 		t.Fatal("expected non-nil application")
 	}
+	t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
 
 	// Verify required fields are set
 	if app.Config == nil {
@@ -416,11 +417,15 @@ func TestBuilderTokenExchangeExpectedAudience(t *testing.T) {
 
 		logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-		return NewBuilder().
+		app, err := NewBuilder().
 			WithConfig(cfg).
 			WithStorage(storageAdapter).
 			WithLogger(logger).
 			Build()
+		if err == nil {
+			t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
+		}
+		return app, err
 	}
 
 	t.Run("empty ExpectedAudience falls back to default and builds successfully", func(t *testing.T) {
@@ -565,6 +570,7 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Build() in proxy mode failed: %v", err)
 		}
+		t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
 		if app.EnduserHandlers.JWKS == nil {
 			t.Error("proxy mode must wire a JWKS handler")
 		}
@@ -585,6 +591,7 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Build() in proxy mode failed: %v", err)
 		}
+		t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
 		if got := app.EnduserHealthComponents(); got["upstream_jwks"] != "degraded" {
 			t.Fatalf("EnduserHealthComponents()[\"upstream_jwks\"] = %q, want %q", got["upstream_jwks"], "degraded")
 		}
@@ -603,6 +610,7 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Build() in local mode failed: %v", err)
 		}
+		t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
 		if app.EnduserHandlers.JWKS == nil {
 			t.Error("local mode must wire a JWKS handler")
 		}
@@ -649,6 +657,7 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Build() in hybrid mode failed: %v", err)
 		}
+		t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
 		if app.EnduserHandlers.JWKS == nil {
 			t.Error("hybrid mode must wire a JWKS handler")
 		}
@@ -1131,6 +1140,7 @@ func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {
 		if app == nil {
 			t.Fatal("expected non-nil app")
 		}
+		t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
 
 		count, err := adapter.SigningKeys().CountActive(context.Background())
 		if err != nil {
@@ -1177,6 +1187,7 @@ func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {
 		app, err := NewBuilder().WithConfig(cfg).WithStorage(adapter).WithLogger(logger).Build()
 		require.NoError(t, err)
 		require.NotNil(t, app)
+		t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
 		assert.Equal(t, 2, calls)
 		require.Len(t, requestedTimeouts, 2)
 		assert.Equal(t, cfg.OAuth2AuthServer.Local.SigningKeys.BootstrapTimeout, requestedTimeouts[0])
@@ -1228,6 +1239,7 @@ func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {
 		if app == nil {
 			t.Fatal("expected non-nil app")
 		}
+		t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
 		assert.Contains(t, logBuf.String(), `"level":"WARN"`)
 		assert.Contains(t, logBuf.String(), "no currently-active signing key available")
 		assert.Contains(t, logBuf.String(), "local token issuance is unavailable")

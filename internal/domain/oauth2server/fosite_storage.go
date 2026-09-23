@@ -127,10 +127,18 @@ func (s *FositeStorage) CreateAuthorizeCodeSession(ctx context.Context, code str
 }
 
 // GetAuthorizeCodeSession retrieves an authorization code session by code signature.
-func (s *FositeStorage) GetAuthorizeCodeSession(ctx context.Context, code string, _ fosite.Session) (fosite.Requester, error) {
+func (s *FositeStorage) GetAuthorizeCodeSession(ctx context.Context, code string, requestSession fosite.Session) (fosite.Requester, error) {
 	authCode, err := s.codeRepo.FindByCodeHash(ctx, code)
 	if err != nil {
 		return nil, s.mapStorageError(ctx, err)
+	}
+	if !authCode.ExpiresAt.After(time.Now()) {
+		return nil, fosite.ErrInvalidGrant
+	}
+
+	// Fosite validates the caller's session before replacing it with the stored session.
+	if requestSession != nil {
+		requestSession.SetExpiresAt(fosite.AuthorizeCode, authCode.ExpiresAt)
 	}
 
 	// Look up the client using the stored ClientID (the original client_id from the authorize
@@ -177,9 +185,6 @@ func (s *FositeStorage) GetAuthorizeCodeSession(ctx context.Context, code string
 		return req, fosite.ErrInvalidatedAuthorizeCode
 	}
 
-	// Expiry is intentionally not checked here. fosite inspects session.GetExpiresAt(AuthorizeCode)
-	// and returns ErrTokenExpired itself. Returning ErrInvalidatedAuthorizeCode for expired codes
-	// would incorrectly trigger fosite's replay-attack revocation path.
 	return req, nil
 }
 
