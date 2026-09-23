@@ -167,23 +167,6 @@ func TestGrantConsent_RejectsUndeclaredPermissionSets(t *testing.T) {
 				GrantedPermissionSets: tt.grantedPermissionSets,
 			})
 
-			returnedUndeclared := false
-			if grant != nil {
-				for _, entry := range grant.GrantedPermissionSets {
-					returnedUndeclared = returnedUndeclared || entry.PermissionSetID == undeclaredSetID
-				}
-			}
-			storedUndeclared := false
-			for _, stored := range grantRepo.grants {
-				for _, entry := range stored.GrantedPermissionSets {
-					storedUndeclared = storedUndeclared || entry.PermissionSetID == undeclaredSetID
-				}
-			}
-			if err == nil {
-				t.Logf("unexpected consent success: result_present=%t returned_undeclared=%t stored_undeclared=%t write_count=%d",
-					grant != nil, returnedUndeclared, storedUndeclared, grantRepo.createCalls+grantRepo.updateCalls)
-			}
-
 			assert.ErrorIs(t, err, ErrGrantValidation)
 			assert.True(t, grant == nil, "rejected consent must not return a grant")
 			if !tt.seedExistingGrant {
