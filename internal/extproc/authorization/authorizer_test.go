@@ -514,7 +514,7 @@ func TestOPAAuthorizer_EvaluationTimeout_Deny(t *testing.T) {
 	// Scenario: context cancelled before evaluation → deny
 	path := writePolicy(t, allowAllPolicy)
 	cfg := authzConfig(path)
-	cfg.EvaluationTimeout = 1 * time.Millisecond
+	cfg.EvaluationTimeout = 100 * time.Millisecond
 
 	auth, err := authorization.NewOPAAuthorizer(cfg, nil)
 	require.NoError(t, err)
@@ -525,12 +525,10 @@ func TestOPAAuthorizer_EvaluationTimeout_Deny(t *testing.T) {
 	cancel()
 
 	decision, err := auth.Evaluate(ctx, testInput("unknown"))
-	// Either returns error or returns deny — both acceptable outcomes
-	if err != nil {
-		// error path: caller should treat as deny
-		return
-	}
+	require.NoError(t, err)
+	require.NotNil(t, decision)
 	assert.Equal(t, "deny", decision.Action)
+	assert.Equal(t, []string{"evaluation timeout"}, decision.Reasons)
 }
 
 func TestOPAAuthorizer_Stop_GracefulShutdown(t *testing.T) {

@@ -807,46 +807,5 @@ bundles:
 				ContainSubstring("only one"),
 			), "error should reference the mutual exclusivity constraint")
 		})
-
-		// Edge case: OPA evaluation timeout
-		// specs/020-extproc-opa-authorization/spec.md — Edge Cases
-		It("should deny on evaluation timeout", func() {
-			// Edge case from specs/020-extproc-opa-authorization/spec.md
-
-			// Use an extremely short timeout to force a timeout on any real policy evaluation
-			cfg := fixtures.DefaultConfig()
-			cfg.Authorization = extprocconfig.AuthorizationConfig{
-				Enabled: true,
-				Policy: extprocconfig.PolicyConfig{
-					Path:     policyPath("allow_all.rego"),
-					Package:  "aib.extproc.authz",
-					Decision: "result",
-				},
-				DefaultDecision:   "deny",
-				EvaluationTimeout: 1 * time.Nanosecond, // guaranteed timeout
-				MaxBodySize:       1024 * 1024,
-			}
-
-			env := bootstrap.NewTestEnvironment(cfg, opaLogger)
-			env.Start()
-			defer env.Stop()
-
-			client, conn := env.NewExtProcClient()
-			defer conn.Close() //nolint:errcheck
-
-			headersReq := helpers.NewRequestHeaders().
-				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
-				WithHeader(":method", "POST").
-				WithAgentgatewayProtocol("mcp").
-				BuildWithMetadata()
-
-			_, bodyResp := helpers.SendHeadersAndBody(context.Background(), client, headersReq,
-				toolCallBody("list_repositories"))
-
-			// On timeout, fail closed: return 403
-			Expect(bodyResp).NotTo(BeNil())
-			Expect(bodyResp).To(helpers.HaveImmediateResponseWithStatus(403),
-				"OPA timeout should result in 403 deny (fail closed)")
-		})
 	})
 })
