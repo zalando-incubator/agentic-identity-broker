@@ -894,6 +894,10 @@ func TestResolveEffectiveScopes_ScopeUnion(t *testing.T) {
 
 	// Agent SR with svcA: ["read", "write"]
 	agent := &storagedomain.Agent{
+		PermissionSets: []storagedomain.AgentPermissionSetEntry{
+			{PermissionSetID: ps1ID, RequirementType: storagedomain.RequirementTypeOptional},
+			{PermissionSetID: ps2ID, RequirementType: storagedomain.RequirementTypeOptional},
+		},
 		ServiceRequirements: []storagedomain.ServiceRequirement{
 			{ServiceID: svcA, RequiredScopes: []string{"read", "write"}},
 		},
@@ -940,10 +944,15 @@ func TestResolveEffectiveScopes_ScopeLessServiceIsCovered(t *testing.T) {
 			PermissionSetID:    permissionSetID,
 			IncludedServiceIDs: []id.ServiceID{serviceID},
 		}},
-	}, &storagedomain.Agent{ServiceRequirements: []storagedomain.ServiceRequirement{{
-		ServiceID:       serviceID,
-		RequirementType: storagedomain.RequirementTypeMandatory,
-	}}})
+	}, &storagedomain.Agent{
+		PermissionSets: []storagedomain.AgentPermissionSetEntry{
+			{PermissionSetID: permissionSetID, RequirementType: storagedomain.RequirementTypeOptional},
+		},
+		ServiceRequirements: []storagedomain.ServiceRequirement{{
+			ServiceID:       serviceID,
+			RequirementType: storagedomain.RequirementTypeMandatory,
+		}},
+	})
 
 	require.NoError(t, err)
 	assert.Contains(t, effectiveScopes, serviceID)
@@ -973,11 +982,16 @@ func TestResolveEffectiveScopes_OmitsScopesOutsideSRCeiling(t *testing.T) {
 			PermissionSetID:    permissionSetID,
 			IncludedServiceIDs: []id.ServiceID{serviceID},
 		}},
-	}, &storagedomain.Agent{ServiceRequirements: []storagedomain.ServiceRequirement{{
-		ServiceID:       serviceID,
-		RequiredScopes:  []string{"write"},
-		RequirementType: storagedomain.RequirementTypeMandatory,
-	}}})
+	}, &storagedomain.Agent{
+		PermissionSets: []storagedomain.AgentPermissionSetEntry{
+			{PermissionSetID: permissionSetID, RequirementType: storagedomain.RequirementTypeOptional},
+		},
+		ServiceRequirements: []storagedomain.ServiceRequirement{{
+			ServiceID:       serviceID,
+			RequiredScopes:  []string{"write"},
+			RequirementType: storagedomain.RequirementTypeMandatory,
+		}},
+	})
 
 	require.NoError(t, err)
 	assert.NotContains(t, effectiveScopes, serviceID)
@@ -1006,6 +1020,9 @@ func TestResolveEffectiveScopes_SRCeiling(t *testing.T) {
 
 	// Agent SR with svcA: only ["read", "write"] — "admin" not in ceiling
 	agent := &storagedomain.Agent{
+		PermissionSets: []storagedomain.AgentPermissionSetEntry{
+			{PermissionSetID: ps1ID, RequirementType: storagedomain.RequirementTypeOptional},
+		},
 		ServiceRequirements: []storagedomain.ServiceRequirement{
 			{ServiceID: svcA, RequiredScopes: []string{"read", "write"}},
 		},
@@ -1050,10 +1067,15 @@ func TestResolveEffectiveScopes_RequireAllScopes(t *testing.T) {
 			PermissionSetID:    psID,
 			IncludedServiceIDs: []id.ServiceID{svcA},
 		}},
-	}, &storagedomain.Agent{ServiceRequirements: []storagedomain.ServiceRequirement{{
-		ServiceID:        svcA,
-		RequireAllScopes: true,
-	}}})
+	}, &storagedomain.Agent{
+		PermissionSets: []storagedomain.AgentPermissionSetEntry{
+			{PermissionSetID: psID, RequirementType: storagedomain.RequirementTypeOptional},
+		},
+		ServiceRequirements: []storagedomain.ServiceRequirement{{
+			ServiceID:        svcA,
+			RequireAllScopes: true,
+		}},
+	})
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"admin", "read", "write"}, effectiveScopes[svcA])
@@ -1083,6 +1105,9 @@ func TestResolveEffectiveScopes_PerServiceInclusion(t *testing.T) {
 	psService := permissionset.NewPermissionSetService(psRepo, &MockGrantRepository{}, slog.Default())
 
 	agent := &storagedomain.Agent{
+		PermissionSets: []storagedomain.AgentPermissionSetEntry{
+			{PermissionSetID: ps1ID, RequirementType: storagedomain.RequirementTypeOptional},
+		},
 		ServiceRequirements: []storagedomain.ServiceRequirement{
 			{ServiceID: svcA, RequiredScopes: []string{"read"}},
 			{ServiceID: svcB, RequiredScopes: []string{"write"}},
@@ -1137,6 +1162,10 @@ func TestResolveEffectiveScopes_MultiPSCrossScopeCeiling(t *testing.T) {
 
 	// SR ceiling only allows read and write (excludes admin and delete)
 	agent := &storagedomain.Agent{
+		PermissionSets: []storagedomain.AgentPermissionSetEntry{
+			{PermissionSetID: ps1ID, RequirementType: storagedomain.RequirementTypeOptional},
+			{PermissionSetID: ps2ID, RequirementType: storagedomain.RequirementTypeOptional},
+		},
 		ServiceRequirements: []storagedomain.ServiceRequirement{
 			{ServiceID: svcA, RequiredScopes: []string{"read", "write"}},
 		},
@@ -1188,6 +1217,9 @@ func TestResolveEffectiveScopes_NonSRServiceExcluded(t *testing.T) {
 
 	// Agent only declares svcA as a service requirement — svcB is not declared
 	agent := &storagedomain.Agent{
+		PermissionSets: []storagedomain.AgentPermissionSetEntry{
+			{PermissionSetID: ps1ID, RequirementType: storagedomain.RequirementTypeOptional},
+		},
 		ServiceRequirements: []storagedomain.ServiceRequirement{
 			{ServiceID: svcA, RequiredScopes: []string{"read"}},
 		},
@@ -1645,8 +1677,8 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 }
 
 // TestExchange_UncoveredServiceDeniedBeforeSessionLookup verifies that an agent
-// with neither service requirements nor permission sets cannot exchange for an
-// uncovered service before the token vault is read.
+// without service requirements cannot exchange for a service outside its granted
+// permission set before the token vault is read.
 func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 	t.Parallel()
 
@@ -1660,6 +1692,9 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 		ID:          agentID,
 		ClientID:    ptr.To(id.ClientID("test-agent-client")),
 		DisplayName: "Test Agent",
+		PermissionSets: []storagedomain.AgentPermissionSetEntry{
+			{PermissionSetID: permissionSetID, RequirementType: storagedomain.RequirementTypeOptional},
+		},
 	}
 	futureTime := time.Now().Add(time.Hour)
 	grant := &storagedomain.UserGrant{

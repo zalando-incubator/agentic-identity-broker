@@ -235,7 +235,7 @@ install-tools:
     @command -v air          > /dev/null || go install github.com/air-verse/air@v1.63.6
     @golangci-lint --version 2>/dev/null | grep -q "version 2.13.2" || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
     @go install github.com/jstemmer/go-junit-report/v2@v2.1.0
-    @go install github.com/onsi/ginkgo/v2/ginkgo@v2.32.1
+    @go install github.com/onsi/ginkgo/v2/ginkgo@v2.32.2
     @if [ -d "$HOME/.cache/ms-playwright" ] && [ -n "$(ls -A "$HOME/.cache/ms-playwright" 2>/dev/null)" ] && [ -f "$HOME/.cache/ms-playwright-go/1.62.1/package/cli.js" ]; then \
         echo "Playwright driver and browsers already installed, skipping download"; \
     else \

@@ -435,9 +435,10 @@ func (s *Service) ValidateSubmission(ctx context.Context, agent *storage.Agent, 
 // validateGrantStructureWithResolved validates the structure of granted permission sets
 // against the agent's declaration (T047). Accepts pre-resolved permission sets.
 // Checks:
-// 1. All mandatory permission_set_ids for the agent are present
-// 2. Mandatory PS entries must have len(IncludedServiceIDs) >= 1
-// 3. For each PS entry, included_service_ids is a subset of PS ServiceScope ∩ agent SR
+// 1. Every granted permission set is declared by the agent
+// 2. All mandatory permission_set_ids for the agent are present
+// 3. Mandatory PS entries must have len(IncludedServiceIDs) >= 1
+// 4. For each PS entry, included_service_ids is a subset of PS ServiceScope ∩ agent SR
 func (s *Service) validateGrantStructureWithResolved(_ context.Context, agent *storage.Agent, entries []storage.GrantedPermissionSetEntry, resolvedSets []*storage.PermissionSet) error {
 	if len(agent.PermissionSets) == 0 {
 		return fmt.Errorf("%w: agent must declare at least one permission set", ErrMissingMandatoryPS)
@@ -449,9 +450,17 @@ func (s *Service) validateGrantStructureWithResolved(_ context.Context, agent *s
 			ErrMissingMandatoryPS)
 	}
 
+	declaredPS := make(map[id.PermissionSetID]storage.RequirementType, len(agent.PermissionSets))
+	for _, aps := range agent.PermissionSets {
+		declaredPS[aps.PermissionSetID] = aps.RequirementType
+	}
+
 	// Build set of granted PS IDs
 	grantedPSSet := make(map[id.PermissionSetID]bool, len(entries))
 	for _, entry := range entries {
+		if _, ok := declaredPS[entry.PermissionSetID]; !ok {
+			return fmt.Errorf("%w: permission set %s is not declared by the agent", ErrGrantValidation, entry.PermissionSetID)
+		}
 		grantedPSSet[entry.PermissionSetID] = true
 	}
 
@@ -470,14 +479,8 @@ func (s *Service) validateGrantStructureWithResolved(_ context.Context, agent *s
 
 	// Mandatory PS entries must include at least one service.
 	// An empty IncludedServiceIDs on a mandatory PS is a no-op grant and must be rejected.
-	mandatoryPSIDs := make(map[id.PermissionSetID]bool, len(agent.PermissionSets))
-	for _, aps := range agent.PermissionSets {
-		if aps.RequirementType == storage.RequirementTypeMandatory {
-			mandatoryPSIDs[aps.PermissionSetID] = true
-		}
-	}
 	for _, entry := range entries {
-		if mandatoryPSIDs[entry.PermissionSetID] && len(entry.IncludedServiceIDs) == 0 {
+		if declaredPS[entry.PermissionSetID] == storage.RequirementTypeMandatory && len(entry.IncludedServiceIDs) == 0 {
 			return fmt.Errorf("%w: mandatory permission set %s must include at least one service",
 				ErrInvalidServiceInclusion, entry.PermissionSetID)
 		}
