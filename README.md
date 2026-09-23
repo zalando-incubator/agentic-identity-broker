@@ -6,7 +6,7 @@
   </picture>
   <div>
     <a href="https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/ci.yml">
-      <img src="https://img.shields.io/github/actions/workflow/status/zalando-incubator/agentic-identity-broker/ci.yml?label=CI&style=flat-square" alt="CI status" />
+      <img src="https://img.shields.io/github/actions/workflow/status/zalando-incubator/agentic-identity-broker/ci.yml?branch=main&label=CI&style=flat-square" alt="CI status" />
     </a>
     <a href="https://github.com/zalando-incubator/agentic-identity-broker/releases/latest">
       <img src="https://img.shields.io/github/v/release/zalando-incubator/agentic-identity-broker?style=flat-square" alt="Release" />
