@@ -46,7 +46,7 @@ Only fields approved in the `SafeFields` registry are stored in `detail.context`
 
 SC-005 remains a user task. A user must find a recent event within 30 seconds among 10,000 events; keyword and jump-to-date filters exist so this does not depend on paging.
 
-The 2,000-principal, 10,000-events-per-principal, 330-writes-per-second workload is an exploratory storage benchmark. It is not a product quota, traffic forecast, capacity commitment, or API latency SLO. Its targets are repository p95 at 100 ms and endpoint p95 at 500 ms on a warm isolated PostgreSQL database; it additionally measures roll-up upsert contention.
+The 2,000-principal, 10,000-events-per-principal, 330-writes-per-second workload is an exploratory storage benchmark. It is not a product quota, traffic forecast, capacity commitment, or API latency SLO. It captures repository and endpoint latency distributions on a warm isolated PostgreSQL database and measures roll-up upsert contention. SC-005 remains the sole user-facing performance criterion.
 
 ---
 

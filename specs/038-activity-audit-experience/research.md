@@ -217,10 +217,9 @@ filters without new infrastructure.
   Run a 10x, 330 writes/s burst across principals. This tests recorder and connection-pool
   behavior; it is not an expected MCP/request rate or a product write SLO.
 - Seed one principal with 10,000 events for SC-005 and issue keyset feed pages plus every single
-  filter and representative combined filters. Record p50/p95/p99. The comparison gate is p95
-  repository filter query at or below 100 ms and p95 endpoint response at or below 500 ms on a
-  warm isolated PostgreSQL database; SC-005 itself remains the user finding a recent event in
-  under 30 seconds, not an API latency promise.
+  filter and representative combined filters. Capture p50/p95/p99 and execution plans on a warm
+  isolated PostgreSQL database. The benchmark records storage behaviour; SC-005 itself remains the
+  user finding a recent event in under 30 seconds, not an API latency promise.
 
 **PostgreSQL comparison**: The base B-tree `(principal, occurred_at DESC, id DESC)` serves the
 feed and cursor. Partial expression B-tree indexes for the optional `agent_id`, `service_id`, and

@@ -30,7 +30,6 @@ incremented within its bucket (§1.2). Nothing else is ever updated. Corresponds
 | `actor_ref` | `ActorRef` (value object) | `{kind, id, display_label}`; `display_label` is the historical human name captured at emit time (FR-015). |
 | `subject_ref` | `SubjectRef` (value object) | `{kind, id, display_label}`; captured at emit time. |
 | `outcome` | `Outcome` enum | `succeeded` \| `failed` \| `blocked` \| `pending` (§7). |
-| `significance` | `Significance` enum | `security` \| `business`. Drives emphasis; all persisted events are already curated-significant. |
 | `summary` | `string` | Server-composed, human-readable, redacted sentence answering what/who/what-affected/outcome (FR-002, FR-010), produced from the per-`type` wording template (§3.2). |
 | `detail` | `ActivityDetail` (value object, JSONB) | Structured explanation, approved context, related links (§3). |
 | `related_refs` | `RelatedRefs` (value object, JSONB) | Foreign IDs for filtering, read-time threading, and outbound links: `agent_id?`, `service_id?`, `grant_id?`, `session_id?`, `approval_id?`, `client_id?`, `resource_uri?`. |
@@ -47,7 +46,7 @@ filters is rejected with `400 invalid_cursor` (research Decision 5).
 
 **Validation / invariants**:
 - `principal` non-empty; a query MUST NOT return events for any other principal (FR-012).
-- `category`, `actor_kind`, `subject_kind`, `outcome`, `significance` MUST be valid enum members.
+- `category`, `actor_kind`, `subject_kind`, and `outcome` MUST be valid enum members.
 - `dedup_key` non-empty and deterministic for the underlying action (§1.1). A second `Record`
   with the same `(principal, dedup_key)` is a no-op (or a counter increment for roll-up types).
 - `summary` MUST NOT be empty and MUST NOT contain a raw token/secret or a bare UUID where a label exists (FR-010, FR-011).
@@ -343,7 +342,6 @@ to the SPA via the existing config endpoint or a build-time constant).
 | `subject_id` | `text` | NULL |
 | `subject_label` | `text` | NOT NULL |
 | `outcome` | `text` | NOT NULL; `CHECK IN (succeeded,failed,blocked,pending)` |
-| `significance` | `text` | NOT NULL; `CHECK IN (security,business)` |
 | `summary` | `text` | NOT NULL |
 | `detail` | `jsonb` | NOT NULL DEFAULT `'{}'` |
 | `related_refs` | `jsonb` | NOT NULL DEFAULT `'{}'` |

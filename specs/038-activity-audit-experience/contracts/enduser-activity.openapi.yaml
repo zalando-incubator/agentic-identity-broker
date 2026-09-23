@@ -135,7 +135,6 @@ paths:
                           actor: { kind: agent, id: 7f0a…, display_label: "Research Agent" }
                           subject: { kind: tool, id: t9, display_label: "delete_repo" }
                           outcome: blocked
-                          significance: security
                           summary: "Research Agent's request to run delete_repo was denied."
                           related_refs: { agent_id: "7f0a…", approval_id: "p7", service_id: "github" }
                           occurrence_count: 1
@@ -148,7 +147,6 @@ paths:
                           actor: { kind: agent, id: 7f0a…, display_label: "Research Agent" }
                           subject: { kind: service, id: github, display_label: "GitHub" }
                           outcome: succeeded
-                          significance: business
                           summary: "Research Agent used GitHub on your behalf."
                           related_refs: { agent_id: "7f0a…", service_id: "github" }
                           occurrence_count: 41
@@ -161,7 +159,6 @@ paths:
                           actor: { kind: service, id: github, display_label: "GitHub" }
                           subject: { kind: session, id: se4, display_label: "GitHub session" }
                           outcome: failed
-                          significance: business
                           summary: "Your GitHub connection expired and needs to be reconnected."
                           related_refs: { service_id: "github", session_id: "se4" }
                           occurrence_count: 1
@@ -325,9 +322,6 @@ components:
       type: string
       enum: [delegation, session, agent_action, policy_decision, approval, revocation, reconnect, failure]
 
-    Significance:
-      type: string
-      enum: [security, business]
 
     ActorRef:
       type: object
@@ -404,7 +398,7 @@ components:
 
     ActivityEvent:
       type: object
-      required: [id, category, type, actor, subject, outcome, significance, summary, related_refs, occurrence_count, first_occurred_at, occurred_at, redacted]
+      required: [id, category, type, actor, subject, outcome, summary, related_refs, occurrence_count, first_occurred_at, occurred_at, redacted]
       properties:
         id: { type: string, format: uuid }
         category: { $ref: '#/components/schemas/ActivityCategory' }
@@ -412,7 +406,6 @@ components:
         actor: { $ref: '#/components/schemas/ActorRef' }
         subject: { $ref: '#/components/schemas/SubjectRef' }
         outcome: { $ref: '#/components/schemas/Outcome' }
-        significance: { $ref: '#/components/schemas/Significance' }
         summary:
           type: string
           description: Human-readable, redacted sentence answering what/who/what-affected/outcome (FR-002, FR-010).

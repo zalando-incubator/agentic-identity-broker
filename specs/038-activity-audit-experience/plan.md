@@ -55,9 +55,9 @@ the SPA (root-mounted, `basename="/"` — ADR 035-root-mounted-spa)
 **Project Type**: web (Go hexagonal backend + React SPA in one monorepo)
 **Performance Goals**: SC-005 is a product UX criterion: a specific recent event remains
 findable in under 30 seconds with ≥10,000 events. The separate storage experiment uses a
-10,000-event-per-principal stress fixture, 2,000 active principals, a 330 significant-event-writes/s
-burst, and p95 repository/API targets of ≤100/≤500 ms; these are exploratory measurements, not
-product load, quota, or latency requirements. Cursor pagination uses `(principal, occurred_at
+10,000-event-per-principal stress fixture, 2,000 active principals, and a 330 significant-event-writes/s
+burst. It captures p50/p95/p99 and execution plans on a warm isolated PostgreSQL database; it is
+exploratory, not a product load, quota, or latency commitment. Cursor pagination uses `(principal, occurred_at
 DESC, id DESC)` with the cursor bound to its filter set. Roll-ups (data-model §1.2) keep feed
 volume proportional to distinct actions, not MCP traffic.
 **Constraints**: read-only experience (no new mutation surface); 30-day rolling retention default
@@ -216,11 +216,10 @@ FR-005/008/009/011).
 [data-model.md](./data-model.md) §4): `delegation`, `session`, `agent_action`, `policy_decision`,
 `approval`, `revocation`, `reconnect`, `failure`. **Outcome**: `succeeded | failed | blocked |
 pending`. **Roll-ups** (data-model §1.2): `agent.acted_via_service` and `session.refreshed` are
-one event per `(agent, service, 1 h bucket)` with `occurrence_count`. **Threads** are derived on
-read from `related_refs` (`service_lifecycle` by service, `agent_journey` by agent within the
-window, `tool_flow` by approval); an event may belong to several. **Needs-attention** is derived
-live (reconnect-required from refresh expiry **or** a refresh failure newer than the last
-successful refresh; approval-pending), remains visible regardless of historical activity
+Seed one principal with 10,000 events for SC-005 and issue keyset feed pages plus every single
+filter and representative combined filters. Capture p50/p95/p99 and execution plans on a warm
+isolated PostgreSQL database. The benchmark records storage behaviour; SC-005 itself remains the
+user finding a recent event in under 30 seconds, not an API latency promise.
 retention, and clears automatically when the underlying state resolves.
 
 **Wording templates**: one template per event `type` (data-model §3.1/§3.2) is written in the
@@ -475,7 +474,7 @@ harness (no a11y E2E exists today):
   `BenchmarkActivityEventRepository` seeds the SC-005 10,000-event principal and measures all
   filters/threads; it separately exercises the 2,000-principal, 20-million-event, 3-KiB stress
   dataset and 330-writes/s burst. Capture p50/p95/p99, `EXPLAIN (ANALYZE, BUFFERS)`, and physical
-  table/index/WAL size; Decision 2 defines the comparison targets.
+  table/index/WAL size; Decision 2 defines the workload and measurements.
 - **SPA**: Vitest for hooks/components (filter→query mapping, cursor reset on filter change,
   outcome mapping, thread IDs resolve against page events + truncated affordance, attention band
   cap/grouping, polling pauses when hidden, `inAppRoute` guard rejects absolute/unknown paths,

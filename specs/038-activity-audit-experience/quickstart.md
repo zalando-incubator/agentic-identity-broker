@@ -111,8 +111,8 @@ workload and storage design.
   330 significant-event-writes/s burst. This is an exploratory stress profile, not a product
   load, quota, or MCP request-rate assumption.
 - Capture `EXPLAIN (ANALYZE, BUFFERS)` plus p50/p95/p99 for the unfiltered feed, each filter,
-  representative combined filters, and threads. The comparison targets are repository p95 ≤100
-  ms and endpoint p95 ≤500 ms on a warm database; SC-005 remains the under-30-second user task.
+  representative combined filters, and threads on a warm isolated PostgreSQL database. SC-005
+  remains the under-30-second user task; the benchmark does not establish an API latency SLO.
 - Record `pg_total_relation_size` and index/WAL headroom. Do not treat the 55.9-GiB raw payload
   estimate as a deployment requirement; it excludes those physical costs.
 

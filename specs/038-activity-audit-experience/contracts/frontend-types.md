@@ -22,7 +22,6 @@ export type ActivityCategory =
   | 'reconnect'
   | 'failure';
 
-export type Significance = 'security' | 'business';
 
 export type ActorKind = 'agent' | 'service' | 'user' | 'broker';
 export type SubjectKind = 'grant' | 'permission_set' | 'service' | 'session' | 'tool' | 'resource';
@@ -89,7 +88,6 @@ export interface ActivityEvent {
   actor: ActorRef;
   subject: SubjectRef;
   outcome: Outcome;
-  significance: Significance;
   summary: string;
   related_refs: RelatedRefs;
   /** >1 for rolled-up routine milestones. */
