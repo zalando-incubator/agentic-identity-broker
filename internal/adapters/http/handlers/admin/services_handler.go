@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -142,17 +141,6 @@ func serviceClientAuthentication(req ServiceRequest) (model.TokenEndpointAuthMet
 	return method, model.NewPlaintextSecret(req.ClientSecret), nil
 }
 
-func (h *ServicesHandler) cimdClientID(serviceID id.ServiceID) (id.ClientID, error) {
-	if h.config == nil {
-		return "", errors.New("server.enduser.public_url is required for CIMD confidential services")
-	}
-	publicURL, err := url.Parse(h.config.Server.EndUser.PublicURL)
-	if err != nil || publicURL.Scheme != "https" || publicURL.Host == "" || publicURL.User != nil || publicURL.RawQuery != "" || publicURL.Fragment != "" {
-		return "", errors.New("server.enduser.public_url must be a public HTTPS URL for CIMD confidential services")
-	}
-	return id.ClientID(strings.TrimRight(h.config.Server.EndUser.PublicURL, "/") + "/.well-known/oauth-client/" + serviceID.String()), nil
-}
-
 // CreateService handles POST /api/third-party/oauth2/clients
 func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -204,15 +192,6 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		AuthorizationParams:     req.AuthorizationParams,
 		CreatedAt:               now,
 		UpdatedAt:               now,
-	}
-	if entity.IsCIMDConfidentialClient() {
-		clientID, err := h.cimdClientID(serviceID)
-		if err != nil {
-			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
-			return
-		}
-		entity.ClientID = clientID
-		entity.CIMDClientIDBrokerAssigned = true
 	}
 
 	// Convert scopes
@@ -394,15 +373,6 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		ProtectedResources:      req.ProtectedResources,
 		AuthorizationParams:     req.AuthorizationParams,
 		UpdatedAt:               time.Now().UTC(),
-	}
-	if entity.IsCIMDConfidentialClient() {
-		clientID, err := h.cimdClientID(parsedSvcID)
-		if err != nil {
-			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
-			return
-		}
-		entity.ClientID = clientID
-		entity.CIMDClientIDBrokerAssigned = true
 	}
 
 	// Convert scopes

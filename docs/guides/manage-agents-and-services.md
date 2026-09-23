@@ -123,9 +123,9 @@ The broker prevents deletion of a service that a grant references. `DELETE
 before you delete the service.
 :::
 
-## Register a CIMD confidential service
+## Register a broker-hosted outbound CIMD confidential service
 
-Use `private_key_jwt` when the broker must authenticate to the provider without a shared secret.
+Use `private_key_jwt` when the broker must authenticate to the provider without a shared secret. This is **outbound CIMD client authentication**: the broker acts as the client of the third-party authorization server. It is separate from inbound CIMD client resolution for agents that authenticate to the broker.
 
 Set `server.enduser.public_url` to the stable public HTTPS URL of the broker first.
 

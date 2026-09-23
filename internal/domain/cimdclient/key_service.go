@@ -3,21 +3,17 @@ package cimdclient
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/keylifecycle"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -26,11 +22,10 @@ const cimdKeyGracePeriod = 10 * time.Minute
 
 // KeyService manages the dedicated CIMD client-authentication key domain.
 type KeyService struct {
-	repository           ports.SigningKeyRepository
-	bootstrapCoordinator ports.SigningKeyBootstrapCoordinator
-	encryption           ports.EncryptionPort
-	branchKeyManager     ports.BranchKeyManager
-	logger               *slog.Logger
+	repository ports.SigningKeyRepository
+	encryption ports.EncryptionPort
+	logger     *slog.Logger
+	engine     *keylifecycle.Engine
 }
 
 // NewKeyService creates a CIMD key-domain service.
@@ -45,11 +40,10 @@ func NewKeyService(
 		logger = slog.Default()
 	}
 	return &KeyService{
-		repository:           repository,
-		bootstrapCoordinator: bootstrapCoordinator,
-		encryption:           encryption,
-		branchKeyManager:     branchKeyManager,
-		logger:               logger,
+		repository: repository,
+		encryption: encryption,
+		logger:     logger,
+		engine:     keylifecycle.NewEngine(repository, bootstrapCoordinator, encryption, branchKeyManager, logger),
 	}
 }
 
@@ -63,31 +57,24 @@ func (s *KeyService) GenerateKey(ctx context.Context, algorithm string) (*storag
 		s.audit("", "generate", "rejected")
 		return nil, ErrUnsupportedCIMDAlgorithm
 	}
-
-	count, err := s.repository.CountActiveInDomain(ctx, storage.KeyDomainCIMDClientAuthentication)
+	now := time.Now().UTC()
+	key, err := s.engine.GenerateWithInitialActivation(ctx, cimdClientAuthenticationPolicy(), now, now.Add(cimdKeyGracePeriod))
 	if err != nil {
 		s.audit("", "generate", "rejected")
-		return nil, fmt.Errorf("count CIMD keys: %w", err)
+		return nil, fmt.Errorf("generate CIMD key: %w", err)
 	}
-	activatesAt := time.Now().UTC()
-	if count > 0 {
-		activatesAt = activatesAt.Add(cimdKeyGracePeriod)
-	}
-	key, err := s.generateAndStore(ctx, activatesAt)
-	if err != nil {
-		return nil, err
-	}
+	s.audit(key.KID, "generate", "success")
 	return key, nil
 }
 
 // ListKeys returns active CIMD client-authentication key metadata.
 func (s *KeyService) ListKeys(ctx context.Context) ([]*storage.SigningKey, error) {
-	return s.repository.ListActiveInDomain(ctx, storage.KeyDomainCIMDClientAuthentication)
+	return s.engine.List(ctx, cimdClientAuthenticationPolicy())
 }
 
 // PromoteKey makes an existing CIMD key immediately current.
 func (s *KeyService) PromoteKey(ctx context.Context, kid id.KeyID) (*storage.SigningKey, error) {
-	key, err := s.repository.SetCurrentInDomain(ctx, storage.KeyDomainCIMDClientAuthentication, kid, time.Now().UTC())
+	key, err := s.engine.Promote(ctx, cimdClientAuthenticationPolicy(), kid, time.Now().UTC())
 	if err != nil {
 		s.audit(kid, "promote", "rejected")
 		return nil, err
@@ -98,34 +85,7 @@ func (s *KeyService) PromoteKey(ctx context.Context, kid id.KeyID) (*storage.Sig
 
 // DeleteKey removes a non-current, non-effective CIMD key while preserving domain guards.
 func (s *KeyService) DeleteKey(ctx context.Context, kid id.KeyID) error {
-	key, err := s.repository.GetByKIDInDomain(ctx, storage.KeyDomainCIMDClientAuthentication, kid)
-	if err != nil {
-		s.audit(kid, "remove", "rejected")
-		return err
-	}
-	count, err := s.repository.CountActiveInDomain(ctx, storage.KeyDomainCIMDClientAuthentication)
-	if err != nil {
-		s.audit(kid, "remove", "rejected")
-		return fmt.Errorf("count CIMD keys: %w", err)
-	}
-	if count <= 1 {
-		s.audit(kid, "remove", "rejected")
-		return ports.ErrLastActiveKey
-	}
-	if key.IsCurrent {
-		s.audit(kid, "remove", "rejected")
-		return ports.ErrCurrentKey
-	}
-	keys, err := s.repository.ListActiveInDomain(ctx, storage.KeyDomainCIMDClientAuthentication)
-	if err != nil {
-		s.audit(kid, "remove", "rejected")
-		return fmt.Errorf("list CIMD keys: %w", err)
-	}
-	if current := currentUsableKey(keys, time.Now().UTC()); current != nil && current.KID == kid {
-		s.audit(kid, "remove", "rejected")
-		return ports.ErrEffectiveCurrentKey
-	}
-	if err := s.repository.DeleteInDomain(ctx, storage.KeyDomainCIMDClientAuthentication, kid); err != nil {
+	if err := s.engine.Delete(ctx, cimdClientAuthenticationPolicy(), kid, time.Now().UTC()); err != nil {
 		s.audit(kid, "remove", "rejected")
 		return err
 	}
@@ -135,23 +95,11 @@ func (s *KeyService) DeleteKey(ctx context.Context, kid id.KeyID) error {
 
 // EnsureInitialKey creates one immediately usable CIMD key when the domain is empty.
 func (s *KeyService) EnsureInitialKey(ctx context.Context) (*storage.SigningKey, bool, error) {
-	var created *storage.SigningKey
-	err := s.bootstrapCoordinator.WithBootstrapLock(ctx, func(lockCtx context.Context) error {
-		count, err := s.repository.CountActiveInDomain(lockCtx, storage.KeyDomainCIMDClientAuthentication)
-		if err != nil {
-			return fmt.Errorf("count CIMD keys: %w", err)
-		}
-		if count > 0 {
-			return nil
-		}
-		created, err = s.generateAndStore(lockCtx, time.Now().UTC())
-		return err
-	})
+	key, created, err := s.engine.EnsureInitialKey(ctx, cimdClientAuthenticationPolicy(), time.Now().UTC())
 	if err != nil {
 		s.audit("", "bootstrap", "rejected")
-		return nil, false, err
 	}
-	return created, created != nil, nil
+	return key, created, err
 }
 
 // RequirePublishedKey confirms that at least one public CIMD verification key is usable.
@@ -208,92 +156,34 @@ func (s *KeyService) PublicJWKSet(ctx context.Context) (jwk.Set, error) {
 	return set, nil
 }
 
-func (s *KeyService) generateAndStore(ctx context.Context, activatesAt time.Time) (*storage.SigningKey, error) {
-	kid := id.NewKeyID(domainencryption.CIMDClientAuthenticationKeyIDPrefix + uuid.New().String())
-	privatePEM, err := generateCIMDES256PEM()
-	if err != nil {
-		s.audit(kid, "generate", "rejected")
-		return nil, fmt.Errorf("generate CIMD ES256 key: %w", err)
-	}
-	subject := domainencryption.NewCIMDClientAuthenticationKeyBranchKeySubject(kid)
-	if err := subject.Validate(); err != nil {
-		s.audit(kid, "generate", "rejected")
-		return nil, fmt.Errorf("validate CIMD branch key subject: %w", err)
-	}
-	if _, err := s.branchKeyManager.Create(ctx, subject); err != nil {
-		s.audit(kid, "generate", "rejected")
-		return nil, fmt.Errorf("provision CIMD branch key: %w", err)
-	}
-	ciphertext, err := s.encryption.Encrypt(ctx, privatePEM, subject.EncryptionContext())
-	if err != nil {
-		s.audit(kid, "generate", "rejected")
-		return nil, fmt.Errorf("encrypt CIMD private key: %w", err)
-	}
-	key := &storage.SigningKey{
-		ID:                  id.NewSigningKeyID(),
-		KID:                 kid,
-		KeyDomain:           storage.KeyDomainCIMDClientAuthentication,
-		Algorithm:           "ES256",
-		PrivateKeyEncrypted: ciphertext,
-		IsCurrent:           true,
-		ActivatesAt:         activatesAt,
-		CreatedAt:           time.Now().UTC(),
-	}
-	if err := s.repository.CreateAndSetCurrent(ctx, key); err != nil {
-		s.audit(kid, "generate", "rejected")
-		return nil, fmt.Errorf("store CIMD key: %w", err)
-	}
-	s.audit(key.KID, "generate", "success")
-	return key, nil
-}
-
 func cimdKeyEncryptionContext(kid id.KeyID) map[string]string {
 	return domainencryption.NewCIMDClientAuthenticationKeyBranchKeySubject(kid).EncryptionContext()
 }
 
-func generateCIMDES256PEM() ([]byte, error) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
+func cimdClientAuthenticationPolicy() keylifecycle.Policy {
+	return keylifecycle.Policy{
+		Domain: storage.KeyDomainCIMDClientAuthentication,
+		NewKID: func() id.KeyID { return keylifecycle.UUIDKID(domainencryption.CIMDClientAuthenticationKeyIDPrefix) },
+		NewSubject: func(kid id.KeyID) (domainencryption.BranchKeySubject, error) {
+			return domainencryption.NewCIMDClientAuthenticationKeyBranchKeySubject(kid), nil
+		},
 	}
-	der, err := x509.MarshalPKCS8PrivateKey(privateKey)
-	if err != nil {
-		return nil, err
-	}
-	encoded := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	if encoded == nil {
-		return nil, errors.New("encode CIMD private key")
-	}
-	return encoded, nil
 }
 
 func cimdPublicKeyFromPEM(privatePEM []byte) (*ecdsa.PublicKey, error) {
-	block, _ := pem.Decode(privatePEM)
-	if block == nil {
-		return nil, errors.New("decode CIMD private key")
-	}
-	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	publicKey, err := keylifecycle.PublicKeyFromPEM(privatePEM, "ES256")
 	if err != nil {
 		return nil, err
 	}
-	ecdsaKey, ok := privateKey.(*ecdsa.PrivateKey)
+	ecdsaKey, ok := publicKey.(*ecdsa.PublicKey)
 	if !ok {
 		return nil, errors.New("CIMD private key is not ECDSA")
 	}
-	return &ecdsaKey.PublicKey, nil
+	return ecdsaKey, nil
 }
 
 func currentUsableKey(keys []*storage.SigningKey, now time.Time) *storage.SigningKey {
-	var best *storage.SigningKey
-	for _, key := range keys {
-		if key == nil || key.ActivatesAt.After(now) {
-			continue
-		}
-		if best == nil || (!best.IsCurrent && key.IsCurrent) || (best.IsCurrent == key.IsCurrent && key.ActivatesAt.After(best.ActivatesAt)) {
-			best = key
-		}
-	}
-	return best
+	return keylifecycle.EffectiveCurrent(keys, now)
 }
 
 func (s *KeyService) audit(kid id.KeyID, operation, outcome string) {

@@ -1655,10 +1655,12 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 		return adapter
 	}
 
-	build := func(t *testing.T, mode string, adapter *storage.Adapter) (*App, error) {
+	build := func(t *testing.T, mode string, adapter *storage.Adapter, publicURL string) (*App, error) {
 		t.Helper()
+		cfg := newConfig(mode)
+		cfg.Server.EndUser.PublicURL = publicURL
 		builder := NewBuilder().
-			WithConfig(newConfig(mode)).
+			WithConfig(cfg).
 			WithStorage(adapter).
 			WithLogger(slog.New(slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelError})))
 		if mode != "local" {
@@ -1701,7 +1703,7 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 		t.Run(mode.name+" starts without a CIMD key when no CIMD service is persisted", func(t *testing.T) {
 			adapter := newStorage(t)
 
-			app, err := build(t, mode.mode, adapter)
+			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
 			require.NoError(t, err)
 			require.NotNil(t, app)
 			assert.Zero(t, countCIMDKeys(t, adapter))
@@ -1716,7 +1718,7 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 			adapter := newStorage(t)
 			persistCIMDService(t, adapter)
 
-			app, err := build(t, mode.mode, adapter)
+			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
 			require.NoError(t, err)
 			require.NotNil(t, app)
 			require.NotNil(t, app.CIMDKeyService)
@@ -1747,20 +1749,44 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 				CreatedAt:           time.Now().UTC(),
 			}))
 
-			_, err := build(t, mode.mode, adapter)
+			_, err := build(t, mode.mode, adapter, "https://broker.example.com")
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ports.ErrCIMDPublicKeyUnavailable)
 		})
 
 		t.Run(mode.name+" persists a later CIMD service without implicitly provisioning a key", func(t *testing.T) {
 			adapter := newStorage(t)
-			app, err := build(t, mode.mode, adapter)
+			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
 			require.NoError(t, err)
 			require.NotNil(t, app)
 			assert.NotNil(t, app.CIMDKeyReadiness)
 
 			persistCIMDService(t, adapter)
 			assert.Zero(t, countCIMDKeys(t, adapter), "service registration must not provision a CIMD key")
+		})
+
+		t.Run(mode.name+" rejects changed public origin without rewriting the CIMD identity", func(t *testing.T) {
+			adapter := newStorage(t)
+			serviceID := persistCIMDService(t, adapter)
+			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
+			require.NoError(t, err)
+			metadata, err := app.CIMDMetadataProvider.Metadata(context.Background(), serviceID)
+			require.NoError(t, err)
+			persisted, err := adapter.Services().Get(context.Background(), serviceID)
+			require.NoError(t, err)
+			keyCount := countCIMDKeys(t, adapter)
+
+			_, err = build(t, mode.mode, adapter, "https://broker.changed.example")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "server.enduser.public_url")
+			assert.Equal(t, metadata.ClientID, persisted.ClientID.String())
+			assert.Equal(t, keyCount, countCIMDKeys(t, adapter))
+
+			restored, err := build(t, mode.mode, adapter, "https://broker.example.com")
+			require.NoError(t, err)
+			restoredMetadata, err := restored.CIMDMetadataProvider.Metadata(context.Background(), serviceID)
+			require.NoError(t, err)
+			assert.Equal(t, metadata.ClientID, restoredMetadata.ClientID)
 		})
 	}
 }

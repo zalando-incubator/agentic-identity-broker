@@ -151,7 +151,9 @@ Each admin endpoint requires `X-Remote-User`. The proxy enforces administrator p
 | PUT | `/api/services/{service-id}` | Update a service. |
 | DELETE | `/api/services/{service-id}` | Delete a service (`409 conflict` if grants reference it). |
 
-### CIMD confidential services
+### Outbound CIMD confidential services
+
+The broker uses **outbound CIMD client authentication** for a `private_key_jwt` third-party service. This is separate from inbound CIMD client resolution, where an agent presents a metadata URL to the broker authorization server.
 
 A service can use one of three token-endpoint authentication methods:
 

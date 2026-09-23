@@ -267,10 +267,10 @@ func TestRefreshAccessTokenSecurity_CIMDClientAuditsSuccessAndRejection(t *testi
 			_, _ = w.Write([]byte(`{"access_token":"cimd-access-token","token_type":"Bearer","expires_in":3600}`))
 		}))
 		defer tokenServer.Close()
-		require.NoError(t, providerService.Create(context.Background(), createCIMDTestProvider(serviceID, tokenServer.URL)))
+		provider := createCIMDTestProvider(serviceID, tokenServer.URL)
+		require.NoError(t, providerService.Create(context.Background(), provider))
 
-		_, err := service.RefreshAccessToken(context.Background(), createCIMDTestProvider(serviceID, tokenServer.URL), "refresh-token")
-
+		_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
 		require.NoError(t, err)
 		assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "success")
 	})
@@ -635,7 +635,7 @@ func newSecurityTestOAuth2SessionService(
 		nil,
 		false,
 		logger,
-	).WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
+	).WithCIMDPublicURL("https://broker.example.com").WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
 
 	config := oauth2session.DefaultConfig()
 	config.CallbackBaseURL = "https://broker.example.com"
@@ -775,11 +775,10 @@ func cimdClientIDForService(serviceID id.ServiceID) string {
 
 func createCIMDTestProvider(serviceID id.ServiceID, tokenEndpoint string) *model.ThirdpartyOAuth2ProviderEntity {
 	provider := createTestService(serviceID)
-	provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
+	provider.ClientID = ""
 	provider.Endpoints.TokenEndpoint = tokenEndpoint
 	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodPrivateKeyJWT
 	provider.Secret = model.NewAbsentSecret()
-	provider.CIMDClientIDBrokerAssigned = true
 	return provider
 }
 

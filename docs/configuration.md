@@ -969,7 +969,9 @@ For compliance and troubleshooting, read the JSON audit log. It is the first sta
 
 CIMD confidential services add no configuration parameter.
 They require the existing `server.enduser.public_url` configuration value to be a stable, public HTTPS URL.
-The broker rejects an HTTP `server.enduser.public_url` for a CIMD confidential service.
+The broker persists this exact origin in each broker-hosted CIMD client ID.
+
+At startup, the broker verifies every persisted CIMD client ID against `server.enduser.public_url` before it provisions CIMD keys or serves routes. A changed origin stops startup; the broker never rewrites the stored client ID or supplies a fallback metadata URL. Restore the prior public URL and keep it externally reachable for immediate recovery. Re-registration or identity migration requires a separately approved migration flow.
 
 #### oauth2_authorization_server.multi_agent_client
 

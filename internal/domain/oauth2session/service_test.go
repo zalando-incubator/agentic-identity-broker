@@ -323,6 +323,7 @@ func TestRefreshAccessToken_CIMDClientUsesFreshAssertionForEachRequest(t *testin
 	defer tokenEndpoint.Close()
 
 	provider := createCIMDTestProvider(serviceID, tokenEndpoint.URL)
+	provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
 	for range 2 {
 		_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
 		require.NoError(t, err)
@@ -391,6 +392,7 @@ func TestRefreshAccessToken_CIMDClientFailsClosedBeforeTokenRequestWhenSigningUn
 			defer tokenEndpoint.Close()
 
 			provider := createCIMDTestProvider(serviceID, tokenEndpoint.URL)
+			provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
 			token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
 			require.Error(t, err)
 			assert.Nil(t, token)

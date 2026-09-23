@@ -125,12 +125,9 @@ type ThirdpartyOAuth2ProviderEntity struct {
 	AuthorizationParams     map[string]string
 	ProtectedResources      []string
 	Version                 int64
-	// CIMDClientIDBrokerAssigned records that the handler generated ClientID after service-ID allocation.
-	// It is transient and must never be persisted.
-	CIMDClientIDBrokerAssigned bool
-	ServiceRequirements        []ServiceRequirement
-	CreatedAt                  time.Time
-	UpdatedAt                  time.Time
+	ServiceRequirements     []ServiceRequirement
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 // IsPublicClient reports whether the provider uses no token-endpoint client authentication.
@@ -141,6 +138,18 @@ func (e *ThirdpartyOAuth2ProviderEntity) IsPublicClient() bool {
 // IsCIMDConfidentialClient reports whether the provider uses broker-managed private_key_jwt authentication.
 func (e *ThirdpartyOAuth2ProviderEntity) IsCIMDConfidentialClient() bool {
 	return e.TokenEndpointAuthMethod.IsCIMDConfidential()
+}
+
+// CIMDClientID derives the fixed broker-hosted identifier for a CIMD client.
+func CIMDClientID(publicURL string, serviceID id.ServiceID) (id.ClientID, error) {
+	if serviceID.IsZero() {
+		return "", errors.New("service ID is required for CIMD client identity")
+	}
+	parsed, err := url.Parse(publicURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return "", errors.New("server.enduser.public_url must be a public HTTPS URL for CIMD confidential services")
+	}
+	return id.ClientID(strings.TrimRight(parsed.String(), "/") + "/.well-known/oauth-client/" + serviceID.String()), nil
 }
 
 // Validate performs basic validation on the entity.
@@ -198,11 +207,8 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateClientAuthentication(flavor OAu
 		if !e.Secret.IsAbsent() {
 			return false, errors.New(`client_secret must be absent when token_endpoint_auth_method is "private_key_jwt"`)
 		}
-		if !e.CIMDClientIDBrokerAssigned && !e.ClientID.IsZero() {
+		if !e.ClientID.IsZero() {
 			return false, errors.New(`client_id must be absent when token_endpoint_auth_method is "private_key_jwt"`)
-		}
-		if e.CIMDClientIDBrokerAssigned && e.ClientID.IsZero() {
-			return false, errors.New(`broker-generated client_id is required when token_endpoint_auth_method is "private_key_jwt"`)
 		}
 		return false, nil
 	}
@@ -562,14 +568,13 @@ func (e *ThirdpartyOAuth2ProviderEntity) Copy() *ThirdpartyOAuth2ProviderEntity 
 	}
 
 	result := &ThirdpartyOAuth2ProviderEntity{
-		ID:                         e.ID,
-		DisplayName:                e.DisplayName,
-		ClientID:                   e.ClientID,
-		Secret:                     e.Secret, // Value type; internal ciphertext slice independently copied by Secret
-		TokenEndpointAuthMethod:    e.TokenEndpointAuthMethod,
-		CIMDClientIDBrokerAssigned: e.CIMDClientIDBrokerAssigned,
-		Flavor:                     e.Flavor,
-		IssuerURI:                  e.IssuerURI,
+		ID:                      e.ID,
+		DisplayName:             e.DisplayName,
+		ClientID:                e.ClientID,
+		Secret:                  e.Secret, // Value type; internal ciphertext slice independently copied by Secret
+		TokenEndpointAuthMethod: e.TokenEndpointAuthMethod,
+		Flavor:                  e.Flavor,
+		IssuerURI:               e.IssuerURI,
 		Discovery: DiscoveryConfig{
 			EnableDiscovery: e.Discovery.EnableDiscovery,
 		},

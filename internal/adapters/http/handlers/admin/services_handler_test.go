@@ -138,7 +138,9 @@ func setupHandler(t *testing.T, mockRepo *MockProviderRepository) *ServicesHandl
 
 func setupHandlerWithConfig(t *testing.T, mockRepo *MockProviderRepository, config *ports.Config) *ServicesHandler {
 	t.Helper()
-	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default()).WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
+	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default()).
+		WithCIMDPublicURL(config.Server.EndUser.PublicURL).
+		WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
 	return NewServicesHandler(svc, config, slog.Default())
 }
 
@@ -1626,6 +1628,13 @@ func TestServicesHandler_UpdateCIMDConfidentialService(t *testing.T) {
 	handler := setupHandler(t, repo)
 	serviceID := id.NewServiceID()
 	clientID := "https://broker.example.com/.well-known/oauth-client/" + serviceID.String()
+	persisted := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                      serviceID,
+		ClientID:                id.ClientID(clientID),
+		Secret:                  model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodPrivateKeyJWT,
+	}
+	repo.On("Get", mock.Anything, serviceID).Return(persisted, nil).Once()
 
 	repo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
 		return entity.ID == serviceID &&

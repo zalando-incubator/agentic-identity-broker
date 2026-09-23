@@ -821,7 +821,7 @@ OAuth2 /authorize request
 
 #### 3.1.z. Outbound CIMD Client Authentication (Feature 046)
 
-**Purpose**: Authenticate the broker to a third-party OAuth2 token endpoint for a CIMD confidential service. This outbound feature does not change inbound CIMD client resolution.
+**Purpose**: Authenticate the broker to a third-party OAuth2 token endpoint for a CIMD confidential service. This outbound client-authentication feature does not change **inbound CIMD client resolution**, where the broker fetches and validates an agent's client metadata document before authorization.
 
 **Service modes**: Third-party OAuth2 service authentication is explicit:
 
@@ -852,6 +852,8 @@ The assertion has `iss` and `sub` equal to the broker-hosted client ID URL. Its 
 **Public documents**: The anonymous metadata route returns the broker-hosted Client ID Metadata Document only for an existing CIMD confidential service with a usable published key. Its JWK route publishes public CIMD verification keys only. Both routes use `Cache-Control: public, max-age=300`. All unavailable service states return the existing JSON `404` response without a redirect, partial document, or key material.
 
 **SC-008 normal load**: After one warm-up request per route, ten concurrent clients send 100 anonymous requests to each public metadata and CIMD JWK route. Each request must return `200 OK`. The p95 retrieval latency for each route must be less than one second.
+
+**Client-ID continuity**: The broker persists the complete HTTPS client ID derived from `server.enduser.public_url` and the immutable service ID. Startup validates every persisted outbound CIMD identity before key bootstrap or route serving. A changed public origin fails startup rather than rewriting an identity or returning metadata from a fallback location. Restore the prior origin for immediate recovery; any re-registration or identity migration is an explicit, separately approved operation.
 
 **See Also**: [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md)
 
