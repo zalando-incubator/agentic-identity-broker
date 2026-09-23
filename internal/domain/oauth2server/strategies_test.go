@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v4/jwa"
@@ -279,10 +280,36 @@ func TestRandomCodeStrategy_GenerateAuthorizeCode(t *testing.T) {
 		assert.Equal(t, sig, computedSig)
 	})
 
-	t.Run("validate is no-op", func(t *testing.T) {
-		err := strategy.ValidateAuthorizeCode(context.Background(), nil, "any-code")
-		assert.NoError(t, err)
-	})
+}
+
+func TestRandomCodeStrategy_ValidateAuthorizeCode(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		expires bool
+		ttl     time.Duration
+		wantErr error
+	}{
+		{name: "active", expires: true, ttl: time.Minute},
+		{name: "expired", expires: true, ttl: -time.Minute, wantErr: fosite.ErrTokenExpired},
+		{name: "at expiry", expires: true, wantErr: fosite.ErrTokenExpired},
+		{name: "missing expiry", wantErr: fosite.ErrTokenExpired},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				req := fosite.NewRequest()
+				req.Session = &fosite.DefaultSession{}
+				if tt.expires {
+					req.Session.SetExpiresAt(fosite.AuthorizeCode, time.Now().Add(tt.ttl))
+				}
+				err := (&RandomCodeStrategy{}).ValidateAuthorizeCode(context.Background(), req, "code")
+				if tt.wantErr != nil {
+					require.ErrorIs(t, err, tt.wantErr)
+				} else {
+					require.NoError(t, err)
+				}
+			})
+		})
+	}
 }
 
 func TestRandomRefreshTokenStrategy(t *testing.T) {

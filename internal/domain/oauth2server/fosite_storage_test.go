@@ -232,6 +232,57 @@ func TestFositeStorage_AuthorizeCodeSessions(t *testing.T) {
 	})
 }
 
+func TestFositeStorage_AuthorizeCodeExpiry(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		expiresAt time.Time
+		used      bool
+		wantErr   error
+	}{
+		{name: "active", expiresAt: time.Now().Add(time.Minute)},
+		{name: "expired", expiresAt: time.Now().Add(-time.Minute), wantErr: fosite.ErrInvalidGrant},
+		{name: "missing expiry", wantErr: fosite.ErrInvalidGrant},
+		{name: "expired used code is not replay", expiresAt: time.Now().Add(-time.Minute), used: true, wantErr: fosite.ErrInvalidGrant},
+		{name: "active used code is replay", expiresAt: time.Now().Add(time.Minute), used: true, wantErr: fosite.ErrInvalidatedAuthorizeCode},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store, _, agentRepo, credRepo := newTestFositeStorage()
+			agent := testAgent()
+			require.NoError(t, agentRepo.Create(context.Background(), agent))
+			require.NoError(t, credRepo.Create(context.Background(), &dstorage.ClientCredential{
+				ID: id.NewCredentialID(), AgentID: agent.ID, SecretHash: "hash",
+			}))
+			code := &dstorage.AuthorizationCode{
+				ID: id.NewAuthorizationCodeID(), AgentID: agent.ID,
+				ExpiresAt: tt.expiresAt,
+			}
+			if tt.used {
+				usedAt := time.Now().Add(-time.Minute)
+				code.UsedAt = &usedAt
+			}
+			store.codeRepo = &mockCodeRepo{
+				findByCodeHashFunc: func(context.Context, string) (*dstorage.AuthorizationCode, error) {
+					return code, nil
+				},
+			}
+			session := &fosite.DefaultSession{}
+			session.SetExpiresAt(fosite.AuthorizeCode, time.Now().Add(-time.Hour))
+			req, err := store.GetAuthorizeCodeSession(context.Background(), "code", session)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				if tt.wantErr == fosite.ErrInvalidatedAuthorizeCode {
+					require.NotNil(t, req)
+				} else {
+					assert.NotErrorIs(t, err, fosite.ErrInvalidatedAuthorizeCode)
+				}
+			} else {
+				require.NoError(t, err)
+				require.NoError(t, (&RandomCodeStrategy{}).ValidateAuthorizeCode(context.Background(), &fosite.Request{Session: session}, "code"))
+			}
+		})
+	}
+}
+
 func TestFositeStorage_AuthorizeCode_ProfileRoundTrip(t *testing.T) {
 	store, _, agentRepo, credRepo := newTestFositeStorage()
 	agent := testAgent()
