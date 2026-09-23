@@ -69,13 +69,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Enable Go 1.26 jsonv2 experiment
-        if: steps.skip-check.outputs.skip != 'true'
-        run: |
-          case "$(go env GOVERSION)" in
-            go1.26.*) echo "GOEXPERIMENT=jsonv2" >> "$GITHUB_ENV" ;;
-          esac
-
       - name: Set up Node.js
         if: steps.skip-check.outputs.skip != 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

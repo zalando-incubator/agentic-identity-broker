@@ -66,7 +66,7 @@ Name: Agentic Identity Broker
 
 Description: Core service providing secure identity management, authentication, and authorization for AI agents and autonomous systems. Implements hexagonal architecture with clear separation of domain logic, ports, and adapters.
 
-Technologies: Go 1.26.8+, Viper (configuration), Cobra (CLI)
+Technologies: Go 1.27.1+, Viper (configuration), Cobra (CLI)
 
 Deployment: Containerized service (Docker), deployable to Kubernetes, AWS ECS, or standalone
 

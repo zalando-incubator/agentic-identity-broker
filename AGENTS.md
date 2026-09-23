@@ -98,7 +98,7 @@ Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 
 | Section | Technology | AGENTS.md |
 |---|---|---|
-| `internal/` | Go 1.26.8 — hexagonal (domain→ports→adapters→app) | `internal/AGENTS.md` |
+| `internal/` | Go 1.27.1 — hexagonal (domain→ports→adapters→app) | `internal/AGENTS.md` |
 | `web/` | React 19 + TypeScript + Vite 7 + Tailwind 4 | `web/AGENTS.md` |
 | `infra/cdk/` | AWS CDK (Go) — KMS, DynamoDB, IAM | `infra/AGENTS.md` |
 | `tests/` | Ginkgo/Gomega (e2e), Go testing (integration) | `tests/AGENTS.md` |
@@ -202,4 +202,4 @@ Use `NNN_description.{up,down}.sql` for migrations in `migrations/`. For large t
 
 ## Active Technologies
 
-Go 1.26.8 | React 19 + TypeScript + Vite 7 + Tailwind 4 | chi v5 | sqlx + pgx v5 | Ginkgo/Gomega | Viper/Cobra | CVA | OpenTelemetry (`otelhttp`, `otelslog`) | `envoyproxy/go-control-plane` | PostgreSQL (prod) + in-memory (dev/test)
+Go 1.27.1 | React 19 + TypeScript + Vite 7 + Tailwind 4 | chi v5 | sqlx + pgx v5 | Ginkgo/Gomega | Viper/Cobra | CVA | OpenTelemetry (`otelhttp`, `otelslog`) | `envoyproxy/go-control-plane` | PostgreSQL (prod) + in-memory (dev/test)

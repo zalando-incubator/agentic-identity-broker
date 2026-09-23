@@ -10,7 +10,7 @@ Full reference: `infra/AGENTS.md`
 
 ## Module Structure
 
-Separate Go module at `infra/cdk/` (Go 1.26.8, aws-cdk-go/awscdk/v2).
+Separate Go module at `infra/cdk/` (Go 1.27.1, aws-cdk-go/awscdk/v2).
 
 ```
 infra/cdk/
