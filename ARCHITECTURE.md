@@ -66,7 +66,7 @@ Name: Agentic Identity Broker
 
 Description: Core service providing secure identity management, authentication, and authorization for AI agents and autonomous systems. Implements hexagonal architecture with clear separation of domain logic, ports, and adapters.
 
-Technologies: Go 1.26.8+, Viper (configuration), Cobra (CLI)
+Technologies: Go 1.27.1+, Viper (configuration), Cobra (CLI)
 
 Deployment: Containerized service (Docker), deployable to Kubernetes, AWS ECS, or standalone
 
@@ -530,6 +530,10 @@ Admin Server (Port 14000):
 - `OAuth2AuthorizeHandler` always exists; the builder injects `proxyProceedStrategy`, `localProceedStrategy`, or `hybridProceedStrategy` based on the selected mode.
 - `OAuth2TokenHandler` always exists; the builder injects `proxyTokenGrantStrategy`, `localGrantStrategy`, or `hybridTokenGrantStrategy` based on the selected mode.
 - When local issuance is part of the active mode (`local` or `hybrid`), the local strategies are backed by `internal/domain/oauth2server.Provider`, which contains all fosite-specific authorization-server logic.
+
+**Authorization code expiry**: Locally issued codes expire after 60 seconds. Repository lookups exclude expired records in PostgreSQL and memory storage. `FositeStorage` checks the stored expiry before replay handling and hydrates the caller's session for `RandomCodeStrategy` to check again. Expired codes return `invalid_grant` without replay revocation. Unexpired, previously used codes retain replay protection.
+
+**OAuth2 record retention**: In local and hybrid modes, the builder starts `SessionCleanup` after successful application construction. It deletes expired authorization codes, PKCE sessions, and refresh-token sessions at startup and every minute. A repository error does not stop the remaining deletions or future sweeps. Application shutdown cancels the worker and waits for its current operation to finish. Expiry enforcement does not depend on cleanup success.
 
 **Type Containment**: All [fosite](https://github.com/ory/fosite) OAuth2 server types are contained in `internal/domain/oauth2server/`. This package encapsulates the OAuth2 authorization server domain logic (authorization code storage, client authentication, token signing) and **never leaks fosite types** into ports, adapters/http, or app packages.
 

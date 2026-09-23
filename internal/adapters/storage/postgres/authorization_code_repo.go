@@ -58,7 +58,7 @@ func (r *AuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash str
 	var code storage.AuthorizationCode
 	err := r.adapter.db.GetContext(queryCtx, &code,
 		`SELECT id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, used_at, created_at, email, display_name
-		 FROM authorization_codes WHERE code_hash = $1`, codeHash)
+		 FROM authorization_codes WHERE code_hash = $1 AND expires_at > NOW()`, codeHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return nil, storage.NewStorageError("AuthorizationCodeRepo.FindByCodeHash", storage.ErrorKindNotFound, err, "authorization code not found")

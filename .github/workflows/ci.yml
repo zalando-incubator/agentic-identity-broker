@@ -115,18 +115,18 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Cache development tools
-        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/go/bin
             ~/.cache/golangci-lint
             ~/.cache/ms-playwright
             ~/.cache/ms-playwright-go
-          key: tools-${{ runner.os }}-${{ hashFiles('justfile', 'scripts/golangci-lint-install.sh') }}
+          key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
 
       - name: Install just
-        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2.86.1
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
         with:
           tool: just
 

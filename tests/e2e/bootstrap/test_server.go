@@ -547,11 +547,18 @@ func NewAdminTestServer(app *app.App, logger *slog.Logger) (*TestServer, error) 
 	return NewTestServerV2(app, logger, WithServerType(ServerTypeAdmin))
 }
 
-// Close gracefully shuts down the server.
-// Safe to call multiple times (httptest.Server.Close is idempotent).
+// Close stops the server and the application's background workers.
+// All servers sharing this application must finish their requests before Close.
 func (ts *TestServer) Close() {
 	if ts.server != nil {
 		ts.server.Close()
+	}
+	if ts.app != nil && ts.app.Shutdown != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := ts.app.Shutdown(ctx); err != nil {
+			ts.logger.Error("test application shutdown failed", "error", err)
+		}
 	}
 }
 

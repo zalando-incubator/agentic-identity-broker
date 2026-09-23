@@ -58,3 +58,14 @@ func TestHelmTemplate_ProxyUpstreamTimeout(t *testing.T) {
 		require.NotContains(t, output, "upstream_timeout:")
 	})
 }
+
+func TestHelmTemplate_ManagedKeysUseBase64StringData(t *testing.T) {
+	key := "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+	output := renderHelmTemplate(t,
+		"--set-string", "broker.thirdPartyOauth2.jweSigningKeyBase64="+key,
+		"--set-string", "broker.encryption.memory.rawKey="+key,
+	)
+
+	require.Contains(t, output, "stringData:\n  signing-key: \""+key+"\"")
+	require.Contains(t, output, "stringData:\n  memory-raw-key: \""+key+"\"")
+}

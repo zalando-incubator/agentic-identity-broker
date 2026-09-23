@@ -49,7 +49,7 @@ func (s *AuthorizationCodeStore) FindByCodeHash(ctx context.Context, codeHash st
 	defer s.mu.RUnlock()
 
 	code, exists := s.byCodeHash[codeHash]
-	if !exists {
+	if !exists || !code.ExpiresAt.After(time.Now()) {
 		return nil, storage.NewStorageError("AuthorizationCodeStore.FindByCodeHash", storage.ErrorKindNotFound, nil,
 			fmt.Sprintf("authorization code with hash %s not found", codeHash))
 	}
