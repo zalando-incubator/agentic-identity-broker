@@ -242,6 +242,14 @@ func (r *assertionSignerRepository) ListActiveInDomain(_ context.Context, domain
 	return clones, nil
 }
 
+func (r *assertionSignerRepository) KeySetVersion(context.Context) (int64, error) {
+	return 0, nil
+}
+
+func (r *assertionSignerRepository) SetPublicJWK(context.Context, id.KeyID, []byte) (bool, error) {
+	return false, nil
+}
+
 func (r *assertionSignerRepository) SetCurrentInDomain(_ context.Context, _ storage.KeyDomain, _ id.KeyID, _ time.Time) (*storage.SigningKey, error) {
 	return nil, ports.ErrNotFound
 }

@@ -59,6 +59,11 @@ func (m *MockSigningKeyRepository) ListActiveInDomain(ctx context.Context, domai
 	return args.Get(0).([]*storage.SigningKey), args.Error(1)
 }
 
+func (m *MockSigningKeyRepository) KeySetVersion(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockSigningKeyRepository) SetCurrentInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
 	args := m.Called(ctx, domain, kid, activatesAt)
 	if args.Get(0) == nil {

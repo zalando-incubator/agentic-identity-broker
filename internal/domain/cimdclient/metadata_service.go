@@ -9,6 +9,7 @@ import (
 	"github.com/lestrrat-go/jwx/v4/jwk"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -71,8 +72,8 @@ func (s *MetadataService) eligibleService(ctx context.Context, serviceID id.Serv
 		return nil, ports.ErrCIMDPublicKeyUnavailable
 	}
 
-	expectedClientID := s.publicURL + "/.well-known/oauth-client/" + serviceID.String()
-	if service.ClientID.IsZero() || service.ClientID.String() != expectedClientID {
+	expectedClientID, err := model.CIMDClientID(s.publicURL, serviceID)
+	if err != nil || service.ClientID.IsZero() || service.ClientID != expectedClientID {
 		return nil, ports.ErrCIMDPublicKeyUnavailable
 	}
 	return service, nil

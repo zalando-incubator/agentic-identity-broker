@@ -16,6 +16,7 @@ import (
 	"github.com/lestrrat-go/jwx/v4/jwt"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/keylifecycle"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -87,7 +88,7 @@ func (s *KeyService) currentUsableCIMDAssertionKey(ctx context.Context) (*storag
 	if err != nil {
 		return nil, ports.ErrCIMDKeyUnavailable
 	}
-	key := currentUsableKey(keys, time.Now().UTC())
+	key := keylifecycle.EffectiveCurrent(keys, time.Now().UTC())
 	if key == nil || key.Algorithm != "ES256" {
 		return nil, ports.ErrCIMDKeyUnavailable
 	}

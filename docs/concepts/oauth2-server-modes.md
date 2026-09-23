@@ -105,18 +105,14 @@ strategies.
 | `local` | The broker issues ES256-signed JWT access tokens with managed keys. | You have no authorization server for agents. Or, the broker is the agent token authority. |
 | `hybrid` | The broker dispatches by registered agent. | You have agents with upstream clients and agents with local or CIMD registration. |
 
-## Client identity and CIMD
+## Inbound CIMD client resolution
 
-The `client_id` form controls what the broker can tell a user during consent. There are two
-forms:
+The broker uses **inbound CIMD client resolution** when an agent presents an HTTPS `client_id` to the broker's authorization-server surface. The broker fetches and validates that agent's Client ID Metadata Document before consent. This feature is available only in local and hybrid mode.
 
-- **An opaque UUID.** This is the default. The UUID is the agent internal identifier. An
-  administrator creates it during registration. It contains no metadata. The broker uses
-  only its registration data.
-- **An HTTPS URL that points to a Client ID Metadata Document (CIMD).** An agent can use
-  this URL as its `client_id` when CIMD is enabled. The broker fetches and validates the JSON
-  document. The consent interface shows its name, description, governance link, and
-  documentation links.
+The `client_id` form controls what the broker can tell a user during consent. There are two forms:
+
+- **An opaque UUID.** This is the default. The UUID is the agent internal identifier. An administrator creates it during registration. It contains no metadata. The broker uses only its registration data.
+- **An HTTPS URL that points to a Client ID Metadata Document (CIMD).** An agent can use this URL as its `client_id` when CIMD is enabled. The broker fetches and validates the JSON document. The consent interface shows its name, description, governance link, and documentation links.
 
 An operator can register a CIMD URL pattern in `client_uris`.
 The `*` character matches one complete, non-empty path segment.
@@ -125,16 +121,14 @@ For example, `https://chatgpt.com/oauth/codex/*/client.json` matches one install
 The broker uses an exact registration first.
 It rejects multiple matching Agents and literal or encoded path separators.
 
-CIMD provides two functions:
+Inbound CIMD provides two functions:
 
-- **Self-describing agents.** An agent can be registered by URL. The broker has metadata for
-  the user who decides about delegation.
-- **SSRF-protected fetches.** A configurable blocklist prevents the broker from fetching
-  internal addresses. An agent URL does not become a request-forgery path.
+- **Self-describing agents.** An agent can be registered by URL. The broker has metadata for the user who decides about delegation.
+- **SSRF-protected fetches.** A configurable blocklist prevents the broker from fetching internal addresses. An agent URL does not become a request-forgery path.
 
-CIMD is available in `local` and `hybrid` mode. In these modes, the broker issues the token
-and manages consent. See [manage agents and services](/docs/guides/manage-agents-and-services)
-for agent registration.
+## Outbound CIMD client authentication
+
+For a `private_key_jwt` third-party service, the broker is the OAuth2 client. It publishes a broker-hosted client identity and signs outbound token requests with its dedicated CIMD client-authentication keys. This works independently of inbound CIMD client resolution and is available in proxy, local, and hybrid mode.
 
 ## Where token issuance meets delegation
 

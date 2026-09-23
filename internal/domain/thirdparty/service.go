@@ -34,6 +34,7 @@ type ThirdpartyOAuth2ProviderService struct {
 	encryption          ports.EncryptionPort
 	branchKeyManager    ports.BranchKeyManager
 	cimdKeyReadiness    ports.CIMDClientKeyReadiness
+	cimdPublicURL       string
 	permissionSetRepo   ports.PermissionSetRepository // may be nil
 	skipHTTPSValidation bool
 	logger              *slog.Logger
@@ -79,6 +80,12 @@ func (s *ThirdpartyOAuth2ProviderService) WithCIMDKeyReadiness(readiness ports.C
 	return s
 }
 
+// WithCIMDPublicURL configures the fixed public origin used for broker-hosted CIMD identities.
+func (s *ThirdpartyOAuth2ProviderService) WithCIMDPublicURL(publicURL string) *ThirdpartyOAuth2ProviderService {
+	s.cimdPublicURL = publicURL
+	return s
+}
+
 func (s *ThirdpartyOAuth2ProviderService) auditCIMD(serviceID id.ServiceID, operation, outcome string) {
 	s.logger.Info("CIMD confidential service", "service_id", serviceID, "operation", operation, "outcome", outcome)
 }
@@ -107,6 +114,30 @@ func (s *ThirdpartyOAuth2ProviderService) CanonicalIDs(ctx context.Context, ids 
 	return map[id.ServiceID]string{}, nil
 }
 
+// HasCompatibleCIMDServices verifies that every persisted CIMD service has the client ID
+// derived from the configured public origin. It never rewrites persisted identities.
+func (s *ThirdpartyOAuth2ProviderService) HasCompatibleCIMDServices(ctx context.Context) (bool, error) {
+	services, err := s.repo.List(ctx)
+	if err != nil {
+		return false, fmt.Errorf("list persisted CIMD services: %w", err)
+	}
+	hasCIMDService := false
+	for _, service := range services {
+		if !service.IsCIMDConfidentialClient() {
+			continue
+		}
+		hasCIMDService = true
+		expected, err := model.CIMDClientID(s.cimdPublicURL, service.ID)
+		if err != nil {
+			return false, fmt.Errorf("server.enduser.public_url is invalid for CIMD service %s: %w", service.ID, err)
+		}
+		if service.ClientID != expected {
+			return false, fmt.Errorf("CIMD service %s client_id does not match server.enduser.public_url", service.ID)
+		}
+	}
+	return hasCIMDService, nil
+}
+
 // Create validates, provisions a branch key, conditionally encrypts the secret, and stores the entity.
 // A confidential entity.Secret must be in plaintext state on entry and is encrypted on success.
 // A public entity.Secret is absent and remains unchanged.
@@ -130,6 +161,14 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 
 	if entity.ID.IsZero() {
 		entity.ID = id.NewServiceID()
+	}
+	if entity.IsCIMDConfidentialClient() {
+		clientID, err := model.CIMDClientID(s.cimdPublicURL, entity.ID)
+		if err != nil {
+			s.auditCIMD(entity.ID, "create", "rejected")
+			return err
+		}
+		entity.ClientID = clientID
 	}
 	if entity.IsCIMDConfidentialClient() {
 		if s.cimdKeyReadiness == nil {
@@ -267,6 +306,23 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 			s.auditCIMD(entity.ID, "update", "rejected")
 		}
 		return fmt.Errorf("provider validation failed: %w", err)
+	}
+	if entity.IsCIMDConfidentialClient() {
+		persisted, err := s.repo.Get(ctx, entity.ID)
+		if err != nil {
+			s.auditCIMD(entity.ID, "update", "rejected")
+			return fmt.Errorf("get existing CIMD service: %w", err)
+		}
+		clientID, err := model.CIMDClientID(s.cimdPublicURL, entity.ID)
+		if err != nil {
+			s.auditCIMD(entity.ID, "update", "rejected")
+			return err
+		}
+		if persisted.IsCIMDConfidentialClient() && persisted.ClientID != clientID {
+			s.auditCIMD(entity.ID, "update", "rejected")
+			return fmt.Errorf("persisted CIMD client_id for service %s does not match server.enduser.public_url", entity.ID)
+		}
+		entity.ClientID = clientID
 	}
 	if entity.IsCIMDConfidentialClient() {
 		if s.cimdKeyReadiness == nil {

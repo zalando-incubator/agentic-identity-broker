@@ -428,7 +428,7 @@ func (b *Builder) Build() (*App, error) {
 			b.storage.PermissionSets(),
 			b.config.Security.SkipThirdpartyHTTPSValidation,
 			b.logger,
-		)
+		).WithCIMDPublicURL(b.config.Server.EndUser.PublicURL)
 	}
 
 	// Construct outbound CIMD key dependencies before the OAuth server-mode split.
@@ -448,22 +448,18 @@ func (b *Builder) Build() (*App, error) {
 		app.ProviderService.WithCIMDKeyReadiness(cimdKeyService)
 	}
 
-	if servicesRepository := b.storage.Services(); servicesRepository != nil {
-		services, err := servicesRepository.List(context.Background())
+	if app.ProviderService != nil {
+		hasCIMDServices, err := app.ProviderService.HasCompatibleCIMDServices(context.Background())
 		if err != nil {
-			return nil, fmt.Errorf("list persisted CIMD services: %w", err)
+			return nil, fmt.Errorf("validate persisted CIMD service identities: %w", err)
 		}
-		for _, service := range services {
-			if string(service.TokenEndpointAuthMethod) != "private_key_jwt" {
-				continue
-			}
+		if hasCIMDServices {
 			if _, _, err := cimdKeyService.EnsureInitialKey(context.Background()); err != nil {
 				return nil, fmt.Errorf("initialize CIMD client-authentication key: %w", err)
 			}
 			if err := cimdKeyService.RequirePublishedKey(context.Background()); err != nil {
 				return nil, fmt.Errorf("verify CIMD client-authentication key publication: %w", err)
 			}
-			break
 		}
 	}
 

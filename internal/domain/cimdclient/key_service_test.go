@@ -549,6 +549,14 @@ func (r *cimdKeyServiceRepository) ListActiveInDomain(_ context.Context, domain 
 	return keys, nil
 }
 
+func (r *cimdKeyServiceRepository) KeySetVersion(context.Context) (int64, error) {
+	return 0, nil
+}
+
+func (r *cimdKeyServiceRepository) SetPublicJWK(context.Context, id.KeyID, []byte) (bool, error) {
+	return false, nil
+}
+
 func (r *cimdKeyServiceRepository) SetCurrentInDomain(_ context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
 	for _, key := range r.activeByDomain[domain] {
 		if key.KID == kid && key.RemovedAt == nil {
