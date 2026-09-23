@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v4/jwt"
+	"github.com/ory/fosite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -328,6 +330,9 @@ func TestProvider_HandleAuthorize(t *testing.T) {
 		)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrInvalidRedirectURI)
+
+		var fositeErr *fosite.RFC6749Error
+		assert.False(t, errors.As(err, &fositeErr))
 	})
 
 	t.Run("unknown agent_id rejected", func(t *testing.T) {
@@ -646,44 +651,67 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		assert.ErrorIs(t, err, ErrInvalidGrant)
 	})
 
-	t.Run("expired code rejects", func(t *testing.T) {
-		provider, agentRepo, _ := newTestProvider(t)
-		agent, _, plaintext := setupTestCredentials(t, provider, agentRepo)
-		agent.RedirectURIs = []string{"http://localhost:8080/callback"}
-		_ = agentRepo.Update(context.Background(), agent)
+	for _, tt := range []struct {
+		name       string
+		lifetime   time.Duration
+		unfiltered bool
+	}{
+		{name: "active code with valid PKCE", lifetime: time.Minute},
+		{name: "expired code rejects", lifetime: -time.Minute},
+		{name: "expired code from unfiltered repository rejects", lifetime: -time.Minute, unfiltered: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			provider, agentRepo, _ := newTestProvider(t)
+			agent, _, plaintext := setupTestCredentials(t, provider, agentRepo)
+			agent.RedirectURIs = []string{"http://localhost:8080/callback"}
+			require.NoError(t, agentRepo.Update(context.Background(), agent))
 
-		verifier := "test-verifier-for-expired"
-		challenge := generateS256Challenge(verifier)
+			verifier := "expiry-code-verifier-xxxxxxxxxxxxxxxxxxxxxxxxxxx"
+			challenge := generateS256Challenge(verifier)
+			rawCode := "expiry-code-value"
+			codeHash := sha256Hex(rawCode)
+			code := &dstorage.AuthorizationCode{
+				ID:            id.NewAuthorizationCodeID(),
+				CodeHash:      codeHash,
+				AgentID:       agent.ID,
+				ClientID:      id.NewClientID(agent.ID.String()),
+				Principal:     id.NewPrincipal("user@example.com"),
+				RedirectURI:   "http://localhost:8080/callback",
+				CodeChallenge: challenge,
+				Scope:         "read",
+				ExpiresAt:     time.Now().Add(tt.lifetime),
+				CreatedAt:     time.Now().Add(-2 * time.Minute),
+			}
+			require.NoError(t, provider.fositeStorage.codeRepo.Create(context.Background(), code))
+			require.NoError(t, provider.fositeStorage.pkceRepo.Create(context.Background(), &dstorage.PKCESession{
+				Signature: codeHash, CodeChallenge: challenge, CodeChallengeMethod: "S256",
+				ExpiresAt: time.Now().Add(time.Minute), CreatedAt: code.CreatedAt,
+			}))
+			if tt.unfiltered {
+				provider.fositeStorage.codeRepo = &mockCodeRepo{
+					findByCodeHashFunc: func(context.Context, string) (*dstorage.AuthorizationCode, error) {
+						return code, nil
+					},
+				}
+			}
 
-		// Directly create an authorization code that is already expired
-		rawCode := "test-expired-code-value"
-		codeHash := sha256Hex(rawCode)
-		expiredCode := &dstorage.AuthorizationCode{
-			ID:            id.NewAuthorizationCodeID(),
-			CodeHash:      codeHash,
-			AgentID:       agent.ID,
-			Principal:     id.NewPrincipal("user@example.com"),
-			RedirectURI:   "http://localhost:8080/callback",
-			CodeChallenge: challenge,
-			Scope:         "read",
-			ExpiresAt:     time.Now().Add(-10 * time.Minute), // expired
-			CreatedAt:     time.Now().Add(-15 * time.Minute),
-		}
-		err := provider.fositeStorage.codeRepo.Create(context.Background(), expiredCode)
-		require.NoError(t, err)
-
-		// Attempt exchange — should fail because code is expired
-		_, err = provider.HandleAuthorizationCodeExchange(
-			context.Background(),
-			agent.ID.String(),
-			plaintext,
-			rawCode,
-			"http://localhost:8080/callback",
-			verifier,
-		)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, ErrInvalidGrant)
-	})
+			resp, err := provider.HandleAuthorizationCodeExchange(
+				context.Background(), agent.ID.String(), plaintext, rawCode, code.RedirectURI, verifier,
+			)
+			if tt.lifetime > 0 {
+				require.NoError(t, err)
+				require.NotNil(t, resp)
+				assert.NotEmpty(t, resp.AccessToken)
+			} else {
+				require.ErrorIs(t, err, ErrInvalidGrant)
+				var oauthErr *RFC6749Error
+				require.ErrorAs(t, err, &oauthErr)
+				assert.Equal(t, "invalid_grant", oauthErr.Code())
+				assert.Equal(t, 400, oauthErr.HTTPStatus())
+				assert.Nil(t, resp)
+			}
+		})
+	}
 
 	t.Run("redirect_uri substitution rejected", func(t *testing.T) {
 		provider, agentRepo, _ := newTestProvider(t)

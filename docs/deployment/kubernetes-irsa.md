@@ -124,7 +124,7 @@ export K8S_SERVICE_ACCOUNT="broker-sa"
 ### 4. Tools Required
 
 - AWS CLI 2.x
-- Go 1.26.8+ (CDK infrastructure is written in Go)
+- Go 1.27.1+ (CDK infrastructure is written in Go)
 - Node.js 24+ with AWS CDK CLI (`npm install -g aws-cdk`)
 - kubectl (configured for your EKS cluster)
 - Helm 3.x

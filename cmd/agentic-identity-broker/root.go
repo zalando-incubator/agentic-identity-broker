@@ -81,6 +81,16 @@ func run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to build application: %w", err)
 	}
+	defer func() {
+		// Release background workers on startup failures as well as normal shutdown.
+		if application.Shutdown != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.Server.Shutdown.Timeout)
+			defer shutdownCancel()
+			if err := application.Shutdown(shutdownCtx); err != nil {
+				logger.Error("Application shutdown error", "error", err)
+			}
+		}
+	}()
 
 	// Create route setup function for admin server
 	adminRouteSetup := func(r chi.Router) {
@@ -257,17 +267,6 @@ func run(cmd *cobra.Command, args []string) error {
 	if err := shutdownGroup.Wait(); err != nil {
 		logger.Error("Shutdown error", "error", err)
 		return fmt.Errorf("shutdown error: %w", err)
-	}
-
-	// Flush and close telemetry providers (after HTTP drain, before process exit)
-	// Satisfies FR-009: pending spans/metrics flushed on graceful shutdown (T043)
-	if application.Shutdown != nil {
-		if err := application.Shutdown(shutdownCtx); err != nil {
-			logger.Error("Telemetry shutdown error", "error", err)
-			// Non-fatal: log and continue
-		} else {
-			logger.Info("Telemetry providers shut down successfully")
-		}
 	}
 
 	// Wait for servers to finish

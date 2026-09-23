@@ -234,11 +234,11 @@ func (p *Provider) HandleAuthorize(
 	// GetRedirectURIs() returns the agent's registered URIs for confidential clients,
 	// and the CIMD document's redirect_uris for public (CIMD) clients.
 	if !containsRedirectURI(fositeClient.GetRedirectURIs(), redirectURI) {
-		return "", fmt.Errorf("%w: %w", ErrInvalidRedirectURI,
+		return "", fmt.Errorf("%w: %s", ErrInvalidRedirectURI,
 			fosite.ErrInvalidRequest.WithHintf("redirect_uri %q is not registered for this client", redirectURI))
 	}
 	if !urivalidation.IsValidRedirectURI(redirectURI) {
-		return "", fmt.Errorf("%w: %w", ErrInvalidRedirectURI,
+		return "", fmt.Errorf("%w: %s", ErrInvalidRedirectURI,
 			fosite.ErrInvalidRequest.WithHintf("redirect_uri must use HTTPS for non-loopback hosts"))
 	}
 
@@ -358,6 +358,10 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 	// compares this redirect_uri against the one stored in the authorization code session,
 	// returning invalid_grant on mismatch (RFC 6749 §4.1.3).
 	if err := p.authCodeHandler.HandleTokenEndpointRequest(ctx, req); err != nil {
+		// Fosite wraps storage's invalid_grant in server_error.
+		if errors.Is(err, fosite.ErrInvalidGrant) {
+			return nil, fosite.ErrInvalidGrant.WithWrap(err)
+		}
 		return nil, err
 	}
 	if err := p.pkceHandler.HandleTokenEndpointRequest(ctx, req); err != nil {
@@ -366,6 +370,9 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 
 	fositeResp := fosite.NewAccessResponse()
 	if err := p.authCodeHandler.PopulateTokenEndpointResponse(ctx, req, fositeResp); err != nil {
+		if errors.Is(err, fosite.ErrInvalidGrant) {
+			return nil, fosite.ErrInvalidGrant.WithWrap(err)
+		}
 		return nil, err
 	}
 	if err := p.pkceHandler.PopulateTokenEndpointResponse(ctx, req, fositeResp); err != nil {

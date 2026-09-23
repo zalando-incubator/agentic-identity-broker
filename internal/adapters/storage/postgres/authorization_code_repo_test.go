@@ -150,27 +150,46 @@ func TestAuthorizationCodeRepo(t *testing.T) {
 		assert.Error(t, err, "duplicate code_hash should fail unique constraint")
 	})
 
-	t.Run("FindByCodeHash expired unused", func(t *testing.T) {
+	t.Run("FindByCodeHash excludes expired codes", func(t *testing.T) {
 		agent := createTestAgent(t, adapter)
-		codeHash := "expired-unused-" + id.NewAuthorizationCodeID().String()[:10]
-		code := &storage.AuthorizationCode{
-			ID:            id.NewAuthorizationCodeID(),
-			CodeHash:      codeHash,
-			AgentID:       agent.ID,
-			Principal:     id.NewPrincipal("user@example.com"),
-			RedirectURI:   "http://localhost/callback",
-			CodeChallenge: "S256challenge",
-			Scope:         "read",
-			ExpiresAt:     time.Now().UTC().Add(-10 * time.Minute),
-			CreatedAt:     time.Now().UTC().Add(-15 * time.Minute),
+		var now time.Time
+		require.NoError(t, adapter.db.GetContext(ctx, &now, "SELECT NOW()"))
+		tests := []struct {
+			name      string
+			expiresAt time.Time
+			used      bool
+		}{
+			{name: "expired unused", expiresAt: now.Add(-time.Minute)},
+			{name: "expired used", expiresAt: now.Add(-time.Minute), used: true},
+			{name: "expires now", expiresAt: now},
+			{name: "missing expiry"},
 		}
-		err := repo.Create(ctx, code)
-		require.NoError(t, err)
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				code := &storage.AuthorizationCode{
+					ID:            id.NewAuthorizationCodeID(),
+					CodeHash:      "expired-" + id.NewAuthorizationCodeID().String(),
+					AgentID:       agent.ID,
+					Principal:     id.NewPrincipal("user@example.com"),
+					RedirectURI:   "http://localhost/callback",
+					CodeChallenge: "S256challenge",
+					Scope:         "read",
+					ExpiresAt:     tt.expiresAt,
+					CreatedAt:     now.Add(-time.Hour),
+				}
+				require.NoError(t, repo.Create(ctx, code))
+				if tt.used {
+					require.NoError(t, repo.MarkUsed(ctx, code.ID))
+				}
 
-		got, err := repo.FindByCodeHash(ctx, codeHash)
-		require.NoError(t, err)
-		assert.Equal(t, code.ID, got.ID)
-		assert.Nil(t, got.UsedAt, "repo must not filter by expiry — domain layer owns that check")
+				got, err := repo.FindByCodeHash(ctx, code.CodeHash)
+				require.Error(t, err)
+				var storageErr *storage.StorageError
+				require.ErrorAs(t, err, &storageErr)
+				assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+				assert.Nil(t, got)
+			})
+		}
 	})
 
 	t.Run("FindByCodeHash not found", func(t *testing.T) {

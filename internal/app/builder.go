@@ -93,7 +93,7 @@ type App struct {
 	jwksPublisherHealth ports.JWKSPublisherHealthPort
 
 	// Shutdown must be called on graceful shutdown to release background resources
-	// (e.g. stop the PermissionSetService eviction goroutine).
+	// (e.g. permission-set eviction and OAuth2 expired-record cleanup).
 	Shutdown func(context.Context) error
 }
 
@@ -1129,6 +1129,32 @@ func (b *Builder) Build() (*App, error) {
 		ApprovalPending:   approval.NewPendingHandler(app.ApprovalService),
 		JWKS:              jwksHandler,
 		SPA:               handlers.NewSPAHandler(b.staticWebResourcesPath, b.logger),
+	}
+
+	// Start maintenance only after all fallible construction has completed.
+	switch oauthCfg.(type) {
+	case *ports.LocalOAuth2Config, *ports.HybridOAuth2Config:
+		cleanup := oauth2server.NewSessionCleanup(
+			b.storage.AuthorizationCodes(),
+			b.storage.PKCESessions(),
+			b.storage.RefreshTokenSessions(),
+			b.logger,
+		)
+		cleanupCtx, cancelCleanup := context.WithCancel(context.Background())
+		cleanupDone := make(chan struct{})
+		go func() {
+			defer close(cleanupDone)
+			cleanup.Run(cleanupCtx)
+		}()
+		prevShutdown := app.Shutdown
+		app.Shutdown = func(ctx context.Context) error {
+			cancelCleanup()
+			<-cleanupDone
+			if prevShutdown != nil {
+				return prevShutdown(ctx)
+			}
+			return nil
+		}
 	}
 
 	return app, nil

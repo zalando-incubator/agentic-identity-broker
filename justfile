@@ -17,8 +17,6 @@ INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/infra/... ./tests/integr
 INTEGRATION_INFRA_PACKAGE_PROCS := env_var_or_default("INTEGRATION_INFRA_PACKAGE_PROCS", "2")
 GINKGO_FRONTEND_PROCS := env_var_or_default("GINKGO_FRONTEND_PROCS", "2")
 E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false")
-# JWX v4 requires jsonv2 only on Go 1.26; Go 1.27 includes it by default.
-export GOEXPERIMENT := `case "$(go env GOVERSION)" in go1.26.*) printf 'jsonv2' ;; esac`
 
 # Use Docker Compose v1 when installed, otherwise Docker Compose v2.
 COMPOSE_CMD := `if command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi`
@@ -235,8 +233,7 @@ vet:
 install-tools:
     @echo "Installing development tools..."
     @command -v air          > /dev/null || go install github.com/air-verse/air@v1.63.6
-    @command -v golangci-lint > /dev/null || bash scripts/golangci-lint-install.sh -b /usr/local/bin v2.11.4
-    @golangci-lint --version 2>/dev/null | grep -q "version 2.11" || bash scripts/golangci-lint-install.sh -b /usr/local/bin v2.11.4
+    @golangci-lint --version 2>/dev/null | grep -q "version 2.13.2" || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
     @command -v go-junit-report > /dev/null || go install github.com/jstemmer/go-junit-report/v2@v2.1.0
     @go install github.com/onsi/ginkgo/v2/ginkgo@v2.32.1
     @if [ -d "$HOME/.cache/ms-playwright" ] && [ -n "$(ls -A "$HOME/.cache/ms-playwright" 2>/dev/null)" ] && [ -f "$HOME/.cache/ms-playwright-go/1.62.1/package/cli.js" ]; then \
