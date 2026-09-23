@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v4/jwt"
+	"github.com/ory/fosite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -328,6 +330,9 @@ func TestProvider_HandleAuthorize(t *testing.T) {
 		)
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrInvalidRedirectURI)
+
+		var fositeErr *fosite.RFC6749Error
+		assert.False(t, errors.As(err, &fositeErr))
 	})
 
 	t.Run("unknown agent_id rejected", func(t *testing.T) {

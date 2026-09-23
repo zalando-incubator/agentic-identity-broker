@@ -17,7 +17,7 @@ pipeline:
     vm_config:
       type: linux
       size: large
-      image: cdp-runtime/go-1.26
+      image: cdp-runtime/go-1.27
     cache:
       paths:
         - /go/pkg/mod
@@ -58,7 +58,7 @@ pipeline:
       event: push
     vm_config:
       type: linux
-      image: cdp-runtime/go-1.26
+      image: cdp-runtime/go-1.27
     cache:
       paths:
         - /go/pkg/mod

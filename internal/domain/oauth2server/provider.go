@@ -234,11 +234,11 @@ func (p *Provider) HandleAuthorize(
 	// GetRedirectURIs() returns the agent's registered URIs for confidential clients,
 	// and the CIMD document's redirect_uris for public (CIMD) clients.
 	if !containsRedirectURI(fositeClient.GetRedirectURIs(), redirectURI) {
-		return "", fmt.Errorf("%w: %w", ErrInvalidRedirectURI,
+		return "", fmt.Errorf("%w: %s", ErrInvalidRedirectURI,
 			fosite.ErrInvalidRequest.WithHintf("redirect_uri %q is not registered for this client", redirectURI))
 	}
 	if !urivalidation.IsValidRedirectURI(redirectURI) {
-		return "", fmt.Errorf("%w: %w", ErrInvalidRedirectURI,
+		return "", fmt.Errorf("%w: %s", ErrInvalidRedirectURI,
 			fosite.ErrInvalidRequest.WithHintf("redirect_uri must use HTTPS for non-loopback hosts"))
 	}
 

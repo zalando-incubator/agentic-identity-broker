@@ -1,6 +1,6 @@
 module github.com/agentic-identity-broker/mock-oauth2-service
 
-go 1.26.8
+go 1.27.1
 
 require (
 	github.com/go-oauth2/oauth2/v4 v4.6.0

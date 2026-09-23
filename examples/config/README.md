@@ -541,7 +541,7 @@ Configuration Summary:
 ### Docker Container
 
 ```dockerfile
-FROM golang:1.21 as builder
+FROM golang:1.27.1-alpine as builder
 WORKDIR /app
 COPY . .
 RUN go build -o agentic-identity-broker ./cmd/agentic-identity-broker

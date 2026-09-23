@@ -371,7 +371,7 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.23-alpine AS backend-builder
+FROM golang:1.27.1-alpine AS backend-builder
 WORKDIR /app
 COPY go.* ./
 RUN go mod download
