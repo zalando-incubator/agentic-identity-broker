@@ -46,7 +46,7 @@ jobs:
             ~/go/bin
             ~/.cache/golangci-lint
             ~/.cache/ms-playwright
-          key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
+          key: tools-${{ runner.os }}-${{ hashFiles('Justfile') }}
           restore-keys: tools-${{ runner.os }}-
 
       - name: Install just
