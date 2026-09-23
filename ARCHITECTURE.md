@@ -264,6 +264,7 @@ App
 - **Local State**: React `useState` for component-level state
 - **Server State**: Custom hooks with axios for API data fetching
 - **Context**: React Context API for global UI state (theme, error messages)
+- **OAuth Redirect Selections**: `AgentGrantDetailPage` stores ephemeral `ConsentSelections` in current-tab `sessionStorage` under an opaque UUID. For selection-preserving logins, it sends the UUID in a same-origin form POST and the provider-facing JWE state carries it as the `consent_state_id` claim. The nested third-party return URL carries no selection state. Records expire after 15 minutes. See [ADR 037](adrs/037-consent-selection-oauth-redirect-state.md) and [Feature 008](specs/008-thirdparty-oauth2-sessions/spec.md).
 - **No Redux/MobX**: Hooks + Context sufficient for current requirements
 
 **API Communication**:

@@ -36,6 +36,25 @@ func TestCreateStateToken_Success(t *testing.T) {
 	assert.NotEmpty(t, result.AuthorizationURL, "authorization URL should not be empty")
 }
 
+func TestInitiateOAuth2FlowWithConsentState_SealsReference(t *testing.T) {
+	service, testServiceID := setupTestService(t)
+	principal := id.Principal("user@example.com")
+	const consentStateID = "d0000000-0000-4000-8000-000000000001"
+
+	result, err := service.InitiateOAuth2FlowWithConsentState(
+		context.Background(),
+		principal,
+		testServiceID,
+		"https://example.com/callback",
+		consentStateID,
+	)
+	require.NoError(t, err)
+
+	claims, err := service.ValidateStateToken(result.StateToken, principal, testServiceID)
+	require.NoError(t, err)
+	assert.Equal(t, consentStateID, claims.ConsentStateID)
+}
+
 // TestValidateStateToken_ValidToken tests successful validation of a valid state token.
 func TestValidateStateToken_ValidToken(t *testing.T) {
 	service, testServiceID := setupTestService(t)

@@ -403,6 +403,28 @@ func (s *OAuth2SessionService) InitiateOAuth2Flow(
 	serviceID id.ServiceID,
 	redirectURI string,
 ) (*InitiateFlowResult, error) {
+	return s.initiateOAuth2Flow(ctx, principal, serviceID, redirectURI, "")
+}
+
+// InitiateOAuth2FlowWithConsentState starts an OAuth2 flow with a sealed
+// current-tab consent-selection reference.
+func (s *OAuth2SessionService) InitiateOAuth2FlowWithConsentState(
+	ctx context.Context,
+	principal id.Principal,
+	serviceID id.ServiceID,
+	redirectURI string,
+	consentStateID string,
+) (*InitiateFlowResult, error) {
+	return s.initiateOAuth2Flow(ctx, principal, serviceID, redirectURI, consentStateID)
+}
+
+func (s *OAuth2SessionService) initiateOAuth2Flow(
+	ctx context.Context,
+	principal id.Principal,
+	serviceID id.ServiceID,
+	redirectURI string,
+	consentStateID string,
+) (*InitiateFlowResult, error) {
 	s.logger.Info("initiating OAuth2 flow", "principal", principal, "service_id", serviceID)
 
 	// Fetch the service (with decrypted client secret via service manager)
@@ -418,12 +440,13 @@ func (s *OAuth2SessionService) InitiateOAuth2Flow(
 	// Create state token claims
 	now := time.Now()
 	claims := &OAuth2StateTokenClaims{
-		Principal:    principal,
-		ServiceID:    serviceID,
-		PKCEVerifier: verifier,
-		RedirectURI:  redirectURI,
-		IssuedAt:     now,
-		ExpiresAt:    now.Add(s.config.StateTokenTTL),
+		Principal:      principal,
+		ServiceID:      serviceID,
+		PKCEVerifier:   verifier,
+		RedirectURI:    redirectURI,
+		ConsentStateID: consentStateID,
+		IssuedAt:       now,
+		ExpiresAt:      now.Add(s.config.StateTokenTTL),
 	}
 
 	// Encrypt state token

@@ -818,6 +818,72 @@ paths:
                 message: Third-party service not found
         "500":
           $ref: "#/components/responses/InternalError"
+    post:
+      operationId: initiateOAuth2FlowWithConsentState
+      summary: Initiate OAuth2 authorization flow with consent selection state
+      description: |
+        Initiates an OAuth2 authorization code flow with PKCE when the consent page must preserve current-tab selections.
+
+        The same-origin form body supplies the bare UUID `consent_state_id`. The broker seals it in the private JWE state claim of the provider-facing authorization request. The value never appears in an authorization URL or callback return URL.
+
+        The redirect_uri field must match the host of the incoming request (same-origin validation).
+      tags:
+        - Third-Party Sessions
+      security:
+        - preAuth: []
+      parameters:
+        - name: serviceId
+          in: path
+          required: true
+          description: UUID of the third-party OAuth2 service
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - redirect_uri
+                - consent_state_id
+              properties:
+                redirect_uri:
+                  type: string
+                  format: uri
+                  description: URI to redirect to after OAuth2 completes. It must be same-origin.
+                  example: https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000
+                consent_state_id:
+                  type: string
+                  format: uuid
+                  description: Bare UUID stored in the JWE state claim. It is not a URL parameter.
+      responses:
+        "302":
+          description: Redirect to third-party authorization endpoint
+          headers:
+            Location:
+              description: Third-party authorization URL with OAuth2 parameters
+              schema:
+                type: string
+                format: uri
+        "400":
+          description: Invalid request, consent-state UUID, or redirect URI
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /api/third-party/{serviceId}/oauth2/callback:
     get:
       operationId: handleOAuth2Callback

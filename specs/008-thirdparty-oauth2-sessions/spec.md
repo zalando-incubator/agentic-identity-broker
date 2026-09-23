@@ -108,6 +108,26 @@ The consent page encodes active permission set selections into the `redirect_uri
 2. **Given** the OAuth2 callback redirects back to the consent page with a `consent_state` URL parameter, **When** the consent page renders, **Then** the page restores the permission set selection state from `consent_state`, re-selecting optional permission sets that were active before the redirect.
 3. **Given** a user completes a full OAuth2 redirect round-trip (consent → third-party OAuth2 → callback → consent), **When** the consent page re-renders after the callback, **Then** permission set selections from before the redirect are fully restored and the corresponding service connections remain visible.
 
+### User Story 5 Amendment - Compact Consent Selection References (2026-09-22)
+
+This amendment supersedes only User Story 5's URL-encoded `consent_state` transport. Feature 008 remains authoritative for third-party OAuth session initiation, JWE and PKCE validation, token exchange, token storage, callback errors, and all unrelated session behavior.
+
+The consent page stores the selection map in current-tab `sessionStorage`. When selections exist, it submits the bare UUID `consent_state_id` and the return URL in a same-origin form POST to the service-login endpoint. The broker seals `consent_state_id` into the third-party state JWE. `consent_state_id` is not a URL or provider authorization parameter. The existing `redirect_uri` JWE claim contains the protected return URL, which contains no selection state.
+
+**Acceptance Scenarios**:
+
+1. **Scenario 1: Compact reference creation. Given** a consent page has a large selection map, **When** the user starts a service login, **Then** the page stores the map under a UUID reference, sends it as `consent_state_id` in a same-origin form POST, and the provider-facing `state` JWE contains that claim. The nested return URL contains no `consent_state_id`, `consent_state`, or selection JSON, and provider-facing `state` is less than 6,000 bytes.
+2. **Scenario 2: Same-tab restoration. Given** a callback returns after a JWE with a valid `consent_state_id` claim, **When** the consent page renders in the originating tab, **Then** it restores the validated pending selection map from current-tab storage, including selected optional permission sets and their available service cards.
+3. **Scenario 3: Complete provider callback. Given** the user starts a service login with optional selections, **When** the mock provider completes the callback in the same tab, **Then** the broker returns callback parameters without a selection-state URL parameter, and the page restores the selected optional permission set from current-tab storage.
+
+**Edge Cases**:
+
+- A missing, malformed, expired, or unreadable reference uses existing grant or default selections. The callback continues.
+- If browser storage cannot save a non-empty selection map, the page does not navigate. It shows `Unable to preserve selections. Please try again.`.
+- If no selections exist, the page clears its pending selection reference and starts the existing flow.
+- A valid record stays until it expires. A page reload in the originating tab can restore it.
+- A callback in another browser tab uses existing grant or default selections.
+
 ---
 
 ### Edge Cases
@@ -129,13 +149,13 @@ The consent page encodes active permission set selections into the `redirect_uri
 - **FR-002**: System MUST display session status for each service including: session existence, initiation timestamp, dependent agent count, encryption status, and expiration status (only marked expired when refresh token expires, not when access token expires)
 - **FR-003**: System MUST provide a "Login" button for services with expired sessions (replaces Terminate button - user must re-authenticate; cannot terminate expired session)
 - **FR-004**: System MUST provide a "Terminate Session" button for services with established sessions
-- **FR-005**: System MUST expose endpoint `/api/third-party/{serviceId}/oauth2/authorize` accepting `redirect_uri` query parameter to initiate OAuth2 authorization code flow with PKCE
+- **FR-005**: System MUST expose `GET /api/third-party/{serviceId}/oauth2/authorize` accepting a `redirect_uri` query parameter and a same-origin `POST /api/third-party/{serviceId}/oauth2/authorize` accepting `redirect_uri` and `consent_state_id` form fields to initiate OAuth2 authorization code flow with PKCE
 - **FR-006**: System MUST validate that `redirect_uri` parameter in authorize endpoint matches the host of the incoming request (same-origin validation)
 - **FR-007**: System MUST generate PKCE code verifier (32-128 bytes per RFC 7636, using crypto/rand.Reader for entropy) and code challenge (SHA256 hash of verifier, base64url encoded) for each OAuth2 flow
-- **FR-008**: System MUST create JWE state token containing: principal (current user), pkce_verifier, service_id, and redirect_uri
+- **FR-008**: System MUST create JWE state token containing: principal (current user), pkce_verifier, service_id, redirect_uri, and an optional consent_state_id claim for a consent-selection login
 - **FR-009**: System MUST redirect user to third-party authorization endpoint with parameters: client_id, redirect_uri (callback endpoint), response_type=code, code_challenge, code_challenge_method=S256, scope, and state (JWE token)
 - **FR-010**: System MUST expose endpoint `/api/third-party/{serviceId}/oauth2/callback` to receive OAuth2 callbacks from third-party services
-- **FR-011**: System MUST validate state token at callback endpoint by: verifying JWE signature, decrypting claims, validating principal matches current authenticated user, and validating service_id matches callback endpoint parameter
+- **FR-011**: System MUST validate state token at callback endpoint by: verifying JWE signature, decrypting claims, validating principal matches current authenticated user, validating service_id matches callback endpoint parameter, and validating consent_state_id when present
 - **FR-012**: System MUST extract PKCE verifier from state token and use it to exchange authorization code for tokens
 - **FR-013**: System MUST exchange authorization code for access token and refresh token using third-party's token endpoint
 - **FR-014**: System MUST store obtained tokens encrypted in the token vault associated with user's principal and service ID
@@ -146,6 +166,14 @@ The consent page encodes active permission set selections into the `redirect_uri
 - **FR-019**: Both authorize and callback endpoints MUST require authenticated principal (user must be logged in)
 - **FR-020**: System MUST handle OAuth2 error responses from third-party services gracefully by parsing error and error_description parameters from callback URL, displaying user-friendly error messages on sessions page, and allowing immediate retry
 - **FR-021**: System MUST retry failed token exchange requests up to 3 times with exponential backoff delays (1 second, 2 seconds, 4 seconds) before displaying error message to user
+
+- **FR-022**: The frontend MUST store a non-empty `Record<string, string[]>` selection map as `{ expiresAt, selections }` in current-tab `sessionStorage` under the internal key `agentic-identity-broker:consent-state:<uuid>`. It MUST generate `consent_state_id` as the bare UUID returned by `crypto.randomUUID()`. The UUID MUST resist collisions among live records in the originating tab during its 15-minute lifetime. `consent_state_id` MUST NOT include a URI, URN, or the internal storage-key prefix.
+- **FR-023**: Consent-selection records MUST expire after 15 minutes. Saving MUST prune expired records under the consent-state prefix.
+- **FR-024**: A service login with selections MUST submit `redirect_uri` and `consent_state_id` in a same-origin form POST. The broker MUST store `consent_state_id` only in `OAuth2StateTokenClaims`; the service-login URL and return URL MUST NOT contain `consent_state_id`, `consent_state`, or selection JSON. Before login, the frontend MUST remove a legacy `consent_state` parameter from the copied URL.
+- **FR-025**: The frontend MUST load only UUID references and validated maps with string-array values. It MUST return `undefined` without throwing for unknown, malformed, expired, or unavailable browser-storage records.
+- **FR-026**: If a selection reference cannot load, the frontend MUST use existing grant or default selections. It MUST preserve `session_token`, `success`, `service_id`, same-origin validation, and callback processing.
+- **FR-027**: If saving a non-empty selection map fails, the frontend MUST not navigate. It MUST show `Unable to preserve selections. Please try again.`.
+- **FR-028**: This amendment adds only the same-origin form POST selection initiation and the optional `consent_state_id` JWE claim. It MUST NOT change the PKCE verifier, authenticated principal binding, service binding, expiration, token exchange, token storage, or the broker authorization-server state path. The provider-facing `state` parameter MUST stay below 6,000 bytes for a large selection map.
 
 ### Domain Model
 

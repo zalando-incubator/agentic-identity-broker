@@ -8,6 +8,7 @@ import (
 	"net/url"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
@@ -26,6 +27,15 @@ func NewHandler(service *oauth2session.OAuth2SessionService) *Handler {
 		service: service,
 		logger:  slog.Default(),
 	}
+}
+
+func writeJSONError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":   code,
+		"message": message,
+	})
 }
 
 // ListSessions handles GET /api/third-party/sessions
@@ -72,120 +82,114 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// InitiateFlow handles GET /api/third-party/{serviceId}/oauth2/authorize
-// Initiates OAuth2 authorization code flow with PKCE
+type initiateFlowInputError struct {
+	status  int
+	code    string
+	message string
+}
+
+func readConsentStateForm(r *http.Request) (string, string, *initiateFlowInputError) {
+	if r.Method != http.MethodPost {
+		return r.URL.Query().Get("redirect_uri"), "", nil
+	}
+	if err := r.ParseForm(); err != nil {
+		return "", "", &initiateFlowInputError{
+			status:  http.StatusBadRequest,
+			code:    "invalid_request",
+			message: "invalid authorize request form",
+		}
+	}
+
+	consentStateID := r.PostForm.Get("consent_state_id")
+	if _, err := uuid.Parse(consentStateID); err != nil {
+		return "", "", &initiateFlowInputError{
+			status:  http.StatusBadRequest,
+			code:    "invalid_request",
+			message: "consent_state_id must be a UUID",
+		}
+	}
+	return r.PostForm.Get("redirect_uri"), consentStateID, nil
+}
+
+// InitiateFlow handles GET and POST /api/third-party/{serviceId}/oauth2/authorize.
+// It initiates an OAuth2 authorization code flow with PKCE.
 func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	// Extract principal from context (set by middleware)
 	principalValue, ok := principal.FromContext(ctx)
 	if !ok || principalValue == "" {
 		h.logger.Warn("principal not found in context in authorize request")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "unauthorized",
-			"message": "principal not found in context",
-		})
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "principal not found in context")
 		return
 	}
 
-	// Extract serviceId from URL path parameter
 	serviceIDStr := chi.URLParam(r, "serviceId")
 	if serviceIDStr == "" {
 		h.logger.Warn("missing serviceId in URL path")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "invalid_request",
-			"message": "serviceId parameter required in path",
-		})
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "serviceId parameter required in path")
 		return
 	}
 
 	parsedServiceID, err := id.ParseServiceID(serviceIDStr)
 	if err != nil {
 		h.logger.Warn("invalid serviceId format in URL path", "service_id", serviceIDStr)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "invalid_request",
-			"message": "serviceId must be a valid UUID",
-		})
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "serviceId must be a valid UUID")
 		return
 	}
 
-	// Extract redirect_uri from query parameters
-	redirectURI := r.URL.Query().Get("redirect_uri")
+	redirectURI, consentStateID, inputErr := readConsentStateForm(r)
+	if inputErr != nil {
+		h.logger.Warn("invalid OAuth2 flow request", "service_id", serviceIDStr, "error", inputErr.message)
+		writeJSONError(w, inputErr.status, inputErr.code, inputErr.message)
+		return
+	}
 	if redirectURI == "" {
-		h.logger.Warn("missing redirect_uri query parameter", "service_id", serviceIDStr)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "invalid_request",
-			"message": "redirect_uri query parameter required",
-		})
+		h.logger.Warn("missing redirect_uri", "service_id", serviceIDStr)
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "redirect_uri is required")
 		return
 	}
 
-	// T054: Validate redirect_uri using configured callback URL
-	// Parse redirect_uri and validate it's using a trusted origin
 	redirectURL, err := url.Parse(redirectURI)
 	if err != nil {
 		h.logger.Warn("invalid redirect_uri", "redirect_uri", redirectURI, "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "invalid_redirect_uri",
-			"message": "redirect_uri is not a valid URL",
-		})
+		writeJSONError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uri is not a valid URL")
 		return
 	}
-
-	// Extract the trusted origin from the configured callback base URL
-	// This ensures redirect_uri goes back to the application's known public URL
-	// (Constitution Principle VII: configuration-driven design)
-	callbackBaseURL := h.service.GetCallbackBaseURL()
-	callbackURL, err := url.Parse(callbackBaseURL)
+	callbackURL, err := url.Parse(h.service.GetCallbackBaseURL())
 	if err != nil {
-		h.logger.Error("failed to parse callback base URL", "callback_url", callbackBaseURL, "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "server_error",
-			"message": "failed to validate redirect_uri",
-		})
+		h.logger.Error("failed to parse callback base URL", "callback_url", h.service.GetCallbackBaseURL(), "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "server_error", "failed to validate redirect_uri")
 		return
 	}
-
-	// Check that redirect_uri origin matches the configured callback origin
-	// This prevents open redirect attacks and ensures the URL is under application control
 	if redirectURL.Host != callbackURL.Host || redirectURL.Scheme != callbackURL.Scheme {
 		h.logger.Warn("redirect_uri origin mismatch",
 			"redirect_host", redirectURL.Host,
 			"configured_host", callbackURL.Host,
 			"service_id", serviceIDStr)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "invalid_redirect_uri",
-			"message": "redirect_uri must be on the same origin as the configured public URL",
-		})
+		writeJSONError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uri must be on the same origin as the configured public URL")
 		return
 	}
+	redirectQuery := redirectURL.Query()
+	redirectQuery.Del("consent_state")
+	redirectQuery.Del("consent_state_id")
+	redirectURL.RawQuery = redirectQuery.Encode()
+	redirectURI = redirectURL.String()
 
-	// Initiate OAuth2 flow via service
-	result, err := h.service.InitiateOAuth2Flow(ctx, id.Principal(principalValue), parsedServiceID, redirectURI)
+	var result *oauth2session.InitiateFlowResult
+	if consentStateID != "" {
+		result, err = h.service.InitiateOAuth2FlowWithConsentState(
+			ctx,
+			id.Principal(principalValue),
+			parsedServiceID,
+			redirectURI,
+			consentStateID,
+		)
+	} else {
+		result, err = h.service.InitiateOAuth2Flow(ctx, id.Principal(principalValue), parsedServiceID, redirectURI)
+	}
 	if err != nil {
-		// Check for specific error types
 		if errors.Is(err, oauth2session.ErrServiceNotFound) {
 			h.logger.Warn("service not found", "service_id", serviceIDStr)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"error":   "service_not_found",
-				"message": "third-party service not found",
-			})
+			writeJSONError(w, http.StatusNotFound, "service_not_found", "third-party service not found")
 			return
 		}
 
@@ -193,12 +197,7 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 			"principal", principalValue,
 			"service_id", serviceIDStr,
 			"error", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "internal_error",
-			"message": "failed to initiate OAuth2 flow",
-		})
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to initiate OAuth2 flow")
 		return
 	}
 
@@ -206,8 +205,6 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 		"principal", principalValue,
 		"service_id", serviceIDStr,
 		"auth_url_domain", extractDomain(result.AuthorizationURL))
-
-	// Redirect to authorization URL
 	http.Redirect(w, r, result.AuthorizationURL, http.StatusFound) // #nosec G710 -- domain service builds this URL from the stored provider endpoint.
 }
 
@@ -508,57 +505,32 @@ func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
 // Deletes the session and its encrypted tokens.
 func (h *Handler) TerminateSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	// Extract principal from context (set by middleware)
 	principalValue, ok := principal.FromContext(ctx)
 	if !ok || principalValue == "" {
 		h.logger.Warn("principal not found in context in terminate session request")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "unauthorized",
-			"message": "principal not found in context",
-		})
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "principal not found in context")
 		return
 	}
 
-	// Extract serviceId from URL path parameter
 	serviceIDStr := chi.URLParam(r, "serviceId")
 	if serviceIDStr == "" {
 		h.logger.Warn("missing serviceId in URL path")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "invalid_request",
-			"message": "serviceId parameter required in path",
-		})
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "serviceId parameter required in path")
 		return
 	}
 
 	parsedServiceID, err := id.ParseServiceID(serviceIDStr)
 	if err != nil {
 		h.logger.Warn("invalid serviceId format in URL path", "service_id", serviceIDStr)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "invalid_request",
-			"message": "serviceId must be a valid UUID",
-		})
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "serviceId must be a valid UUID")
 		return
 	}
 
-	// Terminate session via service
 	err = h.service.TerminateSession(ctx, id.Principal(principalValue), parsedServiceID)
 	if err != nil {
-		// Check for specific error types
 		if errors.Is(err, oauth2session.ErrSessionNotFound) {
 			h.logger.Warn("session not found for termination", "service_id", serviceIDStr, "principal", principalValue)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"error":   "not_found",
-				"message": "session not found",
-			})
+			writeJSONError(w, http.StatusNotFound, "not_found", "session not found")
 			return
 		}
 
@@ -567,34 +539,21 @@ func (h *Handler) TerminateSession(w http.ResponseWriter, r *http.Request) {
 				"service_id", serviceIDStr,
 				"principal", principalValue,
 				"error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"error":   "forbidden",
-				"message": "you do not have permission to terminate this session",
-			})
+			writeJSONError(w, http.StatusForbidden, "forbidden", "you do not have permission to terminate this session")
 			return
 		}
 
-		// Generic error
 		h.logger.Error("failed to terminate session",
 			"principal", principalValue,
 			"service_id", serviceIDStr,
 			"error", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":   "internal_error",
-			"message": "failed to terminate session",
-		})
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to terminate session")
 		return
 	}
 
 	h.logger.Info("session terminated successfully",
 		"principal", principalValue,
 		"service_id", serviceIDStr)
-
-	// Return 200 OK with empty success message
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -697,6 +656,7 @@ func (h *Handler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.Get("/third-party/sessions", h.ListSessions)
 	router.Get("/third-party/{serviceId}/oauth2/authorize", h.InitiateFlow)
+	router.With(http.NewCrossOriginProtection().Handler).Post("/third-party/{serviceId}/oauth2/authorize", h.InitiateFlow)
 	router.Get("/third-party/{serviceId}/oauth2/callback", h.HandleCallback)
 	router.Get("/third-party/{serviceId}/session", h.GetSessionDetails)
 	router.Delete("/third-party/{serviceId}/session", h.TerminateSession)
