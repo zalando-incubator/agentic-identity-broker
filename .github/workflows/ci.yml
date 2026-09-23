@@ -86,34 +86,31 @@ jobs:
           } | tee -a "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
-  # Build, lint and test — identical to `just check && just verify-junit`
-  # locally, so a green local run predicts a green CI run.
+  # Five independent verification jobs run after path classification.
+  # Each runner owns its reports; the required gate combines their results.
   # ---------------------------------------------------------------------------
-  verify:
-    name: Verify
+  unit:
+    name: Unit tests
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
-
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: web/package-lock.json
-
       - name: Cache development tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -124,34 +121,217 @@ jobs:
             ~/.cache/ms-playwright-go
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
-
       - name: Install just
         uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
         with:
           tool: just
-
       - name: Install development tools
         run: just install-tools
-
       - name: Install web dependencies
         run: just web-ci
-
       - name: Static checks (fmt, vet, lint)
         run: just check
-
-      - name: Verification suite (unit, integration, e2e)
-        run: just verify-junit
-
+      - name: Unit suites with JUnit
+        run: just verify-unit-junit
       - name: Build artifacts
         run: |
           just build-all
           test -f web/dist/index.html
-
-      - name: Upload test results
+      - name: Upload unit test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: test-results
+          name: unit-test-results
+          path: test-results/
+          if-no-files-found: warn
+
+  integration:
+    name: Integration tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Cache development tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/bin
+            ~/.cache/golangci-lint
+            ~/.cache/ms-playwright
+            ~/.cache/ms-playwright-go
+          key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
+          restore-keys: tools-${{ runner.os }}-
+      - name: Install just
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: just
+      - name: Install development tools
+        run: just install-tools
+      - name: Integration suites with JUnit
+        run: just verify-integration-junit
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-test-results
+          path: test-results/
+          if-no-files-found: warn
+
+  e2e-backend:
+    name: Backend E2E tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Cache development tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/bin
+            ~/.cache/golangci-lint
+            ~/.cache/ms-playwright
+            ~/.cache/ms-playwright-go
+          key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
+          restore-keys: tools-${{ runner.os }}-
+      - name: Install just
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: just
+      - name: Install development tools
+        run: just install-tools
+      - name: Install web dependencies
+        run: just web-ci
+      - name: Backend E2E suite with JUnit
+        run: just verify-e2e-backend-junit
+      - name: Upload backend E2E test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-backend-test-results
+          path: test-results/
+          if-no-files-found: warn
+
+  e2e-extproc:
+    name: ExtProc E2E tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Cache development tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/bin
+            ~/.cache/golangci-lint
+            ~/.cache/ms-playwright
+            ~/.cache/ms-playwright-go
+          key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
+          restore-keys: tools-${{ runner.os }}-
+      - name: Install just
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: just
+      - name: Install development tools
+        run: just install-tools
+      - name: ExtProc E2E suite with JUnit
+        run: just verify-e2e-extproc-junit
+      - name: Upload ExtProc E2E test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-extproc-test-results
+          path: test-results/
+          if-no-files-found: warn
+
+  e2e-frontend:
+    name: Frontend E2E tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Cache development tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/bin
+            ~/.cache/golangci-lint
+            ~/.cache/ms-playwright
+            ~/.cache/ms-playwright-go
+          key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
+          restore-keys: tools-${{ runner.os }}-
+      - name: Install just
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: just
+      - name: Install development tools
+        run: just install-tools
+      - name: Install web dependencies
+        run: just web-ci
+      - name: Frontend E2E suite with JUnit
+        run: just verify-e2e-frontend-junit
+      - name: Upload frontend E2E test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-frontend-test-results
           path: test-results/
           if-no-files-found: warn
 
@@ -261,7 +441,7 @@ jobs:
   gate:
     name: CI gate
     if: always()
-    needs: [changes, verify, docs, helm, workflows, dependency-review]
+    needs: [changes, unit, integration, e2e-backend, e2e-extproc, e2e-frontend, docs, helm, workflows, dependency-review]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
