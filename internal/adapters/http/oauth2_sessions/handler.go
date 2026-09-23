@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -123,6 +124,8 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serviceIDStr := chi.URLParam(r, "serviceId")
+	safeServiceIDStr := strings.ReplaceAll(serviceIDStr, "\n", "")
+	safeServiceIDStr = strings.ReplaceAll(safeServiceIDStr, "\r", "")
 	if serviceIDStr == "" {
 		h.logger.Warn("missing serviceId in URL path")
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "serviceId parameter required in path")
@@ -131,19 +134,19 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 
 	parsedServiceID, err := id.ParseServiceID(serviceIDStr)
 	if err != nil {
-		h.logger.Warn("invalid serviceId format in URL path", "service_id", serviceIDStr)
+		h.logger.Warn("invalid serviceId format in URL path", "service_id", safeServiceIDStr)
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "serviceId must be a valid UUID")
 		return
 	}
 
 	redirectURI, consentStateID, inputErr := readConsentStateForm(r)
 	if inputErr != nil {
-		h.logger.Warn("invalid OAuth2 flow request", "service_id", serviceIDStr, "error", inputErr.message)
+		h.logger.Warn("invalid OAuth2 flow request", "service_id", safeServiceIDStr, "error", inputErr.message)
 		writeJSONError(w, inputErr.status, inputErr.code, inputErr.message)
 		return
 	}
 	if redirectURI == "" {
-		h.logger.Warn("missing redirect_uri", "service_id", serviceIDStr)
+		h.logger.Warn("missing redirect_uri", "service_id", safeServiceIDStr)
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "redirect_uri is required")
 		return
 	}
