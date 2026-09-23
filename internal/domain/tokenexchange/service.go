@@ -425,7 +425,7 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 			return nil, NewInvalidGrantError(fmt.Sprintf(
 				"permission set %s referenced in grant is not declared by the agent; re-consent required",
 				entry.PermissionSetID,
-			))
+			)).WithErrorURI(strings.TrimRight(s.oauth2SessionService.GetCallbackBaseURL(), "/") + "/agents/" + agent.ID.String())
 		}
 		psIDs[i] = entry.PermissionSetID
 	}

@@ -307,6 +307,7 @@ func (m *MockSessionRepository) CountByService(ctx context.Context, serviceID id
 // TestService_HandleAuthorization tests the HandleAuthorization method with table-driven tests
 func TestService_HandleAuthorization(t *testing.T) {
 	testAgentID := id.NewAgentID()
+	permissionSetID := id.NewPermissionSetID()
 
 	tests := []struct {
 		name       string
@@ -355,10 +356,11 @@ func TestService_HandleAuthorization(t *testing.T) {
 			name: "valid UUID client_id with active grant redirects to upstream",
 			setupAgent: func(r *MockAgentRepository) {
 				agent := &storage.Agent{
-					ID:           testAgentID,
-					ClientID:     ptr.To(id.ClientID("client-1")),
-					DisplayName:  "Test Client",
-					RedirectURIs: []string{"https://client.example.com/callback"},
+					ID:             testAgentID,
+					ClientID:       ptr.To(id.ClientID("client-1")),
+					DisplayName:    "Test Client",
+					RedirectURIs:   []string{"https://client.example.com/callback"},
+					PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: permissionSetID}},
 				}
 				_ = r.Create(context.Background(), agent)
 			},
@@ -368,7 +370,7 @@ func TestService_HandleAuthorization(t *testing.T) {
 					Principal:             id.Principal("user@example.com"),
 					AgentID:               testAgentID,
 					ValidUntil:            nil,
-					GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
+					GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
 				}
 				_ = r.Create(context.Background(), grant)
 			},
@@ -447,6 +449,66 @@ func TestService_HandleAuthorization(t *testing.T) {
 	}
 }
 
+func TestService_HandleAuthorization_RemovedPermissionSetRequiresConsent(t *testing.T) {
+	agentID := id.NewAgentID()
+	serviceA := id.NewServiceID()
+	serviceB := id.NewServiceID()
+	declaredSet := id.NewPermissionSetID()
+	removedSet := id.NewPermissionSetID()
+	principal := id.NewPrincipal("user@example.com")
+	agent := &storage.Agent{
+		ID:           agentID,
+		ClientID:     ptr.To(id.ClientID("upstream-client")),
+		RedirectURIs: []string{"https://client.example.com/callback"},
+		PermissionSets: []storage.AgentPermissionSetEntry{
+			{PermissionSetID: declaredSet, RequirementType: storage.RequirementTypeOptional},
+			{PermissionSetID: removedSet, RequirementType: storage.RequirementTypeOptional},
+		},
+	}
+	agentRepo := NewMockAgentRepository()
+	require.NoError(t, agentRepo.Create(context.Background(), agent))
+	grantRepo := NewMockGrantRepository()
+	require.NoError(t, grantRepo.Create(context.Background(), &storage.UserGrant{
+		ID:        id.NewGrantID(),
+		Principal: principal,
+		AgentID:   agentID,
+		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{
+			{PermissionSetID: declaredSet, IncludedServiceIDs: []id.ServiceID{serviceA}},
+			{PermissionSetID: removedSet, IncludedServiceIDs: []id.ServiceID{serviceB}},
+		},
+	}))
+	sessionLookups := 0
+	sessionRepo := NewMockSessionRepository()
+	sessionRepo.findFunc = func(_ context.Context, _ id.Principal, _ id.ServiceID) (*storage.UserSession, error) {
+		sessionLookups++
+		return nil, nil
+	}
+	svc := newTestAuthorizationServiceWithSessions(agentRepo, grantRepo, sessionRepo, &OAuth2Config{
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		PublicURL:                 "https://broker.example.com",
+		ModeStrategy:              NewProxyModeStrategy(),
+	})
+	req := &ports.AuthorizationRequest{
+		ClientID:     id.ClientID(agentID.String()),
+		RedirectURI:  "https://client.example.com/callback",
+		ResponseType: "code",
+		OriginalURL:  "https://broker.example.com/oauth2/authorize?client_id=" + agentID.String(),
+	}
+
+	decision, err := svc.HandleAuthorization(context.Background(), req, principal)
+	require.NoError(t, err)
+	require.Equal(t, "proceed", decision.Action)
+
+	// Removing the B declaration must invalidate the entire grant, even for service A.
+	agent.PermissionSets = agent.PermissionSets[:1]
+	sessionLookups = 0
+	decision, err = svc.HandleAuthorization(context.Background(), req, principal)
+	require.NoError(t, err)
+	require.Equal(t, "redirect_to_consent", decision.Action)
+	assert.Contains(t, decision.RedirectURL, "https://broker.example.com/agents/"+agentID.String()+"?session_token=")
+	assert.Zero(t, sessionLookups, "stale grants must be rejected before checking sessions")
+}
+
 func TestService_HandleAuthorization_AllowsOfflineAccessReservedScope(t *testing.T) {
 	agentID := id.NewAgentID()
 	agentRepo := NewMockAgentRepository()
@@ -486,13 +548,14 @@ func TestService_HandleAuthorization_AllowsOfflineAccessReservedScope(t *testing
 func TestService_HandleAuthorization_SessionExpiry(t *testing.T) {
 	agentID := id.NewAgentID()
 	serviceID := id.NewServiceID()
+	permissionSetID := id.NewPermissionSetID()
 
 	activeGrant := func(r *MockGrantRepository) {
 		grant := &storage.UserGrant{
 			ID:                    id.NewGrantID(),
 			Principal:             id.Principal("user@example.com"),
 			AgentID:               agentID,
-			GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{serviceID}}},
+			GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{serviceID}}},
 		}
 		_ = r.Create(context.Background(), grant)
 	}
@@ -563,10 +626,11 @@ func TestService_HandleAuthorization_SessionExpiry(t *testing.T) {
 			sessionRepo := NewMockSessionRepository()
 
 			_ = agentRepo.Create(context.Background(), &storage.Agent{
-				ID:           agentID,
-				ClientID:     ptr.To(id.ClientID("client-1")),
-				DisplayName:  "Test Client",
-				RedirectURIs: []string{"https://client.example.com/callback"},
+				ID:             agentID,
+				ClientID:       ptr.To(id.ClientID("client-1")),
+				DisplayName:    "Test Client",
+				RedirectURIs:   []string{"https://client.example.com/callback"},
+				PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: permissionSetID}},
 			})
 			activeGrant(grantRepo)
 			tt.setupSession(sessionRepo)
@@ -592,12 +656,14 @@ func TestService_HandleAuthorization_PreservesParameters(t *testing.T) {
 	grantRepo := NewMockGrantRepository()
 
 	agentID := id.NewAgentID()
+	permissionSetID := id.NewPermissionSetID()
 
 	// Add agent
 	agent := &storage.Agent{
-		ID:           agentID,
-		ClientID:     ptr.To(id.ClientID("client-1")),
-		RedirectURIs: []string{"https://client.example.com/callback"},
+		ID:             agentID,
+		ClientID:       ptr.To(id.ClientID("client-1")),
+		RedirectURIs:   []string{"https://client.example.com/callback"},
+		PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: permissionSetID}},
 	}
 	_ = agentRepo.Create(context.Background(), agent)
 
@@ -607,7 +673,7 @@ func TestService_HandleAuthorization_PreservesParameters(t *testing.T) {
 		Principal:             id.Principal("user@example.com"),
 		AgentID:               agentID,
 		ValidUntil:            nil,
-		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
+		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
@@ -648,13 +714,15 @@ func TestService_HandleAuthorization_PreservesParameters(t *testing.T) {
 func TestService_HandleAuthorization_UUIDResolution(t *testing.T) {
 	agentID := id.NewAgentID()
 	serviceID := id.NewServiceID()
+	permissionSetID := id.NewPermissionSetID()
 
 	setupAgent := func(r *MockAgentRepository) {
 		agent := &storage.Agent{
-			ID:           agentID,
-			ClientID:     ptr.To(id.ClientID("upstream-client-1")), // upstream OAuth2 client ID
-			DisplayName:  "Test Agent",
-			RedirectURIs: []string{"https://client.example.com/callback"},
+			ID:             agentID,
+			ClientID:       ptr.To(id.ClientID("upstream-client-1")), // upstream OAuth2 client ID
+			DisplayName:    "Test Agent",
+			RedirectURIs:   []string{"https://client.example.com/callback"},
+			PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: permissionSetID}},
 		}
 		_ = r.Create(context.Background(), agent)
 	}
@@ -665,7 +733,7 @@ func TestService_HandleAuthorization_UUIDResolution(t *testing.T) {
 			Principal: id.Principal("user@example.com"),
 			AgentID:   agentID,
 			GrantedPermissionSets: []storage.GrantedPermissionSetEntry{
-				{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{serviceID}},
+				{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{serviceID}},
 			},
 		}
 		_ = r.Create(context.Background(), grant)
@@ -748,15 +816,17 @@ func TestService_HandleAuthorization_UUIDResolution(t *testing.T) {
 func TestService_HandleAuthorization_UUIDResolution_UpstreamClientID(t *testing.T) {
 	agentID := id.NewAgentID()
 	serviceID := id.NewServiceID()
+	permissionSetID := id.NewPermissionSetID()
 
 	agentRepo := NewMockAgentRepository()
 	grantRepo := NewMockGrantRepository()
 
 	agent := &storage.Agent{
-		ID:           agentID,
-		ClientID:     ptr.To(id.ClientID("upstream-client-abc")), // this is what should appear in upstream URL
-		DisplayName:  "Test Agent",
-		RedirectURIs: []string{"https://client.example.com/callback"},
+		ID:             agentID,
+		ClientID:       ptr.To(id.ClientID("upstream-client-abc")), // this is what should appear in upstream URL
+		DisplayName:    "Test Agent",
+		RedirectURIs:   []string{"https://client.example.com/callback"},
+		PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: permissionSetID}},
 	}
 	_ = agentRepo.Create(context.Background(), agent)
 
@@ -765,7 +835,7 @@ func TestService_HandleAuthorization_UUIDResolution_UpstreamClientID(t *testing.
 		Principal: id.Principal("user@example.com"),
 		AgentID:   agentID,
 		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{
-			{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{serviceID}},
+			{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{serviceID}},
 		},
 	}
 	_ = grantRepo.Create(context.Background(), grant)
@@ -851,16 +921,18 @@ func TestService_GenerateMetadata(t *testing.T) {
 func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 	agentID := id.NewAgentID()
 	serviceID := id.NewServiceID()
+	permissionSetID := id.NewPermissionSetID()
 
 	makeRepos := func() (*MockAgentRepository, *MockGrantRepository) {
 		agentRepo := NewMockAgentRepository()
 		grantRepo := NewMockGrantRepository()
 
 		agent := &storage.Agent{
-			ID:           agentID,
-			ClientID:     ptr.To(id.ClientID("shared-upstream-client")),
-			DisplayName:  "Test Agent",
-			RedirectURIs: []string{"https://client.example.com/callback"},
+			ID:             agentID,
+			ClientID:       ptr.To(id.ClientID("shared-upstream-client")),
+			DisplayName:    "Test Agent",
+			RedirectURIs:   []string{"https://client.example.com/callback"},
+			PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: permissionSetID}},
 		}
 		_ = agentRepo.Create(context.Background(), agent)
 
@@ -869,7 +941,7 @@ func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 			Principal: id.Principal("user@example.com"),
 			AgentID:   agentID,
 			GrantedPermissionSets: []storage.GrantedPermissionSetEntry{
-				{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{serviceID}},
+				{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{serviceID}},
 			},
 		}
 		_ = grantRepo.Create(context.Background(), grant)

@@ -26,9 +26,11 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 		name              string
 		mixedGrant        bool
 		emptyDeclarations bool
+		otherServiceOnly  bool
 	}{
 		{name: "unrelated set without service requirements"},
 		{name: "mixed declared and undeclared sets for a declared service", mixedGrant: true},
+		{name: "declared service A with undeclared set covering only B", mixedGrant: true, otherServiceOnly: true},
 		{name: "empty agent declarations", emptyDeclarations: true},
 	}
 	for _, tt := range tests {
@@ -83,13 +85,21 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 				},
 			}}
 			if tt.mixedGrant {
+				otherServiceID := requestedServiceID
 				requestedServiceID = coveredServiceID
 				agent.ServiceRequirements = []storagedomain.ServiceRequirement{
 					{ServiceID: coveredServiceID, RequiredScopes: []string{"read", "write"}, RequirementType: storagedomain.RequirementTypeOptional},
 				}
+				undeclaredServiceID := coveredServiceID
+				if tt.otherServiceOnly {
+					undeclaredServiceID = otherServiceID
+					psRepo.psMap[undeclaredSetID].ServiceScopes = []storagedomain.ServiceScope{{
+						ServiceID: otherServiceID, Scopes: []string{"read", "write"}, RequirementType: storagedomain.RequirementTypeOptional,
+					}}
+				}
 				grant.GrantedPermissionSets = []storagedomain.GrantedPermissionSetEntry{
 					{PermissionSetID: declaredSetID, IncludedServiceIDs: []id.ServiceID{coveredServiceID}},
-					{PermissionSetID: undeclaredSetID, IncludedServiceIDs: []id.ServiceID{coveredServiceID}},
+					{PermissionSetID: undeclaredSetID, IncludedServiceIDs: []id.ServiceID{undeclaredServiceID}},
 				}
 			}
 			if tt.emptyDeclarations {
@@ -124,7 +134,7 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 				&MockEncryption{},
 				nil,
 				nil,
-				oauth2session.DefaultConfig(),
+				oauth2session.Config{CallbackBaseURL: "https://broker.example.com/"},
 				slog.Default(),
 			)
 			jwtValidator, err := NewJWTValidator(
@@ -181,19 +191,11 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 			)
 
 			response, err := svc.Exchange(context.Background(), req)
-			returnedUndeclaredSet := false
-			returnedAccessToken := false
-			if response != nil {
-				_, returnedUndeclaredSet = response.GrantedPermissionSets[undeclaredSetID.String()]
-				returnedAccessToken = response.AccessToken != ""
-			}
-			assert.True(t, response == nil,
-				"response_present=%t access_token_present=%t undeclared_set_present=%t session_lookup_count=%d",
-				response != nil, returnedAccessToken, returnedUndeclaredSet, sessionRepo.findByPrincipalAndServiceCalls)
-			tokenErr, ok := err.(*TokenExchangeError)
-			if assert.True(t, ok, "expected TokenExchangeError; error_present=%t error_type=%T", err != nil, err) {
-				assert.Equal(t, "invalid_grant", tokenErr.Code())
-			}
+			assert.Nil(t, response)
+			var tokenErr *TokenExchangeError
+			require.ErrorAs(t, err, &tokenErr)
+			assert.Equal(t, "invalid_grant", tokenErr.Code())
+			assert.Equal(t, "https://broker.example.com/agents/"+agentID.String(), tokenErr.ErrorURI())
 			assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "undeclared permission sets must be rejected before token-vault lookup")
 		})
 	}
@@ -223,8 +225,15 @@ func TestResolveEffectiveScopes_RejectsRemovedDeclaration(t *testing.T) {
 	}}
 	psService := permissionset.NewPermissionSetService(psRepo, &MockGrantRepository{}, slog.Default())
 	t.Cleanup(psService.Close)
-	svc := &TokenExchangeService{permissionSetService: psService}
+	svc := &TokenExchangeService{
+		permissionSetService: psService,
+		oauth2SessionService: oauth2session.NewOAuth2SessionService(
+			nil, nil, nil, nil, nil, nil, nil,
+			oauth2session.Config{CallbackBaseURL: "https://broker.example.com/"}, nil,
+		),
+	}
 	agent := &storagedomain.Agent{
+		ID: id.NewAgentID(),
 		PermissionSets: []storagedomain.AgentPermissionSetEntry{
 			{PermissionSetID: retainedSetID, RequirementType: storagedomain.RequirementTypeOptional},
 			{PermissionSetID: removedSetID, RequirementType: storagedomain.RequirementTypeOptional},
@@ -247,5 +256,6 @@ func TestResolveEffectiveScopes_RejectsRemovedDeclaration(t *testing.T) {
 	var tokenErr *TokenExchangeError
 	if assert.ErrorAs(t, err, &tokenErr) {
 		assert.Equal(t, "invalid_grant", tokenErr.Code())
+		assert.Equal(t, "https://broker.example.com/agents/"+agent.ID.String(), tokenErr.ErrorURI())
 	}
 }
