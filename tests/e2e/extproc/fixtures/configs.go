@@ -55,11 +55,10 @@ func DefaultConfig() *extprocconfig.Config {
 }
 
 // ShortCacheTTLConfig returns a config with very short cache TTL for expiry testing.
-// The DefaultTTL is set to 150ms to allow tests to observe cache expiry within test timeouts.
+// The DefaultTTL is set to 100ms to allow tests to observe cache expiry within test timeouts.
 func ShortCacheTTLConfig() *extprocconfig.Config {
 	cfg := DefaultConfig()
 	cfg.Cache.DefaultTTL = ShortTTL
-	cfg.Cache.MaxTTL = 5 * ShortTTL
 	return cfg
 }
 

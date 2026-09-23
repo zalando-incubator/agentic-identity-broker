@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -501,32 +500,39 @@ var _ = Describe("ExtProc Token Exchange", func() {
 				// When: N concurrent requests arrive simultaneously (all cache misses)
 				const numConcurrent = 10
 				var wg sync.WaitGroup
-				var successCount int64
+				type exchangeResult struct {
+					response *extprocv3.ProcessingResponse
+					err      error
+				}
+				results := make(chan exchangeResult, numConcurrent)
 				wg.Add(numConcurrent)
 
-				for i := 0; i < numConcurrent; i++ {
+				for range numConcurrent {
 					go func() {
 						defer wg.Done()
-						// Each goroutine creates its own client connection for true concurrency
+						defer GinkgoRecover()
 						concurrentClient, concurrentConn := env.NewExtProcClient()
 						defer concurrentConn.Close() //nolint:errcheck
 
-						r := helpers.SendRequestHeaders(context.Background(), concurrentClient, req)
-						if r != nil {
-							atomic.AddInt64(&successCount, 1)
-						}
+						resp, err := helpers.SendRequestHeadersWithError(context.Background(), concurrentClient, req)
+						results <- exchangeResult{resp, err}
 					}()
 				}
 				wg.Wait()
+				close(results)
 
 				// Then: All concurrent requests succeed
-				Expect(successCount).To(Equal(int64(numConcurrent)),
-					"all concurrent requests should succeed")
+				completed := 0
+				for result := range results {
+					Expect(result.err).NotTo(HaveOccurred(), "concurrent request should succeed")
+					Expect(result.response).NotTo(BeNil())
+					Expect(result.response).To(helpers.HaveReplacedAuthorizationHeader("Bearer " + refreshedToken))
+					completed++
+				}
+				Expect(completed).To(Equal(numConcurrent), "all concurrent requests should complete")
 
-				// Only ONE additional token exchange call should have been made (singleflight deduplication)
-				// Total calls = 1 (initial) + 1 (singleflight refresh) = 2
-				finalCallCount := env.MockTokenExchange.CallCount()
-				Expect(finalCallCount).To(Equal(2),
+				// Only ONE additional token exchange call should have been made.
+				Expect(env.MockTokenExchange.CallCount()).To(Equal(2),
 					"singleflight should deduplicate concurrent token exchange refreshes to exactly one call")
 			})
 		})
