@@ -50,14 +50,6 @@ import (
 // agentgwLogger writes structured test output to GinkgoWriter for test visibility.
 var agentgwLogger = bootstrap.NewTestLogger()
 
-func init() {
-	if os.Getenv("TESTCONTAINERS_RYUK_DISABLED") == "" {
-		if err := os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true"); err != nil {
-			panic(err)
-		}
-	}
-}
-
 // agentgwContextKey is used for storing request-scoped values in context.
 type agentgwContextKey string
 
@@ -96,46 +88,17 @@ var _ = Describe("Agentgateway Integration", Ordered, func() {
 		extprocGRPC          *grpc.Server
 		exchanger            *extprocserver.TokenExchanger
 		mcpClient            *client.Client
+		mcpHTTPServer        *http.Server
 	)
 
 	BeforeAll(func() {
-
-		ctx, cancel = context.WithTimeout(context.Background(), 120*time.Second)
-
-		var err error
-		jwtFixture, err = fixtures.NewRS256JWTFixture(agentgwJWTIssuer, agentgwJWTAudience)
-		Expect(err).NotTo(HaveOccurred(), "failed to create agentgateway JWT fixture")
-		mintedJWT, err = jwtFixture.MintToken("agentgateway-e2e-subject", time.Now().Add(10*time.Minute))
-		Expect(err).NotTo(HaveOccurred(), "failed to mint agentgateway JWT")
-
-		// --- 1. Start mock identity broker (client_credentials + token exchange) ---
-		mockOAuth2Srv = newAgentgwMockOAuth2Srv()
-		mockTokenExchangeSvr = newAgentgwMockTokenExchangeSrv()
-
-		// --- 2. Start mock MCP server using mcp-go (captures Authorization header) ---
-		mcpListener := startAgentgwMCPServer()
-		mcpPort := mcpListener.Addr().(*net.TCPAddr).Port
-		agentgwLogger.Info("Mock MCP server listening", "port", mcpPort)
-
-		// --- 3. Start ExtProc gRPC server (system under test) ---
-		var extprocListener net.Listener
-		extprocListener, extprocGRPC, exchanger = startAgentgwExtProc(
-			mockOAuth2Srv.URL, mockTokenExchangeSvr.URL,
-		)
-		extprocPort := extprocListener.Addr().(*net.TCPAddr).Port
-		agentgwLogger.Info("ExtProc gRPC server listening", "port", extprocPort)
-
-		// --- 4. Start agentgateway Docker container ---
-		agentgatewayPort := startAgentgwContainer(ctx, extprocPort, mcpPort, jwtFixture)
-		agentgwLogger.Info("agentgateway accessible on host port", "port", agentgatewayPort)
-
-		// --- 5. Create MCP client and connect through agentgateway ---
-		agentgatewayURL := fmt.Sprintf("http://localhost:%s", agentgatewayPort)
-		mcpClient = connectAgentgwMCPClient(ctx, agentgatewayURL, mintedJWT)
-
+		ctx, cancel = context.WithCancel(context.Background())
 		DeferCleanup(func() {
 			if mcpClient != nil {
 				mcpClient.Close() //nolint:errcheck
+			}
+			if mcpHTTPServer != nil {
+				mcpHTTPServer.Close() //nolint:errcheck
 			}
 			if extprocGRPC != nil {
 				extprocGRPC.GracefulStop()
@@ -151,13 +114,47 @@ var _ = Describe("Agentgateway Integration", Ordered, func() {
 			}
 			cancel()
 		})
+
+		var err error
+		jwtFixture, err = fixtures.NewRS256JWTFixture(agentgwJWTIssuer, agentgwJWTAudience)
+		Expect(err).NotTo(HaveOccurred(), "failed to create agentgateway JWT fixture")
+		mintedJWT, err = jwtFixture.MintToken("agentgateway-e2e-subject", time.Now().Add(10*time.Minute))
+		Expect(err).NotTo(HaveOccurred(), "failed to mint agentgateway JWT")
+
+		// --- 1. Start mock identity broker (client_credentials + token exchange) ---
+		mockOAuth2Srv = newAgentgwMockOAuth2Srv()
+		mockTokenExchangeSvr = newAgentgwMockTokenExchangeSrv()
+
+		// --- 2. Start mock MCP server using mcp-go (captures Authorization header) ---
+		var mcpListener net.Listener
+		mcpListener, mcpHTTPServer = startAgentgwMCPServer()
+		mcpPort := mcpListener.Addr().(*net.TCPAddr).Port
+		agentgwLogger.Info("Mock MCP server listening", "port", mcpPort)
+
+		// --- 3. Start ExtProc gRPC server (system under test) ---
+		var extprocListener net.Listener
+		extprocListener, extprocGRPC, exchanger = startAgentgwExtProc(
+			mockOAuth2Srv.URL, mockTokenExchangeSvr.URL,
+		)
+		extprocPort := extprocListener.Addr().(*net.TCPAddr).Port
+		agentgwLogger.Info("ExtProc gRPC server listening", "port", extprocPort)
+
+		// --- 4. Start agentgateway Docker container ---
+		setupCtx, setupCancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer setupCancel()
+		agentgatewayPort := startAgentgwContainer(setupCtx, extprocPort, mcpPort, jwtFixture)
+		agentgwLogger.Info("agentgateway accessible on host port", "port", agentgatewayPort)
+
+		// --- 5. Create MCP client and connect through agentgateway ---
+		agentgatewayURL := fmt.Sprintf("http://localhost:%s", agentgatewayPort)
+		mcpClient = connectAgentgwMCPClient(ctx, agentgatewayURL, mintedJWT)
 	})
 
 	// US1-agentgw: Token exchange through agentgateway
 	// Given an MCP client sends a Bearer token to agentgateway,
 	// When agentgateway routes the request through ExtProc,
 	// Then the MCP server receives the exchanged token (not the original).
-	It("should exchange the Bearer token through agentgateway and deliver exchanged token to MCP server", func() {
+	It("should exchange the Bearer token through agentgateway and deliver exchanged token to MCP server", NodeTimeout(time.Minute), func(ctx SpecContext) {
 		result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Name: "whoami",
@@ -182,7 +179,7 @@ var _ = Describe("Agentgateway Integration", Ordered, func() {
 	})
 
 	// Echo tool: basic functional test through agentgateway
-	It("should route the echo tool call through agentgateway to the MCP server", func() {
+	It("should route the echo tool call through agentgateway to the MCP server", NodeTimeout(time.Minute), func(ctx SpecContext) {
 		result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Name:      "echo",
@@ -254,7 +251,7 @@ func (m *agentgwMockTokenExchangeSrv) callCount() int {
 // startAgentgwMCPServer creates an MCP server with "echo" and "whoami" tools using the mcp-go library.
 // The "whoami" tool returns a digest of the Authorization credential so the test can
 // verify token exchange without exposing a suite-minted JWT.
-func startAgentgwMCPServer() net.Listener {
+func startAgentgwMCPServer() (net.Listener, *http.Server) {
 	mcpSvr := mcpserver.NewMCPServer(
 		"e2e-mock-mcp-server", "1.0.0",
 		mcpserver.WithToolCapabilities(false),
@@ -303,14 +300,14 @@ func startAgentgwMCPServer() net.Listener {
 	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	Expect(err).NotTo(HaveOccurred(), "failed to create MCP server listener")
 
+	httpServer := &http.Server{Handler: httpSrv}
 	go func() {
-		srv := &http.Server{Handler: httpSrv}
-		if serveErr := srv.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+		if serveErr := httpServer.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
 			agentgwLogger.Error("MCP server error", "err", serveErr)
 		}
 	}()
 
-	return listener
+	return listener, httpServer
 }
 
 // --- ExtProc gRPC Server (System Under Test) ---
@@ -437,9 +434,9 @@ func startAgentgwContainer(ctx context.Context, extprocPort, mcpPort int, jwtFix
 	Expect(err).NotTo(HaveOccurred(), "failed to start agentgateway container")
 
 	DeferCleanup(func() {
-		if termErr := container.Terminate(ctx); termErr != nil {
-			agentgwLogger.Error("failed to terminate agentgateway container", "err", termErr)
-		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		Expect(container.Terminate(cleanupCtx)).To(Succeed(), "failed to terminate agentgateway container")
 	})
 
 	mappedPort, err := container.MappedPort(ctx, "4000")
@@ -529,6 +526,7 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 		elicitationBroker *httptest.Server
 		extprocGRPC       *grpc.Server
 		exchanger         *extprocserver.TokenExchanger
+		mcpHTTPServer     *http.Server
 		agentgatewayURL   string
 	)
 
@@ -538,7 +536,22 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 			Skip("Skipping agentgateway elicitation tests: Docker not available")
 		}
 
-		ctx, cancel = context.WithTimeout(context.Background(), 120*time.Second)
+		ctx, cancel = context.WithCancel(context.Background())
+		DeferCleanup(func() {
+			if extprocGRPC != nil {
+				extprocGRPC.GracefulStop()
+			}
+			if mcpHTTPServer != nil {
+				mcpHTTPServer.Close() //nolint:errcheck
+			}
+			if exchanger != nil {
+				exchanger.Shutdown()
+			}
+			if elicitationBroker != nil {
+				elicitationBroker.Close()
+			}
+			cancel()
+		})
 
 		var err error
 		jwtFixture, err = fixtures.NewRS256JWTFixture(agentgwJWTIssuer, agentgwJWTAudience)
@@ -551,7 +564,8 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 
 		// 2. MCP server: needed by agentgateway config; the elicitation response is
 		//    returned before agentgateway forwards to the backend, so it is never called.
-		mcpListener := startAgentgwMCPServer()
+		var mcpListener net.Listener
+		mcpListener, mcpHTTPServer = startAgentgwMCPServer()
 		mcpPort := mcpListener.Addr().(*net.TCPAddr).Port
 
 		// 3. ExtProc (system under test).
@@ -563,22 +577,11 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 		agentgwLogger.Info("Elicitation ExtProc listening", "port", extprocPort)
 
 		// 4. agentgateway Docker container.
-		agentgatewayPort := startAgentgwContainer(ctx, extprocPort, mcpPort, jwtFixture)
+		setupCtx, setupCancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer setupCancel()
+		agentgatewayPort := startAgentgwContainer(setupCtx, extprocPort, mcpPort, jwtFixture)
 		agentgatewayURL = fmt.Sprintf("http://localhost:%s", agentgatewayPort)
 		agentgwLogger.Info("Elicitation agentgateway accessible", "url", agentgatewayURL)
-
-		DeferCleanup(func() {
-			if extprocGRPC != nil {
-				extprocGRPC.GracefulStop()
-			}
-			if exchanger != nil {
-				exchanger.Shutdown()
-			}
-			if elicitationBroker != nil {
-				elicitationBroker.Close()
-			}
-			cancel()
-		})
 	})
 
 	// Scenario 1.1 from specs/023-extproc-mcp-elicitation/spec.md:
@@ -590,7 +593,7 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 	// Per JSON-RPC 2.0 §5, null id is correct when the request id is indeterminate
 	// — which is the case here since ExtProc short-circuits from the headers phase
 	// before the request body (containing the id) is read.
-	It("should return URLElicitationRequiredError with re-auth URL when token exchange fails with error_uri", func() {
+	It("should return URLElicitationRequiredError with re-auth URL when token exchange fails with error_uri", NodeTimeout(time.Minute), func(ctx SpecContext) {
 		// Build a JSON-RPC Initialize request (id=1) — the same request mcp-go would send.
 		initBody := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` +
 			mcp.LATEST_PROTOCOL_VERSION + `","clientInfo":{"name":"e2e-elicitation-client","version":"1.0.0"},"capabilities":{}}}`
