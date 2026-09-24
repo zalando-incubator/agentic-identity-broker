@@ -283,13 +283,17 @@ jobs:
           \`gh attestation verify oci://ghcr.io/${REPO}:${TAG} --owner ${OWNER}\`
           EOF
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "GitHub Release $TAG already exists; only refreshing assets."
+          if release_is_draft="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [ "$release_is_draft" != true ]; then
+              echo "::error::Release $TAG is already published. Create a new tag to upload assets." >&2
+              exit 1
+            fi
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --draft=false
           else
-            gh release create "$TAG" \
+            gh release create "$TAG" dist/* \
               --verify-tag \
               --title "$TAG" \
               --generate-notes \
               --notes-file release-notes.md
           fi
-          gh release upload "$TAG" dist/* --clobber
