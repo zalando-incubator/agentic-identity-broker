@@ -28,7 +28,6 @@
 package extproc_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -212,7 +211,9 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 
 		// --- 5. Create MCP client connected through agentgateway ---
 		agentgatewayURL := fmt.Sprintf("http://localhost:%s", agentgatewayPort)
-		mcpClient = opaAgentgwConnectMCPClient(ctx, agentgatewayURL, mcpJWT)
+		initCtx, initCancel := context.WithTimeout(ctx, time.Minute)
+		defer initCancel()
+		mcpClient = opaAgentgwConnectMCPClient(initCtx, agentgatewayURL, mcpJWT)
 	})
 
 	BeforeEach(func() {
@@ -457,17 +458,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 			`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"list_repositories","arguments":{}}}`,
 			requestID,
 		)
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			fmt.Sprintf("http://localhost:%s/mcp", agentgatewayPort),
-			bytes.NewBufferString(reqBody),
-		)
-		Expect(err).NotTo(HaveOccurred())
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Accept", "application/json, text/event-stream")
-		httpReq.Header.Set("Authorization", "Bearer "+reAuthJWT)
-
-		resp, err := http.DefaultClient.Do(httpReq)
-		Expect(err).NotTo(HaveOccurred())
+		resp := opaAgentgwPostMCP(ctx, agentgatewayPort, reAuthJWT, reqBody)
 		defer resp.Body.Close() //nolint:errcheck
 
 		Expect(resp.StatusCode).To(Equal(http.StatusOK),

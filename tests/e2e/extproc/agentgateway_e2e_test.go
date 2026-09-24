@@ -147,7 +147,9 @@ var _ = Describe("Agentgateway Integration", Ordered, func() {
 
 		// --- 5. Create MCP client and connect through agentgateway ---
 		agentgatewayURL := fmt.Sprintf("http://localhost:%s", agentgatewayPort)
-		mcpClient = connectAgentgwMCPClient(ctx, agentgatewayURL, mintedJWT)
+		initCtx, initCancel := context.WithTimeout(ctx, time.Minute)
+		defer initCancel()
+		mcpClient = connectAgentgwMCPClient(initCtx, agentgatewayURL, mintedJWT)
 	})
 
 	// US1-agentgw: Token exchange through agentgateway
