@@ -196,7 +196,7 @@ function PendingApprovalCard({ approval, onResolved }: PendingApprovalCardProps)
 
         {action === null && (
           <div className="flex items-center justify-between border-t border-neutral-100 pt-3">
-            <p className="text-xs text-neutral-400">Requested {relativeTime(approval.created_at)}</p>
+            <p className="text-xs text-neutral-400" data-screenshot-dynamic>Requested {relativeTime(approval.created_at)}</p>
             <div className="flex items-center gap-2">
               <Button variant="danger" size="sm" onClick={() => setAction('deny')}>
                 Deny
@@ -237,7 +237,7 @@ function PermanentAuthCard({ approval, onRevoke, revoking }: PermanentCardProps)
               <span className="font-medium text-red-700">Permanently denied</span>
             )}
             {decidedAt && (
-              <span className="text-neutral-400">
+              <span className="text-neutral-400" data-screenshot-dynamic>
                 · {new Date(decidedAt).toLocaleDateString(undefined, {
                   year: 'numeric',
                   month: 'short',

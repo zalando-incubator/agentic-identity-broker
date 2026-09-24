@@ -14,6 +14,7 @@ import (
 type fakeScreenshotPage struct {
 	waitErr         error
 	evaluateErr     error
+	evaluateResult  string
 	screenshotErr   error
 	screenshotData  []byte
 	waitCalls       int
@@ -28,7 +29,7 @@ func (f *fakeScreenshotPage) WaitForLoadState(options ...playwright.PageWaitForL
 
 func (f *fakeScreenshotPage) Evaluate(expression string, arg ...any) (any, error) {
 	f.evaluateCalls = append(f.evaluateCalls, expression)
-	return nil, f.evaluateErr
+	return f.evaluateResult, f.evaluateErr
 }
 
 func (f *fakeScreenshotPage) Screenshot(options ...playwright.PageScreenshotOptions) ([]byte, error) {
@@ -65,6 +66,22 @@ func TestCaptureScreenshot_AllowsNetworkIdleTimeoutFallback(t *testing.T) {
 	dirInfo, statErr := os.Stat(dir)
 	require.NoError(t, statErr)
 	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
+}
+
+func TestCaptureScreenshot_RejectsUnavailableFont(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "unavailable-font.png")
+	require.NoError(t, os.WriteFile(path, []byte("existing-image"), 0o600))
+	page := &fakeScreenshotPage{evaluateResult: "Manrope"}
+
+	err := captureScreenshot(page, dir, "unavailable-font")
+	require.ErrorContains(t, err, "Manrope")
+	assert.Equal(t, 0, page.screenshotCalls)
+	data, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	assert.Equal(t, []byte("existing-image"), data)
 }
 
 func TestCaptureScreenshot_ReturnsErrorOnNonTimeoutLoadFailure(t *testing.T) {

@@ -82,7 +82,7 @@ export function ApprovalConfirmation({
           )}
         </p>
         {decidedAt && (
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-neutral-500" data-screenshot-dynamic>
             {outcome} at {new Date(decidedAt).toLocaleString()}
           </p>
         )}
