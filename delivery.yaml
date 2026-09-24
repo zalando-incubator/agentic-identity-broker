@@ -34,13 +34,16 @@ pipeline:
           apt-get --yes install just curl ca-certificates
           curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
           apt-get --yes install nodejs
+          export GOBIN=/go/bin PATH="/go/bin:$PATH"
           just install-tools
           just web-ci
       - desc: "Run quality checks"
         cmd: |
+          export PATH="/go/bin:$PATH"
           just check
       - desc: "Run unit suites"
         cmd: |
+          export PATH="/go/bin:$PATH"
           cdp-wrap-cmd "just verify-unit-junit" \
             "cdp-tool upload-test-results -t junit \
               $(pwd)/test-results/unit-junit.xml"
@@ -76,9 +79,11 @@ pipeline:
           apt-get --yes install just curl ca-certificates
           curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
           apt-get --yes install nodejs
+          export GOBIN=/go/bin PATH="/go/bin:$PATH"
           just install-tools
       - desc: "Run integration suites"
         cmd: |
+          export PATH="/go/bin:$PATH"
           cdp-wrap-cmd "just verify-integration-junit" \
             "cdp-tool upload-test-results -t junit \
               $(pwd)/test-results/integration-junit.xml"
@@ -110,10 +115,12 @@ pipeline:
           apt-get --yes install just curl ca-certificates
           curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
           apt-get --yes install nodejs
+          export GOBIN=/go/bin PATH="/go/bin:$PATH"
           just install-tools
           just web-ci
       - desc: "Run backend E2E suite"
         cmd: |
+          export PATH="/go/bin:$PATH"
           GINKGO_BACKEND_PROCS=4 cdp-wrap-cmd "just verify-e2e-backend-junit" \
             "cdp-tool upload-test-results -t junit \
               $(pwd)/test-results/e2e-backend-junit.xml"
@@ -142,9 +149,11 @@ pipeline:
         cmd: |
           apt-get update
           apt-get --yes install just curl ca-certificates
+          export GOBIN=/go/bin PATH="/go/bin:$PATH"
           just install-tools
       - desc: "Run ExtProc E2E suite"
         cmd: |
+          export PATH="/go/bin:$PATH"
           GINKGO_EXTPROC_PROCS=4 cdp-wrap-cmd "just verify-e2e-extproc-junit" \
             "cdp-tool upload-test-results -t junit \
               $(pwd)/test-results/e2e-extproc-junit.xml"
@@ -176,11 +185,13 @@ pipeline:
           apt-get --yes install just curl ca-certificates
           curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
           apt-get --yes install nodejs
+          export GOBIN=/go/bin PATH="/go/bin:$PATH"
           just install-tools
           go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.1 install-deps chromium
           just web-ci
       - desc: "Run frontend E2E suite"
         cmd: |
+          export PATH="/go/bin:$PATH"
           GINKGO_FRONTEND_PROCS=2 E2E_CAPTURE_SCREENSHOTS=false \
             cdp-wrap-cmd "just verify-e2e-frontend-junit" \
               "cdp-tool upload-test-results -t junit \
@@ -231,6 +242,7 @@ pipeline:
           apt-get --yes install just curl ca-certificates
           curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
           apt-get --yes install nodejs
+          export GOBIN=/go/bin PATH="/go/bin:$PATH"
           just install-tools
           just web-ci
           docker buildx create --config /etc/cdp-buildkitd.toml \
