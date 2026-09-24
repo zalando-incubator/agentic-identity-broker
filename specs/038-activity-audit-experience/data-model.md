@@ -11,6 +11,9 @@ milestones (`occurrence_count`), read-time threading (no persisted `thread_key`)
 explanation model, the approved-field registry, correlation IDs, recorder durability modes, and a
 coordinated prune. Per-event `needs_attention` is removed from the persisted model and the feed.
 
+**Revision 2026-09-24**: records the approved `720h` default, exact response cutoff,
+response-only shared context links, live attention boundary, and independent action audits.
+
 ---
 
 ## 1. ActivityEvent (aggregate, persisted)
@@ -31,7 +34,7 @@ incremented within its bucket (§1.2). Nothing else is ever updated. Corresponds
 | `subject_ref` | `SubjectRef` (value object) | `{kind, id, display_label}`; captured at emit time. |
 | `outcome` | `Outcome` enum | `succeeded` \| `failed` \| `blocked` \| `pending` (§7). |
 | `summary` | `string` | Server-composed, human-readable, redacted sentence answering what/who/what-affected/outcome (FR-002, FR-010), produced from the per-`type` wording template (§3.2). |
-| `detail` | `ActivityDetail` (value object, JSONB) | Structured explanation, approved context, related links (§3). |
+| `detail` | `ActivityDetail` (value object, JSONB) | Structured explanation and approved context (§3); no links persisted. |
 | `related_refs` | `RelatedRefs` (value object, JSONB) | Approved foreign IDs for filtering, read-time threading, and links: `agent_id?`, `service_id?`, `grant_id?`, `session_id?`, `approval_id?`, `client_id?`. Never store a raw resource URI. |
 | `occurrence_count` | `int` | ≥1. >1 only for roll-up types (§1.2). |
 | `first_occurred_at` | `time.Time` | Domain time of the first occurrence in the bucket (= `occurred_at` for non-roll-ups). |
@@ -170,10 +173,14 @@ Progressive-disclosure payload for the detail view (US4, FR-009). All values pre
 |---|---|---|
 | `explanation` | `Explanation` | Structured "why" (§3.2). |
 | `context` | `map[string]string` | Approved key/value context only (§3.1). Never sensitive values. |
-| `related_links` | `[]RelatedLink` | `{label, target_route}`; `target_route` MUST match one of the route templates in §3.3. |
 
-The detail view derives its pending state from the event's `outcome=pending`; no separate
-`detail.pending` field is persisted or returned.
+The detail view derives its pending state from `outcome=pending`; no separate `detail.pending`
+field is persisted or returned.
+
+`ActivityEvent.related_links: []RelatedLink` is a required, response-only projection shared by
+feed and detail DTOs. The aggregate and `ActivityDetail` JSONB do not store links. Generate each
+allowlisted route from a current, principal-owned target (§3.3), or return `[]` for missing,
+deleted, or cross-principal targets. Historical summary and labels remain visible without links.
 
 ### 3.1 `SafeFields` registry (approved-for-display fields — clarification 2026-09-21)
 
@@ -280,7 +287,7 @@ state resolves. History retention does not suppress unresolved items.
 | `kind` | `AttentionKind` enum | `reconnect_required` \| `approval_pending`. |
 | `title` | `string` | Plain-language situation (e.g. "GitHub needs to be reconnected"). |
 | `summary` | `string` | Why it needs attention. |
-| `subject_ref` | `SubjectRef` | The service/tool involved. |
+| `subject_ref` | `SubjectRef` | Domain field for the service/tool; projects to the existing wire/frontend `subject` field. |
 | `next_step` | `NextStep` value object | `{label, target_route}` from §3.3: reconnect → `/sessions`; approval → `/approvals/{id}`. |
 | `since` | `time.Time` | When the unresolved state began. |
 | `group_key` | `string` | Same-kind items sharing a subject collapse in the UI ("4 tool calls waiting → Review all" → `/approvals`). |
@@ -344,15 +351,16 @@ Filter dimensions for `GET /api/activity` (US3, FR-006). Combinable and clearabl
 | Jump-to-date | `before` | RFC3339; upper bound for `occurred_at` (no range picker needed) |
 | Outcome | `outcome` | `succeeded` \| `failed` \| `blocked` \| `pending` |
 | Category | `category` | any `ActivityCategory` |
-| Keyword | `q` | matched against `summary`, actor/subject labels (`pg_trgm`) |
+| Keyword | `q` | matched against `summary`, actor/subject labels (`pg_trgm` or documented `ILIKE` fallback) |
 | Needs-attention | `needs_attention` | `true` (see §8) |
 | Pagination | `cursor`, `limit` | opaque cursor bound to the filter set; `limit` bounded by config |
 
 `ActivityQuery` also carries a server-computed `retention_cutoff`. The client cannot supply it.
 The effective feed lower bound is the later of this cutoff and the selected window's start.
 
-Empty result of a filter combination → "no matches" state (FR-014); no filters + no events →
-"no activity yet" state.
+Empty filtered results show a reset action and the exact retention boundary (FR-014). An
+unfiltered empty feed uses neutral copy: “No activity in the period shown. New activity will
+appear here.” Live Needs-Attention Items remain independent of missing or aged-out events.
 
 ---
 
@@ -364,10 +372,13 @@ Empty result of a filter combination → "no matches" state (FR-014); no filters
 `GetByID(ctx, principal, id, cutoff time.Time) (ActivityEvent, error)`,
 `ListRelated(ctx, principal, ref RelatedRefSelector, windowStart, cutoff time.Time, limit int) ([]ActivityEvent, int, error)`
 (thread assembly; returns the retained total count), `PruneOlderThan(ctx, cutoff, batch) (int, error)`.
-The read service computes one `occurred_at >= now - retention_window` cutoff per request and
-applies it to the feed, the detail lookup, every related sequence, and thread counts. The
-effective related-sequence lower bound is `max(windowStart, cutoff)`. An owned event before
-the cutoff is not found even when pruning has not deleted its row.
+The read service computes one `occurred_at >= now - retention_window` cutoff per request from
+one request clock instant. It applies the same cutoff to feed, detail, related sequences, and
+thread counts. The feed returns that instant as `retention_cutoff_at` in RFC3339 UTC, even if
+empty. The effective related-sequence lower bound is `max(windowStart, cutoff)`. An owned event
+before the cutoff is not found even when pruning has not deleted its row. With `36h`, at
+`2026-09-04T12:00:00Z`, the cutoff is `2026-09-03T00:00:00Z`: a row at the cutoff remains,
+and one a second earlier does not.
 
 **Recorder durability (best-effort after the primary write, research Decision 12)**:
 - Grant upsert/revoke, approval transitions, and session store/terminate enqueue only after the
@@ -378,6 +389,40 @@ the cutoff is not found even when pruning has not deleted its row.
   request context. On a full queue or insert error, it increments the OTel counter
   `activity_events_dropped_total{type}` and logs at `ERROR`. Recording never changes the result
   of the primary operation. Successful state changes and events are not atomic.
+
+**Independent operational action audit (Principle I):** The durable Activity feed is not the
+structured `slog` security audit. Never parse the logs to construct Activity events. An Activity
+queue overflow or insert error adds an ERROR drop log and `activity_events_dropped_total{type}`;
+it does not remove the underlying action log or change an authorized mutation's result. T006
+reviews this matrix for every emitted transition before T046–T049 add only missing action logs:
+
+| Security action / emitted transition | Existing `slog` action record or required gap | Safe audit identity fields |
+|---|---|---|
+| Grant created | No committed create action log observed in `consent/service.go`; add one. | Verified principal, `grant.created`, succeeded, `grant_id`. |
+| Grant updated | No committed update action log observed in `consent/service.go`; add one. | Verified principal, `grant.updated`, succeeded, `grant_id`. |
+| Grant revoked | `RevokeConsentForPrincipal` logs principal/agent/grant after delete; inspect `RevokeConsent` path and add one only if it mutates without a log. | Verified principal, `grant.revoked`, succeeded, `grant_id` or `agent_id`. |
+| Session connected | `oauth2session.createSession` logs `session created` after write; distinguish new revision. | Verified principal, `session.connected`, succeeded, `session_id`/`service_id`. |
+| Session reconnected | `createSession` uses the same log as connection; enrich its action after the committed revision, do not duplicate it. | Verified principal, `session.reconnected`, succeeded, `session_id`/revision. |
+| Session refreshed | `oauth2_token_refreshed` logs after token write; keep it. | Verified principal, `session.refreshed`, succeeded, `session_id`/`service_id`. |
+| Session refresh failed | `oauth2_refresh_failed` logs upstream rejection; check marker-commit boundary and safe error fields. | Verified principal, `session.refresh_failed`, failed, `session_id`/`service_id`. |
+| Session expired | Lazy/worker observation lacks a confirmed action-specific audit; add one at the accepted observation seam. | Verified principal, `session.expired`, failed, `session_id`/revision. |
+| Session terminated | `oauth2_session_terminated` logs after delete; keep it. | Verified principal, `session.terminated`, succeeded, `session_id`. |
+| Approval requested | `approval created` logs on `IsNew`; keep it, not the idempotent-return log. | Verified principal, `approval.requested`, pending, `approval_id`. |
+| Approval approved | `approval approved` logs the transition; keep its action record. | Verified principal, `approval.approved`, succeeded, `approval_id`. |
+| Approval denied | `approval denied` logs the transition; keep its action record. | Verified principal, `approval.denied`, blocked, `approval_id`. |
+| Approval consumed | `approval consumed` logs the transition; keep its action record. | Verified principal, `approval.consumed`, succeeded, `approval_id`. |
+| Approval revoked | `permanent approval revoked` logs the transition; keep its action record. | Verified principal, `approval.revoked`, succeeded, `approval_id`. |
+| Approval expired | `approval expired (lazy detection)` logs an observed expiry; add one for worker-only observation if missing. | Verified principal, `approval.expired`, failed, `approval_id`. |
+| Broker access issued | Local `TokenIssued` in `token_grant_strategy.go` is not RFC 8693 `Exchange`; add exchange audit. | Verified principal, `agent.access_issued`, succeeded, agent/service ID or request correlation. |
+| Verified-principal policy denial | Generic OAuth2 request and local `TokenRequestFailed` logs do not cover RFC 8693; add typed exchange audit. | Verified principal, `policy.denied`, failed, safe subject ID or request correlation. |
+| Verified-principal policy block | Generic request and local token logs do not cover this RFC 8693 decision; add typed exchange audit. | Verified principal, `policy.blocked`, blocked, safe subject ID or request correlation. |
+
+`oauth2_audit.go` logs principal, method, path, and status, but an HTTP request log cannot
+identify every committed transition. T006 checks each row's logger and safe action fields.
+T046–T049 retain action logs, enrich missing action/outcome identity on existing logs, and
+add one structured log only where action coverage is missing. Omit or sanitize unapproved
+existing labels, including approval tool names. Neither existing nor new action records may
+include tokens, approval arguments, raw resource URIs, or unapproved labels.
 
 **Prune (research Decision 8)**: no scheduler exists in the app. The async drainer, every
 `activity.prune_interval` (default `10m`), attempts `pg_try_advisory_lock(hashtext('activity_prune'))`;
@@ -400,10 +445,10 @@ overwrites an expired session, capture its old revision. After the successful to
 enqueue expiry ahead of reconnection. This closes the gap between worker ticks. The recorder
 remains best-effort; the source session and approval state stays authoritative.
 
-**Config** (`internal/ports/config.go`, `activity` section): `retention_window` (Go duration,
-default `720h` = 30 days), `page_size` (25), `rollup_bucket` (`1h`), `queue_size` (1024),
-`prune_interval` (`10m`), `prune_batch` (5000), `attention_poll_interval_seconds` (30; surfaced
-to the SPA via the existing config endpoint or a build-time constant).
+**Planned config** (`internal/ports/config.go`, `activity` section): `retention_window` (Go
+duration, default `720h` = 30 days; any positive representable duration, including `36h`),
+`page_size` (25), `rollup_bucket` (`1h`), `queue_size` (1024), `prune_interval` (`10m`), and
+`prune_batch` (5000). The 30-second visible-tab poll is an SPA constant, not backend config.
 
 ### Table sketch `activity_events`
 
@@ -438,7 +483,7 @@ to the SPA via the existing config endpoint or a build-time constant).
 3. Partial expression B-trees `(principal, (related_refs->>'agent_id'), occurred_at DESC, id DESC)`
    and the `service_id`, `grant_id`, `approval_id` forms, each `WHERE related_refs ? '<key>'` —
    selective filters **and** read-time thread assembly.
-4. `GIN (summary gin_trgm_ops)` (extension `pg_trgm`) — the `q=` keyword filter.
+4. If T016 confirms `pg_trgm`, use `GIN (summary gin_trgm_ops)` for `q=`. Otherwise the migrated fallback omits this extension/index and uses `ILIKE`; record its 10,000-row query plan separately in T120.
 5. `(recorded_at)` — bounded prune batches.
 6. `outcome`/`category` deliberately have no standalone index until the exploratory benchmark
    shows one is needed.

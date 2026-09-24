@@ -13,7 +13,7 @@
 ### Session 2026-09-04
 
 - Q: How does a needs-attention item with no resolution path (a blocked/denied action, a completed revocation) leave the needs-attention area? → A: It never enters it — needs-attention is purely derived from live unresolved state (reconnect required, pending approval) and clears automatically; non-actionable notable events are informational history only, with no user dismissal (preserves the read-only assumption).
-- Q: What is the committed default retention window for surfaced activity? → A: A 7-day rolling window by default (configurable); activity older than the configured window is not shown.
+- Q: What was the initial retention proposal? → A: A seven-day rolling default was proposed on 2026-09-04 and superseded by the approval on 2026-09-23. The configured window always controls visible history.
 - Q: Does the experience record every low-level, high-frequency success (each token exchange, each policy allow) or a curated set of significant events? → A: A curated set of business/security-significant events; routine high-frequency internals (individual token exchanges, per-request allow evaluations) are summarized into their significant milestones rather than surfaced individually.
 - Q: What form does the time-window filter take (relative presets vs a custom date range)? → A: Relative presets only (for example last 24 hours, last 7 days, all activity within retention); an arbitrary custom start/end date range is not required for the MVP.
 
@@ -21,9 +21,9 @@
 
 - Q: Should unresolved needs-attention items remain visible regardless of history retention? → A: Keep unresolved needs-attention items live until resolved, regardless of history retention.
 
-### Session 2026-09-22 (plan review — proposed, pending stakeholder confirmation)
+### Session 2026-09-22 (plan review)
 
-- Q: Is a 7-day default retention sufficient for the trust goal? → A: Proposed default raised to **30 days** (still configurable). Seven days truncates the history of any user who checks in less than weekly and leaves the end of history unexplained; consumer security-activity pages retain 28–180 days. The experience MUST also state where history ends (see FR-014).
+- Q: Is a 7-day default retention sufficient for the trust goal? → A: No. The requester approved a **30-day default** and **arbitrary positive Go-duration values** on 2026-09-23. The boundary must be explained (FR-014). This approval does not cover the revised three-endpoint API contract; Principle X still requires written stakeholder sign-off before handlers.
 - Q: How is "one canonical event per action" (FR-016b) achieved when the same action is reported repeatedly (replica caches, retries, lazy expiry detection)? → A: Each event carries a deterministic idempotency key; duplicate reports are absorbed, never shown.
 - Q: How are routine high-frequency successes "summarized into milestones" (FR-001)? → A: One event per agent/service/time bucket counts successful broker access issuances ("Broker issued GitHub access for Research Agent · 41 times"). This is not a count of downstream uses.
 - Q: Does an event belong to exactly one narrative thread? → A: No; an event may appear in several threads (a tool call belongs to its approval flow, the agent's journey, and the service's lifecycle).
@@ -31,7 +31,7 @@
 
 ### Session 2026-09-21
 
-- Q: What must happen if the system cannot record a security-significant activity event? → A: Complete the action and record only an operational error.
+- Q: What must happen if the system cannot record a security-significant activity event? → A: Complete the authorized action. The failed Activity recording adds an operational error; the underlying security action still emits its independent, safe structured audit record.
 - Q: Which activity-event data may be displayed when a field has not been explicitly classified as safe for user display? → A: Display only pre-approved user-display fields; omit or redact all others.
 - Q: How should a user see an activity record that must be corrected after it has appeared? → A: No correction flow is defined for this feature.
 - Q: How should activity older than the configured retention window appear to the user? → A: Do not show older activity; history ends at the retention window.
@@ -61,7 +61,7 @@ summary, a time, an actor, a subject, and an outcome.
 1. **Given** a user has recent activity across grants, sessions, broker access issuances, and policy decisions, **When** they open the activity experience, **Then** they see those events ordered by recency, each with what happened, when, the actor, the subject, and the outcome.
 2. **Given** an event describes a technical operation (for example a token exchange or a policy evaluation), **When** it is shown, **Then** it is expressed in human-readable language rather than internal system jargon or raw identifiers.
 3. **Given** an event has a clear outcome, **When** it is displayed, **Then** success, failure, and blocked outcomes are each distinguishable without relying on color alone (for example by label, icon, and text).
-4. **Given** the user has never had any activity, **When** they open the experience, **Then** they see a clear, reassuring empty state that explains what will appear here, with no error.
+4. **Given** the user has no activity within the configured retention window, **When** they open the experience, **Then** they see neutral empty copy explaining that new activity will appear here and the exact local history boundary, with no error.
 5. **Given** an event references an agent or service that has since been revoked or removed, **When** it is shown, **Then** the event remains readable and correctly attributes the historical actor without breaking.
 6. **Given** the user is anywhere in the end-user application, **When** they use the primary navigation, **Then** the activity experience is reachable as its own top-level destination in a single action, not nested inside a specific agent, consent, or session view.
 7. **Given** duplicate reports describe the same underlying action, **When** the user opens the activity experience, **Then** they see one canonical event for that action, not duplicate events.
@@ -70,20 +70,20 @@ summary, a time, an actor, a subject, and an outcome.
 
 ### User Story 2 - See what needs attention and what to do next (Priority: P1)
 
-A user needs to know, without hunting, which events require follow-up: a connected service that must be reconnected, a session that expired, or a tool call awaiting approval. The experience surfaces these "needs attention" items — those with a live resolution path — prominently and, for each, offers a clear next step that leads into the existing consent, session, or approval flow that resolves it. Notable events without a resolution path (an action that was blocked, access that was revoked) remain visible as informational history rather than occupying the needs-attention area.
+A user sees a separate live band for unresolved sessions requiring reconnection and pending approvals. These Needs-Attention Items come from current state, not historical events; they survive missing or pruned history. Each offers a next step in an existing session or approval flow. The exact retained transition can also appear under the feed's `needs_attention=true` filter. Expired or settled approvals leave the live band; a recorded expiry remains historical. Blocked actions and completed revocations without a live next step appear only in history.
 
 **Why this priority**: Trust requires actionability. Explaining that something failed or is blocked is only useful if the user can understand the consequence and act. Attention triage plus guided next steps is essential to the feature's value and belongs in the MVP alongside Story 1.
 
-**Independent Test**: Seed events that require follow-up (an expired session needing reconnect, a pending approval, a blocked action) alongside events that do not. Open the experience and confirm the needs-attention items are clearly separated/highlighted and that each exposes a next-step action that navigates to the correct existing flow.
+**Independent Test**: Seed a reconnect-required session and a pending approval with and without retained transitions. Confirm both live items and their next steps appear. Resolve them, and confirm the band clears while recorded resolutions remain in history. A blocked action stays informational history.
 
 **Acceptance Scenarios**:
 
-1. **Given** the user has one or more events requiring follow-up, **When** they open the activity experience, **Then** those events are clearly distinguished as needing attention and are easy to find without scanning the full history.
+1. **Given** the user has unresolved sessions or approvals, **When** they open Activity, **Then** a distinct live attention band shows the next steps even when the historical events are missing or pruned.
 2. **Given** a connected service requires reconnection, **When** the user views the corresponding needs-attention item, **Then** it explains the situation in plain language and offers a next step that leads to the reconnect flow.
 3. **Given** a tool call is awaiting the user's approval, **When** the user views the needs-attention item, **Then** it offers a next step that leads to the approval review for that action.
-4. **Given** an action was blocked by policy or an authorization was denied, **When** the user views that event, **Then** it explains what was blocked and why in plain language; if a resolution path exists it appears as a needs-attention item offering the appropriate next step, otherwise it is shown as informational history without occupying the needs-attention area.
+4. **Given** a policy block or denied authorization, **When** the user views its history, **Then** it explains the cause; only a separate live unresolved session or approval can enter the attention band.
 5. **Given** the user has no items requiring attention, **When** they open the experience, **Then** the needs-attention area communicates a settled "nothing needs your attention" state rather than appearing broken or empty in an alarming way.
-6. **Given** a needs-attention item has been resolved (for example the session was reconnected or the approval was decided), **When** the user next views the experience, **Then** the item no longer appears as needing attention and its resolution is reflected in the history.
+6. **Given** an approval is settled or expired or a session is reconnected, **When** the band refreshes, **Then** the item clears; any recorded resolution or expiry remains historical.
 
 ---
 
@@ -93,7 +93,7 @@ A user wants to answer targeted questions: "When did the broker issue GitHub acc
 
 **Why this priority**: Once the overview exists, exploration makes it genuinely useful for investigation and for building confidence about a specific agent or service. It is high value but depends on Story 1 being in place.
 
-**Independent Test**: Seed activity spanning multiple agents, services, time windows, and outcomes. Apply each filter dimension individually and in combination, and confirm the visible activity matches the selected criteria and that clearing filters restores the full view.
+**Independent Test**: Seed two grants and an agent and service absent from the first feed page. From a card's approved grant reference or the separate grant link on `/agents/{agent_id}`, enter `/activity?grant_id={grants.id}`. Combine it with an outcome filter, remove the grant chip, and clear all. Also follow agent/service links from their existing pages and confirm retained off-page matches appear.
 
 **Acceptance Scenarios**:
 
@@ -101,8 +101,8 @@ A user wants to answer targeted questions: "When did the broker issue GitHub acc
 2. **Given** activity exists for several connected services, **When** the user narrows to a single service, **Then** only activity involving that service is shown.
 3. **Given** activity spans a range of dates, **When** the user selects a time window, **Then** only events within that window are shown.
 4. **Given** events have different outcomes, **When** the user narrows to "blocked" (or "failed", or "succeeded"), **Then** only events with that outcome are shown.
-5. **Given** the user narrows to "needs attention", **When** the filter is applied, **Then** only follow-up items are shown.
-6. **Given** the user has combined multiple filters, **When** they clear the filters, **Then** the full activity view is restored.
+5. **Given** the user selects `needs_attention=true`, **When** the feed filter applies, **Then** only retained events matching a current unresolved approval or session transition appear; live attention remains independent.
+6. **Given** a card has an approved `related_refs.grant_id` or an existing `UserGrant` appears at `/agents/{agent_id}`, **When** the user selects “View this grant's activity” or the grant activity link and adds a second filter, **Then** the URL contains the exact `grant_id`, both filters intersect, a removable grant chip appears, and clear-all restores the full feed. A card without a grant reference offers no grant action.
 7. **Given** a filter combination matches no events, **When** it is applied, **Then** a clear "no activity matches these filters" state is shown with an easy way to reset.
 
 ---
@@ -151,7 +151,7 @@ as the number of events increases.
 
 ### Edge Cases
 
-- **No activity yet**: The experience shows a clear, non-alarming empty state explaining what will appear, not an error.
+- **No retained activity**: The experience shows “No activity in the period shown. New activity will appear here.” with the exact local retention boundary. It does not claim the user never had activity.
 - **Very high volume**: With thousands of events, grouping, summarization, and incremental loading keep the experience scannable and performant; the user can still locate a specific recent event.
 - **Deleted or revoked references**: Events that reference an agent, service, grant, or session that has since been removed or revoked still render correctly and attribute the historical actor.
 - **Sensitive or unapproved payloads**: Events whose underlying data includes secrets, raw tokens, parameters marked sensitive, or fields not explicitly approved as safe for user display show only approved fields; every other value is redacted or abstracted everywhere it could appear (overview and detail).
@@ -173,8 +173,8 @@ as the number of events increases.
   summarized milestones, not individual events. A successful broker token exchange MUST NOT be
   described or counted as a completed downstream action.
 - **FR-002**: For every surfaced event, the experience MUST let the user determine **what happened**, **when it happened**, **who or what was involved**, **what was affected**, and **the outcome** (succeeded, failed, blocked, or pending).
-- **FR-003**: Each event MUST indicate whether follow-up action is needed. The needs-attention set MUST be derived purely from current unresolved state: only events with a live resolution path (for example a required reconnect or a pending approval) appear as needing attention, and they MUST remain visible until the underlying flow completes, regardless of the activity-retention window — with no user dismissal or acknowledgment. Notable but non-actionable events (for example a blocked or denied action, or a completed revocation) remain visible as informational history and MUST NOT occupy the needs-attention area. Events needing attention MUST be distinguishable and locatable without scanning the entire history.
-- **FR-004**: For each event that needs attention and has a resolution path, the experience MUST offer a clear next step that leads into the existing consent, session, or approval flow that resolves it.
+- **FR-003**: A Needs-Attention Item MUST represent live unresolved session or approval state with a next step. It MUST survive missing or pruned Activity history and clear when its source resolves; users cannot dismiss it. The `needs_attention=true` feed filter MUST show only retained events matching the current unresolved `approval_id` or `session_id` plus `token_revision`. Neither view needs a stored per-event attention flag. Expired or settled approvals leave the live band while any recorded expiry stays in history. Non-actionable blocked or denied events remain informational history.
+- **FR-004**: Each live Needs-Attention Item MUST link to the existing consent, session, or approval flow that resolves it.
 - **FR-005**: The experience MUST support fast scanning of events, plain-language explanation of each event, and deeper inspection of an event's details through progressive disclosure.
 - **FR-006**: The experience MUST let the user explore activity by agent, by connected service, by permission/grant context, by time window, by outcome, and by needs-attention state, and MUST allow these dimensions to be combined and cleared. The time-window control MUST offer relative presets (for example last 24 hours, last 7 days, and all activity within retention); an arbitrary custom start/end date range is not required for the MVP.
 - **FR-007**: The primary presentation MUST NOT rely on simple tables; it MUST emphasize comprehensible visual summaries, narrative groupings, sequences/timelines, and progressive disclosure.
@@ -184,7 +184,7 @@ as the number of events increases.
 - **FR-011**: Sensitive information (including secrets, raw tokens, and parameters marked sensitive) MUST be redacted or abstracted wherever it would otherwise appear, in both summary and detail views. Only fields explicitly approved as safe for user display MAY be shown; all other event fields MUST be omitted or redacted.
 - **FR-012**: The experience MUST scope all activity to the current authenticated user and MUST NOT expose any other user's activity.
 - **FR-013**: The experience MUST remain useful and scannable under low, moderate, and high event volume, using grouping, summarization, and incremental loading so that a specific recent event remains findable.
-- **FR-014**: The experience MUST present a clear, non-error empty state when the user has no activity and a clear "no matches" state when a filter combination yields no events. Where history ends because of the retention window, the experience MUST say so rather than presenting the boundary as "nothing happened".
+- **FR-014**: The experience MUST present neutral, non-error empty copy for no retained activity and a reset action for no filter matches. It MUST show the exact configured history cutoff in the browser's local time whenever the historical feed has loaded, including empty, paginating, filtered, and detail-child views. The cutoff MUST NOT limit live attention items or imply that no earlier activity occurred.
 - **FR-015**: The experience MUST correctly render and attribute events whose referenced agent, service, grant, or session has since been revoked or removed.
 - **FR-016**: The activity experience MUST be a dedicated, first-class destination within the end-user application, reachable directly from the primary navigation as a peer to consent and session management, and MUST NOT be nested as a subordinate view within a specific agent, consent, or session detail.
 - **FR-016a**: If the system cannot record a security-significant activity event, it MUST complete the underlying action and record an operational error.
@@ -209,7 +209,7 @@ as the number of events increases.
 - **Actor**: The party responsible for an event — an authorized agent, a connected service, the user (principal), or the broker/system itself.
 - **Affected Subject**: The thing an event acted on or changed — a grant, a permission set, a connected service, a session, a tool, or a protected resource.
 - **Activity Thread**: An ordered grouping of related events that forms a narrative or timeline (for example a tool-call flow, a connected-service lifecycle, or an agent's journey over a period).
-- **Needs-Attention Item**: An event or thread that requires user follow-up, paired with a recommended next step that leads into the existing consent, session, or approval flow.
+- **Needs-Attention Item**: A live unresolved session or approval state with a next step in an existing flow. It is not an Activity Event or thread, is never persisted separately, and survives missing or pruned history.
 - **Exploration Context**: The set of dimensions used to narrow the view — agent, connected service, permission/grant context, time window, outcome, and needs-attention state.
 
 ## Success Criteria *(mandatory)*
@@ -217,13 +217,13 @@ as the number of events increases.
 ### Measurable Outcomes
 
 - **SC-001**: For any surfaced event, a user can correctly state what happened, when, who/what was involved, what was affected, and the outcome within 10 seconds and without opening the event's detail.
-- **SC-002**: A user can locate all activity for a specific agent, service, time window, or outcome in no more than two interactions.
+- **SC-002**: A user can locate all retained activity for a specific agent, service, time window, or outcome in no more than two interactions.
 - **SC-003**: In usability testing, at least 90% of participants correctly describe, in their own words, what a given event means — with no reliance on internal jargon.
-- **SC-004**: Every event flagged as needing attention exposes a next-step action that advances or resolves it, reachable in no more than two interactions.
+- **SC-004**: Every live Needs-Attention Item offers an existing next-step flow that advances or resolves it, reachable in no more than two interactions.
 - **SC-005**: With at least 10,000 events present, a user can still find a specific recent event in under 30 seconds, and the experience remains scannable and responsive.
 - **SC-006**: The experience passes WCAG 2.1 AA: it is 100% keyboard operable, conveys all information non-visually, distinguishes status without color alone, remains usable at 200% zoom, and honors reduced-motion — verified by audit.
 - **SC-007**: No sensitive value (secret, raw token, or parameter marked sensitive) or event field not explicitly approved as safe for user display appears anywhere in the experience — verified across summary and detail views for a corpus of events known to carry sensitive and unapproved data.
-- **SC-008**: From any event, a user can reach the related consent, session, or agent context in a single action.
+- **SC-008**: From a relevant event with a current accessible related target, a user can reach the related consent, session, or agent context directly from its feed card in one action; missing targets keep historical text without a broken link.
 - **SC-009**: When there is no activity, or when a filter combination matches nothing, 100% of these cases present a clear, non-error state rather than a blank or broken view.
 - **SC-010**: A first-time user can locate and open the activity experience from the application's primary navigation in a single action, without first entering a specific agent, consent, or session view.
 
@@ -233,7 +233,7 @@ as the number of events increases.
 - **Per-user scope**: Activity is scoped to the current authenticated principal, consistent with the established end-user identity model; there is no cross-user, tenant-wide, or operator/admin activity in this feature.
 - **Event source is in scope as a dependency**: Presenting these events requires the system to record or derive them from existing domain state changes and security decisions (session lifecycle, grant/delegation changes, approvals, policy/authorization decisions, token exchanges, revocations, reconnect prompts, failures). Producing and exposing that user-facing activity record is a dependency of this feature; the exact mechanism is deferred to planning.
 - **Read-mostly**: The activity experience itself is read-only, except that needs-attention items link into the existing consent, session, and approval flows; it introduces no new mutation surface of its own. Needs-attention state is derived from current unresolved state, not user-dismissible, so no acknowledgment or read-state store is introduced.
-- **Retention window**: A rolling retention window defaulting to **30 days** (proposed 2026-09-22, superseding the earlier 7-day default; pending stakeholder confirmation) governs how far back historical activity is surfaced. Activity older than the configured window MUST NOT be shown; history ends at that boundary with no older-event summaries, and the boundary is explained to the user. The window does not limit unresolved needs-attention items, which remain visible until resolved. The window is tunable via configuration.
+- **Retention window**: The requester approved a **30-day default** (`720h`) and arbitrary positive, representable Go-duration values on 2026-09-23. This supersedes the proposed seven-day default. Historical activity before the configured read-time cutoff MUST NOT appear. Show the exact cutoff to users; do not round durations to days. Unresolved Needs-Attention Items remain live outside this history window. The revised API still requires separate written sign-off.
 - **Freshness**: On-load and manual refresh freshness is sufficient for historical activity; live streaming/real-time push of new events is not required. The needs-attention area refreshes periodically while the experience is visible so its next steps are not stale.
 - **Time display**: Timestamps are presented in the user's local context with relative labels (for example "2 hours ago") plus an absolute time available on inspection.
 - **Non-goals**: Bulk export/download of an audit log, operator/admin-facing audit dashboards, long-term compliance archival, machine-consumable audit APIs, and activity-history correction, reversal, or deletion workflows are out of scope for this feature.

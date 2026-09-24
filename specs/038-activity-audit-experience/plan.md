@@ -1,6 +1,6 @@
 # Implementation Plan: End-User Activity & Auditing Experience
 
-**Branch**: `038-activity-audit-experience` | **Date**: 2026-09-04 · **Revised**: 2026-09-22 (plan review) | **Spec**: [spec.md](./spec.md)
+**Branch**: `038-activity-audit-experience` | **Date**: 2026-09-04 · **Revised**: 2026-09-24 (artifact remediation) | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `/specs/038-activity-audit-experience/spec.md`
 
@@ -42,7 +42,7 @@ the attention endpoint; and corrects all routes to the root-mounted SPA (`/deleg
 
 ## Technical Context
 
-**Language/Version**: Go 1.26.8 (backend); TypeScript 5 + React 19 (SPA)
+**Language/Version**: Go 1.27.1 (from `go.mod`, backend); TypeScript 5 + React 19 (SPA)
 **Primary Dependencies**: chi v5, sqlx + pgx v5, Viper/Cobra, Ginkgo/Gomega, `playwright-go`
 (backend/E2E); Vite 7, react-router, axios, Tailwind 4 + CVA, Storybook, `axe-core` (frontend)
 **Storage**: PostgreSQL (production) + in-memory (development/test) via ISP repositories; new
@@ -60,14 +60,13 @@ burst. It captures p50/p95/p99 and execution plans on a warm isolated PostgreSQL
 exploratory, not a product load, quota, or latency commitment. Cursor pagination uses `(principal, occurred_at
 DESC, id DESC)` with the cursor bound to its filter set. Roll-ups (data-model §1.2) group
 successful broker access issuances; their counts do not represent downstream actions.
-**Constraints**: read-only experience (no new mutation surface); 30-day rolling retention default
-for historical activity (configurable; spec clarification 2026-09-22); unresolved needs-attention
-items remain visible until the underlying state resolves; exactly one visible event per underlying
-action via `dedup_key` (FR-016b); no sensitive value in any response or view (FR-011, SC-007) —
-enforced by server-side approved-field response projection and the `SafeFields` registry;
-raw resource URIs never enter activity events or browser DTOs; WCAG 2.1 AA (SC-006); per-principal isolation (FR-012);
-recording never blocks or fails the primary security operation, and a dropped recording is
-observable as an operational error (FR-016a)
+**Constraints**: read-only experience (no new mutation surface); approved `720h` default
+for historical activity (2026-09-23) with arbitrary positive representable Go durations;
+live unresolved Needs-Attention Items outlast history; exactly one visible event per underlying
+action via `dedup_key` (FR-016b); approved-only display fields and no sensitive values in any
+response (FR-011, SC-007); raw resource URIs never enter Activity or browser DTOs;
+WCAG 2.1 AA (SC-006) and principal isolation (FR-012). Activity recording never changes an
+authorized primary result; every security-critical action keeps its independent structured audit.
 **Scale/Scope**: per-user scope only (no admin/tenant view); ~8 event categories; one new SPA
 route + detail child route; one new design-system primitive; ~5 new frontend hooks/components
 groups; new backend bounded context + 3 endpoints + 1 migration; **Phase 0** touches
@@ -77,7 +76,7 @@ groups; new backend bounded context + 3 endpoints + 1 migration; **Phase 0** tou
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Verified against [.specify/memory/constitution.md](../../.specify/memory/constitution.md) v1.9.1.
+Compared with [.specify/memory/constitution.md](../../.specify/memory/constitution.md) v1.9.2 (path-correction amendment proposed; acceptance pending). Principle VII is not yet marked compliant.
 
 **Planning Preconditions**:
 
@@ -89,10 +88,10 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
   in the implementation PR. The names are defined in the spec and data model.
 - [ ] **Entity IDs**: Add `ActivityEventID` to `internal/domain/id/gen_ids.go`. Regenerate
   `uuid_ids_gen.go` and update `internal/domain/id/AGENTS.md` as ADR 013 requires.
-- [x] **Configuration Design**: `activity` config section (`retention_window` default `720h`,
-  `page_size`, `rollup_bucket`, `queue_size`, `prune_interval`, `prune_batch`,
-  `attention_poll_interval_seconds`) in `internal/ports/config.go` with YAML examples (research
-  Decision 8).
+- [x] **Configuration Design**: The planned `activity` section has `retention_window`
+  default `720h`, `page_size`, `rollup_bucket`, `queue_size`, `prune_interval`, and
+  `prune_batch`. The design uses `internal/ports/config.go`; it does not claim the section
+  or YAML example already exists. A 30-second attention poll belongs to the SPA, not the backend.
 - [ ] **Config Artifacts**: Add `examples/config/activity.yaml`. Update
   `docs/configuration.md`, the configuration example index, and the Helm values, ConfigMap, and
   README for `activity.*` settings.
@@ -100,34 +99,49 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
   [contracts/enduser-activity.openapi.yaml](./contracts/enduser-activity.openapi.yaml). Merge it
   into `api/enduser/openapi.yaml` only during implementation.
 - [ ] **API Documentation**: Add end-user API examples under `docs/api/` during implementation.
-- [ ] **API Changes**: the three new endpoints require stakeholder confirmation in PR review
-  (Principle X) — **pending sign-off**; contract is the confirmation artifact.
+- [ ] **API Changes**: T013 merges the proposed three-endpoint contract for review; T014
+  requires explicit written stakeholder approval before handler implementation (Principle X).
 - [ ] **Database Implementation**: Create PostgreSQL migration
   `migrations/032_create_activity_events.{up,down}.sql` with the §10 indexes, the
   `UNIQUE (principal, dedup_key)` constraint, and `CREATE EXTENSION IF NOT EXISTS pg_trgm`
   (verify the managed-PostgreSQL offering allows it; fall back to `ILIKE` on `summary` if not).
   Add `user_sessions.token_revision` and `user_sessions.reconnect_required_at` in the same
   migration. Do not add a DynamoDB application table.
-- [ ] **E2E Acceptance Tests**: Add one `It()` per spec scenario in
-  `tests/e2e/activity_test.go`, using the mapping in Testing Strategy.
-- [x] **E2E Test Mapping**: 1:1 scenario→`It()` mapping table populated in Testing Strategy.
+- [ ] **E2E Acceptance Tests**: Add one Ginkgo `It()` per numbered spec scenario across
+  `tests/e2e/activity_test.go` (7 backend) and `tests/e2e/frontend/activity_test.go` (22 frontend).
+- [x] **E2E Test Mapping**: The table in Testing Strategy assigns each of the 29 keys once;
+  this does not mark the red-phase tests written or passing.
 - [ ] **E2E Red Phase**: Add tests that compile and fail semantically against the contract before
   implementation.
 - [ ] **Frontend Playwright E2E**: Add `tests/e2e/frontend/activity_test.go` and the
   `tests/e2e/pages/activity_page.go` page object.
 - [ ] **Frontend Screenshots**: Capture the listed states to `tests/e2e/screenshots/` after the
   frontend E2E suite is implemented.
+- [ ] **Design-System Review**: T017 reviews all eight named design guides and records
+  component, semantic-token, keyboard-focus, reduced-motion, and responsive evidence before UI
+  work. The component plan below is not evidence that this gate has passed.
 
 **Implementation Considerations**:
 
-- [x] **Security Design**: The plan is read-only and per-principal. It excludes raw resource
-  URIs from activity events and browser DTOs, and projects only approved related identifiers.
-  The approved-field registry shapes display text and context. Every `target_route` uses a
-  server-side allowlist, and recording does not change fail-closed security operations.
-  `correlation_id` stays server-side. Public local token failures without a verified user
-  remain in operational audit logs, not the per-user feed.
-- [ ] **Architecture Documentation**: Add the Activity glossary terms and bounded-context description to
-  `ARCHITECTURE.md` in the implementation PR. Document the recorder seam. Link to ADR 037 when that ADR is accepted.
+- [x] **Security Design**: Durable, per-principal Activity is a user-facing historical view;
+  existing structured `slog` action audits remain independent. `consent/service.go` records
+  successful principal/grant revocation; `token_grant_strategy.go` records local
+  `TokenIssued`/`TokenRequestFailed`; `oauth2_audit.go` records principal, method, path, status.
+  These examples do not cover all new emission seams, and a generic request log does not prove
+  action coverage. T006's matrix checks grant, session, approval, RFC 8693 issuance, and
+  verified-principal denial boundaries; T046–T049 retain action logs and add only missing safe
+  structured records. An Activity write failure produces an ERROR drop log and metric while the
+  authorized mutation still succeeds with its independent action audit. Do not parse logs into
+  Activity events. Never log tokens, approval arguments, raw resource URIs, or unapproved labels.
+  Server projections use the approved-field registry, principal isolation, and route allowlist;
+  fail-closed authorization is unchanged. Unverified public token failures remain operational
+  only; no user principal is inferred. Keep `correlation_id` server-side.
+- [ ] **Architecture Documentation**: In the same feature architecture PR, add seven glossary
+  terms and an Activity subsection to `ARCHITECTURE.md`. Record the under-30-second user task
+  among 10,000 events (not a DB p95 SLO), principal isolation, approved-only display fields,
+  read-time retention, independent structured audit, non-blocking recorder, bounded queue,
+  keyset reads/prune, and multi-replica advisory lock. Do not describe unbuilt components as
+  deployed. Link ADR 037 only after acceptance; T105 reviews this evidence before II/V.
 - [x] **ADR**: Proposed [ADR 037: Activity Event Storage](../../adrs/037-activity-event-storage.md)
   (renumbered from 035, which collided with `035-root-mounted-spa.md`) records the durable-store
   choice, the dedup/roll-up model, recorder durability modes, and the advisory-lock prune. It
@@ -145,11 +159,11 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
   adapters, sqlx, `StorageError` wrapping, and adapter accessor. DynamoDB's existing encryption
   key-store table, IAM policy, and schema are not application persistence.
 
-**Post-design Result**: PASS (re-checked 2026-09-22). The design artifacts, OpenAPI fragment, and
-proposed ADR 037 meet the planning gate. The unchecked items are implementation work, not
-completed evidence. PostgreSQL follows ADR 004. DynamoDB requires a superseding ADR and new
-application infrastructure. API stakeholder sign-off remains a review-time gate before
-implementation and must be requested against the **revised** contract.
+**Post-design Result**: OPEN. The storage choice follows accepted ADR 004; ADR 037 remains
+proposed. Principle VII awaits acceptance of the separate v1.9.2 path-correction amendment and
+implementation of unified Activity bindings. The proposed three-endpoint API awaits T013 merge
+and T014 written stakeholder sign-off. T017 design review and T018–T022 semantic-red evidence
+also remain open. None of these gates passes solely because this plan describes them.
 
 ## Route & Navigation Recommendation
 
@@ -166,18 +180,25 @@ implementation and must be requested against the **revised** contract.
   route. Do not touch the orphan `web/src/components/layout/Header.tsx`.
 - **Detail**: deep-linkable child route `/activity/:eventId`, rendered as a detail panel **within**
   the activity shell so the surrounding feed/thread stays in view (US4/US5).
-- **Filters in URL**: exploration state uses
-  `?agent_id=&service_id=&grant_id=&window=&before=&outcome=&category=&q=&needs_attention=` via
-  `useSearchParams`. The names match the OpenAPI contract and make per-agent/service views
-  linkable from other pages (US3). `cursor` is never in the URL.
-- **Outbound links only for actions**: needs-attention next steps and back-links navigate to the
-  existing `/sessions`, `/approvals`, `/approvals/:id`, `/agents/:agentId` routes via the server
-  allowlist (data-model §3.3). The session page must add a "Reconnect" action for the matching
-  `/api/activity/attention` service. This action starts its existing OAuth authorize endpoint;
-  the activity experience adds no mutation of its own.
-- **Inbound links**: `AgentGrantDetailPage` and `ThirdPartySessionsPage` get a "View activity"
-  link to `/activity?agent_id=…` / `/activity?service_id=…` (one line each; makes SC-002's
-  two-interaction path real from where users already are).
+- **Filters in URL**: `useSearchParams` owns
+  `?agent_id=&service_id=&grant_id=&window=&before=&outcome=&category=&q=&needs_attention=`.
+  `cursor` stays outside the URL. Removable chips preserve other filters when one clears;
+  clear-all resets every filter. The server applies each filter across all retained pages.
+- **Outbound context links**: Needs-attention next steps and `ActivityEvent.related_links` use
+  current principal-owned targets and the allowlist (`/sessions`, `/approvals`,
+  `/approvals/:id`, `/agents/:agentId`). The session page adds a "Reconnect" action for its
+  live attention item through the existing OAuth authorize flow; Activity adds no mutation.
+- **Inbound links**: `AgentGrantDetailPage.tsx` keeps "View activity" for the agent using
+  `agent_id`. When `useAgentGrants` returns a grant, add a separate grant activity link using
+  `grant_id=grants.id` from `web/src/types/consent.ts`. Never substitute the agent ID or show
+  that grant link without a grant. `ThirdPartySessionsPage.tsx` links a service to
+  `/activity?service_id=…`.
+
+For SC-002, seed an agent and a connected service with activity absent from page one. Start
+the agent task at `/agents/{agent_id}` and the service task at `/sessions`; one "View activity"
+link applies the exact `agent_id` or `service_id` and finds all retained matches, including
+later pages. Start window/outcome tasks at `/activity`; use existing controls within two
+activations. Keyword search alone cannot identify every off-page entity event.
 
 ## UX Structure & Event Grouping Model
 
@@ -192,12 +213,13 @@ implementation and must be requested against the **revised** contract.
    the user's hands except on poll, and a polite live region would re-announce every 30 s.
 2. **Filter bar** — `<form role="search">`: `Select` for category/outcome, `Tabs` (`pill`) for
    the relative time-window presets `24h | 7d | 30d | all`, a keyword `Input` (`q`), a
-   needs-attention toggle (only the unresolved approval/session transitions are shown in the
-   retained feed), and a clear-all control. Agent/service/grant are **facets** rendered as
-   removable chips from the current page's `related_refs` labels plus **click-to-filter** on any
-   card's actor/subject label (adds `agent_id=`/`service_id=`). Active filters render as removable
-   chips above the feed with an `aria-live="polite"` result count ("12 events match"). All synced
-   to the URL (US3, FR-006).
+   needs-attention toggle (only exact retained unresolved approval/session transitions), and a
+   clear-all control. Agent/service/grant are facets from approved `related_refs`; actor/subject
+   labels on a card set only an existing `agent_id` or `service_id`. A card with an approved
+   `related_refs.grant_id` offers “View this grant's activity” and sets that exact `grant_id`
+   in the URL; without the reference it offers no grant action. An active `grant_id` renders
+   as a removable chip, survives additional filters, and clears with clear-all. Active filters
+   show an `aria-live="polite"` result count. All filter state lives in the URL.
 3. **Activity feed** — reverse-chronological, grouped by day in the browser timezone (Today /
    Yesterday / date) as `<section aria-labelledby>` with an `<h2>` date heading. Each item is a
    narrative **ActivityCard** (`Card as="article"` + `OutcomeStatus` + humanized summary answering
@@ -205,17 +227,19 @@ implementation and must be requested against the **revised** contract.
    local time span ("Broker issued GitHub access for Research Agent · 41 times, 09:00–10:00").
    Cards for `agent_access` / `policy_decision` carry a secondary link "Don't recognise this? Review this agent's access" →
    `/agents/:id` (where revoke already lives; zero new mutation surface). Not a table (FR-007).
-   Incremental "Load more" via `next_cursor` (SC-005, FR-013). A footer line explains the cliff:
-   "Activity older than {retention_days} days isn't kept."
+   Incremental "Load more" via `next_cursor` (SC-005, FR-013). T054 adds `RetentionFooter`
+   below the historical feed after a valid response loads: "Activity before {local date and
+   time} is not shown." Format `retention_cutoff_at` via browser-locale `Intl.DateTimeFormat`,
+   as `SessionCard.tsx` does. Show it for populated, paginating, unfiltered empty, filtered
+   no-match, and detail-child-route views. Never show a history cutoff on live attention items.
 4. **Threads** — related events (service lifecycle, agent journey, tool-call flow) render with the
    new `Timeline` primitive, **collapsed by default** behind an `Accordion` whose summary carries
    the count ("GitHub connection · 6 events"); `truncated` threads show "N earlier events → open
    thread" which navigates to `/activity?service_id=…` (US5).
-5. **Empty/no-match states** — `EmptyState` "no activity yet" with a concrete pointer ("Delegate
-   access to an agent to see its activity here → Agent Delegations") and "no matches for these
-   filters" with a reset action (FR-014, SC-009).
-   With `needs_attention=true`, an empty retained feed does not hide live attention items;
-   explain that their history is unavailable while keeping their next steps visible above.
+5. **Empty/no-match states** — an unfiltered empty feed says "No activity in the period shown.
+   New activity will appear here." This is also true when all rows aged out. Filtered no
+   matches show a reset action and the same exact retention boundary (FR-014, SC-009).
+   An empty retained `needs_attention=true` feed never hides live attention or its next steps.
 
 **Detail view (`/activity/:eventId`)** — full context (actor, subject, timing, outcome), the
 structured **why** rendered as three lines (*trigger* → *basis* → *consequence*; the basis is the
@@ -225,6 +249,13 @@ for tool calls), the bounded related **sequence** as a `Timeline` with "N more" 
 state, and single-action links back to related consent/session/agent context (US4,
 FR-005/008/009/011). An event older than retention returns 404, even before prune removes it;
 its related sequence also excludes events beyond retention.
+
+The feed card and detail both read the required response-only `ActivityEvent.related_links`
+array. T042 selects a safe, per-type route (§3.3); T050 omits missing, cross-principal, or deleted
+targets, so historical text remains visible without a broken link. Link selection uses existing
+agent/session/approval read ports and reuses each unique target lookup per page (at most 100).
+Lookup errors omit the link and produce an operational log; no raw route or unapproved label
+is emitted. Both views guard `target_route` with `web/src/utils/inAppRoute.ts`.
 
 **Event grouping model** (categories → domain seams; full table in
 [data-model.md](./data-model.md) §4): `delegation`, `session`, `agent_access`, `policy_decision`,
@@ -245,9 +276,9 @@ New read-only enduser endpoints (full schema:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/activity` | Cursor-paginated, filterable curated feed (`agent_id`, `service_id`, `grant_id`, `window`, `before`, `outcome`, `category`, `q`, `needs_attention`) + read-derived threads + `retention_days` |
-| `GET` | `/api/activity/attention` | Live-derived needs-attention items (`group_key`, oldest first), unaffected by historical retention, `Cache-Control: no-store`, polled |
-| `GET` | `/api/activity/{event-id}` | Retained single-event detail: structured explanation, approved context, bounded retained sequence (`sequence_limit`), redacted, back-links; 404 beyond retention |
+| `GET` | `/api/activity` | Filterable feed, read-derived threads, exact RFC3339 UTC `retention_cutoff_at`, and response-only `ActivityEvent.related_links` |
+| `GET` | `/api/activity/attention` | Live-derived Needs-Attention Items (`group_key`, oldest first), unaffected by historical retention, `Cache-Control: no-store`, SPA polled |
+| `GET` | `/api/activity/{event-id}` | Retained event with inherited `ActivityEvent.related_links`, explanation, approved context, bounded sequence; 404 beyond retention |
 
 Conventions match the existing API (`{data}` envelope, `{error,message}`, RFC3339,
 `X-Remote-User`). This introduces the **first cursor-pagination pattern** in the enduser API
@@ -256,7 +287,9 @@ invalid_cursor`. `/api/activity/attention` is registered **before** `/api/activi
 and a routing test asserts precedence. All responses are per-principal scoped and pre-redacted
 server-side. The browser DTO omits raw resource URIs, even in `related_refs` and related
 sequences; `detail.pending` is not returned because `outcome=pending` supplies the state.
-The change **requires stakeholder confirmation** (Principle X) before implementation.
+The revised three-endpoint contract, including `retention_cutoff_at` and shared
+`ActivityEvent.related_links`, **requires separate written stakeholder approval** (Principle X)
+after T013 merges it and before any handler implementation.
 
 **Thread response mapping**: threads are derived on read from `related_refs`. The API exposes an
 `ActivityThreadResponse` with ordered `event_ids` (present on this page), `total_events` and
@@ -288,13 +321,31 @@ events" when truncated. `ActivityEvent` no longer carries `thread_key` or `needs
   links into the filtered feed. `ThirdPartySessionsPage` also uses `useNeedsAttention` to show a
   "Reconnect" control for a marked service, even when its existing `is_expired` field is false.
   That control starts the existing third-party OAuth authorization route.
+- **T017 design-system review gate (unchecked)**: Before frontend work, review
+  `INDEX.md`, `DECISION_TREES.md`, `COMMON_MISTAKES.md`, `COMPONENT_PAIRING_GUIDE.md`,
+  `DESIGN_PRINCIPLES.md`, `TOKEN_GUIDE.md`, `ACCESSIBILITY_GUIDE.md`, and `MOTION_GUIDE.md`
+  in `web/src/design-system/docs/`. Record actual reuse and focus/zoom evidence; T106/T117
+  check it. Only `Timeline` qualifies as a new universal primitive.
+- **Planned component rules**: `Timeline` uses a semantic `<ol>` with `StatusIndicator` text
+  and icons and `Accordion` for disclosure. Feed cards use `Card as="article"` with `Badge`,
+  `StatusIndicator`, and a ghost `Button` or descriptive router link for context. Grant facets
+  compose existing `Select`/`Tabs` and `Button`; `ActiveFilterChips` stays app-specific.
+  `RetentionFooter` uses `text-secondary` and a local timestamp, not a new primitive.
+  Use `text-trust-deep` headings, `text-neutral-700` body, semantic status colors, and no
+  `gray-*` or extended palettes. Controls need labels, visible `border-focus` focus rings,
+  keyboard activation, 4.5:1 text/3:1 UI contrast, and 44×44px mobile targets. At 200% zoom
+  and mobile widths, the primary links wrap and cards, chips, and Timeline reflow without
+  clipping or horizontal scrolling. Use design-system timing tokens (150ms hover/focus,
+  200ms state, 300ms card/accordion, 500ms page); suppress nonessential motion with
+  `prefers-reduced-motion` while retaining content and focus.
 - **Backend**: new bounded context
   `internal/domain/activity/{event.go,service.go,recorder.go,safefields.go,templates.go,threads.go,prune.go}`;
   `ActivityEventRepository` in `internal/ports/storage.go`; memory and PostgreSQL adapters in
   `internal/adapters/storage/{memory,postgres}/activity_events.go`; principal/keyset, unique
-  dedup, selective `related_refs` expression, trigram, and prune indexes in migration `032`;
-  the same migration adds `UserSession.token_revision`, `reconnect_required_at`, and due-time
-  indexes for sessions and pending approvals. An expiry-read port supplies bounded due queries
+  dedup, selective `related_refs` expression, optional `pg_trgm` keyword, and prune indexes
+  in migration `032`. That migration adds `UserSession.token_revision`,
+  `reconnect_required_at`, and due-time indexes for sessions and pending approvals. An
+  expiry-read port supplies bounded due queries
   through both storage adapters. The session repository fills the session with its committed ID
   and revision on each write. A small status port conditionally
   marks refresh failure against that revision; refresh success/reconnection clears the marker
@@ -397,13 +448,14 @@ route plus one universal design-system primitive. No existing structure is reorg
 
 | Phase | Purpose | Applies? |
 |-------|---------|----------|
-| **Phase 0** | Pre-implementation refactoring — **seam preparation** | **Include** — typed `DenialReason` on token-exchange errors; success hook on `TokenExchangeService.Exchange`; pin `IsNew` semantics of approval create with a test; nav active-link prefix match |
-| **Phase 1** | Setup — typed ID, config section, dependencies | Yes |
-| **Phase 2** | Design Preconditions (domain, config, API, DB, E2E tests) | **MANDATORY** |
-| **Phase 2.7** | Entity Boilerplate — empty repo/handler (501) for `ActivityEvent` | **Include** — one new entity + port + adapters + handler; isolates skeleton PR |
-| **Phase 2.5** | Foundational Infra — `ActivityRecorder` seam + `Timeline` primitive + SPA scaffolding | Yes |
-| **Phase 3+** | User Stories US1–US5 by priority (P1: US1,US2; P2: US3,US4; P3: US5) | Yes |
-| **Phase N** | Constitution Compliance verification | **MANDATORY** |
+| **Phase 0 · T001–T004** | Behavior-preserving token-exchange denial/success seams and approval `IsNew` test; no navigation | Separate seam review unit |
+| **Phase 1 · T005** | Setup: check migration number, dependencies, Go 1.27.1, and paths | Required |
+| **Phase 2 · T006–T022** | Design, stakeholder gates, and semantic-red backend/frontend acceptance | **MANDATORY** |
+| **Phase N design · T105–T107** | Verify architecture, approved API/design review, and 29 semantic-red scenarios after T022 and **before T023** | **MANDATORY gate** (section remains at end of tasks.md) |
+| **Phase 2.7 · T023–T030** | Entity, ports, adapters, migration, read-only handler scaffold | Intermediate review unit only |
+| **Phase 2.5 · T031–T035** | Unified Activity config, session revision/marker, Timeline primitive | Required after scaffold |
+| **US1 · T036–T055** | Recorder T045, navigation T053, feed and UI; then US2–US5 (T056–T104) | Story implementation |
+| **Phase N implementation · T108–T120** | Principle-grouped evidence after all stories | **MANDATORY** |
 
 - [x] Phase 0 (refactoring): **include** — the review found the assumed seams for denial reasons
   and RFC 8693 success do not exist; they are small, behaviour-preserving changes to
@@ -414,29 +466,51 @@ route plus one universal design-system primitive. No existing structure is reorg
 
 ## Testing Strategy
 
-### Backend E2E (Ginkgo/Gomega) — 1:1 spec mapping
+### Backend + frontend E2E (Ginkgo/Gomega) — 29 unique scenario keys
 
-**Location**: `tests/e2e/activity_test.go` · **Bootstrap**: `tests/e2e/bootstrap/` dual-server,
-`enduserServer.AuthenticatedGET('/api/activity', principal)` · **Fixtures**: extend
-`tests/e2e/fixtures/` with seeded activity events (grants, sessions, approvals, denials, a
-sensitive-payload event, a service lifecycle, a multi-agent day, a since-deleted reference, and a
-second principal for isolation).
+**Backend**: `tests/e2e/activity_test.go`, dual-server bootstrap and `AuthenticatedGET`.
+**Frontend**: `tests/e2e/frontend/activity_test.go`, Playwright page objects and browser context.
+T018 seeds isolated grants, sessions, approvals, denials, sensitive data, deleted references,
+aged-out history, a second principal, and high-volume events. T019 writes only backend rows;
+T021 writes only frontend rows. Each key names exactly one Ginkgo `It()` across both suites.
 
-| Spec scenario | `It()` (in `tests/e2e/activity_test.go`) |
-|---|---|
-| US1 #1 recency + fields | events ordered by recency, each with what/when/who/subject/outcome |
-| US1 #2 human-readable | technical op rendered jargon-free |
-| US1 #3 outcome not color-alone | outcome exposed as label+icon+text in payload |
-| US1 #4 empty state | no events → `{events:[],threads:[],next_cursor:null,retention_days:N}` |
-| US1 #5 revoked reference | since-deleted actor renders with historical label |
-| US1 #6 top-level reachability | (frontend) Activity link visible and single-action on desktop, narrow mobile, and 200% zoom — Playwright |
-| US1 #7 one canonical event | same transition reported twice → one event; two grant updates within one second and two reconnections on one session → distinct events; roll-ups count broker issuances, not downstream uses |
-| US2 #1–#6 needs-attention | attention list present/settled; clears after resolve; blocked stays history-only; rejected refresh or no usable refresh token yields `reconnect_required` even if its history event is dropped or pruned; `/sessions` offers OAuth reconnection despite `is_expired=false` |
-| US3 #1–#7 exploration | each filter (incl. `q`, `before`, `30d`) + combination + clear + no-match; pending approval with a shared tool name selects only its own `approval.requested`, and a reconnect selects only the current session revision's expiry/failure, not older service history; cursor with changed filters → `400 invalid_cursor` |
-| US4 #1–#5 detail | structured explanation, bounded sequence + `sequence_truncated`, back-links, redaction via SafeFields (unknown context key is stripped), pending derived from `outcome`; feed/detail/related sequence never serialize a raw resource URI with embedded credentials or query secrets; 404 for an owned event past retention while pruning is pending; retained sequence excludes old events |
-| US5 #1–#4 threads | service lifecycle + agent journey threads derived on read; idle expiry before reconnect without exchange between worker ticks; pending approval expiry without detail access; repeated observations yield one event per session revision/approval ID; approval event in tool_flow **and** agent_journey; `truncated` across pages; high volume scannable; drill-down |
-| FR-016a operational error | recorder with a failing repository: primary op succeeds, `activity_events_dropped_total` increments, ERROR log emitted |
-| FR-012 unaffiliated token failure | client-credentials and invalid-code failures without a verified principal remain operational logs and produce no user activity event |
+| Scenario | Suite | Unique `It()` title and direct observation |
+|---|---|---|
+| US1 #1 | Backend | recent events ordered with what/when/actor/subject/outcome |
+| US1 #2 | Backend | technical transition has a plain-language summary without raw IDs |
+| US1 #3 | Frontend | succeeded, failed, blocked show icon plus text without color dependence |
+| US1 #4 | Frontend | unfiltered empty feed explains new activity and shows retention boundary |
+| US1 #5 | Backend | deleted actor still appears with its historical display label |
+| US1 #6 | Frontend | primary Activity link opens in one activation at desktop/mobile/200% zoom |
+| US1 #7 | Backend | repeated transition has one row, distinct transitions remain separate, and roll-up count means broker issuances |
+| US2 #1 | Frontend | unresolved items appear in a distinct, labelled attention region |
+| US2 #2 | Frontend | reconnect item explains state and reaches existing reconnect flow |
+| US2 #3 | Frontend | pending tool request reaches its approval review |
+| US2 #4 | Backend | blocked decision explains cause and stays out of attention without next step |
+| US2 #5 | Frontend | empty attention region states that nothing needs attention |
+| US2 #6 | Frontend | resolved item clears on refresh while history records resolution |
+| US3 #1 | Frontend | agent filter narrows feed and shows active filter |
+| US3 #2 | Frontend | service filter excludes other services |
+| US3 #3 | Frontend | selected relative window excludes earlier events |
+| US3 #4 | Frontend | outcome filter shows only selected outcome |
+| US3 #5 | Frontend | needs-attention filter shows only current unresolved transitions |
+| US3 #6 | Frontend | grant facet plus second filter combine, then clear restores full feed |
+| US3 #7 | Frontend | unmatched filters show reset action and retention boundary |
+| US4 #1 | Frontend | event detail remains inside Activity with full context and why |
+| US4 #2 | Backend | related transitions appear in deterministic progression order |
+| US4 #3 | Frontend | related context link opens in one activation |
+| US4 #4 | Frontend | sensitive and unapproved fields never appear in rendered detail |
+| US4 #5 | Frontend | pending event does not imply success or failure |
+| US5 #1 | Backend | connected-service lifecycle forms one derived thread |
+| US5 #2 | Frontend | agent timeline shows broker milestones without downstream-use claims |
+| US5 #3 | Frontend | 10,000-event view stays scannable and exposes target via search |
+| US5 #4 | Frontend | expanded timeline opens detail without losing surrounding narrative |
+
+Keep supplemental backend API tests for filter intersection, invalid cursor, principal
+isolation, approved fields, read-time retention, FR-014 boundary, independent operational
+audit/drop behavior (FR-016a), and unaffiliated-token denial. Keep a separate frontend `It()`
+for SC-008's direct-card link. US4 #3 alone owns the numbered detail-context link. Supplemental
+tests do not acquire story keys or change the count of 29.
 
 **Red phase**: assertions target concrete contract values (status codes, `data.events[…].summary`,
 `redacted:true`, `next_step.target_route`), compile, and fail semantically before implementation.
@@ -447,6 +521,25 @@ No `XIt`/`Skip`, no red-phase comments.
 **Location**: `tests/e2e/frontend/activity_test.go`, page object `tests/e2e/pages/activity_page.go`
 · seeding via direct `GetTestStorage()` repositories · auth via `X-Remote-User` in the browser
 context. Screenshots gated by `E2E_CAPTURE_SCREENSHOTS`, saved to `tests/e2e/screenshots/`.
+
+### Interaction proof (SC-002/004/008/010)
+
+Use `tests/e2e/pages/activity_page.go` to count each click, Enter/Space activation, menu
+opening, or completed query submission as one interaction. Passive rendering is not an
+interaction. Record starting URL, action sequence, filter/target result, and count:
+
+| Outcome | Starting state and observable target | Maximum |
+|---|---|---|
+| SC-002 agent/service | Seed an agent and connected service absent from page one. From `/agents/{agent_id}` or `/sessions`, follow one existing-page "View activity" link for the exact ID; all retained matches, including later pages, appear. | 2 activations |
+| SC-002 window/outcome | Start at `/activity`, use the existing relative-window or outcome controls, and check matching rows. A submitted keyword alone cannot prove all off-page entity results. | 2 activations |
+| SC-004 | Start from a visible live attention item and enter the existing reconnect or approval resolving flow. | 2 activations |
+| SC-008 | Start from a relevant Activity **feed card** with an approved context link; activate the first server-approved `ActivityEvent.related_links` route directly. The detail link is checked separately by US4 #3. Do not count an extra detail-opening click as success. Missing/deleted targets retain text without a link. | 1 activation |
+| SC-010 | Start from a non-Activity app route; open the top-level Activity link on desktop, mobile, and at 200% zoom, without a menu opener. | 1 activation |
+
+T020/T021/T055/T069/T081/T092/T116 record these counts. Guard direct-card and detail routes
+with `web/src/utils/inAppRoute.ts`. T042 selects `/approvals/{approval_id}` for approvals,
+`/sessions` for session/reconnect, and `/agents/{agent_id}` for agent/grant/policy when the
+principal still owns the target. The server omits absent, deleted, or cross-principal links.
 
 ### Accessibility Test Plan (WCAG 2.1 AA — SC-006)
 
@@ -486,6 +579,52 @@ harness (no a11y E2E exists today):
 16. `activity_attention_grouped.png` — attention band with a grouped "+N more" item
 17. `activity_retention_footer.png` — end-of-history explanation
 
+### Opt-in human study (SC-001/003/005; not an acceptance `It()`)
+
+T018 seeds exactly 10,000 **distinct retained** `ActivityEvent`s for `user@example.com`,
+including every emitted type in T006's reviewed registry (the current model lists 18).
+Include a uniquely named recent target at rank 250. Store the approved five-field
+what/when/who/affected/outcome answer rubric for each type with the fixture. Use timestamps
+relative to startup so all rows remain within `720h`. The frontend Ginkgo suite closes storage
+after each `It()`, so T119 adds an opt-in `tests/e2e/study/activity/main.go` driver outside both
+acceptance suites. Do not treat an automated text check as comprehension proof.
+
+The driver starts an isolated PostgreSQL 15 database with
+`bootstrap.NewPostgresFixture(ctx)` (production migrations). Set `ports.StorageConfig` backend
+to `postgres`, connection URL to `PostgresFixture.ConnectionURL`, read timeout 5s, write timeout
+10s. Construct the production storage adapter via `storageadapter.NewAdapter` in
+`internal/adapters/storage/factory.go` and seed through its planned Activity repository. Reuse
+`helpers.NewMockUpstreamOAuth2Server`, `fixtures.OAuth2ConfigWithUpstream`, and set
+`ports.Config.Storage` to the same PostgreSQL config **before**
+`bootstrap.NewServerFactory(...).BuildApp(storage)` and
+`bootstrap.NewEndUserTestServer`. Use built SPA assets after `just web-build`.
+
+Launch headed Chromium with a fresh browser context, viewport 1280×800, and
+`X-Remote-User: user@example.com`. Print `Activity study ready: <URL>/activity` only after a
+fixture card renders. Exit nonzero on any setup, seed, or browser error. Handle SIGINT,
+SIGTERM, and every setup error with one cleanup path: close browser/context, server, mock
+upstream, adapter, and `PostgresFixture.Close`. Ryuk is disabled by the fixture; never rely on
+process exit to terminate its container. Each new launch creates a newly migrated database and
+fresh browser context. If T016 chooses `ILIKE`, the study uses its migrated fallback schema;
+T120 captures the 10,000-row fallback query plan separately. Never substitute a faster
+`pg_trgm` run for a failed `ILIKE` user task.
+
+Recruit ten distinct participants using the same 1280×800 viewport and Chromium build.
+Start each stopwatch after a fixture card confirms feed readiness. Assign each participant at
+least two **different** emitted types, round-robin until every type has a timed, no-detail
+comprehension trial. Score SC-001 **per trial**: all five rubric answers correct within 10s,
+without detail, for every emitted type. For SC-003, give each participant one preselected
+paraphrase prompt and require at least 9/10 correct without jargon; score **per participant**.
+For SC-005, run ten distinct target-finding trials at rank 250 among 10,000 events; each must
+finish in under 30s. Record anonymized answers, types, elapsed times, activations, browser
+build, viewport, fixture count, and failures in this plan's verification evidence. T120 storage
+timings are diagnostic and never substitute for these tasks.
+
+**Verification evidence (not yet collected):** SC-001 trial rubric/times and type coverage:
+unverified. SC-003 participant paraphrases (target ≥9/10): unverified. SC-005 ten target
+trials (target each <30s): unverified. If participants or a container runtime are unavailable,
+leave these outcome claims unverified; do not invent scores.
+
 ### Unit & Integration
 
 - **Unit** (TDD, red first): `internal/domain/activity/*_test.go` — feed assembly, read-time
@@ -496,10 +635,11 @@ harness (no a11y E2E exists today):
 - **Integration** (testcontainers PostgreSQL): `internal/adapters/storage/postgres/activity_events_test.go`
   — record (idempotent upsert incl. concurrent roll-up increments), list, related, prune under
   `pg_try_advisory_lock` with two competing connections, `032` migration apply + rollback +
-  repeat, principal/keyset ordering, selective `related_refs` filters, trigram `q`, and
-  cross-principal isolation. Also prove that an unpruned expired event returns 404 by ID and
-  cannot enter the related sequence. A session refresh rejection must persist its marker even
-  when the history insert fails, and a later token write must clear it without a stale retry.
+  repeat, principal/keyset ordering, selective `related_refs` filters, selected `pg_trgm` or
+  `ILIKE` keyword path, and cross-principal isolation. An unpruned expired event returns
+  404 by ID and cannot enter the related sequence. A rejected session refresh must
+  persist its marker even when the history insert fails; a later successful token write
+  must clear it without a stale retry.
 - **Exploratory storage benchmark** (manual, isolated PostgreSQL; not normal CI or a product SLO):
   `BenchmarkActivityEventRepository` seeds the SC-005 10,000-event principal and measures all
   filters/threads; it separately exercises the 2,000-principal, 20-million-event, 3-KiB stress
@@ -523,8 +663,9 @@ DynamoDB's additional application-data infrastructure and query-index amplificat
 a generic event bus as over-engineering.
 
 Added complexity accepted in the 2026-09-22 revision, and why:
-- **`pg_trgm` extension** — the only way to make SC-005 ("find a specific recent event in 30 s
-  among 10,000") honest without a full search stack; an `ILIKE` fallback is specified.
+- **`pg_trgm` extension** — optional search index when the managed PostgreSQL offering permits
+  it. The documented `ILIKE` fallback must pass the same SC-005 user study; neither query
+  timing nor a faster alternate run proves the user task.
 - **Async recorder goroutine + advisory-lock prune** — the app has no scheduler; this is the
   smallest coordination that is multi-replica safe and needs no new infrastructure.
 - **Phase 0 in `tokenexchange`** — unavoidable: the seams the feature needs do not exist.

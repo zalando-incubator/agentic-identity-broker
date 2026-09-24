@@ -1,4 +1,4 @@
-# Activity & Auditing API — end-user endpoints (Phase 1 contract, rev. 2026-09-22)
+# Activity & Auditing API — end-user endpoints (proposed contract, rev. 2026-09-24)
 # Feature: 038-activity-audit-experience
 #
 # OpenAPI 3.0.3 fragment. Paths and schemas here are merged into
@@ -17,6 +17,8 @@
 #  - target_route values come from a server-side allowlist matching the current SPA router
 #    (basename "/": /agents/{id}, /sessions, /approvals, /approvals/{id}, /activity/{id})
 #  - attention items carry `group_key` for UI grouping
+# Revision 2026-09-24: required exact `retention_cutoff_at` and response-only shared
+# `ActivityEvent.related_links`; written stakeholder approval still required before handlers.
 
 openapi: 3.0.3
 info:
@@ -38,9 +40,11 @@ paths:
         the page's events. Routine high-frequency internals are rolled up into one event per
         bucket with an `occurrence_count`, not surfaced individually. Broker access counts mean
         successful token exchanges, not downstream service uses. All events and thread counts
-        are limited to the configured activity-retention window. Supports combinable, clearable
-        filters (agent, service, grant, time window, jump-to-date, outcome, category, keyword,
-        needs-attention).
+        are limited to the configured activity-retention window. Every feed response includes
+        the exact UTC cutoff computed from the same request clock instant and retention_window as
+        its historical query. Live attention remains available independently. Supports
+        combinable, clearable filters (agent, service, grant, time window, jump-to-date,
+        outcome, category, keyword, needs-attention).
       operationId: listActivity
       security:
         - SessionAuth: []
@@ -83,7 +87,7 @@ paths:
           in: query
           required: false
           schema: { type: string, maxLength: 100 }
-          description: Keyword matched (case-insensitive, trigram) against summary and actor/subject labels.
+          description: Case-insensitive keyword match against summary and actor/subject labels.
         - name: needs_attention
           in: query
           required: false
@@ -113,7 +117,7 @@ paths:
                 properties:
                   data:
                     type: object
-                    required: [events, threads, next_cursor, retention_days]
+                    required: [events, threads, next_cursor, retention_cutoff_at]
                     properties:
                       events:
                         type: array
@@ -126,9 +130,11 @@ paths:
                         type: string
                         nullable: true
                         description: Cursor for the next page; null when no more events.
-                      retention_days:
-                        type: integer
-                        description: Configured retention so the UI can explain where history ends (FR-014 cliff message).
+                      retention_cutoff_at:
+                        type: string
+                        format: date-time
+                        pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$'
+                        description: Exact RFC3339 UTC read-time cutoff, inclusive, from this request's clock instant and configured retention_window (FR-014). Present on empty pages too.
               examples:
                 populated:
                   summary: Mixed feed with a roll-up, a thread and a next page
@@ -143,6 +149,7 @@ paths:
                           outcome: blocked
                           summary: "Research Agent's request to run delete_repo was denied."
                           related_refs: { agent_id: "7f0a…", approval_id: "p8", service_id: "github" }
+                          related_links: [{ label: "Review request", target_route: "/approvals/p8" }]
                           occurrence_count: 1
                           first_occurred_at: "2026-09-04T10:31:00Z"
                           occurred_at: "2026-09-04T10:31:00Z"
@@ -155,6 +162,7 @@ paths:
                           outcome: succeeded
                           summary: "Broker issued GitHub access for Research Agent."
                           related_refs: { agent_id: "7f0a…", service_id: "github" }
+                          related_links: [{ label: "Review agent", target_route: "/agents/7f0a…" }]
                           occurrence_count: 41
                           first_occurred_at: "2026-09-04T09:02:11Z"
                           occurred_at: "2026-09-04T09:58:40Z"
@@ -167,6 +175,7 @@ paths:
                           outcome: failed
                           summary: "Your GitHub connection expired."
                           related_refs: { service_id: "github", session_id: "se4" }
+                          related_links: []
                           occurrence_count: 1
                           first_occurred_at: "2026-09-04T09:05:00Z"
                           occurred_at: "2026-09-04T09:05:00Z"
@@ -187,10 +196,10 @@ paths:
                           truncated: false
                           event_ids: [4f1c2e00-0000-4000-8000-000000000003, 4f1c2e00-0000-4000-8000-000000000001]
                       next_cursor: "b2NjdXJyZWQ6MjAyNi0wOS0wNFQwOTowNTowMFo="
-                      retention_days: 30
+                      retention_cutoff_at: "2026-08-05T12:00:00Z"
                 empty:
-                  summary: No activity yet (first-time user)
-                  value: { data: { events: [], threads: [], next_cursor: null, retention_days: 30 } }
+                  summary: No retained activity in this period
+                  value: { data: { events: [], threads: [], next_cursor: null, retention_cutoff_at: "2026-08-05T12:00:00Z" } }
         '400':
           description: Invalid filter, or a cursor presented with a different filter set than it was issued for.
           content:
@@ -211,12 +220,11 @@ paths:
       tags: [Activity]
       summary: List live needs-attention items for the current user
       description: |
-        Returns items derived from current unresolved state (a session past refresh expiry or
-        marked as requiring reconnection, or a tool call awaiting approval). Historical activity
-        events do not determine live reconnect state. Unresolved items remain visible regardless
-        of the activity-retention window and clear when the underlying state resolves. There is
-        no dismissal. Non-actionable notable events are NOT included here. The SPA polls this
-        endpoint while the tab is visible.
+        Returns live Needs-Attention Items derived from current unresolved session or approval
+        state, never from a stored event or thread. Items survive missing or pruned history and
+        clear when the source resolves. Expired or settled approvals leave the band; any recorded
+        expiry remains historical. There is no dismissal or per-event attention flag.
+        Non-actionable notable events are not included. The SPA polls while the tab is visible.
       operationId: listActivityAttention
       security:
         - SessionAuth: []
@@ -397,13 +405,10 @@ components:
           type: object
           additionalProperties: { type: string }
           description: Approved key/value context only (SafeFields registry). Never contains secrets, tokens, or sensitive parameters (FR-011).
-        related_links:
-          type: array
-          items: { $ref: '#/components/schemas/RelatedLink' }
 
     ActivityEvent:
       type: object
-      required: [id, category, type, actor, subject, outcome, summary, related_refs, occurrence_count, first_occurred_at, occurred_at, redacted]
+      required: [id, category, type, actor, subject, outcome, summary, related_refs, related_links, occurrence_count, first_occurred_at, occurred_at, redacted]
       properties:
         id: { type: string, format: uuid }
         category: { $ref: '#/components/schemas/ActivityCategory' }
@@ -415,6 +420,10 @@ components:
           type: string
           description: Human-readable, redacted sentence answering what/who/what-affected/outcome (FR-002, FR-010).
         related_refs: { $ref: '#/components/schemas/RelatedRefs' }
+        related_links:
+          type: array
+          description: Response-only approved in-app context links; empty when no target is accessible. Never persisted in detail or on the event aggregate.
+          items: { $ref: '#/components/schemas/RelatedLink' }
         occurrence_count:
           type: integer
           minimum: 1

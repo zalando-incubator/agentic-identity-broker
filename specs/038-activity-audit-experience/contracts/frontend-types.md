@@ -1,11 +1,12 @@
 # Frontend type contract — `web/src/types/activity.ts`
 
-**Feature**: 038-activity-audit-experience · **Revised**: 2026-09-22 (plan review)
+**Feature**: 038-activity-audit-experience · **Revised**: 2026-09-24 (artifact remediation)
 
-The SPA has no generated client; response types are hand-written in `web/src/types/*.ts` and kept
-in sync with `api/enduser/openapi.yaml` (see [enduser-activity.openapi.yaml](./enduser-activity.openapi.yaml)).
-This file is the source-of-truth shape the activity hooks/services consume. It mirrors the
-OpenAPI schemas 1:1.
+The SPA has no generated client. These proposed response types mirror the
+[Activity OpenAPI fragment](./enduser-activity.openapi.yaml), not the published API yet.
+T013 merges that fragment into `api/enduser/openapi.yaml` for written stakeholder review;
+T014 requires approval before handlers. Future `web/src/types/activity.ts` must match the
+approved OpenAPI schemas.
 
 ```ts
 // web/src/types/activity.ts
@@ -77,7 +78,6 @@ export interface ActivityDetail {
   explanation: Explanation;
   /** Approved key/value context only; never secrets/tokens/sensitive params (FR-011). */
   context?: Record<string, string>;
-  related_links?: RelatedLink[];
 }
 
 export interface ActivityEvent {
@@ -89,6 +89,8 @@ export interface ActivityEvent {
   outcome: Outcome;
   summary: string;
   related_refs: RelatedRefs;
+  /** Response-only, server-approved context links; [] when none remain accessible. Shared by feed and detail. */
+  related_links: RelatedLink[];
   /** >1 for roll-ups; agent.access_issued counts broker token exchanges, not downstream actions. */
   occurrence_count: number;
   first_occurred_at: string; // RFC3339
@@ -156,7 +158,7 @@ export interface ListActivityResponse {
     events: ActivityEvent[];
     threads: ActivityThreadResponse[];
     next_cursor: string | null;
-    retention_days: number;
+    retention_cutoff_at: string; // Exact RFC3339 UTC cutoff from the feed request clock and retention_window
   };
 }
 
@@ -176,6 +178,13 @@ export interface ListAttentionResponse {
   `get<ListAttentionResponse>('/activity/attention')`.
   Cache the feed and detail GETs via `services/api/cache.ts` with a short TTL; **do not cache**
   `/activity/attention` (it is polled).
+  Before caching each feed page, `web/src/services/api/activity.ts` must reject missing or invalid
+  `retention_cutoff_at`. Accept a string matching
+  `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$` only if `Date.parse` is finite.
+  TypeScript types and the Axios success interceptor do not validate responses. On initial
+  failure, `useActivity` shows its fetch error as `useSessions` does. A later-page failure keeps
+  loaded cards and shows a retryable error without appending the malformed page. Never fabricate
+  a 30-day footer.
 - **Hooks** (canonical `useSessions` shape): `useActivity(filters)` (feed + `loadMore` via
   `next_cursor`; a filter change discards the cursor), `useActivityEvent(id)`,
   `useNeedsAttention({ pollMs })` — polls while `document.visibilityState === 'visible'` and

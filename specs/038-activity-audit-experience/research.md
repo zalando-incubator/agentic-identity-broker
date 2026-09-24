@@ -1,7 +1,7 @@
 # Phase 0 Research: End-User Activity & Auditing Experience
 
 **Feature**: 038-activity-audit-experience
-**Date**: 2026-09-04 · **Revised**: 2026-09-22 (plan review — code re-verified, Decisions 11–13 added)
+**Date**: 2026-09-04 · **Revised**: 2026-09-24 (retention approval and contract design; 2026-09-22 code review retained)
 **Input**: [spec.md](./spec.md)
 
 This document resolves every open question needed to design the feature. The dominant
@@ -209,15 +209,15 @@ filters without new infrastructure.
 
 - Exercise a stress population of 2,000 active principals with a **benchmark maximum** of 10,000
   retained curated events per principal. This aligns the per-user read path with SC-005 without
-  imposing an application limit: 20,000,000 events across the seven-day window.
+  imposing an application limit: 20,000,000 events across the approved 30-day baseline.
 - Drive a representative 3 KiB serialized event (labels plus redacted `detail` and
   `related_refs`). The raw payload estimate is about 55.9 GiB at 20 million events; PostgreSQL
   capacity must be measured with `pg_total_relation_size`, including indexes, TOAST, WAL, and
   headroom. The repository's current 10 GiB Helm default is not a sizing commitment for this
   exploratory load.
-- The evenly distributed stress dataset implies 33.1 significant-event writes/s over seven days.
-  Run a 10x, 330 writes/s burst across principals. This tests recorder and connection-pool
-  behavior; it is not an expected MCP/request rate or a product write SLO.
+- The uniform-write average for 20 million events over 30 days is about 7.7 significant-event
+  writes/s. Separately run an exploratory 330 writes/s burst across principals to test recorder
+  and connection-pool behavior; neither rate is an expected MCP/request rate or product SLO.
 - Seed one principal with 10,000 events for SC-005 and issue keyset feed pages plus every single
   filter and representative combined filters. Capture p50/p95/p99 and execution plans on a warm
   isolated PostgreSQL database. The benchmark records storage behaviour; SC-005 itself remains the
@@ -228,7 +228,7 @@ feed and cursor. Partial expression B-tree indexes for the optional `agent_id`, 
 `grant_id` keys in `related_refs`, plus a principal/thread/time index, keep selective filters and
 threads bounded. The planner can combine those indexes and apply low-cardinality `outcome` and
 `category` predicates within a principal's retained window; the benchmark verifies this rather
-than adding speculative indexes. Seven-day application filtering remains authoritative, while a
+than adding speculative indexes. The configured read-time cutoff remains authoritative, while a
 bounded periodic prune controls physical growth. This reuses the existing SQLx adapter,
 connection pool, migration, backup, and multi-instance PostgreSQL operations.
 
@@ -283,10 +283,10 @@ accessible ordered list; reduced-motion is honored by suppressing entrance/conne
 
 ### Decision 4 — Filter state synced to URL query params
 
-**Decision**: Drive the filter state through `react-router` `useSearchParams`. The exact
-contract names are `agent_id`, `service_id`, `grant_id`, `window`, `outcome`, `category`, and
-`needs_attention`. Pass these names unchanged to `GET /api/activity`. This is the app's first
-URL-synced filter pattern.
+**Decision**: Drive filter state through `react-router` `useSearchParams`. The exact contract
+names are `agent_id`, `service_id`, `grant_id`, `window`, `before`, `outcome`, `category`, `q`,
+and `needs_attention`. Pass these names unchanged to `GET /api/activity`. This is the app's
+first URL-synced filter pattern.
 
 **Rationale**: US3 requires combined, clearable, shareable filters and one-action deep links.
 For example, `/activity?agent_id=…` answers "what has this agent done?". URL state makes each
@@ -299,13 +299,16 @@ react-router and adds no dependency.
 
 ### Decision 5 — Cursor pagination + "Load more"
 
-**Decision**: `GET /api/activity` returns `{data:{events, threads, next_cursor, retention_days}}`;
-the client requests additional pages with `?cursor=` behind a design-system `Button` "Load
-more". Default page size configurable; ordering strictly reverse-chronological with a stable
+**Decision**: `GET /api/activity` returns `{data:{events, threads, next_cursor, retention_cutoff_at}}`;
+the cutoff is an RFC3339 UTC timestamp computed with the query's request clock instant and
+`retention_window`, even when `events` is empty. The client requests additional pages with
+`?cursor=` behind a design-system `Button` "Load more".
+Default page size is configurable; ordering is strictly reverse-chronological with a stable
 tiebreak (`occurred_at`, then `id`). The cursor also encodes a hash of the filter set; a cursor
 presented with different filters is rejected (`400 invalid_cursor`) so a stale cursor can never
-silently return pages from another query. `before=` (RFC3339) and a trigram `q=` keyword filter
-give the user a way to *jump* rather than page through 10,000 events (SC-005).
+silently return pages from another query. `before=` (RFC3339) and the case-insensitive `q=`
+keyword filter (selected `pg_trgm` or documented `ILIKE` fallback) provide a jump into 10,000
+events (SC-005); the human study, not query timing, proves findability.
 
 **Rationale**: SC-005 requires a specific recent event to remain findable under 10,000 events
 with a scannable, responsive surface (FR-013). Cursor pagination is the Zalando-preferred,
@@ -328,6 +331,9 @@ A successful refresh or OAuth callback clears the marker with the token write. A
 session update compares the revision read before failure to prevent a late failure from
 overwriting a later success. This endpoint never queries activity history. Unresolved items
 remain visible beyond history retention.
+Expired or settled approvals leave the live band, while any recorded expiry remains in history.
+The `needs_attention=true` feed filter includes only retained transitions matching current
+unresolved `approval_id` or `session_id` and `token_revision`; it has no stored per-event flag.
 
 The SPA polls this endpoint every 30 s while the tab is visible and revalidates on focus
 (`Cache-Control: no-store`). The history feed stays on-load/manual. The band shows at most three
@@ -373,15 +379,16 @@ the API response body (E2E can assert absence of known-sensitive substrings).
 
 ### Decision 8 — Retention via unified config, default 30 days; advisory-lock prune
 
-**Decision**: Add an `activity` config section to `internal/ports/config.go`
-(`retention_window` default `720h`, `page_size` 25, `rollup_bucket` `1h`, `queue_size` 1024,
-`prune_interval` `10m`, `prune_batch` 5000, `attention_poll_interval_seconds` 30; durations are
-Go duration strings). Every historical activity-event query (feed, detail, related sequence,
-and thread count) applies `occurred_at >= now - retention` with one cutoff per request. Detail
-returns 404 before that cutoff, even while a row awaits pruning. Live needs-attention has no
-retention cutoff. The feed response includes `retention_days` so the UI can explain the boundary.
-Add `examples/config/activity.yaml`, document settings in `docs/configuration.md`, and update
-the Helm chart (`values.yaml`, ConfigMap template, README) per Principle VII.
+**Decision**: Plan an `activity` config section in `internal/ports/config.go` with six settings:
+`retention_window` default `720h`, `page_size` 25, `rollup_bucket` `1h`, `queue_size` 1024,
+`prune_interval` `10m`, and `prune_batch` 5000. Accept arbitrary positive representable Go
+durations, including `36h`; reject zero, negative, and invalid values at startup. Every historical
+query (feed, detail, related sequence, thread count) uses one request-clock cutoff of
+`occurred_at >= now - retention_window`. Detail returns 404 before that cutoff, even before
+pruning. Live attention has no history cutoff. The feed response exposes the exact cutoff as
+`retention_cutoff_at`, never a rounded day count. Add `examples/config/activity.yaml`, document
+settings in `docs/configuration.md`, and update the Helm chart (values, ConfigMap, README) per
+Principle VII. The SPA owns its 30-second visible-tab polling constant.
 
 **Periodic worker**: the app has no general scheduler. The activity recorder's drainer
 attempts `pg_try_advisory_lock(hashtext('activity_prune'))` every `prune_interval`; the holder
@@ -399,7 +406,7 @@ window on reads makes the user-visible retention exact even if a prune is delaye
 lock-coordinated prune batches keep the table from growing without long deletion work or
 duplicate work across replicas. The 20-million-row, 3-KiB footprint in Decision 2 is an
 exploratory capacity measurement, not a retention quota or product provisioning request. The
-spec's Assumptions and Clarifications are updated accordingly (2026-09-22).
+spec's Assumptions and Clarifications record the requester's 2026-09-23 approval.
 
 **Alternatives considered**:
 - *Hard-coded 7 days* — rejected: violates Principle VII (configuration must use the unified
@@ -530,6 +537,13 @@ key matches `token`, `secret`, `arguments`, `authorization`, `assertion`, `code`
 `refresh`. Server-side route templates allow only in-app `target_route` values, and the client
 validates routes before rendering a `<Link>`. A `correlation_id` stays server-side.
 
+The feed and detail share required, response-only `ActivityEvent.related_links: RelatedLink[]`.
+No links are stored on the aggregate or inside `ActivityDetail` JSONB. T042 selects one
+allowlisted route per event type. T050 resolves approved agent/session/approval targets through
+existing principal-scoped read ports, once per unique target on each page of at most 100.
+Missing, deleted, and cross-principal targets yield `[]`, not a broken link. If a lookup fails,
+omit the link, log the operational failure, and keep the historical text visible.
+
 **Rationale**: The 2026-09-21 clarification ("display only pre-approved user-display fields")
 had no plan artifact; a free-form `map[string]string` pushed the discipline onto each future
 seam author. The registry gives SC-007 a concrete oracle. The three-part explanation follows
@@ -553,9 +567,6 @@ create.
   confirmed by the stakeholder in PR review before implementation. This is a workflow gate, not
   a design unknown.
 
-- **Retention default 30 days** (Decision 8) supersedes the 2026-09-04 clarification's 7-day
-  default; recorded in spec.md Clarifications 2026-09-22 and flagged for stakeholder
-  confirmation alongside the contract.
 - **`pg_trgm` availability** on the managed PostgreSQL offering; an `ILIKE` fallback is
   specified if the extension cannot be enabled.
 
