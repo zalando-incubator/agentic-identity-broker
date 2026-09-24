@@ -2,6 +2,7 @@
 package helpers_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -433,5 +434,56 @@ func TestMockUpstreamOAuth2ServerBasic(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestMockUpstreamConcurrentResponseConfiguration(t *testing.T) {
+	server := helpers.NewMockUpstreamOAuth2Server()
+	defer server.Close()
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				server.WithErrorResponseAndDescription("invalid_grant", "denied")
+				server.WithSuccessfulTokenResponse()
+			}
+		}
+	}()
+	defer func() { close(stop); <-done }()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	for range 50 {
+		resp, err := client.PostForm(server.URL()+"/oauth/token", url.Values{"code": {"test-code"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+			AccessToken      string `json:"access_token"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			if body.AccessToken == "" {
+				t.Fatal("successful token response is missing access_token")
+			}
+		case http.StatusBadRequest:
+			if body.Error != "invalid_grant" || body.ErrorDescription != "denied" {
+				t.Fatalf("inconsistent error response: %+v", body)
+			}
+		default:
+			t.Fatalf("unexpected status: %d", resp.StatusCode)
+		}
 	}
 }
