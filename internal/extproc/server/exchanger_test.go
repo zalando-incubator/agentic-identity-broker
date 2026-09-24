@@ -77,6 +77,8 @@ func newMockServers() *mockServers {
 	m.clientCredsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.clientCredsCalls++
 		w.Header().Set("Content-Type", "application/json")
+		// Prevent idle TCP reads from blocking synctest's virtual clock.
+		w.Header().Set("Connection", "close")
 		if m.clientCredsStatus != http.StatusOK {
 			w.WriteHeader(m.clientCredsStatus)
 			_, _ = fmt.Fprintf(w, `{"error":"server_error"}`)
@@ -97,6 +99,7 @@ func newMockServers() *mockServers {
 		m.lastExchangeForm = r.Form
 
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Connection", "close")
 		if m.exchangeStatus != http.StatusOK {
 			w.WriteHeader(m.exchangeStatus)
 			if m.exchangeErrorURI != "" {
