@@ -6,11 +6,13 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
 	domaincimd "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -214,6 +216,40 @@ func TestFetcher_SSRF_BlocksLinkLocalIPv6(t *testing.T) {
 	err = control("tcp", "[fe80::1]:443", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "blocked range")
+}
+
+func TestFetcher_SSRF_BlocksIPv4TranslationBeforeConnect(t *testing.T) {
+	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	require.NoError(t, err)
+	control := buildSSRFControl(bl)
+
+	for _, addr := range []string{
+		"[64:ff9b::a9fe:a9fe]:443",
+		"[64:ff9b:1::a9fe:a9fe]:443",
+		"[2002:0a00:0001::]:443",
+		"[2001:0:0a00:0001::]:443",
+	} {
+		t.Run(addr, func(t *testing.T) {
+			err := control("tcp", addr, nil)
+			require.ErrorContains(t, err, "blocked range")
+		})
+	}
+}
+
+func TestFetcher_SSRF_BlockedURLNeverReachesServer(t *testing.T) {
+	var reached atomic.Bool
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.Store(true)
+		w.Header().Set("Content-Type", "application/json")
+	}))
+	defer srv.Close()
+
+	fetcher, err := NewFetcher(time.Second, 5120, nil)
+	require.NoError(t, err)
+	_, err = fetcher.Fetch(context.Background(), srv.URL+"/client")
+	var blocked *ports.SSRFBlockedError
+	require.ErrorAs(t, err, &blocked)
+	assert.False(t, reached.Load())
 }
 
 func TestFetcher_SSRF_AllowsPublicIP(t *testing.T) {

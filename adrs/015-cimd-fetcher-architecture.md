@@ -41,7 +41,7 @@ The fetcher adapter uses a custom `net.Dialer` with a `Control` callback that ru
 Hostname → DNS resolve → [Control callback: IP blocklist check] → TCP connect
 ```
 
-The `SSRFBlocklist` domain value object (initialized from RFC 6890 Special-Purpose Address Registry defaults plus operator-configured `extra_blocked_cidrs`) is consulted in the control callback. If the resolved IP falls in any blocked range, the connection is rejected before any byte is sent.
+The `SSRFBlocklist` domain value object rejects non-global addresses, RFC 6890 special-purpose ranges, IPv6 transition prefixes (NAT64, Teredo, and 6to4), and operator-configured `extra_blocked_cidrs`. It is consulted in the control callback. If the resolved IP is blocked, the connection is rejected before any byte is sent.
 
 Additionally:
 - HTTP redirects are disabled (via an anonymous `CheckRedirect` function that returns `http.ErrUseLastResponse`) — the client_id URL must serve the document directly

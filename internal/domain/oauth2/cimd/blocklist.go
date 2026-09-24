@@ -6,12 +6,12 @@ import (
 )
 
 // SSRFBlocklist is an immutable set of CIDR ranges blocked for CIMD fetches.
-// Built at startup from RFC 6890 defaults plus any operator-configured extras.
+// Built at startup from special-purpose and transition ranges plus operator-configured extras.
 type SSRFBlocklist struct {
 	blocked []*net.IPNet
 }
 
-// defaultBlockedCIDRs contains RFC 6890 ranges that must never be fetched.
+// defaultBlockedCIDRs contains special-purpose and IPv4-embedding ranges.
 var defaultBlockedCIDRs = []string{
 	"127.0.0.0/8",        // Loopback (IPv4)
 	"::1/128",            // Loopback (IPv6)
@@ -32,10 +32,15 @@ var defaultBlockedCIDRs = []string{
 	"255.255.255.255/32", // Limited broadcast
 	"fc00::/7",           // Unique local (IPv6)
 	"2001:db8::/32",      // Documentation (IPv6)
+	// IPv6 transition mechanisms can tunnel or translate requests to blocked IPv4 destinations.
+	"64:ff9b::/96",   // NAT64 well-known prefix
+	"64:ff9b:1::/48", // NAT64 local-use prefix
+	"2001::/32",      // Teredo
+	"2002::/16",      // 6to4
 }
 
-// NewSSRFBlocklist creates an SSRFBlocklist from the RFC 6890 default ranges
-// plus any operator-configured extra CIDRs. Returns an error if any CIDR is malformed.
+// NewSSRFBlocklist creates an SSRFBlocklist from the default ranges plus any
+// operator-configured extra CIDRs. Returns an error if any CIDR is malformed.
 func NewSSRFBlocklist(extraCIDRs []string) (SSRFBlocklist, error) {
 	all := make([]string, 0, len(defaultBlockedCIDRs)+len(extraCIDRs))
 	all = append(all, defaultBlockedCIDRs...)
@@ -55,6 +60,10 @@ func NewSSRFBlocklist(extraCIDRs []string) (SSRFBlocklist, error) {
 
 // Contains returns true if the given IP address falls within any blocked range.
 func (b SSRFBlocklist) Contains(ip net.IP) bool {
+	if !ip.IsGlobalUnicast() {
+		return true
+	}
+
 	for _, network := range b.blocked {
 		if network.Contains(ip) {
 			return true

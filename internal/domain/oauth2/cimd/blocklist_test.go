@@ -37,6 +37,13 @@ func TestSSRFBlocklist(t *testing.T) {
 		{"broadcast", "255.255.255.255"},
 		{"unique local IPv6", "fc00::1"},
 		{"documentation IPv6", "2001:db8::1"},
+		{"NAT64 well-known prefix", "64:ff9b::a9fe:a9fe"},
+		{"NAT64 local-use prefix", "64:ff9b:1::a9fe:a9fe"},
+		{"6to4 embeds private IPv4", "2002:0a00:0001::"},
+		{"Teredo embeds private IPv4", "2001:0:0a00:0001::"},
+		{"multicast IPv4", "224.0.0.1"},
+		{"multicast IPv6", "ff02::1"},
+		{"unspecified IPv6", "::"},
 	}
 
 	for _, tc := range blocked {
