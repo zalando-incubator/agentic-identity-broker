@@ -76,12 +76,6 @@ var _ = Describe("Approval UI", func() {
 		approvalPage = pages.NewApprovalPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if approvalPage != nil {
-			_ = approvalPage.Close()
-		}
-	})
-
 	// Scenario US1-S1 from specs/024-approval-api-ui/spec.md
 	// State 1: Pending Review
 	It("should display pending approval with user-facing context, session context, and persistence choices", func() {
@@ -149,7 +143,7 @@ var _ = Describe("Approval UI", func() {
 			hasGlobalError, err := approvalPage.HasGlobalErrorBoundary(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasGlobalError).To(BeFalse(), "high-risk approvals should not crash the page")
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 	})
 
 	// FR-016 from specs/024-approval-api-ui/spec.md
@@ -287,7 +281,7 @@ var _ = Describe("Approval UI", func() {
 			hasError, err := approvalPage.HasErrorAlert(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasError).To(BeTrue())
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		title, err := approvalPage.GetErrorTitle(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -318,7 +312,7 @@ var _ = Describe("Approval UI", func() {
 			hasError, err := approvalPage.HasErrorAlert(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasError).To(BeTrue())
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		title, err := approvalPage.GetErrorTitle(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -341,7 +335,7 @@ var _ = Describe("Approval UI", func() {
 			hasError, err := approvalPage.HasErrorAlert(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasError).To(BeTrue())
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		title, err := approvalPage.GetErrorTitle(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -396,7 +390,7 @@ var _ = Describe("Approval UI", func() {
 			hasError, err := approvalPage.HasErrorAlert(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasError).To(BeTrue())
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		title, err := approvalPage.GetErrorTitle(ctx)
 		Expect(err).NotTo(HaveOccurred())

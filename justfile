@@ -462,6 +462,7 @@ verify-e2e-frontend-junit:
     mkdir -p test-results
     rm -f test-results/{e2e-frontend-junit.xml,e2e-frontend.json,e2e-frontend.log,e2e-frontend-web-build.log}
     just web-build 2>&1 | tee test-results/e2e-frontend-web-build.log
+    test -f web/dist/index.html
     E2E_FRONTEND_MODE=built E2E_CAPTURE_SCREENSHOTS={{E2E_CAPTURE_SCREENSHOTS}} \
         ginkgo run --procs={{GINKGO_FRONTEND_PROCS}} --output-interceptor-mode=none \
         --timeout=20m --poll-progress-after=30s --show-node-events \

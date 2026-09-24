@@ -33,7 +33,9 @@ The Vite proxy adds it in development mode.
 
 ## Playwright Lifecycle
 
-- `frontend_suite_test.go` launches one browser in `BeforeSuite`. It creates a browser context and page in `BeforeEach`.
+- Process 1 builds the frontend once in `frontend_suite_test.go`.
+- Each worker starts and stops its own Playwright browser.
+- The suite closes each page with its browser context.
 - `GINKGO_FRONTEND_PROCS` runs multiple workers. Each spec needs its own server, browser context, and storage.
 - Page objects in `../pages/` hide selectors. Use interaction methods in test files. Do not use raw selectors.
 - Use `bootstrap.TestLogger()` and suite helpers for routine logs.
@@ -59,6 +61,6 @@ The Vite proxy adds it in development mode.
 - Unless `E2E_CAPTURE_SCREENSHOTS=true`, `Page.TakeScreenshot()` does nothing.
 - The suite writes captured images to `coverage/screenshots/` relative to its working directory. The screenshot workflow copies maintained images to `tests/e2e/screenshots/`.
 - Normal verification does not capture screenshots.
-- `.github/workflows/frontend-e2e-screenshots.yml` captures tracked PNG files in serial mode.
+- `.github/workflows/screenshots.yml` captures tracked PNG files in serial mode.
 - Capture screenshots only for a maintained artifact or review aid.
 - Screenshot tests use the workflow's serial mode and stable, unique file names.

@@ -172,29 +172,8 @@ func (tp *ToolAuthorizationsPage) SelectPersistence(ctx context.Context, label s
 	radio := tp.pwPage().GetByRole("radio", playwright.PageGetByRoleOptions{
 		Name: label,
 	})
-	radioCount, err := radio.Count()
-	if err != nil {
-		return fmt.Errorf("failed to find persistence radio %q: %w", label, err)
-	}
-	if radioCount > 0 {
-		if err := radio.First().Click(); err != nil {
-			return fmt.Errorf("failed to click persistence radio %q: %w", label, err)
-		}
-		return nil
-	}
-
-	button := tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name: label,
-	})
-	buttonCount, err := button.Count()
-	if err != nil {
-		return fmt.Errorf("failed to find persistence button %q: %w", label, err)
-	}
-	if buttonCount == 0 {
-		return fmt.Errorf("persistence option %q not found", label)
-	}
-	if err := button.First().Click(); err != nil {
-		return fmt.Errorf("failed to click persistence option %q: %w", label, err)
+	if err := radio.Click(); err != nil {
+		return fmt.Errorf("failed to click persistence radio %q: %w", label, err)
 	}
 	return nil
 }

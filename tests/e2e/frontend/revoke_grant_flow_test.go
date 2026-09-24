@@ -77,13 +77,6 @@ var _ = Describe("Revoke Grant Flow", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	// Cleanup after each test
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
-	})
-
 	// Scenario US1-S1 from specs/022-revoke-agent-consent/spec.md
 	It("Revoke All Access button visible on detail page when grant exists", func() {
 		// Given: User has an active grant and navigates to the agent detail page
@@ -141,7 +134,6 @@ var _ = Describe("Revoke Grant Flow", func() {
 
 		// When: User navigates to the detail page of an agent they have NOT consented to
 		noGrantPage := pages.NewConsentPage(GetTestPage(), GetFrontendURL())
-		defer func() { _ = noGrantPage.Close() }()
 		err = noGrantPage.Navigate(ctx, "/agents/"+agentWithoutGrant.ID.String())
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to agent without grant")
 

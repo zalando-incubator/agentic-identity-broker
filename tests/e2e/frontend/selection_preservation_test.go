@@ -132,12 +132,6 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
-	})
-
 	// Scenario 5.1 from specs/008-thirdparty-oauth2-sessions/spec.md
 	It("should encode selections in service login URL for state preservation", func() {
 		// Navigate to the consent page and toggle the optional PS ON
@@ -162,21 +156,24 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		err = toggle.Click()
 		Expect(err).NotTo(HaveOccurred(), "Failed to toggle optional PS")
 
-		// Wait for the optional PS services (Google, Slack) to appear via their article wrapper
-		googleArticle := page.Locator(`article[aria-label="Service: Google"]`)
-		err = googleArticle.WaitFor(playwright.LocatorWaitForOptions{
-			Timeout: playwright.Float(10000),
-		})
-		Expect(err).NotTo(HaveOccurred(), "Google service article should appear after toggling optional PS")
+		// Wait for the optional PS service to appear after selecting it.
+		Expect(consentPage.WaitForServiceToAppear(ctx, "Google")).To(Succeed(),
+			"Google service should appear after toggling optional PS")
 		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_selected_before_login")).NotTo(HaveOccurred())
 
 		// Intercept the navigation that happens when Login is clicked.
 		// We expect the URL to contain consent_state with both PSes.
-		var capturedURL string
+		capturedNavigation := make(chan struct {
+			url string
+			err error
+		}, 1)
 		err = page.Route("**/api/third-party/*/oauth2/authorize*", func(route playwright.Route) {
-			capturedURL = route.Request().URL()
-			// Abort the request — we only need to verify the URL
-			_ = route.Abort()
+			url := route.Request().URL()
+			err := route.Fulfill(playwright.RouteFulfillOptions{Status: playwright.Int(204)})
+			capturedNavigation <- struct {
+				url string
+				err error
+			}{url, err}
 		})
 		Expect(err).NotTo(HaveOccurred(), "Failed to set up route intercept")
 
@@ -184,10 +181,13 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		err = consentPage.DelegateService(ctx, "Google")
 		Expect(err).NotTo(HaveOccurred(), "Failed to click Login on Google service")
 
-		// Wait for the route handler to fire and set capturedURL before asserting.
-		Eventually(func() string {
-			return capturedURL
-		}, 5*time.Second, 100*time.Millisecond).ShouldNot(BeEmpty(), "Should have intercepted the OAuth2 authorize request")
+		var navigation struct {
+			url string
+			err error
+		}
+		Eventually(capturedNavigation).Should(Receive(&navigation), "Should intercept the OAuth2 authorize request")
+		Expect(navigation.err).NotTo(HaveOccurred(), "Failed to fulfill intercepted navigation")
+		capturedURL := navigation.url
 
 		// Parse redirect_uri from the intercepted URL
 		parsedURL, err := url.Parse(capturedURL)
@@ -249,10 +249,10 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(ariaChecked).To(Equal("true"), "Optional PS 'Productivity Suite' toggle should be ON from consent_state")
 
 		// Services from the optional PS (Google, Slack) should appear in the service connections section
-		err = consentPage.WaitForServiceToAppear(ctx, "Google", 5000)
+		err = consentPage.WaitForServiceToAppear(ctx, "Google")
 		Expect(err).NotTo(HaveOccurred(), "Google service should appear when optional PS is selected")
 
-		err = consentPage.WaitForServiceToAppear(ctx, "Slack", 5000)
+		err = consentPage.WaitForServiceToAppear(ctx, "Slack")
 		Expect(err).NotTo(HaveOccurred(), "Slack service should appear when optional PS is selected")
 
 		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_restored_from_url")).NotTo(HaveOccurred())
@@ -303,10 +303,10 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(ariaChecked).To(Equal("true"), "Optional PS should remain selected after OAuth2 round-trip")
 
 		// Verify Google and Slack services are visible (from the optional PS)
-		err = consentPage.WaitForServiceToAppear(ctx, "Google", 5000)
+		err = consentPage.WaitForServiceToAppear(ctx, "Google")
 		Expect(err).NotTo(HaveOccurred(), "Google service should be visible after round-trip")
 
-		err = consentPage.WaitForServiceToAppear(ctx, "Slack", 5000)
+		err = consentPage.WaitForServiceToAppear(ctx, "Slack")
 		Expect(err).NotTo(HaveOccurred(), "Slack service should be visible after round-trip")
 
 		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_full_roundtrip")).NotTo(HaveOccurred())
