@@ -229,10 +229,10 @@ func TestMigration029CanonicalIDs(t *testing.T) {
 	}
 }
 
-func TestMigration031ApprovalPatterns(t *testing.T) {
+func TestMigration032ApprovalPatterns(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 30))
+	require.NoError(t, f.Up(t, 31))
 	exists, err := f.ColumnExists(t, "tool_approvals", "tool_pattern")
 	require.NoError(t, err)
 	assert.False(t, exists)
@@ -241,9 +241,14 @@ func TestMigration031ApprovalPatterns(t *testing.T) {
 		INSERT INTO tool_approvals (id, principal, agent_id, gateway_client_id, tool_name, arguments, arguments_hash, approval_url, expires_at) VALUES
 		('40000000-0000-0000-0000-000000000001', 'pattern@example.com', '30000000-0000-0000-0000-000000000001', 'gateway', 'scalar_tool', '{"repo":"acme/app","count":2,"ratio":1.5,"draft":false,"note":null,"pattern":"a*b","path":"c\\d"}', 'hash-1', 'https://broker.example/approval', NOW() + interval '1 hour'),
 		('40000000-0000-0000-0000-000000000002', 'pattern@example.com', '30000000-0000-0000-0000-000000000001', 'gateway', 'composite_tool', '{"reviewers":["b","a"],"meta":{"b":1,"a":"x"},"empty":{},"list":[]}', 'hash-2', 'https://broker.example/approval', NOW() + interval '1 hour'),
-		('40000000-0000-0000-0000-000000000003', 'pattern@example.com', '30000000-0000-0000-0000-000000000001', 'gateway', 'escape_tool', '{"html":"a<b&c>d","ctl":"a\tb","quote":"say \"hi\""}', 'hash-3', 'https://broker.example/approval', NOW() + interval '1 hour');
+		('40000000-0000-0000-0000-000000000003', 'pattern@example.com', '30000000-0000-0000-0000-000000000001', 'gateway', 'escape_tool', '{"html":"a<b&c>d","ctl":"a\tb","quote":"say \"hi\""}', 'hash-3', 'https://broker.example/approval', NOW() + interval '1 hour'),
+		('40000000-0000-0000-0000-000000000004', 'pattern@example.com', '30000000-0000-0000-0000-000000000001', 'gateway', 'literal\*tool', '{"value":"value\\*suffix"}', 'hash-4', 'https://broker.example/approval', NOW() + interval '1 hour');
 	`))
-	require.NoError(t, f.UpAll(t))
+	require.NoError(t, f.Up(t, 32))
+	version, dirty, err := f.Version(t)
+	require.NoError(t, err)
+	assert.Equal(t, uint(32), version)
+	assert.False(t, dirty)
 	for _, column := range []string{"tool_pattern", "params_pattern"} {
 		exists, err := f.ColumnExists(t, "tool_approvals", column)
 		require.NoError(t, err)
@@ -267,20 +272,25 @@ func TestMigration031ApprovalPatterns(t *testing.T) {
 		ParamsPattern map[string]string `json:"params_pattern"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(rowsJSON), &rows))
-	expected := map[string]map[string]any{
-		"40000000-0000-0000-0000-000000000001": {"repo": "acme/app", "count": 2, "ratio": 1.5, "draft": false, "note": nil, "pattern": "a*b", "path": `c\d`},
-		"40000000-0000-0000-0000-000000000002": {"reviewers": []any{"b", "a"}, "meta": map[string]any{"b": 1, "a": "x"}, "empty": map[string]any{}, "list": []any{}},
-		"40000000-0000-0000-0000-000000000003": {"html": "a<b&c>d", "ctl": "a\tb", "quote": `say "hi"`},
+	type expectedApproval struct {
+		ToolName  string
+		Arguments map[string]any
+	}
+	expected := map[string]expectedApproval{
+		"40000000-0000-0000-0000-000000000001": {ToolName: "scalar_tool", Arguments: map[string]any{"repo": "acme/app", "count": 2, "ratio": 1.5, "draft": false, "note": nil, "pattern": "a*b", "path": `c\d`}},
+		"40000000-0000-0000-0000-000000000002": {ToolName: "composite_tool", Arguments: map[string]any{"reviewers": []any{"b", "a"}, "meta": map[string]any{"b": 1, "a": "x"}, "empty": map[string]any{}, "list": []any{}}},
+		"40000000-0000-0000-0000-000000000003": {ToolName: "escape_tool", Arguments: map[string]any{"html": "a<b&c>d", "ctl": "a\tb", "quote": `say "hi"`}},
+		"40000000-0000-0000-0000-000000000004": {ToolName: `literal\*tool`, Arguments: map[string]any{"value": `value\*suffix`}},
 	}
 	require.Len(t, rows, len(expected))
 	for _, row := range rows {
-		args := expected[row.ID]
-		require.NotNil(t, args)
-		assert.Equal(t, toolpattern.ExactParams(args), row.ParamsPattern)
-		assert.Equal(t, map[string]string{"40000000-0000-0000-0000-000000000001": "scalar_tool", "40000000-0000-0000-0000-000000000002": "composite_tool", "40000000-0000-0000-0000-000000000003": "escape_tool"}[row.ID], row.ToolPattern)
-		assert.True(t, toolpattern.Matches(row.ToolPattern, row.ParamsPattern, row.ToolPattern, args))
+		expectedRow, ok := expected[row.ID]
+		require.True(t, ok)
+		assert.Equal(t, toolpattern.EscapeLiteral(expectedRow.ToolName), row.ToolPattern)
+		assert.Equal(t, toolpattern.ExactParams(expectedRow.Arguments), row.ParamsPattern)
+		assert.True(t, toolpattern.Matches(row.ToolPattern, row.ParamsPattern, expectedRow.ToolName, expectedRow.Arguments))
 	}
-	require.NoError(t, f.Down(t, 30))
+	require.NoError(t, f.Down(t, 31))
 	for _, column := range []string{"tool_pattern", "params_pattern"} {
 		exists, err := f.ColumnExists(t, "tool_approvals", column)
 		require.NoError(t, err)
@@ -288,16 +298,16 @@ func TestMigration031ApprovalPatterns(t *testing.T) {
 	}
 	count, err := f.CountRows(t, "tool_approvals")
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), count)
-	require.NoError(t, f.UpAll(t))
+	assert.Equal(t, int64(len(expected)), count)
+	require.NoError(t, f.Up(t, 32))
 }
 
-func TestMigration032(t *testing.T) {
+func TestMigration031(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
 
-	// Step 1: Apply migrations through 031 and add a confidential service predating migration 032.
-	require.NoError(t, f.Up(t, 31))
+	// Step 1: Apply migrations through 030 and add a confidential service predating migration 031.
+	require.NoError(t, f.Up(t, 30))
 	require.NoError(t, f.ExecuteSQL(t, `
 		INSERT INTO thirdparty_oauth2_services
 			(id, display_name, client_id, client_secret_encrypted, issuer_uri, enable_discovery, scopes)
@@ -306,11 +316,11 @@ func TestMigration032(t *testing.T) {
 			 '\x01', 'https://oauth.example.com', false, '[]');
 	`))
 
-	// Step 2: Apply migration 032 without changing existing services.
-	require.NoError(t, f.Up(t, 32))
+	// Step 2: Apply migration 031 without changing existing services.
+	require.NoError(t, f.Up(t, 31))
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(32), version)
+	assert.Equal(t, uint(31), version)
 	assert.False(t, dirty)
 
 	methodIsNull, err := f.QuerySQL(t, `
@@ -319,7 +329,7 @@ func TestMigration032(t *testing.T) {
 		WHERE id = '30000000-0000-0000-0000-000000000001';
 	`)
 	require.NoError(t, err)
-	assert.Equal(t, "true", strings.TrimSpace(methodIsNull), "migration 032 must not backfill existing services")
+	assert.Equal(t, "true", strings.TrimSpace(methodIsNull), "migration 031 must not backfill existing services")
 
 	// Step 3: The database rejects both invalid client-authentication combinations.
 	err = f.ExecuteSQL(t, `
@@ -357,7 +367,7 @@ func TestMigration032(t *testing.T) {
 			('30000000-0000-0000-0000-000000000004', 'public service blocking rollback', 'client-public',
 			 NULL, 'none', 'https://oauth.example.com', false, '[]');
 	`))
-	err = f.Down(t, 31)
+	err = f.Down(t, 30)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "public service blocking rollback")
 
@@ -365,7 +375,7 @@ func TestMigration032(t *testing.T) {
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
 	// go-migrate marks the requested target before executing the guarded down migration.
-	assert.Equal(t, uint(31), version)
+	assert.Equal(t, uint(30), version)
 	assert.True(t, dirty)
 	exists, err := f.ColumnExists(t, "thirdparty_oauth2_services", "token_endpoint_auth_method")
 	require.NoError(t, err)
@@ -388,20 +398,20 @@ func TestMigration032(t *testing.T) {
 	assert.Equal(t, "true", strings.TrimSpace(publicServiceIsIntact))
 
 	// Step 6: Clear the failed migration state, remove the public service, and roll back cleanly.
-	require.NoError(t, f.Force(t, 32))
+	require.NoError(t, f.Force(t, 31))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(32), version)
+	assert.Equal(t, uint(31), version)
 	assert.False(t, dirty)
 	require.NoError(t, f.ExecuteSQL(t, `
 		DELETE FROM thirdparty_oauth2_services
 		WHERE id = '30000000-0000-0000-0000-000000000004';
 	`))
-	require.NoError(t, f.Down(t, 31))
+	require.NoError(t, f.Down(t, 30))
 
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(31), version)
+	assert.Equal(t, uint(30), version)
 	assert.False(t, dirty)
 	exists, err = f.ColumnExists(t, "thirdparty_oauth2_services", "token_endpoint_auth_method")
 	require.NoError(t, err)

@@ -149,8 +149,7 @@ and arguments.
 2. **Given** that pending approval, **When** the user submits `params_pattern: {repo: "acme/*"}`,
 **Then** the server derives `tool_pattern: "create_pull_request"`, persists the parameter pattern,
 and returns both in the approval sync response.
-3. **Given** that pending approval, **When** the user submits an explicit empty `params_pattern`,
-**Then** the server leaves every argument unconstrained for the reviewed tool.
+3. **Given** that pending approval, **When** the user selects `session` or `permanent` and submits an explicit empty `params_pattern`, **Then** the server leaves every argument unconstrained for the reviewed tool.
 4. **Given** that pending approval, **When** the user submits a malformed or non-covering parameter
 pattern, **Then** the API returns `422 invalid_pattern` and the approval remains pending.
 5. **Given** that pending approval, **When** the user supplies `tool_pattern`, **Then** the API
@@ -158,6 +157,7 @@ returns `400 invalid_request` with `tool_pattern is not allowed` and the approva
 6. **Given** a session or permanent scope editor, **When** the user edits a parameter pattern,
 **Then** the broker validates it and the UI displays the latest server-rendered technical rule;
 approval remains disabled until the current pattern validates successfully.
+7. **Given** that pending approval, **When** the user selects `once` and supplies any `params_pattern`, including `{}`, **Then** the API returns `422 invalid_pattern` and the approval remains pending.
 
 ---
 
@@ -258,7 +258,7 @@ flowchart TD
 - **FR-021**: The system MUST maintain a global monotonically increasing version counter incremented on every approval or permission-set mutation, used to generate ETags for the long-poll protocol.
 - **FR-022**: Every approval record MUST carry a server-derived exact `tool_pattern` for its `tool_name` and a `params_pattern` object mapping argument names to globs. Argument names absent from `params_pattern` are unconstrained. `*` is the only metacharacter; `\` escapes it.
 - **FR-023**: A concrete invocation `(tool_name, arguments)` matches a stored approval when the tool name matches its server-derived exact `tool_pattern` and every constrained argument matches its glob. When several approvals match, the most specific wins, ranked by exact tool name, then more constrained arguments, then fewer wildcards, then most recently decided.
-- **FR-024**: `POST /api/approvals/{id}/approve` MUST accept optional `params_pattern` alongside `persistence`. The server derives `tool_pattern` from the approval's own tool name. Omitting `params_pattern` stores the exact coverage of the reviewed arguments; an explicit empty `params_pattern` leaves all arguments unconstrained. A supplied `tool_pattern` MUST return `400 invalid_request` with `tool_pattern is not allowed`. A malformed or non-covering parameter pattern MUST be rejected with `422 invalid_pattern`.
+- **FR-024**: `POST /api/approvals/{id}/approve` MUST accept optional `params_pattern` alongside `persistence`. The server derives `tool_pattern` from the approval's own tool name. Omitting `params_pattern` stores the exact coverage of the reviewed arguments. An explicit empty `params_pattern` leaves every argument unconstrained for `session` or `permanent`. With `once`, `params_pattern` MUST be omitted; every supplied value, including `{}`, MUST return `422 invalid_pattern` and leave the approval pending. A supplied `tool_pattern` MUST return `400 invalid_request` with `tool_pattern is not allowed`. A malformed or non-covering parameter pattern MUST be rejected with `422 invalid_pattern`.
 - **FR-025**: `POST /api/approvals` MUST store the exact coverage of the reviewed call (`tool_pattern = tool_name`, every argument constrained to its literal value). Pending-record deduplication is unchanged and remains keyed on `(principal, agent_id, tool_name, arguments_hash)`.
 - **FR-026**: `GET /api/approvals`, `GET /api/approvals/{id}`, `GET /api/approvals/pending`, and `GET /api/approvals/permanent` MUST expose `tool_pattern` and `params_pattern`. `arguments_hash` is retained on the sync summary.
 - **FR-027**: Pattern grammar, canonicalization, matching, and precedence MUST have exactly one implementation, shared by the broker and ExtProc, pinned by a language-neutral vector fixture consumed by both test suites.

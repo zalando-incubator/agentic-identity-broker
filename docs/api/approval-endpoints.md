@@ -90,7 +90,7 @@ Changes a pending approval to approved. The request requires a `persistence` fie
 - `session`: Valid for the agent session duration.
 - `permanent`: Persists until a user revokes it. The consent interface manages it.
 
-The request can include an optional `params_pattern` field. Omit it for exact coverage of the reviewed arguments, or send `{}` to allow all arguments for the reviewed tool. A supplied `tool_pattern` returns `400 invalid_request` with `tool_pattern is not allowed`. Malformed or non-covering parameter patterns return `422 invalid_pattern`.
+The request accepts `params_pattern` only for `session` or `permanent`. Omit it for exact coverage. With those scopes, `{}` leaves all arguments unconstrained. For `once`, every supplied `params_pattern` returns `422 invalid_pattern`. A supplied `tool_pattern` returns `400 invalid_request` with `tool_pattern is not allowed`. Malformed or non-covering parameter patterns return `422 invalid_pattern`.
 
 ### Scope Preview
 
@@ -165,7 +165,7 @@ All error responses use the `ApprovalError` schema:
 | `rate_limit_exceeded` | 429 | Rate limit exceeded |
 | `not_consumable` | 422 | Approval cannot be consumed |
 | `not_revocable` | 422 | Approval cannot be revoked |
-| `invalid_pattern` | 422 | Pattern is malformed or does not cover the reviewed tool call |
+| `invalid_pattern` | 422 | Pattern is malformed, does not cover the reviewed call, or is supplied with `once` persistence |
 | `internal_error` | 500 | Unexpected server error |
 
 ## OpenAPI Specification

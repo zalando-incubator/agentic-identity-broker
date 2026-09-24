@@ -839,5 +839,19 @@ var _ = Describe("Tool Approval API", func() {
 			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
 			Expect(detail.Data.Status).To(Equal("pending"))
 		})
+
+		// US7-S7 from specs/024-approval-api-ui/spec.md
+		It("should reject a one-time scoped approval and leave it pending", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "once", "params_pattern": map[string]string{}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusUnprocessableEntity))
+			errorResponse := decodeJSON[helpers.ApprovalErrorResponse](resp)
+			Expect(errorResponse.Error).To(Equal("invalid_pattern"))
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.Status).To(Equal("pending"))
+		})
 	})
 })

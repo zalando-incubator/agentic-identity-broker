@@ -99,12 +99,13 @@ in ExtProc and is fixed by the FR-B7 test vectors.
 reviewed tool name. A supplied `tool_pattern` MUST return `400 invalid_request` with
 `tool_pattern is not allowed`.
 
-- Omitted `params_pattern` (the default for `once`) stores exact arguments.
-- An explicit `{}` (typical for `session`) leaves all arguments unconstrained.
-- An explicit parameter map stores the supplied patterns after validation against FR-B1.
+- `persistence: "once"` requires `params_pattern` to be omitted and stores exact arguments.
+- For `session` or `permanent`, an explicit `{}` leaves all arguments unconstrained.
+- For `session` or `permanent`, an explicit parameter map stores validated patterns from FR-B1.
 
 The broker MUST validate each requested parameter pattern. A malformed or non-covering parameter
-pattern MUST be rejected with `422 invalid_pattern`.
+pattern MUST be rejected with `422 invalid_pattern`. With `once`, every supplied `params_pattern`,
+including `{}`, MUST return `422 invalid_pattern` and leave the approval pending.
 
 ### FR-B4: Creation stays exact (dedup unchanged)
 

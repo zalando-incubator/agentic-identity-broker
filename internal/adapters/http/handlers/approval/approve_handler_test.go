@@ -43,6 +43,7 @@ func TestApproveHandlerPatterns(t *testing.T) {
 		message    string
 	}{
 		{"omitted defaults exact", `{"persistence":"once"}`, http.StatusOK, map[string]string{"repo": "acme/app", "title": "Fix bug"}, "", ""},
+		{"once params pattern rejects", `{"persistence":"once","params_pattern":{}}`, http.StatusUnprocessableEntity, nil, "invalid_pattern", "params_pattern is not allowed for once persistence"},
 		{"empty allows any arguments", `{"persistence":"session","params_pattern":{}}`, http.StatusOK, map[string]string{}, "", ""},
 		{"edited pattern persists", `{"persistence":"permanent","params_pattern":{"repo":"acme/*"}}`, http.StatusOK, map[string]string{"repo": "acme/*"}, "", ""},
 		{"tool pattern is not allowed", `{"persistence":"permanent","tool_pattern":"*"}`, http.StatusBadRequest, nil, "invalid_request", "tool_pattern is not allowed"},

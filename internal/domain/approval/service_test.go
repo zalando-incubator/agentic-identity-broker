@@ -433,6 +433,15 @@ func TestService_ResolveApprovalDecision(t *testing.T) {
 			}
 		})
 	}
+	t.Run("rejects an explicit parameter pattern for once", func(t *testing.T) {
+		_, err := resolveApprovalDecision(approval, ApproveRequest{
+			Persistence:   storage.ApprovalPersistenceOnce,
+			ParamsPattern: map[string]string{},
+		})
+		if !errors.Is(err, ErrApprovalInvalidPattern) {
+			t.Fatalf("expected invalid pattern, got %v", err)
+		}
+	})
 	for _, req := range []ApproveRequest{{Persistence: storage.ApprovalPersistencePermanent, ParamsPattern: map[string]string{"branch": "main"}}} {
 		if _, err := resolveApprovalDecision(approval, req); !errors.Is(err, ErrApprovalInvalidPattern) {
 			t.Fatalf("expected invalid pattern, got %v", err)

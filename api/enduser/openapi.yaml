@@ -1885,11 +1885,16 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
         "422":
-          description: Requested pattern is malformed or does not cover the reviewed tool call
+          description: A supplied pattern is invalid for the selected persistence scope.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
+              examples:
+                invalid_pattern:
+                  value:
+                    error: "invalid_pattern"
+                    message: "params_pattern is not allowed for once persistence"
         "410":
           description: Approval expired or already actioned
           content:
@@ -3764,9 +3769,10 @@ components:
           additionalProperties:
             type: string
           description: >-
-            Constrained argument names mapped to globs. Omit the field entirely to cover only
-            the reviewed argument values; send an empty object to leave every argument
-            unconstrained. The resulting pattern must cover the reviewed arguments.
+            Constrained argument names mapped to globs. Omit the field to cover only the reviewed
+            argument values. This field is permitted only for session or permanent persistence.
+            With once persistence, every supplied value, including an empty object, returns
+            422 invalid_pattern. The resulting pattern must cover the reviewed arguments.
 
     ScopePreviewRequest:
       type: object

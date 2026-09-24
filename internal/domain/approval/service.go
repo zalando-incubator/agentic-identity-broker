@@ -33,6 +33,18 @@ var (
 	ErrApprovalInvalidPattern = errors.New("requested approval pattern is invalid")
 )
 
+type approvalInvalidPatternError struct {
+	message string
+}
+
+func (e approvalInvalidPatternError) Error() string {
+	return e.message
+}
+
+func (e approvalInvalidPatternError) Unwrap() error {
+	return ErrApprovalInvalidPattern
+}
+
 // CreateApprovalRequest contains the parameters for creating a pending approval.
 type CreateApprovalRequest struct {
 	Principal                id.Principal
@@ -49,7 +61,7 @@ type CreateApprovalRequest struct {
 }
 
 // ApproveRequest carries the user's approval decision. A nil ParamsPattern means the pattern is
-// omitted. A non-nil empty ParamsPattern leaves all arguments unconstrained.
+// omitted. A non-nil ParamsPattern is valid only for session and permanent persistence.
 type ApproveRequest struct {
 	Persistence   storage.ApprovalPersistence
 	ParamsPattern map[string]string
@@ -274,6 +286,9 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 }
 
 func resolveApprovalDecision(approval *storage.ToolApproval, req ApproveRequest) (storage.ApprovalDecision, error) {
+	if req.Persistence == storage.ApprovalPersistenceOnce && req.ParamsPattern != nil {
+		return storage.ApprovalDecision{}, approvalInvalidPatternError{message: "params_pattern is not allowed for once persistence"}
+	}
 	toolPattern := toolpattern.EscapeLiteral(approval.ToolName)
 	paramsPattern := req.ParamsPattern
 	if paramsPattern == nil {
