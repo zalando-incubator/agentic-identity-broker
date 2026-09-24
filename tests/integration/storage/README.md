@@ -62,7 +62,7 @@ Tests:
 
 ## Container Runtime
 
-The integration tests use Docker through testcontainers. If Docker is unavailable, the tests skip.
+Locally, tests that require containers skip when Docker or Podman is unavailable. In CI, missing or failed containers fail the infra suites instead of passing without coverage.
 
 ## Test Configuration
 

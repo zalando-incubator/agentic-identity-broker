@@ -1,11 +1,10 @@
 package integration
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -59,17 +58,8 @@ func TestPrincipalMiddlewareExtraction(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 
-	// Start test server
-	testServer := &http.Server{
-		Addr:    "127.0.0.1:18100",
-		Handler: router,
-	}
-
-	go func() { _ = testServer.ListenAndServe() }()
-	defer func() { _ = testServer.Shutdown(context.Background()) }()
-
-	// Wait for server to start
-	waitForEndpoint(t, "http://127.0.0.1:18100/public")
+	testServer := httptest.NewServer(router)
+	defer testServer.Close()
 
 	tests := []struct {
 		name              string
@@ -120,7 +110,7 @@ func TestPrincipalMiddlewareExtraction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := fmt.Sprintf("http://127.0.0.1:18100%s", tt.path)
+			url := testServer.URL + tt.path
 			req, err := http.NewRequest(tt.method, url, nil)
 			require.NoError(t, err)
 
@@ -172,16 +162,8 @@ func TestPrincipalMiddlewareValidation(t *testing.T) {
 		})
 	})
 
-	// Start test server
-	testServer := &http.Server{
-		Addr:    "127.0.0.1:18101",
-		Handler: router,
-	}
-
-	go func() { _ = testServer.ListenAndServe() }()
-	defer func() { _ = testServer.Shutdown(context.Background()) }()
-
-	waitForEndpoint(t, "http://127.0.0.1:18101/admin/users")
+	testServer := httptest.NewServer(router)
+	defer testServer.Close()
 
 	tests := []struct {
 		name           string
@@ -223,7 +205,7 @@ func TestPrincipalMiddlewareValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := "http://127.0.0.1:18101/admin/users"
+			url := testServer.URL + "/admin/users"
 			req, err := http.NewRequest(http.MethodGet, url, nil)
 			require.NoError(t, err)
 
@@ -272,15 +254,8 @@ func TestPrincipalMiddlewareUnicodeSupport(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 
-	testServer := &http.Server{
-		Addr:    "127.0.0.1:18102",
-		Handler: router,
-	}
-
-	go func() { _ = testServer.ListenAndServe() }()
-	defer func() { _ = testServer.Shutdown(context.Background()) }()
-
-	waitForEndpoint(t, "http://127.0.0.1:18102/user")
+	testServer := httptest.NewServer(router)
+	defer testServer.Close()
 
 	tests := []struct {
 		name      string
@@ -310,7 +285,7 @@ func TestPrincipalMiddlewareUnicodeSupport(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := "http://127.0.0.1:18102/user"
+			url := testServer.URL + "/user"
 			req, err := http.NewRequest(http.MethodGet, url, nil)
 			require.NoError(t, err)
 
@@ -358,15 +333,8 @@ func TestPrincipalMiddlewareWhitespaceHandling(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 
-	testServer := &http.Server{
-		Addr:    "127.0.0.1:18103",
-		Handler: router,
-	}
-
-	go func() { _ = testServer.ListenAndServe() }()
-	defer func() { _ = testServer.Shutdown(context.Background()) }()
-
-	waitForEndpoint(t, "http://127.0.0.1:18103/principal")
+	testServer := httptest.NewServer(router)
+	defer testServer.Close()
 
 	tests := []struct {
 		name              string
@@ -407,7 +375,7 @@ func TestPrincipalMiddlewareWhitespaceHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := "http://127.0.0.1:18103/principal"
+			url := testServer.URL + "/principal"
 			req, err := http.NewRequest(http.MethodGet, url, nil)
 			require.NoError(t, err)
 
@@ -452,15 +420,8 @@ func TestPrincipalMiddlewareCustomHeader(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 
-	testServer := &http.Server{
-		Addr:    "127.0.0.1:18104",
-		Handler: router,
-	}
-
-	go func() { _ = testServer.ListenAndServe() }()
-	defer func() { _ = testServer.Shutdown(context.Background()) }()
-
-	waitForEndpoint(t, "http://127.0.0.1:18104/verify")
+	testServer := httptest.NewServer(router)
+	defer testServer.Close()
 
 	tests := []struct {
 		name           string
@@ -494,7 +455,7 @@ func TestPrincipalMiddlewareCustomHeader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url := "http://127.0.0.1:18104/verify"
+			url := testServer.URL + "/verify"
 			req, err := http.NewRequest(http.MethodGet, url, nil)
 			require.NoError(t, err)
 

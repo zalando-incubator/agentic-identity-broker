@@ -22,15 +22,8 @@ func TestServerStartup(t *testing.T) {
 	// Create logger for tests
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	// Create server configurations with test ports
-	enduserConfig := httpAdapter.ServerConfig{
-		Port: 18000, // Test port to avoid conflicts
-		Bind: "::",
-	}
-	adminConfig := httpAdapter.ServerConfig{
-		Port: 18001, // Test port to avoid conflicts
-		Bind: "::",
-	}
+	enduserConfig := httpAdapter.ServerConfig{Port: 0, Bind: "::"}
+	adminConfig := httpAdapter.ServerConfig{Port: 0, Bind: "::"}
 
 	// Simple route setup function
 	routeSetup := func(r chi.Router) {
@@ -49,6 +42,14 @@ func TestServerStartup(t *testing.T) {
 	g, bindCtx := errgroup.WithContext(ctx)
 	var enduserListener, adminListener net.Listener
 	var enduserErr, adminErr error
+	defer func() {
+		if enduserListener != nil {
+			_ = enduserListener.Close()
+		}
+		if adminListener != nil {
+			_ = adminListener.Close()
+		}
+	}()
 
 	g.Go(func() error {
 		enduserListener, enduserErr = enduserServer.Listen()
@@ -73,13 +74,14 @@ func TestServerStartup(t *testing.T) {
 		return adminServer.Serve(serveCtx, adminListener)
 	})
 
-	// Wait for servers to be ready
-	waitForEndpoint(t, fmt.Sprintf("http://localhost:%d/health", enduserConfig.Port))
-	waitForEndpoint(t, fmt.Sprintf("http://localhost:%d/health", adminConfig.Port))
+	enduserURL := fmt.Sprintf("http://localhost:%d/health", enduserListener.Addr().(*net.TCPAddr).Port)
+	adminURL := fmt.Sprintf("http://localhost:%d/health", adminListener.Addr().(*net.TCPAddr).Port)
+	waitForEndpoint(t, enduserURL)
+	waitForEndpoint(t, adminURL)
 
 	// Test enduser server health endpoint
 	t.Run("EndUserHealth", func(t *testing.T) {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", enduserConfig.Port))
+		resp, err := http.Get(enduserURL)
 		if err != nil {
 			t.Fatalf("Failed to reach enduser health endpoint: %v", err)
 		}
@@ -101,7 +103,7 @@ func TestServerStartup(t *testing.T) {
 
 	// Test admin server health endpoint
 	t.Run("AdminHealth", func(t *testing.T) {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", adminConfig.Port))
+		resp, err := http.Get(adminURL)
 		if err != nil {
 			t.Fatalf("Failed to reach admin health endpoint: %v", err)
 		}
@@ -134,6 +136,9 @@ func TestServerStartup(t *testing.T) {
 
 	// Cancel context to ensure goroutines exit
 	cancel()
+	if err := g.Wait(); err != nil {
+		t.Errorf("Serving dual servers: %v", err)
+	}
 }
 
 // TestPortConnectivity tests IPv4 and IPv6 connectivity
@@ -141,11 +146,7 @@ func TestPortConnectivity(t *testing.T) {
 	// Create logger for tests
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	// Create server configuration with test port
-	config := httpAdapter.ServerConfig{
-		Port: 18002,
-		Bind: "::", // Dual-stack
-	}
+	config := httpAdapter.ServerConfig{Port: 0, Bind: "::"}
 
 	// Simple route setup function
 	routeSetup := func(r chi.Router) {
@@ -162,6 +163,8 @@ func TestPortConnectivity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to listen: %v", err)
 	}
+	defer func() { _ = listener.Close() }()
+	port := listener.Addr().(*net.TCPAddr).Port
 
 	errChan := make(chan error, 1)
 	go func() {
@@ -169,11 +172,11 @@ func TestPortConnectivity(t *testing.T) {
 	}()
 
 	// Wait for server to start
-	waitForEndpoint(t, fmt.Sprintf("http://127.0.0.1:%d/health", config.Port))
+	waitForEndpoint(t, fmt.Sprintf("http://127.0.0.1:%d/health", port))
 
 	// Test IPv4 connectivity
 	t.Run("IPv4", func(t *testing.T) {
-		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", config.Port))
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
 		if err != nil {
 			t.Fatalf("Failed to connect via IPv4: %v", err)
 		}
@@ -186,7 +189,7 @@ func TestPortConnectivity(t *testing.T) {
 
 	// Test IPv6 connectivity
 	t.Run("IPv6", func(t *testing.T) {
-		resp, err := http.Get(fmt.Sprintf("http://[::1]:%d/health", config.Port))
+		resp, err := http.Get(fmt.Sprintf("http://[::1]:%d/health", port))
 		if err != nil {
 			t.Skipf("IPv6 not available: %v", err)
 		}
@@ -199,7 +202,7 @@ func TestPortConnectivity(t *testing.T) {
 
 	// Test localhost DNS resolution
 	t.Run("Localhost", func(t *testing.T) {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", config.Port))
+		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
 		if err != nil {
 			t.Fatalf("Failed to connect via localhost: %v", err)
 		}
@@ -219,62 +222,34 @@ func TestPortConnectivity(t *testing.T) {
 	cancel()
 
 	select {
-	case <-errChan:
-		// Server stopped
+	case err := <-errChan:
+		if err != nil {
+			t.Errorf("Serving connectivity test: %v", err)
+		}
 	case <-time.After(2 * time.Second):
 		t.Error("Server did not stop within timeout")
 	}
 }
 
-// TestAtomicStartupFailure tests that if one server fails to bind, shutdown works correctly
-func TestAtomicStartupFailure(t *testing.T) {
-	// Create logger for tests
+// TestPortConflictRejectsSecondServer verifies that an occupied port cannot be rebound.
+func TestPortConflictRejectsSecondServer(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	routeSetup := func(r chi.Router) {}
 
-	// Use same port for both servers - this should cause atomic failure
-	conflictPort := 18003
-	enduserConfig := httpAdapter.ServerConfig{
-		Port: conflictPort,
-		Bind: "::",
+	first := httpAdapter.NewServer(httpAdapter.ServerConfig{Port: 0, Bind: "::"}, routeSetup, logger)
+	listener, err := first.Listen()
+	if err != nil {
+		t.Fatalf("Bind first server: %v", err)
 	}
-	adminConfig := httpAdapter.ServerConfig{
-		Port: conflictPort, // Same port - will conflict!
-		Bind: "::",
+	defer func() { _ = listener.Close() }()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	second := httpAdapter.NewServer(httpAdapter.ServerConfig{Port: port, Bind: "::"}, routeSetup, logger)
+	otherListener, err := second.Listen()
+	if otherListener != nil {
+		_ = otherListener.Close()
 	}
-
-	// Simple route setup function
-	routeSetup := func(r chi.Router) {
-		// Routes already handled by Server.setupRoutes()
-	}
-
-	// Create server instances
-	enduserServer := httpAdapter.NewServer(enduserConfig, routeSetup, logger)
-	adminServer := httpAdapter.NewServer(adminConfig, routeSetup, logger)
-
-	// Try to bind both servers - should fail atomically
-	g, _ := errgroup.WithContext(context.Background())
-
-	var err1, err2 error
-	g.Go(func() error {
-		_, err := enduserServer.Listen()
-		err1 = err
-		return err
-	})
-	g.Go(func() error {
-		_, err := adminServer.Listen()
-		err2 = err
-		return err
-	})
-
-	err := g.Wait()
 	if err == nil {
-		t.Error("Expected startup to fail due to port conflict, but it succeeded")
-	} else {
-		t.Logf("Got expected error during bind: %v", err)
-	}
-
-	// At least one should have failed
-	if err1 == nil && err2 == nil {
-		t.Error("Expected at least one server to fail binding to conflicting port")
+		t.Fatal("Expected binding the occupied port to fail")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"testing"
@@ -21,11 +22,7 @@ func TestHealthEndpoint(t *testing.T) {
 	// Create logger for tests
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	// Create server configuration
-	config := httpAdapter.ServerConfig{
-		Port: 18004,
-		Bind: "::",
-	}
+	config := httpAdapter.ServerConfig{Port: 0, Bind: "::"}
 
 	// Simple route setup function that just adds health endpoint
 	routeSetup := func(r chi.Router) {
@@ -38,22 +35,19 @@ func TestHealthEndpoint(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	listener, err := srv.Listen()
+	require.NoError(t, err)
+	defer func() { _ = listener.Close() }()
+	port := listener.Addr().(*net.TCPAddr).Port
 	errChan := make(chan error, 1)
-	go func() {
-		listener, err := srv.Listen()
-		if err != nil {
-			errChan <- err
-			return
-		}
-		errChan <- srv.Serve(ctx, listener)
-	}()
+	go func() { errChan <- srv.Serve(ctx, listener) }()
 
 	// Wait for server to start
-	waitForEndpoint(t, fmt.Sprintf("http://localhost:%d/health", config.Port))
+	waitForEndpoint(t, fmt.Sprintf("http://localhost:%d/health", port))
 
 	// Test health endpoint format
 	t.Run("ResponseFormat", func(t *testing.T) {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", config.Port))
+		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
 		if err != nil {
 			t.Fatalf("Failed to reach health endpoint: %v", err)
 		}
@@ -95,7 +89,7 @@ func TestHealthEndpoint(t *testing.T) {
 
 	// Test health status values
 	t.Run("StatusValues", func(t *testing.T) {
-		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", config.Port))
+		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
 		if err != nil {
 			t.Fatalf("Failed to reach health endpoint: %v", err)
 		}
@@ -123,7 +117,7 @@ func TestHealthEndpoint(t *testing.T) {
 	// Test uptime increases
 	t.Run("UptimeIncreases", func(t *testing.T) {
 		// Get first health response
-		resp1, err := http.Get(fmt.Sprintf("http://localhost:%d/health", config.Port))
+		resp1, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
 		if err != nil {
 			t.Fatalf("Failed to reach health endpoint: %v", err)
 		}
@@ -136,7 +130,7 @@ func TestHealthEndpoint(t *testing.T) {
 
 		// Wait until uptime advances
 		require.Eventually(t, func() bool {
-			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", config.Port))
+			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
 			if err != nil {
 				return false
 			}
@@ -150,7 +144,7 @@ func TestHealthEndpoint(t *testing.T) {
 		}, 2*time.Second, 25*time.Millisecond)
 
 		// Get second health response
-		resp2, err := http.Get(fmt.Sprintf("http://localhost:%d/health", config.Port))
+		resp2, err := http.Get(fmt.Sprintf("http://localhost:%d/health", port))
 		if err != nil {
 			t.Fatalf("Failed to reach health endpoint: %v", err)
 		}
@@ -176,8 +170,8 @@ func TestHealthEndpoint(t *testing.T) {
 	cancel()
 
 	select {
-	case <-errChan:
-		// Server stopped
+	case err := <-errChan:
+		require.NoError(t, err, "health server stopped unexpectedly")
 	case <-time.After(2 * time.Second):
 		t.Error("Server did not stop within timeout")
 	}
