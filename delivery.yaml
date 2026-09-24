@@ -177,6 +177,7 @@ pipeline:
           curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
           apt-get --yes install nodejs
           just install-tools
+          go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.1 install-deps chromium
           just web-ci
       - desc: "Run frontend E2E suite"
         cmd: |
