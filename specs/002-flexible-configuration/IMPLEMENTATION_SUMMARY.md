@@ -125,6 +125,10 @@ agentic-identity-broker [flags]
 - `/Users/magnus.jungsbluth/Projects/agentic-identity-broker/internal/config/redactor.go` (70 lines)
   - Sensitive value redaction with keyword matching
 
+**Current layout (2026-09-24):** This `schema.go` entry records the historical implementation.
+The current model is `ports.Config` in `internal/ports/config.go`.
+`internal/config/loader.go` loads it. `internal/config/validator.go` validates it at startup.
+
 **CLI Entry Point**:
 - `/Users/magnus.jungsbluth/Projects/agentic-identity-broker/cmd/agentic-identity-broker/main.go` (14 lines)
   - Application entry point
