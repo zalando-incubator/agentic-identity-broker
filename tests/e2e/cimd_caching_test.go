@@ -306,13 +306,12 @@ var _ = Describe("CIMD Response Caching", func() {
 			_ = resp1.Body.Close()
 			Expect(atomic.LoadInt64(&fetchCount)).To(Equal(int64(1)))
 
-			// Wait for cache to expire
-			time.Sleep(2 * time.Second)
-
-			resp2, err := server.AuthenticatedGET(authorizeURL, fixtures.DefaultPrincipal().String())
-			Expect(err).ToNot(HaveOccurred())
-			_ = resp2.Body.Close()
-			Expect(atomic.LoadInt64(&fetchCount)).To(Equal(int64(2)), "expired cache entry must trigger a re-fetch")
+			Eventually(func() int64 {
+				resp, err := server.AuthenticatedGET(authorizeURL, fixtures.DefaultPrincipal().String())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(resp.Body.Close()).To(Succeed())
+				return atomic.LoadInt64(&fetchCount)
+			}, 5*time.Second, 200*time.Millisecond).Should(Equal(int64(2)), "expired cache entry must trigger a re-fetch")
 		})
 	})
 })

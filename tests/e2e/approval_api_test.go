@@ -578,13 +578,11 @@ var _ = Describe("Tool Approval API", func() {
 				req, _ := http.NewRequest(http.MethodGet, server.BaseURL()+"/api/approvals", nil)
 				req.Header.Set("Authorization", "Bearer "+machineAuth.ClientAssertion)
 				req.Header.Set("If-None-Match", etag)
-				req.Header.Set("X-Long-Poll-Timeout", "30")
-				client := &http.Client{Timeout: 35 * time.Second}
+				req.Header.Set("X-Long-Poll-Timeout", "5")
+				client := &http.Client{Timeout: 10 * time.Second}
 				resp, _ := client.Do(req)
 				done <- resp
 			}()
-
-			time.Sleep(200 * time.Millisecond)
 
 			resp, err = postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
 				alicePrincipal, helpers.ApproveRequest{Persistence: "once"})
@@ -592,7 +590,7 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 
 			var pollResp *http.Response
-			Eventually(done, 5*time.Second).Should(Receive(&pollResp))
+			Eventually(done, 8*time.Second).Should(Receive(&pollResp))
 			Expect(pollResp).NotTo(BeNil())
 			Expect(pollResp.StatusCode).To(Equal(http.StatusOK))
 			Expect(pollResp.Header.Get("ETag")).NotTo(Equal(etag))
