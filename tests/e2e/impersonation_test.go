@@ -719,7 +719,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 	})
 
-	Context("when delegation storage cannot be queried", func() {
+	Context("when delegation storage cannot be queried", Label("docker"), func() {
 		var postgres *bootstrap.PostgresFixture
 
 		BeforeEach(func() {

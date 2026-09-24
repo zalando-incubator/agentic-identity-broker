@@ -233,6 +233,8 @@ jobs:
         run: just install-tools
       - name: Install web dependencies
         run: just web-ci
+      - name: Pre-pull PostgreSQL E2E image
+        run: timeout 3m docker pull postgres:15-alpine@sha256:09e4f20b14ddb3dfe3a0c825b206032aaf8f28300ba2070c0b60fc1c10c6abc7
       - name: Backend E2E suite with JUnit
         run: just verify-e2e-backend-junit
       - name: Upload backend E2E test results
