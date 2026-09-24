@@ -193,7 +193,9 @@ func TestPostgresCIMDBootstrapRequiresPersistedCIMDService(t *testing.T) {
 		defer cleanupStorage()
 		createCIMDIntegrationService(t, store)
 
-		brokerApp, err := e2ebootstrap.NewServerFactory(newLocalModePostgresConfig(connStr), logger).BuildApp(store)
+		cfg := newLocalModePostgresConfig(connStr)
+		cfg.Server.EndUser.PublicURL = "https://broker.integration.example.com"
+		brokerApp, err := e2ebootstrap.NewServerFactory(cfg, logger).BuildApp(store)
 		require.NoError(t, err)
 		defer shutdownApp(t, brokerApp)
 
