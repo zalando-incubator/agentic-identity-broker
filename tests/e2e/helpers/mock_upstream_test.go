@@ -441,24 +441,8 @@ func TestMockUpstreamConcurrentResponseConfiguration(t *testing.T) {
 	server := helpers.NewMockUpstreamOAuth2Server()
 	defer server.Close()
 
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				server.WithErrorResponseAndDescription("invalid_grant", "denied")
-				server.WithSuccessfulTokenResponse()
-			}
-		}
-	}()
-	defer func() { close(stop); <-done }()
-
 	client := &http.Client{Timeout: 5 * time.Second}
-	for range 50 {
+	requestToken := func() int {
 		resp, err := client.PostForm(server.URL()+"/oauth/token", url.Values{"code": {"test-code"}})
 		if err != nil {
 			t.Fatal(err)
@@ -485,5 +469,61 @@ func TestMockUpstreamConcurrentResponseConfiguration(t *testing.T) {
 		default:
 			t.Fatalf("unexpected status: %d", resp.StatusCode)
 		}
+		return resp.StatusCode
+	}
+
+	ready := make(chan struct{})
+	proceed := make(chan struct{})
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.WithErrorResponseAndDescription("invalid_grant", "denied")
+		select {
+		case ready <- struct{}{}:
+		case <-stop:
+			return
+		}
+		select {
+		case <-proceed:
+		case <-stop:
+			return
+		}
+		server.WithSuccessfulTokenResponse()
+		select {
+		case ready <- struct{}{}:
+		case <-stop:
+			return
+		}
+		select {
+		case <-proceed:
+		case <-stop:
+			return
+		}
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				server.WithErrorResponseAndDescription("invalid_grant", "denied")
+				server.WithSuccessfulTokenResponse()
+			}
+		}
+	}()
+	defer func() { close(stop); <-done }()
+
+	for _, expected := range []int{http.StatusBadRequest, http.StatusOK} {
+		select {
+		case <-ready:
+		case <-time.After(5 * time.Second):
+			t.Fatal("response configuration did not become ready")
+		}
+		if got := requestToken(); got != expected {
+			t.Fatalf("expected configured status %d, got %d", expected, got)
+		}
+		proceed <- struct{}{}
+	}
+	for range 50 {
+		requestToken()
 	}
 }
