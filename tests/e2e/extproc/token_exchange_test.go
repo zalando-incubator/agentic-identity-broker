@@ -504,10 +504,10 @@ var _ = Describe("ExtProc Token Exchange", func() {
 					response *extprocv3.ProcessingResponse
 					err      error
 				}
-				results := make(chan exchangeResult, numConcurrent)
+				results := make([]exchangeResult, numConcurrent)
 				wg.Add(numConcurrent)
 
-				for range numConcurrent {
+				for i := range numConcurrent {
 					go func() {
 						defer wg.Done()
 						defer GinkgoRecover()
@@ -515,21 +515,17 @@ var _ = Describe("ExtProc Token Exchange", func() {
 						defer concurrentConn.Close() //nolint:errcheck
 
 						resp, err := helpers.SendRequestHeadersWithError(context.Background(), concurrentClient, req)
-						results <- exchangeResult{resp, err}
+						results[i] = exchangeResult{resp, err}
 					}()
 				}
 				wg.Wait()
-				close(results)
 
 				// Then: All concurrent requests succeed
-				completed := 0
-				for result := range results {
+				for _, result := range results {
 					Expect(result.err).NotTo(HaveOccurred(), "concurrent request should succeed")
 					Expect(result.response).NotTo(BeNil())
 					Expect(result.response).To(helpers.HaveReplacedAuthorizationHeader("Bearer " + refreshedToken))
-					completed++
 				}
-				Expect(completed).To(Equal(numConcurrent), "all concurrent requests should complete")
 
 				// Only ONE additional token exchange call should have been made.
 				Expect(env.MockTokenExchange.CallCount()).To(Equal(2),
