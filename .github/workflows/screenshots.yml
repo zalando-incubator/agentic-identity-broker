@@ -1,7 +1,7 @@
 # Screenshots — refresh the tracked frontend E2E screenshots on a PR.
 #
-# The frontend E2E suite itself already runs inside CI (`just verify-junit`,
-# stage 3); this workflow exists only to regenerate the committed screenshots
+# The frontend E2E suite runs in the independent CI `e2e-frontend` job;
+# this workflow exists only to regenerate the committed screenshots
 # and embed them in the PR description. It therefore runs only when the
 # frontend or its E2E tests change, and only for same-repository PRs (a fork
 # PR cannot be pushed to).
@@ -106,7 +106,7 @@ jobs:
       - name: Run frontend E2E tests
         if: steps.skip-check.outputs.skip != 'true'
         id: tests
-        run: E2E_FRONTEND_MODE=built E2E_CAPTURE_SCREENSHOTS=true ginkgo -v ./tests/e2e/frontend/
+        run: E2E_FRONTEND_MODE=built E2E_CAPTURE_SCREENSHOTS=true ginkgo --timeout=20m --poll-progress-after=30s --show-node-events ./tests/e2e/frontend/
         continue-on-error: true
 
       - name: Build screenshot diff tool
