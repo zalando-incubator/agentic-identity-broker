@@ -105,5 +105,5 @@ func doAdminRequest(method, url string, body io.Reader, contentType string) (*ht
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	return http.DefaultClient.Do(req)
+	return HTTPClient().Do(req)
 }

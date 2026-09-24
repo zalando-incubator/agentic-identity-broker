@@ -83,7 +83,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 			mockServer.WithSuccessfulTokenResponse()
 
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
-			resp, err := http.PostForm(tokenURL, url.Values{
+			resp, err := helpers.HTTPClient().PostForm(tokenURL, url.Values{
 				"grant_type": {"authorization_code"},
 				"code":       {"auth-code"},
 			})
@@ -103,7 +103,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 			mockServer.WithSuccessfulTokenResponse()
 
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
-			_, _ = http.PostForm(tokenURL, url.Values{
+			_, _ = helpers.HTTPClient().PostForm(tokenURL, url.Values{
 				"grant_type": {"authorization_code"},
 				"code":       {"test-code"},
 			})
@@ -114,7 +114,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 		It("should retain token requests in order", func() {
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
 			for _, code := range []string{"first-code", "second-code"} {
-				response, err := http.PostForm(tokenURL, url.Values{"code": {code}})
+				response, err := helpers.HTTPClient().PostForm(tokenURL, url.Values{"code": {code}})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(response.Body.Close()).To(Succeed())
 			}
@@ -132,7 +132,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 			mockServer.WithErrorResponse("invalid_grant")
 
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
-			resp, err := http.PostForm(tokenURL, url.Values{
+			resp, err := helpers.HTTPClient().PostForm(tokenURL, url.Values{
 				"grant_type": {"authorization_code"},
 				"code":       {"expired-code"},
 			})
@@ -154,7 +154,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 				WithRefreshToken("custom-refresh-token")
 
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
-			resp, err := http.PostForm(tokenURL, url.Values{
+			resp, err := helpers.HTTPClient().PostForm(tokenURL, url.Values{
 				"grant_type": {"authorization_code"},
 				"code":       {"code"},
 			})
@@ -213,7 +213,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 			secondCode := authorize("second-flow", secondVerifier)
 			Expect(firstCode).NotTo(Equal(secondCode))
 
-			crossFlowResponse, err := http.PostForm(mockServer.URL()+"/oauth/token", url.Values{
+			crossFlowResponse, err := helpers.HTTPClient().PostForm(mockServer.URL()+"/oauth/token", url.Values{
 				"grant_type":    {"authorization_code"},
 				"code":          {firstCode},
 				"code_verifier": {secondVerifier},
@@ -222,7 +222,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 			defer func() { _ = crossFlowResponse.Body.Close() }()
 			Expect(crossFlowResponse.StatusCode).To(Equal(http.StatusBadRequest))
 
-			validResponse, err := http.PostForm(mockServer.URL()+"/oauth/token", url.Values{
+			validResponse, err := helpers.HTTPClient().PostForm(mockServer.URL()+"/oauth/token", url.Values{
 				"grant_type":    {"authorization_code"},
 				"code":          {firstCode},
 				"code_verifier": {firstVerifier},
@@ -237,7 +237,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 		It("should return metadata configuration", func() {
 			metadataURL := fmt.Sprintf("%s/.well-known/openid-configuration", mockServer.URL())
 
-			resp, err := http.Get(metadataURL)
+			resp, err := helpers.HTTPClient().Get(metadataURL)
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
@@ -254,14 +254,14 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 
 		It("should capture metadata request", func() {
 			metadataURL := fmt.Sprintf("%s/.well-known/openid-configuration", mockServer.URL())
-			_, _ = http.Get(metadataURL)
+			_, _ = helpers.HTTPClient().Get(metadataURL)
 
 			Expect(mockServer.GetMetadataCalled()).To(BeTrue())
 		})
 
 		It("should include valid URLs in metadata", func() {
 			metadataURL := fmt.Sprintf("%s/.well-known/openid-configuration", mockServer.URL())
-			resp, err := http.Get(metadataURL)
+			resp, err := helpers.HTTPClient().Get(metadataURL)
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
@@ -279,7 +279,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 			mockServer.WithErrorResponseAndDescription("server_error", "Custom error message")
 
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
-			resp, err := http.PostForm(tokenURL, url.Values{
+			resp, err := helpers.HTTPClient().PostForm(tokenURL, url.Values{
 				"grant_type": {"authorization_code"},
 				"code":       {"code"},
 			})
@@ -298,7 +298,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 				WithExpiresIn(7200)
 
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
-			resp, err := http.PostForm(tokenURL, url.Values{
+			resp, err := helpers.HTTPClient().PostForm(tokenURL, url.Values{
 				"grant_type": {"authorization_code"},
 				"code":       {"code"},
 			})
@@ -315,7 +315,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 	Describe("Request Capture", func() {
 		It("should capture request method", func() {
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
-			_, _ = http.PostForm(tokenURL, url.Values{"code": {"test"}})
+			_, _ = helpers.HTTPClient().PostForm(tokenURL, url.Values{"code": {"test"}})
 
 			lastReq := mockServer.GetLastRequest()
 			Expect(lastReq.Method).To(Equal("POST"))
@@ -323,7 +323,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 
 		It("should capture request URL", func() {
 			authzURL := fmt.Sprintf("%s/oauth/authorize?client_id=client-1&redirect_uri=https://app.example.com/cb&response_type=code&state=xyz", mockServer.URL())
-			_, _ = http.Get(authzURL)
+			_, _ = helpers.HTTPClient().Get(authzURL)
 
 			lastReq := mockServer.GetLastRequest()
 			Expect(lastReq.URL.Path).To(Equal("/oauth/authorize"))
@@ -334,7 +334,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
 
 			for i := 0; i < 5; i++ {
-				go func() { _, _ = http.PostForm(tokenURL, url.Values{"code": {"test"}}) }()
+				go func() { _, _ = helpers.HTTPClient().PostForm(tokenURL, url.Values{"code": {"test"}}) }()
 			}
 
 			// Should be able to access without panic
@@ -347,7 +347,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 	Describe("Reset Functionality", func() {
 		It("should reset request state", func() {
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
-			_, _ = http.PostForm(tokenURL, url.Values{"code": {"test"}})
+			_, _ = helpers.HTTPClient().PostForm(tokenURL, url.Values{"code": {"test"}})
 
 			Expect(mockServer.GetTokenCalled()).To(BeTrue())
 
@@ -375,7 +375,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 			mockServer.Close()
 
 			// After close, new requests should fail
-			_, err := http.Get(fmt.Sprintf("%s/oauth/token", url))
+			_, err := helpers.HTTPClient().Get(fmt.Sprintf("%s/oauth/token", url))
 			Expect(err).To(HaveOccurred())
 		})
 	})
@@ -400,7 +400,7 @@ var _ = Describe("MockUpstreamOAuth2Server", func() {
 				WithSuccessfulTokenResponse()
 
 			tokenURL := fmt.Sprintf("%s/oauth/token", mockServer.URL())
-			resp, err := http.PostForm(tokenURL, url.Values{
+			resp, err := helpers.HTTPClient().PostForm(tokenURL, url.Values{
 				"grant_type": {"authorization_code"},
 				"code":       {"code"},
 			})
@@ -426,7 +426,7 @@ func TestMockUpstreamOAuth2ServerBasic(t *testing.T) {
 	}
 
 	// Test that we can reach the metadata endpoint
-	resp, err := http.Get(fmt.Sprintf("%s/.well-known/openid-configuration", server.URL()))
+	resp, err := helpers.HTTPClient().Get(fmt.Sprintf("%s/.well-known/openid-configuration", server.URL()))
 	if err != nil {
 		t.Fatalf("failed to get metadata: %v", err)
 	}

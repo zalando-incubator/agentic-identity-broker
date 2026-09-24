@@ -53,7 +53,7 @@ var _ = Describe("US3: Client Credentials Grant (local mode)", func() {
 		Expect(helpers.ProvisionSigningKey(adminServer.BaseURL())).ToNot(HaveOccurred())
 
 		// Generate credentials via admin API
-		resp, err := http.Post(
+		resp, err := helpers.HTTPClient().Post(
 			adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials",
 			"application/json", nil,
 		)
@@ -85,7 +85,7 @@ var _ = Describe("US3: Client Credentials Grant (local mode)", func() {
 			"client_id":     {agent.ID.String()},
 			"client_secret": {clientSecret},
 		}
-		resp, err := http.Post(
+		resp, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(form.Encode()),
@@ -107,7 +107,7 @@ var _ = Describe("US3: Client Credentials Grant (local mode)", func() {
 			"client_id":     {agent.ID.String()},
 			"client_secret": {"wrong-secret"},
 		}
-		resp, err := http.Post(
+		resp, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(form.Encode()),
@@ -125,7 +125,7 @@ var _ = Describe("US3: Client Credentials Grant (local mode)", func() {
 			"client_id":     {agent.ID.String()},
 			"client_secret": {clientSecret},
 		}
-		resp, err := http.Post(
+		resp, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(form.Encode()),
@@ -140,7 +140,7 @@ var _ = Describe("US3: Client Credentials Grant (local mode)", func() {
 		Expect(accessToken).ToNot(BeEmpty())
 
 		// Get JWKS
-		jwksResp, err := http.Get(enduserServer.BaseURL() + "/oauth2/jwks.json")
+		jwksResp, err := helpers.HTTPClient().Get(enduserServer.BaseURL() + "/oauth2/jwks.json")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = jwksResp.Body.Close() }()
 		Expect(jwksResp.StatusCode).To(Equal(http.StatusOK))
@@ -162,7 +162,7 @@ var _ = Describe("US3: Client Credentials Grant (local mode)", func() {
 			"client_secret": {clientSecret},
 			"scope":         {"admin"},
 		}
-		resp, err := http.Post(
+		resp, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(form.Encode()),

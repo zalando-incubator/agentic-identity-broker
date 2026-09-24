@@ -97,7 +97,7 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 
 		Expect(helpers.ProvisionSigningKey(adminServer.BaseURL())).ToNot(HaveOccurred())
 
-		credResp, err := http.Post(
+		credResp, err := helpers.HTTPClient().Post(
 			adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials",
 			"application/json",
 			nil,
@@ -196,7 +196,7 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 
 		Expect(code).ToNot(BeEmpty())
 
-		tokenResp, err := http.Post(
+		tokenResp, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(url.Values{

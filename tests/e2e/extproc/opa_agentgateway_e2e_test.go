@@ -57,6 +57,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/helpers"
+	e2ehelpers "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
 const (
@@ -933,7 +934,7 @@ func opaAgentgwPostMCP(ctx context.Context, port, token, body string) *http.Resp
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e2ehelpers.HTTPClient().Do(req)
 	Expect(err).NotTo(HaveOccurred())
 	return resp
 }

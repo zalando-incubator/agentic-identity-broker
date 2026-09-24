@@ -45,6 +45,7 @@ import (
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/fixtures"
+	e2ehelpers "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
 // agentgwLogger writes structured test output to GinkgoWriter for test visibility.
@@ -607,7 +608,7 @@ var _ = Describe("Agentgateway Elicitation Integration", Ordered, func() {
 		req.Header.Set("Accept", "application/json, text/event-stream")
 		req.Header.Set("Authorization", "Bearer "+mintedJWT)
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := e2ehelpers.HTTPClient().Do(req)
 		Expect(err).NotTo(HaveOccurred())
 		defer resp.Body.Close() //nolint:errcheck
 

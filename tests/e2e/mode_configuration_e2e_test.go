@@ -77,7 +77,7 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 
 		// Scenario 1.2 from specs/032-aggregated-jwks/spec.md
 		It("exposes aggregated JWKS endpoint in proxy mode", func() {
-			resp, err := http.Get(server.BaseURL() + "/oauth2/jwks.json")
+			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -89,7 +89,7 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 
 		// Scenario 2.2 from specs/032-aggregated-jwks/spec.md
 		It("advertises jwks_uri in discovery metadata in proxy mode", func() {
-			resp, err := http.Get(server.BaseURL() + "/.well-known/oauth-authorization-server")
+			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/.well-known/oauth-authorization-server")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -175,7 +175,7 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 		})
 
 		It("exposes JWKS endpoint with signing keys", func() {
-			resp, err := http.Get(server.BaseURL() + "/oauth2/jwks.json")
+			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -187,7 +187,7 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 		})
 
 		It("exposes discovery metadata with token endpoint", func() {
-			resp, err := http.Get(server.BaseURL() + "/.well-known/oauth-authorization-server")
+			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/.well-known/oauth-authorization-server")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -293,14 +293,14 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 		})
 
 		It("exposes JWKS endpoint (local mode feature)", func() {
-			resp, err := http.Get(server.BaseURL() + "/oauth2/jwks.json")
+			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 		})
 
 		It("exposes discovery metadata (local mode feature)", func() {
-			resp, err := http.Get(server.BaseURL() + "/.well-known/oauth-authorization-server")
+			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/.well-known/oauth-authorization-server")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))

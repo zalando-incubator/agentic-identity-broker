@@ -66,7 +66,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		Expect(helpers.ProvisionSigningKey(adminServer.BaseURL())).ToNot(HaveOccurred())
 
 		// Generate credentials
-		resp, err := http.Post(
+		resp, err := helpers.HTTPClient().Post(
 			adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials",
 			"application/json", nil,
 		)
@@ -136,7 +136,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 			"redirect_uri":  {"http://localhost:9999/callback"},
 			"code_verifier": {verifier},
 		}
-		tokenResp, err := http.Post(
+		tokenResp, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(form.Encode()),
@@ -196,7 +196,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 				"redirect_uri":  {"http://localhost:9999/callback"},
 				"code_verifier": {verifier},
 			}
-			tokenResp, err := http.Post(
+			tokenResp, err := helpers.HTTPClient().Post(
 				enduserServer.BaseURL()+"/oauth2/token",
 				"application/x-www-form-urlencoded",
 				strings.NewReader(form.Encode()),
@@ -218,7 +218,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 				"client_secret": {clientSecret},
 				"refresh_token": {refreshToken},
 			}
-			resp, err := http.Post(
+			resp, err := helpers.HTTPClient().Post(
 				enduserServer.BaseURL()+"/oauth2/token",
 				"application/x-www-form-urlencoded",
 				strings.NewReader(refreshForm.Encode()),
@@ -401,7 +401,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 			"redirect_uri":  {"http://localhost:9999/callback"},
 			"code_verifier": {"wrong-verifier-value"},
 		}
-		tokenResp, err := http.Post(
+		tokenResp, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(form.Encode()),
@@ -447,7 +447,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		}
 
 		// First exchange succeeds
-		tokenResp, _ := http.Post(
+		tokenResp, _ := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(form.Encode()),
@@ -456,7 +456,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 		Expect(tokenResp.StatusCode).To(Equal(http.StatusOK))
 
 		// Replay fails
-		tokenResp2, err := http.Post(
+		tokenResp2, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(form.Encode()),
@@ -555,7 +555,7 @@ var _ = Describe("US4b: Authorization Code Flow — LocalClient as public client
 			"redirect_uri":  {"http://localhost:9999/callback"},
 			"code_verifier": {verifier},
 		}
-		tokenResp, err := http.Post(
+		tokenResp, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(form.Encode()),
@@ -631,7 +631,7 @@ var _ = Describe("OAuth2 Token Claims (principal profile)", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(helpers.ProvisionSigningKey(adminServer.BaseURL())).ToNot(HaveOccurred())
 
-		resp, err := http.Post(adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials", "application/json", nil)
+		resp, err := helpers.HTTPClient().Post(adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials", "application/json", nil)
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusCreated))
@@ -677,7 +677,7 @@ var _ = Describe("OAuth2 Token Claims (principal profile)", func() {
 		code := location.Query().Get("code")
 		Expect(code).ToNot(BeEmpty())
 
-		tokenResponse, err := http.Post(enduserServer.BaseURL()+"/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(url.Values{
+		tokenResponse, err := helpers.HTTPClient().Post(enduserServer.BaseURL()+"/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(url.Values{
 			"grant_type":    {"authorization_code"},
 			"client_id":     {agent.ID.String()},
 			"client_secret": {clientSecret},
@@ -704,7 +704,7 @@ var _ = Describe("OAuth2 Token Claims (principal profile)", func() {
 		Expect(ok).To(BeTrue())
 		Expect(refreshToken).ToNot(BeEmpty())
 
-		refreshResponse, err := http.Post(enduserServer.BaseURL()+"/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(url.Values{
+		refreshResponse, err := helpers.HTTPClient().Post(enduserServer.BaseURL()+"/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(url.Values{
 			"grant_type":    {"refresh_token"},
 			"client_id":     {agent.ID.String()},
 			"client_secret": {clientSecret},

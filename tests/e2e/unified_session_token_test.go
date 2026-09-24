@@ -295,7 +295,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 			Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(fixtures.DefaultPrincipal().String()))).To(Succeed())
 
 			// Register broker credentials so the issue_token code issuer can authenticate this client.
-			resp, err := http.Post(adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials", "application/json", nil)
+			resp, err := helpers.HTTPClient().Post(adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials", "application/json", nil)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(http.StatusCreated))

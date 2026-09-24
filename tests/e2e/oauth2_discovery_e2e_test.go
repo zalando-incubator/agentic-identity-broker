@@ -53,7 +53,7 @@ var _ = Describe("US032: Discovery and JWKS", func() {
 
 	// Scenario 6.1 from specs/025-oauth2-server/spec.md
 	It("discovery endpoint returns metadata in local mode", func() {
-		resp, err := http.Get(enduserServer.BaseURL() + "/.well-known/oauth-authorization-server")
+		resp, err := helpers.HTTPClient().Get(enduserServer.BaseURL() + "/.well-known/oauth-authorization-server")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -71,7 +71,7 @@ var _ = Describe("US032: Discovery and JWKS", func() {
 
 	// Scenario 6.2 from specs/025-oauth2-server/spec.md
 	It("JWKS endpoint returns valid key set", func() {
-		resp, err := http.Get(enduserServer.BaseURL() + "/oauth2/jwks.json")
+		resp, err := helpers.HTTPClient().Get(enduserServer.BaseURL() + "/oauth2/jwks.json")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -127,7 +127,7 @@ var _ = Describe("US032: Discovery and JWKS", func() {
 
 		// Scenario 2.4 from specs/032-aggregated-jwks/spec.md
 		It("serves aggregated JWKS and advertises jwks_uri in discovery", func() {
-			resp, err := http.Get(proxyServer.BaseURL() + "/oauth2/jwks.json")
+			resp, err := helpers.HTTPClient().Get(proxyServer.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -136,7 +136,7 @@ var _ = Describe("US032: Discovery and JWKS", func() {
 			Expect(json.NewDecoder(resp.Body).Decode(&jwks)).ToNot(HaveOccurred())
 			Expect(jwks).To(HaveKey("keys"))
 
-			discResp, err := http.Get(proxyServer.BaseURL() + "/.well-known/oauth-authorization-server")
+			discResp, err := helpers.HTTPClient().Get(proxyServer.BaseURL() + "/.well-known/oauth-authorization-server")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = discResp.Body.Close() }()
 			Expect(discResp.StatusCode).To(Equal(http.StatusOK))

@@ -410,7 +410,7 @@ func verifyFrontendAccessible(logger *slog.Logger, url string, timeout time.Dura
 
 	for {
 		// Try HTTP GET request
-		resp, err := http.Get(url)
+		resp, err := helpers.HTTPClient().Get(url)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			_ = resp.Body.Close()
 			logger.Info("Frontend verified accessible", "url", url)
