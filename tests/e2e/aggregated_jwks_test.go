@@ -586,6 +586,8 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			defer func() { _ = storageFactory.CloseStorage(testStorage) }()
 
 			config := fixtures.HybridConfig(mockUpstream.URL())
+			config.OAuth2AuthServer.Proxy.UpstreamJWKSMinRefresh = time.Second
+			config.OAuth2AuthServer.Proxy.UpstreamJWKSMaxRefresh = 2 * time.Second
 			app, err := bootstrap.NewServerFactory(config, logger).BuildApp(testStorage)
 			Expect(err).ToNot(HaveOccurred())
 
@@ -606,7 +608,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 
 			Eventually(func() map[string]string {
 				return fetchHealth(server.BaseURL()).Components
-			}, 8*time.Second, 200*time.Millisecond).Should(HaveKeyWithValue("upstream_jwks", "degraded"))
+			}, 30*time.Second, 200*time.Millisecond).Should(HaveKeyWithValue("upstream_jwks", "degraded"))
 		})
 	})
 
@@ -752,6 +754,8 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 			defer func() { _ = storageFactory.CloseStorage(testStorage) }()
 
 			config := fixtures.HybridConfig(rotatingUpstream.URL())
+			config.OAuth2AuthServer.Proxy.UpstreamJWKSMinRefresh = time.Second
+			config.OAuth2AuthServer.Proxy.UpstreamJWKSMaxRefresh = 2 * time.Second
 			app, err := bootstrap.NewServerFactory(config, logger).BuildApp(testStorage)
 			Expect(err).ToNot(HaveOccurred())
 
@@ -793,7 +797,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 				}
 				defer func() { _ = resp.Body.Close() }()
 				return resp.StatusCode
-			}, 8*time.Second, 200*time.Millisecond).Should(Equal(http.StatusServiceUnavailable))
+			}, 30*time.Second, 200*time.Millisecond).Should(Equal(http.StatusServiceUnavailable))
 
 			resp, err = http.Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())

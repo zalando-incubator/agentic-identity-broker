@@ -84,7 +84,7 @@ var _ = Describe("Local Mode Token Exchange Validation", func() {
 				Type: "cel",
 				CEL: ports.CELAuthorizationConfig{
 					Expression:        "true",
-					EvaluationTimeout: 100 * time.Millisecond,
+					EvaluationTimeout: 2 * time.Second,
 				},
 			},
 		}

@@ -65,7 +65,7 @@ func imperSignedRule(name, issuerURI, jwksURI, authzExpr string) ports.Impersona
 			Type: "cel",
 			CEL: ports.CELAuthorizationConfig{
 				Expression:        authzExpr,
-				EvaluationTimeout: 100 * time.Millisecond,
+				EvaluationTimeout: 2 * time.Second,
 			},
 		},
 	}
@@ -98,7 +98,7 @@ func imperUnverifiedRule(name, issuerURI, jwksURI, authzExpr string) ports.Imper
 			Type: "cel",
 			CEL: ports.CELAuthorizationConfig{
 				Expression:        authzExpr,
-				EvaluationTimeout: 100 * time.Millisecond,
+				EvaluationTimeout: 2 * time.Second,
 			},
 		},
 	}

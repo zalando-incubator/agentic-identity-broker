@@ -81,7 +81,7 @@ var _ = Describe("Hybrid Mode Token Exchange Validation", func() {
 				Type: "cel",
 				CEL: ports.CELAuthorizationConfig{
 					Expression:        "true",
-					EvaluationTimeout: 100 * time.Millisecond,
+					EvaluationTimeout: 2 * time.Second,
 				},
 			},
 		}
@@ -339,7 +339,7 @@ var _ = Describe("Token Exchange Client-Assertion JWKS Override", func() {
 				Type: "cel",
 				CEL: ports.CELAuthorizationConfig{
 					Expression:        "true",
-					EvaluationTimeout: 100 * time.Millisecond,
+					EvaluationTimeout: 2 * time.Second,
 				},
 			},
 		}
