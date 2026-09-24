@@ -1,22 +1,24 @@
 <!--
 Sync Impact Report
 ==================
-Version Change: 1.9.0 → 1.9.1
+Version Change: 1.9.1 → 1.9.2
 Rationale:
-  1.9.0 → 1.9.1 (PATCH): Principle I now names the accepted, bounded exception
-    established by ADR 031 for unsigned unverified-subject JWTs in local-mode OAuth2
-    impersonation. The exception is limited to the unverified subject role
-    (`verification: none`) and retains all six compensating controls from ADR 031.
+  1.9.1 → 1.9.2 (PATCH): Principle VII corrects an obsolete configuration path.
+    `ports.Config` already defines the structure. The loader and startup validator
+    use it. Moving the model into the adapter would create a package cycle.
 
 Modified Principles:
-  - Principle I: added ADR 031 bounded exception
+  - Principle VII: replaced `internal/config/schema.go` with the current port,
+    loader, and validator paths; source precedence and startup validation remain.
 
 Added Sections: None
 
 Removed Sections: None
 
 Templates Status:
-- ✅ No template changes required
+- No `internal/config/schema.go` references in `.specify/templates/`; no template changes required.
+
+Migration Plan: No runtime migration is needed.
 
 Follow-up TODOs: None
 
@@ -155,7 +157,7 @@ All runtime configuration MUST use the unified configuration system; ad-hoc conf
 **Rules**:
 - Features MUST NOT implement custom configuration loading; they MUST use the system-wide configuration port defined in [internal/ports/config.go](internal/ports/config.go)
 - All configuration settings MUST support multiple sources (files, environment variables, CLI flags) with clear precedence
-- Configuration structure MUST be defined in [internal/config/schema.go](internal/config/schema.go) with validation rules enforced at startup
+- The configuration structure MUST be defined in [internal/ports/config.go](internal/ports/config.go); [internal/config/loader.go](internal/config/loader.go) MUST load it, and [internal/config/validator.go](internal/config/validator.go) MUST validate it at startup
 - End-user documentation for feature-specific configuration MUST be added to [docs/configuration.md](docs/configuration.md)
 - Feature-specific configuration examples MUST be added to [examples/config/](examples/config/) directory
 - Configuration guide [examples/config/README.md](examples/config/README.md) MUST be referenced and updated as new features add configuration options
@@ -687,4 +689,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - The tasks-template.md uses 🔒 emoji and [MANDATORY] markers to clearly distinguish mandatory from customizable sections
 - Omitting mandatory sections violates this constitution and blocks feature completion
 
-**Version**: 1.9.1 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-08-27
+**Version**: 1.9.2 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-09-24
