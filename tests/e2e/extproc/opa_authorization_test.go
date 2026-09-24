@@ -807,5 +807,35 @@ bundles:
 				ContainSubstring("only one"),
 			), "error should reference the mutual exclusivity constraint")
 		})
+
+		// Evaluation-timeout edge case from specs/020-extproc-opa-authorization/spec.md
+		It("should deny a live request when policy evaluation times out", func() {
+			cfg := opaEnabledConfig(policyPath("allow_all.rego"))
+			cfg.Authorization.EvaluationTimeout = time.Nanosecond
+
+			env := bootstrap.NewTestEnvironment(cfg, opaLogger)
+			env.Start()
+			defer env.Stop()
+			env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken)
+
+			client, conn := env.NewExtProcClient()
+			defer conn.Close() //nolint:errcheck
+
+			headersReq := helpers.NewRequestHeaders().
+				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
+				WithHeader(":method", "POST").
+				WithAgentgatewayProtocol("mcp").
+				BuildWithMetadata()
+
+			headersResp, bodyResp := helpers.SendHeadersAndBody(context.Background(), client, headersReq,
+				toolCallBody("list_repositories"))
+
+			Expect(headersResp).To(helpers.HaveReplacedAuthorizationHeader("Bearer " + fixtures.FreshExchangedToken))
+			Expect(bodyResp).NotTo(BeNil())
+			Expect(bodyResp).To(helpers.HaveImmediateResponseWithStatus(403),
+				"a timed-out policy evaluation must deny the request")
+			Expect(bodyResp).To(helpers.HaveImmediateResponseWithBody("evaluation timeout"),
+				"the 403 must come from the evaluation timeout, not another denial")
+		})
 	})
 })
