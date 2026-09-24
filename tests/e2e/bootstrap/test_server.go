@@ -489,13 +489,17 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 		server:                  server,
 		logger:                  logger,
 		requestSecurityObserver: options.requestSecurityObserver,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		client:                  newTestHTTPClient(),
 	}, nil
+}
+
+func newTestHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 // serverTypeName returns a human-readable name for the server type.
@@ -928,11 +932,6 @@ func (b *TestServerBuilderImpl) Build() (*TestServer, error) {
 		server:                  testServer,
 		logger:                  appInstance.Logger,
 		requestSecurityObserver: nil,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+		client:                  newTestHTTPClient(),
 	}, nil
 }
