@@ -618,8 +618,8 @@ paths:
                 invalidGrant:
                   summary: Invalid grant data
                   value:
-                    error: invalid_permission_set
-                    message: "invalid permission set: permission set <permission_set_id> is not assigned to this agent"
+                    error: invalid request
+                    message: "grant validation failed: permission set <permission_set_id> is not declared by the agent"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":

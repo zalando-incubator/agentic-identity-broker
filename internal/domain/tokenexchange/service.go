@@ -415,9 +415,20 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 	grant *storage.UserGrant,
 	agent *storage.Agent,
 ) (map[id.ServiceID][]string, error) {
+	declaredPS := make(map[id.PermissionSetID]bool, len(agent.PermissionSets))
+	for _, aps := range agent.PermissionSets {
+		declaredPS[aps.PermissionSetID] = true
+	}
+
 	// Collect PS IDs from grant
 	psIDs := make([]id.PermissionSetID, len(grant.GrantedPermissionSets))
 	for i, entry := range grant.GrantedPermissionSets {
+		if !declaredPS[entry.PermissionSetID] {
+			return nil, NewInvalidGrantError(fmt.Sprintf(
+				"permission set %s referenced in grant is not declared by the agent; re-consent required",
+				entry.PermissionSetID,
+			)).WithErrorURI(strings.TrimRight(s.oauth2SessionService.GetCallbackBaseURL(), "/") + "/agents/" + agent.ID.String())
+		}
 		psIDs[i] = entry.PermissionSetID
 	}
 

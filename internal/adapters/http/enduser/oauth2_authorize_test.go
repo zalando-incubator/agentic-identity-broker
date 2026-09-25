@@ -285,11 +285,13 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_NoGrantRedirectsToConsent(t *testing.T
 func TestOAuth2AuthorizeHandler_ServeHTTP_ActiveGrantRedirectsToUpstream(t *testing.T) {
 	agentRepo := newMockAgentRepo()
 	agentID := id.NewAgentID()
+	permissionSetID := id.NewPermissionSetID()
 	agent := &storage.Agent{
-		ID:           agentID,
-		ClientID:     ptr.To(id.ClientID("client-1")),
-		DisplayName:  "Test Client",
-		RedirectURIs: []string{"https://client.example.com/callback"},
+		ID:             agentID,
+		ClientID:       ptr.To(id.ClientID("client-1")),
+		DisplayName:    "Test Client",
+		RedirectURIs:   []string{"https://client.example.com/callback"},
+		PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: permissionSetID, RequirementType: storage.RequirementTypeOptional}},
 	}
 	_ = agentRepo.Create(context.Background(), agent)
 
@@ -299,7 +301,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_ActiveGrantRedirectsToUpstream(t *test
 		Principal:             id.Principal("user@example.com"),
 		AgentID:               agentID,
 		ValidUntil:            nil,
-		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
+		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
@@ -347,11 +349,13 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_ActiveGrantRedirectsToUpstream(t *test
 func TestOAuth2AuthorizeHandler_ServeHTTP_PreservesOAuth2Parameters(t *testing.T) {
 	agentRepo := newMockAgentRepo()
 	agentID := id.NewAgentID()
+	permissionSetID := id.NewPermissionSetID()
 	agent := &storage.Agent{
-		ID:           agentID,
-		ClientID:     ptr.To(id.ClientID("client-1")),
-		DisplayName:  "Test Client",
-		RedirectURIs: []string{"https://client.example.com/callback"},
+		ID:             agentID,
+		ClientID:       ptr.To(id.ClientID("client-1")),
+		DisplayName:    "Test Client",
+		RedirectURIs:   []string{"https://client.example.com/callback"},
+		PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: permissionSetID, RequirementType: storage.RequirementTypeOptional}},
 	}
 	_ = agentRepo.Create(context.Background(), agent)
 
@@ -361,7 +365,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_PreservesOAuth2Parameters(t *testing.T
 		Principal:             id.Principal("user@example.com"),
 		AgentID:               agentID,
 		ValidUntil:            nil,
-		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
+		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 

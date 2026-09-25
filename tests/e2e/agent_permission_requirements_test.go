@@ -553,7 +553,7 @@ var _ = Describe("Agent Permission Requirements", func() {
 			grantWithRequiredScopes := &storage.UserGrant{
 				Principal:             id.Principal(userPrincipal),
 				AgentID:               agent.ID,
-				GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
+				GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: agent.PermissionSets[0].PermissionSetID, IncludedServiceIDs: []id.ServiceID{githubService.ID}}},
 			}
 			err = testStorage.UserGrants().Create(context.Background(), grantWithRequiredScopes)
 			Expect(err).ToNot(HaveOccurred())

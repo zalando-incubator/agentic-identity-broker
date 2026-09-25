@@ -94,6 +94,8 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 	testAgentID := id.NewAgentID()
 	githubServiceID := id.NewServiceID()
 	googleServiceID := id.NewServiceID()
+	permissionSetID1 := id.NewPermissionSetID()
+	permissionSetID2 := id.NewPermissionSetID()
 
 	// Create agent
 	agent := &storage.Agent{
@@ -101,10 +103,10 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 		ClientID:    ptr.To(id.ClientID("client-test")),
 		DisplayName: "Test Agent",
 		Description: "Integration test agent",
-		PermissionSets: []storage.AgentPermissionSetEntry{{
-			PermissionSetID: id.NewPermissionSetID(),
-			RequirementType: storage.RequirementTypeOptional,
-		}},
+		PermissionSets: []storage.AgentPermissionSetEntry{
+			{PermissionSetID: permissionSetID1, RequirementType: storage.RequirementTypeOptional},
+			{PermissionSetID: permissionSetID2, RequirementType: storage.RequirementTypeOptional},
+		},
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -165,7 +167,7 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 	// Test 1: Create initial grant
 	t.Run("create_grant", func(t *testing.T) {
 		futureTime := time.Now().Add(30 * 24 * time.Hour) // 30 days
-		psID := id.NewPermissionSetID()
+		psID := permissionSetID1
 		reqBody := GrantRequest{
 			ValidUntil:            &futureTime,
 			GrantedPermissionSets: map[string][]string{psID.String(): {githubServiceID.String()}},
@@ -206,7 +208,7 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 		futureTime := time.Now().Add(60 * 24 * time.Hour) // 60 days
 		reqBody := GrantRequest{
 			ValidUntil:            &futureTime,
-			GrantedPermissionSets: map[string][]string{id.NewPermissionSetID().String(): {githubServiceID.String()}, id.NewPermissionSetID().String(): {googleServiceID.String()}},
+			GrantedPermissionSets: map[string][]string{permissionSetID1.String(): {githubServiceID.String()}, permissionSetID2.String(): {googleServiceID.String()}},
 		}
 
 		jsonBody, _ := json.Marshal(reqBody)
@@ -234,6 +236,41 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 		assert.Equal(t, "alice@example.com", response.Principal)
 		assert.Equal(t, testAgentID.String(), response.AgentID)
 		assert.Len(t, response.GrantedPermissionSets, 2)
+	})
+
+	t.Run("reject_undeclared_permission_set", func(t *testing.T) {
+		current, err := grantRepo.FindByPrincipalAndAgent(ctx, id.Principal("alice@example.com"), testAgentID)
+		require.NoError(t, err)
+		require.NotNil(t, current)
+		before := current.Copy()
+
+		reqBody := GrantRequest{
+			ValidUntil: before.ValidUntil,
+			GrantedPermissionSets: map[string][]string{
+				permissionSetID1.String():        {githubServiceID.String()},
+				permissionSetID2.String():        {googleServiceID.String()},
+				id.NewPermissionSetID().String(): {githubServiceID.String()},
+			},
+		}
+		jsonBody, err := json.Marshal(reqBody)
+		require.NoError(t, err)
+		req := httptest.NewRequest("POST", "/api/consent/agent/"+testAgentID.String()+"/grants", bytes.NewBuffer(jsonBody))
+		requestCtx := principal.WithPrincipal(req.Context(), "alice@example.com")
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("agent-id", testAgentID.String())
+		req = req.WithContext(context.WithValue(requestCtx, chi.RouteCtxKey, rctx))
+
+		rr := httptest.NewRecorder()
+		handler.CreateGrant(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+		var response map[string]any
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&response))
+		assert.Equal(t, "invalid request", response["error"])
+
+		after, err := grantRepo.FindByPrincipalAndAgent(ctx, id.Principal("alice@example.com"), testAgentID)
+		require.NoError(t, err)
+		assert.Equal(t, before, after)
 	})
 
 	// Test 3: Retrieve grants
@@ -490,6 +527,7 @@ func TestGrantsIntegration_Validation(t *testing.T) {
 
 	testAgentID := id.NewAgentID()
 	testServiceID := id.NewServiceID()
+	permissionSetID := id.NewPermissionSetID()
 
 	// Create agent
 	agent := &storage.Agent{
@@ -498,7 +536,7 @@ func TestGrantsIntegration_Validation(t *testing.T) {
 		DisplayName: "Validation Test Agent",
 		Description: "Test validation",
 		PermissionSets: []storage.AgentPermissionSetEntry{{
-			PermissionSetID: id.NewPermissionSetID(),
+			PermissionSetID: permissionSetID,
 			RequirementType: storage.RequirementTypeOptional,
 		}},
 		CreatedAt: time.Now(),
@@ -562,7 +600,7 @@ func TestGrantsIntegration_Validation(t *testing.T) {
 			name:    "valid_request",
 			agentID: testAgentID.String(),
 			reqBody: GrantRequest{
-				GrantedPermissionSets: map[string][]string{id.NewPermissionSetID().String(): {service.ID.String()}},
+				GrantedPermissionSets: map[string][]string{permissionSetID.String(): {service.ID.String()}},
 			},
 			expectedStatus: http.StatusCreated,
 			expectedError:  "",
@@ -607,13 +645,14 @@ func TestGrantsIntegration_FR020_UnconnectedServices(t *testing.T) {
 	ctx := context.Background()
 
 	agentID := id.NewAgentID()
+	permissionSetID := id.NewPermissionSetID()
 	agent := &storage.Agent{
 		ID:          agentID,
 		ClientID:    ptr.To(id.ClientID("client-fr020")),
 		DisplayName: "FR-020 Test Agent",
 		Description: "Agent for FR-020 unconnected services test",
 		PermissionSets: []storage.AgentPermissionSetEntry{{
-			PermissionSetID: id.NewPermissionSetID(),
+			PermissionSetID: permissionSetID,
 			RequirementType: storage.RequirementTypeOptional,
 		}},
 		CreatedAt: time.Now(),
@@ -626,7 +665,7 @@ func TestGrantsIntegration_FR020_UnconnectedServices(t *testing.T) {
 	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
 
 	t.Run("returns_400_when_included_service_has_no_active_session", func(t *testing.T) {
-		psID := id.NewPermissionSetID()
+		psID := permissionSetID
 		reqBody := GrantRequest{
 			GrantedPermissionSets: map[string][]string{psID.String(): {unconnectedServiceID.String()}},
 		}
