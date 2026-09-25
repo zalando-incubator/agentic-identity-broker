@@ -6,8 +6,8 @@
 # frontend or its E2E tests change, and only for same-repository PRs (a fork
 # PR cannot be pushed to).
 #
-# Screenshot pushes require a GitHub App token. The default GITHUB_TOKEN does
-# not trigger CI for the new commit, leaving the required "CI / gate" pending.
+# Screenshot-only commits use GITHUB_TOKEN. These pushes do not trigger a new
+# CI run; the source revision is tested before screenshots are published.
 
 name: Screenshots
 
@@ -233,32 +233,11 @@ jobs:
           path: tests/e2e/frontend/coverage/screenshots/*.png
           if-no-files-found: error
 
-      - name: Require screenshot bot credentials
-        if: steps.current-head.outputs.current == 'true' && steps.artifact-head.outputs.current == 'true' && steps.sync-screenshots.outputs.has_changes == 'true'
-        env:
-          APP_ID: ${{ vars.SCREENSHOT_BOT_APP_ID }}
-          APP_PRIVATE_KEY: ${{ secrets.SCREENSHOT_BOT_PRIVATE_KEY }}
-        run: |
-          if [ -z "$APP_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
-            echo "Screenshot changes require SCREENSHOT_BOT_APP_ID and SCREENSHOT_BOT_PRIVATE_KEY" >&2
-            exit 1
-          fi
-
-      - name: Mint push token
-        id: app-token
-        if: steps.current-head.outputs.current == 'true' && steps.artifact-head.outputs.current == 'true' && steps.sync-screenshots.outputs.has_changes == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ vars.SCREENSHOT_BOT_APP_ID }}
-          private-key: ${{ secrets.SCREENSHOT_BOT_PRIVATE_KEY }}
-          permission-contents: write
-
       - name: Commit and push screenshot changes
         id: publish
         if: steps.current-head.outputs.current == 'true' && steps.artifact-head.outputs.current == 'true' && steps.sync-screenshots.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -278,7 +257,7 @@ jobs:
           git add tests/e2e/screenshots/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${REPO}.git"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
           git commit -m "Update frontend E2E screenshots" -m "Screenshot-Source-SHA: $EXPECTED_HEAD_SHA"
           if git push origin "HEAD:refs/heads/${HEAD_REF}"; then
             echo "pushed_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
