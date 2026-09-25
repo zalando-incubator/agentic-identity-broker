@@ -16,6 +16,10 @@ import (
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
 
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -119,6 +123,7 @@ var _ = Describe("Tool Approval API", func() {
 		logger         *slog.Logger
 		mockUpstream   *helpers.MockUpstreamOAuth2Server
 		machineAuth    *helpers.ApprovalRequestAuthFixture
+		metricReader   *sdkmetric.ManualReader
 		agentID        id.AgentID
 	)
 
@@ -128,6 +133,15 @@ var _ = Describe("Tool Approval API", func() {
 	)
 
 	BeforeEach(func() {
+		previousMeterProvider := otel.GetMeterProvider()
+		metricReader = sdkmetric.NewManualReader()
+		meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metricReader))
+		otel.SetMeterProvider(meterProvider)
+		DeferCleanup(func() {
+			otel.SetMeterProvider(previousMeterProvider)
+			Expect(meterProvider.Shutdown(context.Background())).To(Succeed())
+		})
+
 		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 			Level: slog.LevelInfo,
 		}))
@@ -573,26 +587,54 @@ var _ = Describe("Tool Approval API", func() {
 			etag := resp.Header.Get("ETag")
 			Expect(etag).NotTo(BeEmpty())
 
-			done := make(chan *http.Response, 1)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.BaseURL()+"/api/approvals", nil)
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Authorization", "Bearer "+machineAuth.ClientAssertion)
+			req.Header.Set("If-None-Match", etag)
+			req.Header.Set("X-Long-Poll-Timeout", "5")
+			type pollResult struct {
+				response *http.Response
+				err      error
+			}
+			done := make(chan pollResult, 1)
 			go func() {
-				req, _ := http.NewRequest(http.MethodGet, server.BaseURL()+"/api/approvals", nil)
-				req.Header.Set("Authorization", "Bearer "+machineAuth.ClientAssertion)
-				req.Header.Set("If-None-Match", etag)
-				req.Header.Set("X-Long-Poll-Timeout", "30")
-				client := &http.Client{Timeout: 35 * time.Second}
-				resp, _ := client.Do(req)
-				done <- resp
+				pollResp, pollErr := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+				done <- pollResult{pollResp, pollErr}
 			}()
 
-			time.Sleep(200 * time.Millisecond)
+			Eventually(func() (int64, error) {
+				var metrics metricdata.ResourceMetrics
+				if err := metricReader.Collect(context.Background(), &metrics); err != nil {
+					return 0, err
+				}
+				for _, scope := range metrics.ScopeMetrics {
+					for _, metric := range scope.Metrics {
+						if metric.Name == "long_poll_connections_active" {
+							count, ok := metric.Data.(metricdata.Sum[int64])
+							if !ok {
+								return 0, fmt.Errorf("unexpected long-poll metric data: %T", metric.Data)
+							}
+							for _, point := range count.DataPoints {
+								return point.Value, nil
+							}
+						}
+					}
+				}
+				return 0, nil
+			}, 2*time.Second).Should(Equal(int64(1)))
+			Expect(done).NotTo(Receive())
 
 			resp, err = postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
 				alicePrincipal, helpers.ApproveRequest{Persistence: "once"})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 
-			var pollResp *http.Response
-			Eventually(done, 5*time.Second).Should(Receive(&pollResp))
+			var result pollResult
+			Eventually(done, 2*time.Second).Should(Receive(&result))
+			Expect(result.err).NotTo(HaveOccurred())
+			pollResp := result.response
 			Expect(pollResp).NotTo(BeNil())
 			Expect(pollResp.StatusCode).To(Equal(http.StatusOK))
 			Expect(pollResp.Header.Get("ETag")).NotTo(Equal(etag))

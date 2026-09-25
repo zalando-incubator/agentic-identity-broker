@@ -127,6 +127,9 @@ func (m *MockUpstreamOAuth2Server) URL() string {
 
 // WithSuccessfulTokenResponse configures the server to return a successful token response.
 func (m *MockUpstreamOAuth2Server) WithSuccessfulTokenResponse() *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
 	m.successfulTokenResp = true
 	m.errorCode = ""
 	m.errorDescription = ""
@@ -135,6 +138,9 @@ func (m *MockUpstreamOAuth2Server) WithSuccessfulTokenResponse() *MockUpstreamOA
 
 // WithErrorResponse configures the server to return an error response.
 func (m *MockUpstreamOAuth2Server) WithErrorResponse(errorCode string) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
 	m.successfulTokenResp = false
 	m.errorCode = errorCode
 	m.errorDescription = fmt.Sprintf("Error from upstream: %s", errorCode)
@@ -143,6 +149,9 @@ func (m *MockUpstreamOAuth2Server) WithErrorResponse(errorCode string) *MockUpst
 
 // WithErrorResponseAndDescription configures error response with custom description.
 func (m *MockUpstreamOAuth2Server) WithErrorResponseAndDescription(errorCode, description string) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
 	m.successfulTokenResp = false
 	m.errorCode = errorCode
 	m.errorDescription = description
@@ -151,18 +160,27 @@ func (m *MockUpstreamOAuth2Server) WithErrorResponseAndDescription(errorCode, de
 
 // WithAccessToken sets the access token in successful responses.
 func (m *MockUpstreamOAuth2Server) WithAccessToken(token string) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
 	m.accessToken = token
 	return m
 }
 
 // WithRefreshToken sets the refresh token in successful responses.
 func (m *MockUpstreamOAuth2Server) WithRefreshToken(token string) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
 	m.refreshToken = token
 	return m
 }
 
 // WithResponseDelay adds a delay to token endpoint responses (simulates network latency).
 func (m *MockUpstreamOAuth2Server) WithResponseDelay(delay time.Duration) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
 	m.responseDelay = delay
 	return m
 }
@@ -171,6 +189,9 @@ func (m *MockUpstreamOAuth2Server) WithResponseDelay(delay time.Duration) *MockU
 // request context is canceled. This is useful for provoking client-side
 // timeouts without sleeping longer than necessary in tests.
 func (m *MockUpstreamOAuth2Server) WithTokenHangUntilCanceled() *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
 	m.blockTokenUntilCanceled = true
 	m.responseDelay = 0
 	return m
@@ -189,6 +210,9 @@ func (m *MockUpstreamOAuth2Server) WithStrictPublicClientMode() *MockUpstreamOAu
 
 // WithExpiresIn sets the token expiration time in seconds.
 func (m *MockUpstreamOAuth2Server) WithExpiresIn(seconds int) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
 	m.expiresIn = seconds
 	return m
 }
@@ -206,6 +230,9 @@ func (m *MockUpstreamOAuth2Server) ReturnTokenWithClaim(claimName, value string)
 	if err != nil {
 		panic(fmt.Sprintf("ReturnTokenWithClaim: failed to sign JWT with claim %q: %v", claimName, err))
 	}
+
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
 
 	m.successfulTokenResp = true
 	m.accessToken = signed
@@ -381,14 +408,26 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if m.blockTokenUntilCanceled {
+	m.requestMutex.RLock()
+	blockTokenUntilCanceled := m.blockTokenUntilCanceled
+	responseDelay := m.responseDelay
+	successfulTokenResp := m.successfulTokenResp
+	errorCode := m.errorCode
+	errorDescription := m.errorDescription
+	accessToken := m.accessToken
+	tokenType := m.tokenType
+	expiresIn := m.expiresIn
+	refreshToken := m.refreshToken
+	m.requestMutex.RUnlock()
+
+	if blockTokenUntilCanceled {
 		<-r.Context().Done()
 		return
 	}
 
 	// Apply response delay if configured
-	if m.responseDelay > 0 {
-		timer := time.NewTimer(m.responseDelay)
+	if responseDelay > 0 {
+		timer := time.NewTimer(responseDelay)
 		defer timer.Stop()
 		select {
 		case <-timer.C:
@@ -398,13 +437,13 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	}
 
 	// Check for error condition
-	if !m.successfulTokenResp && m.errorCode != "" {
+	if !successfulTokenResp && errorCode != "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 
 		errResp := map[string]string{
-			"error":             m.errorCode,
-			"error_description": m.errorDescription,
+			"error":             errorCode,
+			"error_description": errorDescription,
 		}
 		_ = json.NewEncoder(w).Encode(errResp)
 		return
@@ -415,10 +454,10 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusOK)
 
 	tokenResp := map[string]interface{}{
-		"access_token":  m.accessToken,
-		"token_type":    m.tokenType,
-		"expires_in":    m.expiresIn,
-		"refresh_token": m.refreshToken,
+		"access_token":  accessToken,
+		"token_type":    tokenType,
+		"expires_in":    expiresIn,
+		"refresh_token": refreshToken,
 	}
 
 	_ = json.NewEncoder(w).Encode(tokenResp)

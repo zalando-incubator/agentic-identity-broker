@@ -96,7 +96,7 @@ func TestMockUpstreamJWKSEndpoint(t *testing.T) {
 	assert.NotEmpty(t, mockServer.GetPublicKeyPEM())
 
 	// Fetch JWKS from mock server
-	resp, err := http.Get(mockServer.URL() + "/.well-known/jwks.json")
+	resp, err := HTTPClient().Get(mockServer.URL() + "/.well-known/jwks.json")
 	assert.NoError(t, err)
 	assert.NotNil(t, resp)
 	defer func() { _ = resp.Body.Close() }()

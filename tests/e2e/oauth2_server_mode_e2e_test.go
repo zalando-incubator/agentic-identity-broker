@@ -15,6 +15,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
 var _ = Describe("US2: Server Mode Configuration (local mode)", func() {
@@ -82,7 +83,7 @@ var _ = Describe("US2: Server Mode Configuration (local mode)", func() {
 		Expect(err).ToNot(HaveOccurred())
 		defer enduserServer.Close()
 
-		resp, err := http.Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
+		resp, err := helpers.HTTPClient().Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -96,7 +97,7 @@ var _ = Describe("US2: Server Mode Configuration (local mode)", func() {
 		Expect(key["kid"]).ToNot(BeEmpty())
 		Expect(key["is_current"]).To(BeTrue())
 
-		jwkResp, err := http.Get(enduserServer.BaseURL() + "/oauth2/jwks.json")
+		jwkResp, err := helpers.HTTPClient().Get(enduserServer.BaseURL() + "/oauth2/jwks.json")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = jwkResp.Body.Close() }()
 		Expect(jwkResp.StatusCode).To(Equal(http.StatusOK))
@@ -130,7 +131,7 @@ var _ = Describe("US2: Server Mode Configuration (local mode)", func() {
 		Expect(err).ToNot(HaveOccurred())
 		defer enduserServer.Close()
 
-		credentialsResp, err := http.Post(
+		credentialsResp, err := helpers.HTTPClient().Post(
 			adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials",
 			"application/json",
 			nil,

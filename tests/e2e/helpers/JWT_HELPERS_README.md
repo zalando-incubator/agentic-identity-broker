@@ -49,7 +49,7 @@ mockServer := helpers.NewMockUpstreamOAuth2Server()
 defer mockServer.Close()
 
 // Mock server automatically serves JWKS at /.well-known/jwks.json
-resp, err := http.Get(mockServer.URL() + "/.well-known/jwks.json")
+resp, err := helpers.HTTPClient().Get(mockServer.URL() + "/.well-known/jwks.json")
 if err != nil {
     t.Fatalf("Failed to fetch JWKS: %v", err)
 }
@@ -95,7 +95,7 @@ func TestTokenExchangeWithRealJWT(t *testing.T) {
     clientAssertion, _ := helpers.SignTestJWT(assertionClaims, privateKeyPEM)
 
     // Send token exchange request
-    resp, _ := http.PostForm(
+    resp, _ := helpers.HTTPClient().PostForm(
         testServer.URL() + "/oauth2/token",
         url.Values{
             "grant_type":       {"urn:ietf:params:oauth:grant-type:token-exchange"},

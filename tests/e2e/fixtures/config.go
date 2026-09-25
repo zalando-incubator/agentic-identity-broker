@@ -106,8 +106,6 @@ func OAuth2ConfigWithUpstream(upstreamURL string) *ports.Config {
 	config.OAuth2AuthServer.Proxy.UpstreamAuthorizeEndpoint = upstreamURL + "/oauth/authorize"
 	config.OAuth2AuthServer.Proxy.UpstreamTokenEndpoint = upstreamURL + "/oauth/token"
 	config.OAuth2AuthServer.Proxy.UpstreamTimeout = 2 * time.Second
-	config.OAuth2AuthServer.Proxy.UpstreamJWKSMinRefresh = 1 * time.Second
-	config.OAuth2AuthServer.Proxy.UpstreamJWKSMaxRefresh = 2 * time.Second
 	return config
 }
 
@@ -127,7 +125,7 @@ func OAuth2ConfigWithTokenExchange(upstreamURL string) *ports.Config {
 			Type: "cel",
 			CEL: ports.CELAuthorizationConfig{
 				Expression:        "true",
-				EvaluationTimeout: 100 * time.Millisecond,
+				EvaluationTimeout: 2 * time.Second,
 			},
 		},
 	}
@@ -240,7 +238,7 @@ func TokenExchangeConfigWithInvalidCELSyntax(invalidExpression string) *ports.Co
 			Type: "cel",
 			CEL: ports.CELAuthorizationConfig{
 				Expression:        invalidExpression,
-				EvaluationTimeout: 100 * time.Millisecond,
+				EvaluationTimeout: 2 * time.Second,
 			},
 		},
 	}
@@ -496,8 +494,6 @@ func HybridConfig(upstreamURL string) *ports.Config {
 	config.OAuth2AuthServer.Proxy.UpstreamAuthorizeEndpoint = upstreamURL + "/oauth/authorize"
 	config.OAuth2AuthServer.Proxy.UpstreamTokenEndpoint = upstreamURL + "/oauth/token"
 	config.OAuth2AuthServer.Proxy.UpstreamTimeout = 2 * time.Second
-	config.OAuth2AuthServer.Proxy.UpstreamJWKSMinRefresh = 1 * time.Second
-	config.OAuth2AuthServer.Proxy.UpstreamJWKSMaxRefresh = 2 * time.Second
 	config.OAuth2AuthServer.Local.TokenTTL = time.Hour
 	return config
 }

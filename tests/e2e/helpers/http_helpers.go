@@ -8,7 +8,15 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
+
+var boundedHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
+// HTTPClient returns the shared bounded client for E2E requests.
+func HTTPClient() *http.Client {
+	return boundedHTTPClient
+}
 
 // ExtractRedirectURL extracts the Location header from an HTTP response.
 // Returns an error if the response doesn't have a Location header.

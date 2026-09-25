@@ -123,7 +123,7 @@ var _ = Describe("US2: Hybrid Mode Agent Coexistence", func() {
 
 	// Scenario US2.10 from specs/030-hybrid-oauth-modes/spec.md
 	It("serves JWKS endpoint in hybrid mode", func() {
-		resp, err := http.Get(server.BaseURL() + "/oauth2/jwks.json")
+		resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -137,7 +137,7 @@ var _ = Describe("US2: Hybrid Mode Agent Coexistence", func() {
 
 	// Scenario US2.11 from specs/030-hybrid-oauth-modes/spec.md
 	It("exposes discovery metadata with JWKS URI in hybrid mode", func() {
-		resp, err := http.Get(server.BaseURL() + "/.well-known/oauth-authorization-server")
+		resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/.well-known/oauth-authorization-server")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -224,7 +224,7 @@ var _ = Describe("US2+US3: Hybrid Mode with CIMD", func() {
 	It("accepts hybrid+CIMD configuration and starts successfully", func() {
 		// Builder succeeded (server is non-nil) — hybrid+CIMD config is accepted.
 		// The JWKS endpoint confirms local token signing is wired.
-		resp, err := http.Get(server.BaseURL() + "/oauth2/jwks.json")
+		resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -348,7 +348,7 @@ var _ = Describe("US2+US3: Hybrid Mode with CIMD", func() {
 		// Step 4: Exchange code for token — no client_secret (CIMD clients are public).
 		// This step previously failed because GetAuthorizeCodeSession used agentID.String()
 		// for GetClient, which the CIMD resolver rejects with invalid_client.
-		tokenResp, err := http.Post(
+		tokenResp, err := helpers.HTTPClient().Post(
 			server.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(url.Values{
@@ -409,7 +409,7 @@ var _ = Describe("US2: Hybrid Mode — Local Agent Full Authorization Code Journ
 
 		Expect(helpers.ProvisionSigningKey(adminServer.BaseURL())).ToNot(HaveOccurred())
 
-		credResp, err := http.Post(
+		credResp, err := helpers.HTTPClient().Post(
 			adminServer.BaseURL()+"/api/agents/"+agent.ID.String()+"/client-credentials",
 			"application/json", nil,
 		)
@@ -488,7 +488,7 @@ var _ = Describe("US2: Hybrid Mode — Local Agent Full Authorization Code Journ
 		Expect(code).ToNot(BeEmpty())
 
 		// Step 4: Exchange code for locally-issued JWT access token.
-		tokenResp, err := http.Post(
+		tokenResp, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(url.Values{
@@ -557,7 +557,7 @@ var _ = Describe("US2: Hybrid Mode — Local Agent Full Authorization Code Journ
 		Expect(code).ToNot(BeEmpty())
 
 		// Step 4: Exchange code WITHOUT code_verifier — must be rejected.
-		tokenResp, err := http.Post(
+		tokenResp, err := helpers.HTTPClient().Post(
 			enduserServer.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(url.Values{
@@ -692,7 +692,7 @@ var _ = Describe("US2: Hybrid Mode — Proxy Agent Full Authorization Code Journ
 		Expect(code).ToNot(BeEmpty())
 
 		// Step 5: Exchange code at broker — broker proxies request to upstream token endpoint.
-		tokenResp, err := http.Post(
+		tokenResp, err := helpers.HTTPClient().Post(
 			server.BaseURL()+"/oauth2/token",
 			"application/x-www-form-urlencoded",
 			strings.NewReader(url.Values{

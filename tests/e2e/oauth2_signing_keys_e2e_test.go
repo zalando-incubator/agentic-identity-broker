@@ -18,6 +18,7 @@ import (
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
 var _ = Describe("US5: Signing Key Management (local mode)", func() {
@@ -30,7 +31,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 	)
 
 	createClientCredentials := func(agentID string) string {
-		resp, err := http.Post(
+		resp, err := helpers.HTTPClient().Post(
 			adminServer.BaseURL()+"/api/agents/"+agentID+"/client-credentials",
 			"application/json",
 			nil,
@@ -103,7 +104,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 	}
 
 	fetchJWKS := func() jwk.Set {
-		resp, err := http.Get(enduserServer.BaseURL() + "/oauth2/jwks.json")
+		resp, err := helpers.HTTPClient().Get(enduserServer.BaseURL() + "/oauth2/jwks.json")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -183,7 +184,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 
 	// Scenario 5.2 from specs/025-oauth2-server/spec.md
 	It("lists signing keys", func() {
-		resp, err := http.Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
+		resp, err := helpers.HTTPClient().Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))
@@ -208,7 +209,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 		_ = resp.Body.Close()
 
 		// Get the auto-generated key (not current anymore)
-		listResp, _ := http.Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
+		listResp, _ := helpers.HTTPClient().Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
 		var listBody map[string]interface{}
 		Expect(json.NewDecoder(listResp.Body).Decode(&listBody)).ToNot(HaveOccurred())
 		_ = listResp.Body.Close()
@@ -253,7 +254,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 		Expect(tokenKID(issueAccessToken(agent.ID.String(), clientSecret))).To(Equal(newKID))
 
 		// Find non-current key — this should be the key that signed oldToken.
-		listResp, _ := http.Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
+		listResp, _ := helpers.HTTPClient().Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
 		var listBody map[string]interface{}
 		Expect(json.NewDecoder(listResp.Body).Decode(&listBody)).ToNot(HaveOccurred())
 		_ = listResp.Body.Close()
@@ -327,7 +328,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 	// Scenario 5.5 from specs/025-oauth2-server/spec.md
 	It("cannot remove last key", func() {
 		// Only auto-generated key exists; try to delete it
-		listResp, _ := http.Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
+		listResp, _ := helpers.HTTPClient().Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
 		var listBody map[string]interface{}
 		Expect(json.NewDecoder(listResp.Body).Decode(&listBody)).ToNot(HaveOccurred())
 		_ = listResp.Body.Close()
@@ -392,7 +393,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 	// Scenario 5.6 from specs/025-oauth2-server/spec.md
 	It("key appears in JWKS via discovery", func() {
 		// Get JWKS
-		resp, err := http.Get(enduserServer.BaseURL() + "/oauth2/jwks.json")
+		resp, err := helpers.HTTPClient().Get(enduserServer.BaseURL() + "/oauth2/jwks.json")
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(http.StatusOK))

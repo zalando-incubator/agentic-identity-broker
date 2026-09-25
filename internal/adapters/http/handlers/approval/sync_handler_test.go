@@ -50,8 +50,9 @@ func (m *testQueryRepo) ListPermanentByPrincipal(_ context.Context, _ id.Princip
 }
 
 type testSyncStateRepo struct {
-	version atomic.Int64
-	onGet   func()
+	version  atomic.Int64
+	onGet    func()
+	afterGet func()
 }
 
 func newTestSyncStateRepo(v int64) *testSyncStateRepo {
@@ -65,7 +66,13 @@ func (m *testSyncStateRepo) GetVersion(_ context.Context) (int64, error) {
 		m.onGet()
 		m.onGet = nil
 	}
-	return m.version.Load(), nil
+	version := m.version.Load()
+	if m.afterGet != nil {
+		afterGet := m.afterGet
+		m.afterGet = nil
+		afterGet()
+	}
+	return version, nil
 }
 
 func (m *testSyncStateRepo) IncrementVersion(_ context.Context) (int64, error) {
@@ -283,18 +290,32 @@ func TestSyncHandler_WakeOnChange(t *testing.T) {
 		svc := newTestSyncService(queries, syncState, broadcaster)
 		handler := NewSyncHandler(svc)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/approvals", nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		req := httptest.NewRequest(http.MethodGet, "/api/approvals", nil).WithContext(ctx)
 		req.Header.Set("If-None-Match", `"v5"`)
-		req.Header.Set("X-Long-Poll-Timeout", "30")
+		req.Header.Set("X-Long-Poll-Timeout", "5")
 		rec := httptest.NewRecorder()
 
+		versionChecked := make(chan struct{})
+		syncState.afterGet = func() { close(versionChecked) }
+		done := make(chan struct{})
 		go func() {
-			time.Sleep(100 * time.Millisecond)
-			syncState.version.Store(6)
-			broadcaster.Broadcast()
+			handler.ServeHTTP(rec, req)
+			close(done)
 		}()
-
-		handler.ServeHTTP(rec, req)
+		select {
+		case <-versionChecked:
+		case <-ctx.Done():
+			t.Fatal("long poll did not check the current version")
+		}
+		syncState.version.Store(6)
+		broadcaster.Broadcast()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			t.Fatal("long poll did not wake after the version changed")
+		}
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)

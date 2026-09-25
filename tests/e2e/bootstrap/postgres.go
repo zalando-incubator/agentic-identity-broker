@@ -31,14 +31,14 @@ func CanAccessContainerRuntime() error {
 }
 
 func NewPostgresFixture(ctx context.Context) (*PostgresFixture, error) {
-	if os.Getenv("TESTCONTAINERS_RYUK_DISABLED") == "" {
+	if os.Getenv("DOCKER_HOST") != "" && os.Getenv("TESTCONTAINERS_RYUK_DISABLED") == "" {
 		if err := os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true"); err != nil {
 			return nil, fmt.Errorf("set TESTCONTAINERS_RYUK_DISABLED: %w", err)
 		}
 	}
 
 	request := testcontainers.ContainerRequest{
-		Image:        "postgres:15-alpine",
+		Image:        "postgres:15-alpine@sha256:09e4f20b14ddb3dfe3a0c825b206032aaf8f28300ba2070c0b60fc1c10c6abc7",
 		ExposedPorts: []string{"5432/tcp"},
 		Env: map[string]string{
 			"POSTGRES_USER":     "testuser",
@@ -47,7 +47,7 @@ func NewPostgresFixture(ctx context.Context) (*PostgresFixture, error) {
 		},
 		WaitingFor: wait.ForLog("database system is ready to accept connections").
 			WithOccurrence(2).
-			WithStartupTimeout(30 * time.Second),
+			WithStartupTimeout(120 * time.Second),
 	}
 	containerRequest := testcontainers.GenericContainerRequest{
 		ContainerRequest: request,
