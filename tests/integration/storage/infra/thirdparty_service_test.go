@@ -7,8 +7,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 
 	awsencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/aws"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
@@ -29,19 +34,13 @@ import (
 // This is the base64 encoding of known test bytes — NOT for production use.
 const testKEKForIntegration = "ASNFZ4mrze/+3LqYdlQyEAEjRWeJq83v/ty6mHZUMhA="
 
-var thirdpartyProviderMigrations = []bootstrap.SQLMigration{
-	{File: "001_create_agents.up.sql", Version: 1},
-	{File: "002_create_thirdparty_services.up.sql", Version: 2},
-	{File: "003_create_user_grants.up.sql", Version: 3},
-	{File: "004_create_user_sessions.up.sql", Version: 4},
-	{File: "005_add_agent_service_requirements.up.sql", Version: 5},
-	{File: "006_add_service_protected_resources.up.sql", Version: 6},
-	{File: "007_add_oauth2_flavor.up.sql", Version: 7},
-	{File: "017_add_permission_sets.up.sql", Version: 17},
-	{File: "022_add_service_authorization_params.up.sql", Version: 22},
-	{File: "028_normalize_service_protected_resources.up.sql", Version: 28},
-	{File: "029_add_canonical_ids.up.sql", Version: 29},
-	{File: "031_add_token_endpoint_auth_method.up.sql", Version: 31},
+const (
+	cimdPrivateKeyJWTAuthMethod model.TokenEndpointAuthMethod = "private_key_jwt"
+	cimdClientIDPrefix                                        = "https://broker.example.test/.well-known/oauth-client/"
+)
+
+func cimdClientIDForService(serviceID id.ServiceID) id.ClientID {
+	return id.ClientID(cimdClientIDPrefix + serviceID.String())
 }
 
 func TestAuthorizationParamsPersistence(t *testing.T) {
@@ -117,8 +116,20 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 	t.Helper()
 
 	sharedPostgres := bootstrap.RequireSharedPostgres(t)
-	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_031", func(t *testing.T, dbName string) {
-		sharedPostgres.ApplyMigrationsUpTo(t, dbName, thirdpartyProviderMigrations, 31)
+	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_034", func(t *testing.T, dbName string) {
+		projectRoot, err := bootstrap.FindProjectRoot()
+		require.NoError(t, err)
+		migrationsDir, err := filepath.Abs(filepath.Join(projectRoot, "migrations"))
+		require.NoError(t, err)
+
+		migrationRunner, err := migrate.New("file://"+migrationsDir, sharedPostgres.ConnectionString(dbName))
+		require.NoError(t, err)
+		defer func() { _, _ = migrationRunner.Close() }()
+
+		err = migrationRunner.Migrate(34)
+		if err != nil && err != migrate.ErrNoChange {
+			require.NoError(t, err)
+		}
 	})
 
 	config := &ports.StorageConfig{
@@ -633,5 +644,60 @@ func TestConfidentialToPublicUpdateClearsCiphertext(t *testing.T) {
 	stored, err := repo.Get(ctx, public.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
+	assert.True(t, stored.Secret.IsAbsent())
+}
+
+func TestCIMDServicePersistence(t *testing.T) {
+	ctx, repo, _, sharedPostgres, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+
+	entity := createTestService("cimd-service-persistence", "CIMD Service Persistence", nil)
+	entity.ClientID = cimdClientIDForService(entity.ID)
+	entity.TokenEndpointAuthMethod = cimdPrivateKeyJWTAuthMethod
+	entity.Secret = model.NewAbsentSecret()
+	require.NoError(t, repo.Create(ctx, entity))
+
+	assert.Equal(t, string(cimdPrivateKeyJWTAuthMethod), sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT token_endpoint_auth_method
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, entity.ID)))
+	assert.Equal(t, "t", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT client_secret_encrypted IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, entity.ID)))
+
+	stored, err := repo.Get(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, cimdClientIDForService(entity.ID), stored.ClientID)
+	assert.True(t, stored.Secret.IsAbsent())
+}
+
+func TestStaticToCIMDUpdateClearsCiphertext(t *testing.T) {
+	ctx, repo, providerService, sharedPostgres, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+
+	staticService := createTestService("static-to-cimd", "Static Service", nil)
+	require.NoError(t, providerService.Create(ctx, staticService))
+
+	cimdService := createTestService(staticService.ID.String(), "CIMD Service", nil)
+	cimdService.ClientID = cimdClientIDForService(staticService.ID)
+	cimdService.TokenEndpointAuthMethod = cimdPrivateKeyJWTAuthMethod
+	cimdService.Secret = model.NewAbsentSecret()
+	require.NoError(t, repo.Update(ctx, cimdService, nil))
+
+	assert.Equal(t, string(cimdPrivateKeyJWTAuthMethod), sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT token_endpoint_auth_method
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, staticService.ID)))
+	assert.Equal(t, "t", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`
+		SELECT client_secret_encrypted IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '%s';`, staticService.ID)))
+
+	stored, err := repo.Get(ctx, staticService.ID)
+	require.NoError(t, err)
+	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, cimdClientIDForService(staticService.ID), stored.ClientID)
 	assert.True(t, stored.Secret.IsAbsent())
 }

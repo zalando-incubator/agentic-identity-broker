@@ -362,26 +362,23 @@ type SigningKeyRepository interface {
 	// current while demoting all other keys, in a single transaction.
 	CreateAndSetCurrent(ctx context.Context, key *storage.SigningKey) error
 
-	// GetByKID retrieves a signing key by its key ID (kid).
-	GetByKID(ctx context.Context, kid id.KeyID) (*storage.SigningKey, error)
+	// GetByKIDInDomain retrieves an active signing key from one key domain.
+	GetByKIDInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) (*storage.SigningKey, error)
 
-	// GetCurrent retrieves the current active signing key.
-	GetCurrent(ctx context.Context) (*storage.SigningKey, error)
+	// GetCurrentInDomain retrieves the current active signing key from one key domain.
+	GetCurrentInDomain(ctx context.Context, domain storage.KeyDomain) (*storage.SigningKey, error)
 
-	// ListActive returns all signing keys that have not been removed.
-	ListActive(ctx context.Context) ([]*storage.SigningKey, error)
+	// ListActiveInDomain returns active signing keys from one key domain.
+	ListActiveInDomain(ctx context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error)
 
-	// SetCurrent promotes a key to be the current signing key using the domain-supplied
-	// activation timestamp and returns the updated metadata.
-	SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error)
+	// SetCurrentInDomain promotes a signing key within one key domain.
+	SetCurrentInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error)
 
-	// Delete soft-deletes a signing key by setting removed_at.
-	// Implementations must enforce signing-key invariants atomically:
-	// the current key cannot be removed and at least one active key must remain.
-	Delete(ctx context.Context, kid id.KeyID) error
+	// DeleteInDomain soft-deletes a signing key from one key domain.
+	DeleteInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) error
 
-	// CountActive returns the number of non-removed signing keys.
-	CountActive(ctx context.Context) (int, error)
+	// CountActiveInDomain counts non-removed signing keys from one key domain.
+	CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error)
 }
 
 // AuthorizationCodeRepository manages ephemeral authorization codes.

@@ -14,6 +14,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const cimdPrivateKeyJWTAuthMethod model.TokenEndpointAuthMethod = "private_key_jwt"
+
+const cimdClientIDPrefix = "https://broker.example.test/.well-known/oauth-client/"
+
+func testCIMDProvider(providerID id.ServiceID) *model.ThirdpartyOAuth2ProviderEntity {
+	return &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                      providerID,
+		DisplayName:             "CIMD Provider",
+		ClientID:                id.ClientID(cimdClientIDPrefix + providerID.String()),
+		Secret:                  model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: cimdPrivateKeyJWTAuthMethod,
+		IssuerURI:               "https://issuer.example.com",
+	}
+}
+
 func testProvider(providerID id.ServiceID, resources ...string) *model.ThirdpartyOAuth2ProviderEntity {
 	return &model.ThirdpartyOAuth2ProviderEntity{
 		ID:                 providerID,
@@ -278,4 +293,34 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsPlaintextSecret(t *te
 
 	err := repo.Create(context.Background(), provider)
 	requireStorageKind(t, err, storage.ErrorKindValidation)
+}
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_CIMDProviderRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	provider := testCIMDProvider(id.NewServiceID())
+
+	require.NoError(t, repo.Create(ctx, provider))
+
+	stored, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, id.ClientID(cimdClientIDPrefix+provider.ID.String()), stored.ClientID)
+	assert.True(t, stored.Secret.IsAbsent())
+}
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateToCIMDProviderClearsSecret(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	staticProvider := testProvider(id.NewServiceID())
+	require.NoError(t, repo.Create(ctx, staticProvider))
+
+	cimdProvider := testCIMDProvider(staticProvider.ID)
+	require.NoError(t, repo.Update(ctx, cimdProvider, nil))
+
+	stored, err := repo.Get(ctx, staticProvider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, id.ClientID(cimdClientIDPrefix+staticProvider.ID.String()), stored.ClientID)
+	assert.True(t, stored.Secret.IsAbsent())
 }

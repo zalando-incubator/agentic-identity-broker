@@ -40,6 +40,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	agentsservice "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/cimdclient"
 	consentservice "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
@@ -78,6 +79,12 @@ type App struct {
 	ApprovalService        *domainapproval.Service
 	ApprovalSyncSubscriber *postgresstorage.ApprovalSyncSubscriber // nil when storage is not postgres
 	SessionTokenService    *sessiontoken.Service
+
+	// CIMD compile-time contracts are wired once the outbound key domain is implemented.
+	CIMDKeyService       ports.CIMDClientKeyService
+	CIMDKeyReadiness     ports.CIMDClientKeyReadiness
+	CIMDAssertionSigner  ports.CIMDClientAssertionSigner
+	CIMDMetadataProvider ports.CIMDClientMetadataProvider
 
 	// JWT pre-authentication (optional, nil when not configured)
 	JWTAuthenticator             domjwtauth.JWTAuthenticator
@@ -421,7 +428,39 @@ func (b *Builder) Build() (*App, error) {
 			b.storage.PermissionSets(),
 			b.config.Security.SkipThirdpartyHTTPSValidation,
 			b.logger,
-		)
+		).WithCIMDPublicURL(b.config.Server.EndUser.PublicURL)
+	}
+
+	// Construct outbound CIMD key dependencies before the OAuth server-mode split.
+	// They are mode-independent because the broker uses them to authenticate to third-party services.
+	cimdKeyService := cimdclient.NewKeyService(
+		b.storage.SigningKeys(),
+		b.storage.SigningKeyBootstrapCoordinator(),
+		encryptor,
+		app.BranchKeyManager,
+		b.logger,
+	)
+	app.CIMDKeyService = cimdKeyService
+	app.CIMDKeyReadiness = cimdKeyService
+	app.CIMDAssertionSigner = cimdclient.NewAssertionSigner(cimdKeyService)
+	app.CIMDMetadataProvider = cimdclient.NewMetadataService(app.ProviderService, cimdKeyService, b.config.Server.EndUser.PublicURL)
+	if app.ProviderService != nil {
+		app.ProviderService.WithCIMDKeyReadiness(cimdKeyService)
+	}
+
+	if app.ProviderService != nil {
+		hasCIMDServices, err := app.ProviderService.HasCompatibleCIMDServices(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("validate persisted CIMD service identities: %w", err)
+		}
+		if hasCIMDServices {
+			if _, _, err := cimdKeyService.EnsureInitialKey(context.Background()); err != nil {
+				return nil, fmt.Errorf("initialize CIMD client-authentication key: %w", err)
+			}
+			if err := cimdKeyService.RequirePublishedKey(context.Background()); err != nil {
+				return nil, fmt.Errorf("verify CIMD client-authentication key publication: %w", err)
+			}
+		}
 	}
 
 	// Create consent service if repositories available.
@@ -580,7 +619,7 @@ func (b *Builder) Build() (*App, error) {
 		jweTokenService,
 		cfg,
 		b.logger,
-	)
+	).WithCIMDAssertionSigner(app.CIMDAssertionSigner)
 
 	// Create agent domain service (used by admin handlers and CEL resolver)
 	agentService := agentsservice.NewService(
@@ -787,6 +826,7 @@ func (b *Builder) Build() (*App, error) {
 		Services:           admin.NewServicesHandler(app.ProviderService, b.config, b.logger),
 		ProtectedResources: admin.NewProtectedResourcesHandler(app.ProviderService, b.logger),
 		PermissionSets:     admin.NewPermissionSetsHandler(app.PermissionSetService, app.ProviderService, b.logger),
+		CIMDClientKeys:     admin.NewCIMDClientKeysHandler(app.CIMDKeyService, b.logger),
 	}
 
 	agentDetailHandler := consent.NewAgentDetailHandler(app.ConsentService, b.logger, app.SessionTokenService)
@@ -1128,6 +1168,7 @@ func (b *Builder) Build() (*App, error) {
 		ApprovalSync:         approval.NewSyncHandler(app.ApprovalService),
 		ApprovalPermanent:    approval.NewPermanentHandler(app.ApprovalService),
 		ApprovalPending:      approval.NewPendingHandler(app.ApprovalService),
+		CIMDMetadata:         enduserHandlers.NewCIMDMetadataHandler(app.CIMDMetadataProvider, b.logger),
 		JWKS:                 jwksHandler,
 		SPA:                  handlers.NewSPAHandler(b.staticWebResourcesPath, b.logger),
 	}

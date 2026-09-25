@@ -41,7 +41,8 @@ These endpoints require no pre-authentication:
 | `GET /health` | Both |
 | `GET /oauth2/jwks.json` | End-user |
 | `GET /.well-known/oauth-authorization-server` | End-user |
-
+| `GET /.well-known/oauth-client/{service-id}` | End-user |
+| `GET /.well-known/oauth-client/{service-id}/jwks.json` | End-user |
 `GET /oauth2/authorize` and `POST /oauth2/token` do not use pre-authentication. They use
 OAuth2 parameters, such as agent client credentials or `client_assertion`. They do not use
 the principal header. See
@@ -150,6 +151,26 @@ Each admin endpoint requires `X-Remote-User`. The proxy enforces administrator p
 | PUT | `/api/services/{service-id}` | Update a service. |
 | DELETE | `/api/services/{service-id}` | Delete a service (`409 conflict` if grants reference it). |
 
+### Outbound CIMD confidential services
+
+The broker uses **outbound CIMD client authentication** for a `private_key_jwt` third-party service. This is separate from inbound CIMD client resolution, where an agent presents a metadata URL to the broker authorization server.
+
+A service can use one of three token-endpoint authentication methods:
+
+| Method | Client ID | `client_secret` in read responses |
+|---|---|---|
+| `null` | Operator-provided | `REDACTED` |
+| `none` | Operator-provided | Omitted |
+| `private_key_jwt` | Broker-generated HTTPS metadata URL | Omitted |
+
+For `private_key_jwt`, omit `client_id` and `client_secret` in the create or replacement request.
+
+The broker generates the client ID after it allocates the service ID. The broker signs each token request with a fresh ES256 client assertion.
+
+The end-user server serves the public Client ID Metadata Document at the generated client ID. It serves the matching CIMD public JWK Set at `<client-id>/jwks.json`.
+
+Both routes return `Cache-Control: public, max-age=300`. They return JSON `404` responses for unavailable services.
+
 ### Permission sets
 
 | Method | Path | Purpose |
@@ -176,6 +197,23 @@ Each admin endpoint requires `X-Remote-User`. The proxy enforces administrator p
 | GET | `/api/oauth2-server/signing-keys` | List signing keys (`{items}`, newest first). |
 | PUT | `/api/oauth2-server/signing-keys/{kid}/current` | Promote a key to current. |
 | DELETE | `/api/oauth2-server/signing-keys/{kid}` | Soft-delete a key (`409 last_key` / `current_key`). |
+
+### CIMD client-authentication keys
+
+These routes manage the ES256 keys that sign outbound `private_key_jwt` assertions. They are available in proxy, local, and hybrid modes.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/cimd-client-keys` | Generate an ES256 CIMD key. |
+| GET | `/api/cimd-client-keys` | List active CIMD keys. |
+| PUT | `/api/cimd-client-keys/{kid}/current` | Promote a CIMD key immediately. |
+| DELETE | `/api/cimd-client-keys/{kid}` | Remove a non-signing CIMD key. |
+
+The first generated key is immediately usable. Later generated keys remain public during the activation grace period.
+
+The routes never return private key material, ciphertext, or client assertions. `/oauth2/jwks.json` does not contain CIMD key IDs.
+
+Token-signing key routes remain unavailable in proxy mode.
 
 ## Related
 

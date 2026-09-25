@@ -41,6 +41,25 @@ func TestBranchKeySubject_SigningKey(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestBranchKeySubject_CIMDClientAuthenticationKey(t *testing.T) {
+	subject := NewCIMDClientAuthenticationKeyBranchKeySubject(id.NewKeyID("cimd-kid-123"))
+
+	require.NoError(t, subject.Validate())
+	assert.Equal(t, BranchKeySubjectKindCIMDClientAuthenticationKey, subject.Kind())
+	assert.Equal(t, "cimd-kid-123", subject.Identifier())
+
+	encryptionContext := subject.EncryptionContext()
+	require.Len(t, encryptionContext, 1, "the CIMD key AAD must have exactly one subject")
+	assert.Equal(t, map[string]string{ContextKeyKID: "cimd-kid-123"}, encryptionContext)
+
+	keyID, ok := subject.KeyID()
+	require.True(t, ok)
+	assert.Equal(t, id.NewKeyID("cimd-kid-123"), keyID)
+
+	_, ok = subject.ServiceID()
+	assert.False(t, ok)
+}
+
 func TestBranchKeySubject_IdentifierZeroValue(t *testing.T) {
 	assert.Equal(t, "<unknown>", BranchKeySubject{}.Identifier())
 }
@@ -108,6 +127,15 @@ func TestBranchKeySubjectFromEncryptionContext(t *testing.T) {
 			tt.assertSubject(t, subject)
 		})
 	}
+}
+
+func TestBranchKeySubjectFromEncryptionContextCIMDClientAuthenticationKey(t *testing.T) {
+	subject, err := BranchKeySubjectFromEncryptionContext(map[string]string{ContextKeyKID: "cimd-kid-123"})
+	require.NoError(t, err)
+	assert.Equal(t, BranchKeySubjectKindCIMDClientAuthenticationKey, subject.Kind())
+	keyID, ok := subject.KeyID()
+	require.True(t, ok)
+	assert.Equal(t, id.NewKeyID("cimd-kid-123"), keyID)
 }
 
 func TestBranchKeySubjectValidate(t *testing.T) {

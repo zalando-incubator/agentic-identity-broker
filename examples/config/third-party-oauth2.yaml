@@ -5,6 +5,14 @@
 #
 # Feature: Third-Party OAuth2 Session Management (008-thirdparty-oauth2-sessions)
 
+# CIMD confidential-service precondition:
+# If a service uses `private_key_jwt`, set this existing setting to a stable public HTTPS URL.
+# The broker derives the service client ID and public metadata URLs from this URL.
+# CIMD confidential services reject HTTP URLs.
+server:
+  enduser:
+    public_url: "https://identity-broker.example.com"
+
 third_party_oauth2:
   # JWE signing key for state tokens (base64-encoded, 32+ bytes for A256GCMKW)
   #

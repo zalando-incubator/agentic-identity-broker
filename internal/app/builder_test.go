@@ -22,6 +22,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	agentsservice "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
 	domstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
@@ -1142,7 +1144,7 @@ func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {
 		}
 		t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
 
-		count, err := adapter.SigningKeys().CountActive(context.Background())
+		count, err := adapter.SigningKeys().CountActiveInDomain(context.Background(), domstorage.KeyDomainTokenSigning)
 		if err != nil {
 			t.Fatalf("CountActive() failed: %v", err)
 		}
@@ -1150,7 +1152,7 @@ func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {
 			t.Fatalf("expected one auto-generated signing key, got %d", count)
 		}
 
-		current, err := adapter.SigningKeys().GetCurrent(context.Background())
+		current, err := adapter.SigningKeys().GetCurrentInDomain(context.Background(), domstorage.KeyDomainTokenSigning)
 		if err != nil {
 			t.Fatalf("GetCurrent() failed: %v", err)
 		}
@@ -1219,6 +1221,7 @@ func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {
 		err := adapter.SigningKeys().Create(context.Background(), &domstorage.SigningKey{
 			ID:                  id.NewSigningKeyID(),
 			KID:                 id.NewKeyID("550e8400-e29b-41d4-a716-446655440000"),
+			KeyDomain:           domstorage.KeyDomainTokenSigning,
 			Algorithm:           "ES256",
 			PrivateKeyEncrypted: []byte("ciphertext"),
 			IsCurrent:           true,
@@ -1335,7 +1338,7 @@ func TestBuilder_HybridModeSigningKeyReadiness(t *testing.T) {
 			_ = app.Shutdown(shutdownCtx)
 		}()
 
-		count, err := adapter.SigningKeys().CountActive(context.Background())
+		count, err := adapter.SigningKeys().CountActiveInDomain(context.Background(), domstorage.KeyDomainTokenSigning)
 		if err != nil {
 			t.Fatalf("CountActive() failed: %v", err)
 		}
@@ -1343,7 +1346,7 @@ func TestBuilder_HybridModeSigningKeyReadiness(t *testing.T) {
 			t.Fatalf("expected one auto-generated signing key, got %d", count)
 		}
 
-		current, err := adapter.SigningKeys().GetCurrent(context.Background())
+		current, err := adapter.SigningKeys().GetCurrentInDomain(context.Background(), domstorage.KeyDomainTokenSigning)
 		if err != nil {
 			t.Fatalf("GetCurrent() failed: %v", err)
 		}
@@ -1568,5 +1571,222 @@ func TestProxyOAuth2ConfigUpstreamTimeout(t *testing.T) {
 		if p.UpstreamTimeout != tt.want {
 			t.Errorf("UpstreamTimeout with configured=%v = %v, want %v", tt.configured, p.UpstreamTimeout, tt.want)
 		}
+	}
+}
+
+// TestBuilder_CIMDKeyStartupReadiness specifies the mode-independent outbound-CIMD
+// key startup contract. It deliberately uses the production Builder and memory adapter:
+// the only test data written directly is the persisted service state that a later
+// service-registration implementation will create.
+func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
+	const cimdAuthMethod = model.TokenEndpointAuthMethod("private_key_jwt")
+
+	type modeCase struct {
+		name string
+		mode string
+	}
+	modes := []modeCase{
+		{name: "proxy", mode: "proxy"},
+		{name: "local", mode: "local"},
+		{name: "hybrid", mode: "hybrid"},
+	}
+
+	newConfig := func(mode string) *ports.Config {
+		cfg := &ports.Config{
+			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			Server: ports.ServerConfig{
+				EndUser: ports.ServerInstanceConfig{
+					Port: 8000, Bind: "::1", PublicURL: "https://broker.example.com",
+					Authentication: ports.AuthenticationConfig{
+						Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"},
+					},
+				},
+				Admin: ports.ServerInstanceConfig{
+					Port: 14000, Bind: "::1", PublicURL: "https://broker.example.com",
+					Authentication: ports.AuthenticationConfig{
+						Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"},
+					},
+				},
+				Shutdown: ports.ShutdownConfig{Timeout: 5 * time.Second},
+			},
+			Storage: ports.StorageConfig{
+				Backend:  "memory",
+				Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
+			},
+			ThirdPartyOAuth2: ports.ThirdPartyOAuth2Config{
+				JWESigningKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+			},
+			Encryption: ports.EncryptionConfig{Memory: &ports.MemoryConfig{RawKey: testutil.TestKEKBase64}},
+			OAuth2AuthServer: ports.OAuth2AuthServerConfig{
+				Mode: servermode.Mode(mode),
+			},
+		}
+
+		switch mode {
+		case "proxy":
+			cfg.OAuth2AuthServer.Proxy = ports.ProxyModeConfig{
+				UpstreamIssuerURI:         "https://issuer.example.com",
+				UpstreamAuthorizeEndpoint: "https://issuer.example.com/authorize",
+				UpstreamTokenEndpoint:     "https://issuer.example.com/token",
+			}
+		case "local":
+			cfg.OAuth2AuthServer.Local = ports.LocalModeConfig{TokenTTL: time.Hour}
+		case "hybrid":
+			cfg.OAuth2AuthServer.Proxy = ports.ProxyModeConfig{
+				UpstreamIssuerURI:         "https://issuer.example.com",
+				UpstreamAuthorizeEndpoint: "https://issuer.example.com/authorize",
+				UpstreamTokenEndpoint:     "https://issuer.example.com/token",
+			}
+			cfg.OAuth2AuthServer.Local = ports.LocalModeConfig{TokenTTL: time.Hour}
+		default:
+			t.Fatalf("unsupported test mode %q", mode)
+		}
+
+		return cfg
+	}
+
+	newStorage := func(t *testing.T) *storage.Adapter {
+		t.Helper()
+		adapter, err := storage.NewAdapter(&ports.StorageConfig{
+			Backend:  "memory",
+			Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
+		})
+		require.NoError(t, err)
+		return adapter
+	}
+
+	build := func(t *testing.T, mode string, adapter *storage.Adapter, publicURL string) (*App, error) {
+		t.Helper()
+		cfg := newConfig(mode)
+		cfg.Server.EndUser.PublicURL = publicURL
+		builder := NewBuilder().
+			WithConfig(cfg).
+			WithStorage(adapter).
+			WithLogger(slog.New(slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelError})))
+		if mode != "local" {
+			builder.WithJWKSPublisher(&mockJWKSPublisher{})
+		}
+		app, err := builder.Build()
+		if app != nil && app.Shutdown != nil {
+			t.Cleanup(func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = app.Shutdown(shutdownCtx)
+			})
+		}
+		return app, err
+	}
+
+	countCIMDKeys := func(t *testing.T, adapter *storage.Adapter) int {
+		t.Helper()
+		count, err := adapter.SigningKeys().CountActiveInDomain(context.Background(), domstorage.KeyDomainCIMDClientAuthentication)
+		require.NoError(t, err)
+		return count
+	}
+
+	persistCIMDService := func(t *testing.T, adapter *storage.Adapter) id.ServiceID {
+		t.Helper()
+		serviceID := id.NewServiceID()
+		service := &model.ThirdpartyOAuth2ProviderEntity{
+			ID:                      serviceID,
+			DisplayName:             "CIMD upstream",
+			ClientID:                id.ClientID("https://broker.example.com/.well-known/oauth-client/" + serviceID.String()),
+			Secret:                  model.NewAbsentSecret(),
+			TokenEndpointAuthMethod: cimdAuthMethod,
+			IssuerURI:               "https://issuer.example.com",
+		}
+		require.NoError(t, adapter.Services().Create(context.Background(), service))
+		return serviceID
+	}
+
+	for _, mode := range modes {
+		t.Run(mode.name+" starts without a CIMD key when no CIMD service is persisted", func(t *testing.T) {
+			adapter := newStorage(t)
+
+			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
+			require.NoError(t, err)
+			require.NotNil(t, app)
+			assert.Zero(t, countCIMDKeys(t, adapter))
+			assert.NotNil(t, app.CIMDKeyService)
+			assert.NotNil(t, app.CIMDKeyReadiness)
+			if app.CIMDKeyReadiness != nil {
+				assert.ErrorIs(t, app.CIMDKeyReadiness.RequirePublishedKey(context.Background()), ports.ErrCIMDPublicKeyUnavailable)
+			}
+		})
+
+		t.Run(mode.name+" bootstraps a persisted CIMD service with an immediately usable published key", func(t *testing.T) {
+			adapter := newStorage(t)
+			persistCIMDService(t, adapter)
+
+			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
+			require.NoError(t, err)
+			require.NotNil(t, app)
+			require.NotNil(t, app.CIMDKeyService)
+			require.NotNil(t, app.CIMDKeyReadiness)
+			assert.Equal(t, 1, countCIMDKeys(t, adapter))
+
+			key, err := adapter.SigningKeys().GetCurrentInDomain(context.Background(), domstorage.KeyDomainCIMDClientAuthentication)
+			require.NoError(t, err)
+			assert.False(t, key.ActivatesAt.After(time.Now()), "the first CIMD key must be usable immediately")
+			require.NoError(t, app.CIMDKeyReadiness.RequirePublishedKey(context.Background()))
+
+			publicKeys, err := app.CIMDKeyService.PublicJWKSet(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, 1, publicKeys.Len())
+		})
+
+		t.Run(mode.name+" fails closed when persisted CIMD key publication is unavailable", func(t *testing.T) {
+			adapter := newStorage(t)
+			persistCIMDService(t, adapter)
+			require.NoError(t, adapter.SigningKeys().Create(context.Background(), &domstorage.SigningKey{
+				ID:                  id.NewSigningKeyID(),
+				KID:                 id.NewKeyID("cimd-unpublishable-" + mode.mode),
+				KeyDomain:           domstorage.KeyDomainCIMDClientAuthentication,
+				Algorithm:           "ES256",
+				PrivateKeyEncrypted: []byte("not-an-encrypted-private-key"),
+				IsCurrent:           true,
+				ActivatesAt:         time.Now().Add(-time.Minute),
+				CreatedAt:           time.Now().UTC(),
+			}))
+
+			_, err := build(t, mode.mode, adapter, "https://broker.example.com")
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ports.ErrCIMDPublicKeyUnavailable)
+		})
+
+		t.Run(mode.name+" persists a later CIMD service without implicitly provisioning a key", func(t *testing.T) {
+			adapter := newStorage(t)
+			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
+			require.NoError(t, err)
+			require.NotNil(t, app)
+			assert.NotNil(t, app.CIMDKeyReadiness)
+
+			persistCIMDService(t, adapter)
+			assert.Zero(t, countCIMDKeys(t, adapter), "service registration must not provision a CIMD key")
+		})
+
+		t.Run(mode.name+" rejects changed public origin without rewriting the CIMD identity", func(t *testing.T) {
+			adapter := newStorage(t)
+			serviceID := persistCIMDService(t, adapter)
+			app, err := build(t, mode.mode, adapter, "https://broker.example.com")
+			require.NoError(t, err)
+			metadata, err := app.CIMDMetadataProvider.Metadata(context.Background(), serviceID)
+			require.NoError(t, err)
+			persisted, err := adapter.Services().Get(context.Background(), serviceID)
+			require.NoError(t, err)
+			keyCount := countCIMDKeys(t, adapter)
+
+			_, err = build(t, mode.mode, adapter, "https://broker.changed.example")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "server.enduser.public_url")
+			assert.Equal(t, metadata.ClientID, persisted.ClientID.String())
+			assert.Equal(t, keyCount, countCIMDKeys(t, adapter))
+
+			restored, err := build(t, mode.mode, adapter, "https://broker.example.com")
+			require.NoError(t, err)
+			restoredMetadata, err := restored.CIMDMetadataProvider.Metadata(context.Background(), serviceID)
+			require.NoError(t, err)
+			assert.Equal(t, metadata.ClientID, restoredMetadata.ClientID)
+		})
 	}
 }

@@ -32,9 +32,10 @@ info:
     ### Client Secret Protection (SR-003)
 
     - Client secrets are **NEVER** transmitted in plaintext to the frontend
-    - All API responses redact secrets with the value `"REDACTED"`
-    - Secrets are encrypted at rest using AES-256-GCM
-    - Update operations support secret rotation
+    - Static confidential-service responses redact `client_secret` as `"REDACTED"`
+    - Public (`none`) and CIMD (`private_key_jwt`) service responses omit `client_secret` because they store no shared secret
+    - Static confidential-service secrets are encrypted at rest using AES-256-GCM
+    - Update operations support static confidential-service secret rotation
 
     ### URL Validation
 
@@ -95,6 +96,8 @@ tags:
     description: Broker-issued client credential management for agents
   - name: Signing Keys
     description: OAuth2 server signing key management
+  - name: CIMD Client Keys
+    description: Administrative lifecycle operations for the broker-global CIMD client-authentication key set
 
 paths:
   /health:
@@ -459,7 +462,7 @@ paths:
 
         Returns a direct array of service objects (no envelope).
 
-        **Security**: All `client_secret` fields are redacted as `"REDACTED"` for confidential services; the property is omitted for public services, which hold no credential
+        **Security**: Static confidential-service `client_secret` fields are redacted as `"REDACTED"`. The property is omitted for public (`none`) and CIMD (`private_key_jwt`) services because neither stores a shared secret.
       operationId: listServices
       tags:
         - Services
@@ -530,10 +533,17 @@ paths:
 
         **Validation Rules**:
         - `display_name`: Required, max 255 characters
-        - `client_id`: Required, unique across all services
-        - `client_secret`: Required unless `token_endpoint_auth_method` is `none` (encrypted at rest, never returned)
+        - `client_id`: Required and unique across services for static confidential and public services, except Google derives it from its credential document
+        - `client_secret`: Required for static confidential services (encrypted at rest, never returned); public services accept only omitted, null, or empty values
         - `issuer_uri`: Required, must be HTTPS URL
         - `scopes`: Optional. Omit it or provide an empty array when the provider does not use OAuth2 scopes.
+
+        **CIMD confidential mode**: `token_endpoint_auth_method: private_key_jwt` requires
+        `client_id` to be omitted or null and `client_secret` to be omitted, null, or empty.
+        A non-empty value for either field, or `oauth2_flavor: google`, returns the existing
+        `400` error representation before endpoint discovery or provider traffic. The broker
+        creates the service ID first, then assigns the immutable HTTPS Client ID Metadata
+        Document URL for the service lifetime.
 
         **Discovery Modes**:
 
@@ -545,7 +555,7 @@ paths:
         2. **Manual Configuration** (`enable_discovery: false`):
            - Requires `endpoints.token_endpoint` and `endpoints.authorize_endpoint`
 
-        **Security**: `client_secret` is encrypted with AES-256-GCM before storage
+        **Security**: Static confidential-service `client_secret` values are encrypted with AES-256-GCM before storage.
       operationId: createService
       tags:
         - Services
@@ -635,7 +645,7 @@ paths:
       description: |
         Retrieve detailed configuration for a specific OAuth2 service.
 
-        **Security**: All `client_secret` fields are redacted as `"REDACTED"` for confidential services; the property is omitted for public services, which hold no credential
+        **Security**: Static confidential-service `client_secret` fields are redacted as `"REDACTED"`. The property is omitted for public (`none`) and CIMD (`private_key_jwt`) services because neither stores a shared secret.
       operationId: getService
       tags:
         - Services
@@ -696,13 +706,15 @@ paths:
         **Update Semantics**:
         - All fields in the request body will update the service
         - Omitted optional fields are preserved from existing configuration
-        - `token_endpoint_auth_method` is evaluated from the request alone. Omit it or set it to `null` to make the service confidential, regardless of its stored value; a `client_secret` is then required.
+        - `token_endpoint_auth_method` is evaluated from the complete replacement request. Omit it or set it to `null` for static confidential authentication, which requires a new non-empty `client_secret` in that request.
+        - `token_endpoint_auth_method: private_key_jwt` requires `client_id` to be omitted or null and `client_secret` to be omitted, null, or empty. A valid replacement removes any prior static secret and assigns the stable broker-generated HTTPS Client ID Metadata Document URL.
+        - A private-to-static replacement requires a new non-empty `client_secret`. A private-to-public replacement removes any secret state and stops client assertion use.
         - Updating a service to `token_endpoint_auth_method: none` removes the stored credential.
         - `created_at` timestamp is preserved
         - `updated_at` timestamp is set to current time
 
         **Secret Rotation**:
-        - Provide new `client_secret` to rotate credentials
+        - Provide new `client_secret` to rotate static confidential-service credentials
         - New secret is encrypted before storage
         - Old secret is securely discarded
 
@@ -710,7 +722,7 @@ paths:
         - If `enable_discovery: true`, endpoints are re-fetched
         - Useful for services that change endpoint URLs
 
-        **Security**: `client_secret` is redacted in response
+        **Security**: Static confidential-service `client_secret` values are redacted in responses. Public and CIMD service responses omit the property.
         - `protected_resources` omitted or `null`: preserves the current protected-resource set
         - `protected_resources` present (including `[]`): replaces the entire set and requires `If-Match`
 
@@ -1563,6 +1575,141 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 
+  /api/cimd-client-keys:
+    post:
+      summary: Generate a CIMD client-authentication key
+      description: |
+        Generate an ES256 key in the distinct broker-global CIMD client-authentication key domain.
+        This key signs outbound `private_key_jwt` client assertions only; it never signs broker-issued
+        access tokens.
+
+        **Key Lifecycle**:
+        - The first generated CIMD key becomes usable immediately.
+        - A later generated current key is published in the CIMD JWK Set during the existing activation
+          grace period, while the previous usable key continues signing assertions.
+        - Private key material is never exposed by this API.
+      operationId: generateCIMDClientKey
+      tags:
+        - CIMD Client Keys
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CIMDClientKeyGenerateRequest'
+            examples:
+              default_algorithm:
+                summary: Use the default algorithm (ES256)
+                value: {}
+              explicit_es256:
+                summary: Explicit ES256
+                value:
+                  algorithm: ES256
+      responses:
+        '201':
+          description: CIMD client-authentication key generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CIMDClientKey'
+              example:
+                kid: cimd-key-2026-09-21-001
+                algorithm: ES256
+                is_current: true
+                activates_at: '2026-09-21T10:30:00Z'
+                created_at: '2026-09-21T10:30:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    get:
+      summary: List active CIMD client-authentication keys
+      description: |
+        Retrieve active CIMD client-authentication keys in creation order (newest first).
+        Responses contain metadata only and never include private key bytes, PEM, ciphertext,
+        branch-key identifiers, or client assertions.
+      operationId: listCIMDClientKeys
+      tags:
+        - CIMD Client Keys
+      responses:
+        '200':
+          description: CIMD client-authentication keys retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CIMDClientKeyListResponse'
+              example:
+                items:
+                  - kid: cimd-key-2026-09-21-001
+                    algorithm: ES256
+                    is_current: true
+                    activates_at: '2026-09-21T10:40:00Z'
+                    created_at: '2026-09-21T10:30:00Z'
+                  - kid: cimd-key-2026-09-01-001
+                    algorithm: ES256
+                    is_current: false
+                    activates_at: '2026-09-01T09:00:00Z'
+                    created_at: '2026-09-01T09:00:00Z'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/cimd-client-keys/{kid}/current:
+    put:
+      summary: Promote a CIMD client-authentication key immediately
+      description: |
+        Promote an existing CIMD client-authentication key to current immediately. The promoted key
+        becomes usable to sign subsequent client assertions at promotion time. The prior key remains
+        available for verification through the CIMD JWK Set.
+      operationId: promoteCIMDClientKey
+      tags:
+        - CIMD Client Keys
+      parameters:
+        - $ref: '#/components/parameters/CIMDClientKeyId'
+      responses:
+        '200':
+          description: CIMD client-authentication key promoted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CIMDClientKey'
+              example:
+                kid: cimd-key-2026-09-01-001
+                algorithm: ES256
+                is_current: true
+                activates_at: '2026-09-21T10:45:00Z'
+                created_at: '2026-09-01T09:00:00Z'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/cimd-client-keys/{kid}:
+    delete:
+      summary: Remove a non-signing CIMD client-authentication key
+      description: |
+        Remove a CIMD client-authentication key that is neither the last key, the current key, nor an
+        effective-current key that can still sign assertions. Removed keys are no longer published in
+        the CIMD JWK Set.
+      operationId: deleteCIMDClientKey
+      tags:
+        - CIMD Client Keys
+      parameters:
+        - $ref: '#/components/parameters/CIMDClientKeyId'
+      responses:
+        '204':
+          description: CIMD client-authentication key removed successfully (no content)
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          description: Cannot remove the last, current, or effective-current CIMD client-authentication key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
 components:
   parameters:
     AgentId:
@@ -1640,6 +1787,14 @@ components:
       schema:
         type: string
         example: key-2025-12-19-001
+    CIMDClientKeyId:
+      name: kid
+      in: path
+      required: true
+      description: Globally unique identifier of the CIMD client-authentication key
+      schema:
+        type: string
+        example: cimd-key-2026-09-21-001
 
   headers:
     PreferenceApplied:
@@ -2216,29 +2371,32 @@ components:
           description: |
             OAuth2 client_id for this service.
 
-            For `oauth2_flavor: standard`: must be provided in the request.
-            For `oauth2_flavor: google`: automatically extracted from the `client_id` field
-            in the service account JSON credential; the request `client_id` field is ignored.
+            For `oauth2_flavor: standard`: an operator supplies the value for static confidential
+            and public services. For `oauth2_flavor: google`: it is extracted from the `client_id`
+            field in the service account JSON credential. For `private_key_jwt`: the broker generates
+            the immutable HTTPS Client ID Metadata Document URL
+            `<enduser-public-url>/.well-known/oauth-client/<service-id>` after allocating the service
+            ID; an operator cannot supply or replace it during the service lifetime.
           example: Iv1.1234567890abcdef
         client_secret:
           type: string
           description: |
-            Authentication credential for this service. The meaning varies by `oauth2_flavor`:
+            Authentication credential for a static confidential service. The meaning varies by
+            `oauth2_flavor`:
             - **standard**: Plain OAuth2 client secret string
             - **google**: Serialized Google service account JSON key document
 
-            **SECURITY**: For a confidential service this always returns "REDACTED"; the stored
-            secret is never transmitted. For a public service
-            (`token_endpoint_auth_method: none`) this property is **omitted entirely**, because no
-            credential exists — a redacted placeholder would falsely imply a stored secret.
-            Client secrets are never transmitted to the frontend.
-            Secrets are encrypted at rest using AES-256-GCM.
+            **SECURITY**: For a static confidential service this always returns `"REDACTED"`; the
+            stored secret is never transmitted. For public (`token_endpoint_auth_method: none`) and
+            CIMD (`token_endpoint_auth_method: private_key_jwt`) services this property is omitted
+            entirely because no shared credential exists. Client secrets are encrypted at rest using
+            AES-256-GCM.
           example: REDACTED
           readOnly: true
         token_endpoint_auth_method:
           type: string
           nullable: true
-          enum: [none, null]
+          enum: [none, private_key_jwt, null]
           readOnly: true
           description: |
             Client authentication method for this service's upstream token endpoint.
@@ -2246,7 +2404,11 @@ components:
             - `none` — the service is a **public client**. It stores no credential and transmits
               none upstream; it authenticates the authorization-code exchange with the PKCE code
               verifier alone.
-            - `null` — the service is a **confidential client**. It declares no method and
+            - `private_key_jwt` — the service is a CIMD **confidential client**. The broker assigns
+              its stable HTTPS Client ID Metadata Document URL, stores no shared secret, and
+              authenticates upstream with an ES256 client assertion from the dedicated CIMD
+              client-authentication key set.
+            - `null` — the service is a **static confidential client**. It declares no method and
               authenticates upstream with its stored client secret.
           example: none
         oauth2_flavor:
@@ -2353,26 +2515,35 @@ components:
             OAuth2 authentication variant. Defaults to `standard` if omitted.
             Auto-detected as `github` when the token endpoint host equals `github.com`.
 
-            - **standard**: `client_secret` must be a non-empty plain string; `client_id` is required
+            - **standard**: Static confidential services require a non-empty plain `client_secret`;
+              public services require `client_id`
             - **google**: `client_secret` must be a valid Google service account JSON key (≤32 KB);
               `client_id` is derived from the JSON's `client_id` field and need not be provided;
               `issuer_uri` is optional; `endpoints` are derived from the service account JSON
-            - **github**: Same as `standard` but scopes in token responses are parsed as comma-separated
+            - **github**: Same as static confidential standard but scopes in token responses are parsed as comma-separated
+
+            `private_key_jwt` requires a non-credential-derived variant; `google` is rejected.
           example: standard
         client_id:
           type: string
+          nullable: true
           description: |
             OAuth2 client_id for this service.
 
-            Required when `oauth2_flavor` is `standard` or `github`.
-            Optional when `oauth2_flavor` is `google` — automatically extracted from the service account JSON.
+            Required when `oauth2_flavor` is `standard` or `github`, except when
+            `token_endpoint_auth_method` is `private_key_jwt`. Optional when `oauth2_flavor` is
+            `google` because it is extracted from the service account JSON.
+
+            When `token_endpoint_auth_method` is `private_key_jwt`, this property must be omitted or
+            null. After the broker allocates the service ID, it generates the immutable HTTPS Client
+            ID Metadata Document URL `<enduser-public-url>/.well-known/oauth-client/<service-id>`.
           example: Iv1.1234567890abcdef
           minLength: 1
         client_secret:
           type: string
           nullable: true
           description: |
-            Authentication credential for this service.
+            Authentication credential for a static confidential service.
 
             The content depends on `oauth2_flavor`:
             - **standard** / **github**: Non-empty OAuth2 client secret string
@@ -2381,35 +2552,32 @@ components:
                 `client_email` (non-empty), `token_uri` (non-empty), `client_id` (non-empty).
                 Maximum size: 32 KB.
 
-            **SECURITY**: Encrypted at rest using AES-256-GCM.
-            Never returned in API responses (always "REDACTED").
+            **SECURITY**: Static confidential-service secrets are encrypted at rest using AES-256-GCM
+            and return only as `"REDACTED"` on read responses.
 
-            **Conditionally required**: If `token_endpoint_auth_method` is omitted or `null`,
-            `client_secret` is REQUIRED and must contain a non-empty value.
-
-            If `token_endpoint_auth_method` is `none`, this property can be omitted or set to
-            `null` or `""`. A non-empty value returns 400. The broker never stores a secret for a
-            public service.
+            If `token_endpoint_auth_method` is omitted or `null`, this property is REQUIRED and must
+            contain a non-empty value. If the method is `none` or `private_key_jwt`, it can be
+            omitted, null, or `""`; a non-empty value returns the existing `400` error representation.
+            The broker never stores a secret for public or CIMD services.
           example: ghp_secretkey1234567890abcdef
           writeOnly: true
         token_endpoint_auth_method:
           type: string
           nullable: true
-          enum: [none, null]
+          enum: [none, private_key_jwt, null]
           description: |
-            Declares that the upstream token endpoint expects **no client authentication**, making
-            this service a public client (RFC 6749 §2.1, RFC 7591 `token_endpoint_auth_method`).
+            Client authentication method for the upstream token endpoint. Omit this property, or send
+            `null`, for a static confidential client; this requires a non-empty `client_secret`.
 
-            Omit this property, or send `null`, for a confidential client; there is no default and
-            no value is ever inferred or assigned on your behalf. `null` means exactly what omission
-            means, so the `null` this property carries in a read response can be submitted straight
-            back in an update without special handling.
+            When `none`, the service is a public client: `client_secret` can be omitted, null, or
+            `""`, `client_id` remains required, and `oauth2_flavor: google` is rejected.
 
-            When `none`:
-            - `client_secret` can be omitted, set to `null`, or set to `""`. It MUST NOT contain a non-empty value.
-            - `client_id` is still REQUIRED; it is the only identity presented upstream.
-            - `oauth2_flavor: google` is REJECTED, because the Google variant derives its client
-              identifier from the credential document and a public service has none.
+            When `private_key_jwt`, the service is a CIMD confidential client: `client_id` must be
+            omitted or null, and `client_secret` can be omitted, null, or `""`. A non-empty value for
+            either field returns the existing `400` error representation. `oauth2_flavor: google` is
+            rejected. The broker validates these contradictions before endpoint discovery or provider
+            traffic, allocates the service ID, and assigns its immutable HTTPS Client ID Metadata
+            Document URL.
           example: none
         issuer_uri:
           type: string
@@ -2487,66 +2655,71 @@ components:
             OAuth2 authentication variant. Defaults to `standard` if omitted.
             Auto-detected as `github` when the token endpoint host equals `github.com`.
 
-            - **standard**: `client_secret` must be a non-empty plain string; `client_id` is required
+            - **standard**: Static confidential services require a non-empty plain `client_secret`;
+              public services require `client_id`
             - **google**: `client_secret` must be a valid Google service account JSON key (≤32 KB);
               `client_id` is derived from the JSON's `client_id` field and need not be provided;
               `issuer_uri` is optional; `endpoints` are derived from the service account JSON
-            - **github**: Same as `standard` but scopes in token responses are parsed as comma-separated
+            - **github**: Same as static confidential standard but scopes in token responses are parsed as comma-separated
+
+            `private_key_jwt` requires a non-credential-derived variant; `google` is rejected.
           example: standard
         client_id:
           type: string
+          nullable: true
           description: |
             OAuth2 client_id for this service.
 
-            Required when `oauth2_flavor` is `standard` or `github`.
-            Optional when `oauth2_flavor` is `google` — automatically extracted from the service account JSON.
+            Required when `oauth2_flavor` is `standard` or `github`, except when
+            `token_endpoint_auth_method` is `private_key_jwt`. Optional when `oauth2_flavor` is
+            `google` because it is extracted from the service account JSON.
+
+            When `token_endpoint_auth_method` is `private_key_jwt`, this property must be omitted or
+            null. The broker assigns the immutable HTTPS Client ID Metadata Document URL
+            `<enduser-public-url>/.well-known/oauth-client/<service-id>` for the service lifetime.
           example: Iv1.1234567890abcdef
           minLength: 1
         client_secret:
           type: string
           nullable: true
           description: |
-            Authentication credential for this service (provide new value to rotate).
+            Authentication credential for a static confidential service. Provide a new value to rotate.
 
             The content depends on `oauth2_flavor`:
             - **standard** / **github**: Non-empty OAuth2 client secret string
             - **google**: Serialized Google service account JSON key document (≤32 KB)
 
-            **SECURITY**: Encrypted at rest, never returned in responses.
+            **SECURITY**: Static confidential-service secrets are encrypted at rest and never returned
+            in responses.
 
-            **Conditionally required**: If `token_endpoint_auth_method` is omitted or `null`,
-            `client_secret` is REQUIRED and must contain a non-empty value.
-
-            If `token_endpoint_auth_method` is `none`, this property can be omitted or set to
-            `null` or `""`. A non-empty value returns 400. The broker never stores a secret for a
-            public service.
+            If `token_endpoint_auth_method` is omitted or `null`, this property is REQUIRED and must
+            contain a non-empty value. If the method is `none` or `private_key_jwt`, it can be
+            omitted, null, or `""`; a non-empty value returns the existing `400` error representation.
+            The broker never stores a secret for public or CIMD services.
           example: ghp_newsecretkey9876543210zyxwvu
           writeOnly: true
         token_endpoint_auth_method:
           type: string
           nullable: true
-          enum: [none, null]
+          enum: [none, private_key_jwt, null]
           description: |
-            Declares that the upstream token endpoint expects **no client authentication**, making
-            this service a public client (RFC 6749 §2.1, RFC 7591 `token_endpoint_auth_method`).
+            Client authentication method for the upstream token endpoint. This request retains the
+            existing full-replacement semantics: the method is evaluated from the complete replacement
+            request. Omit this property, or send `null`, for a static confidential client; this
+            requires a non-empty `client_secret` in the request.
 
-            Omit this property, or send `null`, for a confidential client; there is no default and
-            no value is ever inferred or assigned on your behalf. `null` means exactly what omission
-            means, so the `null` this property carries in a read response can be submitted straight
-            back in an update without special handling.
+            When `none`, the service is a public client: `client_secret` can be omitted, null, or
+            `""`, `client_id` remains required, and `oauth2_flavor: google` is rejected. The update
+            removes any stored secret.
 
-            When `none`:
-            - `client_secret` can be omitted, set to `null`, or set to `""`. It MUST NOT contain a non-empty value.
-            - `client_id` is still REQUIRED; it is the only identity presented upstream.
-            - `oauth2_flavor: google` is REJECTED, because the Google variant derives its client
-              identifier from the credential document and a public service has none.
+            When `private_key_jwt`, the service is a CIMD confidential client: `client_id` must be
+            omitted or null, and `client_secret` can be omitted, null, or `""`. A non-empty value for
+            either field returns the existing `400` error representation. `oauth2_flavor: google` is
+            rejected. The broker validates the complete replacement before removing a prior static
+            secret and assigning the stable HTTPS Client ID Metadata Document URL.
 
-            **Full replacement**: this request replaces the service representation in full. The
-            method is evaluated from the request alone — omitting it, or sending `null`, makes the
-            updated service confidential regardless of its stored value, and the request is
-            therefore rejected unless it also supplies a `client_secret`. This mirrors the existing
-            rule that the client secret must be re-sent on every update. Updating a confidential
-            service to `none` REMOVES the stored credential, leaving no dormant secret.
+            A private-to-static update requires a new non-empty `client_secret`. A private-to-public
+            update removes any secret state and stops client assertion use.
           example: none
         issuer_uri:
           type: string
@@ -2870,6 +3043,67 @@ components:
           description: List of active signing keys (newest first)
           items:
             $ref: '#/components/schemas/SigningKeyResponse'
+
+    CIMDClientKeyGenerateRequest:
+      type: object
+      properties:
+        algorithm:
+          type: string
+          enum: [ES256]
+          default: ES256
+          description: ES256 is the default and only accepted CIMD client-authentication key algorithm.
+          example: ES256
+
+    CIMDClientKey:
+      type: object
+      required:
+        - kid
+        - algorithm
+        - is_current
+        - activates_at
+        - created_at
+      description: |
+        Public CIMD client-authentication key metadata. This representation never includes private key
+        bytes, PEM, ciphertext, branch-key identifiers, or client assertions.
+      properties:
+        kid:
+          type: string
+          description: Globally unique identifier of this CIMD client-authentication key
+          example: cimd-key-2026-09-21-001
+        algorithm:
+          type: string
+          enum: [ES256]
+          description: Signing algorithm used by this key
+          example: ES256
+        is_current:
+          type: boolean
+          description: Whether this key is the designated current CIMD client-authentication key
+          example: true
+        activates_at:
+          type: string
+          format: date-time
+          description: |
+            Earliest time this key signs client assertions. The first generated key is usable immediately
+            (`activates_at` equals `created_at`). A later generated current key is published in the CIMD
+            JWK Set during the existing activation grace period. A promoted key becomes usable immediately
+            (`activates_at` equals the promotion time).
+          example: '2026-09-21T10:30:00Z'
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the key was created (RFC3339 format)
+          example: '2026-09-21T10:30:00Z'
+
+    CIMDClientKeyListResponse:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          description: Active CIMD client-authentication keys in creation order (newest first)
+          items:
+            $ref: '#/components/schemas/CIMDClientKey'
 
     ErrorResponse:
       type: object

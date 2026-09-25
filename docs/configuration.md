@@ -277,8 +277,9 @@ The Identity Broker runs two independent HTTP servers on separate ports:
 |--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
 | `server.enduser.port` | integer | `8000` | 1-65535 | No | `IDENTITY_BROKER_SERVER_ENDUSER_PORT` | `--server.enduser.port` | Port for end-user server. Must differ from admin port. |
 | `server.enduser.bind` | string | `::` | IPv4/IPv6 address or hostname | No | `IDENTITY_BROKER_SERVER_ENDUSER_BIND` | `--server.enduser.bind` | Bind address for end-user server. Use `::` for dual-stack (IPv6+IPv4), `0.0.0.0` for IPv4 only, or `127.0.0.1` for localhost only. |
+| `server.enduser.public_url` | URL | `http://localhost:8000` | HTTP or HTTPS URL | Yes | `IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL` | `--server.enduser.public-url` | Public URL for callbacks, broker metadata, and CIMD service documents. CIMD confidential services require HTTPS. |
 | `server.admin.port` | integer | `14000` | 1-65535 | No | `IDENTITY_BROKER_SERVER_ADMIN_PORT` | `--server.admin.port` | Port for admin server. Must differ from end-user port. |
-| `server.admin.bind` | string | `::` | IPv4/IPv6 address or hostname | No | `IDENTITY_BROKER_SERVER_ADMIN_BIND` | `--server.admin.bind` | Bind address for admin server. In production, restrict to private network (e.g., `10.0.1.0`) or use firewall rules. |
+| `server.admin.bind` | string | `::` | IPv4/IPv6 address or hostname | No | `IDENTITY_BROKER_SERVER_ADMIN_BIND` | `--server.admin.bind` | Bind address for admin server. In production, restrict to private network (for example `10.0.1.0`) or use firewall rules. |
 | `server.shutdown.timeout` | duration | `30s` | 1s-5m | No | `IDENTITY_BROKER_SERVER_SHUTDOWN_TIMEOUT` | `--server.shutdown.timeout` | Maximum time to wait for in-flight requests to complete during graceful shutdown. Use longer timeouts (60s) in production. |
 
 **Server configuration notes:**
@@ -964,6 +965,13 @@ For compliance and troubleshooting, read the JSON audit log. It is the first sta
 ```
 
 ### OAuth2 Authorization Server Configuration
+#### CIMD Confidential Service Prerequisite
+
+CIMD confidential services add no configuration parameter.
+They require the existing `server.enduser.public_url` configuration value to be a stable, public HTTPS URL.
+The broker persists this exact origin in each broker-hosted CIMD client ID.
+
+At startup, the broker verifies every persisted CIMD client ID against `server.enduser.public_url` before it provisions CIMD keys or serves routes. A changed origin stops startup; the broker never rewrites the stored client ID or supplies a fallback metadata URL. Restore the prior public URL and keep it externally reachable for immediate recovery. Re-registration or identity migration requires a separately approved migration flow.
 
 #### oauth2_authorization_server.multi_agent_client
 
@@ -988,11 +996,16 @@ authorization redirect and token response.
 **Feature disabled (default)**:
 
 ```yaml
-oauth2_authorization_server:
-  upstream_issuer_uri: "https://auth.example.com"
-  upstream_token_endpoint: "https://auth.example.com/token"
-  public_base_url: "https://broker.example.com"
+server:
+  enduser:
+    public_url: "https://broker.example.com"
 
+oauth2_authorization_server:
+  mode: "proxy"
+  proxy:
+    upstream_issuer_uri: "https://auth.example.com"
+    upstream_authorize_endpoint: "https://auth.example.com/authorize"
+    upstream_token_endpoint: "https://auth.example.com/token"
   multi_agent_client:
     enabled: false   # default — each agent must have a unique client_id
 ```
@@ -1000,11 +1013,16 @@ oauth2_authorization_server:
 **Feature enabled**:
 
 ```yaml
-oauth2_authorization_server:
-  upstream_issuer_uri: "https://auth.example.com"
-  upstream_token_endpoint: "https://auth.example.com/token"
-  public_base_url: "https://broker.example.com"
+server:
+  enduser:
+    public_url: "https://broker.example.com"
 
+oauth2_authorization_server:
+  mode: "proxy"
+  proxy:
+    upstream_issuer_uri: "https://auth.example.com"
+    upstream_authorize_endpoint: "https://auth.example.com/authorize"
+    upstream_token_endpoint: "https://auth.example.com/token"
   multi_agent_client:
     enabled: true
     agent_id_param_name: "x_agent_id"   # injected into authorize redirect as ?x_agent_id=<agent.id>

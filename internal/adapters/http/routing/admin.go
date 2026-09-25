@@ -83,6 +83,16 @@ func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig) 
 			})
 		}
 
+		// CIMD client-authentication key management routes are available in every OAuth server mode.
+		if h.CIMDClientKeys != nil {
+			r.Route("/cimd-client-keys", func(r chi.Router) {
+				r.Post("/", h.CIMDClientKeys.Create)
+				r.Get("/", h.CIMDClientKeys.List)
+				r.Put("/{kid}/current", h.CIMDClientKeys.Promote)
+				r.Delete("/{kid}", h.CIMDClientKeys.Remove)
+			})
+		}
+
 		// Signing key management routes
 		if h.SigningKeys != nil {
 			r.Route("/oauth2-server/signing-keys", func(r chi.Router) {

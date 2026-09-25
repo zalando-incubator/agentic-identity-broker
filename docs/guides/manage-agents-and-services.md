@@ -123,6 +123,41 @@ The broker prevents deletion of a service that a grant references. `DELETE
 before you delete the service.
 :::
 
+## Register a broker-hosted outbound CIMD confidential service
+
+Use `private_key_jwt` when the broker must authenticate to the provider without a shared secret. This is **outbound CIMD client authentication**: the broker acts as the client of the third-party authorization server. It is separate from inbound CIMD client resolution for agents that authenticate to the broker.
+
+Set `server.enduser.public_url` to the stable public HTTPS URL of the broker first.
+
+Do not send `client_id` or `client_secret` in this request. The broker allocates the service ID. It then generates the Client ID Metadata URL.
+
+Before you register the service, create or retain a usable CIMD client-authentication key. The broker rejects registration when it cannot publish a CIMD public JWK.
+
+```bash
+curl -X POST http://localhost:14000/api/services \
+  -H "X-Remote-User: admin@example.com" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "display_name": "Corporate SSO with CIMD",
+    "token_endpoint_auth_method": "private_key_jwt",
+    "issuer_uri": "https://sso.corp.example.com",
+    "discovery": { "enable_discovery": false },
+    "endpoints": {
+      "token_endpoint": "https://sso.corp.example.com/oauth/token",
+      "authorize_endpoint": "https://sso.corp.example.com/oauth/authorize"
+    },
+    "scopes": [
+      { "scope_value": "profile", "description": "Basic user profile" }
+    ]
+  }'
+```
+
+The response contains `token_endpoint_auth_method: "private_key_jwt"` and a broker-generated `client_id`. It omits `client_secret`.
+
+The provider retrieves the public metadata document from `client_id`. It retrieves the CIMD public JWK Set from `<client_id>/jwks.json`.
+
+To return to static authentication, send a complete replacement with a new non-empty `client_secret`. To use public authentication, send `token_endpoint_auth_method: "none"` and omit `client_secret`.
+
 ## Define permission sets
 
 A permission set is a business-readable group of scopes for one or more services. Users

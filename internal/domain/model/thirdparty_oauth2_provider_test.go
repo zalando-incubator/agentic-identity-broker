@@ -261,6 +261,7 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateForCreate_FlavorDispatch(t *test
 
 func TestThirdpartyOAuth2ProviderEntity_ValidateForCreateAndUpdate_TokenEndpointAuthMethod(t *testing.T) {
 	t.Parallel()
+	privateKeyJWT := TokenEndpointAuthMethod("private_key_jwt")
 
 	newConfidentialEntity := func() *ThirdpartyOAuth2ProviderEntity {
 		return &ThirdpartyOAuth2ProviderEntity{
@@ -278,12 +279,25 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateForCreateAndUpdate_TokenEndpoint
 		entity.Secret = NewAbsentSecret()
 		return entity
 	}
+	newCIMDConfidentialEntity := func() *ThirdpartyOAuth2ProviderEntity {
+		entity := newConfidentialEntity()
+		entity.ClientID = ""
+		entity.Secret = NewAbsentSecret()
+		entity.TokenEndpointAuthMethod = privateKeyJWT
+		entity.Discovery = DiscoveryConfig{EnableDiscovery: false}
+		entity.Endpoints = OAuth2Endpoints{
+			TokenEndpoint:     "https://issuer.example.com/token",
+			AuthorizeEndpoint: "https://issuer.example.com/authorize",
+		}
+		return entity
+	}
 
 	tests := []struct {
-		name         string
-		newEntity    func() *ThirdpartyOAuth2ProviderEntity
-		wantErr      string
-		assertEntity func(*testing.T, *ThirdpartyOAuth2ProviderEntity)
+		name            string
+		newEntity       func() *ThirdpartyOAuth2ProviderEntity
+		wantErr         string
+		wantErrContains string
+		assertEntity    func(*testing.T, *ThirdpartyOAuth2ProviderEntity)
 	}{
 		{
 			name:      "accepts a public client without a secret",
@@ -296,7 +310,7 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateForCreateAndUpdate_TokenEndpoint
 				entity.TokenEndpointAuthMethod = "client_secret_basic"
 				return entity
 			},
-			wantErr: `token_endpoint_auth_method: only "none" is accepted`,
+			wantErrContains: "token_endpoint_auth_method",
 		},
 		{
 			name: "rejects public Google before credential-derived enrichment",
@@ -341,7 +355,7 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateForCreateAndUpdate_TokenEndpoint
 			wantErr: "client_id is required",
 		},
 		{
-			name: "rejects a confidential client without a secret",
+			name: "rejects a static confidential client without a secret",
 			newEntity: func() *ThirdpartyOAuth2ProviderEntity {
 				entity := newConfidentialEntity()
 				entity.Secret = NewAbsentSecret()
@@ -350,8 +364,43 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateForCreateAndUpdate_TokenEndpoint
 			wantErr: "client_secret is required",
 		},
 		{
-			name:      "preserves confidential client validation",
+			name:      "accepts static confidential client when authentication method is omitted or null",
 			newEntity: newConfidentialEntity,
+		},
+		{
+			name:      "accepts CIMD confidential client while client ID awaits broker generation",
+			newEntity: newCIMDConfidentialEntity,
+			assertEntity: func(t *testing.T, entity *ThirdpartyOAuth2ProviderEntity) {
+				assert.Empty(t, entity.ClientID)
+				assert.True(t, entity.Secret.IsAbsent())
+			},
+		},
+		{
+			name: "rejects CIMD confidential client with a caller-supplied client ID",
+			newEntity: func() *ThirdpartyOAuth2ProviderEntity {
+				entity := newCIMDConfidentialEntity()
+				entity.ClientID = "caller-supplied-client-id"
+				return entity
+			},
+			wantErrContains: "client_id",
+		},
+		{
+			name: "rejects CIMD confidential client with a non-empty secret",
+			newEntity: func() *ThirdpartyOAuth2ProviderEntity {
+				entity := newCIMDConfidentialEntity()
+				entity.Secret = NewPlaintextSecret("client-secret")
+				return entity
+			},
+			wantErrContains: "client_secret",
+		},
+		{
+			name: "rejects CIMD confidential Google client before credential-derived enrichment",
+			newEntity: func() *ThirdpartyOAuth2ProviderEntity {
+				entity := newCIMDConfidentialEntity()
+				entity.Flavor = OAuth2FlavorGoogle
+				return entity
+			},
+			wantErrContains: "google",
 		},
 	}
 
@@ -383,10 +432,16 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateForCreateAndUpdate_TokenEndpoint
 				t.Run(tt.name, func(t *testing.T) {
 					entity := tt.newEntity()
 					err := validation.validate(entity)
-					if tt.wantErr == "" {
+					if tt.wantErr == "" && tt.wantErrContains == "" {
 						require.NoError(t, err)
 					} else {
-						require.EqualError(t, err, tt.wantErr)
+						require.Error(t, err)
+						if tt.wantErr != "" {
+							require.EqualError(t, err, tt.wantErr)
+						}
+						if tt.wantErrContains != "" {
+							require.ErrorContains(t, err, tt.wantErrContains)
+						}
 					}
 					if tt.assertEntity != nil {
 						tt.assertEntity(t, entity)

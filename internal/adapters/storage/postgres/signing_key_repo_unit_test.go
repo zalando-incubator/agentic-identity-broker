@@ -238,6 +238,7 @@ func stubSigningKey() *storage.SigningKey {
 	return &storage.SigningKey{
 		ID:                  id.NewSigningKeyID(),
 		KID:                 id.NewKeyID("kid-unit-test"),
+		KeyDomain:           storage.KeyDomainTokenSigning,
 		Algorithm:           "ES256",
 		PrivateKeyEncrypted: []byte("ciphertext"),
 		IsCurrent:           true,
@@ -266,14 +267,14 @@ func TestClassifySigningKeyRepoError(t *testing.T) {
 		{
 			name:      "maps sql ErrNoRows to not found",
 			err:       sql.ErrNoRows,
-			operation: "SigningKeyRepo.ListActive",
+			operation: "SigningKeyRepo.ListActiveInDomain",
 			kind:      storage.ErrorKindNotFound,
 			message:   "failed to list signing keys",
 		},
 		{
 			name:      "maps pgx ErrNoRows to not found",
 			err:       pgx.ErrNoRows,
-			operation: "SigningKeyRepo.ListActive",
+			operation: "SigningKeyRepo.ListActiveInDomain",
 			kind:      storage.ErrorKindNotFound,
 			message:   "failed to list signing keys",
 		},
@@ -287,7 +288,7 @@ func TestClassifySigningKeyRepoError(t *testing.T) {
 		{
 			name:      "maps context canceled to timeout",
 			err:       context.Canceled,
-			operation: "SigningKeyRepo.ListActive",
+			operation: "SigningKeyRepo.ListActiveInDomain",
 			kind:      storage.ErrorKindTimeout,
 			message:   "failed to list signing keys",
 		},
@@ -377,110 +378,110 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 		{
 			name:      "GetByKID maps deadline exceeded to timeout",
 			cfg:       signingKeyRepoTestConfig{queryErr: context.DeadlineExceeded},
-			operation: "SigningKeyRepo.GetByKID",
+			operation: "SigningKeyRepo.GetByKIDInDomain",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.GetByKID(context.Background(), id.NewKeyID("kid-get-by-kid"))
+				_, err := repo.GetByKIDInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-get-by-kid"))
 				return err
 			},
 		},
 		{
 			name:      "GetByKID maps context canceled to timeout",
 			cfg:       signingKeyRepoTestConfig{queryErr: context.Canceled},
-			operation: "SigningKeyRepo.GetByKID",
+			operation: "SigningKeyRepo.GetByKIDInDomain",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.GetByKID(context.Background(), id.NewKeyID("kid-get-by-kid"))
+				_, err := repo.GetByKIDInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-get-by-kid"))
 				return err
 			},
 		},
 		{
 			name:      "GetByKID maps generic query error to connection",
 			cfg:       signingKeyRepoTestConfig{queryErr: errors.New("query failed")},
-			operation: "SigningKeyRepo.GetByKID",
+			operation: "SigningKeyRepo.GetByKIDInDomain",
 			kind:      storage.ErrorKindConnection,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.GetByKID(context.Background(), id.NewKeyID("kid-get-by-kid"))
+				_, err := repo.GetByKIDInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-get-by-kid"))
 				return err
 			},
 		},
 		{
 			name:      "GetByKID maps missing row to not found",
 			cfg:       signingKeyRepoTestConfig{},
-			operation: "SigningKeyRepo.GetByKID",
+			operation: "SigningKeyRepo.GetByKIDInDomain",
 			kind:      storage.ErrorKindNotFound,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.GetByKID(context.Background(), id.NewKeyID("kid-get-by-kid"))
+				_, err := repo.GetByKIDInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-get-by-kid"))
 				return err
 			},
 		},
 		{
 			name:      "GetCurrent maps deadline exceeded to timeout",
 			cfg:       signingKeyRepoTestConfig{queryErr: context.DeadlineExceeded},
-			operation: "SigningKeyRepo.GetCurrent",
+			operation: "SigningKeyRepo.GetCurrentInDomain",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.GetCurrent(context.Background())
+				_, err := repo.GetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning)
 				return err
 			},
 		},
 		{
 			name:      "GetCurrent maps context canceled to timeout",
 			cfg:       signingKeyRepoTestConfig{queryErr: context.Canceled},
-			operation: "SigningKeyRepo.GetCurrent",
+			operation: "SigningKeyRepo.GetCurrentInDomain",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.GetCurrent(context.Background())
+				_, err := repo.GetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning)
 				return err
 			},
 		},
 		{
 			name:      "GetCurrent maps generic query error to connection",
 			cfg:       signingKeyRepoTestConfig{queryErr: errors.New("query failed")},
-			operation: "SigningKeyRepo.GetCurrent",
+			operation: "SigningKeyRepo.GetCurrentInDomain",
 			kind:      storage.ErrorKindConnection,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.GetCurrent(context.Background())
+				_, err := repo.GetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning)
 				return err
 			},
 		},
 		{
 			name:      "GetCurrent maps missing row to not found",
 			cfg:       signingKeyRepoTestConfig{},
-			operation: "SigningKeyRepo.GetCurrent",
+			operation: "SigningKeyRepo.GetCurrentInDomain",
 			kind:      storage.ErrorKindNotFound,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.GetCurrent(context.Background())
+				_, err := repo.GetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning)
 				return err
 			},
 		},
 		{
 			name:      "ListActive maps deadline exceeded to timeout",
 			cfg:       signingKeyRepoTestConfig{queryErr: context.DeadlineExceeded},
-			operation: "SigningKeyRepo.ListActive",
+			operation: "SigningKeyRepo.ListActiveInDomain",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.ListActive(context.Background())
+				_, err := repo.ListActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 				return err
 			},
 		},
 		{
 			name:      "ListActive maps generic query error to connection",
 			cfg:       signingKeyRepoTestConfig{queryErr: errors.New("query failed")},
-			operation: "SigningKeyRepo.ListActive",
+			operation: "SigningKeyRepo.ListActiveInDomain",
 			kind:      storage.ErrorKindConnection,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.ListActive(context.Background())
+				_, err := repo.ListActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 				return err
 			},
 		},
 		{
 			name:      "SetCurrent maps begin deadline exceeded to timeout",
 			cfg:       signingKeyRepoTestConfig{beginErr: context.DeadlineExceeded},
-			operation: "SigningKeyRepo.SetCurrent",
+			operation: "SigningKeyRepo.SetCurrentInDomain",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.SetCurrent(context.Background(), id.NewKeyID("kid-set-current"), time.Now())
+				_, err := repo.SetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-set-current"), time.Now())
 				return err
 			},
 		},
@@ -491,10 +492,10 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 				queryColumns: []string{"kid", "is_current", "activates_at"},
 				queryRows:    [][]driver.Value{{"kid-set-current", false, time.Now()}},
 			},
-			operation: "SigningKeyRepo.SetCurrent",
+			operation: "SigningKeyRepo.SetCurrentInDomain",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.SetCurrent(context.Background(), id.NewKeyID("kid-set-current"), time.Now())
+				_, err := repo.SetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-set-current"), time.Now())
 				return err
 			},
 		},
@@ -514,10 +515,10 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 				},
 				rowsAffected: 1,
 			},
-			operation: "SigningKeyRepo.SetCurrent",
+			operation: "SigningKeyRepo.SetCurrentInDomain",
 			kind:      storage.ErrorKindConnection,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.SetCurrent(context.Background(), id.NewKeyID("kid-set-current"), time.Now())
+				_, err := repo.SetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-set-current"), time.Now())
 				return err
 			},
 		},
@@ -526,20 +527,20 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 			cfg: signingKeyRepoTestConfig{
 				queryColumns: []string{"kid", "is_current", "activates_at"},
 			},
-			operation: "SigningKeyRepo.SetCurrent",
+			operation: "SigningKeyRepo.SetCurrentInDomain",
 			kind:      storage.ErrorKindNotFound,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.SetCurrent(context.Background(), id.NewKeyID("kid-set-current"), time.Now())
+				_, err := repo.SetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-set-current"), time.Now())
 				return err
 			},
 		},
 		{
 			name:      "Delete maps deadline exceeded to timeout",
 			cfg:       signingKeyRepoTestConfig{queryErr: context.DeadlineExceeded},
-			operation: "SigningKeyRepo.Delete",
+			operation: "SigningKeyRepo.DeleteInDomain",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				return repo.Delete(context.Background(), id.NewKeyID("kid-delete"))
+				return repo.DeleteInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-delete"))
 			},
 		},
 		{
@@ -552,10 +553,10 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 				},
 				execErr: errors.New("delete failed"),
 			},
-			operation: "SigningKeyRepo.Delete",
+			operation: "SigningKeyRepo.DeleteInDomain",
 			kind:      storage.ErrorKindConnection,
 			call: func(repo *SigningKeyRepo) error {
-				return repo.Delete(context.Background(), id.NewKeyID("kid-delete"))
+				return repo.DeleteInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-delete"))
 			},
 		},
 		{
@@ -568,40 +569,40 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 				},
 				rowsAffected: 0,
 			},
-			operation:   "SigningKeyRepo.Delete",
+			operation:   "SigningKeyRepo.DeleteInDomain",
 			kind:        storage.ErrorKindUnknown,
 			wantMessage: "invariant violation: locked signing key was not updated",
 			call: func(repo *SigningKeyRepo) error {
-				return repo.Delete(context.Background(), id.NewKeyID("kid-delete"))
+				return repo.DeleteInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-delete"))
 			},
 		},
 		{
 			name:      "CountActive maps deadline exceeded to timeout",
 			cfg:       signingKeyRepoTestConfig{queryErr: context.DeadlineExceeded},
-			operation: "SigningKeyRepo.CountActive",
+			operation: "SigningKeyRepo.CountActiveInDomain",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.CountActive(context.Background())
+				_, err := repo.CountActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 				return err
 			},
 		},
 		{
 			name:      "CountActive maps context canceled to timeout",
 			cfg:       signingKeyRepoTestConfig{queryErr: context.Canceled},
-			operation: "SigningKeyRepo.CountActive",
+			operation: "SigningKeyRepo.CountActiveInDomain",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.CountActive(context.Background())
+				_, err := repo.CountActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 				return err
 			},
 		},
 		{
 			name:      "CountActive maps generic query error to connection",
 			cfg:       signingKeyRepoTestConfig{queryErr: errors.New("query failed")},
-			operation: "SigningKeyRepo.CountActive",
+			operation: "SigningKeyRepo.CountActiveInDomain",
 			kind:      storage.ErrorKindConnection,
 			call: func(repo *SigningKeyRepo) error {
-				_, err := repo.CountActive(context.Background())
+				_, err := repo.CountActiveInDomain(context.Background(), storage.KeyDomainTokenSigning)
 				return err
 			},
 		},
@@ -638,7 +639,7 @@ func TestSigningKeyRepo_MutationPathsLockActiveKeysInDeterministicOrder(t *testi
 			recordedQueries: &queries,
 		})
 
-		_, err := repo.SetCurrent(context.Background(), id.NewKeyID("kid-target"), time.Now())
+		_, err := repo.SetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-target"), time.Now())
 		require.Error(t, err)
 		require.NotEmpty(t, queries)
 		assert.Contains(t, queries[0], "ORDER BY kid")
@@ -657,7 +658,7 @@ func TestSigningKeyRepo_MutationPathsLockActiveKeysInDeterministicOrder(t *testi
 			recordedQueries: &queries,
 		})
 
-		err := repo.Delete(context.Background(), id.NewKeyID("kid-delete"))
+		err := repo.DeleteInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-delete"))
 		require.NoError(t, err)
 		require.NotEmpty(t, queries)
 		assert.Contains(t, queries[0], "ORDER BY kid")
@@ -675,7 +676,7 @@ func TestSigningKeyRepo_DeleteRejectsRemovingCurrentlyUsableFallbackKey(t *testi
 		},
 	})
 
-	err := repo.Delete(context.Background(), id.NewKeyID("kid-fallback"))
+	err := repo.DeleteInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-fallback"))
 	require.ErrorIs(t, err, ports.ErrEffectiveCurrentKey)
 }
 

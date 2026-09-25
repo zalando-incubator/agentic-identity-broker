@@ -46,6 +46,11 @@ func TestBranchKeyIdSupplier_GetBranchKeyId(t *testing.T) {
 			wantID:            "key_kid-123_branch_key",
 		},
 		{
+			name:              "CIMD client-authentication key subject uses CIMD namespace",
+			encryptionContext: map[string]string{"kid": "cimd-kid-123"},
+			wantID:            "cimd_key_cimd-kid-123_branch_key",
+		},
+		{
 			name:              "missing subject",
 			encryptionContext: map[string]string{},
 			wantErr:           "missing branch key subject",
