@@ -5,6 +5,8 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -48,18 +50,25 @@ func init() {
 }
 
 func TestMain(m *testing.M) {
+	flag.Parse()
 	ctx := context.Background()
-	if canAccessContainerRuntime() {
-		container, host, port, err := startSharedTestContainer(ctx)
-		if err != nil {
-			sharedTestErr = err
+	if !testing.Short() {
+		if canAccessContainerRuntime() {
+			container, host, port, err := startSharedTestContainer(ctx)
+			if err != nil {
+				sharedTestErr = err
+			} else {
+				sharedTestContainer = container
+				sharedTestHost = host
+				sharedTestPort = port
+			}
 		} else {
-			sharedTestContainer = container
-			sharedTestHost = host
-			sharedTestPort = port
+			sharedTestErr = fmt.Errorf("no container runtime available")
 		}
-	} else {
-		sharedTestErr = fmt.Errorf("no container runtime available")
+		if sharedTestErr != nil && os.Getenv("CI") != "" {
+			fmt.Fprintf(os.Stderr, "PostgreSQL integration container unavailable in CI: %v\n", sharedTestErr)
+			os.Exit(1)
+		}
 	}
 
 	code := m.Run()
@@ -69,6 +78,15 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
+}
+
+func TestShortModeBypassesContainerStartup(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("short mode only")
+	}
+
+	require.Nil(t, sharedTestContainer)
+	require.NoError(t, sharedTestErr)
 }
 
 // canAccessContainerRuntime checks if Docker or Podman is available.
@@ -278,101 +296,35 @@ func applyMigrationsUpTo(t *testing.T, container testcontainers.Container, upTo 
 	applyMigrationsUpToDatabase(t, container, "testdb", upTo)
 }
 
-// applyMigrationsUpToDatabase applies migrations sequentially from 001 up to and including
-// the migration with the given version number to the specified database.
-func applyMigrationsUpToDatabase(t *testing.T, container testcontainers.Container, dbName string, upTo int) {
+// applyMigrationsUpToDatabase applies migrations through the requested version.
+func applyMigrationsUpToDatabase(t *testing.T, _ testcontainers.Container, dbName string, upTo int) {
 	t.Helper()
-
-	ctx := context.Background()
-	createSchemaMigrationsTable(t, ctx, container, dbName)
 
 	projectRoot, err := findProjectRoot()
 	require.NoError(t, err)
-	migrationsDir := filepath.Join(projectRoot, "migrations")
-
-	migrations := []struct {
-		file    string
-		version int64
-	}{
-		{"001_create_agents.up.sql", 1},
-		{"002_create_thirdparty_services.up.sql", 2},
-		{"003_create_user_grants.up.sql", 3},
-		{"004_create_user_sessions.up.sql", 4},
-		{"005_add_agent_service_requirements.up.sql", 5},
-		{"006_add_service_protected_resources.up.sql", 6},
-		{"007_add_oauth2_flavor.up.sql", 7},
-		{"008_drop_agent_client_id_unique.up.sql", 8},
-		{"009_add_agent_redirect_uris.up.sql", 9},
-		{"010_create_client_credentials.up.sql", 10},
-		{"011_create_signing_keys.up.sql", 11},
-		{"012_create_authorization_codes.up.sql", 12},
-		{"013_add_client_id_to_auth_codes.up.sql", 13},
-		{"014_create_pkce_sessions.up.sql", 14},
-		{"015_add_cimd_support.up.sql", 15},
-		{"016_nullable_agent_client_id.up.sql", 16},
-		{"017_add_permission_sets.up.sql", 17},
-		{"018_add_agent_permission_sets.up.sql", 18},
-		{"019_migrate_user_grants_to_permission_sets.up.sql", 19},
-		{"020_add_service_scope_requirement_type.up.sql", 20},
-		{"021_enforce_single_current_signing_key.up.sql", 21},
-		{"022_add_service_authorization_params.up.sql", 22},
-		{"023_create_refresh_token_sessions.up.sql", 23},
-		{"024_create_tool_approvals.up.sql", 24},
-		{"025_create_approval_sync_state.up.sql", 25},
-		{"026_sync_approval_mutations.up.sql", 26},
-		{"027_add_profile_to_oauth2_codes.up.sql", 27},
-		{"028_normalize_service_protected_resources.up.sql", 28},
-	}
-
-	for _, migration := range migrations {
-		if int(migration.version) > upTo {
-			break
-		}
-		applyOneMigration(t, ctx, container, dbName, migrationsDir, migration.file, migration.version)
-	}
+	m, err := migrate.New("file://"+filepath.Join(projectRoot, "migrations"), buildConnString(dbName))
+	require.NoError(t, err)
+	defer func() { _, _ = m.Close() }()
+	require.NoError(t, m.Migrate(uint(upTo)))
 }
 
-// createSchemaMigrationsTable creates the schema_migrations tracking table in the target database.
-func createSchemaMigrationsTable(t *testing.T, ctx context.Context, container testcontainers.Container, dbName string) {
-	t.Helper()
-	schemaSQL := []byte(`CREATE TABLE IF NOT EXISTS schema_migrations (version BIGINT PRIMARY KEY, dirty BOOLEAN NOT NULL DEFAULT FALSE);`)
-	if err := container.CopyToContainer(ctx, schemaSQL, "/tmp/schema_migrations.sql", 0644); err != nil {
-		t.Logf("Warning: Failed to copy schema_migrations.sql: %v", err)
-		return
-	}
-	exitCode, _, err := container.Exec(ctx, []string{"psql", "-U", "testuser", "-d", dbName, "-f", "/tmp/schema_migrations.sql"})
-	if err != nil || exitCode != 0 {
-		t.Logf("Warning: Failed to create schema_migrations table in %s (exit %d): %v", dbName, exitCode, err)
-	}
-}
+func TestBoundedMigrationFixture_ReachesMigration031(t *testing.T) {
+	connString, cleanup := setupDatabaseFromTemplate(t, "bounded_migration_031", func(t *testing.T, dbName string) {
+		applyMigrationsUpToDatabase(t, requireSharedTestContainer(t), dbName, 31)
+	})
+	defer cleanup()
 
-// applyOneMigration copies a migration file into the container and runs it via psql -f.
-func applyOneMigration(t *testing.T, ctx context.Context, container testcontainers.Container, dbName, migrationsDir, file string, version int64) {
-	t.Helper()
+	db, err := sql.Open("pgx", connString)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
 
-	data, err := os.ReadFile(filepath.Join(migrationsDir, file))
-	if err != nil {
-		t.Logf("Warning: Could not read migration %s: %v", file, err)
-		return
-	}
-
-	containerPath := fmt.Sprintf("/tmp/migration_%s_%03d.sql", sanitizeDatabaseName(dbName), version)
-	if err := container.CopyToContainer(ctx, data, containerPath, 0644); err != nil {
-		t.Logf("Warning: Could not copy migration %s to container: %v", file, err)
-		return
-	}
-
-	exitCode, _, err := container.Exec(ctx, []string{"psql", "-U", "testuser", "-d", dbName, "-f", containerPath})
-	if err != nil || exitCode != 0 {
-		t.Logf("Warning: Migration %s failed against %s (exit %d): %v", file, dbName, exitCode, err)
-		return
-	}
-
-	versionSQL := []byte(fmt.Sprintf("INSERT INTO schema_migrations (version, dirty) VALUES (%d, FALSE) ON CONFLICT DO NOTHING;", version))
-	versionPath := fmt.Sprintf("/tmp/migration_%s_%03d_version.sql", sanitizeDatabaseName(dbName), version)
-	if err := container.CopyToContainer(ctx, versionSQL, versionPath, 0644); err == nil {
-		container.Exec(ctx, []string{"psql", "-U", "testuser", "-d", dbName, "-f", versionPath}) //nolint:errcheck
-	}
+	var exists bool
+	err = db.QueryRow(`SELECT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_name = 'thirdparty_oauth2_services' AND column_name = 'token_endpoint_auth_method'
+	)`).Scan(&exists)
+	require.NoError(t, err)
+	require.True(t, exists, "bounded fixture must apply migration 031")
 }
 
 // findProjectRoot walks up the directory tree to find the project root.

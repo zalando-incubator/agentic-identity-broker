@@ -279,8 +279,7 @@ func TestPostgresAdapter_ContextCancellation(t *testing.T) {
 // These tests are marked with build tag "integration" and require Docker or Podman
 // Run with: go test -tags=integration ./test/integration/storage/... (requires Docker or Podman)
 //
-// Note: PostgreSQL integration tests require a running container runtime (Docker or Podman)
-// These tests are skipped in CI environments without a container runtime, which is expected behavior
+// In CI, a missing container runtime must fail rather than mask infra coverage.
 
 func TestPostgresAdapter_FullLifecycle_Integration(t *testing.T) {
 	if testing.Short() {
@@ -290,12 +289,18 @@ func TestPostgresAdapter_FullLifecycle_Integration(t *testing.T) {
 	// Skip if neither Docker nor Podman is available
 	// In production CI, either Docker or Podman should be configured for integration tests
 	if err := canAccessContainerRuntime(); err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("PostgreSQL integration requires a container runtime in CI: %v", err)
+		}
 		t.Skipf("Skipping PostgreSQL integration test: No container runtime available - %v", err)
 	}
 
 	ctx := context.Background()
 	container, connStr, err := setupPostgresContainer(ctx)
 	if err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("Starting PostgreSQL integration container in CI: %v", err)
+		}
 		t.Skipf("Skipping integration test: Failed to setup PostgreSQL - %v", err)
 	}
 	defer container.Terminate(ctx)

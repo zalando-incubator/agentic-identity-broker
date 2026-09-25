@@ -17,7 +17,10 @@ func TestMain(m *testing.M) {
 
 	emulator, err := bootstrap.StartAWSEmulatorForSuite(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "AWS emulator unavailable; skipping container-dependent tests: %v\n", err)
+		fmt.Fprintf(os.Stderr, "AWS emulator unavailable: %v\n", err)
+		if os.Getenv("CI") != "" {
+			os.Exit(1)
+		}
 	} else {
 		sharedEmulator = emulator
 	}

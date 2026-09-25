@@ -94,7 +94,7 @@ Use `StartAWSEmulator()` or `StartAWSEmulatorForSuite()` from `bootstrap/aws_emu
 - **Framework**: Use standard `go test` and `testify`. Use `require` for fatal assertions. Use `assert` for soft assertions.
 - **Subtests**: Use `t.Run("description", ...)` to organize subtests.
 - **Cleanup**: Use `defer` to end containers and restore environment variables.
-- **Container runtime**: If Docker and Podman are unavailable, tests that need containers skip.
+- **Container runtime**: Locally, container-backed tests skip if Docker and Podman are unavailable. In CI, missing or failed infrastructure must fail the suite.
 - **Ryuk disabled**: Set `TESTCONTAINERS_RYUK_DISABLED=true` for Podman or constrained Docker compatibility.
 - **Shared PostgreSQL**: Use `bootstrap.RequireSharedPostgres()` and template database clones.
 - **Shared DB subtests**: Reuse one clone in sequential `t.Run(...)` tests. Read `tests/integration/AGENTS.md`.

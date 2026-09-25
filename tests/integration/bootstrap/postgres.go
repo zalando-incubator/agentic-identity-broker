@@ -49,6 +49,9 @@ func RequireSharedPostgres(t *testing.T) *SharedPostgres {
 	}
 
 	if err := CanAccessContainerRuntime(); err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("PostgreSQL integration requires a container runtime in CI: %v", err)
+		}
 		t.Skipf("Skipping PostgreSQL integration test: %v", err)
 	}
 
@@ -57,6 +60,9 @@ func RequireSharedPostgres(t *testing.T) *SharedPostgres {
 	})
 
 	if sharedPostgresErr != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatalf("Starting PostgreSQL integration container in CI: %v", sharedPostgresErr)
+		}
 		t.Skipf("Skipping PostgreSQL integration test: %v", sharedPostgresErr)
 	}
 
