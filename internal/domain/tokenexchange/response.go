@@ -61,6 +61,9 @@ type TokenExchangeResponse struct {
 	// Optional - included in the response per FR-012 for grant provenance.
 	// Keys are permission set UUID strings, values are arrays of service UUID strings.
 	GrantedPermissionSets map[string][]string `json:"granted_permission_sets,omitempty"`
+
+	Principal string `json:"principal,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
 }
 
 // NewTokenExchangeResponse creates a new token exchange response.

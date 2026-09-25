@@ -123,7 +123,7 @@ web/src/
 │   ├── ApprovalLoadingSkeleton.tsx            # Loading state skeleton
 │   └── ApprovalErrorBanner.tsx                # Inline error states
 ├── pages/
-│   └── ApprovalPage.tsx                       # NEW: Route-level page /consent/approvals/:id
+│   └── ApprovalPage.tsx                       # NEW: Route-level page /approvals/:id
 ├── services/api/
 │   └── approvals.ts                           # NEW: Approval API client
 ├── hooks/

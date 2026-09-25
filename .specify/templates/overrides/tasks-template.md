@@ -116,10 +116,9 @@ changes with no behavior change, then review new business logic separately.
 - [ ] T005a Create example YAML showing all new config options with defaults
 - [ ] T005b [P] Commit configuration examples to `examples/config/[feature_name].yaml`
 - [ ] T005c Update `examples/config/README.md` to reference new configuration section
-- [ ] T005d [P] Update `charts/agentic-identity-broker/` Helm chart if config parameters changed:
-      add to `values.yaml`, update ConfigMap/Secret templates, update chart README (if applicable)
+- [ ] T005d [P] Update the deployment contract: update `charts/agentic-identity-broker/` values, templates, and README when it deploys the configured workload; otherwise document the accepted standalone deployment boundary and keep its settings out of the broker chart
 
-**Checkpoint**: Configuration requirements designed with YAML examples and Helm chart updated
+**Checkpoint**: Configuration requirements designed with YAML examples and the applicable deployment contract documented
 
 ### Phase 2c: API Design [MANDATORY]
 
@@ -387,9 +386,8 @@ yet — ready for incremental user story implementation
 - [ ] TXXX [P] Create/update ADR in adrs/ for major architectural decisions
 
 **Configuration** (Principle VII):
-- [ ] TXXX [P] Verify configuration uses unified system configuration port (not custom loading)
-- [ ] TXXX [IF CONFIG CHANGED] Verify Helm chart updated: `charts/agentic-identity-broker/values.yaml`,
-      templates, and README reflect all new/changed configuration parameters (Principle VII)
+- [ ] TXXX [P] Verify configuration uses the configuration system owned by its deployable application; standalone binaries require an accepted ADR for a separate configuration path
+- [ ] TXXX [IF CONFIG CHANGED] Verify Helm values, templates, and README reflect all changed configuration for chart-managed workloads, or verify the accepted ADR and documented standalone deployment boundary (Principle VII)
 
 **Database & Persistence** (Principle IX):
 - [ ] TXXX [P] Create/verify database migrations in `/migrations/` follow sequential numbering (NNN format)
@@ -460,7 +458,7 @@ yet — ready for incremental user story implementation
   - **CRITICAL**: Database schema must be designed and migrations planned (or confirmed no DB changes)
   - **CRITICAL**: E2E acceptance tests must be written with detailed expectations and verified to FAIL
     semantically (red phase); frontend Playwright tests added/amended if UI changes involved
-  - **CRITICAL**: Helm chart must be updated if configuration parameters change
+  - **CRITICAL**: Helm deployment contract must be updated when configuration changes affect a chart-managed workload; otherwise the accepted standalone deployment boundary must be documented
   - Phase 2a, 2b, 2c, 2d, 2e, 2f can proceed in parallel, but all must complete before Phase 2.7 begins
 - **Entity Boilerplate (Phase 2.7)**: OPTIONAL (only if new entities) — depends on completion of all Phase 2 design tasks (2a–2f);
   produces empty scaffolding BEFORE business logic; enables clean review

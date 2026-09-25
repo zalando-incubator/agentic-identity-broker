@@ -43,15 +43,21 @@ log:
   format: "json"
 
 authorization:
-  # Enable OPA authorization for request evaluation
-  enabled: ${EXTPROC_AUTHORIZATION_ENABLED:-false}
+  # Compose runs the bundled demo policy so the sample agent can exercise approval gating.
+  enabled: true
   policy:
-    # Resolved from EXTPROC_AUTHORIZATION_POLICY_CONFIG_FILE env var via Viper AutomaticEnv.
-    # Set to /etc/extproc/opa-config.yaml in .env.compose when authorization is enabled.
-    config_file: ""
+    config_file: "/etc/extproc/opa-config.yaml"
     package: "aib.extproc.authz"
     decision: "result"
 
   default_decision: "deny"
   evaluation_timeout: 100ms
   max_body_size: 1048576
+
+tool_approvals:
+  enabled: true
+  url: "http://identity-broker:8000"
+  long_poll_timeout_seconds: 30
+  approval_cache_idle_ttl: 5m
+  request_timeout: 5s
+  max_staleness: 60s

@@ -25,7 +25,7 @@ func TestToolApprovalRepository_CreateReplacesExpiredDuplicate(t *testing.T) {
 		ToolPattern:   "read_file",
 		ArgumentsHash: "same",
 		Status:        storage.ApprovalStatusPending,
-		ApprovalURL:   "https://broker.example.com/consent/approvals/old",
+		ApprovalURL:   "https://broker.example.com/approvals/old",
 		CreatedAt:     now.Add(-2 * time.Minute),
 		ExpiresAt:     now.Add(-time.Minute),
 	}
@@ -37,7 +37,7 @@ func TestToolApprovalRepository_CreateReplacesExpiredDuplicate(t *testing.T) {
 		ToolPattern:   "read_file",
 		ArgumentsHash: "same",
 		Status:        storage.ApprovalStatusPending,
-		ApprovalURL:   "https://broker.example.com/consent/approvals/new",
+		ApprovalURL:   "https://broker.example.com/approvals/new",
 		CreatedAt:     now,
 		ExpiresAt:     now.Add(time.Minute),
 	}
@@ -66,7 +66,7 @@ func TestToolApprovalRepository_RevokePermanentClearsPermanentDenial(t *testing.
 		ArgumentsHash: "same",
 		Status:        storage.ApprovalStatusDenied,
 		Persistence:   &permanent,
-		ApprovalURL:   "https://broker.example.com/consent/approvals/test",
+		ApprovalURL:   "https://broker.example.com/approvals/test",
 		CreatedAt:     now,
 		DeniedAt:      &now,
 		ExpiresAt:     now.Add(time.Minute),
@@ -92,7 +92,7 @@ func TestToolApprovalRepository_RejectsExpiredPendingResolution(t *testing.T) {
 		ToolName:      "read_file",
 		ArgumentsHash: "same",
 		Status:        storage.ApprovalStatusPending,
-		ApprovalURL:   "https://broker.example.com/consent/approvals/test",
+		ApprovalURL:   "https://broker.example.com/approvals/test",
 		CreatedAt:     now.Add(-2 * time.Minute),
 		ExpiresAt:     now.Add(-time.Minute),
 	}
@@ -119,7 +119,7 @@ func TestToolApprovalRepository_ListAllActiveOmitsInactiveSessionApproval(t *tes
 		Status:         storage.ApprovalStatusApproved,
 		Persistence:    &session,
 		AgentSessionID: &sessionID,
-		ApprovalURL:    "https://broker.example.com/consent/approvals/test",
+		ApprovalURL:    "https://broker.example.com/approvals/test",
 		CreatedAt:      now,
 		ExpiresAt:      now.Add(-time.Minute),
 	}

@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
@@ -1087,6 +1088,24 @@ func (m *mockAuthorizer) Stop(_ context.Context) {
 	m.stopCalled = true
 }
 
+type mockApprovalBroker struct {
+	readFunc    func(context.Context, string, []string) ([]approval.Pair, string, error)
+	createFunc  func(context.Context, string, approval.CreateRequest) (string, error)
+	consumeFunc func(context.Context, string, string) error
+}
+
+func (m *mockApprovalBroker) Read(ctx context.Context, principal string, sessionIDs []string) ([]approval.Pair, string, error) {
+	return m.readFunc(ctx, principal, sessionIDs)
+}
+
+func (m *mockApprovalBroker) Create(ctx context.Context, subjectToken string, request approval.CreateRequest) (string, error) {
+	return m.createFunc(ctx, subjectToken, request)
+}
+
+func (m *mockApprovalBroker) Consume(ctx context.Context, subjectToken, approvalID string) error {
+	return m.consumeFunc(ctx, subjectToken, approvalID)
+}
+
 // startTestServerWithAuthorizer registers a Server (with OPA) on a random port.
 func startTestServerWithAuthorizer(t *testing.T, exchanger server.Exchanger, auth authorization.Authorizer) (extprocv3.ExternalProcessorClient, func()) {
 	t.Helper()
@@ -1121,6 +1140,11 @@ func startTestServerWithAuthorizer(t *testing.T, exchanger server.Exchanger, aut
 
 func startTestServerWithAuthorizerConfig(t *testing.T, cfg *extprocconfig.Config, exchanger server.Exchanger, auth authorization.Authorizer) (extprocv3.ExternalProcessorClient, func()) {
 	t.Helper()
+	return startTestServerWithAuthorizerConfigAndGate(t, cfg, exchanger, auth, nil)
+}
+
+func startTestServerWithAuthorizerConfigAndGate(t *testing.T, cfg *extprocconfig.Config, exchanger server.Exchanger, auth authorization.Authorizer, gate server.ApprovalGate) (extprocv3.ExternalProcessorClient, func()) {
+	t.Helper()
 
 	if !cfg.Authorization.Enabled {
 		cfg.Authorization.Enabled = true
@@ -1140,7 +1164,12 @@ func startTestServerWithAuthorizerConfig(t *testing.T, cfg *extprocconfig.Config
 	if cfg.Authorization.MaxBodySize == 0 {
 		cfg.Authorization.MaxBodySize = 1048576
 	}
-	svc := server.NewServerWithAuthorizer(cfg, exchanger, auth, testLogger())
+	var svc *server.Server
+	if gate != nil {
+		svc = server.NewServerWithApprovalGate(cfg, exchanger, auth, gate, testLogger())
+	} else {
+		svc = server.NewServerWithAuthorizer(cfg, exchanger, auth, testLogger())
+	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -2105,6 +2134,367 @@ func TestServer_OPA_BatchBodyPhase_Deny_AggregatesReasons(t *testing.T) {
 	assert.Equal(t, 2, evaluateCalls)
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "denied tool: delete_repo")
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "denied tool: drop_db")
+}
+
+func TestApprovalInvocationIDIsSemantic(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		id           json.RawMessage
+		invocationID string
+	}{
+		{name: "numeric id", id: json.RawMessage(`42`), invocationID: "42"},
+		{name: "string id", id: json.RawMessage(`"call-42"`), invocationID: "call-42"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var gotPrincipal, gotSubjectToken string
+			var gotSessionIDs []string
+			var gotCreate approval.CreateRequest
+			var gotAgentSession, gotMCPSession string
+			broker := &mockApprovalBroker{
+				readFunc: func(_ context.Context, principal string, sessionIDs []string) ([]approval.Pair, string, error) {
+					mu.Lock()
+					defer mu.Unlock()
+					gotPrincipal = principal
+					gotSessionIDs = append([]string(nil), sessionIDs...)
+					return nil, "etag-1", nil
+				},
+				createFunc: func(_ context.Context, subjectToken string, request approval.CreateRequest) (string, error) {
+					mu.Lock()
+					defer mu.Unlock()
+					gotSubjectToken = subjectToken
+					gotCreate = request
+					return "https://broker.example.com/approvals/approval-1", nil
+				},
+				consumeFunc: func(context.Context, string, string) error {
+					return errors.New("consume must not be called without a matching approval")
+				},
+			}
+			auth := &mockAuthorizer{
+				evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
+					mu.Lock()
+					if contextInput, ok := input["context"].(authorization.ContextInput); ok {
+						gotAgentSession = contextInput.AgentSessionID
+					}
+					if mcpInput, ok := input["mcp"].(*authorization.MCPInput); ok {
+						gotMCPSession = mcpInput.SessionID
+					}
+					mu.Unlock()
+					return &authorization.OPADecision{Action: authorization.ActionApprovalRequired, ApprovalContext: &authorization.ApprovalContext{Description: "Review deployment", RiskLevel: "medium"}}, nil
+				},
+			}
+			exchanger := &mockExchanger{
+				exchangeFunc: func(_ context.Context, subjectToken, _ string) (server.ExchangeResult, error) {
+					assert.Equal(t, "test-metadata-subject-token", subjectToken)
+					return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
+				},
+			}
+			cfg := testConfig()
+			cfg.Sessions.Extraction.HTTPHeader = "X-Agent-Session"
+			gate := approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker)
+			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, cfg, exchanger, auth, gate)
+			defer cleanup()
+
+			body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":` + string(tc.id) + `,"params":{"name":"deploy","arguments":{"environment":"production"}}}`)
+			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
+				":method":         "POST",
+				":path":           "http://mcp-server:9003/mcp",
+				":authority":      "mcp-server:9003",
+				":scheme":         "http",
+				"authorization":   "Bearer subject-token",
+				"Mcp-Session-Id":  "mcp-session",
+				"X-Agent-Session": "agent-session",
+			}, body)
+			require.NotNil(t, bodyResp)
+			immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+			require.True(t, ok)
+			assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immediate.ImmediateResponse.Status.Code))
+
+			var response struct {
+				JSONRPC string          `json:"jsonrpc"`
+				ID      json.RawMessage `json:"id"`
+				Error   struct {
+					Code int `json:"code"`
+					Data struct {
+						Elicitations []struct {
+							Mode string `json:"mode"`
+							URL  string `json:"url"`
+						} `json:"elicitations"`
+					} `json:"data"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(immediate.ImmediateResponse.Body, &response))
+			assert.Equal(t, "2.0", response.JSONRPC)
+			assert.JSONEq(t, string(tc.id), string(response.ID))
+			assert.Equal(t, -32042, response.Error.Code)
+			require.Len(t, response.Error.Data.Elicitations, 1)
+			assert.Equal(t, "url", response.Error.Data.Elicitations[0].Mode)
+			assert.Equal(t, "https://broker.example.com/approvals/approval-1", response.Error.Data.Elicitations[0].URL)
+
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, "verified@example.com", gotPrincipal)
+			assert.Equal(t, []string{"agent-session"}, gotSessionIDs)
+			assert.Equal(t, "test-metadata-subject-token", gotSubjectToken)
+			assert.Equal(t, "deploy", gotCreate.ToolName)
+			assert.Equal(t, map[string]any{"environment": "production"}, gotCreate.Arguments)
+			assert.Equal(t, "mcp-session", gotCreate.Metadata.MCPSessionID)
+			assert.Equal(t, "agent-session", gotCreate.Metadata.AgentSessionID)
+			assert.Equal(t, tc.invocationID, gotCreate.Metadata.InvocationID)
+			assert.Equal(t, "Review deployment", gotCreate.Metadata.Description)
+			assert.Equal(t, "medium", gotCreate.RiskLevel)
+			assert.Equal(t, "agent-session", gotAgentSession)
+			assert.Equal(t, "mcp-session", gotMCPSession)
+		})
+	}
+}
+
+func TestServer_OPA_ApprovalRequired_UsesBrokerAuthoritativeIdentityForCacheKey(t *testing.T) {
+	permanent := "permanent"
+	approvedAt := time.Now()
+	cache := approval.NewCache(time.Minute, time.Minute)
+	cache.Replace([]approval.Pair{{
+		Identity: approval.Identity{Principal: "verified@example.com", AgentID: "canonical-agent-id"},
+		Approvals: []approval.Record{{
+			ID:            "approval-1",
+			ToolPattern:   "deploy",
+			ParamsPattern: map[string]string{},
+			Status:        "approved",
+			Persistence:   &permanent,
+			ApprovedAt:    &approvedAt,
+		}},
+	}}, "etag-1")
+
+	var mu sync.Mutex
+	brokerCalls := 0
+	broker := &mockApprovalBroker{
+		readFunc: func(context.Context, string, []string) ([]approval.Pair, string, error) {
+			mu.Lock()
+			brokerCalls++
+			mu.Unlock()
+			return nil, "", errors.New("cache match must not read the broker")
+		},
+		createFunc: func(context.Context, string, approval.CreateRequest) (string, error) {
+			mu.Lock()
+			brokerCalls++
+			mu.Unlock()
+			return "", errors.New("cache match must not create approval")
+		},
+		consumeFunc: func(context.Context, string, string) error {
+			mu.Lock()
+			brokerCalls++
+			mu.Unlock()
+			return errors.New("permanent approval must not be consumed")
+		},
+	}
+	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+		return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
+	}}
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
+	}}
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker))
+	defer cleanup()
+
+	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
+		":method":       "POST",
+		":path":         "http://mcp-server:9003/mcp",
+		":authority":    "mcp-server:9003",
+		":scheme":       "http",
+		"authorization": "Bearer subject-token",
+	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{}}}`))
+	require.NotNil(t, bodyResp)
+	_, immediate := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+	assert.False(t, immediate, "a cache match keyed by broker identity must proceed")
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Zero(t, brokerCalls)
+}
+
+func TestServer_OPA_ApprovalRequired_WithoutGateDenies(t *testing.T) {
+	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+		return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
+	}}
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "exchanged-token", GrantedPermissionSets: map[string][]string{}}, nil
+	}}
+	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+	defer cleanup()
+
+	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
+		":method":       "POST",
+		":path":         "http://mcp-server:9003/mcp",
+		":authority":    "mcp-server:9003",
+		":scheme":       "http",
+		"authorization": "Bearer subject-token",
+	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{}}}`))
+	require.NotNil(t, bodyResp)
+	immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+	require.True(t, ok)
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+	assert.Contains(t, string(immediate.ImmediateResponse.Body), "approval_required is not yet supported")
+}
+
+func TestServer_OPA_ApprovalGateIsolatedFromNonApprovalActionsAndBatches(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		action          string
+		body            []byte
+		expectImmediate bool
+		wantReason      string
+	}{
+		{name: "allow", action: authorization.ActionAllow, body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list","arguments":{}}}`)},
+		{name: "deny", action: authorization.ActionDeny, body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"delete","arguments":{}}}`), expectImmediate: true, wantReason: "denied by policy"},
+		{name: "ciba", action: authorization.ActionCIBARequired, body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"ciba","arguments":{}}}`), expectImmediate: true, wantReason: "ciba is deferred"},
+		{name: "batch", action: authorization.ActionApprovalRequired, body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{}}}]`), expectImmediate: true, wantReason: "re-issued as standalone"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			brokerCalls := 0
+			broker := &mockApprovalBroker{
+				readFunc: func(context.Context, string, []string) ([]approval.Pair, string, error) {
+					mu.Lock()
+					brokerCalls++
+					mu.Unlock()
+					return nil, "", errors.New("approval gate must not read the broker")
+				},
+				createFunc: func(context.Context, string, approval.CreateRequest) (string, error) {
+					mu.Lock()
+					brokerCalls++
+					mu.Unlock()
+					return "", errors.New("approval gate must not create approval")
+				},
+				consumeFunc: func(context.Context, string, string) error {
+					mu.Lock()
+					brokerCalls++
+					mu.Unlock()
+					return errors.New("approval gate must not consume approval")
+				},
+			}
+			auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+				return &authorization.OPADecision{Action: tc.action, Reasons: []string{tc.wantReason}}, nil
+			}}
+			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
+			}}
+			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
+			defer cleanup()
+
+			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
+				":method":       "POST",
+				":path":         "http://mcp-server:9003/mcp",
+				":authority":    "mcp-server:9003",
+				":scheme":       "http",
+				"authorization": "Bearer subject-token",
+			}, tc.body)
+			require.NotNil(t, bodyResp)
+			_, immediate := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+			assert.Equal(t, tc.expectImmediate, immediate)
+			if tc.wantReason != "" {
+				assert.Contains(t, string(bodyResp.GetImmediateResponse().GetBody()), tc.wantReason)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Zero(t, brokerCalls)
+		})
+	}
+}
+
+func TestServer_OPA_ApprovalGateOnlyHandlesStandaloneMCPToolCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		protocol string
+		body     []byte
+	}{
+		{name: "MCP method", protocol: "mcp", body: []byte(`{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}`)},
+		{name: "non MCP tool call", protocol: "a2a", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{}}}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			brokerCalls := 0
+			broker := &mockApprovalBroker{
+				readFunc: func(context.Context, string, []string) ([]approval.Pair, string, error) {
+					mu.Lock()
+					brokerCalls++
+					mu.Unlock()
+					return nil, "", nil
+				},
+				createFunc: func(context.Context, string, approval.CreateRequest) (string, error) {
+					mu.Lock()
+					brokerCalls++
+					mu.Unlock()
+					return "https://broker.example.com/approvals/approval-1", nil
+				},
+				consumeFunc: func(context.Context, string, string) error { return nil },
+			}
+			auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+				return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
+			}}
+			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
+			}}
+			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
+			defer cleanup()
+
+			_, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
+				":method":       "POST",
+				":path":         "http://mcp-server:9003/mcp",
+				":authority":    "mcp-server:9003",
+				":scheme":       "http",
+				"authorization": "Bearer subject-token",
+			}, tc.body, tc.protocol)
+			require.NotNil(t, bodyResp)
+			immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+			require.True(t, ok)
+			assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Zero(t, brokerCalls)
+		})
+	}
+}
+
+func TestServer_OPA_ApprovalGateDoesNotHandleHeaderOnlyRequests(t *testing.T) {
+	var mu sync.Mutex
+	brokerCalls := 0
+	broker := &mockApprovalBroker{
+		readFunc: func(context.Context, string, []string) ([]approval.Pair, string, error) {
+			mu.Lock()
+			brokerCalls++
+			mu.Unlock()
+			return nil, "", nil
+		},
+		createFunc: func(context.Context, string, approval.CreateRequest) (string, error) {
+			mu.Lock()
+			brokerCalls++
+			mu.Unlock()
+			return "https://broker.example.com/approvals/approval-1", nil
+		},
+		consumeFunc: func(context.Context, string, string) error { return nil },
+	}
+	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+		return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
+	}}
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "exchanged-token"}, nil
+	}}
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
+	defer cleanup()
+
+	response, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
+		":method":       "GET",
+		":path":         "http://mcp-server:9003/mcp",
+		":authority":    "mcp-server:9003",
+		":scheme":       "http",
+		"authorization": "Bearer subject-token",
+	}, "mcp")
+	require.NoError(t, err)
+	immediate, ok := response.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+	require.True(t, ok)
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Zero(t, brokerCalls)
 }
 
 // Spec: Exchange fails with re-auth for a batch request → elicitation is returned in the

@@ -21,7 +21,10 @@ import type {
   ApproveRequest,
 } from '../../types/approval';
 
-const INLINE_ERROR_CODES = new Set<ApprovalErrorCode>(['NETWORK_ERROR', 'INVALID_PATTERN']);
+const INLINE_ERROR_CODES = new Set<ApprovalErrorCode>([
+  'NETWORK_ERROR',
+  'INVALID_PATTERN',
+]);
 
 interface ApprovalReviewPageProps {
   approval: ToolApprovalDetail;
@@ -47,7 +50,9 @@ export function ApprovalReviewPage({
   onRetry,
 }: ApprovalReviewPageProps) {
   const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
-  const [paramsPattern, setParamsPattern] = useState(approval.params_pattern ?? {});
+  const [paramsPattern, setParamsPattern] = useState(
+    approval.params_pattern ?? {},
+  );
   const [scopeValid, setScopeValid] = useState(false);
 
   const handlePersistenceChange = (value: ApprovalPersistence) => {
@@ -63,6 +68,7 @@ export function ApprovalReviewPage({
         decidedAt={approveResult?.approved_at ?? approval.approved_at}
         toolName={approval.tool_name}
         agentName={approval.agent_display_name}
+        historical={approval.status === 'approved' && !approveResult}
       />
     );
   }
@@ -93,7 +99,9 @@ export function ApprovalReviewPage({
 
   const handleApprove = async () => {
     await onApprove(
-      persistence === 'once' ? { persistence } : { persistence, params_pattern: paramsPattern },
+      persistence === 'once'
+        ? { persistence }
+        : { persistence, params_pattern: paramsPattern },
     );
   };
 

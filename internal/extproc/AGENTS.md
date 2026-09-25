@@ -11,9 +11,9 @@ This is a standalone process in `cmd/extproc-token-exchange/`. `internal/extproc
 ```
 internal/extproc/
   config/
-    config.go       gRPC, OAuth2, cache, circuit-breaker, OPA, and telemetry schema
+    config.go       gRPC, OAuth2, cache, circuit-breaker, OPA, approval, session, and telemetry schema
     loader.go       Viper load, environment expansion, defaults, and Cobra flags
-    validate.go     Core, authorization, and telemetry validation
+    validate.go     Base, authorization, approval, session, and telemetry validation
 
   authorization/
     authorizer.go   `Authorizer` and `OPAAuthorizer`
@@ -23,12 +23,21 @@ internal/extproc/
     decision.go      `OPADecision` and result extraction
     doc.go           Package documentation
 
+  approval/
+    cache.go         Approval cache, matching, reservations, and eviction
+    client.go        Broker approval API client
+    gate.go          Approval-gate request decision
+    syncer.go        ETag long-poll synchronization
+    precedence.go    ExtProc candidate ranking and selection
+
+  httpclient/
+    httpclient.go    Traced outbound HTTP client construction
+
   server/
-    server.go       ExtProc gRPC request processing and OPA integration
+    server.go       ExtProc gRPC request processing, OPA, and approval-gate integration
     exchanger.go    RFC 8693 exchange, cache, singleflight, stale fallback, and refresh
     circuit_breaker.go  Broker-failure circuit breaker
     *_test.go       Unit, cancellation, cache, security, circuit-breaker, and TLS coverage
-```
 
 The files outside this tree contain the entry point and wiring:
 
@@ -58,9 +67,11 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 
 | Type | Purpose |
 |---|---|
-| `Config` | gRPC, OAuth2, cache, log, circuit breaker, OPA, and telemetry configuration |
+| `Config` | gRPC, OAuth2, cache, log, circuit breaker, OPA, approval, session, and telemetry configuration |
 | `AuthorizationConfig` | OPA enabled flag, policy, default decision, timeout, and body limit |
 | `PolicyConfig` | Local Rego or OPA configuration file, package, and decision |
+| `ToolApprovalsConfig` | Approval gate enable flag, broker URL, long-poll timeout, idle TTL, request timeout, and maximum staleness |
+| `SessionsConfig` | Agent-session extraction configuration |
 | `GRPCConfig` | `Bind`, `Port`, `MaxConcurrentStreams` |
 | `OAuth2Config` | Token endpoint, issuer, client credentials, scopes, assertion type, timeout, and TLS |
 | `TLSConfig` | `InsecureSkipVerify`, `CaBundlePath`, `AllowHTTP` |
@@ -98,10 +109,11 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | Type/Symbol | Purpose |
 |---|---|
 | `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)` + `Shutdown()` |
-| `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `logger` |
-| `NewServer(cfg, exchanger, logger)` | Constructor with OPA disabled (`authorizer=nil`) |
+| `ApprovalGate` interface | Port: `Evaluate(context.Context, approval.Invocation) approval.Outcome` |
+| `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, `logger` |
+| `NewServer(cfg, exchanger, logger)` | Constructor with OPA and approval handling disabled |
 | `NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)` | Constructor with OPA enabled |
-| `Server.Process(stream)` | Streaming gRPC RPC. It dispatches on the `req.Request` type. |
+| `NewServerWithApprovalGate(cfg, exchanger, authorizer, gate, logger)` | Constructor with OPA and approval handling enabled |
 | `TokenExchanger` struct | Concrete `Exchanger` implementation |
 | `NewTokenExchanger(cfg, logger)` | At startup, it gets a client assertion. It fails early and creates a background goroutine. |
 | `ErrAssertionExpired` | Sentinel error. The caller returns 503. |
@@ -121,17 +133,18 @@ The `cmd/extproc-token-exchange/` composition layer can import `internal/ports`.
 It can also import `internal/adapters/telemetry` for OpenTelemetry (ADR 027).
 Keep `mapTelemetryConfig` in `cmd/extproc-token-exchange/root.go`.
 
-### 2. Two port interfaces: Exchanger and Authorizer
+### 2. Three port interfaces: Exchanger, Authorizer, and ApprovalGate
 
-`Exchanger` in `server/server.go` and `authorization.Authorizer` in `authorization/authorizer.go` are the two hexagonal boundaries in this service.
+`Exchanger` in `server/server.go`, `authorization.Authorizer` in `authorization/authorizer.go`, and `ApprovalGate` in `server/server.go` are the service boundaries in this process.
 
-- `Server` depends on both interfaces. Use `TokenExchanger` as the production `Exchanger` implementation. Use `OPAAuthorizer` as the production `Authorizer` implementation.
+- `Server` depends on all three interfaces. Use `TokenExchanger` as the production `Exchanger` implementation. Use `OPAAuthorizer` as the production `Authorizer` implementation. Use `approval.Gate` as the production `ApprovalGate` implementation.
 - Use `_test.go` helpers or `tests/e2e/extproc/bootstrap/` for ExtProc startup and readiness tests.
-- Keep the `authorizer` field on `Server` as `authorization.Authorizer`. Do not add an adapter layer or `map[string]any` indirection.
+- Keep the `authorizer` field on `Server` as `authorization.Authorizer`. Keep the `approvalGate` field as `ApprovalGate`. Do not add an adapter layer or `map[string]any` indirection.
 - If `authorizer == nil` (OPA disabled), run token exchange during `RequestHeaders`. Do not buffer the body. This adds zero overhead.
 - If a request has a body and OPA is enabled, exchange tokens in `RequestHeaders`. Then evaluate OPA in `RequestBody`.
 - For header-only requests, evaluate first.
-- Use mock or stub implementations of both interfaces in tests.
+- Run `ApprovalGate` only after OPA returns `approval_required` for a standalone MCP tool call.
+- Use mock or stub implementations of all three interfaces in tests.
 
 ### 2a. OPA Authorization Pipeline (when enabled)
 
@@ -182,9 +195,9 @@ Call `LoadWithCommand()` in `cmd/extproc-token-exchange/root.go`. Do not read co
 
 ### 4. Fail-fast at startup
 
-- `Validate()` has 15 core rules, 9 authorization rules when enabled, and 4 telemetry rules when enabled. Its numbered comments run from 1 through 19.
+- `Validate()` has 19 numbered base and telemetry rules, nine authorization rules when enabled, eight tool-approval rules when enabled, and one always-on session-header rule.
 - `NewTokenExchanger()` calls `refreshClientAssertion()` synchronously. It returns an error if this call fails.
-- `buildHTTPClient()` reads and parses the CA bundle at construction time.
+- `httpclient.New()` reads and parses the CA bundle at construction time.
 
 ### 5. Token cache design
 
@@ -217,7 +230,7 @@ See accepted `adrs/036-extproc-metadata-token-exchange-input.md`. It changes the
 
 ## Validation Rules
 
-`Validate()` has 15 core rules, 9 authorization rules when enabled, and 4 telemetry rules when enabled. See `config/validate.go`.
+`Validate()` has 19 numbered base and telemetry rules, nine authorization rules when enabled, eight tool-approval rules when enabled, and one always-on session-header rule. See `config/validate.go`.
 
 ---
 
@@ -266,6 +279,13 @@ Read `config/config.go` and `config/loader.go` for the complete schema and defau
 | `authorization.default_decision` | `deny` | Must remain fail-closed |
 | `authorization.evaluation_timeout` | `100ms` | |
 | `authorization.max_body_size` | `1048576` | Bytes |
+| `tool_approvals.enabled` | `false` | Requires `authorization.enabled` when true |
+| `tool_approvals.url` | `""` | Required when approval handling is enabled |
+| `tool_approvals.long_poll_timeout_seconds` | `30` | Must be 1–120 when approval handling is enabled |
+| `tool_approvals.approval_cache_idle_ttl` | `5m` | Must be positive when approval handling is enabled |
+| `tool_approvals.request_timeout` | `5s` | Must be positive when approval handling is enabled |
+| `tool_approvals.max_staleness` | `60s` | Freshness bound for approval-cache matches |
+| `sessions.extraction.http_header` | `Mcp-Session-Id` | Must be a valid, non-empty HTTP field name |
 | `telemetry.enabled` | `false` | |
 | `telemetry.service_name` | `extproc-token-exchange` | |
 | `telemetry.exporter.protocol` | `grpc` | |
@@ -274,6 +294,7 @@ Read `config/config.go` and `config/loader.go` for the complete schema and defau
 Use `examples/config/extproc-token-exchange.yaml` for base token-exchange configuration.
 Use `examples/config/extproc-opa-authorization.yaml` for OPA.
 Use `examples/config/extproc-telemetry.yaml` for OpenTelemetry.
+Use `examples/config/extproc-tool-approvals.yaml` for approval gating.
 
 ## Docker Compose
 

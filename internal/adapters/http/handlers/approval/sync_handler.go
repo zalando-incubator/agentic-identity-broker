@@ -47,6 +47,7 @@ type toolApprovalSummary struct {
 	Persistence    *string           `json:"persistence,omitempty"`
 	Consumed       bool              `json:"consumed"`
 	AgentSessionID *string           `json:"agent_session_id,omitempty"`
+	ApprovedAt     *time.Time        `json:"approved_at,omitempty"`
 }
 
 func toSummary(a *storage.ToolApproval) toolApprovalSummary {
@@ -68,6 +69,9 @@ func toSummary(a *storage.ToolApproval) toolApprovalSummary {
 	}
 	if a.AgentSessionID != nil {
 		s.AgentSessionID = a.AgentSessionID
+	}
+	if a.Status == storage.ApprovalStatusApproved {
+		s.ApprovedAt = a.ApprovedAt
 	}
 	return s
 }

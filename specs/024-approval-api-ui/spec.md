@@ -17,7 +17,7 @@ An agent calls a medium-risk tool on the user's behalf. The tool requires human 
 
 **Acceptance Scenarios**:
 
-1. **Given** a pending approval exists for tool `create_pull_request` with params `{repo: "acme/app", title: "Fix bug"}`, **When** a user opens `/consent/approvals/{id}` in the browser, **Then** they see the tool name, all parameters with their values, a human-readable description rendered from the action context, the agent name, the risk level, and three persistence choices: "Approve once", "Approve for this session", and "Always allow".
+1. **Given** a pending approval exists for tool `create_pull_request` with params `{repo: "acme/app", title: "Fix bug"}`, **When** a user opens `/approvals/{id}` in the browser, **Then** they see the tool name, all parameters with their values, a human-readable description rendered from the action context, the agent name, the risk level, and three persistence choices: "Approve once", "Approve for this session", and "Always allow".
 
 2. **Given** the user is viewing a pending approval, **When** they select "Approve once" and click Approve, **Then** the approval transitions to `status: approved, persistence: once` and the page shows a success confirmation.
 
@@ -185,7 +185,7 @@ flowchart TD
     H --> I([Return URLElicitationRequiredError −32042\nwith approval_url to agent])
 
     I --> J([Agent presents URL to user])
-    J --> K([User opens /consent/approvals/id\nin browser])
+    J --> K([User opens /approvals/id\nin browser])
 
     K --> L{Approval record state?}
     L -->|not found| Z3([404 — error banner])
@@ -248,7 +248,7 @@ flowchart TD
 - **FR-011**: `POST /api/approvals` MUST be authenticated via both the user's `Authorization: Bearer {subject_token}` (principal derivation) and the gateway's client assertion (validated via CEL expression, same mechanism as token exchange). Both MUST be valid; either failure returns `401 Unauthorized`. Dual auth is REQUIRED here because approval creation establishes user-visible security state and must bind both the trusted gateway caller and the user-scoped subject context.
 - **FR-012**: The long-poll `GET /api/approvals` endpoint MUST be authenticated via a client assertion validated through the existing CEL expression mechanism (same trust path as token exchange). No subject token is required because this is a gateway control-plane sync channel rather than a user-facing operation.
 - **FR-013**: Browser-facing approval endpoints (`GET /api/approvals/{id}`, `POST /api/approvals/{id}/approve`, `POST /api/approvals/{id}/deny`, `POST /api/approvals/{id}/revoke`, `GET /api/approvals/permanent`, `GET /api/approvals/pending`) MUST be authenticated via the acting user's authenticated principal as propagated by the browser auth layer (for example `X-Remote-User` in pre-auth deployments), and the broker MUST verify the acting user matches the approval's stored principal. `POST /api/approvals/{id}/consume` is authenticated via the user's subject token only because it is a per-approval, principal-scoped machine mutation and does not expose cross-user state.
-- **FR-014**: The system MUST serve an Approval UI page at `/consent/approvals/{id}` within the existing React SPA, showing: tool name, all parameters with their values, a human-readable action description, agent name, risk level, and the three persistence choices. When the user selects `session` or `permanent`, the page MUST let them edit parameter patterns and show a live preview; `once` keeps exact coverage.
+- **FR-014**: The system MUST serve an Approval UI page at `/approvals/{id}` within the existing React SPA, showing: tool name, all parameters with their values, a human-readable action description, agent name, risk level, and the three persistence choices. When the user selects `session` or `permanent`, the page MUST let them edit parameter patterns and show a live preview; `once` keeps exact coverage.
 - **FR-015**: The Approval UI MUST allow the user to approve with persistence `once`, `session`, or `permanent`, or to deny the request. `session` and `permanent` decisions expose a parameter-pattern editor while the server derives exact tool coverage; `once` keeps exact coverage.
 - **FR-016**: The Approval UI MUST display an unambiguous warning when the user selects `permanent`, explaining that this authorizes future invocations and can be revoked.
 - **FR-017**: Permanent approvals and permanent denials MUST appear in the consent management UI alongside grants, each with a revocation action (reverting to the default non-permanent state).
