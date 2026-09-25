@@ -746,6 +746,33 @@ func (cp *ConsentPage) IsPermissionSetSelected(_ context.Context, permissionSetN
 	return selected == "true", nil
 }
 
+func (cp *ConsentPage) permissionSetCard(name string) playwright.Locator {
+	heading := cp.page().GetByRole("heading", playwright.PageGetByRoleOptions{
+		Name: name, Level: playwright.Int(3), Exact: playwright.Bool(true),
+	})
+	return cp.page().Locator("[data-testid^='permission-set-']").Filter(playwright.LocatorFilterOptions{
+		Has: heading,
+	})
+}
+
+// ExcludePermissionSetService turns off an optional service within a permission set.
+func (cp *ConsentPage) ExcludePermissionSetService(_ context.Context, permissionSetName, serviceName string) error {
+	return cp.permissionSetCard(permissionSetName).GetByRole("switch", playwright.LocatorGetByRoleOptions{
+		Name: "Exclude " + serviceName,
+	}).Click()
+}
+
+// IsPermissionSetServiceExcluded checks the per-service switch after a selection change.
+func (cp *ConsentPage) IsPermissionSetServiceExcluded(_ context.Context, permissionSetName, serviceName string) (bool, error) {
+	checked, err := cp.permissionSetCard(permissionSetName).GetByRole("switch", playwright.LocatorGetByRoleOptions{
+		Name: "Include " + serviceName,
+	}).GetAttribute("aria-checked")
+	if err != nil {
+		return false, err
+	}
+	return checked == "false", nil
+}
+
 // RevokeService clicks the Revoke button for a service.
 //
 // Parameters:

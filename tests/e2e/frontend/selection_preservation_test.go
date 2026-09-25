@@ -4,9 +4,11 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -185,6 +187,10 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), alignedServer.BaseURL())
 		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
 		selectOptionalPermissionSet(ctx, consentPage)
+		Expect(consentPage.ExcludePermissionSetService(ctx, "Productivity Suite", "Slack")).To(Succeed())
+		Eventually(func() (bool, error) {
+			return consentPage.IsPermissionSetServiceExcluded(ctx, "Productivity Suite", "Slack")
+		}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
 		GetMockUpstream().WithSuccessfulTokenResponse()
 
 		page := consentPage.GetPlaywrightPage()
@@ -214,7 +220,80 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		legacyState, err := consentPage.GetURLQueryParam("consent_state")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(legacyState).To(BeEmpty())
-		expectOptionalSelectionRestored(ctx, consentPage, "Slack")
+		expectOptionalSelectionRestored(ctx, consentPage)
+		Eventually(func() (bool, error) {
+			return consentPage.IsPermissionSetServiceExcluded(ctx, "Productivity Suite", "Slack")
+		}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
+	})
+
+	// Feature 008 User Story 5 Amendment, edge case: failed selection storage
+	It("blocks login when current-tab selections cannot be saved", func() {
+		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
+		selectOptionalPermissionSet(ctx, consentPage)
+
+		page := consentPage.GetPlaywrightPage()
+		originalURL := page.URL()
+		var authorizeRequested atomic.Bool
+		Expect(page.Route("**/api/third-party/*/oauth2/authorize*", func(route playwright.Route) {
+			authorizeRequested.Store(true)
+			Expect(route.Abort()).To(Succeed())
+		})).To(Succeed())
+		_, err := page.Evaluate(`() => {
+			Storage.prototype.setItem = () => { throw new DOMException('Storage unavailable', 'QuotaExceededError'); };
+		}`)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(consentPage.DelegateService(ctx, "Google")).To(Succeed())
+		message, err := consentPage.WaitForGrantError(ctx, 5000)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(message).To(ContainSubstring("Unable to preserve selections. Please try again."))
+		Expect(page.URL()).To(Equal(originalURL))
+		Expect(authorizeRequested.Load()).To(BeFalse())
+	})
+
+	// Feature 008 User Story 5 Amendment, edge case: no selections or return data
+	It("uses GET to reach the provider when no selections or return data exist", func() {
+		config := fixtures.OAuth2ConfigWithUpstream(GetMockUpstream().URL())
+		serverFactory := bootstrap.NewServerFactory(config, GetLogger())
+		serverBuilder, err := bootstrap.NewTestServerBuilder(config, GetTestStorage(), serverFactory, GetLogger())
+		Expect(err).NotTo(HaveOccurred())
+		alignedServer, err := serverBuilder.Build()
+		Expect(err).NotTo(HaveOccurred())
+		defer alignedServer.Close()
+
+		consentPage = pages.NewConsentPage(GetTestPage(), alignedServer.BaseURL())
+		page := consentPage.GetPlaywrightPage()
+		// New agents require permission sets; model a legacy detail response with none.
+		Expect(page.Route("**/api/consent/agents/"+testAgentID, func(route playwright.Route) {
+			response, err := route.Fetch()
+			Expect(err).NotTo(HaveOccurred())
+			var body map[string]any
+			Expect(response.JSON(&body)).To(Succeed())
+			body["data"].(map[string]any)["permission_sets"] = []any{}
+			payload, err := json.Marshal(body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(route.Fulfill(playwright.RouteFulfillOptions{
+				Response: response,
+				Body:     string(payload),
+			})).To(Succeed())
+		})).To(Succeed())
+		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
+		Expect(page.URL()).To(Equal(alignedServer.BaseURL() + "/agents/" + testAgentID))
+		GetMockUpstream().WithSuccessfulTokenResponse()
+
+		var loginMethod string
+		Expect(page.Route("**/api/third-party/*/oauth2/authorize*", func(route playwright.Route) {
+			loginMethod = route.Request().Method()
+			Expect(route.Continue()).To(Succeed())
+		})).To(Succeed())
+		Expect(consentPage.DelegateService(ctx, "Google")).To(Succeed())
+		Eventually(func() string {
+			return loginMethod
+		}, 10*time.Second, 100*time.Millisecond).Should(Equal("GET"))
+		Eventually(GetMockUpstream().GetAuthorizeCalled, 10*time.Second, 100*time.Millisecond).Should(BeTrue())
+		Eventually(func() string {
+			return page.URL()
+		}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("success=true"))
 	})
 
 	// Feature 008 User Story 5 Amendment, Scenario 2: Same-tab restoration
