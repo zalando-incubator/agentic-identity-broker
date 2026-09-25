@@ -24,6 +24,9 @@ var (
 	// ErrInvalidStateToken is returned when state token is invalid or tampered.
 	ErrInvalidStateToken = errors.New("invalid state token")
 
+	// ErrStateTokenTooLarge prevents oversized state from reaching the provider.
+	ErrStateTokenTooLarge = errors.New("state token exceeds provider size limit")
+
 	// ErrServiceIDMismatch is returned when service_id in token doesn't match callback.
 	ErrServiceIDMismatch = errors.New("service_id mismatch")
 

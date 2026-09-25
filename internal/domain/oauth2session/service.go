@@ -40,6 +40,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
+const maxProviderStateBytes = 6000
+
 func addProviderAuthorizationParams(values url.Values, params map[string]string) {
 	for name, value := range params {
 		if !model.IsReservedAuthorizationParamName(name) {
@@ -182,8 +184,9 @@ type HandleCallbackRequest struct {
 
 // HandleCallbackResult contains the result of processing an OAuth2 callback.
 type HandleCallbackResult struct {
-	Session     *storage.UserSession
-	RedirectURI string // Original redirect_uri from state token claims
+	Session        *storage.UserSession
+	RedirectURI    string // Original redirect_uri from state token claims
+	ConsentStateID string
 }
 
 // AgentInfo represents an agent with display information.
@@ -426,6 +429,9 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	consentStateID string,
 ) (*InitiateFlowResult, error) {
 	s.logger.Info("initiating OAuth2 flow", "principal", principal, "service_id", serviceID)
+	if len(redirectURI) >= maxProviderStateBytes {
+		return nil, ErrStateTokenTooLarge
+	}
 
 	// Fetch the service (with decrypted client secret via service manager)
 	service, err := s.providerService.Get(ctx, serviceID)
@@ -454,6 +460,9 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	if err != nil {
 		s.logger.Error("failed to create state token", "err", err)
 		return nil, fmt.Errorf("failed to create state token: %w", err)
+	}
+	if len(stateToken) >= maxProviderStateBytes {
+		return nil, ErrStateTokenTooLarge
 	}
 
 	// Build OAuth2 config with callback URL
@@ -683,8 +692,9 @@ func (s *OAuth2SessionService) HandleCallback(
 		"timestamp", time.Now().Unix())
 
 	return &HandleCallbackResult{
-		Session:     session,
-		RedirectURI: claims.RedirectURI,
+		Session:        session,
+		RedirectURI:    claims.RedirectURI,
+		ConsentStateID: claims.ConsentStateID,
 	}, nil
 }
 

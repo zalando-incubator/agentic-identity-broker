@@ -112,21 +112,21 @@ The consent page encodes active permission set selections into the `redirect_uri
 
 This amendment supersedes only User Story 5's URL-encoded `consent_state` transport. Feature 008 remains authoritative for third-party OAuth session initiation, JWE and PKCE validation, token exchange, token storage, callback errors, and all unrelated session behavior.
 
-The consent page stores the selection map in current-tab `sessionStorage`. When selections exist, it submits the bare UUID `consent_state_id` and the return URL in a same-origin form POST to the service-login endpoint. The broker seals `consent_state_id` into the third-party state JWE. `consent_state_id` is not a URL or provider authorization parameter. The existing `redirect_uri` JWE claim contains the protected return URL, which contains no selection state.
+The consent page stores its selections and original return URL in current-tab `sessionStorage` under a bare UUID `consent_state_id`. With selections or return-page query/fragment data, it submits that ID and a same-origin return path in a form POST. The broker seals the ID in its third-party state JWE; it does not seal the original `session_token` or other page parameters. A successful callback returns the verified ID so the originating tab can recover the right record and replace its URL without the ID.
 
 **Acceptance Scenarios**:
 
-1. **Scenario 1: Compact reference creation. Given** a consent page has a large selection map, **When** the user starts a service login, **Then** the page stores the map under a UUID reference, sends it as `consent_state_id` in a same-origin form POST, and the provider-facing `state` JWE contains that claim. The nested return URL contains no `consent_state_id`, `consent_state`, or selection JSON, and provider-facing `state` is less than 6,000 bytes.
-2. **Scenario 2: Same-tab restoration. Given** a callback returns after a JWE with a valid `consent_state_id` claim, **When** the consent page renders in the originating tab, **Then** it restores the validated pending selection map from current-tab storage, including selected optional permission sets and their available service cards.
-3. **Scenario 3: Complete provider callback. Given** the user starts a service login with optional selections, **When** the mock provider completes the callback in the same tab, **Then** the broker returns callback parameters without a selection-state URL parameter, and the page restores the selected optional permission set from current-tab storage.
+1. **Scenario 1: Compact reference creation. Given** a consent page has a large selection map, **When** the user starts a service login, **Then** the page stores that map and its return URL under a UUID reference, sends the ID as `consent_state_id` in a same-origin form POST, and the provider-facing state JWE contains only the ID and a clean same-origin return path. Neither selection JSON nor the session token appears inside the return path, and the provider-facing `state` is less than 6,000 bytes.
+2. **Scenario 2: Same-tab restoration. Given** a callback returns with a valid `consent_state_id` claim, **When** the consent page renders in the originating tab, **Then** it restores only that ID's selections for the matching service and page, including selected optional permission sets and their available service cards. After the user changes a selection and reloads the page, the previous selections do not return.
+3. **Scenario 3: Complete provider callback. Given** the user starts a service login with optional selections and a `session_token`, **When** the mock provider completes the callback in the same tab, **Then** the broker returns the validated ID and callback status, the page restores the original `session_token` and selected permission sets, and the actual provider-facing `state` stays below 6,000 bytes.
 
 **Edge Cases**:
 
-- A missing, malformed, expired, or unreadable reference uses existing grant or default selections. The callback continues.
-- If browser storage cannot save a non-empty selection map, the page does not navigate. It shows `Unable to preserve selections. Please try again.`.
-- If no selections exist, the page clears its pending selection reference and starts the existing flow.
-- A valid record stays until it expires. A page reload in the originating tab can restore it.
-- A callback in another browser tab uses existing grant or default selections.
+- A missing, malformed, expired, wrong-service, wrong-page, or unreadable reference uses existing grant or default selections. The callback continues.
+- If browser storage cannot save non-empty selections or return data, the page does not navigate and reports the preservation failure.
+- If no selections or return data exist, the page uses the existing GET flow.
+- A valid record remains until it expires; after restoration, the callback ID is removed from the browser URL, so reloads cannot replay selections.
+- A callback in another browser tab cannot recover the originating tab's return data.
 
 ---
 
@@ -167,13 +167,13 @@ The consent page stores the selection map in current-tab `sessionStorage`. When 
 - **FR-020**: System MUST handle OAuth2 error responses from third-party services gracefully by parsing error and error_description parameters from callback URL, displaying user-friendly error messages on sessions page, and allowing immediate retry
 - **FR-021**: System MUST retry failed token exchange requests up to 3 times with exponential backoff delays (1 second, 2 seconds, 4 seconds) before displaying error message to user
 
-- **FR-022**: The frontend MUST store a non-empty `Record<string, string[]>` selection map as `{ expiresAt, selections }` in current-tab `sessionStorage` under the internal key `agentic-identity-broker:consent-state:<uuid>`. It MUST generate `consent_state_id` as the bare UUID returned by `crypto.randomUUID()`. The UUID MUST resist collisions among live records in the originating tab during its 15-minute lifetime. `consent_state_id` MUST NOT include a URI, URN, or the internal storage-key prefix.
-- **FR-023**: Consent-selection records MUST expire after 15 minutes. Saving MUST prune expired records under the consent-state prefix.
-- **FR-024**: A service login with selections MUST submit `redirect_uri` and `consent_state_id` in a same-origin form POST. The broker MUST store `consent_state_id` only in `OAuth2StateTokenClaims`; the service-login URL and return URL MUST NOT contain `consent_state_id`, `consent_state`, or selection JSON. Before login, the frontend MUST remove a legacy `consent_state` parameter from the copied URL.
-- **FR-025**: The frontend MUST load only UUID references and validated maps with string-array values. It MUST return `undefined` without throwing for unknown, malformed, expired, or unavailable browser-storage records.
-- **FR-026**: If a selection reference cannot load, the frontend MUST use existing grant or default selections. It MUST preserve `session_token`, `success`, `service_id`, same-origin validation, and callback processing.
-- **FR-027**: If saving a non-empty selection map fails, the frontend MUST not navigate. It MUST show `Unable to preserve selections. Please try again.`.
-- **FR-028**: This amendment adds only the same-origin form POST selection initiation and the optional `consent_state_id` JWE claim. It MUST NOT change the PKCE verifier, authenticated principal binding, service binding, expiration, token exchange, token storage, or the broker authorization-server state path. The provider-facing `state` parameter MUST stay below 6,000 bytes for a large selection map.
+- **FR-022**: The frontend MUST store `{ expiresAt, selections, serviceID, returnURL }` in current-tab `sessionStorage` under `agentic-identity-broker:consent-state:<uuid>` when it must preserve selections or return-page query/fragment data. `selections` MUST be a `Record<string, string[]>` (possibly empty when preserving only return data). `consent_state_id` MUST be the bare UUID from `crypto.randomUUID()`, not a URI, URN, or prefixed storage key.
+- **FR-023**: Records MUST expire after 15 minutes, covering the maximum configurable third-party state lifetime; the default state TTL is 10 minutes. Saving MUST prune expired records under the consent-state prefix.
+- **FR-024**: A service login with selections or return data MUST send `redirect_uri` (same-origin page path, without query or fragment) and `consent_state_id` in a same-origin form POST. The broker MUST seal the ID in `OAuth2StateTokenClaims` and add it to the successful callback URL only after the state is validated and the session is saved. The service-login URL and JWE return path MUST NOT contain the ID, selection JSON, or the original return-page query/fragment. Before login, the frontend MUST remove any legacy `consent_state` parameter from its saved page URL.
+- **FR-025**: The frontend MUST load only UUID references and validated maps with string-array values, matching the callback service ID, origin, and path. It MUST return `undefined` without throwing for unknown, malformed, expired, mismatched, or unavailable browser-storage records.
+- **FR-026**: If a selection reference cannot load, the frontend MUST use existing grant or default selections. For a valid same-tab record it MUST restore the original `session_token` and callback `success`/`service_id`, then remove the callback ID from the browser URL so reloads do not replay old selections. The broker's same-origin validation and callback processing remain unchanged.
+- **FR-027**: If saving a non-empty selection map fails, the frontend MUST not navigate. It MUST show `Unable to preserve selections. Please try again.`. If saving only return data fails, it MUST also block login and report the failure.
+- **FR-028**: These changes MUST NOT change the PKCE verifier, authenticated principal binding, service binding, expiration, token exchange, token storage, or broker authorization-server state path. The provider-facing `state` MUST remain below 6,000 bytes even when the return page has a realistic `session_token` JWE; arbitrary oversized `redirect_uri` inputs MUST fail before redirecting to a third-party provider.
 
 ### Domain Model
 

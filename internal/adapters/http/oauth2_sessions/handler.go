@@ -190,6 +190,11 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 		result, err = h.service.InitiateOAuth2Flow(ctx, id.Principal(principalValue), parsedServiceID, redirectURI)
 	}
 	if err != nil {
+		if errors.Is(err, oauth2session.ErrStateTokenTooLarge) {
+			writeJSONError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uri produces an oversized OAuth2 state token")
+			return
+		}
+
 		if errors.Is(err, oauth2session.ErrServiceNotFound) {
 			h.logger.Warn("service not found", "service_id", serviceIDStr)
 			writeJSONError(w, http.StatusNotFound, "service_not_found", "third-party service not found")
@@ -394,6 +399,9 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	redirectQuery := redirectURL.Query()
 	redirectQuery.Set("success", "true")
 	redirectQuery.Set("service_id", serviceIDStr)
+	if result.ConsentStateID != "" {
+		redirectQuery.Set("consent_state_id", result.ConsentStateID)
+	}
 	redirectURL.RawQuery = redirectQuery.Encode()
 
 	http.Redirect(w, r, redirectURL.String(), http.StatusFound)

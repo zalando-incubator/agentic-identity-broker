@@ -14,33 +14,25 @@ Feature 008 remains authoritative for third-party OAuth session initiation, JWE 
 
 ## Context
 
-The consent page puts selected permission sets in `consent_state`. It base64url-encodes the selection map in the return URL before a third-party OAuth login starts.
+The consent page formerly put selected permission sets in `consent_state`. It base64url-encoded the selection map in the return URL before a third-party OAuth login started.
 
-The broker places that return URL in the authenticated third-party state JWE. More selections make the JWE larger. Some providers limit the `state` parameter to about 6,000 bytes.
-
-The selection map is presentation state. It does not authorize a grant. The browser tab that begins the login already owns this state.
+The broker seals the return URL in the third-party state JWE. Both selection data and a `session_token` JWE in that URL can make the provider-facing state exceed about 6,000 bytes. The browser tab that begins the login already owns the return URL and presentation selections.
 
 ## Decision
 
-The consent page stores `ConsentSelections` in browser `sessionStorage` under an opaque UUID reference. The page creates the reference with `crypto.randomUUID()` and uses the key prefix `agentic-identity-broker:consent-state:`. The reference is a bare UUID. It needs collision resistance only among live records in the originating tab during the record lifetime. The key prefix is not part of `consent_state_id`. The page also keeps its current pending reference under the internal key `agentic-identity-broker:pending-consent-state`.
+The consent page stores its selection map and original same-origin return URL in current-tab `sessionStorage` under an opaque UUID reference (`agentic-identity-broker:consent-state:<uuid>`). Each record contains `expiresAt`, `selections`, `serviceID`, and `returnURL`. The bare UUID is generated with `crypto.randomUUID()`; the storage-key prefix is not part of `consent_state_id`. Records expire after 15 minutes, the maximum configurable third-party state lifetime (the default is 10 minutes). Saving prunes expired records.
 
-Each stored record contains `expiresAt` and `selections`. Records expire after 15 minutes, which matches the maximum third-party state lifetime. Saving prunes expired records under this prefix.
+When the page has selections or return-URL query/fragment data, it submits a same-origin form POST with `consent_state_id=<uuid>` and a clean `redirect_uri` consisting only of the page's origin and path. The original `session_token` and any other return-page parameters stay in current-tab storage rather than inside the provider-facing JWE. With neither selections nor return data, the page uses the existing GET flow. The broker seals the bare UUID into the private `consent_state_id` claim of `OAuth2StateTokenClaims`. The JWE still protects the PKCE verifier, authenticated principal, service binding, expiration, and validated return path.
 
-When selections exist, the page submits `redirect_uri` and `consent_state_id=<uuid>` in a same-origin form POST. The broker seals the bare UUID into the private `consent_state_id` claim of `OAuth2StateTokenClaims`. The nested return URL contains no `consent_state_id`, `consent_state`, or selection JSON. The existing `redirect_uri` JWE claim carries the protected return URL. The third-party state JWE otherwise remains unchanged and still protects the PKCE verifier, authenticated principal, service binding, expiration, and validated return URL.
+After a successful token exchange and session write, the callback adds the verified `consent_state_id` to the return URL with `success=true` and `service_id`. The page restores only a non-expired record matching that exact ID, service, origin, and path. It restores the saved page URL, retaining `session_token` when present, and replaces the browser-history entry without `consent_state_id`. A later reload cannot replay the stored selections. A forged `success=true` without a matching ID cannot restore any record. Missing or invalid records use the existing grant or default selections without interrupting the callback.
 
-The page blocks a login with non-empty selections when it cannot store the record. It shows `Unable to preserve selections. Please try again.` and does not navigate.
-
-A missing, malformed, expired, or unreadable pending reference does not interrupt callback processing. The consent page uses the existing grant or default selection state. A valid record remains until it expires so that a page reload retains the same-tab selection state. The callback returns the original `redirect_uri` with its existing status parameters and no selection-state URL parameter.
-
-This design supports the originating browser tab only. It does not synchronize selections across tabs.
+If the page cannot store selections or return data, it does not start the login. This design supports the originating tab; it does not synchronize return data across tabs. The record remains until it expires, but the callback ID is consumed from the browser URL after restoration.
 
 ## Consequences
 
-The provider-facing state has a bounded selection contribution. The JWE adds only a fixed-size UUID claim, so selection count does not grow the state JWE.
+The provider-facing state has a bounded return-page contribution: only the clean return path and fixed-size UUID are sealed, regardless of selection count or query/fragment length. The broker also refuses to initiate any provider flow whose resulting `state` reaches 6,000 bytes, including GET flows with arbitrary `redirect_uri` values; it returns a client error instead of sending an oversized state to a provider.
 
-A callback opened in another tab, an expired record, or unavailable browser storage cannot restore presentation selections. The third-party OAuth callback still completes with existing grant or default selections.
-
-This decision does not make arbitrary future return-URL data bounded. A future cross-tab or server-owned variable payload needs a separate opaque server-side correlation design.
+Another tab, an expired record, or unavailable browser storage cannot restore presentation selections or tab-local return data. Supporting arbitrary long return URLs from non-browser clients or restoring cross-tab data requires a separately designed server-side correlation store.
 
 ## References
 

@@ -14,7 +14,7 @@
  * - Smooth scroll to errors on validation failure
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { AppLayout } from '@components/layout/AppLayout';
 import { PageTransition } from '@components/ui/PageTransition';
@@ -31,11 +31,7 @@ import { CIMDSection } from '@components/consent/CIMDSection';
 import { GrantValidityControl } from '@components/consent/GrantValidityControl';
 import { PermissionSetsList } from '@components/consent/PermissionSetsList';
 import { useAgentGrants, useToggleGrant, useUpdateValidity } from '@hooks';
-import {
-  clearPendingConsentSelections,
-  loadPendingConsentSelections,
-  saveConsentSelections,
-} from '@services/storage/session';
+import { loadConsentState, saveConsentSelections } from '@services/storage/session';
 import { validateGrantRequest, isSafeRedirectUrl } from '../utils/validation';
 import { scrollToError } from '../utils/scrollToError';
 
@@ -49,15 +45,40 @@ export function AgentGrantDetailPage() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const searchParams = new URLSearchParams(location.search);
-  const sessionToken = searchParams.get('session_token') || undefined;
-
-  const restoredSelections = useMemo(() => {
-    const callbackParams = new URLSearchParams(location.search);
-    return callbackParams.get('success') === 'true'
-      ? loadPendingConsentSelections()
+  const [callbackState] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('success') !== 'true') {
+      return undefined;
+    }
+    const stateID = params.get('consent_state_id');
+    const serviceID = params.get('service_id');
+    return stateID && serviceID
+      ? loadConsentState(stateID, serviceID, location.pathname)
       : undefined;
-  }, [location.search]);
+  });
+  const returnURL = callbackState ? new URL(callbackState.returnURL) : undefined;
+  const activeCallbackState =
+    returnURL?.pathname === location.pathname ? callbackState : undefined;
+  const restoredSelections =
+    activeCallbackState && Object.keys(activeCallbackState.selections).length > 0
+      ? activeCallbackState.selections
+      : undefined;
+  const sessionToken =
+    (activeCallbackState
+      ? returnURL?.searchParams.get('session_token')
+      : new URLSearchParams(location.search).get('session_token')) || undefined;
+
+  useEffect(() => {
+    if (!activeCallbackState) {
+      return;
+    }
+    const originalURL = new URL(activeCallbackState.returnURL);
+    originalURL.searchParams.set('success', 'true');
+    originalURL.searchParams.set('service_id', activeCallbackState.serviceID);
+    navigate(`${originalURL.pathname}${originalURL.search}${originalURL.hash}`, {
+      replace: true,
+    });
+  }, [activeCallbackState, navigate]);
 
   const resolvedAgentId = agentId ?? '';
 
@@ -229,16 +250,28 @@ export function AgentGrantDetailPage() {
       const currentUrl = new URL(window.location.href);
       currentUrl.searchParams.delete('consent_state');
       currentUrl.searchParams.delete('consent_state_id');
+      currentUrl.searchParams.delete('success');
+      currentUrl.searchParams.delete('service_id');
+      const redirectURI = `${currentUrl.origin}${currentUrl.pathname}`;
 
-      if (Object.keys(perPsIncludedServiceIds).length === 0) {
-        clearPendingConsentSelections();
-        window.location.href = `/api/third-party/${serviceId}/oauth2/authorize?redirect_uri=${encodeURIComponent(currentUrl.toString())}`;
+      const hasSelections = Object.keys(perPsIncludedServiceIds).length > 0;
+      if (!hasSelections && !currentUrl.search && !currentUrl.hash) {
+        window.location.href = `/api/third-party/${serviceId}/oauth2/authorize?redirect_uri=${encodeURIComponent(redirectURI)}`;
         return;
       }
 
-      const stateID = saveConsentSelections(perPsIncludedServiceIds);
+      const stateID = saveConsentSelections(
+        perPsIncludedServiceIds,
+        serviceId,
+        currentUrl.toString(),
+      );
       if (!stateID) {
-        showToast('Unable to preserve selections. Please try again.', 'error');
+        showToast(
+          hasSelections
+            ? 'Unable to preserve selections. Please try again.'
+            : 'Unable to preserve the return page. Please try again.',
+          'error',
+        );
         return;
       }
 
@@ -247,7 +280,7 @@ export function AgentGrantDetailPage() {
       form.action = `/api/third-party/${serviceId}/oauth2/authorize`;
       form.style.display = 'none';
       for (const [name, value] of Object.entries({
-        redirect_uri: currentUrl.toString(),
+        redirect_uri: redirectURI,
         consent_state_id: stateID,
       })) {
         const input = document.createElement('input');

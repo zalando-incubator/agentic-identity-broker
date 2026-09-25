@@ -782,7 +782,8 @@ paths:
           required: true
           description: |
             URI to redirect user after OAuth2 flow completes.
-            Must match the host of the incoming request (same-origin validation).
+            Must match the configured public origin. The resulting provider-facing state
+            must be shorter than 6,000 bytes; oversized requests receive a 400 response.
           schema:
             type: string
             format: uri
@@ -797,7 +798,7 @@ paths:
                 type: string
                 format: uri
         "400":
-          description: Invalid request (missing redirect_uri or origin mismatch)
+          description: Invalid request (missing redirect_uri, origin mismatch, or oversized state)
           content:
             application/json:
               schema:
@@ -820,13 +821,17 @@ paths:
           $ref: "#/components/responses/InternalError"
     post:
       operationId: initiateOAuth2FlowWithConsentState
-      summary: Initiate OAuth2 authorization flow with consent selection state
+      summary: Initiate OAuth2 authorization flow with tab-local return state
       description: |
-        Initiates an OAuth2 authorization code flow with PKCE when the consent page must preserve current-tab selections.
+        Initiates an OAuth2 authorization code flow with PKCE when the consent page must
+        preserve selections or return-page query parameters in its current tab.
 
-        The same-origin form body supplies the bare UUID `consent_state_id`. The broker seals it in the private JWE state claim of the provider-facing authorization request. The value never appears in an authorization URL or callback return URL.
-
-        The redirect_uri field must match the host of the incoming request (same-origin validation).
+        The same-origin form body supplies the bare UUID `consent_state_id`. The broker
+        seals it in the private JWE state claim of the provider-facing authorization
+        request. Only a validated success callback includes it in the browser return URL.
+        The redirect_uri field must match the configured public origin and carry only
+        the return path; the browser retains its original return URL in sessionStorage.
+        State tokens of 6,000 bytes or more are rejected before provider redirect.
       tags:
         - Third-Party Sessions
       security:
@@ -853,12 +858,12 @@ paths:
                 redirect_uri:
                   type: string
                   format: uri
-                  description: URI to redirect to after OAuth2 completes. It must be same-origin.
+                  description: Same-origin return page path without query or fragment. The original URL stays in the originating tab.
                   example: https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000
                 consent_state_id:
                   type: string
                   format: uuid
-                  description: Bare UUID stored in the JWE state claim. It is not a URL parameter.
+                  description: Bare UUID sealed in the JWE state claim and returned only on a successful callback, not a provider authorization parameter.
       responses:
         "302":
           description: Redirect to third-party authorization endpoint
@@ -869,7 +874,7 @@ paths:
                 type: string
                 format: uri
         "400":
-          description: Invalid request, consent-state UUID, or redirect URI
+          description: Invalid request, consent-state UUID, redirect URI, or oversized state
           content:
             application/json:
               schema:
@@ -905,7 +910,9 @@ paths:
         - Exchanges authorization code for access/refresh tokens (with PKCE)
         - Encrypts tokens using EncryptionPort
         - Stores session in database
-        - Redirects user to original redirect_uri with success status
+        - Redirects to the original redirect_uri with success=true and service_id;
+          for form-initiated flows, also adds the validated consent_state_id so the
+          originating tab can recover its return-page data and remove that ID from the URL
 
         On error:
 
@@ -950,12 +957,13 @@ paths:
           example: The user denied the request
       responses:
         "302":
-          description: Redirect to sessions page with success or error status
+          description: Redirect to the initiating return URI on success or sessions page on error
           headers:
             Location:
               description: |
-                On success: Original redirect_uri with success=true query param
-                On error: Redirect_uri with error and message query params
+                On success: Validated redirect_uri with success=true, service_id, and
+                optional consent_state_id from the sealed state claim.
+                On error: Sessions page with error and error_description parameters.
               schema:
                 type: string
                 format: uri

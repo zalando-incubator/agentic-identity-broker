@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -187,10 +188,15 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		GetMockUpstream().WithSuccessfulTokenResponse()
 
 		page := consentPage.GetPlaywrightPage()
+		previousAuthorizeURL := GetMockUpstream().GetLastAuthorizeURL()
 		Expect(consentPage.DelegateService(ctx, "Google")).To(Succeed())
 		var upstreamState string
 		Eventually(func() string {
-			authorizeURL, err := url.Parse(GetMockUpstream().GetLastAuthorizeURL())
+			lastAuthorizeURL := GetMockUpstream().GetLastAuthorizeURL()
+			if lastAuthorizeURL == previousAuthorizeURL {
+				return ""
+			}
+			authorizeURL, err := url.Parse(lastAuthorizeURL)
 			if err != nil {
 				return ""
 			}
@@ -200,11 +206,11 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(len(upstreamState)).To(BeNumerically("<", 6000))
 		Eventually(func() string {
 			return page.URL()
-		}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("/agents/" + testAgentID))
-
-		selectionStateID, err := consentPage.GetURLQueryParam("consent_state_id")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(selectionStateID).To(BeEmpty())
+		}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("success=true"))
+		Eventually(func() string {
+			stateID, _ := consentPage.GetURLQueryParam("consent_state_id")
+			return stateID
+		}, 10*time.Second, 100*time.Millisecond).Should(BeEmpty())
 		legacyState, err := consentPage.GetURLQueryParam("consent_state")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(legacyState).To(BeEmpty())
@@ -225,6 +231,8 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 			var err error
 			postData, err = request.PostData()
 			Expect(err).NotTo(HaveOccurred())
+			Expect(loginMethod).To(Equal("POST"))
+			Expect(postData).NotTo(BeEmpty())
 			form, err := url.ParseQuery(postData)
 			Expect(err).NotTo(HaveOccurred())
 			returnURL, err := url.Parse(form.Get("redirect_uri"))
@@ -232,6 +240,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 			callbackQuery := returnURL.Query()
 			callbackQuery.Set("success", "true")
 			callbackQuery.Set("service_id", selGoogleServiceID.String())
+			callbackQuery.Set("consent_state_id", form.Get("consent_state_id"))
 			returnURL.RawQuery = callbackQuery.Encode()
 			status := 302
 			Expect(route.Fulfill(playwright.RouteFulfillOptions{
@@ -246,7 +255,11 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		}, 5*time.Second, 100*time.Millisecond).ShouldNot(BeEmpty())
 		Eventually(func() string {
 			return page.URL()
-		}, 5*time.Second, 100*time.Millisecond).Should(ContainSubstring("/agents/" + testAgentID))
+		}, 5*time.Second, 100*time.Millisecond).Should(ContainSubstring("success=true"))
+		Eventually(func() string {
+			stateID, _ := consentPage.GetURLQueryParam("consent_state_id")
+			return stateID
+		}, 5*time.Second, 100*time.Millisecond).Should(BeEmpty())
 
 		loginURL, err := url.Parse(capturedLoginURL)
 		Expect(err).NotTo(HaveOccurred())
@@ -261,6 +274,15 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(returnURL.Query().Get("consent_state_id")).To(BeEmpty())
 		expectOptionalSelectionRestored(ctx, consentPage, "Google", "Slack")
+		Expect(consentPage.TogglePermissionSet(ctx, "Productivity Suite")).To(Succeed())
+		Eventually(func() (bool, error) {
+			return consentPage.IsPermissionSetSelected(ctx, "Productivity Suite")
+		}, 5*time.Second, 100*time.Millisecond).Should(BeFalse())
+		_, err = page.Reload()
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() (bool, error) {
+			return consentPage.IsPermissionSetSelected(ctx, "Productivity Suite")
+		}, 5*time.Second, 100*time.Millisecond).Should(BeFalse())
 	})
 
 	// Feature 008 User Story 5 Amendment, Scenario 3: Complete provider callback
@@ -278,7 +300,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		claims, err := sessiontoken.NewAuthorizationSessionClaims(
 			agentID,
 			id.Principal(fixtures.DefaultPrincipal().String()),
-			"/oauth2/authorize?client_id=selection-test&redirect_uri=https%3A%2F%2Fclient.example.com%2Fcallback&response_type=code&state=selection-test",
+			"/oauth2/authorize?client_id=selection-test&redirect_uri=https%3A%2F%2Fclient.example.com%2Fcallback&response_type=code&state="+strings.Repeat("client-state-", 350),
 			nil,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -291,14 +313,35 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		GetMockUpstream().WithSuccessfulTokenResponse()
 
 		page := consentPage.GetPlaywrightPage()
+		previousAuthorizeURL := GetMockUpstream().GetLastAuthorizeURL()
 		Expect(consentPage.DelegateService(ctx, "Google")).To(Succeed())
+		var upstreamState string
+		Eventually(func() string {
+			lastAuthorizeURL := GetMockUpstream().GetLastAuthorizeURL()
+			if lastAuthorizeURL == previousAuthorizeURL {
+				return ""
+			}
+			authorizeURL, parseErr := url.Parse(lastAuthorizeURL)
+			if parseErr != nil {
+				return ""
+			}
+			upstreamState = authorizeURL.Query().Get("state")
+			return upstreamState
+		}, 10*time.Second, 100*time.Millisecond).ShouldNot(BeEmpty())
+		Expect(len(upstreamState)).To(BeNumerically("<", 6000))
+		stateClaims, err := alignedServer.App().OAuth2SessionService.ValidateStateToken(
+			upstreamState, id.Principal(fixtures.DefaultPrincipal().String()), selGoogleServiceID,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stateClaims.RedirectURI).To(Equal(alignedServer.BaseURL() + "/agents/" + testAgentID))
+		Expect(stateClaims.ConsentStateID).To(MatchRegexp(consentStateIDPattern))
 		Eventually(func() string {
 			return page.URL()
-		}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("/agents/" + testAgentID))
-
-		returnedSessionToken, err := consentPage.GetURLQueryParam("session_token")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(returnedSessionToken).To(Equal(sessionToken))
+		}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("success=true"))
+		Eventually(func() string {
+			returnedSessionToken, _ := consentPage.GetURLQueryParam("session_token")
+			return returnedSessionToken
+		}, 10*time.Second, 100*time.Millisecond).Should(Equal(sessionToken))
 		success, err := consentPage.GetURLQueryParam("success")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(success).To(Equal("true"))

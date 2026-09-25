@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  clearPendingConsentSelections,
-  loadConsentSelections,
-  loadPendingConsentSelections,
+  loadConsentState,
   saveConsentSelections,
   type ConsentSelections,
 } from './session';
@@ -12,6 +10,9 @@ const recordLifetimeMilliseconds = 15 * 60 * 1000;
 const testTime = new Date('2026-09-22T12:00:00Z');
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const serviceID = 'd0000000-0000-0000-0000-000000000002';
+const returnURL = `${window.location.origin}/agents/agent?session_token=sealed`;
+const pathname = '/agents/agent';
 
 const largeSelections: ConsentSelections = Object.fromEntries(
   Array.from({ length: 250 }, (_, index) => [
@@ -34,7 +35,7 @@ describe('consent selection session storage', () => {
   });
 
   it('stores a large selection map beneath a fixed-size UUID reference', () => {
-    const stateID = saveConsentSelections(largeSelections);
+    const stateID = saveConsentSelections(largeSelections, serviceID, returnURL);
 
     expect(stateID).toMatch(uuidPattern);
     expect(stateID).toHaveLength(36);
@@ -43,11 +44,9 @@ describe('consent selection session storage', () => {
     ).toEqual({
       expiresAt: Date.now() + recordLifetimeMilliseconds,
       selections: largeSelections,
+      serviceID,
+      returnURL,
     });
-
-    expect(
-      sessionStorage.getItem('agentic-identity-broker:pending-consent-state'),
-    ).toBe(stateID);
   });
 
   it('prunes expired consent records before saving a new selection map', () => {
@@ -60,57 +59,52 @@ describe('consent selection session storage', () => {
       }),
     );
 
-    expect(saveConsentSelections(largeSelections)).toMatch(uuidPattern);
+    expect(
+      saveConsentSelections(largeSelections, serviceID, returnURL),
+    ).toMatch(uuidPattern);
     expect(
       sessionStorage.getItem(`${storagePrefix}${expiredStateID}`),
     ).toBeNull();
   });
 
-  it('loads a validated selection map from a current-tab record', () => {
-    const stateID = 'd0000000-0000-4000-8000-000000000001';
-    const selections: ConsentSelections = {
-      'permission-set-1': ['service-1', 'service-2'],
-    };
-    sessionStorage.setItem(
-      `${storagePrefix}${stateID}`,
-      JSON.stringify({
-        expiresAt: Date.now() + recordLifetimeMilliseconds,
-        selections,
-      }),
+  it('restores only the matching callback ID, service and page in the originating tab', () => {
+    const firstID = saveConsentSelections(
+      { 'permission-set-1': ['service-1'] },
+      serviceID,
+      returnURL,
     );
+    const secondSelections = { 'permission-set-2': ['service-2'] };
+    const secondID = saveConsentSelections(secondSelections, serviceID, returnURL);
 
-    expect(loadConsentSelections(stateID)).toEqual(selections);
-  });
-
-  it('loads a valid single-service selection map', () => {
-    const stateID = 'd0000000-0000-4000-8000-000000000007';
-    const selections: ConsentSelections = {
+    expect(loadConsentState(firstID ?? '', serviceID, pathname)?.selections).toEqual({
       'permission-set-1': ['service-1'],
-    };
+    });
+    expect(
+      loadConsentState(secondID ?? '', serviceID, pathname)?.selections,
+    ).toEqual(secondSelections);
+    expect(loadConsentState(firstID ?? '', 'another-service', pathname)).toBeUndefined();
+    expect(loadConsentState(firstID ?? '', serviceID, '/agents/other')).toBeUndefined();
+    sessionStorage.clear();
+    expect(loadConsentState(firstID ?? '', serviceID, pathname)).toBeUndefined();
+  });
+
+  it('rejects a cross-origin return URL even for a valid record', () => {
+    const stateID = 'd0000000-0000-4000-8000-000000000007';
     sessionStorage.setItem(
       `${storagePrefix}${stateID}`,
       JSON.stringify({
         expiresAt: Date.now() + recordLifetimeMilliseconds,
-        selections,
+        selections: largeSelections,
+        serviceID,
+        returnURL: 'https://other.example.com/agents/agent',
       }),
     );
-
-    expect(loadConsentSelections(stateID)).toEqual(selections);
-  });
-
-  it('loads and clears the pending current-tab selection reference', () => {
-    const stateID = saveConsentSelections(largeSelections);
-
-    expect(loadPendingConsentSelections()).toEqual(largeSelections);
-    clearPendingConsentSelections();
-    expect(
-      sessionStorage.getItem('agentic-identity-broker:pending-consent-state'),
-    ).toBeNull();
-    expect(loadConsentSelections(stateID ?? '')).toEqual(largeSelections);
+    expect(loadConsentState(stateID, serviceID, pathname)).toBeUndefined();
   });
 
   it.each([
     ['an unknown reference', 'd0000000-0000-4000-8000-000000000002', undefined],
+    ['a malformed reference', '../another-key', undefined],
     ['a malformed stored record', 'd0000000-0000-4000-8000-000000000003', '{'],
     [
       'an expired record',
@@ -118,6 +112,8 @@ describe('consent selection session storage', () => {
       JSON.stringify({
         expiresAt: testTime.getTime() - 1,
         selections: { 'permission-set-1': ['service-1'] },
+        serviceID,
+        returnURL,
       }),
     ],
     [
@@ -126,6 +122,8 @@ describe('consent selection session storage', () => {
       JSON.stringify({
         expiresAt: testTime.getTime() + recordLifetimeMilliseconds,
         selections: { 'permission-set-1': ['service-1', 2] },
+        serviceID,
+        returnURL,
       }),
     ],
   ])('returns undefined for %s', (_description, stateID, record) => {
@@ -133,21 +131,19 @@ describe('consent selection session storage', () => {
       sessionStorage.setItem(`${storagePrefix}${stateID}`, record);
     }
 
-    expect(loadConsentSelections(stateID)).toBeUndefined();
+    expect(loadConsentState(stateID, serviceID, pathname)).toBeUndefined();
   });
 
-  it('returns undefined without throwing when browser storage is unavailable', () => {
+  it('returns undefined when browser storage is unavailable', () => {
     vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => {
       throw new Error('storage unavailable');
     });
 
-    expect(() => saveConsentSelections(largeSelections)).not.toThrow();
-    expect(saveConsentSelections(largeSelections)).toBeUndefined();
-    expect(() =>
-      loadConsentSelections('d0000000-0000-4000-8000-000000000006'),
-    ).not.toThrow();
     expect(
-      loadConsentSelections('d0000000-0000-4000-8000-000000000006'),
+      saveConsentSelections(largeSelections, serviceID, returnURL),
+    ).toBeUndefined();
+    expect(
+      loadConsentState('d0000000-0000-4000-8000-000000000006', serviceID, pathname),
     ).toBeUndefined();
   });
 });
