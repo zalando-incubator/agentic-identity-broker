@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -49,22 +50,25 @@ func init() {
 }
 
 func TestMain(m *testing.M) {
+	flag.Parse()
 	ctx := context.Background()
-	if canAccessContainerRuntime() {
-		container, host, port, err := startSharedTestContainer(ctx)
-		if err != nil {
-			sharedTestErr = err
+	if !testing.Short() {
+		if canAccessContainerRuntime() {
+			container, host, port, err := startSharedTestContainer(ctx)
+			if err != nil {
+				sharedTestErr = err
+			} else {
+				sharedTestContainer = container
+				sharedTestHost = host
+				sharedTestPort = port
+			}
 		} else {
-			sharedTestContainer = container
-			sharedTestHost = host
-			sharedTestPort = port
+			sharedTestErr = fmt.Errorf("no container runtime available")
 		}
-	} else {
-		sharedTestErr = fmt.Errorf("no container runtime available")
-	}
-	if sharedTestErr != nil && os.Getenv("CI") != "" {
-		fmt.Fprintf(os.Stderr, "PostgreSQL integration container unavailable in CI: %v\n", sharedTestErr)
-		os.Exit(1)
+		if sharedTestErr != nil && os.Getenv("CI") != "" {
+			fmt.Fprintf(os.Stderr, "PostgreSQL integration container unavailable in CI: %v\n", sharedTestErr)
+			os.Exit(1)
+		}
 	}
 
 	code := m.Run()
@@ -74,6 +78,15 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
+}
+
+func TestShortModeBypassesContainerStartup(t *testing.T) {
+	if !testing.Short() {
+		t.Skip("short mode only")
+	}
+
+	require.Nil(t, sharedTestContainer)
+	require.NoError(t, sharedTestErr)
 }
 
 // canAccessContainerRuntime checks if Docker or Podman is available.

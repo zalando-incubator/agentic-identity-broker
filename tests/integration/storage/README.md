@@ -107,10 +107,11 @@ TESTCONTAINERS_LOGS=true go test -tags=integration -v ./tests/integration/storag
 
 ## CI/CD Integration
 
-Provide a Docker daemon to jobs that run infra-backed integration tests:
+Provide a container runtime to jobs that run infra-backed integration tests.
+Use `-count=1` so a cached success cannot bypass the live runtime check:
 
 ```bash
-go test -tags=integration -v ./tests/integration/storage/infra/...
+go test -count=1 -tags=integration -v ./tests/integration/storage/infra/...
 ```
 
 ## Performance Notes

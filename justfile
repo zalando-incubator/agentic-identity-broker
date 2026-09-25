@@ -258,7 +258,7 @@ test-integration:
 # Run infra-backed integration tests that require build tags and external infrastructure
 test-integration-infra:
     @echo "Running infra-backed integration suites..."
-    go test -tags=integration -p {{INTEGRATION_INFRA_PACKAGE_PROCS}} -v {{INTEGRATION_INFRA_TEST_PACKAGES}}
+    go test -count=1 -tags=integration -p {{INTEGRATION_INFRA_PACKAGE_PROCS}} -v {{INTEGRATION_INFRA_TEST_PACKAGES}}
 
 # Run both self-contained and infra-backed integration suites
 test-integration-all: test-integration test-integration-infra
@@ -369,7 +369,7 @@ verify-integration-junit:
         > test-results/integration-self-contained-output.json 2> test-results/integration-self-contained-stderr.log
     SELF_CONTAINED_EXIT=$?
 
-    go test -json -tags=integration -p {{INTEGRATION_INFRA_PACKAGE_PROCS}} \
+    go test -json -count=1 -tags=integration -p {{INTEGRATION_INFRA_PACKAGE_PROCS}} \
         {{INTEGRATION_INFRA_TEST_PACKAGES}} \
         > test-results/integration-infra-output.json 2> test-results/integration-infra-stderr.log
     INFRA_EXIT=$?
