@@ -13,27 +13,18 @@ Modified Principles:
 Added Sections: None
 Removed Sections: None
 
-Dependent references for the visual-redesign feature (not updated here):
-  - Templates: `.specify/templates/overrides/spec-template.md` and
-    `.specify/templates/overrides/tasks-template.md`.
-  - Design docs: `web/src/design-system/docs/` — `DESIGN_PRINCIPLES.md`, `INDEX.md`,
-    `COLOR_GUIDE.md`, `TOKEN_GUIDE.md`, `COMMON_MISTAKES.md`,
-    `COMPONENT_ARCHETYPES.md`, `DECISION_TREES.md`, `COMPONENT_PAIRING_GUIDE.md`,
-    `COMPOSITION_PATTERNS.md`, `ACCESSIBILITY_GUIDE.md`, and `MOTION_GUIDE.md`.
-  - Other frontend docs: `web/src/design-system/GettingStarted.mdx`,
-    `web/src/components/sessions/README.md`, and
-    `web/src/components/sessions/DESIGN_SYSTEM_USAGE.md`.
-  - Agent and architecture docs: `AGENTS.md`, `web/AGENTS.md`, `ARCHITECTURE.md`.
-  - Historical feature docs to review: `specs/007-consent-frontend/` (`plan.md`,
-    `quickstart.md`, `research.md`, `tasks.md`),
-    `specs/008-thirdparty-oauth2-sessions/tasks.md`,
-    `specs/011-agent-permission-requirements/` (`quickstart.md`, `research.md`, `tasks.md`),
-    `specs/016-jwt-preauth/` (`research.md`, `spec.md`, `tasks.md`),
-    `specs/019-permission-sets/` (`spec.md`, `tasks.md`),
-    `specs/024-approval-api-ui/` (`spec.md`, `tasks.md`), and
-    `specs/028-cimd-support/tasks.md`.
+Version History:
+- 2.0.0 → 2.1.0: Replaced Principle XI aesthetic mandates with token, theme, asset, accessibility, and ADR requirements (MINOR)
+- 1.9.1 → 2.0.0: Scoped Helm changes to workloads deployed by the broker chart (MAJOR)
+- 1.9.0 → 1.9.1: Clarified the bounded ADR 031 exception in Principle I (PATCH)
+- 1.8.0 → 1.8.1: Clarified red phase rules in Principles VIII and XIII (PATCH)
+- 1.7.1 → 1.8.0: Added Helm chart requirement (Principle VII) + frontend Playwright E2E (MINOR)
+- 1.7.0 → 1.7.1: Clarified red phase requirements in Principle VIII (PATCH)
+- 1.6.0 → 1.7.0: Added Principle XIII (E2E Acceptance Testing) + expanded Principle VIII (MINOR)
+- 1.5.1 → 1.6.0: Added Principle XII (Dependency Injection & Component Wiring) (MINOR)
+- 1.5.0 → 1.5.1: Clarified testing requirements in tasks-template.md (PATCH)
 
-Follow-up TODOs: None in the constitution; dependent references belong to the redesign feature.
+Follow-up TODOs: Review dependent references in `specs/047-redesign-consent-console/plan.md`.
 -->
 
 # Agentic Identity Broker Constitution
