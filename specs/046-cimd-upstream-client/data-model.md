@@ -140,15 +140,15 @@ All CIMD confidential services share one CIMD key set. A key set never shares ke
 
 ## Persistence changes
 
-Use two sequential migrations after `031`.
+Use two sequential migrations after `032_add_approval_patterns`.
 
-### `032_add_cimd_key_domain`
+### `033_add_cimd_key_domain`
 
 The up migration adds non-null `key_domain` to `signing_keys` and backfills `token_signing` for existing rows. It adds a closed domain check, retains global `kid` uniqueness, and replaces the global current-key partial index with a per-domain active-current index.
 
 The down migration first refuses rollback when a row has `key_domain = cimd_client_authentication`. When no CIMD key exists, it restores the token-only domain check and global current-key index.
 
-### `033_add_cimd_private_key_jwt_authentication`
+### `034_add_cimd_private_key_jwt_authentication`
 
 The up migration replaces `chk_thirdparty_oauth2_services_client_auth`. It permits `private_key_jwt` only when `client_secret_encrypted` is NULL.
 
