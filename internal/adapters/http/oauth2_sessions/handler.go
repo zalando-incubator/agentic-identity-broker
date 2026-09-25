@@ -83,35 +83,6 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-type initiateFlowInputError struct {
-	status  int
-	code    string
-	message string
-}
-
-func readConsentStateForm(r *http.Request) (string, string, *initiateFlowInputError) {
-	if r.Method != http.MethodPost {
-		return r.URL.Query().Get("redirect_uri"), "", nil
-	}
-	if err := r.ParseForm(); err != nil {
-		return "", "", &initiateFlowInputError{
-			status:  http.StatusBadRequest,
-			code:    "invalid_request",
-			message: "invalid authorize request form",
-		}
-	}
-
-	consentStateID := r.PostForm.Get("consent_state_id")
-	if _, err := uuid.Parse(consentStateID); err != nil {
-		return "", "", &initiateFlowInputError{
-			status:  http.StatusBadRequest,
-			code:    "invalid_request",
-			message: "consent_state_id must be a UUID",
-		}
-	}
-	return r.PostForm.Get("redirect_uri"), consentStateID, nil
-}
-
 // InitiateFlow handles GET and POST /api/third-party/{serviceId}/oauth2/authorize.
 // It initiates an OAuth2 authorization code flow with PKCE.
 func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
@@ -139,11 +110,22 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	redirectURI, consentStateID, inputErr := readConsentStateForm(r)
-	if inputErr != nil {
-		h.logger.Warn("invalid OAuth2 flow request", "service_id", safeServiceIDStr, "error", inputErr.message)
-		writeJSONError(w, inputErr.status, inputErr.code, inputErr.message)
-		return
+	var redirectURI, consentStateID string
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			h.logger.Warn("invalid OAuth2 flow request", "service_id", safeServiceIDStr, "error", "invalid authorize request form")
+			writeJSONError(w, http.StatusBadRequest, "invalid_request", "invalid authorize request form")
+			return
+		}
+		consentStateID = r.PostForm.Get("consent_state_id")
+		if _, err := uuid.Parse(consentStateID); err != nil {
+			h.logger.Warn("invalid OAuth2 flow request", "service_id", safeServiceIDStr, "error", "consent_state_id must be a UUID")
+			writeJSONError(w, http.StatusBadRequest, "invalid_request", "consent_state_id must be a UUID")
+			return
+		}
+		redirectURI = r.PostForm.Get("redirect_uri")
+	} else {
+		redirectURI = r.URL.Query().Get("redirect_uri")
 	}
 	if redirectURI == "" {
 		h.logger.Warn("missing redirect_uri", "service_id", safeServiceIDStr)
