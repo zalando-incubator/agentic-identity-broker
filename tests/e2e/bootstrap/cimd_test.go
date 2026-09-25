@@ -3,7 +3,6 @@ package bootstrap_test
 import (
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
@@ -19,9 +18,7 @@ func TestCIMDServerRejectsIncompleteAuthorizationRequest(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = storageFactory.CloseStorage(storage) })
 
-	metadataServer := httptest.NewTLSServer(http.NotFoundHandler())
-	t.Cleanup(metadataServer.Close)
-	fetcher, err := bootstrap.NewCIMDTestFetcher(metadataServer, "agent.example.com", 5120)
+	fetcher, err := bootstrap.NewCIMDTestFetcherFromClient(&http.Client{}, 5120)
 	if err != nil {
 		t.Fatal(err)
 	}
