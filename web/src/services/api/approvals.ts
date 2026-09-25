@@ -13,6 +13,8 @@ import type {
   DenyRequest,
   DenyResponse,
   DenyResponseData,
+  ScopePreview,
+  ScopePreviewRequest,
   ToolApprovalDetail,
 } from '../../types/approval';
 
@@ -30,6 +32,17 @@ export const approvalApi = {
   ): Promise<ApproveResponseData> {
     const response = await apiClient.post<ApproveResponse>(
       `/approvals/${encodeURIComponent(approvalId)}/approve`,
+      request,
+    );
+    return response.data.data;
+  },
+
+  async previewApprovalScope(
+    approvalId: string,
+    request: ScopePreviewRequest,
+  ): Promise<ScopePreview> {
+    const response = await apiClient.post<{ data: ScopePreview }>(
+      `/approvals/${encodeURIComponent(approvalId)}/scope-preview`,
       request,
     );
     return response.data.data;

@@ -37,6 +37,13 @@ func (*ToolApprovalRepository) ApprovalMutationsSyncAtomically() bool {
 }
 
 func (r *ToolApprovalRepository) Create(_ context.Context, approval *storage.ToolApproval) (*storage.ToolApproval, error) {
+	if approval.ToolPattern == "" {
+		return nil, storage.NewStorageError("Create", storage.ErrorKindValidation, storage.ErrApprovalPatternMissing, "approval tool pattern is required")
+	}
+	if approval.ParamsPattern == nil {
+		approval.ParamsPattern = map[string]string{}
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -70,7 +77,10 @@ func (r *ToolApprovalRepository) Get(_ context.Context, approvalID id.ApprovalID
 	return copyApproval(a), nil
 }
 
-func (r *ToolApprovalRepository) Approve(_ context.Context, approvalID id.ApprovalID, persistence storage.ApprovalPersistence, approvedAt time.Time) (*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) Approve(_ context.Context, approvalID id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error) {
+	if decision.ToolPattern == "" {
+		return nil, storage.NewStorageError("Approve", storage.ErrorKindValidation, storage.ErrApprovalPatternMissing, "approval tool pattern is required")
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -80,7 +90,9 @@ func (r *ToolApprovalRepository) Approve(_ context.Context, approvalID id.Approv
 	}
 
 	a.Status = storage.ApprovalStatusApproved
-	a.Persistence = &persistence
+	a.Persistence = &decision.Persistence
+	a.ToolPattern = decision.ToolPattern
+	a.ParamsPattern = copyParamsPattern(decision.ParamsPattern)
 	a.ApprovedAt = &approvedAt
 	return copyApproval(a), nil
 }
@@ -234,6 +246,9 @@ func copyApproval(a *storage.ToolApproval) *storage.ToolApproval {
 			cp.Arguments[k] = v
 		}
 	}
+	if a.ParamsPattern != nil {
+		cp.ParamsPattern = copyParamsPattern(a.ParamsPattern)
+	}
 	if a.Persistence != nil {
 		p := *a.Persistence
 		cp.Persistence = &p
@@ -251,4 +266,15 @@ func copyApproval(a *storage.ToolApproval) *storage.ToolApproval {
 		cp.ConsumedAt = &t
 	}
 	return &cp
+}
+
+func copyParamsPattern(params map[string]string) map[string]string {
+	if params == nil {
+		return map[string]string{}
+	}
+	cp := make(map[string]string, len(params))
+	for key, value := range params {
+		cp[key] = value
+	}
+	return cp
 }

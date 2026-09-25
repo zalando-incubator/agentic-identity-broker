@@ -12,10 +12,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { approvalApi } from '@services/api/approvals';
 import type {
   ToolApprovalDetail,
-  ApprovalPersistence,
   ApprovalErrorCode,
   ApproveResponseData,
   DenyResponseData,
+  ApproveRequest,
 } from '../types/approval';
 import type { ApiError } from '../types/consent';
 
@@ -34,8 +34,8 @@ interface UseApprovalResult {
   approveResult: ApproveResponseData | null;
   /** Deny response data after successful denial */
   denyResult: DenyResponseData | null;
-  /** Approve the approval with a persistence choice */
-  approve: (persistence: ApprovalPersistence) => Promise<void>;
+  /** Approve the approval with the selected coverage. */
+  approve: (request: ApproveRequest) => Promise<void>;
   /** Deny the approval with optional permanent persistence */
   deny: (permanent?: boolean) => Promise<void>;
   /** Refetch the approval data */
@@ -51,6 +51,7 @@ function mapHttpStatusToErrorCode(
   if (status === 403) return 'FORBIDDEN';
   if (status === 404) return 'NOT_FOUND';
   if (!status || status === 0) return 'NETWORK_ERROR';
+  if (code === 'invalid_pattern' || status === 422) return 'INVALID_PATTERN';
   return 'SERVER_ERROR';
 }
 
@@ -88,23 +89,16 @@ export function useApproval(approvalId: string): UseApprovalResult {
   }, [approvalId]);
 
   const approve = useCallback(
-    async (persistence: ApprovalPersistence) => {
+    async (request: ApproveRequest) => {
       if (!approvalId) return;
       try {
         setSubmitting(true);
         setErrorCode(null);
         setErrorMessage(null);
-        const result = await approvalApi.approveApproval(approvalId, {
-          persistence,
-        });
+        const result = await approvalApi.approveApproval(approvalId, request);
         setApproveResult(result);
         if (approval) {
-          setApproval({
-            ...approval,
-            status: 'approved',
-            persistence,
-            approved_at: result.approved_at,
-          });
+          setApproval({ ...approval, status: 'approved', persistence: request.persistence, approved_at: result.approved_at });
         }
       } catch (err) {
         const apiErr = err as ApiError;

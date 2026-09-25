@@ -62,6 +62,7 @@ type EnduserRouteConfig struct {
 //	GET    /api/approvals/pending                     - List pending approvals
 //	GET    /api/approvals/{id}                        - Get approval detail
 //	POST   /api/approvals/{id}/approve                - Approve
+//	POST   /api/approvals/{id}/scope-preview          - Validate and render scope
 //	POST   /api/approvals/{id}/deny                   - Deny
 //	POST   /api/approvals/{id}/revoke                 - Revoke permanent approval
 //
@@ -97,6 +98,7 @@ func SetupEnduserRoutes(r chi.Router, h *app.EnduserHandlers, cfg EnduserRouteCo
 				approvalRouter.Route("/{id}", func(r chi.Router) {
 					r.With(requirePrincipal).Get("/", h.ApprovalGet.ServeHTTP)
 					r.With(requirePrincipal, browserMutationProtection.Handler).Post("/approve", h.ApprovalApprove.ServeHTTP)
+					r.With(requirePrincipal, browserMutationProtection.Handler).Post("/scope-preview", h.ApprovalScopePreview.ServeHTTP)
 					r.With(requirePrincipal, browserMutationProtection.Handler).Post("/deny", h.ApprovalDeny.ServeHTTP)
 					r.With(requirePrincipal, browserMutationProtection.Handler).Post("/revoke", h.ApprovalRevoke.ServeHTTP)
 					r.With(middleware.RequireApprovalSubjectToken(cfg.ApprovalRequestAuthenticator)).Post("/consume", h.ApprovalConsume.ServeHTTP)

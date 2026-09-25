@@ -10,6 +10,20 @@ import * as matchers from '@testing-library/jest-dom/matchers';
 // Extend Vitest's expect with jest-dom matchers
 expect.extend(matchers);
 
+class ResizeObserverMock {
+  constructor(_callback: ResizeObserverCallback) {}
+
+  observe(_target: Element) {}
+
+  unobserve(_target: Element) {}
+
+  disconnect() {}
+}
+
+if (!globalThis.ResizeObserver) {
+  globalThis.ResizeObserver = ResizeObserverMock;
+}
+
 // Cleanup after each test case
 afterEach(() => {
   cleanup();

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ func TestToolApprovalRepository_CreateReplacesExpiredDuplicate(t *testing.T) {
 		Principal:     principal,
 		AgentID:       agentID,
 		ToolName:      "read_file",
+		ToolPattern:   "read_file",
 		ArgumentsHash: "same",
 		Status:        storage.ApprovalStatusPending,
 		ApprovalURL:   "https://broker.example.com/consent/approvals/old",
@@ -32,6 +34,7 @@ func TestToolApprovalRepository_CreateReplacesExpiredDuplicate(t *testing.T) {
 		Principal:     principal,
 		AgentID:       agentID,
 		ToolName:      "read_file",
+		ToolPattern:   "read_file",
 		ArgumentsHash: "same",
 		Status:        storage.ApprovalStatusPending,
 		ApprovalURL:   "https://broker.example.com/consent/approvals/new",
@@ -95,7 +98,7 @@ func TestToolApprovalRepository_RejectsExpiredPendingResolution(t *testing.T) {
 	}
 	repo.approvals[approval.ID] = approval
 
-	_, err := repo.Approve(context.Background(), approval.ID, storage.ApprovalPersistenceOnce, now)
+	_, err := repo.Approve(context.Background(), approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: "read_file", ParamsPattern: map[string]string{}}, now)
 	require.ErrorIs(t, err, ports.ErrNotFound)
 
 	_, err = repo.Deny(context.Background(), approval.ID, nil, now)
@@ -130,4 +133,27 @@ func TestToolApprovalRepository_ListAllActiveOmitsInactiveSessionApproval(t *tes
 	require.NoError(t, err)
 	require.Len(t, active, 1)
 	require.Equal(t, approval.ID, active[0].ID)
+}
+
+func TestToolApprovalRepositoryPatterns(t *testing.T) {
+	repo := NewToolApprovalRepository()
+	approval := &storage.ToolApproval{ID: id.NewApprovalID(), ToolName: "read_file", Status: storage.ApprovalStatusPending}
+	_, err := repo.Create(context.Background(), approval)
+	require.ErrorIs(t, err, storage.ErrApprovalPatternMissing)
+
+	require.NoError(t, domainapproval.ApplyExactPatterns(approval))
+	approval.ExpiresAt = time.Now().Add(time.Minute)
+	created, err := repo.Create(context.Background(), approval)
+	require.NoError(t, err)
+	_, err = repo.Approve(context.Background(), created.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce}, time.Now())
+	require.ErrorIs(t, err, storage.ErrApprovalPatternMissing)
+	decision := storage.ApprovalDecision{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: "read_*", ParamsPattern: map[string]string{"path": "acme/*"}}
+	updated, err := repo.Approve(context.Background(), created.ID, decision, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, decision.ToolPattern, updated.ToolPattern)
+	require.Equal(t, decision.ParamsPattern, updated.ParamsPattern)
+	updated.ParamsPattern["path"] = "changed"
+	stored, err := repo.Get(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "acme/*", stored.ParamsPattern["path"])
 }

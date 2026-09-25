@@ -117,6 +117,10 @@ func (h *CreateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate limit exceeded for this principal/agent pair")
 			return
 		}
+		if errors.Is(err, domainapproval.ErrApprovalInvalidPattern) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_pattern", err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create approval")
 		return
 	}

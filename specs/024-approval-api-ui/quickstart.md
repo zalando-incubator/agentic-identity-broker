@@ -56,6 +56,8 @@ type ToolApproval struct {
     ToolName             string               `db:"tool_name" json:"tool_name"`
     Arguments            map[string]any       `db:"arguments" json:"arguments"`
     ArgumentsHash        string               `db:"arguments_hash" json:"-"`
+    ToolPattern          string               `db:"tool_pattern" json:"-"`
+    ParamsPattern        map[string]string    `db:"params_pattern" json:"-"`
     Description          string               `db:"description" json:"description"`
     RiskLevel            string               `db:"risk_level" json:"risk_level"`
     MCPSessionID         *string              `db:"mcp_session_id" json:"-"`
@@ -91,7 +93,7 @@ Add to `internal/ports/storage.go`:
 type ToolApprovalRepository interface {
     Create(ctx context.Context, approval *storage.ToolApproval) (*storage.ToolApproval, error)
     Get(ctx context.Context, id id.ApprovalID) (*storage.ToolApproval, error)
-    Approve(ctx context.Context, id id.ApprovalID, persistence storage.ApprovalPersistence, approvedAt time.Time) (*storage.ToolApproval, error)
+    Approve(ctx context.Context, id id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error)
     Deny(ctx context.Context, id id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (*storage.ToolApproval, error)
     Consume(ctx context.Context, id id.ApprovalID, consumedAt time.Time) (*storage.ToolApproval, error)
     ListActiveByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error)
@@ -160,8 +162,8 @@ Create `internal/domain/approval/service.go`:
 Key methods:
 
 - `CreatePendingApproval(ctx, req) (*ToolApproval, error)` — compute arguments_hash, check rate limit, check idempotency, create record, increment version
-- `ApproveApproval(ctx, id, principal, persistence) (*ToolApproval, error)` — verify principal, check expiry, transition state, increment version
-- `DenyApproval(ctx, id, principal, persistence) (*ToolApproval, error)` — verify principal, check expiry, transition state, increment version
+- `ApproveApproval(ctx, id, principal, request)` — verify principal, resolve and validate the requested pattern, check expiry, transition state via repository, increment version
+- `DenyApproval(ctx, id, principal, persistence)` — verify principal, check expiry, transition state via repository, increment version
 - `ConsumeApproval(ctx, id) (*ToolApproval, error)` — verify once-persistence, mark consumed, increment version
 - `GetApproval(ctx, id, principal) (*ToolApproval, error)` — verify principal, return record
 - `GetSyncState(ctx, principalFilter) (*SyncState, error)` — return all active approvals grouped by pair
@@ -192,6 +194,17 @@ func (h *CreateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
     // 3. Parse request body
     // 4. Call domain service
     // 5. Write JSON response
+}
+```
+
+The approve handler detects a supplied `tool_pattern` and rejects it. It preserves an omitted
+`params_pattern` as nil:
+
+```go
+type approveRequest struct {
+    Persistence           string          `json:"persistence"`
+    DisallowedToolPattern json.RawMessage `json:"tool_pattern"`
+    ParamsPattern         json.RawMessage `json:"params_pattern"`
 }
 ```
 
@@ -248,8 +261,8 @@ Add API client in `web/src/services/api/approvals.ts`:
 
 ```typescript
 export const getApproval = (id: string) => client.get(`/approvals/${id}`);
-export const approveApproval = (id: string, persistence: string) =>
-    client.post(`/approvals/${id}/approve`, { persistence });
+export const approveApproval = (id: string, request: ApproveRequest) =>
+    client.post(`/approvals/${id}/approve`, request);
 export const denyApproval = (id: string, persistence?: string) =>
     client.post(`/approvals/${id}/deny`, persistence ? { persistence } : {});
 ```
