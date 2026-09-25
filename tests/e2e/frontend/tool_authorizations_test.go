@@ -65,12 +65,6 @@ var _ = Describe("Tool Authorizations Page", func() {
 		authzPage = pages.NewToolAuthorizationsPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if authzPage != nil {
-			_ = authzPage.Close()
-		}
-	})
-
 	// State 1: Empty state — no pending or permanent approvals
 	It("should display empty state when no approvals exist", func() {
 		err := authzPage.NavigateToToolAuthorizations(ctx)
@@ -83,7 +77,7 @@ var _ = Describe("Tool Authorizations Page", func() {
 			hasEmpty, err := authzPage.HasEmptyState(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasEmpty).To(BeTrue())
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		err = authzPage.TakeScreenshot(ctx, "tool_authorizations_empty")
 		Expect(err).NotTo(HaveOccurred())
@@ -114,7 +108,7 @@ var _ = Describe("Tool Authorizations Page", func() {
 			hasPending, err := authzPage.HasPendingSection(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasPending).To(BeTrue())
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		// Verify tool names are displayed
 		hasDelete, err := authzPage.HasToolName(ctx, "delete_files")
@@ -159,15 +153,20 @@ var _ = Describe("Tool Authorizations Page", func() {
 			hasGlobalError, err := authzPage.HasGlobalErrorBoundary(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasGlobalError).To(BeFalse(), "high-risk approval should not crash the Tool Authorizations page")
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 	})
 
 	// State 3: Approve action with persistence selection
-	It("should allow approving a pending request with persistence choice", func() {
+	// Scenario US1-S4 from specs/024-approval-api-ui/spec.md
+	It("approves the first of two expanded requests with permanent persistence", func() {
 		principal := fixtures.DefaultPrincipal()
 
 		approval := newTestApproval(id.Principal(principal.Email), testAgent.ID, "read_file", "Read configuration file", "low")
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
+		Expect(err).NotTo(HaveOccurred())
+		otherApproval := newTestApproval(id.Principal(principal.Email), testAgent.ID, "send_email", "Send email", "medium")
+		otherApproval.CreatedAt = approval.CreatedAt.Add(-time.Minute)
+		_, err = GetTestStorage().ToolApprovals().Create(ctx, otherApproval)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = authzPage.NavigateToToolAuthorizations(ctx)
@@ -177,14 +176,21 @@ var _ = Describe("Tool Authorizations Page", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func(g Gomega) {
-			hasPending, err := authzPage.HasPendingSection(ctx)
+			count, err := authzPage.GetPendingCount(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(hasPending).To(BeTrue())
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+			g.Expect(count).To(Equal(2))
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		// Click Approve to expand persistence picker
 		err = authzPage.ClickApproveOnFirst(ctx)
 		Expect(err).NotTo(HaveOccurred())
+		err = authzPage.ClickApproveOnFirst(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			count, err := authzPage.GetPendingCount(ctx)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(count).To(Equal(0))
+		}).Should(Succeed())
 
 		// Select "Always allow" persistence
 		err = authzPage.SelectPersistence(ctx, "Always allow")
@@ -195,7 +201,7 @@ var _ = Describe("Tool Authorizations Page", func() {
 			hasWarning, err := authzPage.HasPermanentWarning(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasWarning).To(BeTrue())
-		}).WithTimeout(5 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		err = authzPage.TakeScreenshot(ctx, "tool_authorizations_approve_action")
 		Expect(err).NotTo(HaveOccurred())
@@ -209,7 +215,18 @@ var _ = Describe("Tool Authorizations Page", func() {
 			hasPermanent, err := authzPage.HasPermanentSection(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasPermanent).To(BeTrue())
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
+		Eventually(func(g Gomega) {
+			selected, err := GetTestStorage().ToolApprovals().Get(ctx, approval.ID)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(selected.Status).To(Equal(storage.ApprovalStatusApproved))
+			g.Expect(selected.Persistence).NotTo(BeNil())
+			g.Expect(*selected.Persistence).To(Equal(storage.ApprovalPersistencePermanent))
+
+			other, err := GetTestStorage().ToolApprovals().Get(ctx, otherApproval.ID)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(other.Status).To(Equal(storage.ApprovalStatusPending))
+		}).Should(Succeed())
 
 		GetLogger().Info("Test passed: Approve action with persistence completed")
 	})
@@ -232,7 +249,7 @@ var _ = Describe("Tool Authorizations Page", func() {
 			hasPending, err := authzPage.HasPendingSection(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasPending).To(BeTrue())
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		// Click Deny to expand denial options
 		err = authzPage.ClickDenyOnFirst(ctx)
@@ -245,12 +262,19 @@ var _ = Describe("Tool Authorizations Page", func() {
 		err = authzPage.ClickDenyThisRequest(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
+		// Confirm the POST resolved in storage, not just that the pending card disappeared.
+		Eventually(func(g Gomega) {
+			resolved, err := GetTestStorage().ToolApprovals().Get(ctx, approval.ID)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(resolved.Status).To(Equal(storage.ApprovalStatusDenied))
+		}).Should(Succeed())
+
 		// Wait for the card to be removed from pending
 		Eventually(func(g Gomega) {
 			count, err := authzPage.GetPendingCount(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(count).To(Equal(0))
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		GetLogger().Info("Test passed: Deny action from list completed")
 	})
@@ -277,7 +301,7 @@ var _ = Describe("Tool Authorizations Page", func() {
 			hasPermanent, err := authzPage.HasPermanentSection(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasPermanent).To(BeTrue())
-		}).WithTimeout(10 * time.Second).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		// Verify permanent status
 		hasAllowed, err := authzPage.HasPermanentlyAllowed(ctx)

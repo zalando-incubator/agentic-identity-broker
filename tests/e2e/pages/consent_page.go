@@ -34,7 +34,6 @@ const (
 // Usage pattern:
 //
 //	consentPage := NewConsentPage(page, baseURL)
-//	defer consentPage.Close()
 //	consentPage.NavigateToAgent(ctx, "agent-id")
 //	consentPage.SelectScope(ctx, "user:read")
 //	consentPage.SubmitConsent(ctx)
@@ -246,26 +245,9 @@ func (cp *ConsentPage) ClearScope(ctx context.Context, scopeName string) error {
 // The button may be disabled if mandatory requirements are not met.
 func (cp *ConsentPage) SubmitConsent(ctx context.Context) error {
 	button := cp.getConsentActionButton("Approve & Delegate")
-	count, err := button.Count()
-	if err != nil {
-		return fmt.Errorf("failed to locate consent submit button: %w", err)
-	}
-	if count == 0 {
-		return fmt.Errorf("approve and delegate button not found")
-	}
-
-	enabled, err := button.IsEnabled()
-	if err != nil {
-		return fmt.Errorf("failed to check button enabled state: %w", err)
-	}
-	if !enabled {
-		return fmt.Errorf("approve and delegate button is not enabled (mandatory services may not be connected)")
-	}
-
 	if err := button.Click(); err != nil {
 		return fmt.Errorf("failed to click approve and delegate button: %w", err)
 	}
-
 	return nil
 }
 
@@ -641,40 +623,6 @@ func (cp *ConsentPage) HasError(ctx context.Context) (bool, error) {
 	}
 
 	return count > 0, nil
-}
-
-// WaitForNoValidationError asserts that no validation alert appears on the page within
-// the given timeout window. It works by waiting for an alert role element to become
-// visible; a timeout (meaning no alert appeared) is treated as success.
-//
-// This avoids the false-negative that the previous "wait for hidden" approach had: if
-// the alert is not yet in the DOM when WaitFor is called, Playwright considers the
-// locator already "hidden" and returns immediately — so a late-appearing alert would
-// not be caught. By waiting for the alert to become *visible* and treating a timeout as
-// the expected "no error" outcome, we cover the full React state-update window.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//   - timeoutMs: Maximum wait in milliseconds (default 2000 if ≤ 0)
-//
-// Returns:
-//   - error: If an alert becomes visible within the timeout window
-func (cp *ConsentPage) WaitForNoValidationError(ctx context.Context, timeoutMs int) error {
-	if timeoutMs <= 0 {
-		timeoutMs = 2000
-	}
-	alert := cp.page().GetByRole("alert")
-	err := alert.WaitFor(playwright.LocatorWaitForOptions{
-		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(float64(timeoutMs)),
-	})
-	if err != nil {
-		// Timeout means no alert appeared within the window — that is the expected outcome.
-		return nil
-	}
-	// An alert became visible unexpectedly — report it as a validation error.
-	text, _ := alert.TextContent()
-	return fmt.Errorf("unexpected validation error appeared: %s", text)
 }
 
 // GetExpirationDate retrieves the current expiration date value from the input.
@@ -1310,22 +1258,16 @@ func (cp *ConsentPage) ServiceScopeRequiredIndicatorCount(ctx context.Context, p
 // Parameters:
 //   - ctx: Context for cancellation
 //   - serviceDisplayName: Display name of the service to wait for
-//   - timeout: Maximum time to wait (in milliseconds)
 //
-// Returns:
-//   - error: If service doesn't appear within timeout
+// Returns an error if the service does not appear within the page timeout.
 //
 // Example:
 //
-//	err := consentPage.WaitForServiceToAppear(ctx, "GitHub", 5000)
+//	err := consentPage.WaitForServiceToAppear(ctx, "GitHub")
 //	Expect(err).NotTo(HaveOccurred())
-func (cp *ConsentPage) WaitForServiceToAppear(ctx context.Context, serviceDisplayName string, timeout int) error {
+func (cp *ConsentPage) WaitForServiceToAppear(ctx context.Context, serviceDisplayName string) error {
 	if serviceDisplayName == "" {
 		return fmt.Errorf("serviceDisplayName cannot be empty")
-	}
-
-	if timeout <= 0 {
-		timeout = 5000 // Default to 5 seconds
 	}
 
 	// Wait for service heading using Playwright's built-in wait mechanism
@@ -1337,10 +1279,10 @@ func (cp *ConsentPage) WaitForServiceToAppear(ctx context.Context, serviceDispla
 		},
 	)
 	err := heading.WaitFor(playwright.LocatorWaitForOptions{
-		Timeout: playwright.Float(float64(timeout)),
+		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
 	})
 	if err != nil {
-		return fmt.Errorf("service %q did not appear within %dms: %w", serviceDisplayName, timeout, err)
+		return fmt.Errorf("service %q did not appear: %w", serviceDisplayName, err)
 	}
 	return nil
 }
@@ -1381,11 +1323,13 @@ func (cp *ConsentPage) IsCIMDSummaryVisible(ctx context.Context) (bool, error) {
 	loc := cp.page().GetByText("wants to access", playwright.PageGetByTextOptions{
 		Exact: playwright.Bool(false),
 	})
-	visible, err := loc.IsVisible()
-	if err != nil {
-		return false, fmt.Errorf("failed to check CIMD summary visibility: %w", err)
+	if err := loc.WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
+	}); err != nil {
+		return false, fmt.Errorf("CIMD summary did not become visible: %w", err)
 	}
-	return visible, nil
+	return true, nil
 }
 
 // HasCIMDDomainBadge reports whether the CIMDDomainBadge component ("Verified domain: …")
@@ -1394,22 +1338,28 @@ func (cp *ConsentPage) HasCIMDDomainBadge(ctx context.Context) (bool, error) {
 	loc := cp.page().GetByText("Verified domain:", playwright.PageGetByTextOptions{
 		Exact: playwright.Bool(false),
 	})
-	visible, err := loc.IsVisible()
-	if err != nil {
-		return false, fmt.Errorf("failed to check CIMD domain badge visibility: %w", err)
+	if err := loc.WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
+	}); err != nil {
+		return false, fmt.Errorf("CIMD domain badge did not become visible: %w", err)
 	}
-	return visible, nil
+	return true, nil
 }
 
 // HasCIMDLocalhostWarning reports whether the CIMDLocalhostWarning alert is visible.
 // The warning uses role="alert" and appears only when the redirect_uri points to localhost.
 func (cp *ConsentPage) HasCIMDLocalhostWarning(ctx context.Context) (bool, error) {
-	loc := cp.page().GetByRole("alert")
-	visible, err := loc.IsVisible()
-	if err != nil {
-		return false, fmt.Errorf("failed to check localhost warning visibility: %w", err)
+	loc := cp.page().GetByRole("alert").Filter(playwright.LocatorFilterOptions{
+		HasText: "This app is requesting a redirect to your local machine",
+	}).First()
+	if err := loc.WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
+	}); err != nil {
+		return false, fmt.Errorf("CIMD localhost warning did not become visible: %w", err)
 	}
-	return visible, nil
+	return true, nil
 }
 
 // ClickCIMDAdvancedDetails clicks the "Advanced Details" disclosure button in the
@@ -1524,11 +1474,8 @@ func (cp *ConsentPage) HasCIMDClientIDInDetails(ctx context.Context, clientID st
 }
 
 // WaitForGrantSuccess waits for the "Grant updated successfully!" toast to appear.
-// Returns an error if the toast does not appear within the timeout or if an error toast appears instead.
-func (cp *ConsentPage) WaitForGrantSuccess(ctx context.Context, timeoutMs int) error {
-	if timeoutMs <= 0 {
-		timeoutMs = 5000
-	}
+// Returns an error if the toast does not appear within the page timeout or an error toast appears instead.
+func (cp *ConsentPage) WaitForGrantSuccess(ctx context.Context) error {
 
 	successToast := cp.page().GetByRole("status").Filter(playwright.LocatorFilterOptions{
 		HasText: "Grant updated successfully",
@@ -1536,7 +1483,7 @@ func (cp *ConsentPage) WaitForGrantSuccess(ctx context.Context, timeoutMs int) e
 
 	err := successToast.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(float64(timeoutMs)),
+		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
 	})
 	if err != nil {
 		// Check if an error toast appeared instead
@@ -1545,26 +1492,23 @@ func (cp *ConsentPage) WaitForGrantSuccess(ctx context.Context, timeoutMs int) e
 			text, _ := errorToast.First().TextContent()
 			return fmt.Errorf("expected success toast but got: %s", text)
 		}
-		return fmt.Errorf("grant success toast did not appear within %dms", timeoutMs)
+		return fmt.Errorf("grant success toast did not appear: %w", err)
 	}
 
 	return nil
 }
 
 // WaitForGrantError waits for an error toast (role="alert") to appear after grant submission.
-// Returns the error message text, or an error if no error toast appears within the timeout.
-func (cp *ConsentPage) WaitForGrantError(ctx context.Context, timeoutMs int) (string, error) {
-	if timeoutMs <= 0 {
-		timeoutMs = 5000
-	}
+// Returns the error message text, or an error if no error toast appears within the page timeout.
+func (cp *ConsentPage) WaitForGrantError(ctx context.Context) (string, error) {
 
 	alert := cp.page().GetByRole("alert")
 	err := alert.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(float64(timeoutMs)),
+		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
 	})
 	if err != nil {
-		return "", fmt.Errorf("no error toast appeared within %dms", timeoutMs)
+		return "", fmt.Errorf("no error toast appeared: %w", err)
 	}
 
 	text, err := alert.First().TextContent()

@@ -2351,6 +2351,8 @@ func (cp *ConsentPage) DelegateService(ctx context.Context, serviceName string) 
    func (cp *ConsentPage) GetAgentHeading(ctx context.Context) (playwright.Locator, error)
    ```
 
+5. **Disambiguate repeated controls** - When cards share a button or radio label, scope the locator to a card or use `.First()` for an explicit first-card contract. Exercise the page object with multiple matching cards.
+
 ### Ginkgo By() for Longer Test Sequences
 
 For complex tests with multiple steps, use Ginkgo's `By()` function to organize and report progress:

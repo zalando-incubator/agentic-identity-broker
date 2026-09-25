@@ -116,12 +116,6 @@ var _ = Describe("Consent Grant Save Flow", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
-	})
-
 	It("should successfully save a grant through the consent screen", func() {
 		// specs/007-consent-frontend/spec.md — User Story 3, Scenario 7:
 		// "Given a user clicks Approve & Delegate, When the request is processed successfully,
@@ -136,15 +130,13 @@ var _ = Describe("Consent Grant Save Flow", func() {
 		err = consentPage.SubmitConsent(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to click Approve & Delegate button")
 
-		err = consentPage.WaitForGrantSuccess(ctx, 5000)
+		err = consentPage.WaitForGrantSuccess(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Grant save should succeed")
 	})
 
 	It("should save grant when redirect_uri parameter is present", func() {
-		// specs/011-agent-permission-requirements/spec.md — User Story 6, Scenario 1:
-		// "Given a user is on the consent screen with a redirect_uri query parameter,
-		// When the user clicks the Approve button, Then the backend issues an HTTP redirect
-		// to the URL specified in redirect_uri."
+		// User Story 3, Scenario 7 from specs/007-consent-frontend/spec.md.
+		// Without session_token, redirect_uri does not turn a direct grant save into an OAuth2 redirect.
 		err := consentPage.NavigateToAgentWithRedirectURI(ctx, testAgentID, "/oauth2/callback?code=abc")
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate with redirect_uri")
 
@@ -155,7 +147,10 @@ var _ = Describe("Consent Grant Save Flow", func() {
 		err = consentPage.SubmitConsent(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to submit consent with redirect_uri")
 
-		Expect(consentPage.WaitForNoValidationError(ctx, 3000)).To(Succeed(),
-			"No error should appear after grant save with redirect_uri")
+		Expect(consentPage.WaitForGrantSuccess(ctx)).To(Succeed(),
+			"Direct grant save should display success even with redirect_uri in the page URL")
+		hasError, err := consentPage.HasError(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hasError).To(BeFalse(), "No validation error should remain after saving the grant")
 	})
 })

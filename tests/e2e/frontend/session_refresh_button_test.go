@@ -19,6 +19,7 @@ func refreshTestService(serviceID id.ServiceID) *model.ThirdpartyOAuth2ProviderE
 	svc.Secret = fixtures.EncryptedSecret(serviceID.String(), "refreshable-secret")
 	svc.IssuerURI = GetMockUpstream().URL()
 	svc.Discovery.EnableDiscovery = false
+	svc.ProtectedResources = nil
 	svc.Discovery.MetadataURL = nil
 	svc.Endpoints = model.OAuth2Endpoints{
 		AuthorizeEndpoint: GetMockUpstream().URL() + "/oauth/authorize",
@@ -36,7 +37,6 @@ var _ = Describe("Third-Party Sessions Refresh Button", func() {
 
 	BeforeEach(func() {
 		ctx = context.Background()
-		serviceID := id.NewServiceID()
 		principal := fixtures.DefaultPrincipal().String()
 
 		GetMockUpstream().WithSuccessfulTokenResponse().
@@ -44,26 +44,27 @@ var _ = Describe("Third-Party Sessions Refresh Button", func() {
 			WithRefreshToken("rotated-refresh-token").
 			WithExpiresIn(3600)
 
-		err := GetTestStorage().Services().Create(ctx, refreshTestService(serviceID))
-		Expect(err).NotTo(HaveOccurred(), "Failed to create refreshable third-party service")
+		for range 2 {
+			serviceID := id.NewServiceID()
+			err := GetTestStorage().Services().Create(ctx, refreshTestService(serviceID))
+			Expect(err).NotTo(HaveOccurred(), "Failed to create refreshable third-party service")
 
-		session := fixtures.SessionForService(principal, serviceID.String())
-		err = GetTestStorage().UserSessions().Create(ctx, session)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create refreshable session")
+			session := fixtures.SessionForService(principal, serviceID.String())
+			err = GetTestStorage().UserSessions().Create(ctx, session)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create refreshable session")
+		}
 
 		sessionsPage = pages.NewSessionsPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if sessionsPage != nil {
-			_ = sessionsPage.Close()
-		}
-	})
-
 	// Scenario 1.2 from specs/008-thirdparty-oauth2-sessions/spec.md (extended by approved force-refresh plan)
-	It("shows Refresh for a refreshable session and refreshes successfully", func() {
+	It("shows Refresh for multiple refreshable sessions and refreshes the first", func() {
 		err := sessionsPage.NavigateToSessions(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to third-party sessions page")
+
+		count, err := sessionsPage.GetRefreshButtonCount(ctx)
+		Expect(err).NotTo(HaveOccurred(), "Failed to count refresh buttons")
+		Expect(count).To(Equal(2), "Both refreshable sessions should offer Refresh")
 
 		visible, err := sessionsPage.IsRefreshButtonVisible(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to check refresh button visibility")
@@ -72,7 +73,7 @@ var _ = Describe("Third-Party Sessions Refresh Button", func() {
 		err = sessionsPage.ClickRefreshButton(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to click refresh button")
 
-		err = sessionsPage.WaitForSuccessMessage(ctx, "Session token refreshed successfully.", 5000)
+		err = sessionsPage.WaitForSuccessMessage(ctx, "Session token refreshed successfully.")
 		Expect(err).NotTo(HaveOccurred(), "Expected refresh success message after clicking Refresh")
 
 		Eventually(func() string {
@@ -82,6 +83,6 @@ var _ = Describe("Third-Party Sessions Refresh Button", func() {
 			}
 			_ = request.ParseForm()
 			return request.FormValue("grant_type")
-		}, 5*time.Second, 100*time.Millisecond).Should(Equal("refresh_token"), "Refresh should call the upstream refresh_token grant")
+		}).WithPolling(100*time.Millisecond).Should(Equal("refresh_token"), "Refresh should call the upstream refresh_token grant")
 	})
 })

@@ -5,6 +5,7 @@ package e2e_test
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -61,6 +62,12 @@ func createPermissionSet(ctx context.Context, psID id.PermissionSetID, name, des
 	}
 	err := GetTestStorage().PermissionSets().Create(ctx, ps)
 	Expect(err).NotTo(HaveOccurred(), "Failed to create permission set %q", name)
+}
+
+func expectSwitchChecked(toggle playwright.Locator, checked bool) {
+	Eventually(func() (string, error) {
+		return toggle.GetAttribute("aria-checked")
+	}).Should(Equal(strconv.FormatBool(checked)))
 }
 
 var _ = Describe("Permission Sets on Consent Screen", func() {
@@ -128,12 +135,6 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
-	})
-
 	// Scenario 1: Permission sets section appears above service connections
 	It("should display permission sets section above service connections", func() {
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
@@ -169,27 +170,15 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 
 		// Find the mandatory permission set card
 		mandatoryCard := page.GetByText("Code Access").First()
-		Expect(mandatoryCard).NotTo(BeNil())
+		Expect(mandatoryCard.WaitFor()).To(Succeed(), "Mandatory permission set card should be visible")
 
-		visible, err := mandatoryCard.IsVisible()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(visible).To(BeTrue(), "Mandatory permission set card should be visible")
-
-		// Mandatory card should show "Required" or "Mandatory" indicator
-		requiredIndicator := page.GetByText("Required").First()
-		reqVisible, err := requiredIndicator.IsVisible()
-		if err == nil && reqVisible {
-			Expect(reqVisible).To(BeTrue(), "Required indicator should be visible for mandatory PS")
-		}
-
-		// Mandatory card should NOT have a togglable checkbox
-		// Look within the context of the mandatory PS for unchecked checkboxes
+		// The mandatory card must render a Required badge and no selectable switch.
 		mandatorySection := page.Locator("[data-testid='permission-set-mandatory']").First()
-		if cnt, _ := mandatorySection.Count(); cnt > 0 {
-			checkboxes := mandatorySection.GetByRole("checkbox")
-			cbCount, _ := checkboxes.Count()
-			Expect(cbCount).To(Equal(0), "Mandatory permission set should not have a togglable checkbox")
-		}
+		Expect(mandatorySection.WaitFor()).To(Succeed())
+		Expect(mandatorySection.GetByText("Required", playwright.LocatorGetByTextOptions{Exact: playwright.Bool(true)}).WaitFor()).To(Succeed())
+		switchCount, err := mandatorySection.GetByRole("switch").Count()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(switchCount).To(Equal(0), "Mandatory permission set must not have a toggle")
 
 		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_mandatory_card_locked")).NotTo(HaveOccurred())
 
@@ -203,31 +192,14 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 
 		page := consentPage.GetPlaywrightPage()
 
-		// Find the optional permission set card
-		optionalCard := page.GetByText("Productivity Suite").First()
-		visible, err := optionalCard.IsVisible()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(visible).To(BeTrue(), "Optional permission set card should be visible")
-
-		// Optional card should have a toggle/checkbox that is initially unchecked
+		// Wait for the optional card and assert its PS-level toggle starts off.
 		optionalSection := page.Locator("[data-testid='permission-set-optional']").First()
-		if cnt, _ := optionalSection.Count(); cnt > 0 {
-			checkbox := optionalSection.GetByRole("checkbox").First()
-			if cbCnt, _ := checkbox.Count(); cbCnt > 0 {
-				checked, err := checkbox.GetAttribute("aria-checked")
-				Expect(err).NotTo(HaveOccurred())
-				Expect(checked).To(Equal("false"), "Optional permission set should be initially unchecked")
-			}
-		}
-
-		// Alternatively, check for a switch/toggle element
-		optionalToggle := page.GetByLabel("Productivity Suite").First()
-		if toggleCnt, _ := optionalToggle.Count(); toggleCnt > 0 {
-			checked, err := optionalToggle.GetAttribute("aria-checked")
-			if err == nil && checked != "" {
-				Expect(checked).To(Equal("false"), "Optional PS toggle should be initially unchecked")
-			}
-		}
+		Expect(optionalSection.WaitFor()).To(Succeed())
+		Expect(optionalSection.GetByText("Productivity Suite").WaitFor()).To(Succeed())
+		optionalToggle := optionalSection.GetByRole("switch", playwright.LocatorGetByRoleOptions{
+			Name: "Toggle Productivity Suite",
+		})
+		expectSwitchChecked(optionalToggle, false)
 
 		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_optional_card_togglable")).NotTo(HaveOccurred())
 
@@ -274,47 +246,36 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 		// Take initial state screenshot
 		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_before_optional_toggle")).NotTo(HaveOccurred())
 
-		// Find and click the optional PS toggle
-		optionalToggle := page.Locator("[data-testid='permission-set-optional']").GetByRole("checkbox").First()
-		if cnt, _ := optionalToggle.Count(); cnt == 0 {
-			// Try switch role instead
-			optionalToggle = page.Locator("[data-testid='permission-set-optional']").GetByRole("switch").First()
-		}
-		if cnt, _ := optionalToggle.Count(); cnt == 0 {
-			// Fall back to label-based toggle
-			optionalToggle = page.GetByLabel("Productivity Suite").First()
-		}
-
-		toggleCount, err := optionalToggle.Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(toggleCount).To(BeNumerically(">", 0), "expected at least one optional permission-set toggle element; UI may be missing the optional PS row")
+		optionalToggle := page.Locator("[data-testid='permission-set-optional']").GetByRole("switch", playwright.LocatorGetByRoleOptions{
+			Name: "Toggle Productivity Suite",
+		})
+		expectSwitchChecked(optionalToggle, false)
 
 		// Toggle ON the optional PS
 		err = optionalToggle.Click()
 		Expect(err).NotTo(HaveOccurred(), "Failed to click optional PS toggle")
 
-		// Wait for UI to update after toggle
-		err = page.WaitForLoadState()
-		Expect(err).NotTo(HaveOccurred())
-
-		// After toggling ON: Google and Microsoft should now appear in service connections
+		expectSwitchChecked(optionalToggle, true)
+		Expect(consentPage.WaitForServiceToAppear(ctx, "Google")).To(Succeed())
+		Expect(consentPage.WaitForServiceToAppear(ctx, "Microsoft")).To(Succeed())
 		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_after_optional_toggle_on")).NotTo(HaveOccurred())
 
 		// Toggle OFF the optional PS
 		err = optionalToggle.Click()
 		Expect(err).NotTo(HaveOccurred(), "Failed to toggle off optional PS")
 
-		// Wait for UI to update after toggle
-		err = page.WaitForLoadState()
-		Expect(err).NotTo(HaveOccurred())
+		expectSwitchChecked(optionalToggle, false)
+		Eventually(func() (int, error) {
+			return page.Locator(`article[aria-label="Service: Google"]`).Count()
+		}).Should(Equal(0), "Google must no longer require a connection when the optional PS is off")
 
 		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_after_optional_toggle_off")).NotTo(HaveOccurred())
 
 		GetLogger().Info("Test passed: Service connections update dynamically with optional PS toggle")
 	})
 
-	// Scenario 6: Service already connected shows satisfied indicator, no connect button
-	It("should show satisfied indicator for already connected services", func() {
+	// Scenario 6: An already-connected service needs no new login.
+	It("should not prompt reconnection for an existing session", func() {
 		// Create a user session for GitHub (simulating an existing OAuth2 connection)
 		principal := fixtures.DefaultPrincipal().String()
 
@@ -339,26 +300,21 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 
 		page := consentPage.GetPlaywrightPage()
 
-		// Connected service should show a satisfied/connected indicator
-		// Look for visual indicators like checkmarks, "Connected" text, or success styling
-		connectedIndicator := page.GetByText("Connected").First()
-		if cnt, _ := connectedIndicator.Count(); cnt > 0 {
-			visible, err := connectedIndicator.IsVisible()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(visible).To(BeTrue(), "Connected indicator should be visible for GitHub")
-		}
-
-		// The connected service should NOT have a "Login" or "Connect" button
-		githubArticle := page.Locator(`article[aria-label="Service: GitHub"]`).First()
-		if articleCnt, _ := githubArticle.Count(); articleCnt > 0 {
-			loginBtn := githubArticle.Locator("[data-testid='service-login-button']")
-			loginCount, _ := loginBtn.Count()
-			Expect(loginCount).To(Equal(0), "Connected service should not show Login button")
-		}
+		// Wait for the grant screen, then check the user can save without reconnecting GitHub.
+		saveButton := page.GetByRole("button", playwright.PageGetByRoleOptions{
+			Name: "Save", Exact: playwright.Bool(true),
+		})
+		Expect(saveButton.WaitFor()).To(Succeed())
+		enabled, err := saveButton.IsEnabled()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(enabled).To(BeTrue(), "Existing GitHub session should satisfy the mandatory requirement")
+		articleCount, err := page.Locator(`article[aria-label="Service: GitHub"]`).Count()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(articleCount).To(Equal(0), "Connected GitHub should not ask for another login")
 
 		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_service_already_connected")).NotTo(HaveOccurred())
 
-		GetLogger().Info("Test passed: Connected service shows satisfied indicator without connect button")
+		GetLogger().Info("Test passed: Connected service needs no new login")
 	})
 
 	// Scenario 7: Approve button disabled until all displayed services connected
@@ -482,12 +438,6 @@ var _ = Describe("Permission Sets - All Mandatory", func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to create all-mandatory test agent")
 
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
-	})
-
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
 	})
 
 	It("should display all permission sets as locked with Required badges", func() {
@@ -617,12 +567,6 @@ var _ = Describe("Permission Sets - All Optional", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
-	})
-
 	It("should display all permission sets as optional with toggle switches", func() {
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
@@ -675,36 +619,25 @@ var _ = Describe("Permission Sets - All Optional", func() {
 		// Take initial state screenshot (all off)
 		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_all_optional_initial_state")).NotTo(HaveOccurred())
 
-		// Toggle the first optional PS on
-		firstSwitch := page.Locator("[data-testid='permission-set-optional']").First().Locator("button[role='switch']").First()
-		switchCount, err := firstSwitch.Count()
-		Expect(err).NotTo(HaveOccurred())
-		if switchCount > 0 {
-			err = firstSwitch.Click()
-			Expect(err).NotTo(HaveOccurred(), "Failed to toggle first optional PS")
-			err = page.WaitForLoadState()
-			Expect(err).NotTo(HaveOccurred())
+		// Toggle each optional permission set and verify both selections persist.
+		firstSwitch := page.Locator("[data-testid='permission-set-optional']").First().GetByRole("switch", playwright.LocatorGetByRoleOptions{
+			Name: "Toggle Productivity Suite",
+		})
+		err = firstSwitch.Click()
+		Expect(err).NotTo(HaveOccurred(), "Failed to toggle first optional PS")
+		expectSwitchChecked(firstSwitch, true)
+		Expect(consentPage.WaitForServiceToAppear(ctx, "Google")).To(Succeed())
+		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_all_optional_first_selected")).NotTo(HaveOccurred())
 
-			// First switch should now be ON
-			checked, err := firstSwitch.GetAttribute("aria-checked")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(checked).To(Equal("true"), "First PS toggle should be ON after click")
-
-			Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_all_optional_first_selected")).NotTo(HaveOccurred())
-		}
-
-		// Toggle the second optional PS on
-		secondSwitch := page.Locator("[data-testid='permission-set-optional']").Nth(1).Locator("button[role='switch']").First()
-		secondCount, err := secondSwitch.Count()
-		Expect(err).NotTo(HaveOccurred())
-		if secondCount > 0 {
-			err = secondSwitch.Click()
-			Expect(err).NotTo(HaveOccurred(), "Failed to toggle second optional PS")
-			err = page.WaitForLoadState()
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_all_optional_both_selected")).NotTo(HaveOccurred())
-		}
+		secondSwitch := page.Locator("[data-testid='permission-set-optional']").Nth(1).GetByRole("switch", playwright.LocatorGetByRoleOptions{
+			Name: "Toggle Communication Tools",
+		})
+		err = secondSwitch.Click()
+		Expect(err).NotTo(HaveOccurred(), "Failed to toggle second optional PS")
+		expectSwitchChecked(secondSwitch, true)
+		expectSwitchChecked(firstSwitch, true)
+		Expect(consentPage.WaitForServiceToAppear(ctx, "Microsoft")).To(Succeed())
+		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_all_optional_both_selected")).NotTo(HaveOccurred())
 
 		GetLogger().Info("Test passed: Optional permission sets can be selected independently")
 	})
@@ -776,12 +709,6 @@ var _ = Describe("Permission Sets - Mixed Service Requirements", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
-	})
-
 	It("should display mandatory and optional service indicators within a single PS card", func() {
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
@@ -847,30 +774,19 @@ var _ = Describe("Permission Sets - Mixed Service Requirements", func() {
 		// Initial state screenshot
 		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_mixed_sr_initial_state")).NotTo(HaveOccurred())
 
-		// Find and toggle the optional PS "Productivity Suite"
-		optionalToggle := page.Locator("[data-testid='permission-set-optional']").First().Locator("button[role='switch']").First()
-		toggleCount, err := optionalToggle.Count()
-		Expect(err).NotTo(HaveOccurred())
-		if toggleCount > 0 {
-			err = optionalToggle.Click()
-			Expect(err).NotTo(HaveOccurred(), "Failed to toggle optional PS")
-			err = page.WaitForLoadState()
-			Expect(err).NotTo(HaveOccurred())
-
-			// After toggling on, Google (mandatory SR) and Microsoft (optional SR) should be visible
-			// with different indicators
-			googleText := page.GetByText("Google")
-			gCount, err := googleText.Count()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(gCount).To(BeNumerically(">=", 1), "Google service should be visible after toggling PS on")
-
-			microsoftText := page.GetByText("Microsoft")
-			msCount, err := microsoftText.Count()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(msCount).To(BeNumerically(">=", 1), "Microsoft service should be visible after toggling PS on")
-
-			Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_mixed_sr_optional_ps_toggled_on")).NotTo(HaveOccurred())
-		}
+		// Select the optional PS and wait for its services to require connection.
+		optionalToggle := page.Locator("[data-testid='permission-set-optional']").First().GetByRole("switch", playwright.LocatorGetByRoleOptions{
+			Name: "Toggle Productivity Suite",
+		})
+		err = optionalToggle.Click()
+		Expect(err).NotTo(HaveOccurred(), "Failed to toggle optional PS")
+		expectSwitchChecked(optionalToggle, true)
+		Expect(consentPage.WaitForServiceToAppear(ctx, "Google")).To(Succeed())
+		Expect(consentPage.WaitForServiceToAppear(ctx, "Microsoft")).To(Succeed())
+		optionalCard := page.Locator("[data-testid='permission-set-optional']").First()
+		Expect(optionalCard.Locator("[aria-label='Google (required)']").WaitFor()).To(Succeed())
+		Expect(optionalCard.GetByRole("switch", playwright.LocatorGetByRoleOptions{Name: "Exclude Microsoft"}).WaitFor()).To(Succeed())
+		Expect(consentPage.TakeScreenshot(ctx, "consent_permission_sets_mixed_sr_optional_ps_toggled_on")).NotTo(HaveOccurred())
 
 		GetLogger().Info("Test passed: Mixed SR indicators shown correctly in toggled optional PS")
 	})
@@ -903,16 +819,14 @@ var _ = Describe("Permission Sets - Mixed Service Requirements", func() {
 
 		page := consentPage.GetPlaywrightPage()
 
-		// Toggle optional PS on to show all services
-		optionalToggle := page.Locator("[data-testid='permission-set-optional']").First().Locator("button[role='switch']").First()
-		toggleCount, err := optionalToggle.Count()
-		Expect(err).NotTo(HaveOccurred())
-		if toggleCount > 0 {
-			err = optionalToggle.Click()
-			Expect(err).NotTo(HaveOccurred(), "Failed to toggle optional PS")
-			err = page.WaitForLoadState()
-			Expect(err).NotTo(HaveOccurred())
-		}
+		// Select the optional PS and wait for Microsoft to appear in connections.
+		optionalToggle := page.Locator("[data-testid='permission-set-optional']").First().GetByRole("switch", playwright.LocatorGetByRoleOptions{
+			Name: "Toggle Productivity Suite",
+		})
+		err = optionalToggle.Click()
+		Expect(err).NotTo(HaveOccurred(), "Failed to toggle optional PS")
+		expectSwitchChecked(optionalToggle, true)
+		Expect(consentPage.WaitForServiceToAppear(ctx, "Microsoft")).To(Succeed())
 
 		// Full page screenshot showing all four services across two PS cards
 		// with mixed mandatory/optional indicators, connected services, and the approve button
@@ -965,12 +879,6 @@ var _ = Describe("Permission Sets - ServiceScope requirement_type overrides opti
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
-	})
-
 	It("should not show Google Workspace as required when optional PS is deselected", func() {
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
@@ -996,31 +904,19 @@ var _ = Describe("Permission Sets - ServiceScope requirement_type overrides opti
 
 		page := consentPage.GetPlaywrightPage()
 
-		// Select the optional PS card via its PS-level toggle
-		psToggle := page.Locator("[data-testid='permission-set-optional']").First().Locator("button[role='switch']").First()
-		toggleCount, err := psToggle.Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(toggleCount).To(Equal(1), "Optional PS card should have a PS-level toggle")
-
+		// Select the optional PS and wait for Google Workspace to be marked required.
+		psToggle := page.Locator("[data-testid='permission-set-optional']").First().GetByRole("switch", playwright.LocatorGetByRoleOptions{
+			Name: "Toggle Access to core productivity tools",
+		})
 		err = psToggle.Click()
 		Expect(err).NotTo(HaveOccurred(), "Failed to select optional PS")
-		err = page.WaitForLoadState()
-		Expect(err).NotTo(HaveOccurred())
+		expectSwitchChecked(psToggle, true)
 
 		optionalCard := page.Locator("[data-testid='permission-set-optional']").First()
-
-		// Google Workspace has mandatory ServiceScope → no per-service toggle.
-		// Only the PS-level toggle remains inside the card.
-		switches := optionalCard.Locator("button[role='switch']")
-		switchCount, err := switches.Count()
+		Expect(optionalCard.Locator("[aria-label='Google Workspace (required)']").WaitFor()).To(Succeed())
+		switchCount, err := optionalCard.GetByRole("switch").Count()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(switchCount).To(Equal(1), "Only PS-level toggle; mandatory ServiceScope Google Workspace must not have a per-service toggle")
-
-		// "required" indicator should appear for Google Workspace inside the card
-		requiredText := optionalCard.GetByText("required")
-		reqCount, err := requiredText.Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(reqCount).To(BeNumerically(">=", 1), "Google Workspace should show required indicator inside selected PS card")
+		Expect(switchCount).To(Equal(1), "A required service must not have a per-service toggle")
 
 		Expect(consentPage.TakeScreenshot(ctx, "consent_service_scope_req_type_ps_selected_locked")).NotTo(HaveOccurred())
 	})
@@ -1055,23 +951,17 @@ var _ = Describe("Permission Sets - ServiceScope requirement_type overrides opti
 
 			page := consentPage.GetPlaywrightPage()
 
-			// Select the optional PS card
-			psToggle := page.Locator("[data-testid='permission-set-optional']").First().Locator("button[role='switch']").First()
-			toggleCount, err := psToggle.Count()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(toggleCount).To(BeNumerically(">=", 1), "Optional PS card should have a PS-level toggle")
-
+			// Select the optional PS and wait for the optional service toggle to appear.
+			psToggle := page.Locator("[data-testid='permission-set-optional']").First().GetByRole("switch", playwright.LocatorGetByRoleOptions{
+				Name: "Toggle Optional Scope Productivity",
+			})
 			err = psToggle.Click()
 			Expect(err).NotTo(HaveOccurred(), "Failed to select optional PS")
-			err = page.WaitForLoadState()
-			Expect(err).NotTo(HaveOccurred())
-
-			// Optional ServiceScope → per-service toggle should appear alongside the PS-level toggle.
+			expectSwitchChecked(psToggle, true)
 			optionalCard := page.Locator("[data-testid='permission-set-optional']").First()
-			switches := optionalCard.Locator("button[role='switch']")
-			switchCount, err := switches.Count()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(switchCount).To(BeNumerically(">=", 2), "PS-level toggle + per-service toggle for optional ServiceScope Google Workspace")
+			Expect(optionalCard.GetByRole("switch", playwright.LocatorGetByRoleOptions{
+				Name: "Exclude Google Workspace",
+			}).WaitFor()).To(Succeed(), "Optional service should have its own toggle")
 
 			Expect(consentPage.TakeScreenshot(ctx, "consent_service_scope_req_type_optional_scope_toggle")).NotTo(HaveOccurred())
 		})

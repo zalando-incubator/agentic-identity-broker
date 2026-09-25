@@ -79,7 +79,6 @@ type Page struct {
 //	page, err := context.NewPage()
 //	require.NoError(t, err)
 //	p := pages.NewPage(page, "http://localhost:3000")
-//	defer p.Close()
 func NewPage(page playwright.Page, baseURL string) *Page {
 	if page == nil {
 		panic("page is required and cannot be nil")
@@ -437,28 +436,6 @@ func (p *Page) GetCurrentURL(ctx context.Context) (string, error) {
 //	page.GetByRole("button").Click()
 func (p *Page) GetPlaywrightPage() playwright.Page {
 	return p.page
-}
-
-// Close closes the page and releases resources.
-// Safe to call multiple times (idempotent).
-// Should be called in test cleanup (defer p.Close()).
-//
-// Parameters: None
-//
-// Returns:
-//   - error: If page close fails (rare)
-//
-// Example:
-//
-//	p := pages.NewPage(page, "http://localhost:3000")
-//	defer p.Close()
-//
-//	// Test code here
-func (p *Page) Close() error {
-	if p.page == nil {
-		return nil
-	}
-	return p.page.Close()
 }
 
 func captureScreenshotsEnabled() bool {

@@ -107,7 +107,7 @@ func (tp *ToolAuthorizationsPage) HasPendingSection(ctx context.Context) (bool, 
 	return count > 0, nil
 }
 
-// GetPendingCount returns the number of pending approval cards visible.
+// GetPendingCount returns the number of unexpanded pending approval cards.
 func (tp *ToolAuthorizationsPage) GetPendingCount(ctx context.Context) (int, error) {
 	// Count Approve buttons - one per pending card
 	locator := tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
@@ -167,43 +167,22 @@ func (tp *ToolAuthorizationsPage) ClickDenyOnFirst(ctx context.Context) error {
 	return nil
 }
 
-// SelectPersistence clicks a persistence option within expanded approval.
+// SelectPersistence clicks a persistence option in the first expanded approval.
 func (tp *ToolAuthorizationsPage) SelectPersistence(ctx context.Context, label string) error {
 	radio := tp.pwPage().GetByRole("radio", playwright.PageGetByRoleOptions{
 		Name: label,
-	})
-	radioCount, err := radio.Count()
-	if err != nil {
-		return fmt.Errorf("failed to find persistence radio %q: %w", label, err)
-	}
-	if radioCount > 0 {
-		if err := radio.First().Click(); err != nil {
-			return fmt.Errorf("failed to click persistence radio %q: %w", label, err)
-		}
-		return nil
-	}
-
-	button := tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name: label,
-	})
-	buttonCount, err := button.Count()
-	if err != nil {
-		return fmt.Errorf("failed to find persistence button %q: %w", label, err)
-	}
-	if buttonCount == 0 {
-		return fmt.Errorf("persistence option %q not found", label)
-	}
-	if err := button.First().Click(); err != nil {
-		return fmt.Errorf("failed to click persistence option %q: %w", label, err)
+	}).First()
+	if err := radio.Click(); err != nil {
+		return fmt.Errorf("failed to click persistence radio %q: %w", label, err)
 	}
 	return nil
 }
 
-// ClickConfirmApprove clicks the "Confirm Approve" button after persistence selection.
+// ClickConfirmApprove confirms the first expanded approval.
 func (tp *ToolAuthorizationsPage) ClickConfirmApprove(ctx context.Context) error {
 	button := tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
 		Name: "Confirm Approve",
-	})
+	}).First()
 	if err := button.Click(); err != nil {
 		return fmt.Errorf("failed to click Confirm Approve: %w", err)
 	}

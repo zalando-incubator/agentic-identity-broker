@@ -67,12 +67,6 @@ var _ = Describe("CIMD Consent UI", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
-	})
-
 	// CS-001: CIMDConsentSummary component — "The application … wants to access …"
 	It("should display CIMD consent summary with client name and access target", func() {
 		// CS-001 from specs/028-cimd-support/spec.md — CIMDConsentSummary component

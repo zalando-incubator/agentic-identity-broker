@@ -78,13 +78,6 @@ var _ = Describe("Consent Flow", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	// Cleanup after each test
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
-	})
-
 	Context("when agent has only optional service requirements", func() {
 		BeforeEach(func() {
 			// Create two optional services using fixtures; customize only the IDs to avoid
@@ -141,7 +134,10 @@ var _ = Describe("Consent Flow", func() {
 
 			err = consentPage.SubmitConsent(ctx)
 			Expect(err).NotTo(HaveOccurred(), "SubmitConsent should succeed after selecting optional services")
-			Expect(consentPage.WaitForNoValidationError(ctx, 2000)).To(Succeed(), "Expected no validation error after approving optional services")
+			Expect(consentPage.WaitForGrantSuccess(ctx)).To(Succeed(), "Expected successful grant after approving optional services")
+			hasError, err := consentPage.HasError(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(hasError).To(BeFalse(), "No validation error should remain after a successful grant")
 		})
 	})
 

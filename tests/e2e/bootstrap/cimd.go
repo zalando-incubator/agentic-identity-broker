@@ -113,5 +113,5 @@ func NewCIMDEndUserTestServer(storage interface{}, sf *ServerFactory, cimdFetche
 
 	appInstance.Logger.Info("CIMD test server listening on fixed listener", "url", testServer.URL, "type", "end-user")
 
-	return &TestServer{app: appInstance, server: testServer, logger: appInstance.Logger}, nil
+	return &TestServer{app: appInstance, server: testServer, logger: appInstance.Logger, client: newTestHTTPClient()}, nil
 }

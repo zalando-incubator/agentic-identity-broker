@@ -24,7 +24,6 @@ tests/e2e/
     server_factory.go             Builds production app.App via DI
     storage.go                    In-memory storage initialization
     logger.go, telemetry.go       Quiet logging and telemetry helpers for parallel runs
-    playwright.go                 Playwright browser lifecycle for frontend tests
     cimd.go                       CIMD-specific bootstrap helpers
   fixtures/                       Deterministic test data factories
     *.go                          Agents, grants, principals, OAuth2 config, services, sessions,

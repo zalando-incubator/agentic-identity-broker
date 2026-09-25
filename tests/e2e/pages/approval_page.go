@@ -61,26 +61,20 @@ func (ap *ApprovalPage) IsLoading(ctx context.Context) (bool, error) {
 
 // HasErrorAlert returns true if an error alert is visible on the page.
 func (ap *ApprovalPage) HasErrorAlert(ctx context.Context) (bool, error) {
-	locator := ap.pwPage().GetByRole("alert")
-	count, err := locator.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to check error alert: %w", err)
+	alertHeading := ap.pwPage().GetByRole("alert").GetByRole("heading").First()
+	if err := alertHeading.WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(ap.timeout.Milliseconds())),
+	}); err != nil {
+		return false, fmt.Errorf("approval error alert did not become visible: %w", err)
 	}
-	return count > 0, nil
+	return true, nil
 }
 
 // GetErrorTitle returns the heading text within the error alert.
 func (ap *ApprovalPage) GetErrorTitle(ctx context.Context) (string, error) {
-	alert := ap.pwPage().GetByRole("alert")
-	heading := alert.GetByRole("heading")
-	count, err := heading.Count()
-	if err != nil {
-		return "", fmt.Errorf("failed to count error heading: %w", err)
-	}
-	if count == 0 {
-		return "", fmt.Errorf("no error heading found in alert")
-	}
-	text, err := heading.First().TextContent()
+	heading := ap.pwPage().GetByRole("alert").GetByRole("heading").First()
+	text, err := heading.TextContent()
 	if err != nil {
 		return "", fmt.Errorf("failed to get error heading text: %w", err)
 	}
@@ -107,7 +101,7 @@ func (ap *ApprovalPage) WaitForReviewPage(ctx context.Context) error {
 		Name: "Tool Approval Request",
 	})
 	err := heading.WaitFor(playwright.LocatorWaitForOptions{
-		Timeout: playwright.Float(10000),
+		Timeout: playwright.Float(float64(ap.timeout.Milliseconds())),
 	})
 	if err != nil {
 		return fmt.Errorf("review page heading not found: %w", err)
@@ -222,13 +216,6 @@ func (ap *ApprovalPage) SelectPersistence(ctx context.Context, label string) err
 	radio := ap.pwPage().GetByRole("radio", playwright.PageGetByRoleOptions{
 		Name: label,
 	})
-	count, err := radio.Count()
-	if err != nil {
-		return fmt.Errorf("failed to find radio button %q: %w", label, err)
-	}
-	if count == 0 {
-		return fmt.Errorf("radio button %q not found", label)
-	}
 	if err := radio.Click(); err != nil {
 		return fmt.Errorf("failed to click radio %q: %w", label, err)
 	}
@@ -333,7 +320,7 @@ func (ap *ApprovalPage) WaitForApprovedConfirmation(ctx context.Context) error {
 		Name: "Approved",
 	})
 	err := heading.WaitFor(playwright.LocatorWaitForOptions{
-		Timeout: playwright.Float(10000),
+		Timeout: playwright.Float(float64(ap.timeout.Milliseconds())),
 	})
 	if err != nil {
 		return fmt.Errorf("approved confirmation not found: %w", err)
@@ -347,7 +334,7 @@ func (ap *ApprovalPage) WaitForDeniedConfirmation(ctx context.Context) error {
 		Name: "Denied",
 	})
 	err := heading.WaitFor(playwright.LocatorWaitForOptions{
-		Timeout: playwright.Float(10000),
+		Timeout: playwright.Float(float64(ap.timeout.Milliseconds())),
 	})
 	if err != nil {
 		return fmt.Errorf("denied confirmation not found: %w", err)
