@@ -1168,7 +1168,7 @@ func (b *Builder) Build() (*App, error) {
 		ApprovalSync:         approval.NewSyncHandler(app.ApprovalService),
 		ApprovalPermanent:    approval.NewPermanentHandler(app.ApprovalService),
 		ApprovalPending:      approval.NewPendingHandler(app.ApprovalService),
-		CIMDMetadata:      enduserHandlers.NewCIMDMetadataHandler(app.CIMDMetadataProvider, b.logger),
+		CIMDMetadata:         enduserHandlers.NewCIMDMetadataHandler(app.CIMDMetadataProvider, b.logger),
 		JWKS:                 jwksHandler,
 		SPA:                  handlers.NewSPAHandler(b.staticWebResourcesPath, b.logger),
 	}

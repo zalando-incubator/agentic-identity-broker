@@ -142,8 +142,8 @@ internal/
     └── storage.go                             # Domain-scoped key repository operations
 
 migrations/
-├── 032_add_cimd_key_domain.{up,down}.sql       # Shared key table domain boundary
-└── 033_add_cimd_private_key_jwt_authentication.{up,down}.sql
+├── 033_add_cimd_key_domain.{up,down}.sql       # Shared key table domain boundary
+└── 034_add_cimd_private_key_jwt_authentication.{up,down}.sql
 
 docs/
 ├── reference/api.md
@@ -291,10 +291,10 @@ Record identifiers and outcomes only.
 
 #### Phase 2d: Database Design
 
-- Add `032_add_cimd_key_domain`. Its up migration adds `key_domain`, backfills `token_signing`, and replaces the global current-key index with a per-domain index.
-- The `032` down migration refuses rollback while `cimd_client_authentication` key rows exist. It then restores the token-only domain check and global current-key index.
-- Add `033_add_cimd_private_key_jwt_authentication`. Its up migration extends the service-auth CHECK for secretless `private_key_jwt` services.
-- The `033` down migration refuses rollback while a `private_key_jwt` service exists. It then restores the migration 031 CHECK.
+- Add `033_add_cimd_key_domain`. Its up migration adds `key_domain`, backfills `token_signing`, and replaces the global current-key index with a per-domain index.
+- The `033` down migration refuses rollback while `cimd_client_authentication` key rows exist. It then restores the token-only domain check and global current-key index.
+- Add `034_add_cimd_private_key_jwt_authentication`. Its up migration extends the service-auth CHECK for secretless `private_key_jwt` services.
+- The `034` down migration refuses rollback while a `private_key_jwt` service exists. It then restores the migration 031 CHECK.
 - Add migration tests for existing static and public rows, CIMD rows, both guarded rollbacks, and migration replay.
 
 #### Phase 2e: Frontend and Design System Review
