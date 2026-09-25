@@ -281,14 +281,24 @@ jobs:
             const pr = context.payload.pull_request;
 
             const pushedSha = '${{ steps.publish.outputs.pushed_sha }}';
-            const { data: currentPR } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pr.number,
-            });
+            const sourceSha = '${{ github.event.pull_request.head.sha }}';
+            let currentPR;
+            for (let attempt = 0; attempt < 10; attempt++) {
+              const { data } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+              });
+              currentPR = data;
+              if (currentPR.head.sha === pushedSha) break;
+              if (currentPR.head.sha !== sourceSha) {
+                core.info(`Skipping PR body update: head advanced to ${currentPR.head.sha} after push ${pushedSha}`);
+                return;
+              }
+              if (attempt < 9) await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
             if (currentPR.head.sha !== pushedSha) {
-              core.info(`Skipping PR body update: head advanced to ${currentPR.head.sha} after push ${pushedSha}`);
-              return;
+              throw new Error(`PR head did not reflect pushed screenshot commit ${pushedSha}`);
             }
 
             // Compare base branch to head branch to find all changed screenshots in the PR
