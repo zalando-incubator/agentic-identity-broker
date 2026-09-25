@@ -69,8 +69,8 @@ func selPreservationPermissionSet(psID id.PermissionSetID, name, description str
 
 func selectOptionalPermissionSet(ctx context.Context, consentPage *pages.ConsentPage) {
 	Expect(consentPage.TogglePermissionSet(ctx, "Productivity Suite")).To(Succeed())
-	Expect(consentPage.WaitForServiceToAppear(ctx, "Google", 5000)).To(Succeed())
-	Expect(consentPage.WaitForServiceToAppear(ctx, "Slack", 5000)).To(Succeed())
+	Expect(consentPage.WaitForServiceToAppear(ctx, "Google")).To(Succeed())
+	Expect(consentPage.WaitForServiceToAppear(ctx, "Slack")).To(Succeed())
 }
 
 func expectOptionalSelectionRestored(ctx context.Context, consentPage *pages.ConsentPage, serviceNames ...string) {
@@ -78,7 +78,7 @@ func expectOptionalSelectionRestored(ctx context.Context, consentPage *pages.Con
 	Expect(err).NotTo(HaveOccurred())
 	Expect(selected).To(BeTrue())
 	for _, serviceName := range serviceNames {
-		Expect(consentPage.WaitForServiceToAppear(ctx, serviceName, 5000)).To(Succeed())
+		Expect(consentPage.WaitForServiceToAppear(ctx, serviceName)).To(Succeed())
 	}
 }
 func addLargeActiveSelectionMap(ctx context.Context, agent *storage.Agent) {
@@ -166,12 +166,6 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	AfterEach(func() {
-		if consentPage != nil {
-			_ = consentPage.Close()
-		}
-	})
-
 	// Feature 008 User Story 5 Amendment, Scenario 1: Compact reference creation
 	It("keeps a large selection map compact through the provider callback", func() {
 		addLargeActiveSelectionMap(ctx, testAgent)
@@ -244,7 +238,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(consentPage.DelegateService(ctx, "Google")).To(Succeed())
-		message, err := consentPage.WaitForGrantError(ctx, 5000)
+		message, err := consentPage.WaitForGrantError(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(message).To(ContainSubstring("Unable to preserve selections. Please try again."))
 		Expect(page.URL()).To(Equal(originalURL))
