@@ -97,6 +97,13 @@ export function ApprovalRequestSummary({
         </div>
       )}
 
+      {approval.status !== 'pending' && (
+        <div className="border-t border-neutral-100 pt-2">
+          <p className="text-xs font-medium text-neutral-700">Covers</p>
+          <code className="font-mono text-sm text-neutral-700">{approval.pattern_preview}</code>
+        </div>
+      )}
+
       {showExpiry && (
         <div className="border-t border-neutral-100 pt-2">
           <p className="text-xs text-neutral-400">

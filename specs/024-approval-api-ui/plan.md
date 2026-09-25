@@ -123,7 +123,7 @@ web/src/
 │   ├── ApprovalLoadingSkeleton.tsx            # Loading state skeleton
 │   └── ApprovalErrorBanner.tsx                # Inline error states
 ├── pages/
-│   └── ApprovalPage.tsx                       # NEW: Route-level page /consent/approvals/:id
+│   └── ApprovalPage.tsx                       # NEW: Route-level page /approvals/:id
 ├── services/api/
 │   └── approvals.ts                           # NEW: Approval API client
 ├── hooks/
@@ -472,3 +472,7 @@ Expect(sync.Data.Pairs[0].Approvals[0].Status).To(Equal("approved"))
 | Long-poll + LISTEN/NOTIFY | Multi-instance cache invalidation without polling; ExtProc needs real-time approval state sync | Polling (request-per-second per gateway) creates unacceptable load at scale; WebSocket adds client complexity to ExtProc |
 | ADR 014 (existing ADR) | Long-poll with PostgreSQL LISTEN/NOTIFY is a novel architectural pattern not covered by existing ADRs | Must be documented per Constitution Principle II (binding ADRs) |
 | ADR 018 (new ADR) | Approval endpoints cross two trust boundaries (gateway control-plane and browser/user flows) and therefore require endpoint-specific authentication instead of a blanket policy | Captures why only create uses dual auth, sync uses client assertion only, and consume/browser routes stay single-auth |
+
+## Extension: glob pattern approval matching
+
+This approved extension is specified in [glob-approval-matching.md](glob-approval-matching.md). It adds the neutral, standard-library-only `internal/toolpattern` package for canonicalization, matching, formatting, and precedence, and authorizes its shared use by the broker and ExtProc through ADR 035.

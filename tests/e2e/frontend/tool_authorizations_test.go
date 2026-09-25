@@ -12,6 +12,7 @@ package e2e_test
 
 import (
 	"context"
+	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -24,7 +25,7 @@ import (
 
 // newTestApproval creates a pending tool approval for testing the list page.
 func newTestApproval(principal id.Principal, agentID id.AgentID, toolName, description string, riskLevel string) *storage.ToolApproval {
-	return &storage.ToolApproval{
+	approval := &storage.ToolApproval{
 		ID:              id.NewApprovalID(),
 		Principal:       principal,
 		AgentID:         agentID,
@@ -39,6 +40,8 @@ func newTestApproval(principal id.Principal, agentID id.AgentID, toolName, descr
 		CreatedAt:       time.Now(),
 		ExpiresAt:       time.Now().Add(10 * time.Minute),
 	}
+	Expect(domainapproval.ApplyExactPatterns(approval)).To(Succeed())
+	return approval
 }
 
 // Tool Authorizations page tests verify the approval list and management UI
@@ -261,7 +264,7 @@ var _ = Describe("Tool Authorizations Page", func() {
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
 		Expect(err).NotTo(HaveOccurred())
 
-		_, err = GetTestStorage().ToolApprovals().Approve(ctx, approval.ID, storage.ApprovalPersistencePermanent, time.Now())
+		_, err = GetTestStorage().ToolApprovals().Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: approval.ToolPattern, ParamsPattern: approval.ParamsPattern}, time.Now())
 		Expect(err).NotTo(HaveOccurred())
 
 		err = authzPage.NavigateToToolAuthorizations(ctx)

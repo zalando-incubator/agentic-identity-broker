@@ -169,7 +169,7 @@
 - [X] T068 [P] [US1] Create `ApprovalConfirmation` component in `web/src/components/approvals/ApprovalConfirmation.tsx` (success/denial confirmation screen)
 - [X] T069 [US1] Create `ApprovalReviewPage` component in `web/src/components/approvals/ApprovalReviewPage.tsx` (compose ToolCallCard + PersistenceSelector + action buttons + error states)
 - [X] T070 [US1] Create `ApprovalPage` route-level page in `web/src/pages/ApprovalPage.tsx` (fetch approval by ID, render review page or error/loading states)
-- [X] T071 [US1] Register route `/consent/approvals/:id` in `web/src/App.tsx` pointing to `ApprovalPage`
+- [X] T071 [US1] Register route `/approvals/:id` in `web/src/App.tsx` pointing to `ApprovalPage`
 - [X] T072 [US1] Link `approval.review` (GET handler), `approval.approve`, and `approval.deny` spans to the traceparent persisted from approval creation request headers in `internal/domain/approval/service.go` — all spans are backend-side
 - [X] T072a [US1] Add structured audit logging for all approval lifecycle transitions (approved/denied/consumed/expired) in `internal/domain/approval/service.go` — each log entry MUST contain: principal, agent_id, tool_name, action, persistence (if applicable), and timestamp (SR-005)
 
@@ -459,3 +459,23 @@ With multiple developers or agents:
    - **US1+US2**: golang-pro (backend) + react-specialist (frontend) in parallel
    - **US3**: golang-pro (after US1+US2 backend done)
    - **US4**: golang-pro (can start in parallel with US3)
+
+---
+
+## Phase 8: Extension — Glob Pattern Approval Matching
+
+### Tests for Glob Pattern Approval Matching [MANDATORY - Principle VIII] ⚠️
+
+- [ ] T145 [P] Add vector-driven unit tests for `internal/toolpattern` covering matching, canonicalization, validation, formatting, and precedence.
+- [ ] T146 [P] Add aggregate and approval-service tests for exact-pattern creation, decision resolution, and invalid-pattern rejection.
+- [ ] T147 [P] Add storage, handler, and sync tests for persisted and exposed approval patterns.
+- [ ] T148 [P] Add backend E2E acceptance coverage for edited, unconstrained, exact, and rejected patterns.
+- [ ] T149 [P] Add frontend component and Playwright acceptance tests for the pattern editor and preview.
+- [ ] T150 [P] Add migration integration coverage for apply, rollback, re-apply, and exact-pattern backfill.
+
+### Implementation for Glob Pattern Approval Matching
+
+- [ ] T151 Update the OpenAPI contracts, specification artifacts, and rendered approval API documentation for decomposed approval patterns.
+- [ ] T152 Implement the shared `internal/toolpattern` package and record the ADR 035 shared-dependency boundary.
+- [ ] T153 Extend the approval aggregate, repository port, in-memory and PostgreSQL adapters, and migration 031 with non-null pattern fields.
+- [ ] T154 Resolve approval patterns in the domain service, expose them through HTTP read and sync endpoints, and add the React pattern editor.

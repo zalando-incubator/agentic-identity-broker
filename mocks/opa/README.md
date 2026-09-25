@@ -1,14 +1,7 @@
 # OPA Authorization Mock
 
-Demo OPA policy for ExtProc MCP authorization. The bundle server is always started as part of
-`docker-compose up` but authorization is **off by default**.
-
-To enable, uncomment both vars in `.env.compose`:
-
-```
-EXTPROC_AUTHORIZATION_ENABLED=true
-EXTPROC_AUTHORIZATION_POLICY_CONFIG_FILE=/etc/extproc/opa-config.yaml
-```
+Demo OPA policy for ExtProc MCP authorization. Docker Compose enables authorization and approval
+gating with this policy so the sample agent can exercise the complete approval journey.
 
 ## Policy
 
@@ -18,6 +11,7 @@ EXTPROC_AUTHORIZATION_POLICY_CONFIG_FILE=/etc/extproc/opa-config.yaml
 |------------------------------------------------------------------------------------------------|----------|
 | MCP lifecycle methods (`initialize`, `ping`, `notifications/initialized`)                      | allow    |
 | MCP tool call in allowlist (`whoami`, `list_repositories`, `get_file_contents`, `search_code`) | allow    |
+| MCP tool call `create_issue`                                                                   | approval_required |
 | MCP tool call in denylist (`delete_repository`, `force_push`)                                  | deny     |
 | Unknown type                                                                                   | deny     |
 

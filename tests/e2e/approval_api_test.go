@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"io"
 	"log/slog"
 	"net/http"
@@ -307,7 +308,7 @@ var _ = Describe("Tool Approval API", func() {
 			approvalIDVal := id.NewApprovalID()
 			repo := testStorage.ToolApprovals()
 			pastExpiry := time.Now().UTC().Add(-1 * time.Minute)
-			_, err := repo.Create(context.Background(), &storage.ToolApproval{
+			approval := &storage.ToolApproval{
 				ID:            approvalIDVal,
 				Principal:     id.Principal(alicePrincipal),
 				AgentID:       agentID,
@@ -318,7 +319,9 @@ var _ = Describe("Tool Approval API", func() {
 				ApprovalURL:   "https://localhost/approvals/" + approvalIDVal.String(),
 				CreatedAt:     pastExpiry.Add(-10 * time.Minute),
 				ExpiresAt:     pastExpiry,
-			})
+			}
+			Expect(domainapproval.ApplyExactPatterns(approval)).To(Succeed())
+			_, err := repo.Create(context.Background(), approval)
 			Expect(err).NotTo(HaveOccurred())
 
 			resp, httpErr := server.AuthenticatedGET(fmt.Sprintf("/api/approvals/%s", approvalIDVal.String()), alicePrincipal)
@@ -754,4 +757,160 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(revokeResp.Data.Status).To(Equal("denied"))
 		})
 	})
+
+	Describe("when a user scopes an approval decision", func() {
+		// US7-S2 from specs/024-approval-api-ui/spec.md
+		It("should persist an edited parameter glob and expose it through sync", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{
+				"persistence": "permanent", "params_pattern": map[string]string{"repo": "acme/*"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			_ = decodeJSON[helpers.ApproveResponse](resp)
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals?principal="+alicePrincipal, "", helpers.ApprovalSyncHeaders(machineAuth.ClientAssertion), nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			sync := decodeJSON[helpers.ApprovalSyncResponse](resp)
+			var found *helpers.ApprovalSummary
+			for i := range sync.Data.Pairs {
+				for j := range sync.Data.Pairs[i].Approvals {
+					if sync.Data.Pairs[i].Approvals[j].ID == create.Data.ID {
+						found = &sync.Data.Pairs[i].Approvals[j]
+					}
+				}
+			}
+			Expect(found).NotTo(BeNil())
+			Expect(found.ToolPattern).To(Equal("create_pull_request"))
+			Expect(found.ParamsPattern).To(Equal(map[string]string{"repo": "acme/*"}))
+		})
+
+		// US7-S1 from specs/024-approval-api-ui/spec.md
+		It("should store exact coverage when pattern fields are omitted", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.ToolPattern).To(Equal("create_pull_request"))
+			Expect(detail.Data.ParamsPattern).To(Equal(map[string]string{"repo": "acme/app"}))
+		})
+
+		// US7-S3 from specs/024-approval-api-ui/spec.md
+		It("should store unconstrained coverage for an explicit empty params pattern", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "params_pattern": map[string]string{}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.ParamsPattern).To(BeEmpty())
+		})
+
+		// US7-S4 from specs/024-approval-api-ui/spec.md
+		It("should reject a non-covering parameter pattern and leave the approval pending", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "params_pattern": map[string]string{"repo": "other/*"}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusUnprocessableEntity))
+			errorResponse := decodeJSON[helpers.ApprovalErrorResponse](resp)
+			Expect(errorResponse.Error).To(Equal("invalid_pattern"))
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.Status).To(Equal("pending"))
+		})
+
+		// US7-S5 from specs/024-approval-api-ui/spec.md
+		It("should reject a tool pattern and leave the approval pending", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "tool_pattern": "*"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+			errorResponse := decodeJSON[helpers.ApprovalErrorResponse](resp)
+			Expect(errorResponse.Error).To(Equal("invalid_request"))
+			Expect(errorResponse.Message).To(Equal("tool_pattern is not allowed"))
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.Status).To(Equal("pending"))
+		})
+
+		// US7-S7 from specs/024-approval-api-ui/spec.md
+		It("should reject a one-time scoped approval and leave it pending", func() {
+			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "once", "params_pattern": map[string]string{}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusUnprocessableEntity))
+			errorResponse := decodeJSON[helpers.ApprovalErrorResponse](resp)
+			Expect(errorResponse.Error).To(Equal("invalid_pattern"))
+			resp, err = server.DirectRequest(http.MethodGet, "/api/approvals/"+create.Data.ID, "", map[string]string{"X-Remote-User": alicePrincipal}, nil)
+			Expect(err).NotTo(HaveOccurred())
+			detail := decodeJSON[helpers.ApprovalDetailResponse](resp)
+			Expect(detail.Data.Status).To(Equal("pending"))
+		})
+	})
+
+	// US5-S3 and US5-S4 from specs/026-extproc-approval-sync/spec.md
+	DescribeTable("projects approved_at only for approved sync records", func(status string, wantApprovedAt bool) {
+		created := createPendingApproval(server, machineAuth, alicePrincipal, "decision_time_tool", map[string]any{})
+		var expectedApprovedAt *time.Time
+
+		switch status {
+		case "approved":
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", created.Data.ID), alicePrincipal, helpers.ApproveRequest{Persistence: "once"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			_ = decodeJSON[helpers.ApproveResponse](resp)
+
+			detailResp, err := server.AuthenticatedGET(fmt.Sprintf("/api/approvals/%s", created.Data.ID), alicePrincipal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(detailResp.StatusCode).To(Equal(http.StatusOK))
+			detail := decodeJSON[helpers.ApprovalDetailResponse](detailResp)
+			expectedApprovedAt = detail.Data.ApprovedAt
+		case "denied":
+			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", created.Data.ID), alicePrincipal, helpers.ApproveRequest{Persistence: "permanent"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			_ = decodeJSON[helpers.ApproveResponse](resp)
+
+			resp, err = postJSON(server, fmt.Sprintf("/api/approvals/%s/revoke", created.Data.ID), alicePrincipal, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			_ = decodeJSON[helpers.DenyResponse](resp)
+		}
+
+		resp, err := server.DirectRequest(http.MethodGet, "/api/approvals?principal="+alicePrincipal, "", helpers.ApprovalSyncHeaders(machineAuth.ClientAssertion), nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+		sync := decodeJSON[helpers.ApprovalSyncResponse](resp)
+
+		var summary *helpers.ApprovalSummary
+		for i := range sync.Data.Pairs {
+			for j := range sync.Data.Pairs[i].Approvals {
+				if sync.Data.Pairs[i].Approvals[j].ID == created.Data.ID {
+					summary = &sync.Data.Pairs[i].Approvals[j]
+				}
+			}
+		}
+		Expect(summary).NotTo(BeNil())
+		Expect(summary.Status).To(Equal(status))
+
+		if !wantApprovedAt {
+			Expect(summary.ApprovedAt).To(BeNil())
+			return
+		}
+
+		Expect(expectedApprovedAt).NotTo(BeNil())
+		Expect(summary.ApprovedAt).NotTo(BeNil())
+		Expect(summary.ApprovedAt.Equal(*expectedApprovedAt)).To(BeTrue())
+	},
+		Entry("for an approved record", "approved", true),
+		Entry("for a pending record", "pending", false),
+		Entry("for a denied record", "denied", false),
+	)
 })

@@ -26,6 +26,9 @@ export interface ToolApprovalDetail {
   tool_invocation_id?: string | null;
   tool_name: string;
   arguments: Record<string, unknown>;
+  tool_pattern: string;
+  params_pattern: Record<string, string>;
+  pattern_preview: string;
   description?: string;
   risk_level?: RiskLevel;
   status: ApprovalStatus;
@@ -47,6 +50,19 @@ export interface ApprovalDetailResponse {
 /** Request body for POST /api/approvals/:id/approve */
 export interface ApproveRequest {
   persistence: ApprovalPersistence;
+  params_pattern?: Record<string, string>;
+}
+
+/** Request body for POST /api/approvals/:id/scope-preview */
+export interface ScopePreviewRequest {
+  params_pattern?: Record<string, string>;
+}
+
+/** Server-resolved approval scope preview. */
+export interface ScopePreview {
+  tool_pattern: string;
+  params_pattern: Record<string, string>;
+  preview: string;
 }
 
 /** Response data for POST /api/approvals/:id/approve */
@@ -87,4 +103,5 @@ export type ApprovalErrorCode =
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'NETWORK_ERROR'
-  | 'SERVER_ERROR';
+  | 'SERVER_ERROR'
+  | 'INVALID_PATTERN';

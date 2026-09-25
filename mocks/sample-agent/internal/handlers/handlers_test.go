@@ -1,13 +1,17 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/agentic-identity-broker/sample-agent/internal/config"
+	"github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 	"golang.org/x/oauth2"
 )
 
@@ -247,13 +251,49 @@ func TestHomePageWithValidSession(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	if body == "" {
-		t.Error("expected HTML content, got empty body")
+	if !strings.Contains(body, `id="mcp-approval-btn"`) {
+		t.Error("expected user info page to include the approval-required MCP button")
+	}
+	if !strings.Contains(body, "Call MCP Tool: create_issue (approval required)") {
+		t.Error("expected approval-required MCP button label")
+	}
+}
+
+func TestApprovalElicitationURL(t *testing.T) {
+	url, ok := approvalElicitationURL(mcp.URLElicitationRequiredError{
+		Elicitations: []mcp.ElicitationParams{{URL: "https://broker.example/approvals/123"}},
+	})
+	if !ok || url != "https://broker.example/approvals/123" {
+		t.Fatalf("approvalElicitationURL() = (%q, %t), want approval URL", url, ok)
 	}
 
-	// Should show user page with MCP button
-	if body == "" {
-		t.Error("expected user info page with MCP button")
+	if _, ok := approvalElicitationURL(mcp.URLElicitationRequiredError{}); ok {
+		t.Fatal("approvalElicitationURL() accepted an elicitation without a URL")
+	}
+}
+
+func TestWriteApprovalRequired(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeApprovalRequired(w, "https://broker.example/approvals/123", "http://agentgateway:4000/mcp")
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusConflict)
+	}
+	if contentType := w.Header().Get("Content-Type"); contentType != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", contentType)
+	}
+	var response struct {
+		Error       string `json:"error"`
+		ApprovalURL string `json:"approval_url"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Error != "approval_required" {
+		t.Fatalf("error = %q, want approval_required", response.Error)
+	}
+	if response.ApprovalURL != "https://broker.example/approvals/123" {
+		t.Fatalf("approval_url = %q, want broker approval URL", response.ApprovalURL)
 	}
 }
 
@@ -322,5 +362,69 @@ func TestCallMCPResponseParseError(t *testing.T) {
 	// Should return 502 on parse error
 	if w.Code != http.StatusBadGateway {
 		t.Errorf("expected 502 for response parse error, got %d", w.Code)
+	}
+}
+
+func TestToolArguments(t *testing.T) {
+	arguments := toolArguments("create_issue")
+	if arguments["repository"] != "acme/sample-agent" || arguments["title"] != "Review Compose approval" {
+		t.Fatalf("create_issue arguments = %#v", arguments)
+	}
+	if arguments := toolArguments("whoami"); arguments != nil {
+		t.Fatalf("whoami arguments = %#v, want nil", arguments)
+	}
+}
+
+func TestCallMCPReusesSessionClient(t *testing.T) {
+	mcpServer := mcpserver.NewMCPServer("test-mcp-server", "1.0.0")
+	mcpServer.AddTool(mcp.NewTool("whoami"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	gateway := httptest.NewServer(mcpserver.NewStreamableHTTPServer(mcpServer))
+	defer gateway.Close()
+
+	h := New(&oauth2.Config{}, &config.Config{AgentGateway: config.AgentGatewayConfig{MCPURL: gateway.URL}})
+	sessionID := "test-session"
+	session := &Session{
+		Token:     &oauth2.Token{AccessToken: "valid-token", Expiry: time.Now().Add(time.Hour)},
+		UserInfo:  &UserInfo{Sub: "test-user"},
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	h.sessions[sessionID] = session
+
+	call := func() {
+		req := httptest.NewRequest(http.MethodPost, "/call-mcp", strings.NewReader(`{"tool":"whoami"}`))
+		req.AddCookie(&http.Cookie{Name: "session_id", Value: sessionID})
+		w := httptest.NewRecorder()
+		h.CallMCP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("CallMCP status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+		}
+	}
+
+	call()
+	firstClient := session.MCPClient
+	if firstClient == nil {
+		t.Fatal("first call did not retain an MCP client on the web session")
+	}
+	call()
+	if session.MCPClient != firstClient {
+		t.Fatal("second call created a different MCP client for the same web session")
+	}
+
+	logout := httptest.NewRequest(http.MethodGet, "/logout", nil)
+	logout.AddCookie(&http.Cookie{Name: "session_id", Value: sessionID})
+	h.Logout(httptest.NewRecorder(), logout)
+	if session.MCPClient != nil {
+		t.Fatal("logout did not close the retained MCP client")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/call-mcp", strings.NewReader(`{"tool":"whoami"}`))
+	req.AddCookie(&http.Cookie{Name: "session_id", Value: sessionID})
+	w := httptest.NewRecorder()
+	h.CallMCP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("post-logout CallMCP status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }

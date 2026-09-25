@@ -67,6 +67,13 @@ header contains the current version.
 **Query Parameters**:
 - `principal` (optional): Filter results for one principal.
 
+Each approval summary includes server-derived `tool_pattern` and `params_pattern`. The exact tool pattern matches only the approval's tool name. The params pattern maps constrained argument names to globs. Missing argument names are unconstrained.
+
+Each approved summary includes `approved_at` as an RFC 3339 timestamp. Pending and denied summaries omit this field.
+
+The token-exchange response can include `principal` and `agent_id`. They contain the broker-verified approval identity. ExtProc denies approval-required requests when either field is absent.
+
+
 ### Get Approval Detail
 
 ```
@@ -87,6 +94,16 @@ Changes a pending approval to approved. The request requires a `persistence` fie
 - `once`: One use. The caller must consume the approval after tool use.
 - `session`: Valid for the agent session duration.
 - `permanent`: Persists until a user revokes it. The consent interface manages it.
+
+The request accepts `params_pattern` only for `session` or `permanent`. Omit it for exact coverage. With those scopes, `{}` leaves all arguments unconstrained. For `once`, every supplied `params_pattern` returns `422 invalid_pattern`. A supplied `tool_pattern` returns `400 invalid_request` with `tool_pattern is not allowed`. Malformed or non-covering parameter patterns return `422 invalid_pattern`.
+
+### Scope Preview
+
+```
+POST /api/approvals/{id}/scope-preview
+```
+
+The request accepts only `params_pattern` and does not change approval state. The response includes the server-derived exact `tool_pattern`, resolved `params_pattern`, and preview. A supplied `tool_pattern` returns `400 invalid_request` with `tool_pattern is not allowed`.
 
 ### Deny
 
@@ -146,12 +163,14 @@ All error responses use the `ApprovalError` schema:
 |---|---|---|
 | `unauthorized` | 401 | Missing or invalid authentication |
 | `bad_request` | 400 | Invalid request body or parameters |
+| `invalid_request` | 400 | Supplied `tool_pattern` or another invalid request field |
 | `forbidden` | 403 | Principal does not match approval owner |
 | `not_found` | 404 | Approval not found |
 | `gone` | 410 | Approval has expired |
 | `rate_limit_exceeded` | 429 | Rate limit exceeded |
 | `not_consumable` | 422 | Approval cannot be consumed |
 | `not_revocable` | 422 | Approval cannot be revoked |
+| `invalid_pattern` | 422 | Pattern is malformed, does not cover the reviewed call, or is supplied with `once` persistence |
 | `internal_error` | 500 | Unexpected server error |
 
 ## OpenAPI Specification

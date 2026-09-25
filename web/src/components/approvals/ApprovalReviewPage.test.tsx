@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApprovalReviewPage } from './ApprovalReviewPage';
+
+vi.mock('@services/api/approvals', () => ({
+  approvalApi: {
+    previewApprovalScope: vi.fn().mockResolvedValue({
+      tool_pattern: 'read_file',
+      params_pattern: { path: '/tmp/example' },
+      preview: 'read_file(path=/tmp/example)',
+    }),
+  },
+}));
 
 const approval = {
   id: 'approval-1',
@@ -10,6 +20,8 @@ const approval = {
   agent_display_name: 'Research Assistant',
   tool_name: 'read_file',
   arguments: { path: '/tmp/example' },
+  tool_pattern: 'read_file',
+  params_pattern: { path: '/tmp/example' },
   status: 'pending' as const,
   approval_url: 'https://broker.example.com/approvals/approval-1',
   created_at: '2026-03-29T00:00:00Z',
@@ -42,10 +54,45 @@ describe('ApprovalReviewPage', () => {
     expect(screen.getByRole('button', { name: /^deny$/i })).toBeEnabled();
 
     await user.click(screen.getByRole('button', { name: /^approve$/i }));
-    expect(onApprove).toHaveBeenCalledWith('once');
+    expect(onApprove).toHaveBeenCalledWith({ persistence: 'once' });
 
     await user.click(screen.getByRole('button', { name: /try again/i }));
     expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the scope editable after the server rejects the pattern', async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <ApprovalReviewPage
+        approval={approval}
+        submitting={false}
+        errorCode="INVALID_PATTERN"
+        errorMessage={null}
+        approveResult={null}
+        denyResult={null}
+        onApprove={onApprove}
+        onDeny={vi.fn()}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Scope Not Accepted');
+
+    await user.click(screen.getByRole('radio', { name: /for this session/i }));
+    expect(
+      screen.getByRole('button', { name: /approval scope/i }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled(),
+    );
+
+    await user.click(screen.getByRole('button', { name: /^approve$/i }));
+    expect(onApprove).toHaveBeenCalledWith({
+      persistence: 'session',
+      params_pattern: { path: '/tmp/example' },
+    });
   });
 
   it('approves permanently after selecting Always allow', async () => {
@@ -67,9 +114,15 @@ describe('ApprovalReviewPage', () => {
     );
 
     await user.click(screen.getByRole('radio', { name: /always allow/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled(),
+    );
     await user.click(screen.getByRole('button', { name: /^approve$/i }));
 
-    expect(onApprove).toHaveBeenCalledWith('permanent');
+    expect(onApprove).toHaveBeenCalledWith({
+      persistence: 'permanent',
+      params_pattern: { path: '/tmp/example' },
+    });
   });
 
   it('shows a read-only recorded decision for an already approved once-only request', () => {
@@ -92,18 +145,56 @@ describe('ApprovalReviewPage', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'Approved' })).toBeVisible();
-    expect(screen.getByText('Decision recorded')).toBeVisible();
+    expect(screen.getByText('Decision recorded.')).toBeVisible();
     expect(
-      screen.getByText('This request is complete and is shown read-only.'),
+      screen.getByText('The next tool invocation will be allowed.'),
     ).toBeVisible();
-    expect(screen.getByText('You can safely close this page.')).toBeVisible();
+    expect(screen.getByText('You can return to your agent now.')).toBeVisible();
+    expect(
+      screen.queryByRole('heading', { name: 'Approved' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('This request is complete and is shown read-only.'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('You can safely close this page.'),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /^approve$/i }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /^deny$/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it('shows a complete confirmation immediately after approving a request', () => {
+    render(
+      <ApprovalReviewPage
+        approval={approval}
+        submitting={false}
+        errorCode={null}
+        errorMessage={null}
+        approveResult={{
+          id: approval.id,
+          status: 'approved',
+          persistence: 'permanent',
+          approved_at: '2026-03-29T00:01:00Z',
+        }}
+        denyResult={null}
+        onApprove={vi.fn()}
+        onDeny={vi.fn()}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Approved' })).toBeVisible();
+    expect(screen.getByText('permanent')).toBeVisible();
+    expect(screen.getByText('You can safely close this page.')).toBeVisible();
+    expect(
+      screen.getByText(
+        'Manage this permanent decision from Tool Authorizations.',
+      ),
+    ).toBeVisible();
   });
 
   it('shows an immutable historical decision for an already denied request', () => {

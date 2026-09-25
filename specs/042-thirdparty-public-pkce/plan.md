@@ -94,7 +94,7 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
       mechanical consequences of those two plus the already-clarified full-replacement semantics.
       Decisions recorded in [spec.md Clarifications](./spec.md#clarifications) and
       [checklists/requirements.md finding 11](./checklists/requirements.md).
-- [x] **Database Design**: Migration pair `031_add_token_endpoint_auth_method.{up,down}.sql` in
+- [x] **Database Design**: Migration pair `032_add_token_endpoint_auth_method.{up,down}.sql` in
       `/migrations/`, go-migrate naming, documented in
       [data-model.md §6](./data-model.md#6-persistence-schema).
 - [x] **E2E Acceptance Tests**: All 22 acceptance scenarios map 1:1 to `It()` blocks; see
@@ -185,8 +185,8 @@ internal/
 │       └── memory/thirdparty_provider_record.go   # accept absent secret
 
 migrations/
-├── 031_add_token_endpoint_auth_method.up.sql      # NEW
-└── 031_add_token_endpoint_auth_method.down.sql    # NEW — guarded rollback
+├── 032_add_token_endpoint_auth_method.up.sql      # NEW
+└── 032_add_token_endpoint_auth_method.down.sql    # NEW — guarded rollback
 
 api/
 ├── admin/openapi.yaml                             # 3 schemas + 4 path descriptions
@@ -203,8 +203,8 @@ tests/
 │   └── fixtures/services.go                       # + PublicClientService fixture
 └── integration/
     ├── migrations/framework.go                    # + Force(t, version) — clears the dirty flag
-    ├── migrations/migrations_test.go              # + TestMigration031 apply/constraint/rollback
-    └── storage/infra/thirdparty_service_test.go   # + migration 031, absent-credential persistence
+    ├── migrations/migrations_test.go              # + TestMigration032 apply/constraint/rollback
+    └── storage/infra/thirdparty_service_test.go   # + migration 032, absent-credential persistence
 ```
 
 **Structure Decision**: Existing hexagonal Go backend, no new package or module. The change fans

@@ -194,6 +194,23 @@ authorization:
 Keep `default_decision: "deny"`. If a policy result is undefined or evaluation times out,
 the OPA gate denies the request.
 :::
+### Enable approval gating
+
+Set `tool_approvals.enabled: true` only with OPA authorization enabled. When OPA returns `approval_required` for a standalone MCP `tools/call`, ExtProc checks its local approval cache, refreshes the caller's broker-authoritative `(principal, agent_id)` scope on a miss, and creates a pending approval only after a successful confirmed miss. It returns the broker-provided URL as MCP error `-32042`. The original subject token is used only for create and one-time consume; ExtProc never parses either token for cache identity.
+
+```yaml
+tool_approvals:
+  enabled: true
+  url: "https://identity-broker.example.com"
+  long_poll_timeout_seconds: 30
+  approval_cache_idle_ttl: 5m
+  request_timeout: 5s
+sessions:
+  extraction:
+    http_header: "Mcp-Session-Id"
+```
+
+The cache is warmed asynchronously at startup and then refreshed by one ETag long-poll loop. A failed refresh, malformed response, missing approval identity, or failed one-time consume denies the request. `ciba_required`, batches, and header-only requests never enter the approval elicitation flow.
 ## Use a trusted Compose JWT
 
 The Compose gateway trusts upstream JWTs from `http://upstream-oauth2:9001` and broker-issued local JWTs from `http://localhost:3000`.

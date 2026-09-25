@@ -485,3 +485,55 @@ func TestTokenExchangeResponse_IsExpired(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenExchangeResponse_OptionalApprovalIdentity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		principal string
+		agentID   string
+	}{
+		{
+			name:      "serializes resolved principal and canonical agent ID",
+			principal: "alice@example.com",
+			agentID:   "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+		},
+		{
+			name:    "omits unresolved principal without suppressing agent ID",
+			agentID: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+		},
+		{
+			name:      "omits unresolved agent ID without suppressing principal",
+			principal: "alice@example.com",
+		},
+		{name: "omits unresolved identity"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := NewTokenExchangeResponse("token", BearerTokenType, AccessTokenType)
+			response.Principal = tt.principal
+			response.AgentID = tt.agentID
+
+			body, err := response.ToJSON()
+			require.NoError(t, err)
+
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(body, &decoded))
+
+			for field, expected := range map[string]string{
+				"principal": tt.principal,
+				"agent_id":  tt.agentID,
+			} {
+				actual, present := decoded[field]
+				if expected == "" {
+					require.False(t, present, "%s must be omitted when unresolved", field)
+					continue
+				}
+				require.True(t, present, "%s must be serialized when resolved", field)
+				require.Equal(t, expected, actual)
+			}
+		})
+	}
+}

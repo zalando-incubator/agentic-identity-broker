@@ -1,63 +1,59 @@
 package authorization
 
-// OPADecision represents the structured result of OPA policy evaluation.
-type OPADecision struct {
-	Action  string   `json:"action"`            // "allow", "deny", "approval_required", "ciba_required"
-	Reasons []string `json:"reasons,omitempty"` // Human-readable denial reasons
+const (
+	ActionAllow            = "allow"
+	ActionDeny             = "deny"
+	ActionApprovalRequired = "approval_required"
+	ActionCIBARequired     = "ciba_required"
+)
+
+type ApprovalContext struct {
+	Description string `json:"description,omitempty"`
+	RiskLevel   string `json:"risk_level,omitempty"`
 }
 
-// ParseDecision extracts an OPADecision from a raw OPA evaluation result map.
-// The result is expected to be a map[string]any produced by a Rego query where
-// the decision rule evaluates to an object with "action" and optional "reasons" fields.
-//
-// Behaviour:
-//   - nil or empty map → deny (undefined / missing result)
-//   - action "approval_required" or "ciba_required" → deny (not yet supported)
-//   - action "allow" → allow with no reasons
-//   - action "deny" → deny with reasons extracted from the "reasons" field
-//   - any other action value → deny
+// OPADecision represents the structured result of OPA policy evaluation.
+type OPADecision struct {
+	Action          string           `json:"action"`
+	Reasons         []string         `json:"reasons,omitempty"`
+	ApprovalContext *ApprovalContext `json:"approval_context,omitempty"`
+}
+
+// ParseDecision extracts a fail-closed decision from an OPA result object.
 func ParseDecision(result map[string]any) *OPADecision {
 	if result == nil {
-		return &OPADecision{Action: "deny", Reasons: []string{"undefined result"}}
+		return &OPADecision{Action: ActionDeny, Reasons: []string{"undefined result"}}
 	}
-
-	actionRaw, ok := result["action"]
+	action, ok := result["action"].(string)
 	if !ok {
-		return &OPADecision{Action: "deny", Reasons: []string{"undefined result"}}
+		return &OPADecision{Action: ActionDeny, Reasons: []string{"undefined result"}}
 	}
-
-	action, ok := actionRaw.(string)
-	if !ok {
-		return &OPADecision{Action: "deny", Reasons: []string{"invalid action type"}}
-	}
-
 	switch action {
-	case "allow":
-		return &OPADecision{Action: "allow"}
-
-	case "deny":
-		var reasons []string
-		if reasonsRaw, exists := result["reasons"]; exists {
-			if reasonsList, ok := reasonsRaw.([]any); ok {
-				for _, r := range reasonsList {
-					if s, ok := r.(string); ok {
-						reasons = append(reasons, s)
-					}
+	case ActionAllow:
+		return &OPADecision{Action: ActionAllow}
+	case ActionApprovalRequired:
+		decision := &OPADecision{Action: ActionApprovalRequired}
+		if raw, ok := result["approval_context"].(map[string]any); ok {
+			decision.ApprovalContext = &ApprovalContext{}
+			decision.ApprovalContext.Description, _ = raw["description"].(string)
+			decision.ApprovalContext.RiskLevel, _ = raw["risk_level"].(string)
+		}
+		return decision
+	case ActionDeny, ActionCIBARequired:
+		decision := &OPADecision{Action: ActionDeny}
+		if action == ActionCIBARequired {
+			decision.Reasons = []string{ActionCIBARequired + " is not yet supported"}
+			return decision
+		}
+		if raw, ok := result["reasons"].([]any); ok {
+			for _, reason := range raw {
+				if reason, ok := reason.(string); ok {
+					decision.Reasons = append(decision.Reasons, reason)
 				}
 			}
 		}
-		return &OPADecision{Action: "deny", Reasons: reasons}
-
-	case "approval_required", "ciba_required":
-		return &OPADecision{
-			Action:  "deny",
-			Reasons: []string{action + " is not yet supported"},
-		}
-
+		return decision
 	default:
-		return &OPADecision{
-			Action:  "deny",
-			Reasons: []string{"unknown action: " + action},
-		}
+		return &OPADecision{Action: ActionDeny, Reasons: []string{"unknown action: " + action}}
 	}
 }

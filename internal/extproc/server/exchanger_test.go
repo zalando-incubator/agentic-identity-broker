@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -149,6 +150,29 @@ func configForMocks(m *mockServers) *extprocconfig.Config {
 			ResetTimeout: 30 * time.Second,
 		},
 	}
+}
+
+func TestTokenExchanger_ExchangeRejectsRedirects(t *testing.T) {
+	var redirectRequests atomic.Int32
+	redirect := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		redirectRequests.Add(1)
+	}))
+	defer redirect.Close()
+
+	mocks := newMockServers()
+	defer mocks.Close()
+	mocks.tokenExchServer.Close()
+	mocks.tokenExchServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirect.URL, http.StatusFound)
+	}))
+
+	exchanger, err := server.NewTokenExchanger(configForMocks(mocks), testLogger())
+	require.NoError(t, err)
+	defer exchanger.Shutdown()
+
+	_, err = exchanger.Exchange(context.Background(), "subject-token", "https://api.example.com")
+	require.Error(t, err)
+	assert.Zero(t, redirectRequests.Load())
 }
 
 // ---------------------------------------------------------------------------

@@ -62,7 +62,7 @@ paths:
                 data:
                   id: "550e8400-e29b-41d4-a716-446655440000"
                   status: "pending"
-                  approval_url: "https://broker.example.com/consent/approvals/550e8400-e29b-41d4-a716-446655440000"
+                  approval_url: "https://broker.example.com/approvals/550e8400-e29b-41d4-a716-446655440000"
                   created_at: "2026-03-28T14:30:00Z"
         '200':
           description: Existing pending approval returned (idempotent)
@@ -269,6 +269,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: A supplied pattern is invalid for the selected persistence scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_pattern:
+                  value:
+                    error: "invalid_pattern"
+                    message: "params_pattern is not allowed for once persistence"
         '410':
           description: Approval expired or already actioned
           content:
@@ -538,6 +549,8 @@ components:
         - approval_url
         - created_at
         - expires_at
+        - tool_pattern
+        - params_pattern
       properties:
         id:
           type: string
@@ -557,6 +570,16 @@ components:
           type: object
           description: Actual argument values passed to the tool call
           additionalProperties: true
+        tool_pattern:
+          type: string
+          description: Glob over the tool name that this approval covers.
+        params_pattern:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Constrained argument names mapped to globs. Argument names absent from this
+            object are unconstrained. An empty object matches any arguments.
         description:
           type: string
           description: |
@@ -605,6 +628,15 @@ components:
           type: string
           enum: [once, session, permanent]
           description: How long the approval should persist
+        params_pattern:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Constrained argument names mapped to globs. Omit the field to cover only the reviewed
+            argument values. This field is permitted only for session or permanent persistence.
+            With once persistence, every supplied value, including an empty object, returns
+            422 invalid_pattern. The resulting pattern must cover the reviewed arguments.
 
     ApproveResponse:
       type: object
@@ -733,6 +765,8 @@ components:
         - status
         - persistence
         - consumed
+        - tool_pattern
+        - params_pattern
       properties:
         id:
           type: string
@@ -741,6 +775,16 @@ components:
           type: string
         arguments_hash:
           type: string
+        tool_pattern:
+          type: string
+          description: Glob over the tool name that this approval covers.
+        params_pattern:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            Constrained argument names mapped to globs. Argument names absent from this
+            object are unconstrained. An empty object matches any arguments.
         status:
           type: string
           enum: [pending, approved, denied]

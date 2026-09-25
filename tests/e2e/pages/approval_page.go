@@ -270,6 +270,61 @@ func (ap *ApprovalPage) ClickDeny(ctx context.Context) error {
 	return nil
 }
 
+// ExpandApprovalScope opens the "Approval scope" disclosure when it is collapsed.
+func (ap *ApprovalPage) ExpandApprovalScope(ctx context.Context) error {
+	toggle := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Approval scope"})
+	expanded, err := toggle.GetAttribute("aria-expanded")
+	if err != nil {
+		return fmt.Errorf("read approval scope state: %w", err)
+	}
+	if expanded == "true" {
+		return nil
+	}
+	if err := toggle.Click(); err != nil {
+		return fmt.Errorf("expand approval scope: %w", err)
+	}
+	return nil
+}
+
+// parameterScope locates the scope block of a single request parameter.
+func (ap *ApprovalPage) parameterScope(key string) playwright.Locator {
+	return ap.pwPage().Locator(fmt.Sprintf("[data-testid='approval-scope-param-%s']", key))
+}
+
+// SetParameterMode selects a per-parameter mode from its match dropdown.
+// Valid modes: "This value", "Any value", "Custom match".
+func (ap *ApprovalPage) SetParameterMode(ctx context.Context, key, mode string) error {
+	scope := ap.parameterScope(key)
+	trigger := scope.Locator("button[id$='-mode']")
+	if err := trigger.Click(); err != nil {
+		return fmt.Errorf("open mode dropdown for parameter %q: %w", key, err)
+	}
+	option := ap.pwPage().GetByRole("option", playwright.PageGetByRoleOptions{Name: mode})
+	if err := option.Click(); err != nil {
+		return fmt.Errorf("select mode %q for parameter %q: %w", mode, key, err)
+	}
+	return nil
+}
+
+// SetParameterCustomPattern fills the custom match input of a single parameter.
+func (ap *ApprovalPage) SetParameterCustomPattern(ctx context.Context, key, value string) error {
+	input := ap.parameterScope(key).GetByRole("textbox")
+	if err := input.Fill(value); err != nil {
+		return fmt.Errorf("fill custom pattern for parameter %q: %w", key, err)
+	}
+	return nil
+}
+
+// GetPatternPreview returns the displayed combined approval pattern.
+func (ap *ApprovalPage) GetPatternPreview(ctx context.Context) (string, error) {
+	preview := ap.pwPage().GetByLabel("Approval pattern preview").Locator("code")
+	text, err := preview.TextContent()
+	if err != nil {
+		return "", fmt.Errorf("get pattern preview: %w", err)
+	}
+	return text, nil
+}
+
 // --- Confirmation state ---
 
 // WaitForApprovedConfirmation waits for the "Approved" heading.

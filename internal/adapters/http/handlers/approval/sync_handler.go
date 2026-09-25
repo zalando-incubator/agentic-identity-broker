@@ -38,13 +38,16 @@ type syncResponsePair struct {
 }
 
 type toolApprovalSummary struct {
-	ID             string  `json:"id"`
-	ToolName       string  `json:"tool_name"`
-	ArgumentsHash  string  `json:"arguments_hash"`
-	Status         string  `json:"status"`
-	Persistence    *string `json:"persistence,omitempty"`
-	Consumed       bool    `json:"consumed"`
-	AgentSessionID *string `json:"agent_session_id,omitempty"`
+	ID             string            `json:"id"`
+	ToolName       string            `json:"tool_name"`
+	ArgumentsHash  string            `json:"arguments_hash"`
+	ToolPattern    string            `json:"tool_pattern"`
+	ParamsPattern  map[string]string `json:"params_pattern"`
+	Status         string            `json:"status"`
+	Persistence    *string           `json:"persistence,omitempty"`
+	Consumed       bool              `json:"consumed"`
+	AgentSessionID *string           `json:"agent_session_id,omitempty"`
+	ApprovedAt     *time.Time        `json:"approved_at,omitempty"`
 }
 
 func toSummary(a *storage.ToolApproval) toolApprovalSummary {
@@ -52,8 +55,13 @@ func toSummary(a *storage.ToolApproval) toolApprovalSummary {
 		ID:            a.ID.String(),
 		ToolName:      a.ToolName,
 		ArgumentsHash: a.ArgumentsHash,
+		ToolPattern:   a.ToolPattern,
+		ParamsPattern: a.ParamsPattern,
 		Status:        string(a.Status),
 		Consumed:      a.Consumed,
+	}
+	if s.ParamsPattern == nil {
+		s.ParamsPattern = map[string]string{}
 	}
 	if a.Persistence != nil {
 		p := string(*a.Persistence)
@@ -61,6 +69,9 @@ func toSummary(a *storage.ToolApproval) toolApprovalSummary {
 	}
 	if a.AgentSessionID != nil {
 		s.AgentSessionID = a.AgentSessionID
+	}
+	if a.Status == storage.ApprovalStatusApproved {
+		s.ApprovedAt = a.ApprovedAt
 	}
 	return s
 }

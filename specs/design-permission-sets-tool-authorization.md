@@ -458,7 +458,7 @@ tool_risk := {
 
 ### 4.3 The Approval Service
 
-The approval service is a new **API subtree** (`/api/approvals/*`) within the existing identity broker HTTP server — not a separate server or process. It manages pending approvals and provides a web interface (served under `/consent/approvals/:id` via the existing React SPA) for users to review and approve/deny actions.
+The approval service is a new **API subtree** (`/api/approvals/*`) within the existing identity broker HTTP server — not a separate server or process. It manages pending approvals and provides a web interface (served under `/approvals/:id` via the existing React SPA) for users to review and approve/deny actions.
 
 ```mermaid
 graph TB
@@ -529,7 +529,7 @@ All approval API calls derive the principal (user) and agent identity from the a
 
 | API call | Auth mechanism | Broker action |
 |----------|---------------|---------------|
-| `GET /consent/approvals/:id` (Approval UI page) | Upstream proxy auth (X-Remote-User) | User authenticated via normal consent UI auth flow |
+| `GET /approvals/:id` (Approval UI page) | Upstream proxy auth (X-Remote-User) | User authenticated via normal consent UI auth flow |
 | `POST /api/approvals/:id/approve` | Upstream proxy auth (X-Remote-User) | Verify requesting user matches the approval's principal |
 | `POST /api/approvals/:id/deny` | Upstream proxy auth (X-Remote-User) | Verify requesting user matches the approval's principal |
 
@@ -576,7 +576,7 @@ sequenceDiagram
 
     EP-->>GW: ImmediateResponse 200
     Note over EP,GW: MCP URLElicitationRequiredError<br/>(-32042) with elicitation URL
-    GW-->>Agent: {"error": {"code": -32042, "message": "Approval required",<br/>"data": {"elicitations": [{"mode": "url",<br/>"elicitationId": "abc123",<br/>"url": "https://broker/consent/approvals/abc123",<br/>"message": "Approve: create_pull_request"}]}}}
+    GW-->>Agent: {"error": {"code": -32042, "message": "Approval required",<br/>"data": {"elicitations": [{"mode": "url",<br/>"elicitationId": "abc123",<br/>"url": "https://broker/approvals/abc123",<br/>"message": "Approve: create_pull_request"}]}}}
 
     Agent->>User: "I need your approval to create a PR. Please review: [link]"
     User->>UI: Opens approval_url in browser
@@ -691,14 +691,16 @@ tool_name    := identifier | identifier ".*"   # wildcard suffix
 | `issues.*` | `issues.create`, `issues.update`, `issues.close`, etc. | Broad permanent approval |
 | `*` | Any tool | "Trust this agent fully" (within permission set boundary) |
 
-**Matching in ExtProc**: When a tool call arrives, ExtProc checks existing approvals by matching the concrete tool invocation `(tool_name, params)` against stored patterns. The most specific match wins. A permanent approval for `create_pull_request(repo=acme/*)` would match `create_pull_request(repo=acme/app, title="Fix bug")` because unspecified params are implicitly `*`.
+**Matching in ExtProc**: When a tool call arrives, ExtProc checks existing approvals by matching the concrete tool invocation `(tool_name, params)` against stored patterns. The most specific match wins. A permanent approval for `create_pull_request(repo=acme/*)` matches `create_pull_request(repo=acme/app, title="Fix bug")` because unspecified parameters are unconstrained.
+
+**Browser-owned scope**: The broker derives `tool_pattern` as an exact escaped matcher for the reviewed tool name. Browser users cannot edit it. Users can edit only `params_pattern` for session and permanent approvals.
 
 **Approval UI displays**: When users review a pending approval, they see:
 - The **exact tool name** (e.g., `create_pull_request`)
 - The **full parameters** with values (e.g., `repo: acme/app`, `title: Fix bug`, `body: This fixes...`)
 - A **description** rendered from the OPA policy's `description_template` with parameter interpolation
 
-When users choose session or permanent persistence, the UI shows the **pattern** that will be stored and explains what it covers:
+When users choose session or permanent persistence, the UI shows the parameter pattern that will be stored and explains what it covers:
 > "Always allow this agent to call `create_pull_request` on any repo in `acme/*`"
 
 ### 4.9 Key Design Properties
@@ -1103,7 +1105,7 @@ sequenceDiagram
     Broker->>Broker: Extract principal + agent from subject token
     Broker->>Broker: Risk score: 0.6 (above auto-approve threshold)
     Broker->>Broker: Create pending approval
-    Broker-->>EP: {id: "abc123", approval_url: "https://broker/consent/approvals/abc123"}
+    Broker-->>EP: {id: "abc123", approval_url: "https://broker/approvals/abc123"}
 
     EP-->>GW: MCP URLElicitationRequiredError (-32042)
     GW-->>Agent: {"error": {"code": -32042, "data": {"elicitations": [{"mode": "url", "elicitationId": "abc123", "url": "...", "message": "Approve: create_pull_request in acme/app"}]}}}
@@ -1167,10 +1169,10 @@ sequenceDiagram
         Broker->>Broker: Store auth_req_id on approval record
     end
 
-    Broker-->>EP: {approval_id, status: pending,<br/>approval_url: "https://broker/consent/approvals/abc123"}
+    Broker-->>EP: {approval_id, status: pending,<br/>approval_url: "https://broker/approvals/abc123"}
 
     EP-->>GW: MCP URLElicitationRequiredError (-32042)
-    GW-->>Agent: {"error": {"code": -32042,<br/>"message": "Strong authentication required",<br/>"data": {"elicitations": [{"mode": "url",<br/>"elicitationId": "abc123",<br/>"url": "https://broker/consent/approvals/abc123",<br/>"message": "Authenticate to delete acme/app"}]}}}
+    GW-->>Agent: {"error": {"code": -32042,<br/>"message": "Strong authentication required",<br/>"data": {"elicitations": [{"mode": "url",<br/>"elicitationId": "abc123",<br/>"url": "https://broker/approvals/abc123",<br/>"message": "Authenticate to delete acme/app"}]}}}
 
     Agent->>User: "I need your authentication to delete acme/app.<br/>Please confirm on your device: [link]"
 
@@ -1436,7 +1438,7 @@ If the client does not declare elicitation support, the server MUST NOT return `
         {
           "mode": "url",
           "elicitationId": "abc123",
-          "url": "https://broker.example.com/consent/approvals/abc123",
+          "url": "https://broker.example.com/approvals/abc123",
           "message": "Approve: Create pull request 'Fix bug' in acme/app"
         }
       ]
@@ -1459,7 +1461,7 @@ If the client does not declare elicitation support, the server MUST NOT return `
         {
           "mode": "url",
           "elicitationId": "ghi789",
-          "url": "https://broker.example.com/consent/approvals/ghi789",
+          "url": "https://broker.example.com/approvals/ghi789",
           "message": "Authenticate to delete repository acme/app"
         }
       ]

@@ -410,8 +410,8 @@ ginkgo -v --focus="Authorization Endpoint" ./tests/e2e/
 **Purpose**: Human-in-the-loop authorization for agent tool calls. When an AI agent attempts to invoke a tool that requires human-in-the-loop authorization, the system creates a pending approval record, presents it to the user, and blocks the tool call until the user approves or denies it.
 
 **Domain Model**:
-- **ToolApproval**: Aggregate root representing an approval record with lifecycle status (pending → approved/denied), persistence scope (once/session/permanent), and consumption tracking.
-- **ApprovalService**: Core business logic (`internal/domain/approval/service.go`) — create, get, approve, deny, consume, list permanent, revoke, sync state. Enforces principal-matching, expiry checks, rate limiting, and idempotency.
+- **ToolApproval**: Aggregate root representing an approval record with lifecycle status (pending → approved/denied), persistence scope (once/session/permanent), consumption tracking, and an exact server-derived tool matcher with editable parameter constraints.
+- **ApprovalService**: Core business logic (`internal/domain/approval/service.go`) — create, get, approve, deny, consume, list permanent, revoke, sync state. Enforces principal-matching, expiry checks, rate limiting, idempotency, and server-owned exact tool coverage.
 
 **API Endpoints** (8 routes on end-user server):
 ```
@@ -867,14 +867,21 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **TokenCacheKey**: Struct used as Go map key: `{subjectToken, resourceURI}`. Using struct keys prevents separator-injection attacks compared to string concatenation.
 
-**Two policy gates on one request chain**:
+**Approval Cache**: An ExtProc-local `sync.RWMutex` cache of broker approval summaries. It is keyed by the verified `(principal, agent_id)` pair. `internal/domain/approval/toolpattern` provides single-pattern matching. `internal/extproc/approval/precedence.go` ranks matching candidates under ADR 035. A cache match requires a successful sync within `tool_approvals.max_staleness`, which defaults to 60s. The cache stores no permission sets.
+
+**Approval Gate**: The request-path component that handles standalone `approval_required` MCP tool calls. It matches the cache, performs a targeted broker read on a miss, and creates an approval only after that read succeeds. It denies on every broker or identity error.
+
+**Long-Poll Syncer**: One background ExtProc goroutine that receives broker approval snapshots. It uses ETags, replaces returned pair state, and retries with bounded backoff.
+
+**Three policy gates on one request chain**:
 
 | Gate | Service / Boundary | Question Answered | Inputs | Config Surface | Default |
 |------|--------------------|-------------------|--------|----------------|---------|
-| ExtProc OPA | `extproc-token-exchange` request path | May this proxied request or MCP tool call proceed? | `OPAInput` built from ExtProc metadata, headers, and optional request body | `authorization.*` in ExtProc config | Disabled |
 | Broker CEL | Broker `POST /oauth2/token` token-exchange boundary | May this gateway perform token exchange for this resource? | `CELAuthorizationContext` built from client assertion claims and RFC 8693 request fields | `token_exchange.authorization.cel.*` in broker config | CEL expression defaults to `true` |
+| ExtProc OPA | `extproc-token-exchange` request path | May this proxied request or MCP tool call proceed? | `OPAInput` built from ExtProc metadata, headers, and optional request body | `authorization.*` in ExtProc config | Disabled |
+| ExtProc approval gate | `extproc-token-exchange` request path | May this standalone MCP tool call proceed after OPA returns `approval_required`? | OPA action, broker-issued `principal` and `agent_id`, invocation data, and cache or broker approval state | `tool_approvals.*` in ExtProc config | Disabled |
 
-The gates compose as fail-closed AND: ExtProc OPA can only further restrict a request after broker CEL authorizes token exchange, and broker CEL can still deny token exchange even when ExtProc OPA would allow the proxied request.
+All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can further restrict the request after broker token exchange. The approval gate runs only for a standalone MCP tool call after OPA returns `approval_required`.
 
 #### 3.2.2. gRPC Server
 
@@ -908,6 +915,8 @@ The gates compose as fail-closed AND: ExtProc OPA can only further restrict a re
 
 **Configuration Subsystem**: Separate from broker config, uses `EXTPROC_` environment prefix.
 
+**Deployment Boundary**: ExtProc is independently deployed and is not a workload of `charts/agentic-identity-broker/`. Its `EXTPROC_*` settings and YAML file MUST NOT be added to the broker chart's ConfigMap or Deployment. Any chart that later deploys ExtProc must give it a distinct workload and configuration path, as required by ADR 011 and Constitution Principle VII.
+
 **Config Structure**:
 
 - **GRPCConfig**: `bind`, `port`, `max_concurrent_streams`
@@ -919,8 +928,10 @@ The gates compose as fail-closed AND: ExtProc OPA can only further restrict a re
 - **MetricsConfig**: `enabled`, `export_interval`
 - **LogsConfig**: `enabled`
 - **TelemetryConfig**: `enabled`, `service_name`, `resource_attributes`, `traces` (enabled, sampling_rate, propagators), `metrics` (enabled, export_interval), `logs` (enabled), `exporter` (protocol, endpoint, insecure, headers, timeout, compression)
+- **ToolApprovalsConfig**: `enabled`, `url`, `long_poll_timeout_seconds`, `approval_cache_idle_ttl`, `request_timeout`, and `max_staleness`
+- **SessionsConfig**: `extraction.http_header` sets the agent-session header.
 
-**Validation Rules** (19 rules, fail-fast at startup):
+**Validation Rules**: `Validate()` has 19 numbered base and telemetry rules. It has nine authorization rules when authorization is enabled. It has eight tool-approval rules when `tool_approvals.enabled` is true. The session-header rule always applies. `Validate()` collects all errors and fails early.
 
 1. grpc.port must be 1–65535
 2. grpc.bind must not be empty
@@ -1047,6 +1058,11 @@ internal/extproc/
     ├── exchanger.go           # TokenExchanger with cache & singleflight
     ├── server_test.go         # Server unit tests
     └── exchanger_test.go      # Exchange unit tests
+├── approval/
+│   ├── cache.go              # Approval cache, scope filtering, reservation, eviction
+│   ├── client.go             # Broker API client
+│   ├── gate.go               # Request-path approval gate
+│   └── syncer.go             # ETag long-poll lifecycle
 
 tests/e2e/extproc/
 ├── extproc_suite_test.go      # Ginkgo suite runner
@@ -1420,6 +1436,14 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **MCP Streamable HTTP**: Model Context Protocol transport mode allowing JSON-RPC communication over HTTP with streaming capabilities. Used by ExtProc to forward tool calls to MCP servers while maintaining transparent token exchange for authentication.
 
+**Approval Identity**: The verified `principal` and canonical `agent_id` returned by the broker token-exchange response. ExtProc uses it as the only approval-cache key source.
+
+**Approval Cache**: Per-process approval records returned by the broker. Records are matchable only when approved, in scope, unconsumed, and timestamped with `approved_at`. A match requires a successful broker sync within `tool_approvals.max_staleness`, which defaults to 60s.
+
+**Long-Poll Syncer**: The ExtProc worker that refreshes approval records with the broker ETag protocol.
+
+**Approval Gate**: The ExtProc component that applies cached approvals only after OPA returns `approval_required` for a standalone MCP tool call.
+
 ### OAuth2 Server Mode
 
 **BrokerClientCredential**: OAuth2 client credentials generated by the broker and bound to exactly one Agent. Contains hashed client secret (Argon2id, PHC format). `client_id` equals the agent's UUID string — no separate field needed. One credential per agent enforced by UNIQUE on `client_credentials.client_id`. Lifecycle: generated on demand via Admin API, replaced atomically on rotation, cascade-deleted with agent. Located in `internal/domain/storage/broker_client_credential.go`.
@@ -1518,11 +1542,17 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 ### Tool Approval Domain
 
-**ToolApproval**: Aggregate root representing a human-in-the-loop authorization record for a tool invocation. Contains tool name, arguments, principal, agent reference, lifecycle status, and persistence scope. Located in `internal/domain/storage/tool_approval.go`. Identified by `ApprovalID` (typed UUID per ADR 013).
+**ToolApproval**: Aggregate root representing a human-in-the-loop authorization record for a tool invocation. Contains tool name, arguments, principal, agent reference, lifecycle status, persistence scope, and `ToolPattern`/`ParamsPattern` for future calls. `ToolPattern` is server-derived from the exact tool name. `ParamsPattern` is the browser-editable scope. Located in `internal/domain/storage/tool_approval.go`. Identified by `ApprovalID` (typed UUID per ADR 013).
 
 **ApprovalStatus**: Value object enum with three states: `pending` (awaiting user decision), `approved` (user authorized the tool call), `denied` (user rejected the tool call). State transitions are one-way: pending → approved or pending → denied.
 
 **ApprovalPersistence**: Value object enum controlling how long an approval decision persists: `once` (single use, consumed after first match), `session` (valid for the agent session duration, scoped by `agent_session_id`), `permanent` (persists indefinitely, visible in consent management UI). Set by the user during approve/deny action.
+
+**ToolPattern**: The server derives this exact matcher from the approval tool name with `toolpattern.EscapeLiteral`. Browser decisions cannot change it. Together with ParamsPattern it describes the future invocations covered by the decision.
+
+**ParamsPattern**: A map from top-level argument names to glob strings for an approval decision. Argument names absent from the map are unconstrained; a present key must match the canonical rendering of that argument value. An empty map leaves every argument unconstrained.
+
+**Approval pattern authority**: `arguments_hash` is the exact identity used to de-duplicate pending approvals. `ToolPattern` is server-owned exact coverage, and `ParamsPattern` defines editable coverage consumed by ExtProc's approval matcher. `ComputeArgumentsHash` and `toolpattern.Canonical` intentionally serve different purposes and must not be unified.
 
 **ApprovalSyncState**: Single-row entity tracking a monotonically increasing version counter. Incremented on every approval mutation. Used as the ETag source for the long-poll sync endpoint. Located in `migrations/009_create_approval_sync_state.up.sql`.
 

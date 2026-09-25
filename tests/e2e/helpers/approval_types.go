@@ -4,26 +4,28 @@ import "time"
 
 // ApprovalRecord represents a ToolApprovalDetail in E2E test responses.
 type ApprovalRecord struct {
-	ID               string         `json:"id"`
-	Principal        string         `json:"principal"`
-	AgentID          string         `json:"agent_id"`
-	AgentDisplayName string         `json:"agent_display_name,omitempty"`
-	MCPSessionID     *string        `json:"mcp_session_id,omitempty"`
-	AgentSessionID   *string        `json:"agent_session_id,omitempty"`
-	ToolInvocationID *string        `json:"tool_invocation_id,omitempty"`
-	ToolName         string         `json:"tool_name"`
-	Arguments        map[string]any `json:"arguments"`
-	Description      string         `json:"description"`
-	RiskLevel        string         `json:"risk_level"`
-	Status           string         `json:"status"`
-	Persistence      *string        `json:"persistence,omitempty"`
-	Consumed         bool           `json:"consumed"`
-	ApprovalURL      string         `json:"approval_url"`
-	CreatedAt        time.Time      `json:"created_at"`
-	ApprovedAt       *time.Time     `json:"approved_at,omitempty"`
-	DeniedAt         *time.Time     `json:"denied_at,omitempty"`
-	ConsumedAt       *time.Time     `json:"consumed_at,omitempty"`
-	ExpiresAt        time.Time      `json:"expires_at"`
+	ID               string            `json:"id"`
+	Principal        string            `json:"principal"`
+	AgentID          string            `json:"agent_id"`
+	AgentDisplayName string            `json:"agent_display_name,omitempty"`
+	MCPSessionID     *string           `json:"mcp_session_id,omitempty"`
+	AgentSessionID   *string           `json:"agent_session_id,omitempty"`
+	ToolInvocationID *string           `json:"tool_invocation_id,omitempty"`
+	ToolName         string            `json:"tool_name"`
+	Arguments        map[string]any    `json:"arguments"`
+	ToolPattern      string            `json:"tool_pattern"`
+	ParamsPattern    map[string]string `json:"params_pattern"`
+	Description      string            `json:"description"`
+	RiskLevel        string            `json:"risk_level"`
+	Status           string            `json:"status"`
+	Persistence      *string           `json:"persistence,omitempty"`
+	Consumed         bool              `json:"consumed"`
+	ApprovalURL      string            `json:"approval_url"`
+	CreatedAt        time.Time         `json:"created_at"`
+	ApprovedAt       *time.Time        `json:"approved_at,omitempty"`
+	DeniedAt         *time.Time        `json:"denied_at,omitempty"`
+	ConsumedAt       *time.Time        `json:"consumed_at,omitempty"`
+	ExpiresAt        time.Time         `json:"expires_at"`
 }
 
 // CreateApprovalRequest is the request body for POST /api/approvals.
@@ -64,7 +66,8 @@ type ApprovalListResponse struct {
 
 // ApproveRequest is the request body for POST /api/approvals/{id}/approve.
 type ApproveRequest struct {
-	Persistence string `json:"persistence"`
+	Persistence   string            `json:"persistence"`
+	ParamsPattern map[string]string `json:"params_pattern,omitempty"`
 }
 
 // ApproveResponse is the response body for POST /api/approvals/{id}/approve.
@@ -118,13 +121,16 @@ type ApprovalPair struct {
 
 // ApprovalSummary represents a trimmed approval in the sync response.
 type ApprovalSummary struct {
-	ID             string  `json:"id"`
-	ToolName       string  `json:"tool_name"`
-	ArgumentsHash  string  `json:"arguments_hash"`
-	Status         string  `json:"status"`
-	Persistence    *string `json:"persistence,omitempty"`
-	Consumed       bool    `json:"consumed"`
-	AgentSessionID *string `json:"agent_session_id,omitempty"`
+	ID             string            `json:"id"`
+	ToolName       string            `json:"tool_name"`
+	ArgumentsHash  string            `json:"arguments_hash"`
+	ToolPattern    string            `json:"tool_pattern"`
+	ParamsPattern  map[string]string `json:"params_pattern"`
+	Status         string            `json:"status"`
+	Persistence    *string           `json:"persistence,omitempty"`
+	Consumed       bool              `json:"consumed"`
+	AgentSessionID *string           `json:"agent_session_id,omitempty"`
+	ApprovedAt     *time.Time        `json:"approved_at,omitempty"`
 }
 
 // ApprovalErrorResponse is the error response for approval endpoints.
