@@ -92,6 +92,19 @@ func TestInitiateOAuth2Flow_RejectsOversizedRedirectState(t *testing.T) {
 	assert.Nil(t, result)
 }
 
+func TestInitiateOAuth2Flow_RejectsOversizedEncryptedState(t *testing.T) {
+	service, serviceID := setupTestService(t)
+	prefix := "https://broker.example.com/agents/" + id.NewAgentID().String() + "?session_token="
+	redirectURI := prefix + strings.Repeat("x", 5900-len(prefix))
+	require.Less(t, len(redirectURI), 6000)
+
+	result, err := service.InitiateOAuth2Flow(
+		context.Background(), id.Principal("user@example.com"), serviceID, redirectURI,
+	)
+	require.ErrorIs(t, err, oauth2session.ErrStateTokenTooLarge)
+	assert.Nil(t, result)
+}
+
 // TestValidateStateToken_ValidToken tests successful validation of a valid state token.
 func TestValidateStateToken_ValidToken(t *testing.T) {
 	service, testServiceID := setupTestService(t)
