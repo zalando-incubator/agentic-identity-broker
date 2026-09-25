@@ -137,6 +137,7 @@ export function GrantStatusBadge({ status, expiresAt }: GrantStatusBadgeProps) {
       {/* Expiration date */}
       {expirationText && (
         <span
+          data-screenshot-dynamic
           className={`text-xs ${isExpired ? 'text-neutral-500 line-through' : 'text-neutral-600'}`}
           aria-label={expirationText}
         >

@@ -228,22 +228,23 @@ var _ = BeforeEach(func() {
 		frontendURL = server.BaseURL()
 	}
 
-	// Step 6: Create fresh Playwright context with X-Remote-User header for built mode
-	// Fresh context ensures no cookies/storage leakage between tests
-	var browserContext playwright.BrowserContext
-	if suiteCtx.FrontendMode == "built" {
-		// In built mode: inject X-Remote-User header for all requests
-		// (Vite dev proxy injects this automatically in dev mode)
-		contextOpts := playwright.BrowserNewContextOptions{
-			ExtraHttpHeaders: map[string]string{
-				"X-Remote-User": fixtures.DefaultPrincipal().String(),
-			},
-		}
-		browserContext, err = suiteCtx.Browser.NewContext(contextOpts)
-	} else {
-		// Dev mode: no extra headers needed
-		browserContext, err = suiteCtx.Browser.NewContext()
+	// Step 6: Create an isolated context with the same rendering settings in both modes.
+	contextOpts := playwright.BrowserNewContextOptions{
+		Viewport:          &playwright.Size{Width: 1280, Height: 720},
+		Screen:            &playwright.Size{Width: 1280, Height: 720},
+		DeviceScaleFactor: playwright.Float(1),
+		Locale:            playwright.String("en-US"),
+		TimezoneId:        playwright.String("UTC"),
+		ColorScheme:       playwright.ColorSchemeLight,
+		ReducedMotion:     playwright.ReducedMotionNoPreference,
+		ForcedColors:      playwright.ForcedColorsNone,
 	}
+	if suiteCtx.FrontendMode == "built" {
+		contextOpts.ExtraHttpHeaders = map[string]string{
+			"X-Remote-User": fixtures.DefaultPrincipal().String(),
+		}
+	}
+	browserContext, err := suiteCtx.Browser.NewContext(contextOpts)
 	Expect(err).NotTo(HaveOccurred(), "Failed to create Playwright context")
 
 	page, err := browserContext.NewPage()

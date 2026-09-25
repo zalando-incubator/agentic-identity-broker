@@ -2661,8 +2661,12 @@ HEADLESS=false ginkgo -v --focus="test-name" ./tests/e2e/frontend/
 By("taking screenshot at this point")
 err := consentPage.TakeScreenshot(ctx, "debug-point-name")
 Expect(err).NotTo(HaveOccurred())
-// Screenshot saved to tests/e2e/frontend/screenshots/
+// Screenshot saved to tests/e2e/frontend/coverage/screenshots/
 ```
+
+Run `E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend` for maintained screenshots.
+Capture fails if one of the three bundled fonts does not load.
+The capture hides elements marked `data-screenshot-dynamic`. The normal page still shows these elements.
 
 #### Add Detailed Logging
 

@@ -168,6 +168,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 			Timeout: playwright.Float(10000),
 		})
 		Expect(err).NotTo(HaveOccurred(), "Google service article should appear after toggling optional PS")
+		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_selected_before_login")).NotTo(HaveOccurred())
 
 		// Intercept the navigation that happens when Login is clicked.
 		// We expect the URL to contain consent_state with both PSes.
@@ -215,7 +216,6 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(selections).To(HaveKey(selOptionalPSID.String()),
 			"Selections should include optional PS after toggling")
 
-		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_encoded_in_login_url")).NotTo(HaveOccurred())
 	})
 
 	// Scenario 5.2 from specs/008-thirdparty-oauth2-sessions/spec.md

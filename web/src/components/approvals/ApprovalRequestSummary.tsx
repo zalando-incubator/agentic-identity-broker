@@ -105,7 +105,7 @@ export function ApprovalRequestSummary({
       )}
 
       {showExpiry && (
-        <div className="border-t border-neutral-100 pt-2">
+        <div className="border-t border-neutral-100 pt-2" data-screenshot-dynamic>
           <p className="text-xs text-neutral-400">
             Expires: {new Date(approval.expires_at).toLocaleString()}
           </p>
