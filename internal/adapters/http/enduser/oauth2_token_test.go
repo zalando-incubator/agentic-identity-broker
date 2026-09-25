@@ -313,6 +313,23 @@ func TestOAuth2TokenHandler_PreFlightErrorsReturnJSON(t *testing.T) {
 	}
 }
 
+func TestOAuth2TokenHandler_ServeHTTP_RejectsOversizedBody(t *testing.T) {
+	handler := &OAuth2TokenHandler{}
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(strings.Repeat("x", 256*1024+1)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+
+	var body map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+	assert.Equal(t, "invalid_request", body["error"])
+	assert.Equal(t, "failed to read request body", body["error_description"])
+}
+
 // TestOAuth2TokenHandler_ServeHTTP_HeaderFiltering verifies allowlisted proxy request and response headers.
 func TestOAuth2TokenHandler_ServeHTTP_HeaderFiltering(t *testing.T) {
 	agentID := id.NewAgentID()

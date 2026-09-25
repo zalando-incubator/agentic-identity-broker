@@ -796,7 +796,7 @@ OAuth2 /authorize request
 
 **CIMD Client URI Resolution**: `AgentRepository.GetByClientURI` looks for an exact URI before it evaluates patterns. A pattern uses `*` as a complete path segment. It matches one non-empty segment. The broker rejects literal `\`, encoded `/`, and encoded `\` in paths before matching. If patterns on different Agents match, the resolver logs the event. It then returns `invalid_client`.
 
-**Security Properties**: SSRF blocked at TCP-connect time (TOCTOU-safe); authorization context never relay through browser URL as plain params (JWE session_token seals context server-side, SR-013/SR-014). All agent modes (local, proxy, CIMD) use session_token — no redirect_uri fallback.
+**Security Properties**: SSRF blocked at TCP-connect time (TOCTOU-safe). The fetcher rejects non-global IP addresses, known private and special-purpose ranges, and IPv6 translation/tunnel prefixes that can reach IPv4 destinations. Authorization context never relays through browser URL as plain params (JWE session_token seals context server-side, SR-013/SR-014). All agent modes (local, proxy, CIMD) use session_token — no redirect_uri fallback.
 
 **Redirect URI Matching**: `urivalidation.MatchesRedirectURI` (`internal/domain/urivalidation/redirect.go`) compares a registered URI against the runtime request URI. For loopback hosts (`localhost`, `127.0.0.1`, `::1`) the port component is ignored per RFC 8252 §7.3 and OAuth 2.1 §2.3.1 — any ephemeral port is accepted as long as scheme, host, and path match exactly. For all other hosts all four URI components (scheme, host, port, path) must match exactly. This rule applies to both CIMD clients (redirect_uris from the fetched document) and opaque clients (redirect_uris registered on the Agent entity).
 

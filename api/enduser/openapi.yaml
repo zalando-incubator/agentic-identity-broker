@@ -1414,6 +1414,7 @@ paths:
       tags:
         - OAuth2 Token
       requestBody:
+        description: Form-encoded request bodies larger than 256 KiB are rejected with the documented HTTP 400 invalid_request response before token-form parsing.
         required: true
         content:
           application/x-www-form-urlencoded:
