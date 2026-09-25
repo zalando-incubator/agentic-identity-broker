@@ -104,7 +104,7 @@ function DelegationCardComponent({
 
         {/* Metadata row */}
         <Stack direction="row" justify="space-between" align="center">
-          <span className="text-xs text-neutral-500">
+          <span className="text-xs text-neutral-500" data-screenshot-dynamic>
             Updated {lastModifiedText}
           </span>
           <Stack direction="row" gap="sm" align="center">
@@ -124,7 +124,7 @@ function DelegationCardComponent({
                     d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
-                <span className="text-xs text-neutral-500">
+                <span className="text-xs text-neutral-500" data-screenshot-dynamic>
                   {expirationText}
                 </span>
               </Stack>

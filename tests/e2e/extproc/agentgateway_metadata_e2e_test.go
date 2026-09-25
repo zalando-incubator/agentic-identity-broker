@@ -90,8 +90,11 @@ func (s *metadataTokenExchangeServer) reset() {
 	s.mu.Unlock()
 }
 
+type metadataMCPAuthKey struct{}
+
 type metadataMCPAuthorization struct {
 	hasCredential    bool
+	calls            int
 	scheme           string
 	credentialDigest [sha256.Size]byte
 }
@@ -112,6 +115,8 @@ func (o *metadataMCPAuthorizationObserver) observe(header string) {
 	}
 
 	o.mu.Lock()
+	o.authorization.calls++
+	observation.calls = o.authorization.calls
 	o.authorization = observation
 	o.mu.Unlock()
 }
@@ -141,7 +146,9 @@ func startMetadataGatewayMCPServer(observer *metadataMCPAuthorizationObserver) (
 		"whoami",
 		mcp.WithDescription("Confirms that the MCP server processed the request."),
 	)
-	mcpService.AddTool(whoamiTool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mcpService.AddTool(whoamiTool, func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		authHeader, _ := ctx.Value(metadataMCPAuthKey{}).(string)
+		observer.observe(authHeader)
 		return mcp.NewToolResultText("authorization observed"), nil
 	})
 
@@ -152,8 +159,7 @@ func startMetadataGatewayMCPServer(observer *metadataMCPAuthorizationObserver) (
 		// host.testcontainers.internal. This fixture is not browser-facing.
 		mcpserver.WithDisableLocalhostProtection(true),
 		mcpserver.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
-			observer.observe(r.Header.Get("Authorization"))
-			return ctx
+			return context.WithValue(ctx, metadataMCPAuthKey{}, r.Header.Get("Authorization"))
 		}),
 	)}
 
@@ -231,9 +237,9 @@ func startMetadataGatewayContainer(
 	Expect(err).NotTo(HaveOccurred(), "failed to start metadata Agentgateway container")
 
 	DeferCleanup(func() {
-		if terminateErr := container.Terminate(ctx); terminateErr != nil {
-			metadataGatewayLogger.Error("failed to terminate metadata Agentgateway container", "err", terminateErr)
-		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		Expect(container.Terminate(cleanupCtx)).To(Succeed(), "failed to terminate metadata Agentgateway container")
 	})
 
 	mappedPort, err := container.MappedPort(ctx, "4000")
@@ -267,6 +273,7 @@ func connectMetadataGatewayMCPClient(ctx context.Context, agentgatewayURL, token
 
 func expectMetadataMCPReceivesExchangedToken(observer *metadataMCPAuthorizationObserver) {
 	observedAuthorization := observer.latest()
+	Expect(observedAuthorization.calls).To(BeNumerically(">=", 1), "whoami must reach the MCP handler")
 	Expect(observedAuthorization.hasCredential).To(BeTrue(), "MCP server should receive an authorization credential")
 	Expect(observedAuthorization.scheme).To(Equal("Bearer"), "MCP server should receive a Bearer credential")
 	Expect(observedAuthorization.credentialDigest).To(Equal(metadataTokenDigest(metadataGatewayExchangedJWT)),
@@ -306,34 +313,7 @@ var _ = Describe("Metadata Input via Agentgateway", Ordered, func() {
 		jwtFixture, err = fixtures.NewRS256JWTFixture(metadataGatewayJWTIssuer, metadataGatewayJWTAudience)
 		Expect(err).NotTo(HaveOccurred(), "failed to create metadata gateway JWT fixture")
 
-		ctx, cancel = context.WithTimeout(context.Background(), 120*time.Second)
-		mockOAuth2Server = newAgentgwMockOAuth2Srv()
-		tokenExchangeServer = newMetadataTokenExchangeServer()
-		mcpAuthorization = &metadataMCPAuthorizationObserver{}
-		mcpListener, mcpServer := startMetadataGatewayMCPServer(mcpAuthorization)
-		mcpHTTPServer = mcpServer
-		mcpPort := mcpListener.Addr().(*net.TCPAddr).Port
-
-		var extprocListener net.Listener
-		extprocListener, extprocGRPC, exchanger = startAgentgwExtProc(
-			mockOAuth2Server.URL, tokenExchangeServer.URL,
-		)
-		extprocPort := extprocListener.Addr().(*net.TCPAddr).Port
-
-		// The container receives its own context so DeferCleanup can terminate it before
-		// this context is cancelled with the in-process services.
-		containerCtx, containerCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		DeferCleanup(containerCancel)
-		agentgatewayPort := startMetadataGatewayContainer(
-			containerCtx,
-			extprocPort,
-			mcpPort,
-			jwtFixture.Issuer(),
-			jwtFixture.Audience(),
-			jwtFixture.JWKSJSON(),
-		)
-		agentgatewayURL = fmt.Sprintf("http://localhost:%s", agentgatewayPort)
-
+		ctx, cancel = context.WithCancel(context.Background())
 		DeferCleanup(func() {
 			if extprocGRPC != nil {
 				extprocGRPC.GracefulStop()
@@ -352,6 +332,30 @@ var _ = Describe("Metadata Input via Agentgateway", Ordered, func() {
 			}
 			cancel()
 		})
+		mockOAuth2Server = newAgentgwMockOAuth2Srv()
+		tokenExchangeServer = newMetadataTokenExchangeServer()
+		mcpAuthorization = &metadataMCPAuthorizationObserver{}
+		mcpListener, mcpServer := startMetadataGatewayMCPServer(mcpAuthorization)
+		mcpHTTPServer = mcpServer
+		mcpPort := mcpListener.Addr().(*net.TCPAddr).Port
+
+		var extprocListener net.Listener
+		extprocListener, extprocGRPC, exchanger = startAgentgwExtProc(
+			mockOAuth2Server.URL, tokenExchangeServer.URL,
+		)
+		extprocPort := extprocListener.Addr().(*net.TCPAddr).Port
+
+		setupCtx, setupCancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer setupCancel()
+		agentgatewayPort := startMetadataGatewayContainer(
+			setupCtx,
+			extprocPort,
+			mcpPort,
+			jwtFixture.Issuer(),
+			jwtFixture.Audience(),
+			jwtFixture.JWKSJSON(),
+		)
+		agentgatewayURL = fmt.Sprintf("http://localhost:%s", agentgatewayPort)
 	})
 
 	BeforeEach(func() {
@@ -361,7 +365,7 @@ var _ = Describe("Metadata Input via Agentgateway", Ordered, func() {
 
 	Context("US1: Exchange From Dynamic Metadata", func() {
 		// 043-extproc-metadata-input: US1-S1 — specs/043-extproc-metadata-input/spec.md
-		It("exchanges the JWT-validated raw token for the configured MCP resource", func() {
+		It("exchanges the JWT-validated raw token for the configured MCP resource", NodeTimeout(time.Minute), func(ctx SpecContext) {
 			mintedJWT, err := jwtFixture.MintToken("metadata-input-us1-s1", time.Now().Add(10*time.Minute))
 			Expect(err).NotTo(HaveOccurred(), "failed to mint US1-S1 metadata gateway JWT")
 			mcpClient := connectMetadataGatewayMCPClient(ctx, agentgatewayURL, mintedJWT)
@@ -390,7 +394,7 @@ var _ = Describe("Metadata Input via Agentgateway", Ordered, func() {
 
 	Context("US2: Configure Instance Resource", func() {
 		// 043-extproc-metadata-input: US2-S1 — specs/043-extproc-metadata-input/spec.md
-		It("exchanges for the resource URL configured in the instance ExtProc policy", func() {
+		It("exchanges for the resource URL configured in the instance ExtProc policy", NodeTimeout(time.Minute), func(ctx SpecContext) {
 			mintedJWT, err := jwtFixture.MintToken("metadata-input-us2-s1", time.Now().Add(10*time.Minute))
 			Expect(err).NotTo(HaveOccurred(), "failed to mint US2-S1 metadata gateway JWT")
 			mcpClient := connectMetadataGatewayMCPClient(ctx, agentgatewayURL, mintedJWT)

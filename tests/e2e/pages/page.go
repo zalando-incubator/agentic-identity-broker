@@ -37,6 +37,8 @@ import (
 
 const screenshotWaitTimeoutMs = 10_000
 
+const screenshotDynamicStyle = "[data-screenshot-dynamic] { display: none !important; }"
+
 type screenshotPage interface {
 	WaitForLoadState(options ...playwright.PageWaitForLoadStateOptions) error
 	Evaluate(expression string, arg ...any) (any, error)
@@ -296,6 +298,7 @@ func captureScreenshot(page screenshotPage, screenshotDir, name string) error {
 	data, err := page.Screenshot(playwright.PageScreenshotOptions{
 		Animations: playwright.ScreenshotAnimationsDisabled,
 		FullPage:   playwright.Bool(true),
+		Style:      playwright.String(screenshotDynamicStyle),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to take screenshot %s: %w", filePath, err)
@@ -332,6 +335,7 @@ func (p *Page) TakeLocatorScreenshot(ctx context.Context, name string, locator p
 
 	data, err := locator.Screenshot(playwright.LocatorScreenshotOptions{
 		Animations: playwright.ScreenshotAnimationsDisabled,
+		Style:      playwright.String(screenshotDynamicStyle),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to take locator screenshot %s: %w", filePath, err)
@@ -365,15 +369,30 @@ func waitForScreenshotStability(page screenshotPage, name string) error {
 }
 
 func waitForScreenshotRenderStability(page screenshotPage, name string) error {
-	if _, err := page.Evaluate(`async () => {
-		if (document.fonts && document.fonts.ready) {
+	result, err := page.Evaluate(`async () => {
+		await document.fonts.ready
+		for (const [family, specification, sample] of [
+			['Crimson Pro', '700 24px "Crimson Pro"', 'Consent Management'],
+			['Manrope', '400 16px "Manrope"', 'Approve & Delegate'],
+			['JetBrains Mono', '400 14px "JetBrains Mono"', 'tool_name'],
+		]) {
 			try {
-				await document.fonts.ready
-			} catch (_) {}
+				const faces = await document.fonts.load(specification, sample)
+				if (faces.length === 0 || !document.fonts.check(specification, sample)) return family
+			} catch (_) {
+				return family
+			}
 		}
 		await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-	}`); err != nil {
+		return ''
+	}`)
+	if err != nil {
 		return fmt.Errorf("failed waiting for font/render stability before screenshot %s: %w", name, err)
+	}
+	if family, ok := result.(string); !ok {
+		return fmt.Errorf("invalid font stability result before screenshot %s: %T", name, result)
+	} else if family != "" {
+		return fmt.Errorf("font %s unavailable before screenshot %s", family, name)
 	}
 
 	return nil

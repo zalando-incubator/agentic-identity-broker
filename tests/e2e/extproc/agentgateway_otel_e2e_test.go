@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"time"
@@ -121,6 +122,7 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 		spanRecorder    *tracetest.SpanRecorder
 		mockOAuth2      *httptest.Server
 		broker          *bootstrap.MockTokenExchangeServer
+		mcpHTTPServer   *http.Server
 		extprocGRPC     *grpc.Server
 		exchanger       *extprocserver.TokenExchanger
 		jwtFixture      *fixtures.RS256JWTFixture
@@ -153,7 +155,28 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 			Skip(fmt.Sprintf("Skipping agentgateway telemetry tests: %v", dockerErr))
 		}
 
-		ctx, cancel = context.WithTimeout(context.Background(), 120*time.Second)
+		ctx, cancel = context.WithCancel(context.Background())
+		DeferCleanup(func() {
+			if extprocGRPC != nil {
+				extprocGRPC.GracefulStop()
+			}
+			if exchanger != nil {
+				exchanger.Shutdown()
+			}
+			if broker != nil {
+				broker.Stop()
+			}
+			if mockOAuth2 != nil {
+				mockOAuth2.Close()
+			}
+			if mcpHTTPServer != nil {
+				mcpHTTPServer.Close() //nolint:errcheck
+			}
+			otel.SetTracerProvider(prevTP)
+			otel.SetTextMapPropagator(prevProp)
+			otel.SetMeterProvider(prevMP)
+			cancel()
+		})
 
 		var err error
 		jwtFixture, err = fixtures.NewRS256JWTFixture(agentgwJWTIssuer, agentgwJWTAudience)
@@ -178,7 +201,8 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 		broker.Start()
 
 		// 3. Mock MCP server — reuse from agentgateway_e2e_test.go.
-		mcpListener := startAgentgwMCPServer()
+		var mcpListener net.Listener
+		mcpListener, mcpHTTPServer = startAgentgwMCPServer()
 		mcpPort := mcpListener.Addr().(*net.TCPAddr).Port
 
 		// 4. ExtProc gRPC server (system under test).
@@ -191,35 +215,11 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 		agentgwLogger.Info("OTel ExtProc listening", "port", extprocPort)
 
 		// 5. agentgateway Docker container — reuse from agentgateway_e2e_test.go.
-		// Use a dedicated context for the container so its cleanup isn't affected
-		// by cancelling the main test context (container.Logs/Terminate need a live ctx).
-		containerCtx, containerCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		// Register containerCancel BEFORE startAgentgwContainer so LIFO order ensures
-		// the container's DeferCleanup (Logs/Terminate) runs first with a live context,
-		// and containerCancel runs after.
-		DeferCleanup(containerCancel)
-		agentgatewayPort := startAgentgwContainer(containerCtx, extprocPort, mcpPort, jwtFixture)
+		setupCtx, setupCancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer setupCancel()
+		agentgatewayPort := startAgentgwContainer(setupCtx, extprocPort, mcpPort, jwtFixture)
 		agentgatewayURL = fmt.Sprintf("http://localhost:%s", agentgatewayPort)
 		agentgwLogger.Info("OTel agentgateway accessible", "url", agentgatewayURL)
-
-		// Cleanup LIFO execution order:
-		// 1. Stop SUT + restore OTel globals + cancel main ctx  (registered last → runs first)
-		// 2. Container Logs/Terminate with live containerCtx     (registered by startAgentgwContainer)
-		// 3. containerCancel                                     (registered first → runs last)
-		DeferCleanup(func() {
-			if extprocGRPC != nil {
-				extprocGRPC.GracefulStop()
-			}
-			if exchanger != nil {
-				exchanger.Shutdown()
-			}
-			broker.Stop()
-			mockOAuth2.Close()
-			otel.SetTracerProvider(prevTP)
-			otel.SetTextMapPropagator(prevProp)
-			otel.SetMeterProvider(prevMP)
-			cancel()
-		})
 	})
 
 	// US1-agentgw-otel: Three-hop trace propagation through agentgateway.
@@ -234,7 +234,7 @@ var _ = Describe("Agentgateway Telemetry Integration", Ordered, func() {
 	//
 	// The MCP client is created within this It block with a known traceparent,
 	// so all trace assertions are scoped to this specific request flow.
-	It("should propagate trace context end-to-end: client → agentgateway → ExtProc → broker", func() {
+	It("should propagate trace context end-to-end: client → agentgateway → ExtProc → broker", NodeTimeout(time.Minute), func(ctx SpecContext) {
 		// Create MCP client with a known traceparent injected on every HTTP request.
 		traceparent := fmt.Sprintf("00-%s-%s-01", otelAgentgwTraceID, otelAgentgwSpanID)
 		mcpCl, err := client.NewStreamableHttpClient(
