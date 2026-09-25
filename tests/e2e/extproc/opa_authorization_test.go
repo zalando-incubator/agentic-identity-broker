@@ -808,28 +808,15 @@ bundles:
 			), "error should reference the mutual exclusivity constraint")
 		})
 
-		// Edge case: OPA evaluation timeout
-		// specs/020-extproc-opa-authorization/spec.md — Edge Cases
-		It("should deny on evaluation timeout", func() {
-			// Edge case from specs/020-extproc-opa-authorization/spec.md
-
-			// Use an extremely short timeout to force a timeout on any real policy evaluation
-			cfg := fixtures.DefaultConfig()
-			cfg.Authorization = extprocconfig.AuthorizationConfig{
-				Enabled: true,
-				Policy: extprocconfig.PolicyConfig{
-					Path:     policyPath("allow_all.rego"),
-					Package:  "aib.extproc.authz",
-					Decision: "result",
-				},
-				DefaultDecision:   "deny",
-				EvaluationTimeout: 1 * time.Nanosecond, // guaranteed timeout
-				MaxBodySize:       1024 * 1024,
-			}
+		// Evaluation-timeout edge case from specs/020-extproc-opa-authorization/spec.md
+		It("should deny a live request when policy evaluation times out", func() {
+			cfg := opaEnabledConfig(policyPath("allow_all.rego"))
+			cfg.Authorization.EvaluationTimeout = time.Nanosecond
 
 			env := bootstrap.NewTestEnvironment(cfg, opaLogger)
 			env.Start()
 			defer env.Stop()
+			env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken)
 
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
@@ -840,13 +827,15 @@ bundles:
 				WithAgentgatewayProtocol("mcp").
 				BuildWithMetadata()
 
-			_, bodyResp := helpers.SendHeadersAndBody(context.Background(), client, headersReq,
+			headersResp, bodyResp := helpers.SendHeadersAndBody(context.Background(), client, headersReq,
 				toolCallBody("list_repositories"))
 
-			// On timeout, fail closed: return 403
+			Expect(headersResp).To(helpers.HaveReplacedAuthorizationHeader("Bearer " + fixtures.FreshExchangedToken))
 			Expect(bodyResp).NotTo(BeNil())
 			Expect(bodyResp).To(helpers.HaveImmediateResponseWithStatus(403),
-				"OPA timeout should result in 403 deny (fail closed)")
+				"a timed-out policy evaluation must deny the request")
+			Expect(bodyResp).To(helpers.HaveImmediateResponseWithBody("evaluation timeout"),
+				"the 403 must come from the evaluation timeout, not another denial")
 		})
 	})
 })

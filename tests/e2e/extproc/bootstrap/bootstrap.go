@@ -61,6 +61,7 @@ type TestEnvironment struct {
 	grpcListener           net.Listener
 	grpcAddress            string
 	exchanger              *extprocserver.TokenExchanger
+	authorizer             authorization.Authorizer
 	approvalCache          *approval.Cache
 	approvalClient         *approval.Client
 	approvalSyncCancel     context.CancelFunc
@@ -105,6 +106,7 @@ func (e *TestEnvironment) Start() {
 		var authErr error
 		authorizer, authErr = NewOPAAuthorizer(e.Config, e.logger)
 		Expect(authErr).NotTo(HaveOccurred(), "failed to create OPA authorizer")
+		e.authorizer = authorizer
 	}
 
 	var approvalGate extprocserver.ApprovalGate
@@ -208,6 +210,11 @@ func (e *TestEnvironment) Stop() {
 		}
 		if e.exchanger != nil {
 			e.exchanger.Shutdown()
+		}
+		if e.authorizer != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			e.authorizer.Stop(ctx)
 		}
 		if e.MockOAuth2 != nil {
 			e.MockOAuth2.Stop()
