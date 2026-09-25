@@ -24,8 +24,16 @@ func (sp *SessionsPage) NavigateToSessions(ctx context.Context) error {
 	return sp.waitForPageLoad(ctx)
 }
 
+func (sp *SessionsPage) GetRefreshButtonCount(ctx context.Context) (int, error) {
+	count, err := sp.refreshButtonLocator().Count()
+	if err != nil {
+		return 0, fmt.Errorf("failed to count refresh buttons: %w", err)
+	}
+	return count, nil
+}
+
 func (sp *SessionsPage) IsRefreshButtonVisible(ctx context.Context) (bool, error) {
-	button := sp.refreshButtonLocator()
+	button := sp.refreshButtonLocator().First()
 	if err := button.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
 		Timeout: playwright.Float(float64(sp.timeout.Milliseconds())),
@@ -36,7 +44,7 @@ func (sp *SessionsPage) IsRefreshButtonVisible(ctx context.Context) (bool, error
 }
 
 func (sp *SessionsPage) ClickRefreshButton(ctx context.Context) error {
-	button := sp.refreshButtonLocator()
+	button := sp.refreshButtonLocator().First()
 	if err := button.Click(); err != nil {
 		return fmt.Errorf("failed to click refresh button: %w", err)
 	}
