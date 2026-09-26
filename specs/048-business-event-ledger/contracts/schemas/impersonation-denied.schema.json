@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentic-identity-broker:events:v1:impersonation-denied",
+  "title": "impersonation-denied",
+  "description": "The broker refuses an impersonation decision.",
+  "allOf": [
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:envelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "agentic-identity-broker.impersonation-denied"
+        },
+        "outcome": {
+          "const": "denied"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reason_code": {
+              "enum": [
+                "authentication_failed",
+                "authorization_failed",
+                "delegation_missing"
+              ]
+            },
+            "delegating_actor_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "reason_code"
+          ]
+        }
+      }
+    }
+  ]
+}

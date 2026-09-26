@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentic-identity-broker:events:v1:agent-updated",
+  "title": "agent-updated",
+  "description": "An agent's effective configuration changes.",
+  "allOf": [
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:envelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "agentic-identity-broker.agent-updated"
+        },
+        "outcome": {
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      },
+      "required": [
+        "agent_id"
+      ]
+    }
+  ]
+}

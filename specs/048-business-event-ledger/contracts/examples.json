@@ -1,0 +1,530 @@
+[
+  {
+    "id": "01997100-0000-7000-8000-000000000001",
+    "type": "agentic-identity-broker.grant-created",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "A new user-to-agent delegation is committed.",
+    "reason_admin": "A new user-to-agent delegation is committed.",
+    "data": {},
+    "grant_id": "11111111-1111-4111-8111-111111111111",
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000002",
+    "type": "agentic-identity-broker.grant-updated",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "An existing delegation's effective permissions or validity changes.",
+    "reason_admin": "An existing delegation's effective permissions or validity changes.",
+    "data": {},
+    "grant_id": "11111111-1111-4111-8111-111111111111",
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000003",
+    "type": "agentic-identity-broker.grant-revoked",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "A delegation is explicitly revoked.",
+    "reason_admin": "A delegation is explicitly revoked.",
+    "data": {},
+    "grant_id": "11111111-1111-4111-8111-111111111111",
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000004",
+    "type": "agentic-identity-broker.grant-expired",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "A delegation reaches expiry and the broker recognizes it.",
+    "reason_admin": "A delegation reaches expiry and the broker recognizes it.",
+    "data": {},
+    "grant_id": "11111111-1111-4111-8111-111111111111",
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000005",
+    "type": "agentic-identity-broker.session-established",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "A usable third-party session is established.",
+    "reason_admin": "A usable third-party session is established.",
+    "data": {},
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "service_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000006",
+    "type": "agentic-identity-broker.session-refreshed",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "Refreshed session state is accepted and committed.",
+    "reason_admin": "Refreshed session state is accepted and committed.",
+    "data": {},
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "service_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000007",
+    "type": "agentic-identity-broker.session-refresh-failed",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "failure",
+    "reason_user": "A third-party session refresh attempt fails.",
+    "reason_admin": "A third-party session refresh attempt fails.",
+    "data": {
+      "reason_code": "upstream_rejected"
+    }
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000008",
+    "type": "agentic-identity-broker.session-terminated",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "A third-party session is ended.",
+    "reason_admin": "A third-party session is ended.",
+    "data": {},
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "service_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000009",
+    "type": "agentic-identity-broker.authorization-requested",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "pending",
+    "reason_user": "The broker accepts an authorization request for processing.",
+    "reason_admin": "The broker accepts an authorization request for processing.",
+    "data": {}
+  },
+  {
+    "id": "01997100-0000-7000-8000-00000000000a",
+    "type": "agentic-identity-broker.token-issued",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "The broker completes a non-exchange token issuance.",
+    "reason_admin": "The broker completes a non-exchange token issuance.",
+    "data": {}
+  },
+  {
+    "id": "01997100-0000-7000-8000-00000000000b",
+    "type": "agentic-identity-broker.token-request-failed",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "failure",
+    "reason_user": "A token request fails without a more specific exchange-denial classification.",
+    "reason_admin": "A token request fails without a more specific exchange-denial classification.",
+    "data": {
+      "reason_code": "invalid_request"
+    }
+  },
+  {
+    "id": "01997100-0000-7000-8000-00000000000c",
+    "type": "agentic-identity-broker.token-exchanged",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "The broker completes a token exchange for a receiving agent.",
+    "reason_admin": "The broker completes a token exchange for a receiving agent.",
+    "data": {},
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-00000000000d",
+    "type": "agentic-identity-broker.token-exchange-denied",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "denied",
+    "reason_user": "An exchange is refused by authentication or authorization controls.",
+    "reason_admin": "An exchange is refused by authentication or authorization controls.",
+    "data": {
+      "reason_code": "invalid_request"
+    }
+  },
+  {
+    "id": "01997100-0000-7000-8000-00000000000e",
+    "type": "agentic-identity-broker.impersonation-granted",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "The broker permits an impersonation decision.",
+    "reason_admin": "The broker permits an impersonation decision.",
+    "data": {}
+  },
+  {
+    "id": "01997100-0000-7000-8000-00000000000f",
+    "type": "agentic-identity-broker.impersonation-denied",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "denied",
+    "reason_user": "The broker refuses an impersonation decision.",
+    "reason_admin": "The broker refuses an impersonation decision.",
+    "data": {
+      "reason_code": "authentication_failed"
+    }
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000010",
+    "type": "agentic-identity-broker.approval-requested",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "pending",
+    "reason_user": "A new pending approval is created.",
+    "reason_admin": "A new pending approval is created.",
+    "data": {},
+    "approval_id": "11111111-1111-4111-8111-111111111111",
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000011",
+    "type": "agentic-identity-broker.approval-approved",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "A pending approval is approved.",
+    "reason_admin": "A pending approval is approved.",
+    "data": {},
+    "approval_id": "11111111-1111-4111-8111-111111111111",
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000012",
+    "type": "agentic-identity-broker.approval-denied",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "denied",
+    "reason_user": "A pending approval is denied.",
+    "reason_admin": "A pending approval is denied.",
+    "data": {
+      "reason_code": "user_denied"
+    },
+    "approval_id": "11111111-1111-4111-8111-111111111111",
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000013",
+    "type": "agentic-identity-broker.approval-consumed",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "A single-use approval is consumed.",
+    "reason_admin": "A single-use approval is consumed.",
+    "data": {},
+    "approval_id": "11111111-1111-4111-8111-111111111111",
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000014",
+    "type": "agentic-identity-broker.approval-revoked",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "An existing approval is revoked.",
+    "reason_admin": "An existing approval is revoked.",
+    "data": {},
+    "approval_id": "11111111-1111-4111-8111-111111111111",
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000015",
+    "type": "agentic-identity-broker.approval-expired",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": "principal-example",
+    "actor": {
+      "kind": "user",
+      "id": "principal-example",
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "An approval reaches expiry and the broker recognizes it.",
+    "reason_admin": "An approval reaches expiry and the broker recognizes it.",
+    "data": {},
+    "approval_id": "11111111-1111-4111-8111-111111111111",
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000016",
+    "type": "agentic-identity-broker.agent-registered",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": null,
+    "actor": {
+      "kind": "admin",
+      "id": null,
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "An agent is registered.",
+    "reason_admin": "An agent is registered.",
+    "data": {},
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000017",
+    "type": "agentic-identity-broker.agent-updated",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": null,
+    "actor": {
+      "kind": "admin",
+      "id": null,
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "An agent's effective configuration changes.",
+    "reason_admin": "An agent's effective configuration changes.",
+    "data": {},
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000018",
+    "type": "agentic-identity-broker.agent-deleted",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": null,
+    "actor": {
+      "kind": "admin",
+      "id": null,
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "An agent is deleted.",
+    "reason_admin": "An agent is deleted.",
+    "data": {},
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-000000000019",
+    "type": "agentic-identity-broker.credential-generated",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": null,
+    "actor": {
+      "kind": "admin",
+      "id": null,
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "An agent credential is generated.",
+    "reason_admin": "An agent credential is generated.",
+    "data": {
+      "credential_id": "44444444-4444-4444-8444-444444444444"
+    },
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-00000000001a",
+    "type": "agentic-identity-broker.credential-rotated",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": null,
+    "actor": {
+      "kind": "admin",
+      "id": null,
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "An agent credential is rotated.",
+    "reason_admin": "An agent credential is rotated.",
+    "data": {
+      "credential_id": "44444444-4444-4444-8444-444444444444"
+    },
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-00000000001b",
+    "type": "agentic-identity-broker.credential-revoked",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": null,
+    "actor": {
+      "kind": "admin",
+      "id": null,
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "An agent credential is revoked.",
+    "reason_admin": "An agent credential is revoked.",
+    "data": {
+      "credential_id": "44444444-4444-4444-8444-444444444444"
+    },
+    "agent_id": "11111111-1111-4111-8111-111111111111"
+  },
+  {
+    "id": "01997100-0000-7000-8000-00000000001c",
+    "type": "agentic-identity-broker.signing-key-promoted",
+    "source": "urn:agentic-identity-broker:broker",
+    "occurred_at": "2026-09-26T00:00:00Z",
+    "recorded_at": "2026-09-26T00:00:01Z",
+    "subject": null,
+    "actor": {
+      "kind": "admin",
+      "id": null,
+      "on_behalf_of": null
+    },
+    "outcome": "success",
+    "reason_user": "A signing key becomes the active signing key.",
+    "reason_admin": "A signing key becomes the active signing key.",
+    "data": {
+      "signing_key_id": "55555555-5555-4555-8555-555555555555",
+      "activates_at": "2026-09-26T00:10:00Z"
+    }
+  }
+]

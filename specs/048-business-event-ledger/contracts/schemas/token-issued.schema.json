@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentic-identity-broker:events:v1:token-issued",
+  "title": "token-issued",
+  "description": "The broker completes a non-exchange token issuance.",
+  "allOf": [
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:envelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "agentic-identity-broker.token-issued"
+        },
+        "outcome": {
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      }
+    }
+  ]
+}
