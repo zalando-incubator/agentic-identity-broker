@@ -46,6 +46,7 @@ func newStrategyTestSigningKeyService() (*SigningKeyService, *strategySigningKey
 func cloneStrategySigningKey(key *storage.SigningKey) *storage.SigningKey {
 	clone := *key
 	clone.PrivateKeyEncrypted = append([]byte(nil), key.PrivateKeyEncrypted...)
+	clone.PublicJWK = append([]byte(nil), key.PublicJWK...)
 	return &clone
 }
 
@@ -146,6 +147,20 @@ func (s *strategySigningKeyStore) SetCurrent(_ context.Context, kid id.KeyID, ac
 	target.IsCurrent = true
 	target.ActivatesAt = activatesAt
 	return cloneStrategySigningKey(target), nil
+}
+
+func (s *strategySigningKeyStore) SetPublicJWK(_ context.Context, kid id.KeyID, publicJWK []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key, exists := s.byKID[kid]
+	if !exists || key.RemovedAt != nil {
+		return storage.NewStorageError("strategySigningKeyStore.SetPublicJWK", storage.ErrorKindNotFound, nil, "signing key not found")
+	}
+	if len(key.PublicJWK) == 0 {
+		key.PublicJWK = append([]byte(nil), publicJWK...)
+	}
+	return nil
 }
 
 func currentUsableStrategySigningKey(keys map[id.SigningKeyID]*storage.SigningKey, now time.Time) *storage.SigningKey {

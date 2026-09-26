@@ -37,6 +37,7 @@ func NewSigningKeyStore() *SigningKeyStore {
 func cloneSigningKey(key *storage.SigningKey) *storage.SigningKey {
 	clone := *key
 	clone.PrivateKeyEncrypted = append([]byte(nil), key.PrivateKeyEncrypted...)
+	clone.PublicJWK = append([]byte(nil), key.PublicJWK...)
 	return &clone
 }
 
@@ -192,6 +193,26 @@ func (s *SigningKeyStore) setCurrentLocked(kid id.KeyID, activatesAt time.Time) 
 	target.IsCurrent = true
 	target.ActivatesAt = activatesAt
 	return cloneSigningKey(target), nil
+}
+
+func (s *SigningKeyStore) SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) error {
+	if !bootstrapWriteLockHeld(ctx) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
+	return s.setPublicJWKLocked(kid, publicJWK)
+}
+
+func (s *SigningKeyStore) setPublicJWKLocked(kid id.KeyID, publicJWK []byte) error {
+	key, exists := s.byKID[kid]
+	if !exists || key.RemovedAt != nil {
+		return storage.NewStorageError("SigningKeyStore.SetPublicJWK", storage.ErrorKindNotFound, nil,
+			fmt.Sprintf("signing key with kid %s not found", kid))
+	}
+	if key.PublicJWK == nil {
+		key.PublicJWK = append([]byte(nil), publicJWK...)
+	}
+	return nil
 }
 
 func (s *SigningKeyStore) Delete(ctx context.Context, kid id.KeyID) error {

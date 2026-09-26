@@ -475,6 +475,27 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 			},
 		},
 		{
+			name:      "SetPublicJWK maps deadline exceeded to timeout",
+			cfg:       signingKeyRepoTestConfig{execErr: context.DeadlineExceeded},
+			operation: "SigningKeyRepo.SetPublicJWK",
+			kind:      storage.ErrorKindTimeout,
+			call: func(repo *SigningKeyRepo) error {
+				return repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
+			},
+		},
+		{
+			name: "SetPublicJWK maps missing key to not found",
+			cfg: signingKeyRepoTestConfig{
+				queryColumns: []string{"exists"},
+				queryRows:    [][]driver.Value{{false}},
+			},
+			operation: "SigningKeyRepo.SetPublicJWK",
+			kind:      storage.ErrorKindNotFound,
+			call: func(repo *SigningKeyRepo) error {
+				return repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
+			},
+		},
+		{
 			name:      "SetCurrent maps begin deadline exceeded to timeout",
 			cfg:       signingKeyRepoTestConfig{beginErr: context.DeadlineExceeded},
 			operation: "SigningKeyRepo.SetCurrent",
@@ -508,8 +529,8 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 						rows:    [][]driver.Value{{"kid-set-current", false, time.Now()}},
 					},
 					{
-						columns: []string{"id", "kid", "algorithm", "private_key_encrypted", "is_current", "activates_at", "created_at", "removed_at"},
-						rows:    [][]driver.Value{{"signing-key-id", "kid-set-current", "ES256", []byte("ciphertext"), true, time.Now(), time.Now(), nil}},
+						columns: []string{"id", "kid", "algorithm", "private_key_encrypted", "public_jwk", "is_current", "activates_at", "created_at", "removed_at"},
+						rows:    [][]driver.Value{{"signing-key-id", "kid-set-current", "ES256", []byte("ciphertext"), []byte(`{"kty":"EC"}`), true, time.Now(), time.Now(), nil}},
 					},
 				},
 				rowsAffected: 1,
@@ -621,6 +642,19 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSigningKeyRepo_SetPublicJWKUsesConditionalUpdate(t *testing.T) {
+	var execs []string
+	repo := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{
+		rowsAffected:  1,
+		recordedExecs: &execs,
+	})
+
+	err := repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
+	require.NoError(t, err)
+	require.Len(t, execs, 1)
+	assert.Contains(t, execs[0], "public_jwk IS NULL")
 }
 
 func TestSigningKeyRepo_MutationPathsLockActiveKeysInDeterministicOrder(t *testing.T) {

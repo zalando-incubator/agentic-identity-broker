@@ -375,6 +375,10 @@ type SigningKeyRepository interface {
 	// activation timestamp and returns the updated metadata.
 	SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error)
 
+	// SetPublicJWK backfills a legacy signing key's public JWK if it is missing.
+	// Implementations must not overwrite an existing value.
+	SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) error
+
 	// Delete soft-deletes a signing key by setting removed_at.
 	// Implementations must enforce signing-key invariants atomically:
 	// the current key cannot be removed and at least one active key must remain.
