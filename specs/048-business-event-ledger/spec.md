@@ -14,6 +14,10 @@
 
 - Q: If the broker crashes after committing a ledger event but before emitting its telemetry copy, must it emit that missing copy after restarting? → A: Yes. Recover missing copies after restart while the event remains retained and telemetry copying remains enabled. Retries may produce duplicates with the same event ID; erased or retention-deleted events must never be emitted.
 
+### Session 2026-09-26
+
+- Q: Should the full event type name be organization-specific or configurable per deployment? → A: Neither. Every type is the fixed functional name `agentic-identity-broker`, a dot, and a hyphenated event name, following Zalando event type naming (Rule 213). The name identifies the product, not its hosting organization or a deployment, and no setting changes it.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Trust the Record of Security Changes (Priority: P1)
@@ -46,7 +50,7 @@ As a security engineer, I can query which agents received exchanged tokens for a
 
 **Acceptance Scenarios**:
 
-1. **US2-AS1 — Scoped investigation**: **Given** successful and denied exchanges for multiple principals before, within, and after a selected time range, **When** an investigator selects one principal's successful `token.exchanged` events in that range, **Then** the results identify exactly the agents that received tokens for that principal, exclude other principals and denied exchanges, and contain no credentials.
+1. **US2-AS1 — Scoped investigation**: **Given** successful and denied exchanges for multiple principals before, within, and after a selected time range, **When** an investigator selects one principal's successful `token-exchanged` events in that range, **Then** the results identify exactly the agents that received tokens for that principal, exclude other principals and denied exchanges, and contain no credentials.
 2. **US2-AS2 — Attribution and correlation**: **Given** a validated delegated exchange with a request SecurityContext, **When** its event is recorded, **Then** the subject identifies the affected principal, the actor identifies the authenticated caller, `on_behalf_of` preserves delegation, and the event's trace, span when available, IP, and user agent match the authoritative request context rather than unverified identity claims.
 3. **US2-AS3 — Credential exclusion**: **Given** representative inputs and failures for every catalogued type containing distinct access-token, refresh-token, client-secret, client-assertion, raw-JWT, authorization-code, and PKCE-verifier values, **When** those workflows record events and emit ledger telemetry, **Then** none of those values or credential-bearing payloads appears anywhere in the envelope, reasons, data, or telemetry copy. This includes credentials embedded in arbitrary strings such as user agents and upstream error text.
 4. **US2-AS4 — Unavailable identities**: **Given** an unauthenticated failure, a background expiration, or an administrative action with no affected user, **When** the broker records the event, **Then** it explicitly represents unavailable subject or actor identity, does not invent a user or trust a supplied identity claim, and retains the known resource and source context.
@@ -90,7 +94,7 @@ As an SRE, I continue to see the existing structured logs and telemetry signals,
 ### Edge Cases
 
 - A transaction commits but its response is lost: the retained event remains authoritative; re-reading unchanged state must not create another state-change event. A genuinely new token issuance is a distinct occurrence, even if a caller retries a request.
-- A request produces several distinct facts, such as an impersonation decision and a token exchange: each catalogued fact has its own event. The same exchanged-token fact is not also labeled `token.issued`.
+- A request produces several distinct facts, such as an impersonation decision and a token exchange: each catalogued fact has its own event. The same exchanged-token fact is not also labeled `token-issued`.
 - An upstream provider may complete an action before a local commit fails. The atomicity promise covers broker-controlled state and the broker's recorded outcome, not a distributed transaction with that provider.
 - A failure outcome can occur without a domain-state mutation. Its event is not a success event rescued from a rolled-back transaction.
 - When ledger storage is unavailable, the broker fails closed rather than releasing a newly issued token or reporting a successful mutation without its record. A storage outage cannot itself be promised a durable failure event in that unavailable store.
@@ -114,10 +118,10 @@ The first eight requirements preserve the numbering and intent of the user's FR-
 - **FR-006 — Principal erasure**: One authorized operation MUST remove all ledger events whose `subject` equals the selected principal across all retained partitions. It MUST be idempotent, leave other subjects unchanged, and provide a completion boundary relative to concurrent event recording. It MUST NOT create a replacement subject event that immediately defeats erasure. This operation is distinct from time-based partition retention.
 - **FR-007 — In-memory support**: The in-memory storage backend MUST support recording, validation, scoped querying, subject erasure, and logical retention with the same observable business and atomicity semantics as PostgreSQL. It MUST support unit and end-to-end workflows without PostgreSQL; persistence across process restart and physical partition dropping apply only to PostgreSQL.
 - **FR-008 — Recording overhead**: Recording MUST add at most 5 ms p99 to transaction time at current load. Acceptance MUST compare equivalent workloads and conditions with and without recording, capture both baseline and enabled latency distributions, and document workload mix, concurrency, event sizes, retained history, and telemetry settings. No existing load measurement is assumed by this specification.
-- **FR-009 — Catalogue**: The initial catalogue MUST include all 28 types below. Full names MUST use one stable reverse-DNS namespace followed by the listed `object.action` suffix. Adding an event type MUST NOT require a ledger database migration. Published names and meanings MUST not be reassigned.
+- **FR-009 — Catalogue**: The initial catalogue MUST include all 28 types below. Full names MUST be the fixed functional name `agentic-identity-broker`, a dot, and the listed event name, following Zalando event type naming (Rule 213). Names MUST NOT depend on the hosting organization or deployment and MUST NOT be configurable. Adding an event type MUST NOT require a ledger database migration. Published names and meanings MUST not be reassigned.
 - **FR-010 — Envelope**: Every event MUST conform to the envelope contract below, preserving subject, actor, source, business references, and authoritative correlation without reconstructing identities from unverified credentials.
 - **FR-011 — Per-type schemas**: Each event's `data` MUST be validated against its registered per-type JSON schema published under `api/`. Unknown types and schema-invalid data MUST be rejected before recording or ledger telemetry emission. Schemas MUST define allowed fields and forbid unspecified data fields; new optional data must not invalidate existing records.
-- **FR-012 — Investigation**: Authorized operational queries MUST support exact subject, event type, outcome, and occurrence-time filtering, with a half-open time interval `[start, end)` and deterministic ordering by `occurred_at` then event ID. Successful exchange records MUST identify their receiving agent. No user-facing or new HTTP read API is introduced.
+- **FR-012 — Investigation**: Authorized operational queries MUST support exact subject, event type, outcome, and occurrence-time filtering, with a half-open time interval `[start, end)` and deterministic ordering by `occurred_at` then event ID. Events whose subject is null are selected with an explicit no-subject selector; no query spans all subjects implicitly. Successful exchange records MUST identify their receiving agent. No user-facing or new HTTP read API is introduced.
 - **FR-013 — Non-mutating outcomes**: Catalogued requests, denials, failures, and token issuance without another persisted mutation MUST still be durable ledger occurrences. Where there is no committing business transaction, the event MUST commit as its own recorded outcome before the broker completes the request; a rolled-back state change MUST NOT be represented as successful. Unavailable storage MUST never cause a denied action to become allowed.
 - **FR-014 — Exactly one occurrence**: Duplicate observations of the same effective state transition MUST NOT create multiple events. Concurrent losing transitions and no-op mutations MUST NOT create success events. Distinct business facts within one request MAY each produce their own corresponding type; this does not introduce general request-idempotency behavior.
 - **FR-015 — Source boundary**: Only broker-produced events are recorded in this feature. Broker state changes invoked by a gateway, such as requesting or consuming an approval through the broker, remain broker-produced. No external producer ingestion capability is introduced.
@@ -126,38 +130,38 @@ The first eight requirements preserve the numbering and intent of the user's FR-
 
 #### Broker Event Catalogue
 
-The following are suffixes, not complete names. Selection of the single project-controlled reverse-DNS prefix and the precise schema registry layout is a planning decision, not permission to vary names per producer or deployment.
+The following are event names, not complete type names. Each full type is `agentic-identity-broker.<event name>`, for example `agentic-identity-broker.grant-created`. The precise schema registry layout is a planning decision, not permission to vary names per producer or deployment.
 
-| Family | Type suffix | Recorded business fact | Outcome |
+| Family | Event name | Recorded business fact | Outcome |
 |--------|-------------|------------------------|---------|
-| Consent | `grant.created` | A new user-to-agent delegation is committed. | success |
-| Consent | `grant.updated` | An existing delegation's effective permissions or validity changes. | success |
-| Consent | `grant.revoked` | A delegation is explicitly revoked. | success |
-| Consent | `grant.expired` | A delegation reaches expiry and the broker recognizes it. | success |
-| Third-party sessions | `session.established` | A usable third-party session is established. | success |
-| Third-party sessions | `session.refreshed` | Refreshed session state is accepted and committed. | success |
-| Third-party sessions | `session.refresh_failed` | A third-party session refresh attempt fails. | failure |
-| Third-party sessions | `session.terminated` | A third-party session is ended. | success |
-| OAuth2 | `authorization.requested` | The broker accepts an authorization request for processing. | pending |
-| OAuth2 | `token.issued` | The broker completes a non-exchange token issuance. | success |
-| OAuth2 | `token.request_failed` | A token request fails without a more specific exchange-denial classification. | failure |
-| OAuth2 | `token.exchanged` | The broker completes a token exchange for a receiving agent. | success |
-| OAuth2 | `token.exchange_denied` | An exchange is refused by authentication or authorization controls. | denied |
-| OAuth2 | `impersonation.granted` | The broker permits an impersonation decision. | success |
-| OAuth2 | `impersonation.denied` | The broker refuses an impersonation decision. | denied |
-| Approvals | `approval.requested` | A new pending approval is created. | pending |
-| Approvals | `approval.approved` | A pending approval is approved. | success |
-| Approvals | `approval.denied` | A pending approval is denied. | denied |
-| Approvals | `approval.consumed` | A single-use approval is consumed. | success |
-| Approvals | `approval.revoked` | An existing approval is revoked. | success |
-| Approvals | `approval.expired` | An approval reaches expiry and the broker recognizes it. | success |
-| Administration | `agent.registered` | An agent is registered. | success |
-| Administration | `agent.updated` | An agent's effective configuration changes. | success |
-| Administration | `agent.deleted` | An agent is deleted. | success |
-| Administration | `credential.generated` | An agent credential is generated. | success |
-| Administration | `credential.rotated` | An agent credential is rotated. | success |
-| Administration | `credential.revoked` | An agent credential is revoked. | success |
-| Administration | `signing_key.promoted` | A signing key becomes the active signing key. | success |
+| Consent | `grant-created` | A new user-to-agent delegation is committed. | success |
+| Consent | `grant-updated` | An existing delegation's effective permissions or validity changes. | success |
+| Consent | `grant-revoked` | A delegation is explicitly revoked. | success |
+| Consent | `grant-expired` | A delegation reaches expiry and the broker recognizes it. | success |
+| Third-party sessions | `session-established` | A usable third-party session is established. | success |
+| Third-party sessions | `session-refreshed` | Refreshed session state is accepted and committed. | success |
+| Third-party sessions | `session-refresh-failed` | A third-party session refresh attempt fails. | failure |
+| Third-party sessions | `session-terminated` | A third-party session is ended. | success |
+| OAuth2 | `authorization-requested` | The broker accepts an authorization request for processing. | pending |
+| OAuth2 | `token-issued` | The broker completes a non-exchange token issuance. | success |
+| OAuth2 | `token-request-failed` | A token request fails without a more specific exchange-denial classification. | failure |
+| OAuth2 | `token-exchanged` | The broker completes a token exchange for a receiving agent. | success |
+| OAuth2 | `token-exchange-denied` | An exchange is refused by authentication or authorization controls. | denied |
+| OAuth2 | `impersonation-granted` | The broker permits an impersonation decision. | success |
+| OAuth2 | `impersonation-denied` | The broker refuses an impersonation decision. | denied |
+| Approvals | `approval-requested` | A new pending approval is created. | pending |
+| Approvals | `approval-approved` | A pending approval is approved. | success |
+| Approvals | `approval-denied` | A pending approval is denied. | denied |
+| Approvals | `approval-consumed` | A single-use approval is consumed. | success |
+| Approvals | `approval-revoked` | An existing approval is revoked. | success |
+| Approvals | `approval-expired` | An approval reaches expiry and the broker recognizes it. | success |
+| Administration | `agent-registered` | An agent is registered. | success |
+| Administration | `agent-updated` | An agent's effective configuration changes. | success |
+| Administration | `agent-deleted` | An agent is deleted. | success |
+| Administration | `credential-generated` | An agent credential is generated. | success |
+| Administration | `credential-rotated` | An agent credential is rotated. | success |
+| Administration | `credential-revoked` | An agent credential is revoked. | success |
+| Administration | `signing-key-promoted` | A signing key becomes the active signing key. | success |
 
 `success` denotes successful completion of the named action; for example, successful revocation does not mean access was granted. A recorded impersonation permission decision does not itself claim that subsequent token issuance succeeded.
 
@@ -168,7 +172,7 @@ All fields below belong to one common envelope. Nullable identity and missing-co
 | Field | Meaning and presence rule |
 |-------|---------------------------|
 | `id` | Required, immutable, time-ordered unique event identifier. Identifier order is not a guarantee of global causal order. |
-| `type` | Required, full registered reverse-DNS event type. |
+| `type` | Required, full registered event type `agentic-identity-broker.<event name>`. |
 | `source` | Required, stable identification of the producing broker, not the calling actor or a credential-bearing request URL. |
 | `occurred_at` | Required UTC instant at which the business fact occurred; effective expiry time for expiration events. |
 | `recorded_at` | Required UTC instant assigned when the ledger records the event; retention age uses this value. |
@@ -311,7 +315,7 @@ New domain vocabulary and architectural implications MUST be incorporated into `
 ### Decisions Reserved for Planning
 
 - The crash-safe telemetry handoff and recovery mechanism, preserving ledger atomicity, automatic recovery of missing copies, stable event IDs on retries, and suppression of erased or retention-deleted events. Best-effort after-commit publication without recovery does not satisfy FR-004.
-- The precise reverse-DNS event namespace, compatible schema evolution rules, and schema registry location within `api/`.
+- Compatible schema evolution rules and the schema registry location within `api/`.
 - Partition granularity and retention ownership, including pg_partman versus broker-scheduled maintenance, subject-erasure concurrency, and the 24-hour grace bound.
 - The recorder port and transaction boundary, injected through the existing builder rather than a parallel wiring mechanism.
 

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentic-identity-broker:events:v1:token-request-failed",
+  "title": "token-request-failed",
+  "description": "A token request fails without a more specific exchange-denial classification.",
+  "allOf": [
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:envelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "agentic-identity-broker.token-request-failed"
+        },
+        "outcome": {
+          "const": "failure"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reason_code": {
+              "enum": [
+                "invalid_request",
+                "authentication_failed",
+                "authorization_failed",
+                "upstream_failed",
+                "internal_failure"
+              ]
+            }
+          },
+          "required": [
+            "reason_code"
+          ]
+        }
+      }
+    }
+  ]
+}
