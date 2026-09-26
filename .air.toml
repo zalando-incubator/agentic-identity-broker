@@ -41,7 +41,7 @@ tmp_dir = "tmp"
   log = "build-errors.log"
 
   # Use fsnotify for native development (much faster than polling)
-  # For Docker Compose, use .air.docker.toml with polling enabled
+  # For Docker Compose, use build/air/.air.docker.toml with polling enabled
   poll = false
 
   # Delay after a detected file change before rebuilding (milliseconds)

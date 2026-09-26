@@ -16,6 +16,7 @@ build/
 !/build/docker/
 /build/docker/*
 !/build/docker/Dockerfile*
+!/build/air/
 
 # Test binary, built with `go test -c`
 *.test

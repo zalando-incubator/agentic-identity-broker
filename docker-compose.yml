@@ -31,20 +31,20 @@ services:
       # Mount source code for Air hot reload
       - ./cmd:/app/cmd
       - ./internal:/app/internal
-      - ./config.docker.yaml:/app/config.docker.yaml:ro
+      - ./configs/config.docker.yaml:/app/configs/config.docker.yaml:ro
       - ./migrations:/app/migrations
       - ./scripts:/app/scripts:ro
       - ./tests:/app/tests:ro
       - ./mocks:/app/mocks:ro
       - broker-tmp:/app/tmp
-      # Mount .air.docker.toml for Docker-optimized hot reload configuration
-      - ./.air.docker.toml:/app/.air.docker.toml:ro
+      # Mount the Docker-specific Air configuration for hot reload
+      - ./build/air/.air.docker.toml:/app/build/air/.air.docker.toml:ro
       # Mount go.mod and go.sum to keep them in sync with the host.
       # This avoids the "updates to go.mod needed" error in the container.
       - ./go.mod:/app/go.mod
       - ./go.sum:/app/go.sum
     environment:
-      - IDENTITY_BROKER_CONFIG_PATH=config.docker.yaml
+      - IDENTITY_BROKER_CONFIG_PATH=configs/config.docker.yaml
       - IDENTITY_BROKER_LOG_LEVEL=debug
       - IDENTITY_BROKER_JWE_SIGNING_KEY=${IDENTITY_BROKER_JWE_SIGNING_KEY}
       - IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=${IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY}
@@ -141,13 +141,13 @@ services:
       context: .
       dockerfile: build/docker/Dockerfile.dev
     container_name: aib-sample-agent
-    command: ["air", "-c", ".air.sample-agent.toml"]
+    command: ["air", "-c", "build/air/.air.sample-agent.toml"]
     ports:
       - "9002:9002"
     volumes:
       - ./mocks/sample-agent:/app/mocks/sample-agent
       - ./scripts:/app/scripts:ro
-      - ./.air.sample-agent.toml:/app/.air.sample-agent.toml:ro
+      - ./build/air/.air.sample-agent.toml:/app/build/air/.air.sample-agent.toml:ro
       - sample-agent-tmp:/app/tmp
     networks:
       - aib-network
@@ -204,7 +204,7 @@ services:
       target: development
     container_name: aib-extproc
     volumes:
-      - ./config.extproc.docker.yaml:/app/config.yaml:ro
+      - ./configs/config.extproc.docker.yaml:/app/config.yaml:ro
       - ./mocks/opa/opa-config.yaml:/etc/extproc/opa-config.yaml:ro
     environment:
       - EXTPROC_CONFIG_PATH=/app/config.yaml

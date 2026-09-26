@@ -23,7 +23,7 @@
 - [X] T002 [P] Add `golang.org/x/time` dependency for rate limiting (`go get golang.org/x/time`)
 - [X] T003 [P] Add `ApprovalsConfig` and `ApprovalRateLimitConfig` structs to `internal/ports/config.go` under the `Config` struct; add `Approvals ApprovalsConfig` field to `Config`
 - [X] T004 [P] Register Viper defaults for `approvals.*` keys in `internal/config/loader.go` (pending_ttl=10m, sync_coalesce_window=1s, rate_limit.max_pending_per_pair=50, rate_limit.max_requests_per_minute=10)
-- [X] T005 [P] Add approvals configuration block to `config.dev.yaml`, `config.test.yaml`, and `examples/config/`
+- [X] T005 [P] Add approvals configuration block to `configs/config.dev.yaml`, `configs/config.test.yaml`, and `examples/config/`
 - [X] T006 [P] Update Helm chart for `approvals.*` config: (a) add `approvals.*` block to `charts/agentic-identity-broker/values.yaml` with defaults and `--` doc comments; (b) update ConfigMap/Secret templates under `charts/agentic-identity-broker/templates/` to pass `APPROVAL_PENDING_TTL`, `APPROVAL_SYNC_COALESCE_WINDOW`, `APPROVAL_RATE_LIMIT_MAX_PENDING`, `APPROVAL_RATE_LIMIT_REQUESTS_PER_MINUTE` env vars to pods (Principle VII)
 
 **Checkpoint**: Config schema compiles, defaults load correctly, Helm chart updated

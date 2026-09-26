@@ -116,7 +116,7 @@ export default defineConfig({
 
 **Backend:**
 ```yaml
-# config.dev.yaml
+# configs/config.dev.yaml
 
 servers:
   enduser:

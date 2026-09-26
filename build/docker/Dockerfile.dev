@@ -30,4 +30,4 @@ RUN mkdir -p tmp \
 EXPOSE 8000 14000
 
 # Run with Air for hot-reload (uses Docker-specific config with polling)
-CMD ["air", "-c", ".air.docker.toml"]
+CMD ["air", "-c", "build/air/.air.docker.toml"]

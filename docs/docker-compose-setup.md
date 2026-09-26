@@ -95,7 +95,7 @@ oauth2_authorization_server:
 Use this mode for native debugging or profiling. You can use it when you do not require the
 complete stack.
 
-### `config.docker.yaml` (Docker Compose)
+### `configs/config.docker.yaml` (Docker Compose)
 
 Docker Compose uses this file for container-to-container communication. It uses internal
 container DNS names:
@@ -108,7 +108,7 @@ oauth2_authorization_server:
 ```
 
 Use it with `just dev-docker` or `just compose-up`. `docker-compose.yml` sets
-`IDENTITY_BROKER_CONFIG_PATH=config.docker.yaml`.
+`IDENTITY_BROKER_CONFIG_PATH=configs/config.docker.yaml`.
 
 ### Why the files differ
 
@@ -162,7 +162,7 @@ just compose-restart-frontend
 
 ### Configuration Changes
 
-If you change `.air.toml` or `vite.config.ts`, restart the affected service:
+If you change `build/air/.air.docker.toml` or `vite.config.ts`, restart the affected service:
 
 ```bash
 just compose-restart-backend    # For Air config changes
@@ -337,7 +337,7 @@ Air uses polling for changes in bind-mounted files.
 
 **Make sure that polling is enabled:**
 ```bash
-grep "poll = " .air.toml
+grep "poll = " build/air/.air.docker.toml
 # Should show: poll = true
 ```
 

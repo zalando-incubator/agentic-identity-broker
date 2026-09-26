@@ -107,7 +107,7 @@
 - [x] T011 Create config loader with Viper/Cobra, `EXTPROC_` env prefix, env key replacer, and `os.ExpandEnv` for `${VAR}` notation in `internal/extproc/config/loader.go`
 - [x] T012 [P] Create config validation (startup fail-fast rules from data-model.md) in `internal/extproc/config/loader.go`
 - [x] T013 [P] Write unit tests for config loading, validation, env var expansion, and default values in `internal/extproc/config/loader_test.go`
-- [x] T014 Create Docker configuration for ExtProc service in `config.extproc.docker.yaml` (project root) per contracts/docker-compose.md
+- [x] T014 Create Docker configuration for ExtProc service in `configs/config.extproc.docker.yaml` per contracts/docker-compose.md
 
 **Checkpoint**: Foundation ready — user story implementation can now begin
 
