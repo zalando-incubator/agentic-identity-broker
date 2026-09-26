@@ -22,7 +22,7 @@ services:
   identity-broker:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: build/docker/Dockerfile.dev
     container_name: aib-broker
     ports:
       - "8000:8000"
@@ -73,7 +73,7 @@ services:
   cimd-mock:
     build:
       context: .
-      dockerfile: Dockerfile.cimd
+      dockerfile: build/docker/Dockerfile.cimd
     container_name: aib-cimd-mock
     ports:
       - "9004:443"
@@ -98,7 +98,7 @@ services:
   upstream-oauth2:
     build:
       context: .
-      dockerfile: Dockerfile.mock
+      dockerfile: build/docker/Dockerfile.mock
       args:
         SERVICE_PATH: >-
           mocks/upstream-oauth2-server/cmd/mock-upstream-oauth2-server
@@ -119,7 +119,7 @@ services:
   third-party-oauth2:
     build:
       context: .
-      dockerfile: Dockerfile.mock
+      dockerfile: build/docker/Dockerfile.mock
       args:
         SERVICE_PATH: mocks/third-party-service/cmd/mock-oauth2-server
     container_name: aib-third-party-oauth2
@@ -139,7 +139,7 @@ services:
   sample-agent:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: build/docker/Dockerfile.dev
     container_name: aib-sample-agent
     command: ["air", "-c", ".air.sample-agent.toml"]
     ports:
@@ -200,7 +200,7 @@ services:
   extproc-token-exchange:
     build:
       context: .
-      dockerfile: Dockerfile.extproc
+      dockerfile: build/docker/Dockerfile.extproc
       target: development
     container_name: aib-extproc
     volumes:
@@ -224,7 +224,7 @@ services:
   mcp-server-mock:
     build:
       context: .
-      dockerfile: Dockerfile.mock
+      dockerfile: build/docker/Dockerfile.mock
       args:
         SERVICE_PATH: mocks/mcp-server/cmd/mcp-server
     container_name: aib-mcp-server
@@ -262,7 +262,7 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.web
+      dockerfile: build/docker/Dockerfile.web
     container_name: aib-frontend
     ports:
       - "3000:3000"

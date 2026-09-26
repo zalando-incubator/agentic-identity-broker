@@ -990,7 +990,7 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 
 **Binary**: `extproc-token-exchange` (single Go binary, ~24MB)
 
-**Containerization**: `Dockerfile` for Docker Compose integration
+**Containerization**: `build/docker/Dockerfile.extproc` for Docker Compose integration
 
 **Lifecycle**:
 

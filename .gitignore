@@ -10,6 +10,12 @@
 bin/*
 dist/
 build/
+# Keep Dockerfile sources under build/docker, but ignore other build output.
+!/build/
+/build/*
+!/build/docker/
+/build/docker/*
+!/build/docker/Dockerfile*
 
 # Test binary, built with `go test -c`
 *.test

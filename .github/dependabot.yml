@@ -91,7 +91,7 @@ updates:
 
   # Container base images — pinned by digest in every Dockerfile.
   - package-ecosystem: "docker"
-    directory: "/"
+    directory: "/build/docker"
     schedule:
       interval: "monthly"
     cooldown:
