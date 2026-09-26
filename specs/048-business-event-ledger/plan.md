@@ -6,9 +6,9 @@
 
 ## Summary
 
-Add a mandatory, credential-free ledger for all 28 broker-produced business facts. Generalize the existing storage transaction protocol so each state transition and its event commit together on PostgreSQL and have real rollback/isolation in memory. Use immutable UUIDv7 event envelopes, a closed embedded JSON-schema registry, six-hour recorded-time partitions, and payload-free pending-delivery references. A background synchronous OpenTelemetry pipeline uses the existing destination and recovers after crashes; lifecycle/subject barriers prevent post-deletion replay. Partition DDL belongs to a separate migration-owned scheduled Job, not the runtime broker. Existing slog output and HTTP representations remain unchanged.
+Add a mandatory, credential-free ledger for all 28 broker-produced business facts. Generalize the existing storage transaction protocol so each state transition and its event commit together on PostgreSQL and have real rollback/isolation in memory. Use immutable UUIDv7 event envelopes, a closed embedded JSON-schema registry, six-hour recorded-time partitions, and payload-free delivery references. A background synchronous OpenTelemetry pipeline uses the existing destination and recovers after crashes; lifecycle/subject barriers prevent post-deletion replay. Partition DDL belongs to a separate migration-owned scheduled Job, not the runtime broker. Existing slog output and HTTP representations remain unchanged.
 
-This plan provides the complete Phase 0 research and Phase 1 design, not production implementation, migrations, acceptance tests or measured performance. [ADR 037](../../adrs/037-business-event-ledger.md) is Proposed, not self-approved.
+This plan provides the complete Phase 0 research and Phase 1 design, not production implementation, migrations, acceptance tests or measured performance. [ADR 037](../../adrs/037-business-event-ledger.md) was accepted by the maintainer on 2026-09-26 and is binding for this feature.
 
 ## Technical Context
 
@@ -18,7 +18,7 @@ This plan provides the complete Phase 0 research and Phase 1 design, not product
 **Testing**: Standard Go tests/testify, Ginkgo 2.32.2/Gomega, shared testcontainers PostgreSQL, production app.Builder bootstrap, local OTLP receiver. No frontend Playwright work for this backend-only feature.
 **Target Platform**: Existing Linux broker deployment on amd64/arm64, local development on supported Go hosts; Kubernetes chart plus equivalent external PostgreSQL scheduler.
 **Project Type**: Existing Go hexagonal backend within the monorepo, not a new service or event bus.
-**Performance Goals**: Added recording transaction p99 <=5 ms at documented deployment load. Reference and deployment-profile baseline methodology is in quickstart.md; no measurement result is asserted here. Collector work stays outside business commits.
+**Performance Goals**: Added recording transaction p99 <=5 ms at documented deployment load. Reference and deployment-profile baseline methodology is in quickstart.md. T007 requests the deployment profile from the operations owner of the target deployment and records its approval in quickstart.md; no measurement result is asserted here. Collector work stays outside business commits.
 **Constraints**: Mandatory fail-closed recording, 28-type coverage, same-transaction persistence, unchanged slog, no credentials even in arbitrary strings, stable event names, no post-erasure replay, no early retention deletion, <=24h normal grace, no new HTTP/CLI read/erase surface, no runtime DDL.
 **Scale/Scope**: 28 event types, 21 acceptance scenarios, two storage backends. Default 90-day history corresponds to about 360 six-hour retained partitions plus 28 precreated future windows. Workload cardinalities are measured during acceptance, not guessed from repository size.
 
@@ -29,7 +29,7 @@ This plan provides the complete Phase 0 research and Phase 1 design, not product
 | Shared transaction boundaries and memory rollback | Generalize the current context-carried manager/executor; joined scopes and transaction-wide memory visibility gate |
 | Event identity/namespace/schema validator | Named UUIDv7, fixed product functional name `agentic-identity-broker` per Zalando Rule 213, existing google/jsonschema-go and embedded Draft 2020-12 contracts with URN schema identifiers |
 | Caller versus subject, missing span, unsafe context | Trusted domain event context; caller from verified peer, subject from affected identity; matching span only; allowlisted context and fixed reasons |
-| Telemetry recovery/deletion race | Atomic pending reference plus synchronous background export held inside lifecycle/subject barriers |
+| Telemetry recovery/deletion race | Atomic delivery reference plus synchronous background export held inside lifecycle/subject barriers |
 | Partition ownership/grace/operational erasure | Six-hour partitions, five-minute migration-owned PostgreSQL Job, exact-subject SQL erasure function |
 | Current-load acceptance evidence | Explicit paired baseline/enabled procedure, reference profile and deployment-profile capture before release |
 
@@ -37,7 +37,7 @@ This plan provides the complete Phase 0 research and Phase 1 design, not product
 
 **Gate result before research**: PASS for planning. Scope already identifies the domain model, required configuration, event contracts, database invariants and 21 scenarios. No accepted-ADR exception is selected. Implementation prerequisites are obligations, not claims that tests or migrations already exist.
 
-**Gate result after design**: PASS for planning. The documents and schemas below resolve the design unknowns and keep all 13 principles. Implementation remains gated on contract/ADR review, schema publication, architecture/configuration documentation and semantic red acceptance evidence. There is no blanket public-API-change approval.
+**Gate result after design**: PASS for planning. The documents and schemas below resolve the design unknowns and keep all 13 principles. Implementation remains gated on contract review, schema publication, architecture/configuration documentation and semantic red acceptance evidence. There is no blanket public-API-change approval.
 
 ### Design Preconditions (BLOCKING before implementation)
 
@@ -64,7 +64,7 @@ The checked items above mean the plan contains a compliant design/commitment. Th
 | Principle | Compliance decision |
 |---|---|
 | I Security-first | Mandatory recording; typed trusted attribution; no raw credentials/errors; exact erasure; no fail-open fallback |
-| II Binding architecture/ADRs | Retain accepted ADR 002/004 storage/007/009 migration/011 telemetry/013 patterns; proposed ADR 037 documents new design; ADR 033 stays Proposed |
+| II Binding architecture/ADRs | Retain accepted ADR 002/004 storage/007/009 migration/011 telemetry/013 patterns; accepted ADR 037 records the new design and binds deviations to a superseding ADR; ADR 033 stays Proposed |
 | III Library-first security | Existing crypto untouched; UUID and schema libraries reused; no homemade cryptography or token decoding to invent identity |
 | IV OpenAPI transparency | Event schemas published before producers; existing HTTP contracts preserved and any extra change requires review |
 | V DDD | Business owners classify facts; ledger enforces its own immutable-record invariants; glossary updated |
@@ -91,6 +91,7 @@ specs/048-business-event-ledger/
   research.md
   data-model.md
   quickstart.md
+  performance-results.md            measured US4-AS4 profiles and distributions (T095)
   contracts/
     events.md
     storage.md
@@ -108,7 +109,7 @@ adrs/037-business-event-ledger.md
 ### Source Code (planned changes, not generated now)
 
 ```text
-api/events/                         embedded reviewed schema publication
+api/events/                         embedded reviewed schema publication (schemas.go, v1/)
 internal/domain/id/                 generated BusinessEventID
 internal/domain/model/              immutable shared business-event values
 internal/domain/ledger/             registry, recorder, query/lifecycle invariants
@@ -126,7 +127,10 @@ internal/ports/config.go             business-event settings
 internal/adapters/storage/           factory, PostgreSQL and memory implementations
 internal/adapters/telemetry/         separate synchronous ledger SDK pipeline
 internal/adapters/http/              typed parse outcomes and staged proxy responses
+internal/adapters/http/business_event_context.go  trusted request-context capture
 internal/app/builder.go              recorder/worker composition and shutdown
+internal/app/business_event_delivery.go   ledger telemetry copy delivery worker
+internal/app/business_event_retention.go  in-memory logical retention worker
 internal/config/                     defaults, bindings and validation
 cmd/agentic-identity-broker/          dotted flags and lifecycle integration
 migrations/035_business_event_ledger.{up,down}.sql
@@ -140,7 +144,7 @@ tests/integration/                  storage, migrations, Helm and lifecycle cove
 docs/ and examples/config/          operator/API/configuration updates
 ```
 
-**Structure Decision**: Extend the existing broker; ledger is a bounded context, not a catch-all event bus. Shared models avoid a ports/domain-service import cycle. No separate telemetry port, parallel config loader, external queue, or new HTTP service.
+**Structure Decision**: Extend the existing broker; ledger is a bounded context, not a catch-all event bus. Shared models avoid a ports/domain-service import cycle. The two background workers live in `internal/app/` because the builder owns their start, cancellation and shutdown order; they schedule work and call ports but hold no domain rules. No separate telemetry port, parallel config loader, external queue, or new HTTP service.
 
 ## Implementation Phase Overview
 
@@ -149,7 +153,7 @@ docs/ and examples/config/          operator/API/configuration updates
 | Phase 0 | Separate behavior-preserving refactor PR: generalize transaction executor/ownership seams, extract credential orchestration and proxy completion seam without changing responses or old logs | Required by breadth of structural change |
 | Phase 1 | Setup: promote existing schema dependency, prepare schema publication and typed ID generation | Yes |
 | Phase 2 | Design Preconditions: domain/glossary, config/examples/Helm design, reviewed event/API contracts, migrations design, 21 red E2E scenarios | MANDATORY |
-| Phase 2.5 | Ledger foundations: registry, real memory/PG transactions, immutable event append/get/scoped query, payload-free pending-reference insert, lifecycle/subject barriers on append and migration-owned partition provisioning | Yes |
+| Phase 2.5 | Ledger foundations: registry, real memory/PG transactions, immutable event append/get/scoped query, payload-free delivery-reference insert, lifecycle/subject barriers on append and migration-owned partition provisioning | Yes |
 | Phase 3 | US1 atomic catalogue recording: implement every producer, expiration-recognition markers, no-op/competition/expiry and failure boundaries | Yes, P1 |
 | Phase 4 | US2 safe investigation: trust attribution, schema-source extension seam, full credential-exclusion matrix and investigation documentation | Yes, P1 |
 | Phase 5 | US3 erasure/retention: erasure function, retention drops, scheduler, privileges and operations roles, backend parity and no resurrection | Yes, P2 |
@@ -192,11 +196,13 @@ US1-AS1 loops through all 28 business journeys inside its catalogue scenario, as
 
 US1-AS2 and US4-AS3 use a PostgreSQL-backed child process and controlled interruption after commit/before output or export; memory cannot demonstrate restart durability. Put child-process coordination and fault-injecting port wrappers in `tests/e2e/bootstrap/`, ledger inspection, operational SQL and OTLP capture in `tests/e2e/helpers/`, and envelope and credential-canary matchers in `tests/e2e/matchers/`; never add production debug endpoints or test-only APIs. A committed ledger row observed from another connection is the commit oracle. The crash helper runs production builder logic. Scenario-specific helpers prevent a timing race from substituting for a deterministic boundary.
 
-Use integration-tagged PostgreSQL scenarios in tests/e2e/business_event_ledger_postgres_test.go, executed with Ginkgo's integration tag; no Skip when the acceptance lane is required. Add a dedicated just recipe and CI lane so the normal memory-only E2E command does not silently count these scenarios as run. Keep one It per spec scenario, with PG assertion variants inside the relevant scenario. Other PG-specific invariants remain focused integration tests, not duplicate E2E identifiers.
+Use integration-tagged PostgreSQL scenarios in tests/e2e/business_event_ledger_postgres_test.go, executed with Ginkgo's integration tag; no Skip when the acceptance lane is required. All ledger specs carry the Ginkgo label `business-event-ledger`. Add one just recipe, `test-e2e-ledger-postgres`, that runs the tagged ledger specs except `performance`, include it in `just verify` (which already needs Docker for `test-integration-all`), and add a matching CI lane. The normal memory-only E2E command therefore cannot silently count these scenarios as run, and the final gate cannot pass without them. Keep one It per spec scenario, with PG assertion variants inside the relevant scenario. Other PG-specific invariants remain focused integration tests, not duplicate E2E identifiers.
 
-Scenarios in `business_event_ledger_test.go` iterate the backends returned by a build-tag-selected bootstrap helper: `tests/e2e/bootstrap/business_event_ledger_backends.go` (`//go:build !integration`) returns memory only, and `tests/e2e/bootstrap/business_event_ledger_backends_integration.go` (`//go:build integration`) returns memory and PostgreSQL. The default lane therefore proves memory behavior, and the tagged lane runs every shared scenario against both backends; that tagged run is the SC-008 backend-consistency evidence. US1-AS7 compares both backends inside one It, so it lives in the tagged file.
+Scenarios in `business_event_ledger_test.go` iterate the backends returned by a build-tag-selected bootstrap helper: `tests/e2e/bootstrap/business_event_ledger_backends.go` (`//go:build !integration`) returns memory only, and `tests/e2e/bootstrap/business_event_ledger_backends_integration.go` (`//go:build integration`) returns memory and PostgreSQL. The default lane (the existing `test-e2e-backend` recipe) therefore proves memory behavior, and the tagged lane runs every shared scenario against both backends. Each backend iteration inside an It bootstraps its own server and storage (a fresh memory adapter or a fresh template-database clone) and releases them through `DeferCleanup`; iterations share no state. This satisfies Principle XIII's fresh-server-and-storage isolation while keeping one It per scenario. US1-AS7 compares both backends inside one It, so it lives in the tagged file.
 
-US4-AS4 is performance-labelled and runs alone with one Ginkgo process; repeatable profile/baseline instructions are in quickstart.md. Besides the latency thresholds it asserts that the feature run retained exactly one event of the expected type for every completed catalogued action. It therefore fails semantically until recording exists, instead of passing because the feature run equals the baseline.
+SC-008 evidence has two sources. For event contents, query results and erasure results it is the tagged run of the shared scenarios plus US1-AS7. Logical retention, erasure during recording and non-resurrection (US3-AS2/AS3/AS4) need database-clock history seeding or a process restart, so their acceptance scenarios run on PostgreSQL only; memory equivalence for those three comes from the memory lifecycle and retention-worker tests (T072, T074), which drive the adapter clock from inside the memory package. T083 records both sources.
+
+US4-AS4 is labelled `performance` and `business-event-ledger` and runs alone with one Ginkgo process through the existing `test-e2e-performance` recipe, which gains optional label-filter and build-tag parameters whose defaults keep its current invocation; no second performance recipe is added. Repeatable profile/baseline instructions are in quickstart.md. Besides the latency thresholds it asserts that the feature run retained exactly one event of the expected type for every completed catalogued action. It therefore fails semantically until recording exists, instead of passing because the feature run equals the baseline.
 
 PostgreSQL maintenance reads the database clock, and `recorded_at` is database-assigned and immutable, so retention scenarios seed history rather than moving time. A helper connected with migration-owner credentials calls the production `public.business_event_create_partition_pair` function for past six-hour windows, inserts envelopes validated through the production registry with explicit historical `recorded_at`, and then runs the real maintenance function. Live HTTP workflows supply the young side of each boundary. Memory lifecycle unit tests control the adapter clock from inside the memory package's tests. Do not wait 90 days or add time-travel APIs to production.
 
@@ -224,4 +230,4 @@ Planning validation checks JSON-schema resolution and representative positive/ne
 
 ## Complexity Tracking
 
-No constitutional violation is proposed. The transaction refactor, pending references and deletion barriers are necessary for FR-001/004/006/007/017; simpler best-effort logging and snapshot-only deletion fail named acceptance requirements. A separate maintenance Job is required by the existing migration privilege boundary, not a new deployment architecture exception. Contract/ADR acceptance and executable red tests remain implementation gates, not unresolved design choices.
+No constitutional violation is proposed. The transaction refactor, delivery references and deletion barriers are necessary for FR-001/004/006/007/017; simpler best-effort logging and snapshot-only deletion fail named acceptance requirements. A separate maintenance Job is required by the existing migration privilege boundary, not a new deployment architecture exception. Contract review and executable red tests remain implementation gates, not unresolved design choices.

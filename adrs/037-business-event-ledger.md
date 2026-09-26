@@ -1,24 +1,25 @@
 # ADR 037: Atomic Business Event Ledger and Recoverable Telemetry
 
-**Status**: Approved
+**Status**: Accepted
 **Date**: 2026-09-26
+**Accepted**: 2026-09-26 by maintainer Jan Brennenstuhl
 **Feature**: [048-business-event-ledger](../specs/048-business-event-ledger/spec.md)
 
 ## Context
 
 The broker needs 28 catalogued security facts recorded with broker-owned state transitions, with exact subject investigation, credential exclusion, retention and subject erasure. Existing slog records remain unchanged. The accepted feature clarification requires automatic recovery when a process crashes after database commit but before its additional telemetry copy is emitted; duplicate copies retain the same event ID.
 
-The current PostgreSQL transaction context is OAuth2-specific, other repositories contain autonomous transactions, and memory uses a no-op OAuth2 transaction manager. Ordinary logs use a batched OpenTelemetry processor. Accepted ADR 009 separates migration/schema capabilities from runtime; accepted ADR 011 owns providers in app wiring and rejects a custom telemetry port. These are constraints, not decisions superseded by this proposal.
+The current PostgreSQL transaction context is OAuth2-specific, other repositories contain autonomous transactions, and memory uses a no-op OAuth2 transaction manager. Ordinary logs use a batched OpenTelemetry processor. Accepted ADR 009 separates migration/schema capabilities from runtime; accepted ADR 011 owns providers in app wiring and rejects a custom telemetry port. These are constraints, not decisions superseded by this ADR.
 
 ## Decision
 
 1. Generalize the existing transaction manager/executor and migrate every catalogued producer, repository, and Fosite caller. Outer domain operations own commit; nested scopes join and cannot commit independently. Preserve intentional security mutations on failed OAuth2 validation paths. Memory uses a transaction-wide visibility gate and touched-record undo journal, not whole-store snapshots.
 2. Domain services construct immutable, schema-validated facts. Shared values belong in domain/model, ledger invariants in domain/ledger, and ISP repositories in ports/storage.go. Builder owns all wiring. Extract credential lifecycle logic from its current handler port bypass into the existing OAuth2-server context.
 3. Use generated named UUIDv7 BusinessEventID and fixed event type names `agentic-identity-broker.<event-name>` following Zalando event type naming (Rule 213), independent of hosting organization and deployment and not configurable; schema `$id`s are URNs `urn:agentic-identity-broker:events:v1:<name>`. Publish embedded, closed Draft 2020-12 schemas under api/events/v1 using the existing google/jsonschema-go dependency. JSON shape does not replace identity provenance or credential-safe field construction.
-4. Store immutable events in PostgreSQL six-hour UTC recorded_at partitions. Store payload-free pending-delivery references in paired partitions within the business transaction. No cascading event foreign keys to mutable business objects and no DEFAULT partition. Keep effective-expiry occurrence markers on owning grant/approval records so deletion of event history cannot replay a past expiry.
-5. A builder-owned worker uses the existing telemetry destination configuration through a separate non-global, unbuffered SDK log provider. Capture synchronous export success before acknowledging the pending reference; retries preserve the event ID. Do not alter existing slog or its batch pipeline. No custom telemetry port is introduced.
+4. Store immutable events in PostgreSQL six-hour UTC recorded_at partitions. Store payload-free delivery references in paired partitions within the business transaction. No cascading event foreign keys to mutable business objects and no DEFAULT partition. Keep effective-expiry occurrence markers on owning grant/approval records so deletion of event history cannot replay a past expiry.
+5. A builder-owned worker uses the existing telemetry destination configuration through a separate non-global, unbuffered SDK log provider. Capture synchronous export success before acknowledging the delivery reference; retries preserve the event ID. Do not alter existing slog or its batch pipeline. No custom telemetry port is introduced.
 6. Append, emission, erasure and retention share a lifecycle/subject lock order. Emission reloads a retained event under shared barriers and holds them through its synchronous attempt. Erasure obtains exclusive subject access; partition maintenance obtains exclusive lifecycle access. No buffered broker payload can outlive the deletion barrier. External already-dispatched copies remain external data.
-7. PostgreSQL partition creation/drop runs in a five-minute operational CronJob using the existing PostgreSQL-client image and migration-owned credentials. Runtime remains DML-only. The maintenance function reads the validated common retention policy stored by startup, with six-hour partition granularity satisfying the 24-hour grace. Memory performs equivalent logical maintenance in-process.
+7. PostgreSQL partition creation/drop runs in a five-minute operational CronJob using the existing PostgreSQL-client image and migration-owned credentials. Runtime remains DML-only. The maintenance function reads the validated common retention policy stored by startup, with six-hour partition granularity satisfying the 24-hour grace. Migrations and pre-install/pre-upgrade jobs only provision partitions; only the scheduled maintenance drops them, so an upgrade cannot sweep with a superseded policy. Memory performs equivalent logical maintenance in-process.
 8. Investigation uses operational SQL or internal scoped repositories; subject erasure is one operator-authorized SQL function. No new HTTP or CLI interface, external ingestion, historical log backfill or user interface is added.
 
 ## Consequences
@@ -54,4 +55,4 @@ The current PostgreSQL transaction context is OAuth2-specific, other repositorie
 
 ## Governance
 
-This ADR is a proposal for review, not an accepted exception or authorization to change public APIs. It supersedes no accepted ADR. Before producer implementation, approve the event/operational contracts, publish the schemas, update architecture/glossary and configuration/deployment documentation, and establish the required red E2E acceptance evidence. Detailed plan and interfaces: [plan](../specs/048-business-event-ledger/plan.md), [storage contract](../specs/048-business-event-ledger/contracts/storage.md), [event contract](../specs/048-business-event-ledger/contracts/events.md).
+Accepted by maintainer Jan Brennenstuhl on 2026-09-26. The decisions above are binding for this feature (Principle II); any deviation requires a superseding ADR. Acceptance does not authorize public API changes, and this ADR supersedes no accepted ADR. Before producer implementation, confirm the event/operational contracts, publish the schemas, update architecture/glossary and configuration/deployment documentation, and establish the required red E2E acceptance evidence. Detailed plan and interfaces: [plan](../specs/048-business-event-ledger/plan.md), [storage contract](../specs/048-business-event-ledger/contracts/storage.md), [event contract](../specs/048-business-event-ledger/contracts/events.md).

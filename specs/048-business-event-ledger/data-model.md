@@ -87,7 +87,7 @@ UUID generation supplies globally unique identities; the composite primary key r
 
 ### `business_event_delivery_pending`
 
-Paired six-hour partitions on `recorded_at` with `(recorded_at,event_id)` primary key. Columns: recorded_at, event_id, next_attempt_at (timestamptz). A pending row contains no envelope, principal, credential, or diagnostic payload. Index `(next_attempt_at,recorded_at,event_id)` supports bounded scanning. References are checked against the retained event while holding lifecycle barriers; there is no FK to mutable business objects. Paired deletion and paired partition drops are one transaction; no cross-partition FK is required.
+Paired six-hour partitions on `recorded_at` with `(recorded_at,event_id)` primary key. Columns: recorded_at, event_id, next_attempt_at (timestamptz). A delivery-reference row contains no envelope, principal, credential, or diagnostic payload. Index `(next_attempt_at,recorded_at,event_id)` supports bounded scanning. References are checked against the retained event while holding lifecycle barriers; there is no FK to mutable business objects. Paired deletion and paired partition drops are one transaction; no cross-partition FK is required.
 
 States:
 
@@ -97,11 +97,11 @@ stateDiagram-v2
     Pending --> Pending: export fails or process crashes
     Pending --> Delivered: export succeeds and acknowledgement commits
     Pending --> Deleted: subject erasure or retention
-    Delivered --> [*]: pending row removed
+    Delivered --> [*]: delivery reference removed
     Deleted --> [*]: no replay source remains
 ```
 
-Delivered is not a mutable state on the event. It is represented by absence of a pending reference. An export success followed by rollback/crash leaves Pending and can produce a same-ID duplicate. No general request-idempotency contract is added.
+Delivered is not a mutable state on the event. It is represented by absence of a delivery reference. An export success followed by rollback/crash leaves Pending and can produce a same-ID duplicate. No general request-idempotency contract is added.
 
 ### `business_event_policy`
 
@@ -127,4 +127,4 @@ The exact storage and operational interfaces, lock order, SQL erasure call, main
 
 ## Migration and rollback
 
-Plan `035_business_event_ledger.{up,down}.sql`, verifying that 035 remains free before implementation (the unmerged `046-cimd-upstream-client` branch holds 033 and 034). Up creates policy/event/delivery parents, indexes, immutable-row protection, the partition-pair and maintenance functions, the erasure function, current/future partitions, and object recognition markers. Foundation work provides partition provisioning; the erasure function, retention drops and privilege restrictions join the same unreleased migration during the retention/erasure story, after their tests. Partition names derive only from internal UTC boundaries; dynamic SQL identifiers are quoted, never user supplied. Down removes only feature-owned functions/tables/markers and leaves existing business records intact. Dropping the feature necessarily deletes ledger history; backup/export and operator acknowledgement are required before production rollback, and the old binary must be deployed together with down migration. Real PostgreSQL tests cover up/down/up, business-data survival, permission boundaries, and populated partition deletion. Schema changes ship in the migration image; the broker image remains DML-only.
+Plan `035_business_event_ledger.{up,down}.sql`, verifying that 035 remains free before implementation (the unmerged `046-cimd-upstream-client` branch holds 033 and 034). Up creates policy/event/delivery parents, indexes, immutable-row protection, the partition-pair, provisioning and maintenance functions, the erasure function, current/future partitions, and object recognition markers. Foundation work provides partition provisioning, which the migration and pre-upgrade job invoke and which never drops partitions. The erasure function, retention drops (scheduled maintenance only) and privilege restrictions join the same unreleased migration during the retention/erasure story, after their tests. Partition names derive only from internal UTC boundaries; dynamic SQL identifiers are quoted, never user supplied. Down removes only feature-owned functions/tables/markers and leaves existing business records intact. Dropping the feature necessarily deletes ledger history; backup/export and operator acknowledgement are required before production rollback, and the old binary must be deployed together with down migration. Real PostgreSQL tests cover up/down/up, business-data survival, permission boundaries, and populated partition deletion. Schema changes ship in the migration image; the broker image remains DML-only.
