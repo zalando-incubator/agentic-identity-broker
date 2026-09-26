@@ -684,14 +684,17 @@ paths:
   /api/third-party/sessions:
     get:
       operationId: listThirdPartySessions
-      summary: List third-party services with session status
+      summary: List the current user's third-party sessions
       description: |
-        Returns a list of all configured third-party OAuth2 services along with the current user's session status for each service.
+        Returns the authenticated user's stored third-party OAuth2 sessions, including sessions whose tokens have expired.
 
-        For services where the user has an active session, includes:
+        Services without a stored session for the user are not listed. A session whose service configuration no longer exists is omitted.
 
-        - Session initiation timestamp
-        - Token expiration status
+        Each session summary includes:
+
+        - Service identifier and display name
+        - Granted scopes and session initiation timestamp
+        - Access-token and refresh-token expiry status
         - Number of agents depending on this session, derived only from grants owned by the authenticated session principal
         - Encryption status indicator
 
@@ -701,7 +704,7 @@ paths:
         - preAuth: []
       responses:
         "200":
-          description: List of services with session status
+          description: The user's third-party sessions
           content:
             application/json:
               schema:
@@ -710,40 +713,32 @@ paths:
                   - data
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ThirdPartyServiceWithSession"
+                    type: object
+                    required:
+                      - sessions
+                    properties:
+                      sessions:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserSessionSummary"
+                        description: Empty array if the user has no stored sessions.
               example:
                 data:
-                  - service:
-                      id: 550e8400-e29b-41d4-a716-446655440000
-                      display_name: GitHub
-                      description: GitHub OAuth2 integration
-                      scopes:
-                        - scope_value: repo
-                          description: Full control of private repositories
-                        - scope_value: user:email
-                          description: Access user email addresses
-                    session:
-                      session_id: 660e8400-e29b-41d4-a716-446655440001
-                      initiated_at: "2025-12-20T10:30:00Z"
-                      access_token_expires_at: "2025-12-20T11:30:00Z"
-                      refresh_token_expires_at: "2026-01-20T10:30:00Z"
-                      is_expired: false
-                      has_refresh_token: true
+                  sessions:
+                    - id: 660e8400-e29b-41d4-a716-446655440001
+                      service_id: 550e8400-e29b-41d4-a716-446655440000
+                      service_display_name: GitHub
+                      token_type: Bearer
                       scope:
                         - repo
                         - user:email
+                      initiated_at: "2025-12-20T10:30:00Z"
+                      is_expired: false
+                      access_token_expired: false
+                      has_refresh_token: true
+                      refresh_token_expires_at: "2026-01-20T10:30:00Z"
                       dependent_agent_count: 3
-                      tokens_encrypted: true
-                  - service:
-                      id: 550e8400-e29b-41d4-a716-446655440002
-                      display_name: Google Workspace
-                      description: Google OAuth2 integration
-                      scopes:
-                        - scope_value: calendar.readonly
-                          description: Read calendar events
-                    session: null
+                      is_encrypted: true
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -3245,52 +3240,6 @@ components:
           description: |
             Optional human-readable error message. Provides additional context about the error. May be empty for generic errors.
           example: authentication required
-    ThirdPartyServiceWithSession:
-      type: object
-      required:
-        - service
-      properties:
-        service:
-          $ref: "#/components/schemas/ThirdPartyService"
-        session:
-          $ref: "#/components/schemas/SessionStatus"
-          nullable: true
-          description: Session status if user has an active session, null otherwise
-    ThirdPartyService:
-      type: object
-      required:
-        - id
-        - display_name
-        - scopes
-      properties:
-        id:
-          type: string
-          format: uuid
-          description: Unique service identifier
-        display_name:
-          type: string
-          description: Human-readable service name
-          maxLength: 255
-        description:
-          type: string
-          description: Service description
-        scopes:
-          type: array
-          description: Available OAuth2 scopes
-          items:
-            $ref: "#/components/schemas/OAuthScope"
-    OAuthScope:
-      type: object
-      required:
-        - scope_value
-        - description
-      properties:
-        scope_value:
-          type: string
-          description: OAuth2 scope identifier
-        description:
-          type: string
-          description: Human-readable scope description
     UserSessionSummary:
       type: object
       description: |

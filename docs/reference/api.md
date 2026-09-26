@@ -106,7 +106,7 @@ The full request and response schemas for every endpoint below are in the
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/third-party/sessions` | List third-party services and per-user session status. |
+| GET | `/api/third-party/sessions` | List the current user's stored third-party sessions. |
 | GET | `/api/third-party/{serviceId}/oauth2/authorize` | Start an authorization-code + PKCE flow to the third party. |
 | GET | `/api/third-party/{serviceId}/oauth2/callback` | Handle the third-party OAuth2 callback. |
 | GET | `/api/third-party/{serviceId}/session` | Session detail and the agents that depend on it. |

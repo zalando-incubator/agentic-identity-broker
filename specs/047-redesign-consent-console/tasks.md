@@ -69,9 +69,10 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 **Constitution Reference**: Principles II (Architecture Documentation), V (Domain-Driven Design & Glossary Management)
 
-- [ ] T005 Confirm in `specs/047-redesign-consent-console/data-model.md` that Agent, UserGrant, Permission Set, UserSession, ToolApproval, and Authorization context keep their ownership and semantics. Confirm that the only new concepts are UI state: ConsentDraft, ConnectionState, Agent Origin Label, and browser preferences (`aib.theme`: values `light, dark, system`, default `system`, scope Browser; `aib.sidebar-collapsed`: values `true, false`, default `false`, scope Browser). Correct any drift from the 2026-09-26 clarifications in `spec.md`
+- [ ] T005 Confirm in `specs/047-redesign-consent-console/data-model.md` that Agent, UserGrant, Permission Set, UserSession, ToolApproval, and Authorization context keep their ownership and semantics. Confirm that the only new concepts are UI state and projections: ConsentDraft, ConnectionState, Agent Origin Label, the Delegation list projection, and browser preferences (`aib.theme`: values `light, dark, system`, default `system`, scope Browser; `aib.sidebar-collapsed`: values `true, false`, default `false`, scope Browser). Correct any drift from the 2026-09-26 clarifications in `spec.md`
 - [ ] T006 [P] Update the Glossary (§12) in `ARCHITECTURE.md`:
-      - Rename "Connection State (feature 046 presentation)" to feature 047. List its states verbatim: "Connected", "Needs re-authentication", "Expired", "No connection". Add no Missing scopes state
+      - Rename "Connection State (feature 046 presentation)" to feature 047. List its states verbatim: "Connected", "Needs re-authentication", "Expired", "No connection". State that No connection appears only for a service an agent requires but the user has not connected. Add no Missing scopes state
+      - Add **Delegation**: a principal's unexpired UserGrant to one agent, as listed on `/delegations` under the Agents navigation item
       - Add **Consent Draft**: transient selections, existing grant, duration, custom expiry, and dirty state. It is never persisted beyond the existing `consent_state` URL parameter
       - Add **Agent Origin Label**: "Verified domain: host" for validated CIMD metadata, "Registered by your administrator" when CIMD metadata is absent, or "Unverified" for a CIMD request without domain trust. It derives only from the authorization session and never claims legal publisher verification
       - Add **Delta Re-consent**: a decision on only the access that is not already in `granted_permission_sets`
@@ -80,7 +81,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - Re-consent never widens a grant beyond the user's selection
       - Deny creates nothing, revokes nothing, and constructs no redirect
       - An invalid or expired authorization session is a decision error, never a console fallback
-      - Console views carry no origin label
+      - Console views carry no Agent Origin Label
       - Preferences never submit or preselect a decision
       - The browser never calls the gateway long-poll `GET /api/approvals`
 
@@ -108,8 +109,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - `/api/approvals/pending`, and the permanent approval list and revoke
       - Approval get, approve, deny, and scope preview
 
-      Record the map in `specs/047-redesign-consent-console/cutover-inventory.md`. Confirm that no browser code calls `GET /api/approvals`
-- [ ] T011 [P] Record the stakeholder confirmation of API-005 in `specs/047-redesign-consent-console/cutover-inventory.md` for the PR description. API-005 allows no endpoint, response-field, persistence, or OAuth2/token contract change (spec Clarifications, 2026-09-26). The feature does not affect `api/admin/openapi.yaml`
+      Record the map in `specs/047-redesign-consent-console/cutover-inventory.md`. Confirm that each documented response matches its handler; the session-list documentation was corrected to `{data: {sessions: [UserSessionSummary]}}` on 2026-09-27 (spec Clarifications). Confirm that no browser code calls `GET /api/approvals`
+- [ ] T011 [P] Record the stakeholder confirmations in `specs/047-redesign-consent-console/cutover-inventory.md` for the PR description: API-005 allows no endpoint, response-field, runtime-response, persistence, or OAuth2/token contract change (spec Clarifications, 2026-09-26), and the documentation-only correction of the session-list response in `api/enduser/openapi.yaml` and `docs/reference/api.md` (spec Clarifications, 2026-09-27). The feature does not affect `api/admin/openapi.yaml`
 
 **Checkpoint**: No API change confirmed and recorded
 
@@ -133,19 +134,19 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
       Every later task is blocked until this task is done
 - [ ] T014 Review `web/src/design-system/docs/INDEX.md`, `DECISION_TREES.md`, `COMPONENT_PAIRING_GUIDE.md`, and `COMMON_MISTAKES.md`. Then add a "Design system" section to `specs/047-redesign-consent-console/cutover-inventory.md` that records:
-      - (a) The target of each component:
-        - `primitives/{Button,Badge,Separator,Avatar,Wordmark}`
-        - `inputs/{Input,Select,Switch,Checkbox,RadioGroup,TextArea,DatePicker}`
-        - `overlays/{Dialog,DropdownMenu,Popover,Tooltip,Sheet}`
-        - `navigation/Tabs`
-        - `data-display/{Card,Table,TruncatedText}`
-        - `feedback/{Skeleton,Toaster,Alert,EmptyState,InlineError,ErrorBoundary,GlobalErrorBoundary}`
-        - `advanced/{Accordion,Command}`
-        - `layout/{ConsoleShell,DecisionShell,PageHeader}`
-        - `web/src/design-system/theme/ThemeChoice`
+      - (a) The target of each component, marked as replaced in place (the existing directory is rewritten), new, or replacing a differently named component:
+        - `primitives/`: Button, Badge, and Avatar in place; Separator replaces Divider; Wordmark is new
+        - `inputs/`: Select, Switch, Checkbox, TextArea, and DatePicker in place; Input replaces TextInput; RadioGroup replaces Radio
+        - `overlays/`: Popover and Tooltip in place; Dialog replaces Modal; DropdownMenu replaces Dropdown; Sheet is new
+        - `navigation/`: Tabs in place
+        - `data-display/`: Card and Table in place; TruncatedText is new
+        - `feedback/`: Skeleton, Alert, EmptyState, InlineError, ErrorBoundary, and GlobalErrorBoundary in place; Toaster replaces Toast
+        - `advanced/`: Accordion in place; Command is new
+        - `layout/`: ConsoleShell, DecisionShell, and PageHeader are new and replace AppLayout and PageTransition
+        - `web/src/design-system/theme/ThemeChoice` is new
       - (b) The replaced components to delete: `overlays/Modal`, `overlays/Dropdown`, `inputs/TextInput`, `inputs/Radio`, `primitives/Divider`, `layout/AppLayout`, `layout/PageTransition`, `feedback/Toast`, and all of `web/src/components/ui/`
       - (c) The universal components added to the design system: Wordmark, TruncatedText, ThemeChoice, and the three shells
-      - (d) The story state matrix that every component must cover in light and dark themes: default, hover and focus-visible, disabled, error, loading, and overlay-open where applicable
+      - (d) The story state matrix that every component must cover in light and dark themes: default, hover and focus-visible, disabled, error, loading, and overlay-open where applicable. Every story also gets a reviewed visual-regression baseline per theme (T065)
       - (e) The self-hosted assets:
         - Zalando Sans and Inter WOFF2 files (latin and latin-ext subsets) and the existing JetBrains Mono files in `web/public/fonts/`
         - Outlined wordmarks, favicon, and compact mark in `web/public/brand/`
@@ -179,9 +180,9 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - `StartRequestRecorder()` and `RecordedRequests()`: record every request URL and method, including subresources
       - `HasHorizontalPageOverflow(ctx)`: `scrollWidth > clientWidth` on `document.documentElement`
       - `EmulateZoom(percent)`: a 1280×1080 viewport divided by the zoom factor; for example, 640×540 at 200%
-      - `PrimaryAccentActionCount(ctx)`: visible elements that match `[data-variant="primary"]`
+      - `PrimaryAccentActionCount(ctx)`: visible elements that match `[data-variant="primary"]` outside `aria-hidden="true"` and `inert` subtrees, so an open modal dialog counts only its own actions
       - `ActiveElementDescription(ctx)`
-      - `TakeThemedScreenshots(ctx, stem)`: writes `<stem>_light.png` and `<stem>_dark.png` after the preference changes, the page reloads, the fonts load, and queries settle
+      - `TakeThemedScreenshots(ctx, stem)`: writes `<stem>_light.png` and `<stem>_dark.png` after the preference changes, the page reloads, the fonts load, and queries settle. Scenarios call it before they change server state
 - [ ] T023 [P] Create `tests/e2e/pages/console_shell.go` with a `ConsoleShell` page object:
       - Navigation to Agents, Connections, Approvals, and Settings
       - `CollapseSidebar`, `IsSidebarCollapsed`, and `HasSidebar`
@@ -191,36 +192,37 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - `WordmarkVariant`
       - `LiveRegionText`
 - [ ] T024 [P] Create `tests/e2e/pages/delegations_page.go` with a `DelegationsPage` page object:
-      - `Navigate`, `Search(text)`, and `FilterByStatus(label)`
-      - `Rows()`: agent, services, expiry, and status for each row
+      - `Navigate` and `Search(text)`
+      - `Rows()`: agent, permission-set count, and expiry for each row
+      - `ColumnHeaders()`
       - `VisibleRowCount`
       - `ClickView(agent)` and `ClickRevoke(agent)`
       - `ConfirmRevoke` and `CancelRevoke`
       - `RevokeDialogText`, `EmptyStateText`, and `RowIsPending(agent)`
 - [ ] T025 [P] Create `tests/e2e/pages/settings_page.go` with a `SettingsPage` page object: `Navigate`, `ChooseTheme(label)`, `SelectedTheme`, and `HasApprovalPersistenceControl`
 - [ ] T026 [P] Add decision and console-detail methods to `tests/e2e/pages/consent_page.go`:
-      - Decision view: `OriginBadgeText`, `HasLocalhostBanner`, and `PermissionGroups()` (order, required flag, name, description, and already-granted state)
+      - Decision view: `OriginLabelText`, `HasLocalhostBanner`, and `PermissionGroups()` (order, required flag, name, description, already-granted state, and read-only state)
       - Permission groups: `ExpandPermissionGroup`, `GroupServices`, `GroupHasRiskIndicator`, and `GroupShowsScopeStrings`
-      - Duration and actions: `ChooseDuration(label)`, `SetCustomDate`, `ClickAllow`, `ClickDeny`, `DecisionOutcomeText`, and `DecisionErrorText`
-      - Console detail: `OpenTab(label)`, `IsSaveBarVisible`, `CancelChanges`, `SaveChanges`, `OpenOverflowMenu`, and `ChooseRevokeAllAccess`
+      - Duration and actions: `ChooseDuration(label)`, `SelectedDuration`, `CustomDateValue`, `SetCustomDate`, `ClickAllow`, `ClickDeny`, `DecisionOutcomeText`, and `DecisionErrorText`
+      - Console detail: `OpenTab(label)`, `ConnectionsTabRows()` (service, state label, and action), `IsSaveBarVisible`, `CancelChanges`, `SaveChanges`, `OpenOverflowMenu`, and `ChooseRevokeAllAccess`
 - [ ] T027 [P] Add these methods to `tests/e2e/pages/approval_page.go`: `ExpandArguments`, `ArgumentsText`, `ActingUser`, `RiskLabel`, `ApprovalScopeText`, `ClickApproveOnce`, `ClickApproveAndRemember`, `ChooseRememberDuration`, `HasDecisionActions`, and `ResolvedOutcomeText`
 - [ ] T028 [P] Add these methods to `tests/e2e/pages/tool_authorizations_page.go`: `SectionOrder`, `PendingRows`, `ApproveRow`, `DenyRow`, `ChoosePersistenceForRow`, `ScopePreviewForRow`, `StandingDecisions`, and `RevokeStanding(tool)`
-- [ ] T029 [P] Add these methods to `tests/e2e/pages/sessions_page.go`: `ConnectionRows` (provider, account, scope count, state label, and creation time), `ClickReconnect`, `ClickRefresh`, `ClickDisconnect`, `DisconnectDialogText`, and `ConfirmDisconnect`
+- [ ] T029 [P] Add these methods to `tests/e2e/pages/sessions_page.go`: `ConnectionRows` (provider, scope count, state label, action, and creation time), `ClickReconnect`, `ClickRefresh`, `ClickDisconnect`, `DisconnectDialogText`, and `ConfirmDisconnect`
 - [ ] T030 [P] Add deterministic fixtures in `tests/e2e/fixtures/consent_ui_v2.go`, reusing the builders in `agents.go`, `grants.go`, `services.go`, `sessions.go`, and `principals.go`:
       - Agents:
         - An agent with two required and two optional permission sets across two services
-        - An existing grant that covers one optional set (AS-02)
-        - An expired grant
+        - An existing grant with a future `valid_until` that covers one optional set (AS-02)
+        - An expired grant, which the existing delegation list excludes (AS-06)
         - Fourteen granted agents (SC-005)
         - An administrator-registered agent without CIMD
+        - An agent that requires a service the principal has not connected (No connection, AS-10)
         - A localhost CIMD client and a validated-domain CIMD client
         - An agent with a 300-character name that contains `<script>` markup and has no publisher
-      - Sessions, one for each ConnectionState precedence row:
-        - No session
-        - A refresh rejected by the mock upstream
-        - An expired refresh token
-        - An expired access token with a refresh token that has not refreshed yet
+      - Stored sessions for the ConnectionState precedence rows that `/sessions` can show:
         - Usable access
+        - An expired refresh token
+        - An expired access token with a refresh token, on a service whose mock upstream accepts refresh (AS-11)
+        - An expired access token with a refresh token, on a service whose mock upstream rejects refresh, so the refresh call returns `502`
       - Approvals:
         - Pending, approved, denied, and expired tool approvals, including one without `risk_level`
         - Standing permanent allow and deny decisions
@@ -228,19 +230,19 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - A fixed clock value for screenshot timestamps
 - [ ] T031 Add suite helpers in `tests/e2e/frontend/consent_ui_v2_helpers_test.go`:
       - `startAuthorizationRequest(...)`: drives the browser through the real `/oauth2/authorize` flow, using the pattern in `tests/e2e/frontend/cimd_flow_test.go`, and waits for `/agents/:id?session_token=…`. Never build a session token by hand
-      - `forEachTheme(body)`: runs one scenario body in light and dark within a single `It`
+      - `forEachTheme(body)`: runs a read-only body once per theme within a single `It`, each time in a fresh browser context with `SetThemePreference`. It fails the test if the body issues a non-GET request to `/api/`. Only AS-15 uses it. AS-14 and AS-17 switch themes as their subject, and every other scenario runs once in the default theme
       - `expectNoThirdPartyOrGatewayRequests(recorded)`: asserts that every automatic request is same-origin and that none is `GET /api/approvals`
 - [ ] T032 Create `tests/e2e/frontend/consent_ui_v2_test.go` with `Describe("Consent UI v2")` and `Context("Decide on an agent request")`. Add one `It` each for AS-01, AS-02, and AS-03, with the exact identifier in the `It` text and a spec reference comment.
 
       AS-01 asserts:
-      - The origin badge for each CIMD fixture, and the localhost banner
+      - The Agent Origin Label for each CIMD fixture, and the localhost banner
       - Required groups before optional groups. Each group shows a name, description, and services, with no risk indicator and no scope strings
       - "Until revoked", "30 days", and "Custom date"
       - Exactly one primary accent action ("Allow") and a secondary Deny
       - The next-steps text
       - No sidebar
 
-      AS-02 asserts that previously granted groups are collapsed and checked, only new groups are decisions, and the saved grant equals prior ∪ newly selected.
+      AS-02 asserts that previously granted groups are collapsed, checked, and read-only, only new groups are decisions, the duration starts as "Custom date" at the existing `valid_until`, and the saved grant equals prior ∪ newly selected with the existing `valid_until` unchanged.
 
       AS-03 asserts:
       - The chosen duration persists through a required-service connect callback and Allow's validated continuation
@@ -267,9 +269,9 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [ ] T034 Add `Context("Find and revoke an agent")` to `tests/e2e/frontend/consent_ui_v2_test.go`.
 
       AS-06 asserts:
-      - Search by name and filter by status
-      - Each row shows the agent, services, expiry, and status. The expired fixture is never "Active"
-      - No verification column
+      - Search by name
+      - Each row shows the agent, the number of granted permission sets, and the expiry ("Until revoked" or a date). The expired-grant fixture is absent
+      - No status column, status filter, or Agent Origin Label column
       - View navigates to the agent, and Revoke requires confirmation
       - At least 12 rows are visible at 1920×1080 (SC-005)
 
@@ -282,8 +284,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [ ] T035 Add `Context("Change an agent grant")` to `tests/e2e/frontend/consent_ui_v2_test.go`.
 
       AS-08 asserts that the console detail, opened without `session_token`, has:
-      - A sidebar, identity, links, and Permissions and Sessions tabs
-      - No origin badge
+      - A sidebar, identity, links, and Permissions and Connections tabs
+      - No Agent Origin Label
       - Locked required groups and editable optional groups
       - No save bar until an edit. Cancel restores the selections, and Save persists them (assert storage)
 
@@ -295,7 +297,11 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       Capture `agent_detail_{light,dark}.png`
 - [ ] T036 Add `Context("Manage connections")` to `tests/e2e/frontend/consent_ui_v2_test.go`.
 
-      AS-10 asserts that each ConnectionState fixture shows its exact label ("Connected", "Needs re-authentication", "Expired", or "No connection"), plus the provider, account when known, scope count, creation time, and matching action. The text "Missing scopes" appears nowhere.
+      AS-10 asserts:
+      - On `/sessions`, each stored-session fixture shows its exact label ("Connected", "Expired", or "Needs re-authentication" with Refresh), plus the provider, scope count, creation time, and matching action
+      - After Refresh on the rejecting fixture, that row shows "Needs re-authentication" with Reconnect
+      - `/sessions` has no row for the unconnected service, and the agent's Connections tab shows it as "No connection" with Connect
+      - The text "Missing scopes" appears nowhere
 
       AS-11 asserts:
       - Reconnect through the mock upstream callback returns and updates the state
@@ -325,7 +331,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - System mode follows an emulated OS change
       - `color-scheme` matches the theme
 
-      AS-15 runs at 320 px width and at emulated 200% zoom, in both themes. On every console route and both decision views, it asserts:
+      AS-15 runs at 320 px width and at emulated 200% zoom, in both themes through `forEachTheme`. On every console route and both decision views, it asserts:
       - No horizontal page overflow
       - Tab reaches every action with visible focus
       - The local wordmark is present: black in light mode, white in dark mode
@@ -342,13 +348,14 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - The second principal's records never appear
 
       Capture `settings_{light,dark}.png`
-- [ ] T040 Add a `gate` mode to `tools/imgdiff/main.go`, with tests in `tools/imgdiff/`: `imgdiff gate --actual <dir> --baseline <dir> --required <comma-separated stems> --threshold 0.5 --out <dir>`.
-      - It compares `<stem>_light.png` and `<stem>_dark.png` for `delegations`, `agent_consent`, `agent_detail`, `sessions`, `approvals`, `approval_review`, and `settings`
-      - It writes the expected, actual, and diff PNG for each image
-      - It exits non-zero on a missing baseline, an unreviewed new image, or a difference above the threshold
+- [ ] T040 Add a `gate` mode to `tools/imgdiff/main.go`: `imgdiff gate --actual <dir> --baseline <dir> --required <comma-separated stems> --manifest <file> --threshold 0.5 --out <dir>`. First write table-driven tests in `tools/imgdiff/gate_test.go` for a passing set, a gated capture without a baseline, a gated baseline without a capture, a difference above the threshold, and an ungated capture that the gate ignores. Confirm that they fail, then implement:
+      - It gates `<stem>_light.png` and `<stem>_dark.png` for the required stems `delegations`, `agent_consent`, `agent_detail`, `sessions`, `approvals`, `approval_review`, and `settings`, plus every stem listed in the manifest `tests/e2e/screenshots/visual-gate.txt`
+      - Captures that are neither required nor in the manifest are documentation and are ignored
+      - It writes the expected, actual, and diff PNG for each gated image
+      - It exits non-zero on a gated capture without a baseline (unreviewed), a gated baseline without a capture (stale), or a difference above the threshold
 
-      Add a `test-e2e-frontend-visual` recipe to `justfile`. It runs the frontend suite with `E2E_CAPTURE_SCREENSHOTS=true` and `GINKGO_FRONTEND_PROCS=1`, then runs `go run ./tools/imgdiff gate` from `tests/e2e/frontend/coverage/screenshots/` to `tests/e2e/screenshots/`, with output in `tests/e2e/frontend/coverage/visual-diff/`
-- [ ] T041 Add a blocking `just test-e2e-frontend-visual` step to the frontend E2E job in `.github/workflows/ci.yml`. On failure, upload `tests/e2e/frontend/coverage/visual-diff/`. Change the "Sync screenshots" and "Commit and push" steps in `.github/workflows/screenshots.yml` so that they never overwrite the reviewed route baselines from T040. Baselines change only in a reviewed commit
+      Add a `test-e2e-frontend-visual` recipe to `justfile`. It runs the frontend suite with `E2E_CAPTURE_SCREENSHOTS=true` and `GINKGO_FRONTEND_PROCS=1`, then runs `go run ./tools/imgdiff gate` from `tests/e2e/frontend/coverage/screenshots/` to `tests/e2e/screenshots/` with `--manifest tests/e2e/screenshots/visual-gate.txt`, with output in `tests/e2e/frontend/coverage/visual-diff/`. Create the manifest with a comment header and no stems; T149 adds the reviewed state stems
+- [ ] T041 Add a blocking `just test-e2e-frontend-visual` step to the frontend E2E job in `.github/workflows/ci.yml`. On failure, upload `tests/e2e/frontend/coverage/visual-diff/`. In `.github/workflows/screenshots.yml`, replace the "Sync screenshots" and "Commit and push" steps: the workflow no longer writes to or commits `tests/e2e/screenshots/`, and instead uploads every capture from `tests/e2e/frontend/coverage/screenshots/` as a review artifact. Every baseline changes only in a reviewed commit
 - [ ] T042 Verify the red phase. Run `just test-e2e-frontend`. Every new AS `It` must compile and fail on its behavioral expectation. Record the failing assertion for each scenario in a "Red phase" section of `specs/047-redesign-consent-console/cutover-inventory.md`. Confirm that no test uses `Skip`, `PIt`, `XIt`, a placeholder assertion, or a "red phase" comment, and that existing journeys still pass
 
 **Checkpoint**: E2E acceptance tests written and verified to fail semantically. The visual gate and screenshot stems are configured
@@ -368,7 +375,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - Development: `@fontsource-variable/zalando-sans` and `@fontsource-variable/inter` (font sources only, never imported at runtime), `@storybook/addon-vitest@10.3.5`, the Vitest 4 Playwright browser provider, `playwright`, and `culori`
 
       Keep `@headlessui/react` and `framer-motion` until T144. Run `just web-install`, and confirm that `npm --prefix web ls` reports no errors
-- [ ] T044 [P] Create the copy catalogue `web/src/copy/index.ts` (FR-027). Group the strings by view and use second-person, present-tense, action-first wording. Include these strings verbatim: "Verified domain: {host}", "Registered by your administrator", "Unverified", "Publisher not provided", "Risk not rated", "Until revoked", "30 days", "Custom date", "Allow", "Deny", "Approve once", "Approve and remember", "Revoke all access", "Save changes", "Cancel", "Connected", "Needs re-authentication", "Expired", "No connection", and "Powered by Zalando". Add the `@copy` alias to `web/vite.config.ts`, `web/vitest.config.ts`, `web/.storybook/main.ts`, and `web/tsconfig.app.json`
+- [ ] T044 [P] Create the copy catalogue `web/src/copy/index.ts` (FR-027). Group the strings by view and use second-person, present-tense, action-first wording. Include these strings verbatim: "Agentic Identity Broker", "Verified domain: {host}", "Registered by your administrator", "Unverified", "Risk not rated", "Until revoked", "30 days", "Custom date", "Allow", "Deny", "Approve once", "Approve and remember", "Revoke all access", "Save changes", "Cancel", "Connected", "Needs re-authentication", "Expired", "No connection", "Connect", "Reconnect", "Refresh", "Disconnect", "Light", "Dark", "System", "Show more", "Show less", and "Powered by Zalando". Pages and application components take every user-facing string from `@copy`. Design-system components receive user-facing strings through props and never import `@copy`. Add the `@copy` alias to `web/vite.config.ts`, `web/vitest.config.ts`, `web/.storybook/main.ts`, and `web/tsconfig.app.json`
 - [ ] T045 [P] Write RuleTester cases in `web/eslint-rules/no-raw-palette.test.js`, run by Vitest.
       - Reject Tailwind palette utilities (for example, `bg-blue-600`, `text-neutral-500`, `border-white`, and `from-amber-50`)
       - Reject arbitrary color literals (`bg-[#fff]`, `text-[oklch(…)]`, and `[rgb(…)]`)
@@ -436,33 +443,34 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 ### Owned components
 
-- [ ] T058 [P] In `web/src/design-system/components/primitives/{Button,Badge,Separator,Avatar,Wordmark}/`:
-      - Copy and own the shadcn Radix sources for Button, Badge, and Separator:
+- [ ] T058 [P] In `web/src/design-system/components/primitives/{Button,Badge,Separator,Avatar,Wordmark}/`, first write each component's `.test.tsx` (variant attributes, `data-variant`, the Avatar off-origin fallback, and the Wordmark accessible name and variant) and confirm that it fails. Then:
+      - Replace Button and Badge in place with owned shadcn Radix sources, and add Separator, which replaces Divider:
         - Button: variants `primary` (accent), `secondary`, `outline`, `ghost`, and `destructive`. It renders `data-variant` and supports `asChild`. Its loading state uses Lucide `Loader2` and `aria-busy`
         - Badge: `neutral`, `outline`, `success`, `warning`, `danger`, and `info`
-      - Migrate Avatar. It renders only same-origin sources or a local fallback, never an off-origin `src`
-      - Add Wordmark. It renders both local wordmarks and shows the one that matches `[data-theme]` through CSS, so it never flashes. Its accessible name is "Agentic Identity Broker", and its `compact` variant uses `aib-mark.svg`
+      - Replace Avatar in place. It renders only same-origin sources or a local fallback, never an off-origin `src`
+      - Add Wordmark. It renders both local wordmarks and shows the one that matches `[data-theme]` through CSS, so it never flashes. Its accessible name comes from a required `label` prop, and its `compact` variant uses `aib-mark.svg`
 
-      Give each component stories for the T014 state matrix and a `.test.tsx` for variant attributes and the Avatar off-origin fallback
-- [ ] T059 [P] In `web/src/design-system/components/inputs/{Input,Select,Switch,Checkbox,RadioGroup,TextArea,DatePicker}/`:
-      - Copy and own the Radix sources for Input, Select, Switch, Checkbox, and RadioGroup
-      - Migrate TextArea
-      - Migrate DatePicker to a native `<input type="date">` with a minimum date and an inline validation message
+      Give each component stories for the T014 state matrix
+- [ ] T059 [P] In `web/src/design-system/components/inputs/{Input,Select,Switch,Checkbox,RadioGroup,TextArea,DatePicker}/`, first write tests for labels, `aria-invalid`, keyboard operation, and the DatePicker minimum date, and confirm that they fail. Then:
+      - Replace Select, Switch, and Checkbox in place with owned Radix sources
+      - Add Input, which replaces TextInput, and RadioGroup, which replaces Radio
+      - Migrate TextArea in place
+      - Migrate DatePicker in place to a native `<input type="date">` with a minimum date and an inline validation message
 
-      Add stories and tests for labels, `aria-invalid`, and keyboard operation
-- [ ] T060 [P] Copy and own Dialog, DropdownMenu, Popover, Tooltip, and Sheet in `web/src/design-system/components/overlays/{Dialog,DropdownMenu,Popover,Tooltip,Sheet}/`. Use CSS transitions and `@starting-style` (120–200 ms, no movement under reduced motion). Add stories with overlay-open states in both themes, and tests for focus trapping, Escape, and focus return
-- [ ] T061 [P] Add these components with stories and tests:
-      - Tabs (Radix) in `web/src/design-system/components/navigation/Tabs/`
-      - Card in `web/src/design-system/components/data-display/Card/`
-      - The owned Table presentation parts in `web/src/design-system/components/data-display/Table/`: `Table`, `TableHeader`, `TableBody`, `TableRow`, `TableHead`, `TableCell`, and `TableCaption`. They use compact row density. Below the `sm` breakpoint, rows stack as label and value groups that keep every action. A `Narrow` story with a play function asserts that a 320 px viewport has no horizontal overflow and that all row actions stay visible
-      - TruncatedText in `web/src/design-system/components/data-display/TruncatedText/`: escaped text, a CSS line clamp, and a "Show more"/"Show less" toggle with `aria-expanded`
-- [ ] T062 [P] In `web/src/design-system/components/feedback/`:
-      - Add Skeleton and Toaster. Toaster wraps Sonner, follows `useTheme()`, and makes polite announcements
-      - Migrate Alert, EmptyState (with an optional wordmark), InlineError, ErrorBoundary, and GlobalErrorBoundary to semantic tokens
+      Add stories for the T014 state matrix
+- [ ] T060 [P] In `web/src/design-system/components/overlays/{Dialog,DropdownMenu,Popover,Tooltip,Sheet}/`, first write tests for focus trapping, Escape, and focus return, and confirm that they fail. Then own the shadcn Radix sources: replace Popover and Tooltip in place, add Dialog (replacing Modal) and DropdownMenu (replacing Dropdown), and add Sheet. Use CSS transitions and `@starting-style` (120–200 ms, no movement under reduced motion). Add stories with overlay-open states in both themes
+- [ ] T061 [P] For each component below, first write its tests and confirm that they fail, then build it with stories:
+      - Replace Tabs (Radix) in place in `web/src/design-system/components/navigation/Tabs/`
+      - Replace Card in place in `web/src/design-system/components/data-display/Card/`
+      - Replace `web/src/design-system/components/data-display/Table/` in place with owned Table presentation parts: `Table`, `TableHeader`, `TableBody`, `TableRow`, `TableHead`, `TableCell`, and `TableCaption`. They use compact row density. Below the `sm` breakpoint, rows stack as label and value groups that keep every action. A `Narrow` story with a play function asserts that a 320 px viewport has no horizontal overflow and that all row actions stay visible
+      - Add TruncatedText in `web/src/design-system/components/data-display/TruncatedText/`: escaped text, a CSS line clamp with a `lines` prop (2 for names and descriptions, 1 in table cells), and an expand toggle with `aria-expanded` whose labels come from required `expandLabel` and `collapseLabel` props
+- [ ] T062 [P] In `web/src/design-system/components/feedback/`, first write tests for Toaster announcements and theme, Skeleton, and the migrated components, and confirm that they fail. Then:
+      - Replace Skeleton in place, and add Toaster, which replaces Toast. Toaster wraps Sonner, follows `useTheme()`, and makes polite announcements
+      - Migrate Alert, EmptyState (with an optional wordmark), InlineError, ErrorBoundary, and GlobalErrorBoundary in place to semantic tokens
 
-      Add stories and tests
-- [ ] T063 [P] Copy and own Accordion (Radix) and Command (cmdk) in `web/src/design-system/components/advanced/{Accordion,Command}/`. No barrel that decision routes import may re-export `advanced/Command` or `data-display/Table`, so consumers import the concrete module path. Add stories and keyboard-navigation tests
-- [ ] T064 Build `web/src/design-system/theme/ThemeChoice.tsx` with a story and `ThemeChoice.test.tsx`. It is a RadioGroup of Light, Dark, and System, wired to `useTheme()`. It reflects the current preference, calls `setTheme`, and is keyboard operable
+      Add stories for the T014 state matrix
+- [ ] T063 [P] In `web/src/design-system/components/advanced/{Accordion,Command}/`, first write keyboard-navigation tests and confirm that they fail. Then replace Accordion (Radix) in place and add Command (cmdk) from owned shadcn sources. No barrel that decision routes import may re-export `advanced/Command` or `data-display/Table`, so consumers import the concrete module path. Add stories
+- [ ] T064 First write `web/src/design-system/theme/ThemeChoice.test.tsx` and confirm that it fails. Then build `web/src/design-system/theme/ThemeChoice.tsx` with a story. It is a RadioGroup of Light, Dark, and System, wired to `useTheme()`, with option labels from a required `labels` prop. It reflects the current preference, calls `setTheme`, and is keyboard operable
 
 ### Storybook gate
 
@@ -470,11 +478,13 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - In `web/.storybook/preview.ts`, use `withThemeByDataAttribute` (`light` and `dark`, with the `data-theme` attribute on `html`). Remove the cream, sand, and navy backgrounds, and set `parameters.a11y.test = 'error'`
       - Add `@storybook/addon-vitest` to `web/.storybook/main.ts`
       - Convert `web/vitest.config.ts` to three projects: `unit` (the current jsdom configuration), `storybook-light`, and `storybook-dark`. The two Storybook projects run in browser mode with headless Playwright Chromium, and each applies its theme global through project annotations in `web/.storybook/vitest.setup.ts`
+      - Add story visual regression (Principle XI). In `web/.storybook/vitest.setup.ts`, add a Vitest-only project-level `afterEach` annotation that waits for fonts and asserts `toMatchScreenshot('<story id>-<theme>')` on the story root. Configure `browser.expect.toMatchScreenshot` with the pixelmatch comparator and a `resolveScreenshotPath` that stores Linux Chromium baselines as `web/.storybook/__screenshots__/<story id>-<theme>.png`
 - [ ] T066 Add Storybook recipes and a CI gate:
-      - Add `web-storybook-build` (which wraps `npm --prefix web run build-storybook`) and `web-storybook-test` (which runs both Storybook projects) to `justfile`
+      - Add `web-storybook-build` (which wraps `npm --prefix web run build-storybook`), `web-storybook-test` (which runs both Storybook projects, including the screenshot comparison, and never updates baselines), and `web-storybook-visual-candidates` (which runs both projects with `--update`) to `justfile`
+      - Add a step to `.github/workflows/screenshots.yml` that runs `just web-storybook-visual-candidates` and uploads the changed images in `web/.storybook/__screenshots__/` as a review artifact without committing them. Review and commit the initial baselines from that artifact
       - Restrict `web-test` and `web-test-coverage` to the `unit` project
       - Add a blocking step to the web job in `.github/workflows/ci.yml` that runs `npx playwright install --with-deps chromium` first
-      - Prove the gate with a temporary low-contrast story that fails both projects. Remove that story before you commit
+      - Prove the gate with a temporary low-contrast story, and separately with a temporary style change to an existing story; each must fail both projects. Remove both before you commit
 
 ### Data layer and shared UI-state models
 
@@ -493,17 +503,18 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
         - A second action on the same record is disabled
         - Lists, details, and the pending count are invalidated on settle
         - Success is reported only after the server accepts the revocation, and nothing retries automatically
-- [ ] T068 Update `web/src/services/api/consent.ts`, `sessions.ts`, and `approvals.ts`:
+- [ ] T068 First extend `web/src/services/api/consent.test.ts` and `client.test.ts`, and add `sessions.test.ts` and `approvals.test.ts`. Assert that every read forwards its `signal` to `apiClient`, that no read or mutation touches `apiCache`, and that a 401 notifies auth-loss subscribers. Confirm that they fail. Then update `web/src/services/api/consent.ts`, `sessions.ts`, and `approvals.ts`:
       - Every read accepts `{ signal?: AbortSignal }` and forwards it to `apiClient`
       - Remove every `apiCache` read, write, and invalidation, because TanStack Query owns caching
 
-      Update `web/src/services/api/consent.test.ts` to match. In `web/src/services/api/client.ts`, expose an auth-loss subscription that fires on a 401
+      In `web/src/services/api/client.ts`, expose an auth-loss subscription that fires on a 401
 - [ ] T069 Implement `web/src/services/query/queryClient.ts`, `queryKeys.ts`, and `QueryProvider.tsx`, following the "Data and mutation contract" section in `contracts/ui-and-configuration.md`. Mutations never retry. Queries retry a bounded number of times and never retry a 4xx
 - [ ] T070 Implement `web/src/hooks/optimisticRevoke.ts` and `web/src/hooks/usePendingApprovals.ts`. `usePendingApprovals` is one shared console-level query for `/api/approvals/pending`, with `refetchInterval: 10_000`, `refetchIntervalInBackground: false`, `refetchOnWindowFocus: true`, and a stale flag on error
 - [ ] T071 [P] Write `web/src/components/consent/consentDraft.test.ts`. It asserts:
       - Required groups come first, then optional groups
       - Required groups and required services are locked
-      - Groups in `granted_permission_sets` are marked already granted (collapsed and checked) and are excluded from new decisions
+      - Groups in `granted_permission_sets` are marked already granted (collapsed, checked, and read-only in decision context) and are excluded from new decisions
+      - On re-consent, the initial duration is Until revoked for a null `valid_until` and Custom date at the existing `valid_until` otherwise. Unless the user changes the duration, `toGrantRequest()` sends the existing `valid_until` unchanged; a changed duration applies to the whole grant
       - `consent_state` from the URL restores the selections
       - `toGrantRequest()` returns existing ∪ newly selected services. It never drops an existing selection and never adds an unselected one
       - Dirty detection works, and `reset()` restores the loaded state
@@ -511,18 +522,20 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - Its output matches the `valid_until` format that `web/src/components/consent/GrantValidityControl.tsx` and `web/src/hooks/useUpdateValidity.ts` produce today
 - [ ] T072 Implement `web/src/components/consent/consentDraft.ts` with the ConsentDraft transitions from data-model.md. It adds no persistence beyond the existing `consent_state` URL parameter
 - [ ] T073 [P] Write `web/src/components/sessions/connectionState.test.ts`. It covers each row of the data-model.md precedence table, in order:
-      - "No session" → No connection, with Connect
-      - "Known rejected refresh result or other authoritative unusable-token result" → Needs re-authentication, with Reconnect
+      - "No session for a service the agent requires" (`connectionStatus: not_connected`) → No connection, with Connect. Only the agent Connections tab and the consent service prompt use this row
+      - "Known rejected refresh result": a `409` or `502` response to the refresh call in the current page → Needs re-authentication, with Reconnect
       - "Refresh token expired, or access expired without usable refresh capacity" → Expired, with Reconnect
       - "Access expired with apparently usable refresh token, but refresh not yet successful" → Needs re-authentication with a refresh explanation, with Refresh when supported and Reconnect otherwise
       - "Usable access" → Connected, with refresh and a confirmed disconnect
       - "Session read fails" → an error or an explicitly stale prior state, never Connected
 
       It also asserts:
-      - A refresh failure caused only by the network keeps the last authoritative state and marks it stale
+      - A refresh failure caused only by the network, or any other non-authoritative failure, keeps the last authoritative state and marks it stale
+      - A `404` refresh response requests a list refetch
+      - A reload discards a known rejected refresh result, so the session fields decide the state again
       - An unknown token lifetime follows the existing usability semantics
       - No state named Missing scopes exists
-- [ ] T074 Implement `web/src/components/sessions/connectionState.ts`, using only the existing `SessionSummary` fields from `web/src/services/api/sessions.ts`
+- [ ] T074 Implement `web/src/components/sessions/connectionState.ts`, using only the existing `SessionSummary` fields from `web/src/services/api/sessions.ts`, refresh responses in the current page, and `ServiceRequirementForUser.connectionStatus`
 - [ ] T075 [P] Write these tests:
       - `web/src/hooks/useAgentGrant.test.ts`: the grant read is keyed by principal and agent. `useSaveGrant` waits for the server, never updates optimistically, and invalidates the grant, the delegations list, and the agent detail
       - `web/src/hooks/useRevokeGrant.test.ts`: revocation uses `optimisticRevoke`
@@ -549,7 +562,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - `web/src/App.tsx`: layout routes, with every page lazy-loaded, and a `LoadingFallback` built from Skeleton
 
       Existing pages render inside the new layouts until their story replaces them. `ToastProvider` stays mounted until T142
-- [ ] T081 [P] Write `web/build/decisionBundle.test.ts` as a Vitest `bundle` project that reads `web/dist/.vite/manifest.json`. Take the static import graph of the entry and the decision-route chunks (`AgentDecisionPage` and `ApprovalPage`), together with their CSS. Assert that it is under 150 kB gzip-compressed and contains no module from `@tanstack/react-table`, `cmdk`, `data-display/Table`, or `advanced/Command`
+- [ ] T081 [P] Write `web/build/decisionBundle.test.ts` as a Vitest `bundle` project that reads `web/dist/.vite/manifest.json`. For each decision route (`AgentDecisionPage` and `ApprovalPage`) separately, take the static import graph of the entry and that route's chunk, together with their CSS. Assert that each graph is under 150 kB gzip-compressed (SC-002 applies to the consent graph; the approval graph uses the same budget) and contains no module from `@tanstack/react-table`, `cmdk`, `data-display/Table`, or `advanced/Command`
 - [ ] T082 Enable `build.manifest` in `web/vite.config.ts`. Add a `web-bundle-check` recipe to `justfile` that builds and then runs the `bundle` project, and run it in the web job of `.github/workflows/ci.yml`. The recipe goes green after US1 and US2
 
 **Checkpoint**: The foundation is ready. Tokens, themes, CSP, components, Storybook gate, data layer, and shells exist. User stories can start
@@ -558,7 +571,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 ## User Story 1: Decide on an Agent Request (Priority: P1)
 
-**Goal**: A focused, single-column decision on `/agents/:id?session_token=…`. It shows a truthful origin badge, permission groups (required first), duration, one Allow action, a non-mutating Deny, and delta re-consent (AS-01, AS-02, AS-03; FR-002, FR-007–FR-012, FR-026; SR-002)
+**Goal**: A focused, single-column decision on `/agents/:id?session_token=…`. It shows a truthful Agent Origin Label, permission groups (required first), duration, one Allow action, a non-mutating Deny, and delta re-consent (AS-01, AS-02, AS-03; FR-002, FR-007–FR-012, FR-026; SR-002)
 
 **Independent Test**: Start a real authorization request. Review the groups, connect a required service, then Allow. Repeat with an existing grant and with Deny. The console is not needed
 
@@ -575,12 +588,12 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
         - DecisionShell renders without `nav`
         - A logo from a third-party origin renders the local fallback and issues no image request
         - Markup in the agent name renders as text, and a 300-character name is truncated with an accessible expand control
-        - "Publisher not provided" appears when the publisher is absent, and the governance link appears when available
-        - The origin badge and the localhost banner appear
+        - No publisher field appears, and the governance link appears when available
+        - The Agent Origin Label and the localhost banner appear
       - Access:
         - One plain-language sentence describes the requested access
         - Groups are ordered required first. Each shows a name, a description, and its services on expansion, with no risk indicator and no scope strings
-        - On re-consent, granted groups are collapsed and checked
+        - On re-consent, granted groups are collapsed, checked, and read-only, and the duration starts from the existing validity
         - The three duration choices appear, with custom-date validation
       - Actions:
         - Exactly one `data-variant="primary"` action ("Allow"), and a non-destructive Deny
@@ -592,19 +605,19 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 ### Implementation for User Story 1
 
 - [ ] T085 [US1] Implement `web/src/components/consent/origin.ts`. Move the loopback detection out of `web/src/components/consent/CIMDLocalhostWarning.tsx`
-- [ ] T086 [US1] Implement `web/src/hooks/useAgentDecision.ts`. It calls `getAgentDetail(agentId, { sessionToken, signal })` with the key `['principal', p, 'agent-decision', agentId, sessionToken]`, `gcTime: 0`, and `staleTime: 0`, so the authorization context is never cached as ordinary agent detail. It combines the result with `useAgentGrant`
+- [ ] T086 [US1] Implement `web/src/hooks/useAgentDecision.ts`. It calls `getAgentDetail(agentId, { sessionToken, signal })` with the key `['principal', p, 'agent-decision', agentId, sessionToken]`, `gcTime: 0`, and `staleTime: 0`, so the authorization context is never cached as ordinary agent detail. It combines the result with `useAgentGrant` and requests the agent detail and the grant in parallel once the principal is known, never one after the other
 - [ ] T087 [P] [US1] Build these components in `web/src/components/consent/`:
-      - `AgentIdentityHeader.tsx`: an Avatar fallback, a TruncatedText name, the publisher or "Publisher not provided", governance and documentation links with `rel="noopener noreferrer"`, and an optional origin Badge
+      - `AgentIdentityHeader.tsx`: an Avatar fallback, a TruncatedText name, governance and documentation links with `rel="noopener noreferrer"`, and an optional Agent Origin Label rendered with Badge. It shows no publisher field
       - `LocalhostBanner.tsx`: a prominent Alert that replaces `CIMDLocalhostWarning` and keeps its warning content
       - `CIMDDetails.tsx`: the existing CIMD advanced-details disclosure (client ID, redirect URI, and requested scopes), rebuilt on Accordion with monospace values
-- [ ] T088 [P] [US1] Build `web/src/components/consent/PermissionGroupList.tsx` and `PermissionGroupItem.tsx` on Accordion, Checkbox or Switch, and Badge. Each item shows a Lucide icon, the permission-set name and description, and a locked required control or an optional toggle. Service names are one expansion away. Already-granted groups are collapsed and checked. Show no risk indicator and no scope strings
+- [ ] T088 [P] [US1] Build `web/src/components/consent/PermissionGroupList.tsx` and `PermissionGroupItem.tsx` on Accordion, Checkbox or Switch, and Badge. Each item shows a Lucide icon, the permission-set name and description, and a locked required control or an optional toggle. Service names are one expansion away. Already-granted groups are collapsed, checked, and read-only in decision context. Show no risk indicator and no scope strings
 - [ ] T089 [P] [US1] Build these components in `web/src/components/consent/`:
-      - `DurationChoice.tsx`: a RadioGroup with "Until revoked", "30 days", and "Custom date", plus a DatePicker. Validation comes from `consentDraft`
+      - `DurationChoice.tsx`: a RadioGroup with "Until revoked", "30 days", and "Custom date", plus a DatePicker. Its initial value and validation come from `consentDraft`
       - `ConsentActions.tsx`: a primary Allow, a secondary Deny, and the next-steps text
       - `ServiceConnectPrompt.tsx`: connects a required service. It encodes the draft into `consent_state` and navigates to the existing `/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=…` URL
 - [ ] T090 [US1] Implement `web/src/pages/AgentDecisionPage.tsx` in DecisionShell from T085–T089, and switch the decision branch of `web/src/components/layout/AgentRoute.tsx` to it. Move the session-token, `consent_state`, redirect, and service-login logic from `web/src/pages/AgentGrantDetailPage.tsx` (about lines 47–64 and 230–272) without changing its semantics
 - [ ] T091 [US1] Update the decision-view selectors in `tests/e2e/pages/consent_page.go` only, following T004. The decision-context journeys in `cimd_consent_test.go`, `cimd_flow_test.go`, `selection_preservation_test.go`, and `permission_sets_frontend_test.go` must pass with unchanged assertions
-- [ ] T092 [US1] Run `ginkgo -v --focus "AS-0[1-3]" ./tests/e2e/frontend/` and the journeys from T091 until they pass, then run `just web-test`
+- [ ] T092 [US1] Run `ginkgo -v --focus "AS-0[1-3]" ./tests/e2e/frontend/` and the journeys from T091 until they pass, then run `just web-test`. Measure SC-002 once with T204's procedure and record it in the "Performance" section of `cutover-inventory.md`; fix a miss before continuing
 
 **Checkpoint (not a release)**: AS-01–AS-03 pass on the branch
 
@@ -655,15 +668,17 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 **Goal**: A dense, searchable `/delegations` list with a confirmed revoke and a meaningful empty state (AS-06, AS-07; FR-014; SR-001, SR-003)
 
-**Independent Test**: Search for an agent, filter by status, open it, and revoke its grant with confirmation. Inject a revoke failure. View the empty state
+**Independent Test**: Search for an agent, open it, and revoke its grant with confirmation. Inject a revoke failure. View the empty state
 
 ### Tests for User Story 3 [MANDATORY - Principle VIII] ⚠️
 
-- [ ] T101 [P] [US3] Write `web/src/hooks/useDelegations.test.ts`. It asserts that the delegations list is keyed by principal, and that revoking through `useRevokeGrant` removes only the affected row and rolls back only that row on failure
+- [ ] T101 [P] [US3] Write `web/src/hooks/useDelegations.test.ts`. It asserts that the delegations list is keyed by principal, exposes `activeGrantCount` as the permission-set count, drops a row once its `expiresAt` passes (fake timers, without a refetch), and that revoking through `useRevokeGrant` removes only the affected row and rolls back only that row on failure
 - [ ] T102 [P] [US3] Write `web/src/pages/DelegationsPage.test.tsx`. It asserts:
       - The PageHeader shows a title and a one-line purpose
-      - Table columns show the agent (fallback logo and a truncated, escaped name), the granted services, the expiry in monospace ("Never" for Until revoked), and the status. An expired grant never shows as Active, and there is no verification column
-      - Name search is case-insensitive, and the status filter offers All, Active, and Expired
+      - Table columns show the agent (fallback logo and a truncated, escaped name), the number of granted permission sets from `activeGrantCount`, and the expiry in monospace ("Until revoked" when `expiresAt` is null). There is no status column, status filter, or Agent Origin Label column
+      - A row whose `expiresAt` passes while the page is open disappears
+      - Name search is case-insensitive
+      - Row actions use non-accent variants, and the page has no accent action
       - View links to `/agents/:id`
       - Revoke opens `RevokeAgentDialog`. Confirm marks the row pending, then removes it and shows a success toast after the server succeeds. A failure restores the row and shows an error toast
       - The empty state shows the wordmark and a one-sentence explanation of a delegation
@@ -671,7 +686,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 ### Implementation for User Story 3
 
 - [ ] T103 [US3] Implement `web/src/hooks/useDelegations.ts`
-- [ ] T104 [P] [US3] Build `web/src/components/delegations/DelegationsTable.tsx` (TanStack Table with `data-display/Table` at compact density) and `web/src/components/delegations/DelegationStatusBadge.tsx`
+- [ ] T104 [P] [US3] Build `web/src/components/delegations/DelegationsTable.tsx` (TanStack Table with `data-display/Table` at compact density)
 - [ ] T105 [US3] Implement `web/src/pages/DelegationsPage.tsx`, and route `/delegations` to it in `web/src/App.tsx`
 - [ ] T106 [US3] Update the overview selectors in `tests/e2e/pages/consent_page.go` (`NavigateToOverview`, `IsOverviewRevokeButtonPresent`, and `ClickOverviewRevokeButton`), so that the overview scenarios in `tests/e2e/frontend/revoke_grant_flow_test.go` pass with unchanged assertions
 - [ ] T107 [US3] Run `ginkgo -v --focus "AS-0[67]" ./tests/e2e/frontend/` and the overview revoke journeys until they pass
@@ -692,19 +707,19 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 - [ ] T108 [P] [US4] Write `web/src/hooks/useAgentDetail.test.ts`. It asserts that the console-context agent detail is keyed `['principal', p, 'agent', agentId]` and is never requested with `session_token`
 - [ ] T109 [P] [US4] Write `web/src/pages/AgentConsolePage.test.tsx`. It asserts:
-      - The page renders in ConsoleShell. AgentIdentityHeader shows no origin badge, and links appear
-      - The page has Permissions and Sessions tabs
+      - The page renders in ConsoleShell. AgentIdentityHeader shows no Agent Origin Label and no publisher field, and links appear
+      - The page has Permissions and Connections tabs
       - Required groups are locked. Optional groups and the duration are editable
       - The sticky "Cancel"/"Save changes" bar is absent until an edit. Cancel restores the loaded selections. Save persists through `useSaveGrant` and hides the bar
       - The bar never obscures the focused element
       - The header overflow menu offers "Revoke all access", with no resting red primary action. Its dialog names the agent. Cancel preserves access, and confirm revokes and returns to `/delegations`
-      - The Sessions tab lists this agent's services with `deriveConnectionState` labels
+      - The Connections tab lists this agent's required services: a `not_connected` service shows No connection with Connect, and a connected service shows its `deriveConnectionState` label
 
 ### Implementation for User Story 4
 
 - [ ] T110 [US4] Implement `web/src/hooks/useAgentDetail.ts`
 - [ ] T111 [P] [US4] Build `web/src/components/consent/GrantEditBar.tsx` and `web/src/components/consent/AgentOverflowMenu.tsx`. GrantEditBar is sticky and sets `scroll-padding-bottom` so focus stays visible. AgentOverflowMenu is a DropdownMenu that opens `RevokeAgentDialog`
-- [ ] T112 [P] [US4] Build `web/src/components/consent/AgentSessionsTab.tsx`. It lists the services the agent requires, with ConnectionState badges and links to `/sessions`
+- [ ] T112 [P] [US4] Build `web/src/components/consent/AgentConnectionsTab.tsx`. It lists the services the agent requires by joining `services[].connectionStatus` from the agent detail with `useConnections`: `not_connected` shows No connection with a Connect link to the existing authorize URL, and a connected service shows its ConnectionState badge and a link to `/sessions`
 - [ ] T113 [US4] Implement `web/src/pages/AgentConsolePage.tsx`, reusing AgentIdentityHeader, PermissionGroupList, DurationChoice, and `consentDraft`. Switch the console branch of `web/src/components/layout/AgentRoute.tsx` to it
 - [ ] T114 [US4] Update the detail selectors in `tests/e2e/pages/consent_page.go`: `GetRevokeButton`, `ClickRevokeButton`, and `IsRevokeButtonPresent` now go through the overflow menu, and the save-button methods change too. These journeys must pass with unchanged assertions: `consent_flow_test.go`, `csrf_grant_save_test.go`, the detail scenarios of `revoke_grant_flow_test.go`, and the console scenarios of `permission_sets_frontend_test.go`
 - [ ] T115 [US4] Run `ginkgo -v --focus "AS-0[89]" ./tests/e2e/frontend/` and the journeys from T114 until they pass
@@ -724,10 +739,11 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [ ] T116 [P] [US5] Write `web/src/hooks/useConnections.test.ts`. It asserts:
       - The sessions list is keyed by principal
       - A refresh waits for the server and recomputes the state
-      - An authoritative rejection yields Needs re-authentication, while a network failure keeps the prior state and marks it stale
+      - A `409` or `502` refresh response yields Needs re-authentication with Reconnect, a `404` refetches the list, and a network failure keeps the prior state and marks it stale
       - Disconnect uses `optimisticRevoke` after confirmation
 - [ ] T117 [P] [US5] Write `web/src/pages/ConnectionsPage.test.tsx`. It asserts:
-      - Each row shows the provider, the account when available, the scope count, the ConnectionState label, and the creation time in monospace, below a PageHeader
+      - Each row shows the provider, the scope count, the ConnectionState label, and the creation time in monospace, below a PageHeader. Rows come only from stored sessions, so No connection never appears on this page
+      - Row actions use non-accent variants, and the page has no accent action
       - Reconnect navigates to the existing `/api/third-party/{serviceId}/oauth2/authorize` URL
       - Refresh appears only when supported
       - The Disconnect dialog lists dependent agents from `getSessionDetails`, and states that disconnecting does not revoke provider-side tokens
@@ -758,7 +774,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [ ] T123 [P] [US6] Write `web/src/hooks/useStandingApprovals.test.ts`. It asserts that permanent approvals are keyed by principal, that revoke uses `optimisticRevoke`, and that approve and deny from the queue wait for the server and refresh the pending query
 - [ ] T124 [P] [US6] Write `web/src/pages/ApprovalsPage.test.tsx` and `web/src/components/layout/ConsoleLayout.test.tsx`. They assert:
       - The pending section appears above the standing allow and deny sections
-      - Each pending row shows the tool, agent, risk label, and age. Its inline Approve and Deny are styled secondary to any page-level primary action
+      - Each pending row shows the tool, agent, risk label, and age. Its inline Approve and Deny use non-accent variants, and the page has no accent action
       - Choosing session or permanent shows the scope preview before confirmation, and nothing mutates without an explicit click
       - Standing decisions revoke only after confirmation
       - A newly fetched pending item appears, and a polite live region announces it while `document.activeElement` stays unchanged
@@ -886,7 +902,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [ ] T149 Capture, review, and commit the baselines:
       - Run `E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend`
       - A human reviewer approves each image
-      - Commit the 14 route, context, and theme images, plus meaningful loading, empty, error, and overlay states, to `tests/e2e/screenshots/`
+      - Commit the 14 route, context, and theme images, plus meaningful loading, empty, error, and overlay states, to `tests/e2e/screenshots/`, and list the state stems in `tests/e2e/screenshots/visual-gate.txt`
+      - Replace every retained journey screenshot with its reviewed new-UI capture
       - Remove old-UI baselines that no test generates anymore
 
       Then `just test-e2e-frontend-visual` must pass
@@ -909,10 +926,10 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 **Constitution Reference**: PRECONDITIONS checklist. Verify that the Phase 2 tasks were completed correctly
 
-- [ ] T152 Verify that the Glossary (§12) in `ARCHITECTURE.md` contains Consent Draft, Agent Origin Label, Delta Re-consent, Appearance Preferences, and the feature-047 Connection State entry (Principle V)
+- [ ] T152 Verify that the Glossary (§12) in `ARCHITECTURE.md` contains Consent Draft, Agent Origin Label, Delta Re-consent, Appearance Preferences, Delegation, and the feature-047 Connection State entry (Principle V)
 - [ ] T153 Verify that no configuration example is needed: `examples/config/` is unchanged, and `cutover-inventory.md` records T008 (Principle VII)
 - [ ] T154 Verify that `examples/config/README.md` needs no new reference, because no configuration section was added (Principle VII)
-- [ ] T155 Verify that `git diff main -- api/enduser/openapi.yaml api/admin/openapi.yaml` is empty and that T010's endpoint map is attached to the PR (Principles IV, X)
+- [ ] T155 Verify that `git diff main -- api/enduser/openapi.yaml` contains only the 2026-09-27 documentation correction of the `GET /api/third-party/sessions` response, that `git diff main -- api/admin/openapi.yaml` is empty, and that T010's endpoint map is attached to the PR (Principles IV, X)
 - [ ] T156 Verify that the PR description references the stakeholder confirmation recorded in `specs/047-redesign-consent-console/cutover-inventory.md` (T011) and the ADR 037 acceptance in `adrs/037-design-system-rebuilt-on-shadcn-radix.md` (T013) (Principle X)
 - [ ] T157 Verify that `git diff main -- migrations/ internal/ports/storage.go` is empty (Principle IX)
 - [ ] T158 [IF FRONTEND] Verify that the T014 review is recorded and that the universal components (Wordmark, TruncatedText, ThemeChoice, ConsoleShell, DecisionShell, and PageHeader) live in `web/src/design-system/` (Principle XI)
@@ -926,9 +943,9 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 **Constitution Reference**: Implementation Phase checklist. Verify that all principles were followed during implementation
 
 **API & Documentation** (Principles IV, X):
-- [ ] T163 [P] Verify that `api/enduser/openapi.yaml` needed no update, because every implemented call in the T010 map exists unchanged
+- [ ] T163 [P] Verify that `api/enduser/openapi.yaml` needed no update beyond the session-list documentation correction, because every implemented call in the T010 map exists unchanged
 - [ ] T164 [P] Verify that the request and response types in `web/src/services/api/*.ts` and `web/src/types/*.ts` match `api/enduser/openapi.yaml` exactly
-- [ ] T165 Verify that `docs/api/` needs no change, because no API changed. End-user UI documentation lives in `README.md` and `docs/` (T150, T151)
+- [ ] T165 Verify that `docs/api/` needs no change, because no API changed, and that `docs/reference/api.md` describes the corrected session list. End-user UI documentation lives in `README.md` and `docs/` (T150, T151)
 
 **Architecture & Documentation** (Principle II):
 - [ ] T166 Update the frontend section of `ARCHITECTURE.md` (about lines 135–160) to the delivered stack. Remove the "proposed" framing and the pre-migration inventory (Headless UI, React Router 6, and "no external state library")
@@ -959,7 +976,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [ ] T178 Verify that `git diff main --stat -- internal/ cmd/` touches only `internal/adapters/http/handlers/spa.go` and `spa_test.go`, with no domain, port, or builder change
 
 **Testing** (Principle VIII - Unit & Integration Tests):
-- [ ] T179 Verify that the unit tests in `web/src/`, `web/build/`, `web/eslint-rules/`, and `internal/adapters/http/handlers/spa_test.go` were written first and failed before implementation. Check each test task (T045, T047, T049, T051, T053, T056, T067, T071, T073, T075, T077, T079, T081, and every story test task) against its implementation commit
+- [ ] T179 Verify that the unit tests in `web/src/`, `web/build/`, `web/eslint-rules/`, and `internal/adapters/http/handlers/spa_test.go` were written first and failed before implementation. Check each test task (T045, T047, T049, T051, T053, T056, T067, T071, T073, T075, T077, T079, T081, and every story test task) and each test-first substep (T040, T058–T064, and T068) against its implementation commit
 - [ ] T180 Verify that the tests drove the design, so that the implementation in `web/src/` and `internal/adapters/http/handlers/spa.go` emerged from their requirements
 - [ ] T181 Verify that the tests in `web/src/**/*.test.ts(x)` and `internal/adapters/http/handlers/spa_test.go` changed minimally during implementation
 - [ ] T182 Verify with the `justfile` recipes that `just web-test`, `just web-storybook-test`, `just web-bundle-check`, and `just test` pass
@@ -981,10 +998,10 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 **Frontend** (Principle XI - if applicable):
 - [ ] T196 [IF FRONTEND] Verify that the components in `web/src/components/` and `web/src/pages/` use design-system primitives and semantic tokens
-- [ ] T197 [IF FRONTEND] Verify that the universal components are in `web/src/design-system/components/` with Storybook stories
+- [ ] T197 [IF FRONTEND] Verify that the universal components are in `web/src/design-system/components/` with Storybook stories and reviewed visual-regression baselines in `web/.storybook/__screenshots__/`
 - [ ] T198 [IF FRONTEND] Verify that no custom CSS bypasses the design tokens: `just web-lint` passes, and `web/src/styles/` contains only fonts and token mapping
 - [ ] T199 [IF FRONTEND] Verify WCAG 2.1 AA compliance (4.5:1 text contrast, 3:1 UI contrast) and the feature's WCAG 2.2 AA target, using `web/src/design-system/tokens/contrast.test.ts` and the Storybook a11y results
-- [ ] T200 [IF FRONTEND] Verify that every component story in `web/src/design-system/components/` renders and passes the accessibility addon in light and dark themes (`just web-storybook-test`)
+- [ ] T200 [IF FRONTEND] Verify that every component story in `web/src/design-system/components/` renders, passes the accessibility addon, and matches its reviewed screenshot baseline in light and dark themes (`just web-storybook-test`)
 - [ ] T201 [IF FRONTEND] Verify that all visual decisions use the centralized semantic tokens in `web/src/design-system/tokens/theme.css`, without raw palette utilities
 - [ ] T202 [IF FRONTEND] Verify that brand assets are self-hosted in `web/public/brand/` and `web/public/fonts/`, and that the frontend loads no third-party fonts, scripts, or images (SC-006, the AS-15 request recorder, and CSP `font-src 'self'`)
 - [ ] T203 [IF FRONTEND] Verify that the visual direction matches `web/src/design-system/docs/DESIGN_PRINCIPLES.md` and ADR 037, and that no current guide describes two active visual systems (SC-010)
@@ -1007,6 +1024,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - **Phase 2 (T005–T042)**: T005–T012 only record and confirm, so they may run before the gate. **T013 (ADR 037 acceptance) blocks every later task.** T015–T021 update current guidance after acceptance. T022–T031 build the E2E harness, T032–T039 write the red scenarios in one file (sequentially), and T040–T041 add the visual gate. T042 proves the red phase
 - **Foundational (T043–T082)**: Depends on all of Phase 2. It blocks every user story. Internal order:
   - T043 comes before everything else in this section
+  - T058–T064 and T068 write their tests first inside the task and confirm the failure before implementing. T040 does the same in Phase 2
   - Each test task comes before its implementation: T045→T046, T047→T048, T049→T050, T051→T052, T053→T054, T056→T057, T067→T068–T070, T071→T072, T073→T074, T075→T076, T077→T078, T079→T080, and T081→T082
   - T054 needs T016. T058–T063 need T054. T064 needs T048 and T059. T065 and T066 need T058–T064. T078 needs T058 and T060. T080 needs T048, T062, T069, T070, and T078
 - **User stories (T083–T141)**: All depend on Foundational

@@ -21,6 +21,23 @@ ConsoleShell owns the collapsible sidebar, mobile Sheet, page heading, purpose t
 
 All route components remain lazy. Import concrete component modules where a barrel would pull Table or Command into decision bundles.
 
+## Primary actions
+
+Each view shows at most one accent (`primary` variant) action. Row, menu, and dialog-cancel actions use non-accent variants.
+
+| View | Accent action |
+| --- | --- |
+| `/delegations` | None |
+| `/agents/:id` decision | Allow |
+| `/agents/:id` console | Save changes, only in the edit bar while the draft has unsaved changes |
+| `/sessions` | None |
+| `/approvals` | None |
+| `/approvals/:id` pending | Approve once |
+| `/approvals/:id` resolved or expired | None |
+| `/settings` | None; a theme change applies immediately |
+
+An open modal dialog hides the page behind it from assistive technology. Its confirm button is then the view's single accent action, or uses the `destructive` variant for a destructive confirmation.
+
 ## Single cutover
 
 Deliver all routes, shells, preferences, and command search in one release.
@@ -64,7 +81,9 @@ No browser request reaches `GET /api/approvals`, the gateway-wide long-poll. No 
 
 ## Decision invariants
 
-Delta consent compares requested selections with the existing `granted_permission_sets`. Preserve prior groups and selected services. Required groups and services remain locked. Never request an API delta computation.
+Delta consent compares requested selections with the existing `granted_permission_sets`. Preserve prior groups and selected services. Previously granted groups are read-only in the decision view. Required groups and services remain locked. Never request an API delta computation.
+
+The re-consent duration starts from the existing grant: Until revoked for a null `valid_until`, otherwise Custom date. Unless the user changes it, submission sends the existing `valid_until` unchanged. A changed duration applies to the whole grant.
 
 Keep the current authorization-session parameter, expiry, callback, scope-preview, and continuation checks. Deny leaves existing grants untouched. Without an existing validated cancellation path, show a local cancelled outcome instead of inventing an OAuth2 redirect.
 
@@ -74,10 +93,16 @@ Grant durations remain Until revoked, 30 days, and a validated custom date. Tool
 
 Use all primitives named in ADR 037, plus retained controls needed by current flows. Use semantic tokens and owned source. The raw-palette ESLint rule covers className, `cn`, `clsx`, CVA, and variant-prefixed utilities.
 
+Pages and application components take every user-facing string from the copy catalogue in `web/src/copy/`. Design-system components receive user-facing strings through props and do not import the catalogue.
+
 Every component story runs with light and dark globals. Storybook uses the themes addon with `data-theme` and the a11y addon with `test: 'error'`. Two explicit browser-test projects run the same story set, one per theme. A toolbar switch alone does not constitute CI coverage.
+
+Every story also has a visual regression check in each theme project (Principle XI). A Vitest-only project annotation compares the rendered story root with a reviewed baseline through Vitest browser-mode `toMatchScreenshot`. Baselines are Linux Chromium images keyed by story ID and theme. CI never runs with `--update` and fails on a missing or changed image.
 
 Playwright baselines cover all six routes in both themes, including both `/agents/:id` contexts. The minimum matrix contains 14 route/context/theme images.
 
 Store screenshots under `tests/e2e/screenshots/`. Pin browser version, OS image, fonts, viewport, data, and time. Wait for fonts and query settlement. Compare pixels and publish expected, actual, and diff images on failure. Do not accept changed baselines automatically.
+
+The route gate compares the 14 required images plus the state images listed in `tests/e2e/screenshots/visual-gate.txt`. Other journey screenshots remain documentation. No workflow writes to or commits `tests/e2e/screenshots/` or the Storybook baselines; automation uploads candidates as a review artifact, and every baseline changes only in a reviewed commit.
 
 WCAG 2.2 AA, 320 px, 200% zoom, focus, reduced motion, theme persistence, and zero automatic third-party requests require browser journeys beyond screenshot comparison.

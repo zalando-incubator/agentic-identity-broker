@@ -106,9 +106,9 @@ Dialog and Sheet trap focus, close through an available control, and restore foc
 
 ### Truthful state
 
-A domain-verified CIMD badge does not verify a publisher's legal identity. Without CIMD metadata, consent shows “Registered by your administrator”. Console views show no origin badge. Missing publisher metadata uses “Publisher not provided”. Localhost risks remain prominent.
+A domain-verified Agent Origin Label does not verify a publisher's legal identity. Without CIMD metadata, consent shows “Registered by your administrator”. Console views show no Agent Origin Label. No existing response identifies a publisher, so the UI shows no publisher field. Localhost risks remain prominent.
 
-A connection is not a grant. Its state reflects token usability from existing session fields. Do not infer missing scopes from the provider's scope catalogue.
+A connection is not a grant. Its state reflects token usability from existing session fields. “No connection” appears only for a service an agent requires but the user has not connected. Do not infer missing scopes from the provider's scope catalogue.
 
 Permission groups show their human-readable name and description. Do not add raw scope strings where the UI does not show them today. Do not display last use, and never substitute creation or modification times for it.
 

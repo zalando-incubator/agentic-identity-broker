@@ -117,6 +117,10 @@ Do not add broker configuration, environment or CLI bindings, Helm values, or HT
 
 **Implementation**: Install Chromium for the Storybook browser projects. Pin the existing 10.3.5 addon family together. Parameterize every story in both themes. Keep the current screenshot capture path and promote only reviewed baselines into `tests/e2e/screenshots/`.
 
+**Story visual regression**: Principle XI requires visual regression testing for design-system stories. No story-level tooling exists today. Vitest 4.1 browser mode provides `toMatchScreenshot` with a pixelmatch comparator, and Storybook runs project-level `afterEach` annotations after each story renders. A Vitest-only annotation in `web/.storybook/vitest.setup.ts` therefore compares every story root in both theme projects without affecting the Storybook UI. Baselines are Linux Chromium images reviewed like route baselines. Cloud visual-testing services add an external dependency and are not needed.
+
+**Evidence**: Context7 on 2026-09-27 returned Vitest v4.1.6 `toMatchScreenshot` and `browser.expect.toMatchScreenshot` configuration, and Storybook v10.2.9 project-level `afterEach`. Validate against the installed 10.3.5 release during foundation work.
+
 **Evidence**: `web/.storybook/main.ts`, `preview.ts`, `web/package.json`, `.github/workflows/ci.yml`, `.github/workflows/screenshots.yml`, `tests/e2e/frontend/frontend_suite_test.go`, `tests/e2e/pages/page.go`, [Storybook accessibility testing](https://storybook.js.org/docs/writing-tests/accessibility-testing). Context7 verified the `error` gate using Storybook 10.2.9 documentation. Validate integration against the installed 10.3.5 release during foundation work.
 
 ## Resolved unknowns and remaining approvals

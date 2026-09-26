@@ -54,6 +54,8 @@ just web-storybook-test
 
 Expected result: both projects run, and an intentional inaccessible fixture fails the gate during gate development. Production stories must use `parameters.a11y.test = 'error'`. Do not suppress failures with `todo`.
 
+`web-storybook-test` also compares every story in each theme with its reviewed screenshot baseline (Principle XI visual regression). A missing or changed image fails the run. Baselines are Linux Chromium images from the screenshots workflow's review artifact; commit them only after review. Never pass `--update` in CI.
+
 ## Existing unit and end-to-end commands
 
 ```bash
@@ -97,11 +99,11 @@ Verify production and Vite routes against the same UI contract.
 
 ## Decision journeys
 
-Run AS-01–AS-05 through the Ginkgo/Playwright suite in both themes.
+Run AS-01–AS-05 through the Ginkgo/Playwright suite. AS-15 and the themed route screenshots cover both themes; scenarios that change state run once in the default theme.
 
 Start consent through the existing authorization flow, not a fabricated `session_token`. Select optional access and a duration. Connect a required provider, return, and verify that selections remain intact. Allow and observe the existing validated continuation.
 
-Repeat with an existing grant. Only new selections require a decision. Existing selections remain granted. Deny must leave the grant unchanged and show a local outcome without a constructed redirect.
+Repeat with an existing grant. Only new selections require a decision. Existing selections remain granted and read-only, and the duration starts from the existing validity. Deny must leave the grant unchanged and show a local outcome without a constructed redirect.
 
 Open a pending approval. Inspect the exact scope and expanded arguments. Exercise once, session, permanent, and denial in isolated runs. Resolve a request in another context and verify that stale actions disappear.
 
@@ -109,9 +111,9 @@ Expected result: one accent primary action, no sidebar, truthful identity/risk, 
 
 ## Console journeys
 
-Run AS-06–AS-15. Search/filter agents, edit and cancel a draft, save a deliberate edit, and revoke with confirmation. Inject a failed revoke and verify that the pending row returns without overwriting unrelated row changes.
+Run AS-06–AS-15. Search agents, confirm that an expired grant is absent, edit and cancel a draft, save a deliberate edit, and revoke with confirmation. Inject a failed revoke and verify that the pending row returns without overwriting unrelated row changes.
 
-Use connection fixtures for no session, expired refresh, usable access, and refresh rejection. No fixture produces a Missing scopes state. Disconnect copy must state the provider-token limitation.
+Use connection fixtures for expired refresh, usable access, and refresh rejection on `/sessions`. Click Refresh on the rejection fixture before checking its state. Use an agent that requires an unconnected service to see No connection on its Connections tab; `/sessions` never shows it. No fixture produces a Missing scopes state. Disconnect copy must state the provider-token limitation.
 
 Create a pending approval while the console remains open. The queue and count must update within 15 seconds on the foreground test browser. Inspect network requests: only `/api/approvals/pending` supplies browser updates, never the gateway-wide endpoint.
 
@@ -139,7 +141,7 @@ Implementation adds the planned gate recipe:
 just test-e2e-frontend-visual
 ```
 
-The recipe captures both themes serially and compares against reviewed baselines with the existing `tools/imgdiff`. It fails on unreviewed images or excess difference and publishes comparison artifacts. Baseline approval is a separate review action.
+The recipe captures both themes serially and compares against reviewed baselines with the existing `tools/imgdiff`. It gates the required route images and the state stems listed in `tests/e2e/screenshots/visual-gate.txt`. It fails on a gated image without a baseline, a gated baseline without a capture, or excess difference, and publishes comparison artifacts. Baseline approval is a separate review action; no workflow commits baselines.
 
 Required original-route filenames use these stems with `_light.png` and `_dark.png`:
 
@@ -154,9 +156,9 @@ Include `settings` in the same release. This produces at least 14 route/context/
 
 ## Performance and manual acceptance
 
-Build with `just web-build`. Measure the compressed initial consent dependency graph. It must remain below 150 kB without console Table or Command chunks.
+Build with `just web-build`. Measure the compressed initial dependency graph of each decision route. Each must remain below 150 kB without console Table or Command chunks.
 
-Measure main-content appearance on throttled 4G. It must remain below 1.5 seconds. Confirm at least 12 agent rows at a 1080 px-high desktop viewport.
+Measure main-content appearance under the Chrome DevTools “Slow 4G” preset. It must remain below 1.5 seconds. Confirm at least 12 agent rows at a 1080 px-high desktop viewport.
 
 Run moderated consent sessions for SC-001 and SC-007. Record decision time, service comprehension, and primary-action recognition. Automated accessibility and timing checks cannot establish those human outcomes.
 

@@ -69,7 +69,7 @@ Migrate all consumers and remove obsolete code in the same change.
 After ADR acceptance, update all current guidance in the plan's inventory for the approved direction.
 Preserve historical feature decisions. Replace only references that incorrectly present old rules as current guidance.
 
-Every component story runs in both themes with Storybook accessibility failures blocking CI. Playwright visual comparisons cover the five existing routes in both themes, including both agent contexts. Ginkgo acceptance journeys preserve authorization behavior. WCAG 2.2 AA is the feature target.
+Every component story runs in both themes with Storybook accessibility and visual-regression failures blocking CI. Playwright visual comparisons cover all six routes in both themes, including both agent contexts. Ginkgo acceptance journeys preserve authorization behavior. WCAG 2.2 AA is the feature target.
 
 ## Consequences
 

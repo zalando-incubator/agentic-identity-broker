@@ -1,4 +1,4 @@
-# Feature Specification: Redesign End-User Consent and Console
+# Feature Specification: Consent UI v2 — Redesign End-User Consent and Console
 
 **Feature Branch**: `047-redesign-consent-console`
 
@@ -26,6 +26,15 @@
 - Q: If someone sets a default approval persistence in `/settings`, what should the tool-review accent action do? → A: Descope the saved approval-persistence default. `/settings` offers only the theme. Existing once, session, and permanent approval choices keep their current behavior, and Approve once stays the sole accent action.
 - Q: Should permission groups on the consent screen show a risk indicator, given that permission sets have no risk rating in the existing API? → A: No. Permission groups show name, description, required or optional control, and services. Tool approvals keep their server-provided risk level.
 
+### Session 2026-09-27
+
+- Q: How should the delegation list show granted access, given that the existing list response has no service names? → A: Do not add backend features. Show the number of granted permission sets from the existing `activeGrantCount`. Service names stay one click away in the agent detail.
+- Q: What should the delegation status filter show, given that the existing list excludes expired grants? → A: Remove the status column and status filter. The list contains only unexpired delegations, and a row whose expiry passes while the page is open disappears.
+- Q: Where can “No connection” appear, given that `/api/third-party/sessions` lists only stored sessions? → A: Only where an agent requires a service the user has not connected: the agent's Connections tab and the consent view's service prompt. `/sessions` lists stored connections only.
+- Q: What should the UI show for an agent's publisher or a connection's account, given that no existing response has either field? → A: Neither. Show no publisher or account row and never imply that a publisher identity was checked.
+- Q: Can the user remove previously granted access during re-consent? → A: No. Already-granted groups are read-only in the decision view; the console detail view changes or removes them. The duration choice starts from the existing grant's validity, and Allow applies the chosen duration to the whole grant.
+- Q: The OpenAPI description of `GET /api/third-party/sessions` documents `{data: [ThirdPartyServiceWithSession]}`, but the handler, its integration test, and the browser client use `{data: {sessions: [UserSessionSummary]}}`. How should the drift be resolved? → A: Correct the OpenAPI documentation to the existing handler response. This documentation-only correction changes no runtime behavior and is the stakeholder confirmation required by Principles IV and X.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Decide on an Agent Request (Priority: P1)
@@ -38,8 +47,8 @@ A user arrives from an authorization request and needs to understand the agent, 
 
 **Acceptance Scenarios**:
 
-1. **AS-01**: **Given** a first-time request, **When** the user opens `/agents/:id`, **Then** a single-column view identifies the agent and its origin badge. It highlights localhost risks and orders required permission groups first. Each group explains access in plain language from its human-readable name and description and expands to its service names, without a risk indicator. The view offers duration choices, one primary Allow action, secondary Deny, and an explanation of what happens next.
-2. **AS-02**: **Given** an active grant, **When** the user returns through another request, **Then** only new access needs a decision. Existing groups appear collapsed and checked. Continuing preserves prior groups and never widens access without the user's selection.
+1. **AS-01**: **Given** a first-time request, **When** the user opens `/agents/:id`, **Then** a single-column view identifies the agent and its Agent Origin Label. It highlights localhost risks and orders required permission groups first. Each group explains access in plain language from its human-readable name and description and expands to its service names, without a risk indicator. The view offers duration choices, one primary Allow action, secondary Deny, and an explanation of what happens next.
+2. **AS-02**: **Given** an active grant, **When** the user returns through another request, **Then** only new access needs a decision. Existing groups appear collapsed, checked, and read-only; the console detail view changes or removes them. The duration choice starts from the existing grant's validity. Continuing preserves prior groups and never widens access without the user's selection.
 3. **AS-03**: **Given** a selected duration and an authorization session, **When** the user allows, **Then** the selected permissions and duration take effect and the existing safe continuation resumes. **When** the user denies or the session expires, **Then** no new grant is created and the user gets a clear outcome without an unsafe redirect.
 
 ---
@@ -65,11 +74,11 @@ A returning user wants one dense view of their agent delegations and a safe way 
 
 **Why this priority**: Users need to see active access before they can control it.
 
-**Independent Test**: Find an agent by name, filter by status, inspect it, and revoke its grant with confirmation.
+**Independent Test**: Find an agent by name, inspect it, and revoke its grant with confirmation.
 
 **Acceptance Scenarios**:
 
-1. **AS-06**: **Given** several delegations, **When** the user opens `/delegations`, searches, or filters by status, **Then** a dense list shows the agent, granted services, expiry, and status. Each row offers View and a confirmed Revoke action.
+1. **AS-06**: **Given** several delegations, **When** the user opens `/delegations` or searches by name, **Then** a dense list shows each agent with an unexpired grant, its number of granted permission sets, and its expiry. Each row offers View and a confirmed Revoke action.
 2. **AS-07**: **Given** no delegations or a revoked delegation, **When** the user opens or returns to `/delegations`, **Then** the empty state explains what a delegation is, or the revoked agent disappears from active access after confirmation. The user sees a clear result in either case.
 
 ---
@@ -84,7 +93,7 @@ A returning user reviews an agent's permissions and connections on `/agents/:id`
 
 **Acceptance Scenarios**:
 
-1. **AS-08**: **Given** an existing agent grant, **When** the user opens the agent outside an authorization request, **Then** a console detail view shows identity, links, Permissions and Sessions tabs, locked required groups, and editable optional groups. A sticky Cancel and Save changes bar appears only after an edit; cancel discards it and save persists it.
+1. **AS-08**: **Given** an existing agent grant, **When** the user opens the agent outside an authorization request, **Then** a console detail view shows identity, links, Permissions and Connections tabs, locked required groups, and editable optional groups. A sticky Cancel and Save changes bar appears only after an edit; cancel discards it and save persists it.
 2. **AS-09**: **Given** an agent with active access, **When** the user chooses Revoke all access from the header overflow menu, **Then** a confirmation names the agent and explains the effect. Confirming revokes only that user's delegation; cancelling preserves it.
 
 ---
@@ -99,8 +108,8 @@ A returning user reviews third-party services and reconnects, refreshes, or disc
 
 **Acceptance Scenarios**:
 
-1. **AS-10**: **Given** connected, expired, and unusable connections, **When** the user opens `/sessions`, **Then** each service shows provider, account if known, scope count, truthful state, creation time, and an appropriate reconnect or refresh action.
-2. **AS-11**: **Given** a connection that needs attention, **When** the user reconnects, completes the existing authorization callback, refreshes a supported session, or disconnects, **Then** the visible state updates without changing token semantics. Before disconnect, the user sees that broker disconnection does not revoke provider-side tokens when that is the case.
+1. **AS-10**: **Given** connected, expired, and unusable connections and an agent that requires an unconnected service, **When** the user opens `/sessions` and that agent's Connections tab, **Then** `/sessions` lists each stored connection with provider, scope count, truthful state, creation time, and an appropriate reconnect or refresh action, and the agent's Connections tab shows the unconnected service as No connection with a Connect action.
+2. **AS-11**: **Given** a connection that needs attention, **When** the user reconnects, completes the existing authorization callback, refreshes a supported session, or disconnects, **Then** the visible state updates without changing token semantics. Before disconnect, the user sees that broker disconnection does not revoke provider-side tokens.
 
 ---
 
@@ -162,18 +171,18 @@ A user opens a command palette to find an agent, connection, or approval, or cha
 
 ### Edge Cases
 
-- If an agent has no publisher, show “Publisher not provided”; do not imply a publisher identity was checked.
+- No existing response identifies an agent's publisher. Show no publisher field and do not imply that a publisher identity was checked.
 - If a consent request has no CIMD metadata, show “Registered by your administrator”, not “Unverified”. Reserve “Unverified” for a CIMD request without domain trust, such as a localhost client.
-- Outside an authorization request, no existing response supplies verification data. Console views show no verification badge rather than a guessed or uniform label.
+- Outside an authorization request, no existing response supplies verification data. Console views show no Agent Origin Label rather than a guessed or uniform one.
 - If a service or agent logo is only available at a third-party origin, show a local fallback instead of silently loading that image.
 - Permission sets carry no risk rating, so permission groups show no risk indicator. If a tool approval has no server-provided risk level, show a neutral “Risk not rated” label. Never infer a security guarantee from a scope or tool name.
-- Never show an expired grant as active.
+- Never show an expired grant as active. The existing delegation list excludes expired grants; if a listed grant's expiry passes while the page is open, remove its row.
 - If a user's previous grant is unchanged, do not prompt for previously granted permissions. Preserve the existing safe continuation and do not enlarge the grant.
 - If a third-party connection is missing, a refresh token expires, or refresh fails, show the correct reconnect path. Do not label an unusable session “Connected”.
 - If a pending approval expires or another session resolves it, stop offering actions and show its current state.
 - If a requested service connection interrupts consent, preserve the current selections and authorization session through the existing callback flow.
 - If a user denies a consent request, leave existing grants unchanged. Do not construct an unverified redirect or claim that provider-side tokens were revoked.
-- If user-supplied or agent-supplied text is long or contains markup, show escaped, truncated text with an accessible expand action.
+- If user-supplied or agent-supplied text contains markup or exceeds its display area (two lines for names and descriptions, one line in table cells), show escaped, truncated text with an accessible expand action.
 
 ## Requirements *(mandatory)*
 
@@ -182,45 +191,45 @@ A user opens a command palette to find an agent, connection, or approval, or cha
 - **FR-001**: Preserve `/delegations`, `/agents/:id`, `/sessions`, `/approvals`, and `/approvals/:id`, including existing authorization, session, grant, approval, and callback behavior. Keep `/` directed to `/delegations` (AS-01–AS-15).
 - **FR-002**: Use the same `/agents/:id` address for a focused decision view when an authorization session is present and a console detail view otherwise. Decision views and `/approvals/:id` have no sidebar (AS-01, AS-04, AS-08).
 - **FR-003**: Show the repository's black AIB wordmark in light mode, white wordmark in dark mode, and matching favicon. Replace the shield and “Consent Management” title throughout. Show “Powered by Zalando” only as small monochrome decision-view footer text if used (AS-01, AS-04, AS-14).
-- **FR-004**: Use self-hosted Zalando Sans for the wordmark, page titles, decision-screen agent and service names, empty-state headlines, and statistics. Use a neutral self-hosted body face and a self-hosted monospaced face for identifiers, scopes, and timestamps. Remove Crimson Pro and Manrope (AS-01, AS-14, AS-15).
-- **FR-005**: Replace the cream/taupe gradient, serif-led editorial styling, strong card shadows, loud multi-accent actions, marketing top navigation, and page-entry animation with a neutral surface, one accent, sans-serif hierarchy, thin borders, and restrained feedback. Show at most one accent-colored primary action per view (AS-01, AS-04, AS-14, AS-15).
-- **FR-006**: The console has a collapsible sidebar with wordmark, search, navigation, pending-approval count, and a user menu with theme choice. Each console page has a title, one-line purpose, and a contextual primary action where one exists (AS-06, AS-12, AS-14).
-- **FR-007**: The consent view shows an agent logo or safe fallback, name, publisher when known, governance link when available, and one origin badge from the authorization session: “Verified domain: host” for validated CIMD metadata, “Registered by your administrator” when CIMD metadata is absent, or “Unverified” for a CIMD request without domain trust. A validated CIMD domain does not claim that a publisher's legal identity was verified. Promote the existing localhost/CIMD warning to a prominent banner (AS-01).
+- **FR-004**: Use self-hosted Zalando Sans for the wordmark, page titles, decision-screen agent and service names, and empty-state headlines. Use a neutral self-hosted body face and a self-hosted monospaced face for identifiers, scopes, and timestamps. Remove Crimson Pro and Manrope (AS-01, AS-14, AS-15).
+- **FR-005**: Replace the cream/taupe gradient, serif-led editorial styling, strong card shadows, loud multi-accent actions, marketing top navigation, and page-entry animation with neutral `background` and `card` surfaces, one `primary` accent, a sans-serif hierarchy, 1 px `border`-token borders, and feedback limited to toasts, inline status, and 120–200 ms CSS transitions. Show at most one accent-colored primary action per view (AS-01, AS-04, AS-14, AS-15).
+- **FR-006**: The console has a collapsible sidebar with wordmark, search, navigation, pending-approval count, and a user menu with theme choice. Each console page has a title, a one-line purpose, and only the primary action that the UI contract assigns to it, if any (AS-06, AS-12, AS-14).
+- **FR-007**: The consent view shows an agent logo or safe fallback, name, governance link when available, and one Agent Origin Label from the authorization session: “Verified domain: host” for validated CIMD metadata, “Registered by your administrator” when CIMD metadata is absent, or “Unverified” for a CIMD request without domain trust. A validated CIMD domain does not claim that a publisher's legal identity was verified. Promote the existing localhost/CIMD warning to a prominent banner (AS-01).
 - **FR-008**: Describe the agent's requested access in one plain-language sentence. Group permissions by purpose with icon, the permission set's human-readable name and description, required or optional control, and service names one expansion away. Show no risk indicator on permission groups. Do not add raw scope strings to permission groups or to any other view that does not show them today (AS-01).
 - **FR-009**: List required groups before optional groups and prevent users from disabling required groups or required services. Preserve optional permission-set and service selection, and existing validation (AS-01, AS-08).
 - **FR-010**: Offer “Until revoked”, “30 days”, and “Custom date” grant duration choices. Keep the existing validity semantics and validate a custom date before submission (AS-03, AS-08).
-- **FR-011**: On re-consent, compare the requested permission-set/service selections with the existing `granted_permission_sets`. Show only new access as a decision, display already-granted groups collapsed and checked, and preserve prior choices when saving. Use the existing user grant read response; do not add a delta API (AS-02).
+- **FR-011**: On re-consent, compare the requested permission-set/service selections with the existing `granted_permission_sets`. Show only new access as a decision, display already-granted groups collapsed, checked, and read-only, and preserve prior choices when saving. Start the duration choice from the existing grant's validity; Allow applies the chosen duration to the whole grant. Use the existing user grant read response; do not add a delta API (AS-02).
 - **FR-012**: Offer one primary Allow and a secondary Deny in consent, with no destructive styling. Allow resumes the existing validated authorization flow; Deny does not create or revoke a grant. Explain next steps and where access can later be reviewed (AS-01, AS-03).
 - **FR-013**: Tool review identifies tool, agent, acting user, arguments in a collapsible monospace block, the server-provided risk level with a label and accessible explanation, and the approval scope. Preserve once, session, and permanent persistence and existing scope-preview validation; show the resolved outcome without new actions (AS-04, AS-05).
-- **FR-014**: The agent list shows logo or fallback, name, granted services, expiry, status, search, status filter, View, and confirmed Revoke. Its empty state uses the wordmark and explains a delegation in one sentence (AS-06, AS-07).
-- **FR-015**: The agent detail has identity, publisher when known, links, Permissions and Sessions tabs, editable optional groups, and a sticky Cancel/Save changes bar only for unsaved changes (AS-08).
+- **FR-014**: The agent list shows logo or fallback, name, the number of granted permission sets from the existing `activeGrantCount`, expiry, name search, View, and confirmed Revoke. It lists only unexpired delegations, because the existing response excludes expired grants, and has no status column or status filter. Its empty state uses the wordmark and explains a delegation in one sentence (AS-06, AS-07).
+- **FR-015**: The agent detail has identity, links, Permissions and Connections tabs, editable optional groups, and a sticky Cancel/Save changes bar only for unsaved changes (AS-08).
 - **FR-016**: Move “Revoke all access” to the detail header overflow menu. Require confirmation; do not show it as a resting red primary action (AS-09).
-- **FR-017**: The connections list shows provider, account when available, scope count, state, and creation time. Offer Reconnect, supported Refresh, and confirmed Disconnect without changing authorize/callback/refresh behavior (AS-10, AS-11).
-- **FR-018**: Distinguish Connected, Needs re-authentication, Expired, and No connection using only existing session fields. Do not add a missing-scope state or infer missing requirements from available scopes (AS-10).
-- **FR-019**: Disconnect text states clearly when broker disconnection does not revoke provider-side tokens. Preserve dependent-agent warnings and current callback error handling (AS-11).
-- **FR-020**: Show the pending queue above standing allow and deny decisions; support inline Approve/Deny, existing persistence and scope choices, and revocation of standing decisions. Keep each row's actions visually secondary to any page-level primary action (AS-12).
+- **FR-017**: The connections list shows provider, scope count, state, and creation time for each stored connection. Offer Reconnect, supported Refresh, and confirmed Disconnect without changing authorize/callback/refresh behavior (AS-10, AS-11).
+- **FR-018**: Distinguish Connected, Needs re-authentication, Expired, and No connection using only existing session fields, refresh responses, and agent requirement connection status. `/sessions` lists stored connections only, so No connection appears only for a service an agent requires but the user has not connected: on the agent's Connections tab and in the consent view's service prompt. Do not add a missing-scope state or infer missing requirements from available scopes (AS-10).
+- **FR-019**: Disconnect text states clearly that broker disconnection does not revoke provider-side tokens. Preserve dependent-agent warnings and current callback error handling (AS-11).
+- **FR-020**: Show the pending queue above standing allow and deny decisions; support inline Approve/Deny, existing persistence and scope choices, and revocation of standing decisions. Row actions use non-accent styling, and `/approvals` has no page-level accent action (AS-12).
 - **FR-021**: Refresh the existing user-scoped pending list regularly while the console is open. Show new approvals and sidebar count changes within 15 seconds without reloading. Announce arrivals and decision-state changes without taking focus; never use the gateway-wide long-poll for a browser (AS-13).
 - **FR-022**: Support light, dark, and system themes. Remember the choice per browser, follow changes to the system theme when chosen, avoid the wrong-theme flash, and theme form controls and scrollbars (AS-14, AS-15).
 - **FR-024**: Add `/settings` with the per-browser theme choice. Do not add a saved approval-persistence default; approval persistence choices keep their existing behavior (AS-17).
 - **FR-025**: Add a keyboard-accessible command palette to find only the current user's agents, connections, and approvals, jump to their existing views, and change theme (AS-18).
 - **FR-026**: Escape all agent-supplied strings and CIMD metadata. Truncate long display text with an accessible expansion. Do not load third-party fonts, scripts, or images while rendering the application; keep user-initiated external links and OAuth2 redirects functional (AS-01, AS-04, AS-15).
 - **FR-027**: Collect user-facing copy in one place for later localization. Use second-person, present-tense, action-first wording for sentences and actions; keep proper names, technical scopes, status labels, and route titles accurate (AS-01–AS-18).
-- **FR-028**: Deliver every redesigned route and capability in one cutover. Do not use implementation phases, feature flags, dual presentations, backwards-compatibility layers, or old-server fallbacks. Migrate every consumer and remove obsolete components, tokens, aliases, fonts, gradients, page-entry animations, and caches in the same release (AS-01–AS-18).
+- **FR-028**: Deliver every redesigned route and capability in one cutover. Do not use implementation phases, feature flags, dual presentations, backwards-compatibility layers, or old-server fallbacks. Migrate every consumer and remove obsolete components, tokens, aliases, fonts, animations, and caches in the same release (AS-01–AS-18).
 - **FR-029**: Keep the existing user-facing end-to-end journeys working with selector changes only for existing behaviors. Add traceable acceptance coverage for changed journeys and both themes (AS-01–AS-18).
-- **FR-030**: Add `/settings` without changing the five existing route addresses or authorization behavior. Record the route and visual-direction changes in an ADR before implementation (AS-14, AS-17).
+- **FR-030**: Record the `/settings` route and the visual-direction change in an ADR that is accepted before implementation (AS-14, AS-17).
 - **FR-031**: Produce README guidance and documentation screenshots for every original route and the new `/settings` route in light and dark modes, including both agent-detail contexts (AS-01, AS-04, AS-06, AS-08, AS-10, AS-12, AS-14, AS-17).
 
 ### Domain Model *(if applicable - document before API or database design)*
 
-The redesign does not change the meaning or ownership of an Agent, UserGrant, UserSession, Permission Set, or ToolApproval. A consent decision combines the current authorization request, existing grant, selected services, and chosen expiry. It never promotes a third-party connection to a grant.
+The redesign does not change the meaning or ownership of an Agent, UserGrant, UserSession, Permission Set, or ToolApproval. A consent decision combines the current authorization request, existing grant, selected services, and chosen expiry. It never promotes a third-party connection to a grant. The console calls a principal's unexpired UserGrant to one agent a delegation.
 
-A connection state summarizes token usability from existing session fields. Agent origin labels derive only from the current authorization session. A verified-domain label describes validated CIMD domain metadata, not a verified publisher identity. Absent CIMD metadata means an administrator registered the agent. Console views carry no origin label.
+A connection state summarizes token usability from existing session fields, refresh responses, and agent requirement connection status. Agent Origin Labels derive only from the current authorization session. A verified-domain label describes validated CIMD domain metadata, not a verified publisher identity. Absent CIMD metadata means an administrator registered the agent. Console views carry no Agent Origin Label.
 
 ### API Requirements *(if applicable - design before database)*
 
-- **API-001**: Keep existing end-user contracts and the consent-grants read response unchanged. The redesign must preserve the existing authorization session, third-party authorization/callback/refresh, scope preview, and approval-decision contracts.
+- **API-001**: Keep existing end-user contracts and the consent-grants read response unchanged. The redesign must preserve the existing authorization session, third-party authorization/callback/refresh, scope preview, and approval-decision contracts. The only `api/enduser/openapi.yaml` change is the documentation correction of the existing `GET /api/third-party/sessions` response to `{data: {sessions: [UserSessionSummary]}}` (Clarifications, 2026-09-27).
 - **API-004**: The gateway-only approval long-poll is not a browser data source. Refresh the existing acting-user pending-list response regularly for live browser updates.
-- **API-005**: This feature adds or changes no backend endpoint, response field, persistence, or OAuth2/token contract. Every screen uses existing end-user responses.
+- **API-005**: This feature adds or changes no backend endpoint, response field, runtime response, persistence, or OAuth2/token contract. Every screen uses existing end-user responses. Correcting documentation to match an existing response is not a contract change.
 
 ### Security Requirements *(mandatory for security-critical features)*
 
@@ -237,8 +246,8 @@ A connection state summarizes token usability from existing session fields. Agen
 
 ### Key Entities *(include if feature involves data)*
 
-- **Agent**: The named requester, its trustworthy origin information, optional publisher and documentation links, and user-owned grants.
-- **Permission Set and UserGrant**: A human-readable, named, and described group of allowed services with required or optional controls, and one user's selections and expiry. Existing selections remain part of delta re-consent.
+- **Agent**: The named requester, its trustworthy origin information, optional governance and documentation links, and user-owned grants.
+- **Permission Set and UserGrant**: A human-readable, named, and described group of allowed services with required or optional controls, and one user's selections and expiry. Existing selections remain part of delta re-consent. The console lists unexpired UserGrants as delegations.
 - **UserSession**: A user's third-party connection, granted scopes, expiry and refresh capacity, and dependent agents. Its visible state must reflect usable access.
 - **ToolApproval**: A user's pending or resolved tool decision with reviewed arguments, scope, risk, and once, session, or permanent persistence.
 - **Appearance Preferences**: Per-browser theme and sidebar choices. They never affect a consent or tool decision.
@@ -248,7 +257,7 @@ A connection state summarizes token usability from existing session fields. Agen
 ### Measurable Outcomes
 
 - **SC-001**: In moderated first-time consent sessions, users decide within 30 seconds and can name each granted service and state what each selected permission set allows.
-- **SC-002**: On a throttled 4G profile, the consent screen's main content appears within 1.5 seconds. Its initial compressed application code is under 150 kB.
+- **SC-002**: Under the Chrome DevTools “Slow 4G” network preset, the consent screen's main content appears within 1.5 seconds. Its initial compressed application code is under 150 kB.
 - **SC-003**: Every screen passes WCAG 2.2 AA checks in both themes. Automated component checks find no text below 4.5:1 contrast; every flow works by keyboard and announces new approvals, decisions, and toasts.
 - **SC-004**: At 320 px width and 200% zoom, 100% of routes remain usable without horizontal page scrolling.
 - **SC-005**: At least 12 agent rows fit within a 1080 px-high viewport without page scrolling in the standard desktop layout.
