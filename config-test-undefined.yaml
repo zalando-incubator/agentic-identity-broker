@@ -1,3 +1,0 @@
-log:
-  level: ${UNDEFINED_VARIABLE}
-  format: text

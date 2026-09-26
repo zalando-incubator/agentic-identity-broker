@@ -75,7 +75,7 @@ Dockerfile supports future multi-architecture builds via `ARG TARGETARCH`. Curre
 
 ## Files Modified/Created
 
-- `Dockerfile` - Multi-stage build definition (NEW)
+- `build/docker/Dockerfile` - Multi-stage build definition (NEW)
 - `justfile` - Docker tasks added (MODIFIED)
 - `.dockerignore` - Non-essential file exclusions (NEW)
 

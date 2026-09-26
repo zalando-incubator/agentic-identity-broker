@@ -230,7 +230,7 @@ The API design satisfies all functional and security requirements from [`spec.md
 ## Related Documentation
 
 - **Feature Specification**: [`../spec.md`](../spec.md) - Complete requirements and user stories
-- **Architecture Overview**: [`/ARCHITECTURE.md`](/ARCHITECTURE.md) - System architecture
+- **Architecture Overview**: [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) - System architecture
 - **Development Guide**: [`/AGENT.md`](/AGENT.md) - Build, test, and deployment workflows
 - **Session Management**: [`/specs/005-session-management/`](/specs/005-session-management/) - Principal extraction
 

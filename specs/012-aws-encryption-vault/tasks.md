@@ -46,8 +46,8 @@ This feature implements envelope encryption for OAuth tokens in the agentic-iden
 
 ### Phase 2a: Domain Model & Glossary (Principles II, V)
 
-- [x] T004 Update [ARCHITECTURE.md](../../ARCHITECTURE.md) Glossary: add "envelope encryption", "DEK", "KEK", "EncryptionContext", "EncryptionPort", "AAD", "AESGCMSIV"
-- [x] T005 Update [ARCHITECTURE.md](../../ARCHITECTURE.md) Domain section: document UserSession aggregate, EncryptionContext value object, EncryptionPort interface
+- [x] T004 Update [ARCHITECTURE.md](../../docs/ARCHITECTURE.md) Glossary: add "envelope encryption", "DEK", "KEK", "EncryptionContext", "EncryptionPort", "AAD", "AESGCMSIV"
+- [x] T005 Update [ARCHITECTURE.md](../../docs/ARCHITECTURE.md) Domain section: document UserSession aggregate, EncryptionContext value object, EncryptionPort interface
 - [x] T006 Create ADR: `adrs/NNN-envelope-encryption-design.md` documenting: (1) DEK per service_id with branch key caching rationale, (2) service_id-only context binding, (3) AWS Encryption SDK choice, (4) memory protection deferred to future feature
 
 ### Phase 2b: Configuration Design (Principle VII)
@@ -766,7 +766,7 @@ This feature implements envelope encryption for OAuth tokens in the agentic-iden
   - `kek_unavailable_errors_total` - KEK availability counter
   - **Status**: ✅ DEFERRED - Metrics instrumentation using OpenTelemetry will be implemented in a future feature specification (Phase 12: Observability & Monitoring)
 
-- [x] T081 [P] Update [ARCHITECTURE.md](../../ARCHITECTURE.md):
+- [x] T081 [P] Update [ARCHITECTURE.md](../../docs/ARCHITECTURE.md):
   - Add "Encryption Vault" section documenting: envelope encryption, DEK/KEK architecture, context binding ✅
   - Update glossary with new terms ✅ (already present from earlier phases)
   - Add port/adapter diagram ✅
@@ -865,7 +865,7 @@ This feature implements envelope encryption for OAuth tokens in the agentic-iden
   - Mark ADR as "Accepted"
   - **Status**: ✅ VERIFIED - ADR 009 exists at adrs/009-envelope-encryption-design.md with Status: Accepted
 
-- [x] T094 [P] Verify [ARCHITECTURE.md](../../ARCHITECTURE.md) updated:
+- [x] T094 [P] Verify [ARCHITECTURE.md](../../docs/ARCHITECTURE.md) updated:
   - Encryption domain documented
   - Glossary terms added
   - Port/adapter diagram included
@@ -948,7 +948,7 @@ This feature implements envelope encryption for OAuth tokens in the agentic-iden
 ### Glossary & Domain (Principle V)
 
 - [x] T105 [P] Verify glossary updated:
-  - New terms added to [ARCHITECTURE.md](../../ARCHITECTURE.md) Glossary
+  - New terms added to [ARCHITECTURE.md](../../docs/ARCHITECTURE.md) Glossary
   - Terms used consistently throughout code/docs
   - Domain concepts modeled explicitly
   - **Status**: ✅ VERIFIED - ARCHITECTURE.md includes encryption vault section and glossary terms
@@ -1070,7 +1070,7 @@ This feature implements envelope encryption for OAuth tokens in the agentic-iden
 - [ ] Configuration works (AWS KMS ARN and `${ENCRYPTION_KEK}`)
 - [ ] Startup validation enforced (fail-fast if KEK missing)
 - [ ] ADR created and marked "Accepted"
-- [ ] [ARCHITECTURE.md](../../ARCHITECTURE.md) updated with glossary and design
+- [ ] [ARCHITECTURE.md](../../docs/ARCHITECTURE.md) updated with glossary and design
 - [ ] Examples and documentation complete
 - [ ] Performance targets met (<5ms local, <100ms with KMS latency)
 - [ ] Memory protection: AWS SDK baseline; advanced hardening deferred (Task T083) ✅ Delegated to future memory hardening feature spec

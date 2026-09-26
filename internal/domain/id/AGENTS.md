@@ -51,4 +51,4 @@ If you introduce a domain entity with a UUID primary key:
    ```
 
 2. Run `go generate ./internal/domain/id/`. The command regenerates `uuid_ids_gen.go`.
-3. If the entity changes the architecture or glossary, update `ARCHITECTURE.md`.
+3. If the entity changes the architecture or glossary, update `docs/ARCHITECTURE.md`.

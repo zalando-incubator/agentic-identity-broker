@@ -74,7 +74,7 @@ specs/[###-feature]/
 The Docker setup is primarily configuration-driven with deployment artifacts generated from existing source:
 
 ```text
-Dockerfile                          # Multi-stage build definition (NEW)
+build/docker/Dockerfile             # Multi-stage build definition (NEW)
 justfile                            # Updated with docker build/deploy tasks (MODIFIED)
 
 cmd/agentic-identity-broker/        # Existing Go backend entry point

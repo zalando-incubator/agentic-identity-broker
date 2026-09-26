@@ -18,14 +18,14 @@
 
 ### 2. extproc-token-exchange
 
-Config file is located at `config.extproc.docker.yaml` in the project root directory, next to other Docker Compose configuration files.
+The config file is at `configs/config.extproc.docker.yaml` in the project `configs/` directory.
 
 | Property | Value |
 |----------|-------|
 | Build | `Dockerfile.mock` with `SERVICE_PATH=cmd/extproc-token-exchange` |
 | Container Name | `aib-extproc` |
 | Ports | `50051` (gRPC, container-internal only — not exposed to Docker host) |
-| Config Mount | `./config.extproc.docker.yaml:/app/config.yaml:ro` |
+| Config Mount | `./configs/config.extproc.docker.yaml:/app/config.yaml:ro` |
 | Environment | `EXTPROC_CLIENT_SECRET`, `EXTPROC_LOG_LEVEL=debug` |
 | Network | `aib-network` |
 | Depends On | `identity-broker` (healthy), `upstream-oauth2` |

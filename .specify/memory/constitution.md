@@ -57,9 +57,9 @@ Security is NON-NEGOTIABLE and MUST NOT be bypassed or made optional in this cod
 Architecture and major decisions MUST be documented, and Architecture Decision Records are BINDING.
 
 **Rules**:
-- [ARCHITECTURE.md](ARCHITECTURE.md) is the single source of truth for system architecture
-- When features change or touch architecture, [ARCHITECTURE.md](ARCHITECTURE.md) MUST be updated in the same PR
-- Non-functional requirements (performance, security, scalability) MUST be documented in [ARCHITECTURE.md](ARCHITECTURE.md)
+- [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) is the single source of truth for system architecture
+- When features change or touch architecture, [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) MUST be updated in the same PR
+- Non-functional requirements (performance, security, scalability) MUST be documented in [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)
 - Major architectural decisions MUST be recorded in [adrs/](adrs/) directory as Architecture Decision Records
 - ADR files MUST follow the format `NNN-decision-title.md` (e.g., `001-hexagonal-architecture.md`)
 - ADRs MUST include: Context, Decision, Consequences, Status (Proposed/Accepted/Deprecated/Superseded)
@@ -105,11 +105,11 @@ and API contracts are binding commitments to consumers.
 - Once an API is deployed/released, NEVER change its behavior without a major version bump or creating a new endpoint
 - Deprecation warnings MUST be added to OpenAPI docs before removing endpoints
 - When user requests API change during implementation, create ADR documenting the change with confirmation reference
-- API versioning strategy MUST be documented in [ARCHITECTURE.md](ARCHITECTURE.md)
+- API versioning strategy MUST be documented in [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)
 - All APIs MUST follow Zalando RESTful API and Event Guidelines
   (https://opensource.zalando.com/restful-api-guidelines/)
 - API design decisions (e.g., naming conventions, error response format, pagination strategy) MUST be
-  documented in [ARCHITECTURE.md](ARCHITECTURE.md) or via ADR
+  documented in [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) or via ADR
 - Breaking API changes MUST be documented in [docs/changelog.md](docs/changelog.md)
 
 **Rationale**: APIs are contracts with consumers. Explicit OpenAPI documentation in designated locations
@@ -124,8 +124,8 @@ Domain concepts MUST be explicitly modeled, documented, and maintained in the gl
 
 **Rules**:
 - This project follows Domain-Driven Design (DDD) principles
-- When the domain model is updated or new domain concepts are introduced, they MUST be added to [ARCHITECTURE.md](ARCHITECTURE.md)
-- All domain terms MUST be added to the Glossary section in [ARCHITECTURE.md](ARCHITECTURE.md)
+- When the domain model is updated or new domain concepts are introduced, they MUST be added to [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)
+- All domain terms MUST be added to the Glossary section in [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)
 - Glossary entries MUST include: term name, definition, relationships to other domain concepts
 - Ubiquitous language from the domain model MUST be used consistently in code, docs, and discussions
 
@@ -140,8 +140,8 @@ Backend architecture MUST use hexagonal architecture with clear port/adapter sep
 - Domain logic MUST depend on ports (interfaces), NOT concrete implementations
 - Adapters MUST implement ports: driving adapters (inbound, e.g., HTTP handlers) and driven adapters (outbound, e.g., database clients)
 - This is NOT dogmatic: pragmatic deviations are allowed, but domain logic MUST remain insulated via interfaces
-- The directory structure MUST be explained in [ARCHITECTURE.md](ARCHITECTURE.md)
-- If directory structure is unclear or misleading, it MUST be clarified with the user and updated in [ARCHITECTURE.md](ARCHITECTURE.md)
+- The directory structure MUST be explained in [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)
+- If directory structure is unclear or misleading, it MUST be clarified with the user and updated in [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)
 
 **Rationale**: Hexagonal architecture enables testability, flexibility, and maintainability by decoupling domain logic from infrastructure concerns.
 
@@ -292,7 +292,7 @@ changed without confirmation, even to fix bugs.
 - Once an API is deployed/released, NEVER change its behavior without a major version bump or creating a new endpoint
 - Deprecation warnings MUST be added to OpenAPI docs before removing endpoints
 - When user requests API change during implementation, create ADR documenting the change with confirmation reference
-- API versioning strategy MUST be documented in [ARCHITECTURE.md](ARCHITECTURE.md)
+- API versioning strategy MUST be documented in [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md)
 
 **Rationale**: Designing APIs before implementation ensures that system contracts are stable,
 well-thought-out, and user-centric. Requiring user/stakeholder confirmation makes API changes explicit
@@ -474,7 +474,7 @@ documentation of UI states, making regressions immediately visible during review
 **PRECONDITIONS (must complete BEFORE implementation begins)**:
 
 - [ ] Domain model designed: all entities, aggregates, and value objects identified and documented
-- [ ] Domain concepts added to [ARCHITECTURE.md](ARCHITECTURE.md) Glossary section
+- [ ] Domain concepts added to [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) Glossary section
 - [ ] Configuration requirements designed: example YAML snippets showing all new config options
 - [ ] Configuration examples committed to [examples/config/](examples/config/) for reference
 - [ ] **Helm deployment contract updated when configuration parameters of a chart-managed workload change; otherwise the standalone deployment owner and its accepted ADR boundary are documented (Principle VII)**
@@ -491,7 +491,7 @@ documentation of UI states, making regressions immediately visible during review
 **Implementation Phase**:
 
 - [ ] Security controls are enabled by default and fail closed
-- [ ] [ARCHITECTURE.md](ARCHITECTURE.md) reflects architectural changes (if any)
+- [ ] [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) reflects architectural changes (if any)
 - [ ] Major decisions recorded in [adrs/](adrs/) with correct numbering
 - [ ] Code follows patterns established in accepted ADRs (especially ADR 004 for persistence)
 - [ ] APIs implemented exactly as documented in OpenAPI specification

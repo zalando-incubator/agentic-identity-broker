@@ -80,7 +80,7 @@ Enable building a production-ready Docker image containing both backend and fron
 3. Frontend and backend communication works within container
 
 ### Independent Test Criteria
-- Docker image builds with `docker build -t agentic-identity-broker:latest .`
+- Docker image builds with `docker build -t agentic-identity-broker:latest -f build/docker/Dockerfile .`
 - Image size is optimized (reasonable footprint with alpine base)
 - Container starts with `docker run -p 8000:8000 agentic-identity-broker:latest`
 - Backend HTTP server responds to requests on port 8000 (SC-002)
@@ -169,7 +169,7 @@ Enable developers to build and run containerized application using the unified t
   - [x] File: `justfile` - **✓ Implemented** (lines 193-204)
   - [x] Command: build multi-architecture images with error checking - **✓**: Full error checking in place
   - [x] Verify prerequisites: Docker installed, architecture binaries exist - **✓**: Validates ./bin/linux/amd64 and ./bin/linux/arm64
-  - [x] Execute: `docker buildx build --build-arg VERSION="{{VERSION}}" --platform linux/amd64,linux/arm64 --push .` - **✓**: Buildx command
+  - [x] Execute: `docker buildx build --build-arg VERSION="{{VERSION}}" --platform linux/amd64,linux/arm64 --file build/docker/Dockerfile --push .` - **✓**: Buildx command
   - [x] Error handling: exit with helpful message if Docker not installed or build fails - **✓**: Comprehensive error messages
   - [x] Success message: confirm images pushed to registry - **✓**: Displays push confirmation
 

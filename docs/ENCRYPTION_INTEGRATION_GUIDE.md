@@ -460,7 +460,7 @@ See `tests/e2e/encryption_vault_raw_test.go` for E2E scenarios that cover:
 ## Additional Resources
 
 - Encryption feature specification: see `specs/012-aws-encryption-vault/spec.md` in the repository
-- Architecture documentation: see `ARCHITECTURE.md` in the repository root
+- Architecture documentation: see `docs/ARCHITECTURE.md`
 - [Configuration Guide](./configuration.md)
 - [AWS KMS Documentation](https://docs.aws.amazon.com/kms/)
 - [AWS Encryption SDK Documentation](https://docs.aws.amazon.com/encryption-sdk/)

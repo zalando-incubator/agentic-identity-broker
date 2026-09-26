@@ -37,7 +37,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 **Design Preconditions (BLOCKING)**:
 
 - [ ] **Domain Model**: Have entities, aggregates, value objects been identified and documented?
-- [ ] **Domain Concepts**: Will new domain terms be added to ARCHITECTURE.md Glossary?
+- [ ] **Domain Concepts**: Will new domain terms be added to `docs/ARCHITECTURE.md` Glossary?
 - [ ] **Entity IDs**: For each new domain entity with a UUID primary key, will a typed ID (`type XxxID uuid.UUID`) be added to `internal/domain/id/` via `gen_ids.go` and documented in `internal/domain/id/AGENTS.md`? (ADR 013)
 - [ ] **Configuration Design**: Have all config requirements been identified with YAML examples?
 - [ ] **Config Examples**: Will example YAML snippets be added to examples/config/?
@@ -55,7 +55,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 **Implementation Considerations**:
 
 - [ ] **Security-First**: Are security features enabled by default? No bypasses or optional security?
-- [ ] **Architecture Docs**: Will ARCHITECTURE.md be updated if this touches architecture?
+- [ ] **Architecture Docs**: Will `docs/ARCHITECTURE.md` be updated if this touches architecture?
 - [ ] **ADRs**: Does this require an ADR in adrs/ for major decisions?
 - [ ] **Library-First Security**: Are we using vetted libraries for crypto/security (no custom implementations)?
 - [ ] **Zalando Guidelines**: Will APIs follow Zalando RESTful API and Event Guidelines?

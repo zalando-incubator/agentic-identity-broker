@@ -40,13 +40,13 @@ This section provides a high-level overview of the project's directory and file 
 │   ├── tsconfig.build.json # Build TypeScript configuration
 │   └── tailwind.config.ts # Tailwind CSS v4.0 configuration
 ├── docs/                 # Project documentation (e.g., API docs, setup guides)
+│   └── ARCHITECTURE.md   # This document
 ├── infra/                # Infrastructure as Code
 │   └── cdk/              # AWS CDK (Go) – encryption infrastructure (KMS, DynamoDB, IAM)
 ├── scripts/              # Automation scripts (e.g., deployment, data seeding)
 ├── .github/              # GitHub Actions or other CI/CD configurations
 ├── .gitignore            # Specifies intentionally untracked files to ignore
-├── README.md             # Project overview and quick start guide
-└── ARCHITECTURE.md       # This document
+└── README.md             # Project overview and quick start guide
 
 ## 2. High-Level System Diagram
 
@@ -303,7 +303,7 @@ App
 
 **OTel Provider Wiring** (Feature 017):
 
-The OTel provider is initialized in `Build()` and follows the app-layer provider pattern documented in [ADR 011](adrs/011-opentelemetry-provider-pattern.md):
+The OTel provider is initialized in `Build()` and follows the app-layer provider pattern documented in [ADR 011](../adrs/011-opentelemetry-provider-pattern.md):
 
 ```
 Build()
@@ -338,7 +338,7 @@ The composite shutdown function is stored as `App.ShutdownTelemetry func(context
 
 **Architecture**: Ginkgo BDD-style tests with separation of stable test scenarios (HTTP contract) and volatile setup code (production bootstrap wrappers).
 
-**Key Design Principles** (see [ADR 007](adrs/007-e2e-testing-with-ginkgo.md)):
+**Key Design Principles** (see [ADR 007](../adrs/007-e2e-testing-with-ginkgo.md)):
 
 1. **Use Production Bootstrap**: Tests use production `app.Builder`, `httpAdapter.Server`, and `storage.Adapter` - no custom test implementations
 2. **Stability Through Separation**: Test scenarios focus on HTTP contracts (stable), setup code wraps production bootstrap (volatile)
@@ -396,7 +396,7 @@ ginkgo -v --focus="Authorization Endpoint" ./tests/e2e/
 - **Readable Output**: Ginkgo output is hierarchical and understandable by non-developers
 - **Production Parity**: Tests exercise the same code path as production (DI, routing, middleware)
 
-**Documentation**: Comprehensive E2E testing guide with examples, patterns, and anti-patterns in [tests/e2e/README.md](tests/e2e/README.md)
+**Documentation**: Comprehensive E2E testing guide with examples, patterns, and anti-patterns in [tests/e2e/README.md](../tests/e2e/README.md)
 
 **Technologies**:
 
@@ -435,7 +435,7 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 
 **Purpose**: Enable real-time approval state synchronization between ExtProc gateway instances and the broker without polling overhead.
 
-**Architecture** (see [ADR 014](adrs/014-long-poll-listen-notify.md)):
+**Architecture** (see [ADR 014](../adrs/014-long-poll-listen-notify.md)):
 
 - **Long-Poll HTTP**: `GET /api/approvals` blocks using `select{}` on change channel, timeout timer, or client disconnect. Uses `If-None-Match` / `ETag` with monotonic version counter.
 - **ApprovalSyncBroadcaster**: In-process fan-out with configurable coalesce window (default 1s). Subscribers register buffered channels; broadcast wakes all subscribers after coalesce delay.
@@ -990,7 +990,7 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 
 **Binary**: `extproc-token-exchange` (single Go binary, ~24MB)
 
-**Containerization**: `Dockerfile` for Docker Compose integration
+**Containerization**: `build/docker/Dockerfile.extproc` for Docker Compose integration
 
 **Lifecycle**:
 
@@ -1160,42 +1160,42 @@ This section lists all architectural decisions made for this project. ADRs docum
 
 ### Core Infrastructure
 
-- [ADR 002: Configuration Libraries](adrs/002-configuration-libraries.md) - Multi-source configuration with Viper, Cobra, and godotenv
-- [ADR 003: Chi Framework Selection](adrs/003-chi-framework.md) - HTTP routing framework choice
-- [ADR 004: Dual-Server Isolation](adrs/004-dual-server-isolation.md) - Separate end-user and admin servers
-- [ADR 004: Storage Layer Architecture](adrs/004-storage-layer-architecture.md) - Hexagonal architecture for persistence
+- [ADR 002: Configuration Libraries](../adrs/002-configuration-libraries.md) - Multi-source configuration with Viper, Cobra, and godotenv
+- [ADR 003: Chi Framework Selection](../adrs/003-chi-framework.md) - HTTP routing framework choice
+- [ADR 004: Dual-Server Isolation](../adrs/004-dual-server-isolation.md) - Separate end-user and admin servers
+- [ADR 004: Storage Layer Architecture](../adrs/004-storage-layer-architecture.md) - Hexagonal architecture for persistence
 
 ### Frontend & User Interface
 
-- [ADR 005: SPA Serving Pattern](adrs/005-spa-serving-pattern.md) - Serving React SPA from Go backend
-- [ADR 006: Frontend Stack](adrs/006-frontend-stack.md) - React 18 + Vite + Tailwind CSS v4
+- [ADR 005: SPA Serving Pattern](../adrs/005-spa-serving-pattern.md) - Serving React SPA from Go backend
+- [ADR 006: Frontend Stack](../adrs/006-frontend-stack.md) - React 18 + Vite + Tailwind CSS v4
 
 ### Testing & Quality
 
-- [ADR 007: E2E Testing with Ginkgo](adrs/007-e2e-testing-with-ginkgo.md) - BDD-style E2E tests using production bootstrap
+- [ADR 007: E2E Testing with Ginkgo](../adrs/007-e2e-testing-with-ginkgo.md) - BDD-style E2E tests using production bootstrap
 
 ### RFC 8693 Token Exchange
 
-- [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
+- [ADR 008: Token Exchange JWKS Adapter Pattern](../adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
 
 ### Security & Encryption
 
-- [ADR 008: Encryption Context Optimization](adrs/008-encryption-context-optimization.md) - Service-ID-only context binding performance optimization
-- [ADR 009: Envelope Encryption Design](adrs/009-envelope-encryption-design.md) - DEK-per-session with AWS KMS and context binding
-- [ADR 010: CDK Encryption Infrastructure](adrs/010-cdk-encryption-infrastructure.md) - AWS CDK (Go) for KMS, DynamoDB, and IAM provisioning
-- [ADR 012: Encryption Layer Separation](adrs/012-encryption-layer-separation.md) - Domain service encryption pattern for hexagonal architecture
+- [ADR 008: Encryption Context Optimization](../adrs/008-encryption-context-optimization.md) - Service-ID-only context binding performance optimization
+- [ADR 009: Envelope Encryption Design](../adrs/009-envelope-encryption-design.md) - DEK-per-session with AWS KMS and context binding
+- [ADR 010: CDK Encryption Infrastructure](../adrs/010-cdk-encryption-infrastructure.md) - AWS CDK (Go) for KMS, DynamoDB, and IAM provisioning
+- [ADR 012: Encryption Layer Separation](../adrs/012-encryption-layer-separation.md) - Domain service encryption pattern for hexagonal architecture
 
 ### Observability
 
-- [ADR 011: OpenTelemetry Provider Pattern](adrs/011-opentelemetry-provider-pattern.md) - App-layer OTel provider, otelchi middleware choice, context-based span propagation
-- [ADR 033: Request Security Context Propagation](adrs/033-request-security-context-propagation.md) - Perimeter security-context capture, additive `traceresponse` response header, and delegated `calling_peer` semantics
+- [ADR 011: OpenTelemetry Provider Pattern](../adrs/011-opentelemetry-provider-pattern.md) - App-layer OTel provider, otelchi middleware choice, context-based span propagation
+- [ADR 033: Request Security Context Propagation](../adrs/033-request-security-context-propagation.md) - Perimeter security-context capture, additive `traceresponse` response header, and delegated `calling_peer` semantics
 
 ### Client ID Metadata Document (CIMD)
 
-- [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) - SSRF-hardened HTTP client, in-process caching, hexagonal port, strategy pattern for opaque vs URL-based client IDs
+- [ADR 015: CIMD Fetcher Architecture](../adrs/015-cimd-fetcher-architecture.md) - SSRF-hardened HTTP client, in-process caching, hexagonal port, strategy pattern for opaque vs URL-based client IDs
 
 ### Tool Approval
-- [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
+- [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](../adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
 
 ## 11. Project Identification
 

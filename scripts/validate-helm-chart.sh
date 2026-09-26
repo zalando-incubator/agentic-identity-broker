@@ -48,7 +48,7 @@ print_error() {
 
 # Check prerequisites
 print_header "Checking Prerequisites"
-for cmd in kind helm kubectl; do
+for cmd in kind helm kubectl docker; do
     if ! command -v "$cmd" &> /dev/null; then
         print_error "$cmd is not installed. Please install it first."
     fi
@@ -84,27 +84,21 @@ print_header "Loading Docker Images into Kind"
 
 # Load broker image
 BROKER_IMAGE="localhost/agentic-identity-broker:0.1.0"
-if podman image exists "${BROKER_IMAGE}" 2>/dev/null; then
-    echo "Loading broker image ${BROKER_IMAGE} from podman..."
-    podman save "${BROKER_IMAGE}" | kind load image-archive /dev/stdin --name "${CLUSTER_NAME}" || print_error "Failed to load broker image from podman"
-elif docker image inspect "${BROKER_IMAGE}" >/dev/null 2>&1; then
+if docker image inspect "${BROKER_IMAGE}" >/dev/null 2>&1; then
     echo "Loading broker image ${BROKER_IMAGE} from docker..."
     kind load docker-image "${BROKER_IMAGE}" --name "${CLUSTER_NAME}" || print_error "Failed to load broker image from docker"
 else
-    print_error "Broker image ${BROKER_IMAGE} not found. Build it first with: podman build -t ${BROKER_IMAGE} ."
+    print_error "Broker image ${BROKER_IMAGE} not found. Build it first with: docker build -t ${BROKER_IMAGE} -f build/docker/Dockerfile ."
 fi
 print_success "Broker image loaded into Kind cluster"
 
 # Load migrate image
 MIGRATE_IMAGE="localhost/agentic-identity-broker-migrate:0.1.0"
-if podman image exists "${MIGRATE_IMAGE}" 2>/dev/null; then
-    echo "Loading migrate image ${MIGRATE_IMAGE} from podman..."
-    podman save "${MIGRATE_IMAGE}" | kind load image-archive /dev/stdin --name "${CLUSTER_NAME}" || print_error "Failed to load migrate image from podman"
-elif docker image inspect "${MIGRATE_IMAGE}" >/dev/null 2>&1; then
+if docker image inspect "${MIGRATE_IMAGE}" >/dev/null 2>&1; then
     echo "Loading migrate image ${MIGRATE_IMAGE} from docker..."
     kind load docker-image "${MIGRATE_IMAGE}" --name "${CLUSTER_NAME}" || print_error "Failed to load migrate image from docker"
 else
-    print_error "Migrate image ${MIGRATE_IMAGE} not found. Build it first with: podman build -t ${MIGRATE_IMAGE} -f Dockerfile.migrate ."
+    print_error "Migrate image ${MIGRATE_IMAGE} not found. Build it first with: docker build -t ${MIGRATE_IMAGE} -f build/docker/Dockerfile.migrate ."
 fi
 print_success "Migrate image loaded into Kind cluster"
 

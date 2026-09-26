@@ -21,7 +21,7 @@ This guide describes the separate Agentgateway policy and ExtProc sidecar config
 - A trusted JWT issuer and a JWKS source for the Agentgateway JWT provider.
 - A reachable broker token endpoint at `POST /oauth2/token` on end-user port 8000.
 - OAuth2 client credentials for the ExtProc sidecar. The sidecar uses them to obtain a client assertion for the broker.
-- The sidecar container image (`Dockerfile.extproc`). The sidecar stores state only in an in-memory cache.
+- The sidecar container image (`build/docker/Dockerfile.extproc`). The sidecar stores state only in an in-memory cache.
 - A broker CEL policy if you restrict gateway exchanges. You can also add an OPA policy for the proxied request.
 
 ## How the exchange flows
@@ -242,7 +242,7 @@ Give the JWT to a local MCP client as its bearer token. Do not print the credent
   target. To build a source-based development image, run:
 
   ```bash
-  docker build --target development --file Dockerfile.extproc .
+  docker build --target development --file build/docker/Dockerfile.extproc .
   ```
 
   Configure the sidecar with a YAML file or `EXTPROC_` environment variables.

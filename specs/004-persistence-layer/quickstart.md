@@ -1127,5 +1127,5 @@ if err != nil {
 
 **Questions?** Refer to:
 - [Constitution](../../.specify/memory/constitution.md) - Principle VI (Hexagonal Architecture)
-- [ARCHITECTURE.md](../../ARCHITECTURE.md) - Section 3.1.2 (Storage Subsystem)
+- [ARCHITECTURE.md](../../docs/ARCHITECTURE.md) - Section 3.1.2 (Storage Subsystem)
 - [Research Document](research.md) - Technology decisions and patterns

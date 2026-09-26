@@ -128,7 +128,7 @@ storage:
 
 2. Use PostgreSQL in production.
    ```yaml
-   # config.prod.yaml
+   # configs/config.prod.yaml
    storage:
      backend: postgres  # Better for persistent, scalable storage
    ```
@@ -206,7 +206,7 @@ watch -n 1 "psql $IDENTITY_BROKER_STORAGE_POSTGRES_URL -c
 
 **Examine redaction:**
 ```bash
-agentic-identity-broker --log-level=debug --config config.prod.yaml 2>&1 | grep -i password
+agentic-identity-broker --log-level=debug --config configs/config.prod.yaml 2>&1 | grep -i password
 # Should output nothing - password should be redacted as "[REDACTED]"
 ```
 

@@ -22,7 +22,7 @@ When reviewing code, focus on:
 - Use clear, descriptive naming conventions
 - Ensure proper error handling throughout
 - Identify code that is not fully implemented. This could be "TODO" markers in comments or wording that indicates a mock or non-production implementation. Other giveaways are phrases like "in a real implementation..." or "for now".
-- Identify deviations from the architectural principles defined in `ARCHITECTURE.md`
+- Identify deviations from the architectural principles defined in `docs/ARCHITECTURE.md`
 - Identify missing ADRs or violations of ADRs. ADRs are stored in the `adrs/` folder.
 
 ## Specification Adherence

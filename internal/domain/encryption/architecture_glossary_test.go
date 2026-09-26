@@ -13,7 +13,7 @@ import (
 )
 
 func TestArchitectureGlossaryDocumentsBranchKeySubjects(t *testing.T) {
-	architecture := readRepoFile(t, "ARCHITECTURE.md")
+	architecture := readRepoFile(t, "docs/ARCHITECTURE.md")
 	encryptionDomain := extractSection(t, architecture, "### Encryption Domain", "### Session Management Domain")
 
 	assert.Contains(t, encryptionDomain, "**BranchKeySubject**", "architecture glossary must define BranchKeySubject")

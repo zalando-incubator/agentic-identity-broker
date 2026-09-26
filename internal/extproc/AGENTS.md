@@ -298,7 +298,7 @@ Use `examples/config/extproc-tool-approvals.yaml` for approval gating.
 
 ## Docker Compose
 
-Docker Compose mounts `config.extproc.docker.yaml` at `/app/config.yaml`.
+Docker Compose mounts `configs/config.extproc.docker.yaml` at `/app/config.yaml`.
 It sets `EXTPROC_CONFIG_PATH=/app/config.yaml`.
 `agentgateway` connects to `extproc-token-exchange:50051` on the internal Compose network.
 
