@@ -594,7 +594,7 @@ func TestHandleCallback_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Initiate flow to get state token with PKCE verifier
-	flowResult, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, redirectURI)
+	flowResult, err := service.InitiateOAuth2FlowWithConsentState(ctx, principal, serviceID, redirectURI, "d0000000-0000-4000-8000-000000000001")
 	require.NoError(t, err)
 	require.NotNil(t, flowResult)
 
@@ -614,6 +614,7 @@ func TestHandleCallback_Success(t *testing.T) {
 	require.NotNil(t, result)
 	require.NotNil(t, result.Session)
 
+	assert.Equal(t, "d0000000-0000-4000-8000-000000000001", result.ConsentStateID)
 	// Verify session properties
 	session := result.Session
 	assert.Equal(t, principal, session.Principal)

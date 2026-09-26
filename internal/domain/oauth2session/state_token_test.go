@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 )
@@ -34,6 +37,72 @@ func TestCreateStateToken_Success(t *testing.T) {
 	require.NotNil(t, result, "result should not be nil")
 	assert.NotEmpty(t, result.StateToken, "state token should not be empty")
 	assert.NotEmpty(t, result.AuthorizationURL, "authorization URL should not be empty")
+}
+
+func TestInitiateOAuth2FlowWithConsentState_SealsReference(t *testing.T) {
+	service, testServiceID := setupTestService(t)
+	principal := id.Principal("user@example.com")
+	const consentStateID = "d0000000-0000-4000-8000-000000000001"
+
+	result, err := service.InitiateOAuth2FlowWithConsentState(
+		context.Background(),
+		principal,
+		testServiceID,
+		"https://example.com/callback",
+		consentStateID,
+	)
+	require.NoError(t, err)
+
+	claims, err := service.ValidateStateToken(result.StateToken, principal, testServiceID)
+	require.NoError(t, err)
+	assert.Equal(t, consentStateID, claims.ConsentStateID)
+}
+
+func TestInitiateOAuth2FlowWithConsentState_SessionTokenRedirectFitsProviderLimit(t *testing.T) {
+	service, serviceID := setupTestService(t)
+	principal := id.Principal("user@example.com")
+	key, err := jwk.Import[jwk.Key]([]byte("0123456789012345678901234567890X"))
+	require.NoError(t, err)
+	claims, err := sessiontoken.NewAuthorizationSessionClaims(
+		id.NewAgentID(), principal,
+		"/oauth2/authorize?client_id=test-client&redirect_uri=https%3A%2F%2Fclient.example.com%2Fcallback&response_type=code&state="+strings.Repeat("client-state-", 40),
+		nil,
+	)
+	require.NoError(t, err)
+	sessionToken, err := domjwe.New(key).Encrypt(claims)
+	require.NoError(t, err)
+	redirectURI := "https://broker.example.com/agents/" + claims.AgentID.String() + "?session_token=" + url.QueryEscape(sessionToken)
+
+	flow, err := service.InitiateOAuth2FlowWithConsentState(
+		context.Background(), principal, serviceID, redirectURI, "d0000000-0000-4000-8000-000000000001",
+	)
+	require.NoError(t, err)
+	assert.Less(t, len(flow.StateToken), 6000)
+}
+
+func TestInitiateOAuth2Flow_RejectsOversizedRedirectState(t *testing.T) {
+	service, serviceID := setupTestService(t)
+	redirectURI := "https://broker.example.com/agents/" + id.NewAgentID().String() +
+		"?session_token=" + strings.Repeat("opaque-token-data", 500)
+
+	result, err := service.InitiateOAuth2Flow(
+		context.Background(), id.Principal("user@example.com"), serviceID, redirectURI,
+	)
+	require.ErrorContains(t, err, "state token exceeds")
+	assert.Nil(t, result)
+}
+
+func TestInitiateOAuth2Flow_RejectsOversizedEncryptedState(t *testing.T) {
+	service, serviceID := setupTestService(t)
+	prefix := "https://broker.example.com/agents/" + id.NewAgentID().String() + "?session_token="
+	redirectURI := prefix + strings.Repeat("x", 5900-len(prefix))
+	require.Less(t, len(redirectURI), 6000)
+
+	result, err := service.InitiateOAuth2Flow(
+		context.Background(), id.Principal("user@example.com"), serviceID, redirectURI,
+	)
+	require.ErrorIs(t, err, oauth2session.ErrStateTokenTooLarge)
+	assert.Nil(t, result)
 }
 
 // TestValidateStateToken_ValidToken tests successful validation of a valid state token.

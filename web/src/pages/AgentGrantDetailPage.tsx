@@ -14,7 +14,7 @@
  * - Smooth scroll to errors on validation failure
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { AppLayout } from '@components/layout/AppLayout';
 import { PageTransition } from '@components/ui/PageTransition';
@@ -31,6 +31,7 @@ import { CIMDSection } from '@components/consent/CIMDSection';
 import { GrantValidityControl } from '@components/consent/GrantValidityControl';
 import { PermissionSetsList } from '@components/consent/PermissionSetsList';
 import { useAgentGrants, useToggleGrant, useUpdateValidity } from '@hooks';
+import { loadConsentState, saveConsentSelections } from '@services/storage/session';
 import { validateGrantRequest, isSafeRedirectUrl } from '../utils/validation';
 import { scrollToError } from '../utils/scrollToError';
 
@@ -44,39 +45,40 @@ export function AgentGrantDetailPage() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const searchParams = new URLSearchParams(location.search);
-  const sessionToken = searchParams.get('session_token') || undefined;
-
-  // Restore consent state from URL (survives third-party OAuth2 redirects).
-  // Currently contains permission set selections, encoded as base64url JSON in `consent_state`.
-  const restoredSelections = useMemo(():
-    | Record<string, string[]>
-    | undefined => {
+  const [callbackState] = useState(() => {
     const params = new URLSearchParams(location.search);
-    const encoded = params.get('consent_state');
-    if (!encoded) return undefined;
-    try {
-      const padded = encoded + '='.repeat((4 - (encoded.length % 4)) % 4);
-      const json = atob(padded.replace(/-/g, '+').replace(/_/g, '/'));
-      const parsed = JSON.parse(json);
-      if (
-        typeof parsed !== 'object' ||
-        parsed === null ||
-        Array.isArray(parsed)
-      )
-        return undefined;
-      const result: Record<string, string[]> = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        if (Array.isArray(v) && v.every((s) => typeof s === 'string')) {
-          result[k] = v;
-        }
-      }
-      return Object.keys(result).length > 0 ? result : undefined;
-    } catch {
-      // Silently ignore malformed selections
+    if (params.get('success') !== 'true') {
+      return undefined;
     }
-    return undefined;
-  }, [location.search]);
+    const stateID = params.get('consent_state_id');
+    const serviceID = params.get('service_id');
+    return stateID && serviceID
+      ? loadConsentState(stateID, serviceID, location.pathname)
+      : undefined;
+  });
+  const returnURL = callbackState ? new URL(callbackState.returnURL) : undefined;
+  const activeCallbackState =
+    returnURL?.pathname === location.pathname ? callbackState : undefined;
+  const restoredSelections =
+    activeCallbackState && Object.keys(activeCallbackState.selections).length > 0
+      ? activeCallbackState.selections
+      : undefined;
+  const sessionToken =
+    (activeCallbackState
+      ? returnURL?.searchParams.get('session_token')
+      : new URLSearchParams(location.search).get('session_token')) || undefined;
+
+  useEffect(() => {
+    if (!activeCallbackState) {
+      return;
+    }
+    const originalURL = new URL(activeCallbackState.returnURL);
+    originalURL.searchParams.set('success', 'true');
+    originalURL.searchParams.set('service_id', activeCallbackState.serviceID);
+    navigate(`${originalURL.pathname}${originalURL.search}${originalURL.hash}`, {
+      replace: true,
+    });
+  }, [activeCallbackState, navigate]);
 
   const resolvedAgentId = agentId ?? '';
 
@@ -243,35 +245,53 @@ export function AgentGrantDetailPage() {
     // 'noContent' — grant revoked, no further action
   };
 
-  // Handle service login (FR-020a: redirect to third-party OAuth2 flow)
-  // Extract redirect logic to separate function for testability.
-  // Encodes current permission set selections into the redirect URL so they survive the round-trip.
-  const buildServiceLoginUrl = useCallback(
-    (serviceId: string): string => {
-      const currentUrl = new URL(window.location.href);
-      // Always encode current selections as base64url JSON to preserve state across redirect.
-      // Explicitly delete stale consent_state when no services are selected.
-      if (Object.keys(perPsIncludedServiceIds).length > 0) {
-        const json = JSON.stringify(perPsIncludedServiceIds);
-        const encoded = btoa(json)
-          .replace(/\+/g, '-')
-          .replace(/\//g, '_')
-          .replace(/=+$/, '');
-        currentUrl.searchParams.set('consent_state', encoded);
-      } else {
-        currentUrl.searchParams.delete('consent_state');
-      }
-      return `/api/third-party/${serviceId}/oauth2/authorize?redirect_uri=${encodeURIComponent(currentUrl.toString())}`;
-    },
-    [perPsIncludedServiceIds],
-  );
-
   const handleServiceLogin = useCallback(
     (serviceId: string) => {
-      const loginUrl = buildServiceLoginUrl(serviceId);
-      window.location.href = loginUrl;
+      const currentUrl = new URL(window.location.href);
+      currentUrl.searchParams.delete('consent_state');
+      currentUrl.searchParams.delete('consent_state_id');
+      currentUrl.searchParams.delete('success');
+      currentUrl.searchParams.delete('service_id');
+      const redirectURI = `${currentUrl.origin}${currentUrl.pathname}`;
+
+      const hasSelections = Object.keys(perPsIncludedServiceIds).length > 0;
+      if (!hasSelections && !currentUrl.search && !currentUrl.hash) {
+        window.location.href = `/api/third-party/${serviceId}/oauth2/authorize?redirect_uri=${encodeURIComponent(redirectURI)}`;
+        return;
+      }
+
+      const stateID = saveConsentSelections(
+        perPsIncludedServiceIds,
+        serviceId,
+        currentUrl.toString(),
+      );
+      if (!stateID) {
+        showToast(
+          hasSelections
+            ? 'Unable to preserve selections. Please try again.'
+            : 'Unable to preserve the return page. Please try again.',
+          'error',
+        );
+        return;
+      }
+
+      const form = document.createElement('form');
+      form.method = 'post';
+      form.action = `/api/third-party/${serviceId}/oauth2/authorize`;
+      form.style.display = 'none';
+      for (const [name, value] of Object.entries({
+        redirect_uri: redirectURI,
+        consent_state_id: stateID,
+      })) {
+        const input = document.createElement('input');
+        input.name = name;
+        input.value = value;
+        form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      form.submit();
     },
-    [buildServiceLoginUrl],
+    [perPsIncludedServiceIds, showToast],
   );
 
   // Handle full grant deletion (Revoke All Access button)

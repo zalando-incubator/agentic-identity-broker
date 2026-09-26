@@ -5,8 +5,6 @@ package pages
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -731,6 +729,48 @@ func (cp *ConsentPage) TogglePermissionSet(_ context.Context, permissionSetName 
 	return cp.page().GetByRole("switch", playwright.PageGetByRoleOptions{
 		Name: "Toggle " + permissionSetName,
 	}).Click()
+}
+
+// IsPermissionSetSelected reports whether an optional permission set is selected.
+func (cp *ConsentPage) IsPermissionSetSelected(_ context.Context, permissionSetName string) (bool, error) {
+	if permissionSetName == "" {
+		return false, fmt.Errorf("permissionSetName cannot be empty")
+	}
+
+	selected, err := cp.page().GetByRole("switch", playwright.PageGetByRoleOptions{
+		Name: "Toggle " + permissionSetName,
+	}).GetAttribute("aria-checked")
+	if err != nil {
+		return false, fmt.Errorf("failed to read permission set %q selection: %w", permissionSetName, err)
+	}
+	return selected == "true", nil
+}
+
+func (cp *ConsentPage) permissionSetCard(name string) playwright.Locator {
+	heading := cp.page().GetByRole("heading", playwright.PageGetByRoleOptions{
+		Name: name, Level: playwright.Int(3), Exact: playwright.Bool(true),
+	})
+	return cp.page().Locator("[data-testid^='permission-set-']").Filter(playwright.LocatorFilterOptions{
+		Has: heading,
+	})
+}
+
+// ExcludePermissionSetService turns off an optional service within a permission set.
+func (cp *ConsentPage) ExcludePermissionSetService(_ context.Context, permissionSetName, serviceName string) error {
+	return cp.permissionSetCard(permissionSetName).GetByRole("switch", playwright.LocatorGetByRoleOptions{
+		Name: "Exclude " + serviceName,
+	}).Click()
+}
+
+// IsPermissionSetServiceExcluded checks the per-service switch after a selection change.
+func (cp *ConsentPage) IsPermissionSetServiceExcluded(_ context.Context, permissionSetName, serviceName string) (bool, error) {
+	checked, err := cp.permissionSetCard(permissionSetName).GetByRole("switch", playwright.LocatorGetByRoleOptions{
+		Name: "Include " + serviceName,
+	}).GetAttribute("aria-checked")
+	if err != nil {
+		return false, err
+	}
+	return checked == "false", nil
 }
 
 // RevokeService clicks the Revoke button for a service.
@@ -1519,34 +1559,6 @@ func (cp *ConsentPage) WaitForGrantError(ctx context.Context) (string, error) {
 	return strings.TrimSpace(text), nil
 }
 
-// NavigateToAgentWithSelections navigates to the consent page with pre-selected
-// permission set selections encoded in the consent_state query parameter.
-// This simulates the state preserved across third-party OAuth2 login redirects.
-func (cp *ConsentPage) NavigateToAgentWithSelections(ctx context.Context, agentID string, selections map[string][]string) error {
-	if agentID == "" {
-		return fmt.Errorf("agentID cannot be empty")
-	}
-
-	path := fmt.Sprintf(agentDetailPath, agentID)
-	if len(selections) > 0 {
-		encoded, err := encodeSelections(selections)
-		if err != nil {
-			return fmt.Errorf("failed to encode selections: %w", err)
-		}
-		path += "?consent_state=" + url.QueryEscape(encoded)
-	}
-
-	if err := cp.Navigate(ctx, path); err != nil {
-		return fmt.Errorf("failed to navigate to agent consent page with selections: %w", err)
-	}
-
-	if err := cp.waitForAgentNameHeading(ctx); err != nil {
-		return fmt.Errorf("agent name heading not found after navigation with selections: %w", err)
-	}
-
-	return nil
-}
-
 // GetURLQueryParam returns the value of a query parameter from the current page URL.
 func (cp *ConsentPage) GetURLQueryParam(param string) (string, error) {
 	currentURL := cp.page().URL()
@@ -1555,14 +1567,4 @@ func (cp *ConsentPage) GetURLQueryParam(param string) (string, error) {
 		return "", fmt.Errorf("failed to parse current URL %q: %w", currentURL, err)
 	}
 	return parsed.Query().Get(param), nil
-}
-
-// encodeSelections encodes permission set selections to base64url JSON.
-func encodeSelections(selections map[string][]string) (string, error) {
-	jsonBytes, err := json.Marshal(selections)
-	if err != nil {
-		return "", err
-	}
-	encoded := base64.RawURLEncoding.EncodeToString(jsonBytes)
-	return encoded, nil
 }

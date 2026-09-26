@@ -264,6 +264,7 @@ App
 - **Local State**: React `useState` for component-level state
 - **Server State**: Custom hooks with axios for API data fetching
 - **Context**: React Context API for global UI state (theme, error messages)
+- **OAuth Redirect Selections**: `AgentGrantDetailPage` stores current-tab `ConsentSelections` and the original return URL (including `session_token`, if present) under an opaque UUID in `sessionStorage`. It sends the UUID in a same-origin form POST with a clean return path; the provider-facing JWE state seals only the UUID and that path, not nested return-page query data. A successful callback appends the verified `consent_state_id`; the page restores only the matching tab, service, and path, then replaces the URL without the ID so reloads do not replay selections. Records expire after 15 minutes, covering the maximum configurable state TTL (10 minutes by default). All provider-facing state tokens must be shorter than 6,000 bytes or initiation fails. See [ADR 037](adrs/037-consent-selection-oauth-redirect-state.md) and [Feature 008](specs/008-thirdparty-oauth2-sessions/spec.md).
 - **No Redux/MobX**: Hooks + Context sufficient for current requirements
 
 **API Communication**:

@@ -108,7 +108,8 @@ The full request and response schemas for every endpoint below are in the
 |---|---|---|
 | GET | `/api/third-party/sessions` | List third-party services and per-user session status. |
 | GET | `/api/third-party/{serviceId}/oauth2/authorize` | Start an authorization-code + PKCE flow to the third party. |
-| GET | `/api/third-party/{serviceId}/oauth2/callback` | Handle the third-party OAuth2 callback. |
+| POST | `/api/third-party/{serviceId}/oauth2/authorize` | Start a PKCE flow with a tab-local `consent_state_id` and clean same-origin return path; the provider-facing state stays under 6,000 bytes. |
+| GET | `/api/third-party/{serviceId}/oauth2/callback` | Complete the third-party flow and, on success, return the sealed selection ID for same-tab restoration. |
 | GET | `/api/third-party/{serviceId}/session` | Session detail and the agents that depend on it. |
 | DELETE | `/api/third-party/{serviceId}/session` | Terminate the session and delete its stored tokens. |
 | GET | `/api/third-party/{serviceId}/session/affected-agents` | Agents that lose access when the session ends. |
