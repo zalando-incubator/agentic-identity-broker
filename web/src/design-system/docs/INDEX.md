@@ -1,6 +1,6 @@
 # Design System Documentation Index
 
-Complete reference guide for the Refined Trust Architecture design system. This index points to all documentation files and their coverage.
+This index routes to design-system guidance. Consent UI v2 is a proposed replacement under feature 046. Runtime migration has not started.
 
 ---
 
@@ -11,74 +11,20 @@ Complete reference guide for the Refined Trust Architecture design system. This 
 #### [DESIGN_PRINCIPLES.md](./DESIGN_PRINCIPLES.md)
 
 **Location**: `/web/src/design-system/docs/DESIGN_PRINCIPLES.md`
-**Coverage**: 240+ lines
+The [v2 design principles](DESIGN_PRINCIPLES.md) define focused decision views, a compact console, local typography and brand assets, restrained motion, and accessibility gates.
 
-The foundational design philosophy for the Refined Trust Architecture design system.
+Use this guide for new v2 work. [ADR 037](../../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) requires acceptance before implementation.
 
-**Sections**:
-
-- **Visual Design Direction** - "Refined Trust Architecture" aesthetic concept
-- **Visual Design Principles** - 5 core visual principles with specifications
-  - Visual Hierarchy Through Weight (typography)
-  - Color as Semantic Signal (color usage)
-  - Elevation Through Shadow, Not Borders (shadow strategy)
-  - Motion That Guides, Not Entertains (animation timing)
-  - Whitespace as a Luxury Signal (spacing)
-- **Distinctive Visual Details**
-  - Gradient backgrounds (warm neutral gradients)
-  - Micro-textures (2% opacity noise overlay)
-  - Shadow strategy (specific shadow values)
-  - Border radius strategy (component-specific radius)
-- **Component Aesthetic Archetypes**
-  - Primary Button (navy, 44px, shadow specifications)
-  - Card Component (white, double shadow, 12px radius)
-  - Form Input (44px height, clear focus states)
-  - Modal (navy overlay, slide animation)
-- **Core Principles** - Implementation guidelines
-- **Design Values** - Trust, Efficiency, User Control
-
-**Key Specifications**:
-
-- ✅ Navy brand colors: #0A2540 (deep), #1E4D6B (medium), #E8F1F5 (light)
-- ✅ Success: #059669 (emerald)
-- ✅ Warning: #D97706 (amber)
-- ✅ Error: #DC2626 (red)
-- ✅ Typography: Crimson Pro (headings), Manrope (body), JetBrains Mono (code)
-- ✅ Animation timings: 150ms, 200ms, 300ms, 500ms
-- ✅ Component-specific border radius values
-- ✅ Shadow specifications with exact pixel values
+The remaining detailed guides describe legacy components until phase 3. They do not override the rewritten design principles or color contract.
 
 ---
 
 #### [COLOR_GUIDE.md](./COLOR_GUIDE.md)
 
 **Location**: `/web/src/design-system/docs/COLOR_GUIDE.md`
-**Coverage**: 450+ lines
+The [v2 color guide](COLOR_GUIDE.md) defines semantic OKLCH tokens, light/dark precedence, contrast requirements, and raw-palette lint enforcement.
 
-Comprehensive color system documentation with hex values and accessibility compliance.
-
-**Sections**:
-
-- **Core Color Palette**
-  - Navy (Trust & Authority): Navy-50 through Navy-900 with semantic tokens
-  - Emerald (Success & Approval): All shades with usage guidance
-  - Amber (Warnings & CTAs): All shades with practical examples
-  - Red (Errors & Destructive): All shades for error states
-  - Neutral (Backgrounds & Text): Complete neutral spectrum
-- **Color Accessibility** - WCAG 2.1 AA compliance with contrast ratios
-- **Using Colors in Components** - Tailwind classes, CSS variables, component guidelines
-- **Semantic Color Tokens** - Type-safe token references
-- **Color Combinations to Avoid** - Common pitfalls
-- **Dark Mode Considerations** - Future-proofing strategy
-- **Resources** - External tools and references
-
-**Key Hex Values** (Complete Palette):
-
-- Navy: #0A2540, #1E4D6B, #E8F1F5, etc. (full scale)
-- Emerald: #059669 (primary success)
-- Amber: #D97706 (primary CTA)
-- Red: #DC2626 (primary error)
-- Neutrals: #faf9f7 (cream), #f5f1ed (sand), #e8e3de (taupe)
+It replaces the legacy trust, CTA, and warm-neutral palette instructions for v2. Runtime token changes belong to foundation implementation.
 
 ---
 

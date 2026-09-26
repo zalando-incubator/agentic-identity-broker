@@ -1,12 +1,18 @@
 # Feature Specification: Redesign End-User Consent and Console
 
-**Feature Branch**: `047-redesign-consent-console`
+**Feature Branch**: `046-redesign-consent-console`
 
 **Created**: 2026-09-25
 
 **Status**: Draft
 
 **Input**: Redesign the end-user consent frontend as a calm, fast security tool. Preserve existing capabilities and authorization behavior. Add only the specified user activity read endpoint and, if necessary, a session response field.
+
+## Clarifications
+
+### Session 2026-09-25
+
+- Q: If the system cannot save an event to the new activity history, should the user's action still complete? → A: Preserve the action's normal outcome. Record the activity-storage failure in operational logs. The user-facing history can have gaps. Existing security audit logging remains required.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -126,7 +132,7 @@ A user reviews their own recent grants, revocations, approval decisions, and tok
 
 **Acceptance Scenarios**:
 
-1. **AS-16**: **Given** activity for multiple users, **When** one user filters `/activity` by agent or type, **Then** only their last 90 days of events appear. The trail includes grant changes, revocations, approval decisions, and token exchanges, plus denied or failed attempts attributable to that user. Each entry shows a time and safe outcome, but never tokens, secrets, raw tool arguments, or another user's activity.
+1. **AS-16**: **Given** activity for multiple users, **When** one user filters `/activity` by agent or type, **Then** only their last 90 days of events appear. The trail includes grant changes, revocations, approval decisions, and token exchanges, plus denied or failed attempts attributable to that user. Each entry shows a time and safe outcome, but never tokens, secrets, raw tool arguments, or another user's activity. If activity storage fails during an action, the action retains its normal outcome and operational logs record the storage failure without credentials. The user-facing history can have gaps. Existing security audit logging remains required.
 
 ---
 
@@ -168,6 +174,7 @@ A user opens a command palette to find an agent, connection, or approval, or cha
 - If a requested service connection interrupts consent, preserve the current selections and authorization session through the existing callback flow.
 - If a user denies a consent request, leave existing grants unchanged. Do not construct an unverified redirect or claim that provider-side tokens were revoked.
 - If user-supplied or agent-supplied text is long or contains markup, show escaped, truncated text with an accessible expand action.
+- If activity storage fails, preserve the normal outcome of consent, approval, token exchange, denial, and revocation actions. Record the storage failure in operational logs without credentials. The user-facing history can have gaps. Existing security audit logging remains required.
 
 ## Requirements *(mandatory)*
 
@@ -195,7 +202,7 @@ A user opens a command palette to find an agent, connection, or approval, or cha
 - **FR-020**: Show the pending queue above standing allow and deny decisions; support inline Approve/Deny, existing persistence and scope choices, and revocation of standing decisions. Keep each row's actions visually secondary to any page-level primary action (AS-12).
 - **FR-021**: Refresh the existing user-scoped pending list regularly while the console is open. Show new approvals and sidebar count changes within 15 seconds without reloading. Announce arrivals and decision-state changes without taking focus; never use the gateway-wide long-poll for a browser (AS-13).
 - **FR-022**: Support light, dark, and system themes. Remember the choice per browser, follow changes to the system theme when chosen, avoid the wrong-theme flash, and theme form controls and scrollbars (AS-14, AS-15).
-- **FR-023**: Add `/activity` as a read-only, user-owned trail of grant creation and edits, revocations, approval decisions, and token exchanges. Include attributable denials and failures. Support agent and event-type filters without exposing credentials or other users' events (AS-16).
+- **FR-023**: Add `/activity` as a read-only, user-owned trail of grant creation and edits, revocations, approval decisions, and token exchanges. Include attributable denials and failures. Support agent and event-type filters without exposing credentials or other users' events. If activity storage fails, preserve the action's normal outcome and record the storage failure in operational logs without credentials. The user-facing history can have gaps. Existing security audit logging remains required (AS-16).
 - **FR-024**: Add `/settings` with theme and default approval persistence. Keep the default per browser, default to “Approve once”, and require explicit confirmation for every decision (AS-17).
 - **FR-025**: Add a keyboard-accessible command palette to find only the current user's agents, connections, and approvals, jump to their existing views, and change theme (AS-18).
 - **FR-026**: Escape all agent-supplied strings and CIMD metadata. Truncate long display text with an accessible expansion. Do not load third-party fonts, scripts, or images while rendering the application; keep user-initiated external links and OAuth2 redirects functional (AS-01, AS-04, AS-15).
@@ -239,7 +246,7 @@ A connection state summarizes token usability and unmet *required* scopes. A ver
 - **Permission Set and UserGrant**: A group of allowed services with required or optional controls, and one user's selections and expiry. Existing selections remain part of delta re-consent.
 - **UserSession**: A user's third-party connection, granted scopes, expiry and refresh capacity, and dependent agents. Its visible state must reflect usable access.
 - **ToolApproval**: A user's pending or resolved tool decision with reviewed arguments, scope, risk, and once, session, or permanent persistence.
-- **Activity Event**: A user-owned audit entry containing a time, type, safe outcome, and applicable agent or service. Retention and event coverage require the AS-16 decisions.
+- **Activity Event**: A user-owned audit entry containing a time, type, safe outcome, and applicable agent or service. AS-16 defines event coverage and permits gaps after activity-storage failures. SR-004 limits retention to 90 days.
 - **Appearance and Approval Defaults**: Per-browser choices that never replace an explicit consent or tool decision.
 
 ## Success Criteria *(mandatory)*

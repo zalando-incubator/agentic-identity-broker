@@ -4,9 +4,40 @@
 
 ## Overview
 
-Use this React consent SPA for agent permissions and tool approvals. The Go backend serves it at root `/` (ADR 035). Use the Refined Trust Architecture and WCAG 2.1 AA.
+Use this React consent SPA for agent permissions and tool approvals. The Go backend serves it at root `/` (ADR 035).
 
-## Tech Stack
+## Consent UI v2 Planning
+
+Feature 046 replaces the design-system layer, not the application stack. Runtime migration has not started. ADR 037 remains proposed.
+
+| Reference | Purpose |
+| --- | --- |
+| `../specs/046-redesign-consent-console/spec.md` | Requirements and AS-01–AS-18 |
+| `../specs/046-redesign-consent-console/plan.md` | Four implementation phases and acceptance gates |
+| `../specs/046-redesign-consent-console/research.md` | Technology choices and integration evidence |
+| `../specs/046-redesign-consent-console/contracts/` | Proposed API, configuration, and UI contracts |
+| `../specs/046-redesign-consent-console/quickstart.md` | Storybook themes and validation commands |
+| `../adrs/037-design-system-rebuilt-on-shadcn-radix.md` | Proposed replacement of ADR 006 component and server-cache choices |
+| `../adrs/035-root-mounted-spa.md` | Binding root-mounted route behavior |
+| `../api/enduser/openapi.yaml` | Canonical API contract |
+| `../ARCHITECTURE.md` | Architecture and domain glossary |
+| `../.specify/memory/constitution.md` | Binding principles |
+
+For v2 work, use the rewritten `DESIGN_PRINCIPLES.md` and `COLOR_GUIDE.md`. Other detailed guides describe the legacy system until phase 3.
+
+The target uses owned shadcn/Radix components in the existing category directories, Lucide, TanStack Table, TanStack Query over Axios, and cmdk. Keep CVA and `cn()`.
+
+Use semantic OKLCH tokens, Zalando Sans, Inter, JetBrains Mono, local outlined wordmarks, and 120–200 ms CSS transitions. No raw palette utilities are permitted.
+
+Place ConsoleShell and DecisionShell in `src/design-system/components/layout/`. Preserve route-level lazy loading. Keep console-only Table and Command code outside decision-route imports.
+
+Broker configuration `ui.v2` controls temporary presentation rollout. Do not create a browser flag or another configuration API. Remove the flag and old presentation in phase 3.
+
+The browser refreshes only `/api/approvals/pending`. Never expose the gateway-wide long-poll. Keep authentication, scope preview, authorization-session validation, and callbacks unchanged.
+
+Run every Storybook component in both themes with blocking a11y checks. Add visual comparisons through the existing Ginkgo/Playwright harness. Feature 046 targets WCAG 2.2 AA.
+
+## Current Runtime Stack
 
 | Technology            | Version | Role                                           |
 | --------------------- | ------- | ---------------------------------------------- |
@@ -52,8 +83,8 @@ src/
     utils/             cn() (clsx + tailwind-merge), a11y helpers, focus utilities
     docs/              ★ Read before any UI work:
       INDEX.md                Complete documentation index
-      DESIGN_PRINCIPLES.md    Visual philosophy — "Refined Trust Architecture"
-      COLOR_GUIDE.md          Full color palette with hex values + WCAG ratios
+      DESIGN_PRINCIPLES.md    Consent UI v2 target visual and interaction rules
+      COLOR_GUIDE.md          Consent UI v2 semantic OKLCH light/dark contract
       TOKEN_GUIDE.md          All design tokens with usage examples
       COMPONENT_ARCHETYPES.md Foundational component specifications
       COMMON_MISTAKES.md      Anti-patterns with correct solutions
@@ -124,7 +155,9 @@ Use these aliases in imports. Do not use relative imports across alias boundarie
 Use `src/design-system/` as the **single source of truth** for visual decisions.
 Before you write a styled component, read `src/design-system/docs/COMMON_MISTAKES.md`.
 
-### Critical Rules
+### Legacy Runtime Rules
+
+These rules describe unmigrated components only. They do not govern new v2 components. Remove this section at phase-3 cutover.
 
 1. **Semantic colors only** — Use semantic tokens. Do not use raw gray tokens.
 2. **Typography** — Use `font-display`, `font-sans`, and `font-mono` for headings, body text, and code.
@@ -133,7 +166,7 @@ Before you write a styled component, read `src/design-system/docs/COMMON_MISTAKE
 5. **WCAG 2.1 AA** — Give interactive elements visible focus. Text and UI colors must meet AA contrast.
 6. **Component composition** — Use design-system components before ad-hoc components. Read `src/design-system/docs/DECISION_TREES.md`.
 
-### Semantic Color Palette
+### Legacy Runtime Palette
 
 | Token Family | Hex (primary)                            | Use                                 |
 | ------------ | ---------------------------------------- | ----------------------------------- |
@@ -150,7 +183,7 @@ Before you write a styled component, read `src/design-system/docs/COMMON_MISTAKE
 - The base URL is `/api`. In development, Vite forwards requests to Go. In production, use the upstream proxy.
 - **Authentication is external** — The Vite proxy adds `X-Remote-User` in development. An upstream proxy handles production authentication.
 - `ConsentApiService`, `SessionsApiService`, and `approvalApi` provide typed `apiClient` methods.
-- GET responses use the in-memory `apiCache`. Invalidate relevant cache entries after mutations.
+- Legacy GET responses use `apiCache`. During v2 migration, TanStack Query replaces this cache over the same Axios services. Remove `apiCache` after all callers migrate.
 - The response interceptor normalizes errors to `ApiError`.
 
 ### Key API Endpoints
