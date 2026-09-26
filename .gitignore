@@ -81,3 +81,5 @@ imgdiff
 
 # OPA build artifacts (from just opa-check)
 mocks/opa/bundles/
+
+plans/*
