@@ -1,35 +1,21 @@
 <!--
 Sync Impact Report
 ==================
-Version Change: 1.9.1 → 2.0.0
-Rationale:
-  1.9.1 → 2.0.0 (MAJOR): Principle VII now scopes Helm changes to configuration
-    of workloads deployed by charts/agentic-identity-broker. Standalone binaries
-    governed by an accepted ADR must retain their own configuration delivery path
-    and MUST NOT receive configuration through the broker chart.
-  2. Standing evidence:
-    - The broker Helm chart files in `charts/agentic-identity-broker/`, including `templates/`, contain no ExtProc references.
-    - ADR 011 (2026-02-23) predates feature 026. It established `EXTPROC_` and independent ExtProc deployment.
-    - Features 015, 020, and 027 added `EXTPROC_` parameters. They added no ExtProc workload or configuration to the broker chart. Feature 020 changed only a broker telemetry propagator.
-  3. This Constitution amendment reconciles accepted practice rather than making a feature exemption.
+Version Change: 2.0.0 → 2.1.0
+Rationale: MINOR — Principle XI adds centralized semantic tokens, light/dark accessibility
+  checks, brand-asset self-hosting, and ADR review of visual-direction changes while removing
+  the prescribed aesthetic. The principle and its design-system process remain in place.
 
 Modified Principles:
-  - Principle VII: scoped Helm deployment-contract requirements and defined the
-    standalone-binary configuration boundary.
+  - XI. Design System Compliance & Consistency → XI. Design System Compliance & Consistency:
+    replaced aesthetic mandates with process requirements.
 
 Added Sections: None
-
 Removed Sections: None
 
-Templates Status:
-- ✅ `.specify/templates/tasks-template.md` updated with the deployment-contract rule.
-- ✅ `.specify/templates/overrides/tasks-template.md` and `.specify/templates/overrides/plan-template.md` updated with the scoped Helm rule.
-- ✅ `.specify/templates/plan-template.md` and `.specify/templates/spec-template.md` reviewed; no change required.
-- ✅ `.specify/templates/commands/` is not present; no command templates to update.
-
-Follow-up TODOs: None
-
-Previous Version History:
+Version History:
+- 2.0.0 → 2.1.0: Replaced Principle XI aesthetic mandates with token, theme, asset, accessibility, and ADR requirements (MINOR)
+- 1.9.1 → 2.0.0: Scoped Helm changes to workloads deployed by the broker chart (MAJOR)
 - 1.9.0 → 1.9.1: Clarified the bounded ADR 031 exception in Principle I (PATCH)
 - 1.8.0 → 1.8.1: Clarified red phase rules in Principles VIII and XIII (PATCH)
 - 1.7.1 → 1.8.0: Added Helm chart requirement (Principle VII) + frontend Playwright E2E (MINOR)
@@ -37,6 +23,8 @@ Previous Version History:
 - 1.6.0 → 1.7.0: Added Principle XIII (E2E Acceptance Testing) + expanded Principle VIII (MINOR)
 - 1.5.1 → 1.6.0: Added Principle XII (Dependency Injection & Component Wiring) (MINOR)
 - 1.5.0 → 1.5.1: Clarified testing requirements in tasks-template.md (PATCH)
+
+Follow-up TODOs: Review dependent references in `specs/047-redesign-consent-console/plan.md`.
 -->
 
 # Agentic Identity Broker Constitution
@@ -315,8 +303,8 @@ without confirmation breaks that trust.
 
 ### XI. Design System Compliance & Consistency
 
-All frontend components MUST use the design system; universal patterns MUST be contributed back to
-ensure consistency, accessibility, and brand identity.
+All frontend components MUST use the design system; universal patterns MUST be contributed back
+to ensure consistency and accessibility without prescribing a specific aesthetic.
 
 **Rules**:
 - All frontend components MUST be built using the design system located at `web/src/design-system/`
@@ -325,12 +313,18 @@ ensure consistency, accessibility, and brand identity.
   - Review [DECISION_TREES.md](../web/src/design-system/docs/DECISION_TREES.md) for variant selection guidance
   - Reference [COMPONENT_PAIRING_GUIDE.md](../web/src/design-system/docs/COMPONENT_PAIRING_GUIDE.md) for composition patterns
   - Study [COMMON_MISTAKES.md](../web/src/design-system/docs/COMMON_MISTAKES.md) to avoid anti-patterns
-  - Use semantic color tokens (`trust-deep`, `success-primary`, `neutral-*`) NOT extended palettes (`navy-*`, `emerald-*`, `gray-*`)
-  - Follow [DESIGN_PRINCIPLES.md](../web/src/design-system/docs/DESIGN_PRINCIPLES.md) for Refined Trust Architecture aesthetic
 - New application-specific components MUST use design system primitives (Button, Card, Badge, etc.) not custom implementations
 - If a component is universally applicable (not app-specific), it MUST be added to the design system in `web/src/design-system/components/`
+- All visual decisions (color, type, spacing, radius, motion, theme) MUST be expressed as semantic
+  design tokens defined in one place under `web/src/design-system/tokens/`; components MUST NOT
+  reference raw palette utilities
+- The design system MUST support light and dark themes; every component story MUST render and pass
+  the accessibility addon in both
+- Brand assets (wordmark, mark, favicon, brand typeface) MUST be self-hosted from the repository;
+  the frontend MUST NOT load fonts, scripts or images from third-party origins
+- The current visual direction is documented in
+  `web/src/design-system/docs/DESIGN_PRINCIPLES.md`; changing it requires an ADR
 - All design system components MUST follow:
-  - Refined Trust Architecture aesthetic (navy brand colors #0A2540, warm neutrals, Crimson Pro serif headings)
   - WCAG 2.1 AA accessibility standards (4.5:1 text contrast minimum, 3:1 UI component contrast minimum)
   - Semantic HTML with proper ARIA attributes for screen reader support
   - Tailwind CSS v4 with @theme directive for design tokens
@@ -338,16 +332,12 @@ ensure consistency, accessibility, and brand identity.
 - Component-specific styling MUST NOT bypass design tokens or introduce custom CSS that breaks visual consistency
 - Storybook stories MUST be included for all new design system components with visual regression testing
 - Color usage MUST follow semantic tokens defined in [TOKEN_GUIDE.md](../web/src/design-system/docs/TOKEN_GUIDE.md)
-- Typography MUST use font families: Crimson Pro (headings), Manrope (body), JetBrains Mono (code/technical values)
 
-**Rationale**: Design system compliance ensures visual consistency across the application, maintains brand
-identity (Refined Trust Architecture), reduces development time through component reuse, and guarantees
-accessibility standards (WCAG 2.1 AA). The design system documentation provides comprehensive guidance
-enabling 92-95% autonomous decision-making for AI agents building components (verified via independent
-ui-designer assessment). Requiring universal components to be contributed back prevents fragmentation
-and ensures patterns are shared across the application. Semantic tokens prevent color inconsistencies and
-make theming possible. This principle establishes frontend quality standards and prevents ad-hoc styling
-that undermines user experience and accessibility.
+**Rationale**: Shared semantic tokens and reusable components keep the frontend consistent without
+mandating a particular aesthetic. WCAG 2.1 AA checks and accessible Storybook stories protect
+usability in both themes. Self-hosted brand assets avoid third-party dependencies for visual
+identity. ADR review makes changes to the documented visual direction explicit, while design-system
+reuse prevents fragmented component behavior.
 
 ### XII. Dependency Injection & Component Wiring
 
@@ -686,4 +676,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - The tasks-template.md uses 🔒 emoji and [MANDATORY] markers to clearly distinguish mandatory from customizable sections
 - Omitting mandatory sections violates this constitution and blocks feature completion
 
-**Version**: 2.0.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-09-04
+**Version**: 2.1.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-09-25
