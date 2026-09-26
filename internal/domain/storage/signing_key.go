@@ -18,6 +18,7 @@ type SigningKey struct {
 	KID                 id.KeyID        `json:"kid" db:"kid"`
 	Algorithm           string          `json:"algorithm" db:"algorithm"`
 	PrivateKeyEncrypted []byte          `json:"-" db:"private_key_encrypted"` // Never serialize
+	PublicJWK           []byte          `json:"-" db:"public_jwk"`
 	IsCurrent           bool            `json:"is_current" db:"is_current"`
 	ActivatesAt         time.Time       `json:"activates_at" db:"activates_at"`
 	CreatedAt           time.Time       `json:"created_at" db:"created_at"`

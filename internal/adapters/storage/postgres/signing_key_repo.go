@@ -75,9 +75,9 @@ func (r *SigningKeyRepo) Create(ctx context.Context, key *storage.SigningKey) er
 	defer cancel()
 
 	_, err := r.adapter.db.ExecContext(execCtx,
-		`INSERT INTO signing_keys (id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		key.ID, key.KID, key.Algorithm, key.PrivateKeyEncrypted,
+		`INSERT INTO signing_keys (id, kid, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		key.ID, key.KID, key.Algorithm, key.PrivateKeyEncrypted, key.PublicJWK,
 		key.IsCurrent, key.ActivatesAt, key.CreatedAt, key.RemovedAt,
 	)
 	if err != nil {
@@ -107,9 +107,9 @@ func (r *SigningKeyRepo) CreateAndSetCurrent(ctx context.Context, key *storage.S
 	}
 
 	_, err = tx.ExecContext(execCtx,
-		`INSERT INTO signing_keys (id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at)
-		 VALUES ($1, $2, $3, $4, true, $5, $6, $7)`,
-		key.ID, key.KID, key.Algorithm, key.PrivateKeyEncrypted,
+		`INSERT INTO signing_keys (id, kid, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at)
+		 VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8)`,
+		key.ID, key.KID, key.Algorithm, key.PrivateKeyEncrypted, key.PublicJWK,
 		key.ActivatesAt, key.CreatedAt, key.RemovedAt,
 	)
 	if err != nil {
@@ -132,7 +132,7 @@ func (r *SigningKeyRepo) GetByKID(ctx context.Context, kid id.KeyID) (*storage.S
 
 	var key storage.SigningKey
 	err := r.adapter.db.GetContext(queryCtx, &key,
-		`SELECT id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at
+		`SELECT id, kid, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at
 		 FROM signing_keys WHERE kid = $1 AND removed_at IS NULL`, kid)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
@@ -160,7 +160,7 @@ func (r *SigningKeyRepo) GetCurrent(ctx context.Context) (*storage.SigningKey, e
 
 	var key storage.SigningKey
 	err := r.adapter.db.GetContext(queryCtx, &key,
-		`SELECT id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at
+		`SELECT id, kid, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at
 		 FROM signing_keys
 		 WHERE removed_at IS NULL AND activates_at <= NOW()
 		 ORDER BY
@@ -189,7 +189,7 @@ func (r *SigningKeyRepo) ListActive(ctx context.Context) ([]*storage.SigningKey,
 
 	var keys []*storage.SigningKey
 	err := r.adapter.db.SelectContext(queryCtx, &keys,
-		`SELECT id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at
+		`SELECT id, kid, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at
 		 FROM signing_keys WHERE removed_at IS NULL ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, classifySigningKeyRepoError("SigningKeyRepo.ListActive", err, "failed to list signing keys")
@@ -241,7 +241,7 @@ func (r *SigningKeyRepo) SetCurrent(ctx context.Context, kid id.KeyID, activates
 		`UPDATE signing_keys
 		 SET is_current = true, activates_at = $2
 		 WHERE kid = $1 AND removed_at IS NULL
-		 RETURNING id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at, removed_at`, kid, activatesAt)
+		 RETURNING id, kid, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at`, kid, activatesAt)
 	if err != nil {
 		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrent", err, "failed to promote key")
 	}
@@ -250,6 +250,41 @@ func (r *SigningKeyRepo) SetCurrent(ctx context.Context, kid id.KeyID, activates
 		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrent", err, "failed to commit transaction")
 	}
 	return &key, nil
+}
+
+func (r *SigningKeyRepo) SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) error {
+	if r.adapter.db == nil {
+		return storage.NewStorageError("SigningKeyRepo.SetPublicJWK", storage.ErrorKindConnection, nil, "database not initialized")
+	}
+
+	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+
+	result, err := r.adapter.db.ExecContext(execCtx,
+		`UPDATE signing_keys
+		 SET public_jwk = $2
+		 WHERE kid = $1 AND removed_at IS NULL AND public_jwk IS NULL`, kid, publicJWK)
+	if err != nil {
+		return classifySigningKeyRepoError("SigningKeyRepo.SetPublicJWK", err, "failed to backfill signing key public JWK")
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return storage.NewStorageError("SigningKeyRepo.SetPublicJWK", storage.ErrorKindUnknown, err, "failed to determine rows affected")
+	}
+	if rowsAffected != 0 {
+		return nil
+	}
+
+	var exists bool
+	err = r.adapter.db.GetContext(execCtx, &exists,
+		`SELECT EXISTS(SELECT 1 FROM signing_keys WHERE kid = $1 AND removed_at IS NULL)`, kid)
+	if err != nil {
+		return classifySigningKeyRepoError("SigningKeyRepo.SetPublicJWK", err, "failed to query signing key")
+	}
+	if !exists {
+		return storage.NewStorageError("SigningKeyRepo.SetPublicJWK", storage.ErrorKindNotFound, nil, "signing key not found")
+	}
+	return nil
 }
 
 func (r *SigningKeyRepo) Delete(ctx context.Context, kid id.KeyID) error {

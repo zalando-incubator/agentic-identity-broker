@@ -138,6 +138,46 @@ func TestSigningKeyStore_SetCurrent(t *testing.T) {
 	})
 }
 
+func TestSigningKeyStore_PublicJWK(t *testing.T) {
+	store := NewSigningKeyStore()
+	ctx := context.Background()
+	publicJWK := []byte(`{"alg":"ES256","kid":"public-kid","kty":"EC"}`)
+	key := testSigningKey("public-kid", true)
+	key.PublicJWK = append([]byte(nil), publicJWK...)
+	require.NoError(t, store.Create(ctx, key))
+
+	key.PublicJWK[0] = '!'
+	stored, err := store.GetByKID(ctx, key.KID)
+	require.NoError(t, err)
+	assert.Equal(t, publicJWK, stored.PublicJWK)
+
+	stored.PublicJWK[0] = '!'
+	listed, err := store.ListActive(ctx)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, publicJWK, listed[0].PublicJWK)
+
+	promoted, err := store.SetCurrent(ctx, key.KID, time.Now().UTC())
+	require.NoError(t, err)
+	assert.Equal(t, publicJWK, promoted.PublicJWK)
+}
+
+func TestSigningKeyStore_SetPublicJWK(t *testing.T) {
+	store := NewSigningKeyStore()
+	ctx := context.Background()
+	key := testSigningKey("legacy-public-kid", true)
+	require.NoError(t, store.Create(ctx, key))
+
+	first := []byte(`{"alg":"ES256","kid":"legacy-public-kid","kty":"EC"}`)
+	second := []byte(`{"alg":"RS256","kid":"legacy-public-kid","kty":"RSA"}`)
+	require.NoError(t, store.SetPublicJWK(ctx, key.KID, first))
+	require.NoError(t, store.SetPublicJWK(ctx, key.KID, second))
+
+	stored, err := store.GetByKID(ctx, key.KID)
+	require.NoError(t, err)
+	assert.Equal(t, first, stored.PublicJWK)
+}
+
 func TestSigningKeyStore_Delete(t *testing.T) {
 	t.Run("rejects deleting the last active key", func(t *testing.T) {
 		store := NewSigningKeyStore()

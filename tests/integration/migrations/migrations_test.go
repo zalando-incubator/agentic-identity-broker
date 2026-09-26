@@ -434,3 +434,35 @@ func TestMigration031(t *testing.T) {
 	`)
 	require.Error(t, err, "rollback must restore the confidential client-secret constraint")
 }
+
+func TestMigration033SigningKeyPublicJWK(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+
+	require.NoError(t, f.Up(t, 32))
+	require.NoError(t, f.ExecuteSQL(t, `
+		INSERT INTO signing_keys (id, kid, private_key_encrypted)
+		VALUES ('30000000-0000-0000-0000-000000000033', 'legacy-kid', '\x0102');
+	`))
+	require.NoError(t, f.Up(t, 33))
+	columnType, err := f.GetColumnType(t, "signing_keys", "public_jwk")
+	require.NoError(t, err)
+	assert.Equal(t, "bytea", columnType)
+	missing, err := f.QuerySQL(t, `SELECT (public_jwk IS NULL)::text FROM signing_keys WHERE kid = 'legacy-kid'`)
+	require.NoError(t, err)
+	assert.Equal(t, "true", strings.TrimSpace(missing))
+
+	require.NoError(t, f.ExecuteSQL(t, `UPDATE signing_keys SET public_jwk = convert_to('{"kty":"EC"}', 'UTF8') WHERE kid = 'legacy-kid'`))
+	require.NoError(t, f.Down(t, 32))
+	exists, err := f.ColumnExists(t, "signing_keys", "public_jwk")
+	require.NoError(t, err)
+	assert.False(t, exists)
+	ciphertext, err := f.QuerySQL(t, `SELECT encode(private_key_encrypted, 'hex') FROM signing_keys WHERE kid = 'legacy-kid'`)
+	require.NoError(t, err)
+	assert.Equal(t, "0102", strings.TrimSpace(ciphertext))
+
+	require.NoError(t, f.Up(t, 33))
+	missing, err = f.QuerySQL(t, `SELECT (public_jwk IS NULL)::text FROM signing_keys WHERE kid = 'legacy-kid'`)
+	require.NoError(t, err)
+	assert.Equal(t, "true", strings.TrimSpace(missing))
+}
