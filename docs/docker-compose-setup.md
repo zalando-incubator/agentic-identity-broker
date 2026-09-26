@@ -18,7 +18,7 @@ just dev-docker
 
 This command does the following:
 
-1. Creates `.env.compose` from the `.env` template when required.
+1. Creates `.env.compose` from `.env.compose.example` when required.
 2. Builds Docker images for all services.
 3. Starts all services with hot reload.
 4. Runs seed-data scripts.

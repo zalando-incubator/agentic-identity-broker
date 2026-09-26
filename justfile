@@ -664,12 +664,12 @@ docker-build-all: docker-build-broker docker-build-migrate docker-build-extproc
 # Docker Compose - Development (Hot Reload)
 # =============================================================================
 
-# Create .env.compose from .env template if it doesn't exist
+# Create .env.compose from .env.compose.example if it doesn't exist
 compose-env:
     @if [ -f .env.compose ]; then \
         echo ".env.compose already exists"; \
     else \
-        cp .env .env.compose; \
+        cp .env.compose.example .env.compose; \
         echo "✓ Created: .env.compose (customize as needed)"; \
     fi
 

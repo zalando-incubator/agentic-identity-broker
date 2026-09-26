@@ -29,6 +29,7 @@ go.work.sum
 
 # Environment files
 .env*
+!.env*.example
 
 # Editor/IDE
 # .idea/
@@ -70,10 +71,9 @@ tests/e2e/frontend/coverage/
 
 infra/cdk/cdk
 infra/cdk/cdk.out
-bin/extproc-token-exchange
-extproc-token-exchange
-mocks/mcp-server/mcp-server
-imgdiff
+/bin/extproc-token-exchange
+/mocks/mcp-server/mcp-server
+/tools/imgdiff/imgdiff
 .githooks/
 .pi/
 .pi-lens/
