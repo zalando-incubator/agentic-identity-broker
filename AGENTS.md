@@ -12,7 +12,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 
 ### Architecture & Decisions
 
-`ARCHITECTURE.md` | Source of truth for system design
+`docs/ARCHITECTURE.md` | Source of truth for system design
 `adrs/NNN-*.md` | Binding ADRs — read before implementation (see the ADR index that follows)
 `.specify/memory/constitution.md` | Binding constitution — 13 principles governing all work
 
@@ -77,10 +77,10 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 
 1. **Security-First** — Fail closed. Do not use bypasses. Never treat signature validation as optional.
-2. **ADRs are Binding** — Treat ADRs as binding. Use `ARCHITECTURE.md` as the source of truth. A deviation requires a superseding ADR.
+2. **ADRs are Binding** — Treat ADRs as binding. Use `docs/ARCHITECTURE.md` as the source of truth. A deviation requires a superseding ADR.
 3. **Library-First Security** — Do not use custom crypto. Use Go `crypto/*`, `golang.org/x/crypto`, or AWS Encryption SDK.
 4. **OpenAPI Transparency** — Define APIs in `api/{enduser,admin}/openapi.yaml` before implementation.
-5. **Domain-Driven Design** — Enforce ubiquitous language. Add new concepts to the `ARCHITECTURE.md` glossary.
+5. **Domain-Driven Design** — Enforce ubiquitous language. Add new concepts to the `docs/ARCHITECTURE.md` glossary.
 6. **Hexagonal Architecture** — Arrange dependencies as domain → ports (interfaces) → adapters. Never reverse this order. Prevent these violations:
    - **Port bypass**: Route handlers through domain services to ports. Do not route a handler to a port directly.
    - **Anemic domain**: Make services enforce invariants. Do not only proxy port calls.

@@ -1379,7 +1379,7 @@ When tracing is enabled, the following operations emit child spans:
 
 - Read error messages. They include correction instructions.
 - Read the startup summary to identify loaded sources.
-- Read `ARCHITECTURE.md` for the configuration subsystem architecture.
+- Read `docs/ARCHITECTURE.md` for the configuration subsystem architecture.
 - Make sure that each configuration path is absolute or relative to the current working directory.
 - Make sure that `GO_ENV` has the expected environment value.
 - Read `adrs/002-configuration-libraries.md` for the configuration library decision.

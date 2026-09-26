@@ -542,7 +542,7 @@ aws s3 sync web/dist/ s3://my-cdn-bucket/
 
 ## Related Documentation
 
-- Architecture documentation: see `ARCHITECTURE.md` in the repository root
+- Architecture documentation: see `docs/ARCHITECTURE.md`
 - Consent frontend development guide: see `README.md` in the repository root
 - [API Documentation](../api/consent-endpoints.md) - API reference
 - [Configuration Guide](../configuration.md) - General configuration

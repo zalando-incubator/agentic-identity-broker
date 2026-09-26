@@ -21,7 +21,7 @@ instruction file.
 - Use exact relative paths and give each important path a short purpose.
 - Tell agents to read source files and detailed documents before they decide.
 - Use canonical sources to prove each instruction. Do not use general knowledge as evidence.
-- Treat the constitution, accepted ADRs, API contracts, and `ARCHITECTURE.md` as canonical when they govern the changed area.
+- Treat the constitution, accepted ADRs, API contracts, and `docs/ARCHITECTURE.md` as canonical when they govern the changed area.
 - Read the current feature specification, plan, and tasks when they govern the changed area.
 - Read related project guides, configurations, runbooks, tests, and source code when they support a local instruction.
 - Keep detailed procedures in their canonical documents. Link to them instead.
@@ -40,7 +40,7 @@ instruction file.
    ```
 
 2. Build an evidence set for each affected `AGENTS.md` file. Read its local source and each relevant canonical source:
-   - Repository rules: `ARCHITECTURE.md`, `.specify/memory/constitution.md`, and accepted ADRs.
+   - Repository rules: `docs/ARCHITECTURE.md`, `.specify/memory/constitution.md`, and accepted ADRs.
    - API behavior: the relevant OpenAPI contract.
    - Feature behavior: the current `spec.md`, `plan.md`, and `tasks.md`.
    - Local behavior: source code, configuration, tests, maintained guides, and runbooks.

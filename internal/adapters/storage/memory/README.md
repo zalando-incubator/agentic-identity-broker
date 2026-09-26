@@ -180,5 +180,5 @@ The hexagonal architecture ensures storage backend switching requires only confi
 ## References
 
 - [Storage Layer Documentation](../../docs/storage.md)
-- [Hexagonal Architecture Pattern](../../ARCHITECTURE.md)
+- [Hexagonal Architecture Pattern](../../../../docs/ARCHITECTURE.md)
 - [Implementation Tests](./adapter_test.go)

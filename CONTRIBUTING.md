@@ -56,6 +56,10 @@ Both commands must pass before you open a pull request.
 
 ## Making Changes
 
+### Repository Root
+
+Root contains only files that a tool requires there or that GitHub/Zalando OSS renders. Variants go in a subdirectory.
+
 ### Specification-Driven Development
 
 For new features, follow this workflow using [Speckit](https://speckit.org/):
@@ -64,7 +68,7 @@ For new features, follow this workflow using [Speckit](https://speckit.org/):
 2. Create `specs/NNN-feature-name/plan.md` with design
 3. Create `specs/NNN-feature-name/tasks.md` with tasks
 4. Implement according to the plan
-5. Update [ARCHITECTURE.md](ARCHITECTURE.md) if needed
+5. Update [ARCHITECTURE.md](docs/ARCHITECTURE.md) if needed
 
 ### Backend
 
@@ -105,7 +109,7 @@ export function MyComponent() {
 ### Before Opening a PR
 
 1. Run `just check` and `just verify`, and ensure both pass
-2. Update [ARCHITECTURE.md](ARCHITECTURE.md) if design changed
+2. Update [ARCHITECTURE.md](docs/ARCHITECTURE.md) if design changed
 3. Write clear commit messages using [Conventional Commits](https://www.conventionalcommits.org/)
 
 ### Submitting a PR
@@ -163,7 +167,7 @@ Disclose responsibly:
 ## Resources
 
 - [README](README.md) - Overview and quick start
-- [ARCHITECTURE.md](ARCHITECTURE.md) - System design
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - System design
 - [Constitution v1.4.0](.specify/memory/constitution.md) - Governance
 - [MAINTAINERS](MAINTAINERS) - Maintainer information
 - [Speckit](https://speckit.org/) - Specification-driven development

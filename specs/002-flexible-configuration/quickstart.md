@@ -481,7 +481,7 @@ chmod +r config.yaml
 2. Review [contracts/config-port.go](contracts/config-port.go) for port interface
 3. Implement remaining validation edge cases (circular references, injection detection)
 4. Add comprehensive integration tests
-5. Update [ARCHITECTURE.md](../../../ARCHITECTURE.md) with configuration subsystem
+5. Update [ARCHITECTURE.md](../../docs/ARCHITECTURE.md) with configuration subsystem
 6. Create ADR for library selection (see research.md)
 7. Update end-user documentation in [docs/configuration.md](../../../docs/configuration.md)
 

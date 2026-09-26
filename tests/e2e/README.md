@@ -2689,5 +2689,5 @@ GetLogger().Info("Service check complete",
 - [/tests/e2e/bootstrap/test_server.go](bootstrap/test_server.go) - Server implementation details
 - [/tests/e2e/pages/](pages/) - Page Object implementations
 - [/specs/009-oauth2-auth-server/spec.md](../../specs/009-oauth2-auth-server/spec.md) - Feature specification
-- `/ARCHITECTURE.md` - System architecture overview
+- `docs/ARCHITECTURE.md` - System architecture overview
 - `/justfile` - Available test commands

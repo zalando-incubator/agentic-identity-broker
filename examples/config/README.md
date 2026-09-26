@@ -817,7 +817,7 @@ See [docs/configuration.md](../../docs/configuration.md) for the complete list.
 - [Configuration Guide](../../docs/configuration.md) - Comprehensive documentation
 - [ADR 002](../../adrs/002-configuration-libraries.md) - Library selection rationale
 - [ADR 011](../../adrs/011-opentelemetry-provider-pattern.md) - OpenTelemetry provider pattern
-- [Architecture](../../ARCHITECTURE.md) - Configuration subsystem architecture
+- [Architecture](../../docs/ARCHITECTURE.md) - Configuration subsystem architecture
 
 ### `approvals.yaml`
 

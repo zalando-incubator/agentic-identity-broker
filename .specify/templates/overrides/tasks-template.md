@@ -102,7 +102,7 @@ changes with no behavior change, then review new business logic separately.
 **Required Tasks** (adapt descriptions to your feature):
 - [ ] T004 Identify all entities, aggregates, and value objects for this feature
 - [ ] T004a Document domain model (entities, aggregates, value objects, domain events)
-- [ ] T004b [P] Add all new domain terms to ARCHITECTURE.md Glossary section
+- [ ] T004b [P] Add all new domain terms to `docs/ARCHITECTURE.md` Glossary section
 - [ ] T004c Document invariants and consistency rules for key aggregates
 
 **Checkpoint**: Domain model complete and documented
@@ -357,7 +357,7 @@ yet — ready for incremental user story implementation
 
 **Constitution Reference**: PRECONDITIONS checklist - verify Phase 2 tasks were completed correctly
 
-- [ ] TXXX Verify domain model design is documented in ARCHITECTURE.md Glossary (Principle V)
+- [ ] TXXX Verify domain model design is documented in `docs/ARCHITECTURE.md` Glossary (Principle V)
 - [ ] TXXX Verify configuration design YAML examples exist in `examples/config/` (Principle VII)
 - [ ] TXXX Verify configuration examples referenced in `examples/config/README.md` (Principle VII)
 - [ ] TXXX Verify API designs documented in `/api/enduser/openapi.yaml` or `/api/admin/openapi.yaml` (Principles IV, X)
@@ -381,8 +381,8 @@ yet — ready for incremental user story implementation
 - [ ] TXXX Update `docs/api/` with end-user API documentation and integration examples (if applicable)
 
 **Architecture & Documentation** (Principle II):
-- [ ] TXXX Update ARCHITECTURE.md with architectural changes and new domain concepts
-- [ ] TXXX Update ARCHITECTURE.md Glossary with new domain terms (if not done in design phase)
+- [ ] TXXX Update `docs/ARCHITECTURE.md` with architectural changes and new domain concepts
+- [ ] TXXX Update `docs/ARCHITECTURE.md` Glossary with new domain terms (if not done in design phase)
 - [ ] TXXX [P] Create/update ADR in adrs/ for major architectural decisions
 
 **Configuration** (Principle VII):

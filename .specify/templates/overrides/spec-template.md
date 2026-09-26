@@ -185,7 +185,7 @@ sequenceDiagram
 **Domain Events** (state changes of business significance):
 - **[Event 1]**: [When it occurs, what changed]
 
-*All domain terms should be added to ARCHITECTURE.md Glossary section*
+*All domain terms should be added to `docs/ARCHITECTURE.md` Glossary section*
 
 ### Configuration Requirements *(if applicable - document before implementation)*
 
@@ -222,7 +222,7 @@ sequenceDiagram
 - **API-004**: End-user API documentation MUST be rendered in `docs/api/` with examples for typical use cases
 - **API-005**: APIs MUST follow Zalando RESTful API and Event Guidelines (https://opensource.zalando.com/restful-api-guidelines/)
 - **API-006**: All API changes MUST be confirmed by user/stakeholder before implementation begins
-- **API-007**: API design decisions (naming conventions, error response format, pagination) MUST be documented in ARCHITECTURE.md or ADR
+- **API-007**: API design decisions (naming conventions, error response format, pagination) MUST be documented in `docs/ARCHITECTURE.md` or ADR
 
 *Example of API requirement clarification:*
 
@@ -303,7 +303,7 @@ sequenceDiagram
 - **[Entity 1]**: [What it represents, key attributes without implementation]
 - **[Entity 2]**: [What it represents, relationships to other entities]
 
-*Domain concepts should be added to ARCHITECTURE.md Glossary (per Constitution Principle V)*
+*Domain concepts should be added to `docs/ARCHITECTURE.md` Glossary (per Constitution Principle V)*
 
 ## Success Criteria *(mandatory)*
 
