@@ -5,6 +5,8 @@
 **Status**: Research
 **Constitution Version**: 1.2.0
 
+> **Historical visual scope**: The aesthetic and frontend choices below record feature 007's original research, not a current constitutional aesthetic mandate. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 ## Executive Summary
 
 This document provides comprehensive Phase 0 research for implementing the consent management frontend feature. The implementation consists of:

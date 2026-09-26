@@ -2,6 +2,16 @@
 
 Quick-reference decision trees to eliminate ambiguity when building with the Refined Trust Architecture design system. Use these flowcharts to make confident design choices without guesswork.
 
+## Authority and example status
+
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current direction and Principle XI process.
+ADR 037 remains Proposed. These trees describe the existing Refined Trust Architecture choices.
+Fixed timings, colors, and dimensions are not constitutional aesthetic requirements.
+Raw palette classes and abbreviated utilities in older examples are not instructions for new code.
+Use actual semantic tokens and component variants. See [COLOR_GUIDE.md](COLOR_GUIDE.md) for generated utility names.
+Self-host assets and verify every component story with the accessibility addon in light and dark themes.
+Align these trees with the implemented target in the single cutover after ADR acceptance.
+
 ---
 
 ## Button Variant Selection
@@ -65,7 +75,7 @@ Is it a HEADING (h1-h6)?
 Is it BODY TEXT (paragraphs, descriptions)?
 ├─ YES ↓
 │   Is it primary content?
-│   ├─ YES → Use `text-neutral-700` (#4a4137)
+│   ├─ YES → Use the semantic primary text role (`text-text-primary`)
 │   └─ NO (supporting/secondary) → Use `text-secondary` (neutral-600, #6b6561)
 └─ NO ↓
 
@@ -100,7 +110,7 @@ Is it a STATUS INDICATOR?
   Healthcare Provider Access
 </h3>
 
-<p className="text-base text-neutral-700">                {/* Body content */}
+<p className="text-base text-text-primary">                {/* Body content */}
   This permission allows your healthcare provider to access your medical records
   for treatment purposes. You can revoke this at any time.
 </p>
@@ -123,7 +133,7 @@ Is it a STATUS INDICATOR?
 ✅ **DO** use trust colors for brand consistency
 
 ❌ **DON'T** use `text-neutral-600` directly
-✅ **DO** use `text-secondary` semantic alias
+✅ **DO** use the generated `text-text-secondary` semantic utility
 
 ---
 

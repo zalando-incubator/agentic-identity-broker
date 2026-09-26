@@ -1,10 +1,21 @@
 # OAuth2 Sessions Management - Frontend Implementation
 
-This directory contains the React frontend implementation for **User Story 1: View Available Third-Party Sessions** - the MVP feature for OAuth2 session management.
+This directory contains the React frontend components for OAuth2 session management.
 
 ## Overview
 
 Users can view all their active OAuth2 sessions with third-party services, see detailed status information, and manage session lifecycles.
+
+## Design authority and example status
+
+[DESIGN_PRINCIPLES.md](../../design-system/docs/DESIGN_PRINCIPLES.md) defines the current Refined Trust Architecture direction.
+ADR 037 remains Proposed. The redesign target is not current runtime guidance.
+Existing examples describe session components, not constitutional aesthetic requirements or verified accessibility results.
+Principle XI requires semantic tokens, light/dark story accessibility checks, self-hosted assets, and WCAG 2.1 AA.
+Do not copy raw palette utilities into components. Use existing semantic roles and component variants.
+Do not load service images from third-party origins. Use repository-hosted assets or a local fallback.
+After ADR acceptance, align this file and `DESIGN_SYSTEM_USAGE.md` with the implementation in the single cutover.
+Do not use redesign phases, feature flags, or compatibility paths.
 
 ## Components
 
@@ -120,14 +131,14 @@ const {
 
 ## Design System Compliance
 
-All components follow the **Refined Trust Architecture** design system:
+These components use the current **Refined Trust Architecture** design system. The following values describe existing usage, not new palette requirements:
 
 ### Colors
 
 - Success (Active): `success-primary` (green)
 - Warning (Expiring Soon, Access Token Expired): `warning-primary` (amber)
 - Error (Expired): `error-primary` (red)
-- Neutral: `neutral-300` to `neutral-900`
+- Neutral values in existing source: `neutral-300` to `neutral-900`. New component styling must use semantic roles instead.
 
 ### Components Used
 
@@ -143,7 +154,7 @@ All components follow the **Refined Trust Architecture** design system:
 
 ### Accessibility
 
-- WCAG 2.1 AA compliant
+- WCAG 2.1 AA is required. Verify composed surfaces and component stories in both themes.
 - Semantic HTML (h1, h2, h3 hierarchy)
 - Proper ARIA attributes
 - Keyboard navigation support
@@ -281,7 +292,10 @@ The frontend expects the following API response format:
 }
 ```
 
-## Next Steps
+## Historical session backlog — not the redesign delivery plan
+
+These original session-story notes do not define feature 046 scope or delivery order.
+The redesign plan owns the single-cutover requirements.
 
 1. **User Story 2**: Terminate a Third-Party Session
    - Implement confirmation dialog refinements
@@ -294,7 +308,7 @@ The frontend expects the following API response format:
    - Display token expiration timeline
    - Show audit log of session events
 
-3. **Phase 4**: OAuth2 Authorization Flow
+3. **OAuth2 Authorization Flow**:
    - Implement OAuth2 redirect handler
    - Create service selection UI
    - Add re-authentication flow for expired sessions

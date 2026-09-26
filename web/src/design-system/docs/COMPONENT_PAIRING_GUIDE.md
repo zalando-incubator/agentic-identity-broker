@@ -1,6 +1,16 @@
 # Component Pairing Guide
 
-Real-world examples showing how to combine design system components with exact spacing, colors, and hierarchy. Use these as templates for common UI patterns.
+These existing examples show component composition, spacing, and hierarchy for Refined Trust Architecture.
+
+## Authority and example status
+
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current direction and Principle XI process.
+ADR 037 remains Proposed. These examples are not the proposed target or constitutional aesthetic requirements.
+Raw palette classes and literal visual values in snippets are historical examples, not new-code instructions.
+Use actual semantic role tokens and component APIs. Do not copy missing APIs or abbreviated utility names from snippets.
+Self-host images and fonts. Dynamic image sources must resolve to repository-hosted assets or a local fallback.
+Every component story must pass the accessibility addon in light and dark themes.
+Align these examples with the implemented target in the single cutover after ADR acceptance.
 
 ---
 

@@ -2,6 +2,16 @@
 
 This guide shows how to effectively combine design system components to build common UI patterns and solve typical design challenges.
 
+## Authority and example status
+
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current Refined Trust Architecture direction and Principle XI process.
+ADR 037 remains Proposed. These recipes retain existing examples, not a target implementation contract.
+Raw palette classes and literal visual values in snippets are not new-code requirements.
+Use actual semantic tokens and component APIs. Verify component props before reuse.
+Self-host images and fonts. Dynamic image sources must resolve to repository-hosted assets or a local fallback.
+Every component story must pass the accessibility addon in light and dark themes.
+Align these recipes with the implemented target in the single cutover after ADR acceptance.
+
 ## Layout Patterns
 
 ### Centered Hero Section

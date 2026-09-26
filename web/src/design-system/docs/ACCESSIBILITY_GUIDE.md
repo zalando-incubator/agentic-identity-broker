@@ -2,9 +2,19 @@
 
 The Refined Trust Architecture design system is built with accessibility at its core. This guide explains WCAG 2.1 AA compliance and best practices for using the design system accessibly.
 
+## Authority and evidence
+
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current visual direction and Principle XI process.
+ADR 037 remains Proposed. WCAG 2.2 AA is the proposed feature target, not a replacement for the binding WCAG 2.1 AA baseline.
+Every component story must render and pass the accessibility addon in light and dark themes.
+Use semantic tokens and self-hosted assets. Do not load fonts, scripts, or images from third-party origins.
+Existing snippets illustrate patterns. They do not prove component, theme, or contrast compliance.
+Verify actual keyboard behavior, accessible names, focus, reduced motion, and rendered contrast.
+Align this guide with the implemented target in the single cutover after ADR acceptance.
+
 ## Overview
 
-All design system components meet **WCAG 2.1 Level AA** accessibility standards, which include:
+All design system components must meet **WCAG 2.1 Level AA** accessibility standards, which include:
 
 - Perceivable: Information and UI are visible/perceivable to all
 - Operable: All functionality accessible via keyboard
@@ -94,14 +104,13 @@ All interactive components support full keyboard navigation:
 
 ### Color Contrast
 
-All colors meet WCAG AA contrast requirements:
+Verify rendered colors in both themes against these requirements. The table records requirements, not measured results.
 
-| Use Case           | Ratio | Status      |
-| ------------------ | ----- | ----------- |
-| Text on background | 4.5:1 | ✓ Meets     |
-| Large text (18pt+) | 3:1   | ✓ Meets     |
-| UI components      | 3:1   | ✓ Meets     |
-| Disabled state     | N/A   | ✓ Exception |
+| Use Case | Minimum ratio | Requirement |
+| --- | --- | --- |
+| Text on background | 4.5:1 | Principle XI baseline |
+| UI components | 3:1 | Principle XI baseline |
+| Inactive controls | WCAG exception where applicable | Do not apply this exception to placeholder text |
 
 ## Component Accessibility
 
@@ -293,6 +302,9 @@ Test with NVDA (Windows) or JAWS, or test using browser extensions:
 
 ### Automated Testing
 
+Run the Storybook accessibility addon for every component story in both themes.
+The snippets that follow illustrate axe usage, not the configured test stack or evidence of passing checks.
+
 ```typescript
 // Using axe-core in tests
 import { axe } from 'jest-axe';
@@ -326,6 +338,8 @@ cy.checkA11y();
 - [ ] No keyboard traps
 - [ ] ARIA used correctly (not overused)
 - [ ] Page passes automated accessibility testing
+- [ ] Every component story passes the accessibility addon in light and dark themes
+- [ ] Contrast checks include rendered states, overlays, and focus indicators
 
 ### Ongoing
 
@@ -487,13 +501,13 @@ button:focus {
 
 ## Summary
 
-Accessibility is not an afterthought—it's built into every component:
+Accessibility requires implementation and verification for every component:
 
 - **Semantic HTML** ensures proper structure
 - **ARIA attributes** provide context to assistive tech
 - **Keyboard navigation** works without mouse
-- **Color contrast** meets WCAG AA standards
-- **Focus indicators** are always visible
-- **Testing** ensures real-world usability
+- **Color contrast** must meet WCAG AA requirements
+- **Focus indicators** must remain visible
+- **Testing** must cover real user journeys in both themes
 
-By using the design system components correctly and following these guidelines, we ensure our applications are accessible to everyone.
+Component reuse does not prove accessibility. Verify each composed surface and retain the results.

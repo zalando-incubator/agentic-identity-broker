@@ -282,17 +282,24 @@ sequenceDiagram
 - **Universal Components** (if any): [List components applicable across the application]
   - Location: `web/src/design-system/components/[category]/`
   - Must include Storybook stories
-  - Must follow Refined Trust Architecture aesthetic
+  - Must follow the current `DESIGN_PRINCIPLES.md` and accepted design ADRs, not a proposed replacement
 
 **Design Tokens Usage**:
-- Use semantic tokens: `trust-deep`, `trust`, `success-primary`, `error-primary`, `neutral-*`
-- DO NOT use extended palettes: `navy-700`, `emerald-600`, `gray-*`
+- Define all visual decisions as semantic tokens under `web/src/design-system/tokens/`
+- Do not reference raw palette utilities in components
 - DO NOT bypass design tokens with custom CSS
+- Use Tailwind v4 `@theme` tokens and CVA variants
+- Document visual-direction changes in an ADR and obtain acceptance before implementation
+- Self-host brand assets. Do not load fonts, scripts, or images from third-party origins
 
 **Accessibility Requirements**:
 - WCAG 2.1 AA compliance mandatory (4.5:1 text contrast, 3:1 UI component contrast)
 - Semantic HTML with proper ARIA attributes
 - Keyboard navigation support for all interactive elements
+- Support light and dark themes. Every component story MUST pass the accessibility addon in both
+- Include Storybook stories and visual regression coverage for new design-system components
+
+Principle XI defines this process. It does not mandate a fixed aesthetic or palette.
 
 *Example clarification needed:*
 

@@ -2,6 +2,16 @@
 
 Motion in the Refined Trust Architecture is purposeful and restrained. Animations guide user attention, provide feedback, and create fluid transitions—but never entertain or distract. Every animation serves a functional purpose.
 
+## Authority and example status
+
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current direction and Principle XI process.
+The 150–500 ms motion scale describes Refined Trust Architecture, not a constitutional duration mandate.
+ADR 037 remains Proposed. Its 120–200 ms CSS-only target does not replace current motion guidance.
+Literal CSS examples explain existing motion. Components must express motion through centralized semantic tokens and respect reduced motion.
+Verify every component story with the accessibility addon in light and dark themes.
+Resource links are reading references, not permission to load third-party scripts into the frontend.
+Align this guide with the implemented target in the single cutover after ADR acceptance.
+
 ---
 
 ## Animation Principles

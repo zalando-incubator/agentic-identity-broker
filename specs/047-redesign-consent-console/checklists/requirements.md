@@ -35,5 +35,8 @@
 - First pass: AS-13 required a browser-safe update mechanism. The user chose regular refresh of the existing user-scoped pending list. AS-13 and FR-021 now require updates within 15 seconds; the gateway long-poll remains machine-only.
 - First pass: AS-16 and SR-004 lacked event coverage and retention. The user chose attributable failures and denials alongside completed actions, with deletion after 90 days. AS-16, FR-023, and SR-004 now state both decisions.
 - Final pass: All 18 acceptance scenarios have explicit outcomes; functional requirements point to their scenarios. The only permitted backend additions are one activity read endpoint and a minimal session field if existing data cannot establish required-scope gaps.
-- Existing route and contract names in the specification identify user-provided compatibility constraints. No framework, database, new endpoint path, or proposed implementation is specified. The 150 kB compressed-code threshold is an explicit user-requested performance outcome.
+- Existing routes and authorization semantics remain in scope. They do not authorize compatibility layers or older-server support. The compressed-code limit is a user-requested performance outcome.
 - The checklist evaluates whether the specification defines outcomes, not whether software already meets them.
+- Revision 2026-09-26: FR-028 and SC-010 require one complete cutover with no phases, flags, or compatibility paths. The plan retains all 18 acceptance scenarios.
+- FE-001 and the plan inventory separate aesthetic-neutral Principle XI from the current visual direction and proposed ADR 037. ADR acceptance remains necessary.
+- Current guidance must match the accepted decision. Historical records retain their original aesthetic choices and completion evidence.

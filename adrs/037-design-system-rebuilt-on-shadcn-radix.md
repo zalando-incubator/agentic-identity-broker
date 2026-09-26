@@ -2,15 +2,19 @@
 
 **Status**: Proposed
 **Date**: 2026-09-25
-**Feature**: [046-redesign-consent-console](../specs/046-redesign-consent-console/spec.md)
+**Feature**: [047-redesign-consent-console](../specs/047-redesign-consent-console/spec.md)
 **Supersedes on acceptance**: ADR 006's UI Components clause, animation choice, and custom-hook server-state ownership. Its client UI-state guidance remains unchanged.
-**Extends on acceptance**: ADR 035's browser route list with `/activity` and `/settings`. Root mounting and protocol precedence remain unchanged.
+**Extends on acceptance**: ADR 035's browser route list with `/settings`. Root mounting and protocol precedence remain unchanged.
 
 ## Context
 
 The existing UI uses Headless UI, Framer Motion, and an editorial visual style. Consent UI v2 needs focused decisions and a compact console.
 
 The user requested this replacement during planning on 2026-09-25. This request selects the technical direction, not acceptance of this proposed ADR or detailed API schemas.
+
+The user's 2026-09-26 revision requires one complete cutover, without implementation phases, feature flags, or backwards compatibility.
+Principle XI sets design-system and accessibility requirements without selecting an aesthetic.
+The current direction in `DESIGN_PRINCIPLES.md` remains authoritative until this ADR is accepted.
 
 ADR 006 also assigns server-state management to custom hooks. TanStack Query requires an explicit, narrow exception to that decision. Axios remains the transport.
 
@@ -44,7 +48,7 @@ A small inline script sets the resolved `data-theme` before first paint. A CSP h
 
 ConsoleShell contains the sidebar and page header. Sheet contains the mobile sidebar. DecisionShell has a centered column no wider than 640 px, a wordmark, and a footer. Both shells live under `design-system/components/layout/`.
 
-Preserve the five existing route addresses. `/agents/:id` uses DecisionShell for an authorization session and ConsoleShell otherwise. `/approvals/:id` always uses DecisionShell. Add `/activity` and `/settings` as lazy console routes.
+Preserve the five existing route addresses. `/agents/:id` uses DecisionShell for an authorization session and ConsoleShell otherwise. `/approvals/:id` always uses DecisionShell. Add `/settings` as a lazy console route.
 
 ### Data and authorization
 
@@ -54,13 +58,16 @@ Optimistic revocation follows explicit confirmation. Show a pending result, rest
 
 ADR 014's synchronization endpoint remains gateway-only. ADR 018 and feature API-004 prohibit browser use. A shared query refreshes `/api/approvals/pending` every 10 seconds while the console is visible. Sidebar and queue share that result. Resume refresh immediately on focus. The 15-second target assumes a reachable server and a foreground browser.
 
-The only additive API scope is user activity plus one minimal session required-scopes field if necessary. API contracts need stakeholder review before implementation. No new runtime-configuration endpoint is permitted.
+This decision adds or changes no API contract, response field, or persistence. No new runtime-configuration endpoint is permitted.
 
-### Rollout and verification
+### Single cutover and verification
 
-The temporary broker configuration `ui.v2` selects old or new presentation during phases 2–3. It uses the existing configuration port, environment and CLI bindings, startup validation, and Helm contract. Server HTML carries only the boolean. It never contains a principal, credential, or full configuration.
+Deliver every route, both shells, settings, and command search in one release.
+Do not add feature flags, broker rollout configuration, HTML flag delivery, parallel presentations, or backwards-compatibility layers.
+Migrate all consumers and remove obsolete code in the same change.
 
-Phase 1 supplies foundations. Phase 2 migrates decision views behind the flag. Phase 3 migrates console views and removes the flag and obsolete visual layer. Phase 4 adds activity, settings, command search, screenshots, and final documentation.
+After ADR acceptance, update all current guidance in the plan's inventory for the approved direction.
+Preserve historical feature decisions. Replace only references that incorrectly present old rules as current guidance.
 
 Every component story runs in both themes with Storybook accessibility failures blocking CI. Playwright visual comparisons cover the five existing routes in both themes, including both agent contexts. Ginkgo acceptance journeys preserve authorization behavior. WCAG 2.2 AA is the feature target.
 
@@ -68,11 +75,11 @@ Every component story runs in both themes with Storybook accessibility failures 
 
 The team owns component source, theme integration, and dependency updates. Radix does not remove the need for keyboard, focus, contrast, and screen-reader validation.
 
-The migration temporarily carries two presentations, not two authentication paths. Phase 3 removes old primitives, fonts, animations, theme, cache, flag bindings, and deployment documentation.
+The cutover removes old primitives, fonts, animations, tokens, wrappers, and caches. No compatibility aliases or older-server fallbacks remain.
 
 Table, Command, and console-only dependencies must stay outside the initial decision-route bundle. The consent route retains the under-150-kB compressed-code target.
 
-A proposed ADR does not authorize implementation against accepted ADRs. Acceptance of this ADR and detailed additive API contracts is an implementation gate.
+A proposed ADR does not authorize implementation against accepted ADRs. Acceptance of this ADR is an implementation gate. The feature adds no API contract.
 
 ## Alternatives considered
 
@@ -80,8 +87,8 @@ A proposed ADR does not authorize implementation against accepted ADRs. Acceptan
 - A second component library leaves conflicting variants and token rules. Existing directories remain the integration point.
 - Live HTML wordmark text removes font imports but changes supplied artwork metrics. Outlined artwork preserves the brand assets.
 - Zalando orange competes with warning states. Neutral blue separates primary action from warning meaning.
-- A browser gateway long-poll violates the existing authentication boundary. User-scoped polling meets the spec without a third API.
-- A permanent migration flag leaves two systems to maintain. The flag ends in phase 3.
+- A browser gateway long-poll violates the existing authentication boundary. User-scoped polling meets the spec without a new API.
+- A staged rollout or temporary flag creates two presentations. The requested release contains only the new presentation.
 
 ## References
 
@@ -89,6 +96,6 @@ A proposed ADR does not authorize implementation against accepted ADRs. Acceptan
 - [ADR 014](014-long-poll-listen-notify.md)
 - [ADR 018](018-approval-endpoint-auth-boundaries.md)
 - [ADR 035](035-root-mounted-spa.md)
-- [Implementation plan](../specs/046-redesign-consent-console/plan.md)
+- [Implementation plan](../specs/047-redesign-consent-console/plan.md)
 - [Design principles](../web/src/design-system/docs/DESIGN_PRINCIPLES.md)
 - [Color guide](../web/src/design-system/docs/COLOR_GUIDE.md)

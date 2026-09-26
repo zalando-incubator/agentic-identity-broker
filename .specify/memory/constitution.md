@@ -24,7 +24,6 @@ Version History:
 - 1.5.1 → 1.6.0: Added Principle XII (Dependency Injection & Component Wiring) (MINOR)
 - 1.5.0 → 1.5.1: Clarified testing requirements in tasks-template.md (PATCH)
 
-Follow-up TODOs: Review dependent references in `specs/047-redesign-consent-console/plan.md`.
 -->
 
 # Agentic Identity Broker Constitution

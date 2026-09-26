@@ -3,6 +3,8 @@
 **Branch**: `007-consent-frontend` | **Date**: 2025-12-18 | **Spec**: [spec.md](spec.md)
 **Input**: Feature specification from `/specs/007-consent-frontend/spec.md`
 
+> **Historical visual scope**: The visual choices in this plan record feature 007's original design, not a current constitutional aesthetic mandate. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 **Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
 
 ## Summary

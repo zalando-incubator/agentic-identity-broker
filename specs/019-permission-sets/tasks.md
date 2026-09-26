@@ -51,6 +51,8 @@
 
 ### Phase 2e: Frontend / Design System Review [MANDATORY]
 
+> **Historical visual scope**: The visual choices and design checks in this task record retain their original wording and completion states, not renewed aesthetic requirements. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 - [X] T008 Review `web/src/design-system/docs/DECISION_TREES.md`, `COMPONENT_PAIRING_GUIDE.md`, and `COMMON_MISTAKES.md` for `PermissionSetCard` component selection
 - [X] T009 [P] Document planned design system primitives: Card, Badge, Checkbox, Button from `web/src/design-system/`; confirm semantic tokens: `trust` (mandatory cards), `neutral` (optional cards), `success-primary` (connected service indicator)
 

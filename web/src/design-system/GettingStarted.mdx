@@ -6,6 +6,21 @@ import { Meta } from '@storybook/addon-docs/blocks';
 
 Welcome to the **Refined Trust Architecture** design system for the consent management frontend.
 
+## Current authority
+
+`docs/DESIGN_PRINCIPLES.md` defines the current visual direction.
+ADR 037 remains Proposed. The neutral-blue OKLCH design is a proposal, not the current runtime.
+The examples here describe Refined Trust Architecture, not constitutional aesthetic requirements.
+
+Principle XI requires centralized semantic tokens, reusable components, and WCAG 2.1 AA.
+Every component story must render and pass the accessibility addon in light and dark themes.
+Self-host brand assets. Do not load fonts, scripts, or images from third-party origins.
+Do not copy raw palette utilities or literal visual values from older examples into components.
+Use the actual token source and component APIs.
+
+After ADR acceptance, update this guide and all linked design guides in the same implementation cutover.
+Do not introduce redesign phases, feature flags, or compatibility paths.
+
 ## Overview
 
 This design system provides a comprehensive component library optimized for capturing consent from non-technical end-users who delegate permissions to AI agents. Every component is designed to communicate **trustworthiness, clarity, and control**.
@@ -89,7 +104,7 @@ import { semanticColors } from '@design-system/tokens';
 
 ## Accessibility
 
-All components follow **WCAG 2.1 AA** guidelines:
+All components must meet **WCAG 2.1 AA** requirements. This list is not evidence of completed verification:
 
 - Keyboard navigation support
 - Screen reader compatibility

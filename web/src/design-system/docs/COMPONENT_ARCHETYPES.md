@@ -2,6 +2,16 @@
 
 This guide documents the visual specifications for the four foundational components in the Refined Trust Architecture design system. These archetypes serve as the reference for all other component designs.
 
+## Authority and example status
+
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current direction and Principle XI process.
+ADR 037 remains Proposed. These archetypes describe Refined Trust Architecture, not its proposed replacement.
+The fixed colors, dimensions, shadows, and CSS blocks document existing visual examples, not constitutional aesthetic requirements.
+Do not copy literal visual values or raw palette utilities into components. Express visual decisions through centralized semantic tokens.
+Light and dark themes require accessible surfaces, not permanently white inputs or cards.
+Self-host images and fonts. Verify every component story with the accessibility addon in both themes.
+Align these archetypes with the implemented target in the single cutover after ADR acceptance.
+
 ---
 
 ## Primary Button
@@ -212,7 +222,7 @@ Trust through clarity. Form inputs are where users enter sensitive data, so ever
 | **Border**              | 1.5px solid #ddd8d1 | 1.5px solid #1e4d6b           | 1.5px solid #dc2626 | Neutral-300 default            |
 | **Height**              | 44px                | 44px                          | 44px                | Touch-friendly minimum         |
 | **Padding**             | 12px 16px           | 12px 16px                     | 12px 16px           | Horizontal 16px, vertical 12px |
-| **Background**          | #ffffff             | #ffffff                       | #ffffff             | Always white for clarity       |
+| **Background**          | #ffffff             | #ffffff                       | #ffffff             | Existing light appearance, not a dark-theme rule |
 | **Border Radius**       | 6px (md)            | 6px (md)                      | 6px (md)            | Consistent with buttons        |
 | **Focus Ring**          | none                | 2px solid #1e4d6b, 2px offset | none                | Clear, 2px offset              |
 | **Disabled Background** | #f5f1ed             | —                             | —                   | Subtle background              |
@@ -459,12 +469,15 @@ Command attention without aggression. Modals are critical for permission dialogs
 3. **Form Input**: User data entry (email, name, settings)
 4. **Modal**: Critical confirmations, permission grants, destructive actions
 
-### Consistency Rules
+### Existing visual conventions
 
-- All primary buttons must use the trust-deep background (#0A2540) and shadow strategy
-- All cards must maintain the double shadow (external + internal highlight)
-- All form inputs must be exactly 44px height for touch accessibility
-- All modals must use the trust-deep overlay (rgba(13, 24, 41, 0.5)) with 8px blur
+- Primary buttons use trust-deep and shadow elevation in the current direction.
+- Cards use an external shadow and an internal highlight.
+- The input examples use a 44 px height. Exact height alone does not prove accessibility.
+- Modal examples use a navy overlay and 8 px blur.
+
+These descriptions are not constitutional aesthetic mandates.
+Express each role through central tokens and verify accessibility in both themes.
 
 ### Customization
 

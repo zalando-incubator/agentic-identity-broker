@@ -1,6 +1,6 @@
 # Design System Documentation Index
 
-This index routes to design-system guidance. Consent UI v2 is a proposed replacement under feature 046. Runtime migration has not started.
+Refined Trust Architecture remains the current visual direction. Feature 046 proposes a replacement. ADR 037 is not accepted.
 
 ---
 
@@ -11,20 +11,26 @@ This index routes to design-system guidance. Consent UI v2 is a proposed replace
 #### [DESIGN_PRINCIPLES.md](./DESIGN_PRINCIPLES.md)
 
 **Location**: `/web/src/design-system/docs/DESIGN_PRINCIPLES.md`
-The [v2 design principles](DESIGN_PRINCIPLES.md) define focused decision views, a compact console, local typography and brand assets, restrained motion, and accessibility gates.
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current direction and the binding Principle XI process.
+Its separate proposal section retains the feature 046 target for review.
+[ADR 037](../../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) requires acceptance before that target replaces current guidance.
 
-Use this guide for new v2 work. [ADR 037](../../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) requires acceptance before implementation.
+The detailed guides retain existing examples. Raw palette classes and literal CSS values in those examples are not permission to bypass semantic tokens.
+Use the actual token definitions and component APIs. Do not treat older examples as proof of accessibility or theme support.
+Principle XI requires centralized semantic tokens, light/dark story accessibility checks, self-hosted assets, and WCAG 2.1 AA.
+It does not mandate Refined Trust Architecture or the proposed neutral-blue aesthetic.
 
-The remaining detailed guides describe legacy components until phase 3. They do not override the rewritten design principles or color contract.
+After ADR acceptance, align all guides in this index, `GettingStarted.mdx`, and both session-component guides in the same implementation cutover.
+There are no redesign phases, feature flags, or compatibility paths.
 
 ---
 
 #### [COLOR_GUIDE.md](./COLOR_GUIDE.md)
 
 **Location**: `/web/src/design-system/docs/COLOR_GUIDE.md`
-The [v2 color guide](COLOR_GUIDE.md) defines semantic OKLCH tokens, light/dark precedence, contrast requirements, and raw-palette lint enforcement.
-
-It replaces the legacy trust, CTA, and warm-neutral palette instructions for v2. Runtime token changes belong to foundation implementation.
+[COLOR_GUIDE.md](COLOR_GUIDE.md) documents current role tokens and their generated utilities.
+A separate section retains the proposed semantic OKLCH contract, theme precedence, and enforcement rules.
+The proposed contract is not implemented runtime guidance.
 
 ---
 
@@ -269,8 +275,7 @@ All documentation is located in:
 ├── COMPOSITION_PATTERNS.md           ✅ Real-world usage patterns
 ├── DECISION_TREES.md                 ✅ Flowchart-based decision guidance
 ├── COMPONENT_PAIRING_GUIDE.md        ✅ Component composition with spacing
-├── COMMON_MISTAKES.md                ✅ Anti-patterns and correct solutions
-└── MIGRATION_GUIDE.md                ✅ Migration strategy
+└── COMMON_MISTAKES.md                ✅ Anti-patterns and correct solutions
 ```
 
 ---
@@ -289,7 +294,7 @@ All documentation is located in:
 1. Read [TOKEN_GUIDE.md](./TOKEN_GUIDE.md) for implementation tokens
 2. Review [COMPOSITION_PATTERNS.md](./COMPOSITION_PATTERNS.md) for common patterns
 3. Verify [ACCESSIBILITY_GUIDE.md](./ACCESSIBILITY_GUIDE.md) for compliance
-4. Check [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md) when refactoring existing components
+4. Read the [feature 046 plan](../../../../specs/047-redesign-consent-console/plan.md) for the proposed single-cutover replacement
 
 ### For AI Agents
 
@@ -314,9 +319,9 @@ All documentation is located in:
 
 ### Using Colors
 
-- **Semantic tokens**: Use `bg-trust`, `text-success-primary`, `border-neutral-300`
-- **NO extended palettes**: `navy-700`, `emerald-600`, `gray-*` are removed
-- **Warm neutrals**: Replace all `gray-*` with `neutral-*`
+- Use existing semantic role tokens and component variants. See [COLOR_GUIDE.md](COLOR_GUIDE.md) for exact generated utilities.
+- Do not use raw palette utilities, including `neutral-*`, in components.
+- If a semantic role is missing, define it centrally before component use. Do not copy a proposed token into current code.
 
 ### Typography
 

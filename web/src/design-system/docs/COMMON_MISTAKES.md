@@ -2,6 +2,15 @@
 
 Learn from frequent pitfalls in the Refined Trust Architecture design system. Each mistake includes the reason it's wrong and the correct solution.
 
+## Authority and example status
+
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current Refined Trust Architecture direction and Principle XI process.
+ADR 037 remains Proposed. Its target does not govern current components.
+The examples retain existing component patterns. Their raw palette classes and literal values are not new-code requirements.
+Use semantic tokens for all visual decisions and self-hosted assets.
+Every component story must pass accessibility checks in light and dark themes.
+Align this guide with the implemented target in the single cutover after ADR acceptance.
+
 ---
 
 ## Color Usage Mistakes
@@ -13,7 +22,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <h1 className="text-primary">Dashboard</h1>
 ```
 
-**Why it's wrong**: `text-primary` is an alias that points to `trust-deep`, but it's confusing because "primary" could mean "primary text color" (for body text). The semantic intent is unclear.
+**Why it is wrong**: `--color-text-primary` generates `text-text-primary`. The shorter `text-primary` is not that token's generated utility.
 
 **Correct solution**:
 
@@ -22,7 +31,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <h1 className="text-trust-deep">Dashboard</h1>
 ```
 
-**Rule**: Always use `text-trust-deep` or `text-trust` explicitly for headings to communicate brand authority.
+**Rule**: Use a semantic heading role from the current token source. The existing trust colors describe the visual direction, not constitutional mandates.
 
 ---
 
@@ -43,7 +52,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <h3 className="text-trust">Subsection Title</h3>    // Minor sections
 ```
 
-**Rule**: Reserve `neutral-900` only for body text when `neutral-700` doesn't provide enough contrast.
+**Rule**: Do not select raw neutral shades in components. Use semantic text roles and verify contrast against the actual surface.
 
 ---
 
@@ -54,18 +63,18 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <div className="bg-gray-100 text-gray-700 border-gray-300">Content</div>
 ```
 
-**Why it's wrong**: Standard Tailwind grays have been replaced with warm neutrals throughout the design system. Gray classes don't exist in this system.
+**Why it is wrong**: Principle XI prohibits raw palette utilities, including both `gray-*` and `neutral-*`.
 
 **Correct solution**:
 
 ```tsx
 // DO
-<div className="bg-neutral-100 text-neutral-700 border-neutral-300">
+<div className="bg-bg-secondary text-text-primary border-border-primary">
   Content
 </div>
 ```
 
-**Rule**: Always use `neutral-*` scale instead of `gray-*`. Our warm neutrals (#faf9f7, #f5f1ed) convey sophistication and trust.
+**Rule**: Use semantic role tokens. Warm-neutral values remain a current design choice, not a component palette API.
 
 ---
 
@@ -85,7 +94,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <button className="bg-trust-deep text-white">Click Me</button>
 ```
 
-**Rule**: Use semantic tokens: `trust-deep`, `trust`, `success-primary`, `error-primary`, `warning-primary`, `neutral-*`.
+**Rule**: Use component variants and semantic roles from the current token source. Do not use numbered palette utilities.
 
 ---
 
@@ -111,7 +120,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 </div>
 ```
 
-**Rule**: Prefer semantic aliases (`text-secondary`, `text-tertiary`) over direct neutral colors for consistency.
+**Rule**: Use generated semantic utilities such as `text-text-secondary`, not raw palette colors or historical abbreviations.
 
 ---
 
@@ -398,7 +407,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <h1 className="font-sans">Title</h1>
 ```
 
-**Why it's wrong**: The design system specifies **Crimson Pro** for headings to create the "Refined Trust Architecture" aesthetic. System fonts lose brand identity.
+**Why it is wrong**: The current direction specifies Crimson Pro for headings. Keep system fallbacks available when a local font cannot load.
 
 **Correct solution**:
 
@@ -412,6 +421,8 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 - Headings → `font-display` (Crimson Pro)
 - Body → `font-sans` (Manrope)
 - Code → `font-mono` (JetBrains Mono)
+
+Self-host these fonts. The font choices describe the current direction, not constitutional typeface mandates.
 
 ---
 
@@ -526,7 +537,7 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 <p className="text-neutral-700 bg-white">High contrast text</p>
 ```
 
-**Rule**: Use `neutral-700` (#4a4137) or darker for body text. `neutral-600` (#6b6561) for secondary text. `neutral-400` only for placeholders/disabled states.
+**Rule**: Use semantic text roles and verify rendered contrast. Placeholder text is not exempt merely because it is a placeholder.
 
 ---
 
@@ -585,9 +596,9 @@ Learn from frequent pitfalls in the Refined Trust Architecture design system. Ea
 
 | Mistake                           | Fix                                        |
 | --------------------------------- | ------------------------------------------ |
-| Using `gray-*`                    | Use `neutral-*` instead                    |
-| Using `navy-700`                  | Use `trust-deep` or `trust`                |
-| Using `text-primary` for headings | Use `text-trust-deep` explicitly           |
+| Using `gray-*` or `neutral-*`     | Use semantic role tokens                    |
+| Using `navy-700`                  | Use a semantic role or component variant    |
+| Using `text-primary` for headings | Use the generated role utility, such as `text-text-primary` |
 | Multiple primary buttons          | One primary per section                    |
 | No spacing between elements       | Use `space-y-4` for stacking               |
 | Animating width/height            | Animate `transform` instead                |

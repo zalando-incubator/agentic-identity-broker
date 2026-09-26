@@ -2,6 +2,15 @@
 
 Design tokens are the visual design decisions encoded as data. This guide covers the tokens available in the Refined Trust Architecture design system and how to use them.
 
+## Authority and example status
+
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current direction and Principle XI process.
+ADR 037 remains Proposed. The OKLCH replacement is not the current token API.
+This guide retains an inventory and older examples, not evidence of theme or accessibility compliance.
+Raw palette utilities and literal visual values in examples are not requirements for new code.
+Use centralized semantic tokens, self-hosted assets, and light/dark accessibility checks for every story.
+Align this guide with the implemented target in the single cutover after ADR acceptance.
+
 ## Overview
 
 Design tokens in this system are managed through:
@@ -13,26 +22,23 @@ Design tokens in this system are managed through:
 
 ## Color System
 
-The color palette uses **semantic tokens** based on meaning, brand identity, and accessibility requirements. All colors meet WCAG 2.1 AA standards.
+The source contains semantic roles and the existing palette. Verify rendered contrast in both themes. Token names do not prove WCAG compliance.
 
 ### Why Semantic Tokens?
 
 Semantic tokens provide meaning-driven color naming that improves code readability and maintainability.
 
-**✅ DO: Use semantic tokens**
+**Use existing semantic role tokens:**
 
 ```tsx
-<button className="bg-trust text-white hover:bg-trust-hover">
-  Primary Action
-</button>
-<div className="bg-neutral-50 text-neutral-700 border-neutral-200">
+<div className="bg-bg-primary text-text-primary border-border-primary">
   Content
 </div>
 ```
 
 **❌ DON'T: Use extended palette classes**
 
-### Semantic Color Tokens
+### Existing color inventory — not a component palette API
 
 ```typescript
 // PRIMARY - Trust & Authority (Navy)
@@ -97,7 +103,7 @@ border-secondary: #e8e3de // Secondary borders (neutral-200)
 border-focus:     #1E4D6B // Focus ring (trust)
 ```
 
-### Color Usage
+### Existing color usage examples — not new-code requirements
 
 | Use Case            | Token                                | Example                                    |
 | ------------------- | ------------------------------------ | ------------------------------------------ |
@@ -114,45 +120,21 @@ border-focus:     #1E4D6B // Focus ring (trust)
 | Headings (h1-h2)    | text-trust-deep                      | Major headings for authority               |
 | Headings (h3-h6)    | text-trust                           | Minor headings, subsections                |
 
-### ⚠️ Important: Semantic Token Naming Clarification
+### Semantic token naming
 
-**Always use explicit color tokens for headings, not semantic aliases:**
+Tailwind adds its utility prefix to the full token name.
+For example, `--color-text-primary` generates `text-text-primary`, not `text-primary`.
+`--color-bg-primary` generates `bg-bg-primary`.
+See [COLOR_GUIDE.md](COLOR_GUIDE.md) for the current role inventory.
 
-```tsx
-// ❌ DON'T - Ambiguous semantic alias
-<h1 className="text-primary">Dashboard</h1>
-
-// ✅ DO - Explicit brand color
-<h1 className="text-trust-deep">Dashboard</h1>
-<h3 className="text-trust">Subsection</h3>
-```
-
-**Why `text-primary` is confusing for headings:**
-
-- `text-primary` points to `trust-deep` (#0A2540) technically, but semantically it's unclear
-- "Primary" could mean "primary text" (body text) OR "primary brand color" (headings)
-- This creates ambiguity that makes code harder to maintain
-
-**Semantic Token Rules:**
-
-- `text-trust-deep` → h1, h2 (major sections, authority)
-- `text-trust` → h3-h6 (minor sections, subsections)
-- `text-secondary` → Supporting text, metadata (neutral-600)
-- `text-tertiary` → Labels, timestamps (neutral-500)
-- `text-neutral-700` → Body paragraphs (explicit and clear)
-
-**When to use semantic aliases:**
-
-- ✅ `text-secondary` for supporting text (consistent, clear intent)
-- ✅ `text-tertiary` for metadata (consistent, clear intent)
-- ✅ `bg-primary` / `bg-secondary` for backgrounds (layouts, not brand)
-- ❌ `text-primary` for headings (too ambiguous - use `text-trust-deep` instead)
-
-See [COMMON_MISTAKES.md](./COMMON_MISTAKES.md) (Mistake #1) and [DECISION_TREES.md](./DECISION_TREES.md) (Text Color Hierarchy) for detailed guidance.
+Use semantic roles according to purpose. Do not select numbered palette shades in components.
+The older examples in this guide retain historical names and visual values.
+They do not authorize raw palette use or establish missing APIs.
+If a role is missing, define it in the token source before component use.
 
 ### Color Accessibility
 
-All semantic colors meet WCAG AA contrast requirements:
+Verify rendered semantic color pairs against these requirements:
 
 - Text contrast: Minimum 4.5:1 (for body text)
 - UI component contrast: Minimum 3:1 (for graphics)
@@ -161,7 +143,7 @@ All semantic colors meet WCAG AA contrast requirements:
 **When choosing colors:**
 
 1. Prefer semantic tokens (trust, success, warning, error)
-2. Use warm neutrals (neutral-\*) instead of standard grays
+2. Use semantic roles instead of raw warm-neutral or standard palette utilities
 3. Check contrast with intended background (WCAG AA minimum 4.5:1 for text)
 4. Consider colorblind accessibility (don't rely on color alone)
 5. Test with accessibility tools (WebAIM, ColorSnack)
@@ -383,13 +365,13 @@ Popover  → z-20
 
 ## Using Design Tokens in Code
 
-### Via Tailwind Classes (Recommended)
+### Via Tailwind Classes
 
 ```tsx
 // Most common approach
-<div className="bg-primary text-neutral-700 p-4 rounded-lg shadow">
-  <h2 className="text-2xl font-bold text-trust-deep">Title</h2>
-  <p className="mt-2 text-sm text-secondary">Description</p>
+<div className="bg-bg-primary text-text-primary p-4 rounded-lg shadow">
+  <h2 className="text-2xl font-bold text-text-primary">Title</h2>
+  <p className="mt-2 text-sm text-text-secondary">Description</p>
 </div>
 ```
 
@@ -409,7 +391,7 @@ Popover  → z-20
 </div>
 ```
 
-### Via Component Props
+### Older component-prop example — verify APIs before reuse
 
 ```tsx
 // Most semantic approach
@@ -426,60 +408,27 @@ Popover  → z-20
 
 ## Token Customization
 
-### For Application-Specific Theming
+### Centralized token changes
 
-1. **Color overrides** in `tailwind.config.ts`:
+Define semantic roles under `web/src/design-system/tokens/` and expose CSS roles through Tailwind v4 `@theme`.
+Do not define a second palette in application components or `tailwind.config.ts`.
+Component CVA variants select tokens. They do not own another source of visual values.
 
-```typescript
-export default {
-  theme: {
-    extend: {
-      colors: {
-        'brand-primary': '#0A2540', // Override trust-deep
-        'brand-accent': '#D97706', // Override cta
-      },
-    },
-  },
-};
-```
+If a token changes the visual direction, obtain ADR acceptance before implementation.
+Document its role, supported themes, and accessibility results.
+The proposed feature 046 contract remains separate in [COLOR_GUIDE.md](COLOR_GUIDE.md).
 
-2. **CSS variable overrides**:
+### User preferences
 
-```css
-:root {
-  --color-trust-deep: #0a2540;
-  --color-cta: #d97706;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg-primary: #0d1829; /* Dark navy */
-    --color-text-primary: #faf9f7; /* Cream text */
-  }
-}
-```
-
-### Respecting User Preferences
-
-```typescript
-// Dark mode support (automatic via Tailwind)
-<div className="dark:bg-neutral-900 dark:text-white">
-  {children}
-</div>
-
-// Reduced motion support
-<div className="motion-safe:animate-in motion-reduce:animate-none">
-  {children}
-</div>
-
-// High contrast support (automatic via semantic colors)
-```
+Light and dark themes require implementation and verification. Tailwind utilities do not create a complete accessible theme automatically.
+Do not use raw `dark:neutral-*` palette utilities as a substitute for semantic theme tokens.
+Respect reduced motion and verify forced-color behavior.
 
 ## Accessibility with Design Tokens
 
 1. **Always verify color contrast** when using custom colors (WCAG AA: 4.5:1 for text, 3:1 for UI components)
-2. **Use semantic tokens** (trust, success, warning, error) which are pre-verified for WCAG 2.1 AA
-3. **Use warm neutrals** (neutral-\*) for text hierarchy - pre-verified contrast ratios
+2. **Use semantic tokens** and verify actual rendered combinations in both themes
+3. **Do not use raw palette utilities**, including numbered warm neutrals
 4. **Avoid color-only encoding** - use icons, text, or patterns for status communication
 5. **Test with ColorSnack** or WebAIM Contrast Checker for custom combinations
 6. **Respect prefers-reduced-motion** in animations and transitions
@@ -488,10 +437,9 @@ export default {
 
 Design tokens are maintained in:
 
-- `tailwind.config.ts` - Tailwind configuration
-- Component CVA files - Component-specific variants
-- Storybook docs - Visual reference
-- This guide - Documentation
+- `web/src/design-system/tokens/` - Central definitions for visual decisions
+- Component CVA files - Variants that select those tokens
+- Storybook stories and this guide - Examples and verification guidance, not duplicate token definitions
 
 When proposing new tokens:
 
@@ -499,7 +447,7 @@ When proposing new tokens:
 2. Check if existing token works
 3. Verify accessibility compliance
 4. Document in this guide
-5. Update Tailwind config
+5. Update the central token definitions and their Tailwind v4 mapping
 6. Test across components
 
 ## Summary

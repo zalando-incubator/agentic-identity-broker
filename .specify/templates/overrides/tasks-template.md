@@ -151,7 +151,12 @@ changes with no behavior change, then review new business logic separately.
 - [ ] T009 Review [web/src/design-system/docs/INDEX.md](../web/src/design-system/docs/INDEX.md) for component selection
 - [ ] T009a [P] Identify which design system components to use (consult DECISION_TREES.md)
 - [ ] T009b [P] Identify universal components that should be added to design system
-- [ ] T009c Document semantic token usage (trust-deep, success-primary, neutral-*)
+- [ ] T009c Document semantic tokens for all visual decisions under `web/src/design-system/tokens/`, without raw palette utilities
+- [ ] T009d Review current `DESIGN_PRINCIPLES.md` and accepted design ADRs. Obtain ADR acceptance before visual-direction changes
+- [ ] T009e Plan light/dark themes and accessibility-addon checks for every component story
+- [ ] T009f Plan self-hosted brand assets and exclude third-party font, script, and image loads
+
+Principle XI defines this process, not a fixed aesthetic or palette. Proposed ADRs do not replace current guidance.
 
 **Checkpoint**: Design system usage planned (if applicable)
 
@@ -429,6 +434,10 @@ yet — ready for incremental user story implementation
 - [ ] TXXX [IF FRONTEND] Verify universal components added to design system with Storybook stories
 - [ ] TXXX [IF FRONTEND] Verify no custom CSS bypassing design tokens
 - [ ] TXXX [IF FRONTEND] Verify WCAG 2.1 AA accessibility compliance (4.5:1 text, 3:1 UI contrast)
+- [ ] TXXX [IF FRONTEND] Verify every component story renders and passes the accessibility addon in light and dark themes
+- [ ] TXXX [IF FRONTEND] Verify all visual decisions use centralized semantic tokens, without raw palette utilities
+- [ ] TXXX [IF FRONTEND] Verify brand assets are self-hosted and the frontend loads no third-party fonts, scripts, or images
+- [ ] TXXX [IF FRONTEND] Verify visual direction matches `DESIGN_PRINCIPLES.md` and accepted ADRs
 
 ### Additional Polish [CUSTOMIZABLE]
 

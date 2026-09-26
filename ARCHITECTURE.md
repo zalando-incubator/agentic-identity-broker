@@ -147,15 +147,17 @@ Application Startup
 
 The proposed design adds ConsoleShell and DecisionShell, semantic OKLCH light/dark tokens, self-hosted fonts and outlined brand assets, and CSS-only motion. TanStack Query replaces the custom GET cache over Axios. TanStack Table supplies headless table state. Local UI state remains in React.
 
-The temporary `ui.v2` broker configuration selects presentation during phases 2–3. The server exposes only this boolean through SPA HTML. Phase 3 removes the flag and old presentation. No new configuration endpoint is planned.
+The proposed redesign ships in one cutover. It has no implementation phases, feature flags, backwards-compatibility layers, or older-server fallbacks. All consumers migrate together.
 
-The browser refreshes the acting-user pending list every 10 seconds. ADR 014's gateway synchronization remains unchanged. Proposed `/activity` and `/settings` browser routes extend ADR 035 without changing protocol precedence.
-
-The activity read API adds immutable, user-owned events with 90-day retention. Recording failure leaves the original action outcome unchanged and produces credential-free operational logging. Existing security audit logging remains required. Domain services enforce ownership and safe event content through storage ports. Both memory and PostgreSQL adapters implement the repository. The builder owns wiring.
+The browser refreshes the acting-user pending list every 10 seconds. ADR 014's gateway synchronization remains unchanged. The proposed `/settings` browser route extends ADR 035 without changing protocol precedence. The redesign adds no API, response field, or persistence.
 
 The feature targets WCAG 2.2 AA, zero automatic third-party resource requests, a consent content time below 1.5 seconds on throttled 4G, and initial compressed application code below 150 kB. These are acceptance targets, not measured results.
 
-See [the plan](specs/046-redesign-consent-console/plan.md) and [proposed contracts](specs/046-redesign-consent-console/contracts/). ADR acceptance and detailed API approval are required before implementation. The older inventory that follows describes the pre-migration design.
+See [the plan](specs/047-redesign-consent-console/plan.md) and [proposed contracts](specs/047-redesign-consent-console/contracts/). ADR acceptance and detailed API approval are required before implementation. The older inventory that follows describes the pre-migration design.
+
+Principle XI requires the shared design system, semantic tokens, accessible light/dark stories, and self-hosted assets. It does not prescribe an aesthetic.
+The current visual direction remains in [DESIGN_PRINCIPLES.md](web/src/design-system/docs/DESIGN_PRINCIPLES.md) until an accepted ADR changes it.
+After acceptance, update current guidance for the approved direction. Preserve historical feature decisions.
 
 **Directory Structure**:
 
@@ -1225,9 +1227,7 @@ Date of Last Update: 2026-06-02
 
 Define any project-specific terms or acronyms.)
 
-**Activity Event (proposed, feature 046)**: An immutable event owned by an authenticated user. It records a grant change, revocation, approval decision, or token exchange, including attributable denial or failure. It contains a timestamp, safe outcome, and applicable agent or service reference. It contains no credentials or raw tool arguments. Events expire after 90 days. This best-effort history does not replace security audit logging.
-
-**Connection State (feature 046 presentation)**: A derived view of a UserSession's token usability and required scope coverage. A connection does not imply a UserGrant. Unknown last-use data remains unknown.
+**Connection State (feature 046 presentation)**: A view of a UserSession's token usability derived from existing session fields. A connection does not imply a UserGrant.
 
 ### Configuration Domain
 

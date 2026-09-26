@@ -1,7 +1,7 @@
 # Research — Consent UI v2
 
-**Branch**: `046-redesign-consent-console`
-**Status**: Technical choices resolved. ADR and detailed API acceptance remain implementation gates.
+**Branch**: `047-redesign-consent-console`
+**Status**: Technical choices resolved. ADR acceptance remains the implementation gate. The feature adds no API.
 
 ## 1. Retain the platform, replace the component layer
 
@@ -31,7 +31,7 @@
 
 **Rationale**: A React effect runs too late to prevent wrong-theme paint. Explicit light must override a dark OS. System mode must keep following OS changes. The current SPA CSP only sets `frame-ancestors 'none'`.
 
-**Alternatives considered**: A React-only initializer risks a flash. `unsafe-inline` for scripts weakens CSP unnecessarily. Browser storage is appropriate for appearance, but not for the rollout flag.
+**Alternatives considered**: A React-only initializer risks a flash. `unsafe-inline` for scripts weakens CSP unnecessarily. Browser storage holds preferences, not authorization.
 
 **Design boundary**: Production fonts, scripts, images, and connections use same-origin sources. Preserve frame protection and safe OAuth2 top-level navigation. Radix positioning can use inline style attributes. Validate those separately instead of blindly adding a restrictive style policy that breaks overlays. Do not broaden `script-src`.
 
@@ -85,41 +85,29 @@
 
 **Evidence**: `web/src/App.tsx:38-75`, `web/src/pages/AgentGrantDetailPage.tsx:47-64,255-264`, `internal/domain/oauth2/service.go:479-481`, `tests/e2e/frontend/selection_preservation_test.go`.
 
-## 8. Temporary rollout configuration
+## 8. Single cutover
 
-**Decision**: Add `ui.v2: false`, `IDENTITY_BROKER_UI_V2`, and `--ui-v2` through the broker configuration port. Expose only the validated boolean in HTML. Add matching examples, Helm values/templates, and documentation. Remove every binding in phase 3.
+**Decision**: Deliver the complete redesign in one release. Do not add implementation phases, feature flags, or backwards-compatibility layers.
 
-**Rationale**: The user explicitly requires a broker-controlled rollout. Current code has no SPA runtime configuration endpoint. A fixed HTML bootstrap slot does not introduce a third API. Existing environment bindings use `IDENTITY_BROKER_*`, not `AIB_*`.
+**Rationale**: The user's 2026-09-26 revision replaces the earlier rollout proposal. All routes and consumers migrate together.
+Remove old components, tokens, aliases, fonts, animations, and caches in the same change.
+Do not add broker configuration, environment or CLI bindings, Helm values, or HTML flag delivery.
 
-**Alternatives considered**: Build-time Vite flags cannot reflect deployed broker configuration. localStorage is user-controlled. Omitting the flag contradicts the requested phases. A JSON configuration endpoint exceeds API scope.
+**Alternatives considered**: A staged presentation switch creates a second system to maintain. Old-server fallbacks preserve a contract that this release does not support.
 
-**Evidence**: `internal/ports/config.go`, `internal/config/loader.go:144-174`, `internal/app/builder.go`, `internal/adapters/http/handlers/spa.go`, `charts/agentic-identity-broker/`, ADR 035.
+**Evidence**: The revised FR-028 and [UI contract](contracts/ui-and-configuration.md) define the release boundary. Authorization behavior remains unchanged.
 
-## 9. Session state and the additive field
+## 9. Connection state from existing session fields
 
-**Decision**: Propose one optional `required_scopes` array on existing session representations. It contains the sorted, deduplicated required scopes for the acting user's active dependent grants. The UI derives state from this field and existing expiry/refresh fields. Do not add a second `state` enum.
+**Decision**: Derive Connected, Needs re-authentication, Expired, and No connection from the existing session response only. Add no session field, backend state, or Missing scopes state.
 
-**Rationale**: Provider `service.scopes` lists available scopes, not requirements. Per-agent details expose requirements, but a service-wide list needs per-agent request fan-out and grant-selection reconciliation. A bounded backend aggregation gives the requested state without browser N+1 requests. Reuse domain requirement resolution and batch reads rather than adding database N+1 queries.
+**Rationale**: The 2026-09-26 clarification limits this feature to visual and UX changes. Existing session reads expose granted scopes, access and refresh expiry, and refresh-token presence. They do not expose required scope coverage, so the UI must not claim a scope gap.
 
-**Alternatives considered**: Inferring requirements from all available scopes labels valid sessions incorrectly. Reading every agent detail is possible but not the selected console design. A backend state enum duplicates derived presentation state and consumes an unnecessary second field.
+**Alternatives considered**: Inferring requirements from available provider scopes labels valid sessions incorrectly. Fetching every agent detail to reconstruct requirements adds browser fan-out for a state this feature does not show.
 
-**Approval boundary**: This field is a proposal. API-003 permits it only after review of the aggregation gap. If reviewers require existing per-agent reads instead, revise this design before implementation. Missing scope coverage remains unknown while the field is absent, never an empty set by assumption.
+**Evidence**: `api/enduser/openapi.yaml`, `web/src/components/sessions/SessionCard.tsx`, `internal/domain/oauth2session/service.go`.
 
-**Evidence**: `api/enduser/openapi.yaml:684-750,926-988,3294-3394`, `internal/domain/consent/service.go:207-237`, `internal/domain/oauth2session/service.go:911-943`.
-
-## 10. Activity ownership and failure semantics
-
-**Decision**: Add one authenticated `GET /api/activity` endpoint, an immutable ActivityEvent, memory/PostgreSQL repositories, and 90-day query filtering and cleanup. Record after the original action outcome. A recording failure logs a safe operational error and never changes that outcome.
-
-**Rationale**: Current audit output is structured logging, not a queryable user-owned history. The spec explicitly permits history gaps. A separate append cannot roll back a successful grant, approval, revocation, or exchange.
-
-**Attribution**: Record backend-observed denials and failures only after the acting principal is authenticated. Do not trust a submitted subject claim before validation. Local consent cancellation has no server request and cannot become a server activity event without an unauthorized third API. Show that limit in user documentation.
-
-**Alternatives considered**: Parsing logs risks secrets and cross-user leakage. A transactional outbox changes the accepted best-effort guarantee. Cascading event deletion with agent deletion erases history before retention ends. Preserve immutable reference identifiers without cascading foreign keys.
-
-**Evidence**: `internal/domain/consent/service.go`, `internal/domain/approval/service.go`, `internal/domain/tokenexchange/service.go`, `internal/domain/oauth2session/service.go`, `internal/adapters/http/middleware/oauth2_audit.go`, `internal/domain/oauth2server/session_cleanup.go`, [data model](data-model.md).
-
-## 11. Storybook and visual gates
+## 10. Storybook and visual gates
 
 **Decision**: Keep Storybook 10 and its a11y/themes addons. Add the matching Vitest addon with browser-mode projects for light and dark. Set global `parameters.a11y.test = 'error'`. Reuse Ginkgo/Playwright and `tools/imgdiff` for a blocking route snapshot gate.
 
@@ -133,4 +121,4 @@
 
 ## Resolved unknowns and remaining approvals
 
-No technical choice remains marked NEEDS CLARIFICATION. The plan supplies concrete defaults and contracts. ADR acceptance and stakeholder approval of detailed API additions are governance gates, not assumed results. Planning does not authorize runtime changes.
+No technical choice remains marked NEEDS CLARIFICATION. The plan supplies concrete defaults and contracts. ADR acceptance is a governance gate, not an assumed result. The feature adds no API contract. Planning does not authorize runtime changes.

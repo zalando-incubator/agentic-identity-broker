@@ -180,6 +180,8 @@ Add a custom validation function in `internal/config/schema.go` that runs during
 
 ## Research Topic 7: Frontend Profile Display Strategy
 
+> **Historical visual scope**: The token names below record this feature's original design choice, not a current constitutional aesthetic mandate; in particular, `slate-600` is not a current semantic-token recommendation. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 **Question**: How should the consent UI header adapt to display email and enriched profile?
 
 ### Decision: Progressive Enhancement in AppLayout Header

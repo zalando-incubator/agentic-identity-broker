@@ -12,30 +12,32 @@ Feature 046 replaces the design-system layer, not the application stack. Runtime
 
 | Reference | Purpose |
 | --- | --- |
-| `../specs/046-redesign-consent-console/spec.md` | Requirements and AS-01–AS-18 |
-| `../specs/046-redesign-consent-console/plan.md` | Four implementation phases and acceptance gates |
-| `../specs/046-redesign-consent-console/research.md` | Technology choices and integration evidence |
-| `../specs/046-redesign-consent-console/contracts/` | Proposed API, configuration, and UI contracts |
-| `../specs/046-redesign-consent-console/quickstart.md` | Storybook themes and validation commands |
+| `../specs/047-redesign-consent-console/spec.md` | Requirements and AS-01–AS-18 |
+| `../specs/047-redesign-consent-console/plan.md` | Single-cutover implementation and acceptance gates |
+| `../specs/047-redesign-consent-console/research.md` | Technology choices and integration evidence |
+| `../specs/047-redesign-consent-console/contracts/` | Proposed API and single-cutover UI contracts |
+| `../specs/047-redesign-consent-console/quickstart.md` | Storybook themes and validation commands |
 | `../adrs/037-design-system-rebuilt-on-shadcn-radix.md` | Proposed replacement of ADR 006 component and server-cache choices |
 | `../adrs/035-root-mounted-spa.md` | Binding root-mounted route behavior |
 | `../api/enduser/openapi.yaml` | Canonical API contract |
 | `../ARCHITECTURE.md` | Architecture and domain glossary |
 | `../.specify/memory/constitution.md` | Binding principles |
 
-For v2 work, use the rewritten `DESIGN_PRINCIPLES.md` and `COLOR_GUIDE.md`. Other detailed guides describe the legacy system until phase 3.
+Principle XI does not prescribe an aesthetic. `DESIGN_PRINCIPLES.md` defines the current direction until an accepted ADR changes it.
 
-The target uses owned shadcn/Radix components in the existing category directories, Lucide, TanStack Table, TanStack Query over Axios, and cmdk. Keep CVA and `cn()`.
+The proposed target uses owned shadcn/Radix components, Lucide, TanStack Table, TanStack Query over Axios, and cmdk. Keep CVA and `cn()`.
 
-Use semantic OKLCH tokens, Zalando Sans, Inter, JetBrains Mono, local outlined wordmarks, and 120–200 ms CSS transitions. No raw palette utilities are permitted.
+The proposed target uses semantic OKLCH tokens, Zalando Sans, Inter, JetBrains Mono, local outlined wordmarks, and 120–200 ms CSS transitions.
 
-Place ConsoleShell and DecisionShell in `src/design-system/components/layout/`. Preserve route-level lazy loading. Keep console-only Table and Command code outside decision-route imports.
+After ADR acceptance, place ConsoleShell and DecisionShell in `src/design-system/components/layout/`. Keep console-only Table and Command outside decision-route imports.
 
-Broker configuration `ui.v2` controls temporary presentation rollout. Do not create a browser flag or another configuration API. Remove the flag and old presentation in phase 3.
+Deliver all routes and consumers in one cutover. Do not add phases, feature flags, backwards-compatibility layers, or older-server fallbacks.
 
 The browser refreshes only `/api/approvals/pending`. Never expose the gateway-wide long-poll. Keep authentication, scope preview, authorization-session validation, and callbacks unchanged.
 
 Run every Storybook component in both themes with blocking a11y checks. Add visual comparisons through the existing Ginkgo/Playwright harness. Feature 046 targets WCAG 2.2 AA.
+
+After ADR acceptance, update every current guide listed in the plan before implementation. Preserve historical feature decisions.
 
 ## Current Runtime Stack
 
@@ -83,8 +85,8 @@ src/
     utils/             cn() (clsx + tailwind-merge), a11y helpers, focus utilities
     docs/              ★ Read before any UI work:
       INDEX.md                Complete documentation index
-      DESIGN_PRINCIPLES.md    Consent UI v2 target visual and interaction rules
-      COLOR_GUIDE.md          Consent UI v2 semantic OKLCH light/dark contract
+      DESIGN_PRINCIPLES.md    Current direction and proposed replacement
+      COLOR_GUIDE.md          Current palette and proposed semantic OKLCH contract
       TOKEN_GUIDE.md          All design tokens with usage examples
       COMPONENT_ARCHETYPES.md Foundational component specifications
       COMMON_MISTAKES.md      Anti-patterns with correct solutions
@@ -155,9 +157,9 @@ Use these aliases in imports. Do not use relative imports across alias boundarie
 Use `src/design-system/` as the **single source of truth** for visual decisions.
 Before you write a styled component, read `src/design-system/docs/COMMON_MISTAKES.md`.
 
-### Legacy Runtime Rules
+### Current Runtime Rules
 
-These rules describe unmigrated components only. They do not govern new v2 components. Remove this section at phase-3 cutover.
+These rules describe the current system. ADR 037 does not replace them until acceptance. Update this guidance for the accepted direction.
 
 1. **Semantic colors only** — Use semantic tokens. Do not use raw gray tokens.
 2. **Typography** — Use `font-display`, `font-sans`, and `font-mono` for headings, body text, and code.
@@ -166,7 +168,7 @@ These rules describe unmigrated components only. They do not govern new v2 compo
 5. **WCAG 2.1 AA** — Give interactive elements visible focus. Text and UI colors must meet AA contrast.
 6. **Component composition** — Use design-system components before ad-hoc components. Read `src/design-system/docs/DECISION_TREES.md`.
 
-### Legacy Runtime Palette
+### Current Runtime Palette
 
 | Token Family | Hex (primary)                            | Use                                 |
 | ------------ | ---------------------------------------- | ----------------------------------- |
@@ -183,7 +185,7 @@ These rules describe unmigrated components only. They do not govern new v2 compo
 - The base URL is `/api`. In development, Vite forwards requests to Go. In production, use the upstream proxy.
 - **Authentication is external** — The Vite proxy adds `X-Remote-User` in development. An upstream proxy handles production authentication.
 - `ConsentApiService`, `SessionsApiService`, and `approvalApi` provide typed `apiClient` methods.
-- Legacy GET responses use `apiCache`. During v2 migration, TanStack Query replaces this cache over the same Axios services. Remove `apiCache` after all callers migrate.
+- Current GET responses use `apiCache`. The proposed cutover replaces it with TanStack Query over Axios and removes all old callers.
 - The response interceptor normalizes errors to `ApiError`.
 
 ### Key API Endpoints

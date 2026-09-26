@@ -5,6 +5,8 @@
 **Status**: Implementation Guide
 **Constitution Version**: 1.2.0
 
+> **Historical visual scope**: The typography, palette, motion, and styling examples in this guide record feature 007's original design, not a current constitutional aesthetic mandate. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 ## Overview
 
 This quickstart guide helps developers implement and work with the consent management frontend feature. Follow this guide to set up your development environment, understand the architecture, and implement the feature following established patterns.

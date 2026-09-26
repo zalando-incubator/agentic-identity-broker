@@ -70,6 +70,8 @@
 
 ### Phase 2e: Frontend/Design System Review
 
+> **Historical visual scope**: The visual choices and design checks in this task record retain their original wording and completion states, not renewed aesthetic requirements. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 - [X] T019 Review `web/src/design-system/docs/INDEX.md` and `DECISION_TREES.md` for approval page component selection
 - [X] T020 [P] Identify design system primitives: Card, Badge, Radio, Alert, Skeleton, Button; plan semantic token usage (trust-deep, success-primary, warning-primary, error-primary for risk levels)
 

@@ -4,6 +4,18 @@
 **Component Scope**: SessionCard, TerminationDialog, ThirdPartySessionsPage
 **Design System Version**: Refined Trust Architecture
 
+## Authority and example status
+
+[DESIGN_PRINCIPLES.md](../../design-system/docs/DESIGN_PRINCIPLES.md) defines the current direction and Principle XI process.
+ADR 037 remains Proposed. These session examples do not implement or approve its target.
+The snippets retain older component patterns and data shapes. Verify actual component props and service types before reuse.
+Fixed aesthetic values describe existing examples, not constitutional requirements.
+Do not copy raw palette utilities or literal visual values into components. Use centralized semantic tokens.
+Self-host fonts and images. Dynamic service logos must resolve to repository-hosted assets or a local fallback.
+Every component story must pass the accessibility addon in light and dark themes.
+Align this file and `README.md` with the implemented target in the single cutover after ADR acceptance.
+Do not use redesign phases, feature flags, or compatibility paths.
+
 ---
 
 ## Component Mapping
@@ -417,7 +429,7 @@ import { Skeleton } from '@design-system/components/feedback/Skeleton';
 
 ## Accessibility Considerations
 
-All design system components used comply with WCAG 2.1 AA:
+The composed session views must meet WCAG 2.1 AA. The following items are verification requirements, not recorded test results:
 
 ### Keyboard Navigation
 
@@ -435,9 +447,9 @@ All design system components used comply with WCAG 2.1 AA:
 
 ### Color Contrast
 
-- All text colors meet 4.5:1 ratio (WCAG AA)
-- UI elements meet 3:1 ratio (WCAG AA)
-- Badge variants tested for contrast (success, warning, error all pass)
+- Verify text contrast of at least 4.5:1 in both themes
+- Verify UI contrast of at least 3:1 in both themes
+- Verify each rendered badge variant, including success, warning, and error states
 
 ### Motion
 
@@ -447,16 +459,17 @@ All design system components used comply with WCAG 2.1 AA:
 
 ---
 
-## Color Token Usage (See oauth2-semantic-tokens.md)
+## Color Token Usage
 
-Refer to `web/src/design-system/oauth2-semantic-tokens.md` for detailed semantic token mappings for session statuses.
+Use [COLOR_GUIDE.md](../../design-system/docs/COLOR_GUIDE.md) for current semantic role tokens and generated utility names.
+The following status colors describe existing usage. They do not authorize raw palette utilities in new code.
 
 **Quick Reference**:
 
 - **Active session**: `success-primary` (#059669)
 - **Expiring session**: `warning-primary` (#D97706)
 - **Expired session**: `error-primary` (#DC2626)
-- **No session**: `neutral-300` (#ddd8d1)
+- **No session**: Existing examples use `neutral-300`. Use a semantic role and verify contrast instead of copying that shade.
 
 ---
 

@@ -90,7 +90,7 @@ Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 8. **TDD** — Use red-green-refactor. Write tests first. Make each test fail before implementation.
 9. **Persistence Consistency** — Define ISP repos in `internal/ports/storage.go`. Use sqlx for PostgreSQL. Provide both in-memory and postgres adapters.
 10. **API-First** — Design APIs before implementation. Get stakeholder agreement before changes.
-11. **Design System Compliance** — Use Refined Trust Architecture and WCAG 2.1 AA. Use semantic tokens in `web/src/design-system/`.
+11. **Design System Compliance** — Use the shared design system, semantic tokens, accessible light/dark stories, and self-hosted assets. Principle XI requires WCAG 2.1 AA, not an aesthetic. Read `web/src/design-system/docs/DESIGN_PRINCIPLES.md` for the current direction. A change requires an accepted ADR.
 12. **DI via Builder** — Put all wiring in `internal/app/builder.go`. Do not instantiate services in routing.
 13. **E2E Acceptance Tests** — Use a 1:1 specification-to-test mapping in `tests/e2e/`. Test a complete user journey. Do not test one endpoint segment.
 
