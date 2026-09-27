@@ -2,6 +2,134 @@
 
 This is the execution guide for the planned implementation. The plan command does not install a working ledger or create its Go tests. Commands against the new schema package, labelled ledger scenarios, tables or functions become runnable after their corresponding implementation phase. Existing repository commands were checked with `just --list`; no runtime acceptance result is implied by this guide.
 
+## Pre-refactor baseline evidence (T001)
+
+The production baseline is `main` revision `d500f36378dd914f8a516604a08525f737e8ddff`.
+The capture checkout is `7d830d685715e03e5d054c3ef51d8ed5641a58df`.
+Its differences from `main` contain planning artifacts, not production or test code.
+
+The baseline run used Go 1.27.1 and Ginkgo v2.32.2.
+The first attempt lacked the Ginkgo executable.
+After installation, one scenario failed because testcontainers did not discover the active Colima socket.
+The following command supplied the socket and passed all 608 functional scenarios:
+
+```bash
+env PATH="/Users/brennenstuhl/go/bin:$PATH" \
+  DOCKER_HOST=unix:///Users/brennenstuhl/.colima/default/docker.sock \
+  TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock \
+  just test-e2e-backend
+```
+
+The run reported 608 passed, zero failed, and one excluded performance scenario.
+The frontend build also passed.
+These results describe existing behavior, not ledger acceptance.
+
+A temporary Go overlay captured JSON through `bootstrap.NewBufferedJSONLogger`.
+The overlay wrapped test-factory loggers and the test process default logger.
+It preserved the original log sinks and left the checkout unchanged.
+A single-process run with `--label-filter='!performance'` and `--json-report` also passed all 608 scenarios.
+The capture contained 6,398 log descriptors from 605 scenario contexts.
+
+The fixture `tests/e2e/fixtures/business_event_ledger_legacy_slog.go` retains 28 catalogue entries and 31 workflow variants.
+Each record contains its event name, level, message, field names, and observed count.
+It contains no runtime attribute values.
+Counts describe the named journey, not a promise of one old log per new ledger event.
+Grant expiry and proxy issuance have explicit entries without dedicated fact logs.
+Local and hybrid issuance retain their distinct field sets.
+
+Existing backend tests did not execute session termination or agent deletion.
+Two temporary extensions completed those HTTP workflows through the production builder:
+
+- Session establishment followed by DELETE returned 200, then GET returned 404.
+- Agent creation followed by DELETE returned 204, then GET returned 404.
+
+Both extensions passed.
+The fixture identifies their source scenarios and additional actions.
+No production capture code or new ledger behavior formed part of these runs.
+
+`just fmt`, `just check`, and `go test ./tests/e2e/fixtures` passed for the baseline fixture.
+`golangci-lint` was unavailable, so `just check` used its documented `go vet` fallback.
+This result does not claim a golangci-lint run.
+
+The session smoke exposed an existing contract difference.
+The DELETE handler returns a top-level `message`, but OpenAPI documents `data.terminated` and `data.affected_agents`.
+The first smoke assertion assumed the documented shape and failed.
+The corrected baseline smoke checked the deletion status and subsequent 404.
+This feature must preserve the existing response unless stakeholders separately approve a contract change.
+T011 must record this difference.
+
+### T001 commit gate
+
+The first signed commit attempt failed with `gpg: signing failed: Operation cancelled`.
+After user approval, the signed retry succeeded as `f9dcb7cb` (`test: capture business event legacy slog baseline`).
+T001 is complete.
+The commit-signing configuration remains unchanged.
+
+## Refactor verification (T005)
+
+T002–T004 introduce no ledger persistence or telemetry copies.
+The shared transaction rename preserves current backend behavior.
+The credential domain service owns the existing creation, rotation, and removal policy.
+The proxy domain service owns client association and successful-response verification.
+The transport adapter preserves streaming, permitted headers, response closure, and existing trace scopes.
+`oauth2_token.go` retains its resolution and dispatch interface because that interface requires no change.
+
+The following checks passed after extraction:
+
+```bash
+just fmt
+just check
+go test ./internal/domain/oauth2/... ./internal/domain/oauth2server/... \
+  ./internal/adapters/http/enduser/... ./internal/adapters/http/handlers/admin/... \
+  ./internal/adapters/storage/... ./tests/integration/...
+```
+
+The Go test command reported 13 passing packages and one package without tests.
+`just check` used the `go vet` fallback because golangci-lint was unavailable.
+The format gate required the deleted transaction filename and its replacement to enter the Git index together.
+No obsolete transaction names remain in `internal/` or `tests/`.
+
+The single-process JSON capture run passed all 608 functional E2E scenarios after extraction.
+The two deletion extensions also completed in that run.
+The comparison found zero differences across all 31 baseline workflow variants.
+It compared event names, levels, messages, field names, and counts.
+Complete journey comparisons also passed for workflows without dedicated fact logs.
+These results do not claim ledger acceptance or the excluded performance scenario.
+
+A separate `go run ./tmp/ledger-refactor-smoke` process built the production application and exercised real HTTP requests:
+
+| Operation | Observed status |
+|---|---:|
+| Generate credential | 201 |
+| Rotate credential | 200 |
+| Issue with old secret | 401 |
+| Issue with new secret | 200 |
+| Revoke credential | 204 |
+| Issue with revoked secret | 401 |
+| Read revoked credential metadata | 404 |
+| Delete agent | 204 |
+| Read deleted agent | 404 |
+
+The smoke observed one each of `CredentialGenerated`, `CredentialRotated`, `CredentialRevoked`, and `TokenIssued`.
+It observed two `TokenRequestFailed` records.
+Neither generated secret appeared in the logs.
+The temporary smoke source and capture overlays were removed after these checks.
+
+Two independent assistant reviews found no actionable compatibility or security defects.
+One review covered transactions and credentials. The other covered proxy transport and completion.
+The reviews were read-only and ran no additional checks.
+The Fosite boundary wording now names `HandleTokenEndpointRequest`, not the request constructor.
+
+The feature branch contains baseline commit `f9dcb7cb` and refactor commit `9ad008c4`.
+The isolated branch is `refactor/048-business-event-ledger-prerequisites`, based on `d500f36378dd914f8a516604a08525f737e8ddff`.
+It contains only the baseline and refactor commits, as `d3c5de45` and `e8ddd218`.
+Its worktree is `.worktrees/ledger-prerequisites`.
+
+T005 still requires submission of the isolated refactor PR.
+The GitHub CLI reported an invalid token for its active account.
+Git's GitHub credential helper also uses that CLI.
+PR submission requires renewed GitHub authentication.
+
 ## Prerequisites
 
 - Go 1.27.1, just, the repository-pinned Ginkgo CLI, and frontend build prerequisites for production bootstrap.
