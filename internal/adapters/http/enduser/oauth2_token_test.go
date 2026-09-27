@@ -28,6 +28,7 @@ import (
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
@@ -41,6 +42,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func newProxyTokenGrantStrategyForTest(endpoint string, verifier ports.MultiAgentVerifier) *proxyTokenGrantStrategy {
+	transport := NewOAuth2TokenProxy(endpoint, nil)
+	outcomes := oauth2.NewTokenOutcomeService(transport, verifier)
+	return NewProxyTokenGrantStrategy(endpoint, outcomes, nil)
+}
 
 // mockTokenMintingStrategy is a configurable test double for ports.TokenMintingStrategy.
 type mockTokenMintingStrategy struct {
@@ -189,7 +196,7 @@ func TestOAuth2TokenHandler_ServeHTTP_ContentTypeValidation(t *testing.T) {
 	defer mockUpstream.Close()
 
 	handler := &OAuth2TokenHandler{
-		GrantHandler:  NewProxyTokenGrantStrategy(mockUpstream.URL, nil, nil, nil),
+		GrantHandler:  newProxyTokenGrantStrategyForTest(mockUpstream.URL, nil),
 		OAuth2Service: newResolvingOAuth2Service(agentRepo.agent),
 	}
 
@@ -349,7 +356,7 @@ func TestOAuth2TokenHandler_ServeHTTP_HeaderFiltering(t *testing.T) {
 	defer mockUpstream.Close()
 
 	handler := &OAuth2TokenHandler{
-		GrantHandler:  NewProxyTokenGrantStrategy(mockUpstream.URL, nil, nil, nil),
+		GrantHandler:  newProxyTokenGrantStrategyForTest(mockUpstream.URL, nil),
 		OAuth2Service: newResolvingOAuth2Service(agentRepo.agent),
 	}
 
@@ -395,7 +402,7 @@ func TestOAuth2TokenHandler_ServeHTTP_SuccessfulProxy(t *testing.T) {
 	defer mockUpstream.Close()
 
 	handler := &OAuth2TokenHandler{
-		GrantHandler:  NewProxyTokenGrantStrategy(mockUpstream.URL, nil, nil, nil),
+		GrantHandler:  newProxyTokenGrantStrategyForTest(mockUpstream.URL, nil),
 		OAuth2Service: newResolvingOAuth2Service(agentRepo.agent),
 	}
 
@@ -429,7 +436,7 @@ func TestOAuth2TokenHandler_ServeHTTP_UpstreamError(t *testing.T) {
 	defer mockUpstream.Close()
 
 	handler := &OAuth2TokenHandler{
-		GrantHandler:  NewProxyTokenGrantStrategy(mockUpstream.URL, nil, nil, nil),
+		GrantHandler:  newProxyTokenGrantStrategyForTest(mockUpstream.URL, nil),
 		OAuth2Service: newResolvingOAuth2Service(agentRepo.agent),
 	}
 
@@ -453,7 +460,7 @@ func TestProxyGrantStrategy_InfraErrorsReturnJSON(t *testing.T) {
 
 	t.Run("unreachable upstream returns JSON server_error", func(t *testing.T) {
 		// Use an invalid URL that will fail to connect
-		strategy := NewProxyTokenGrantStrategy("http://127.0.0.1:1/token", nil, nil, nil)
+		strategy := newProxyTokenGrantStrategyForTest("http://127.0.0.1:1/token", nil)
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/oauth2/token", nil)
 
@@ -536,7 +543,7 @@ func TestOAuth2TokenHandler_ProxyToUpstream_MultiAgentVerifier(t *testing.T) {
 			defer mockUpstream.Close()
 
 			handler := &OAuth2TokenHandler{
-				GrantHandler:  NewProxyTokenGrantStrategy(mockUpstream.URL, nil, tt.verifier, nil),
+				GrantHandler:  newProxyTokenGrantStrategyForTest(mockUpstream.URL, tt.verifier),
 				OAuth2Service: newResolvingOAuth2Service(agentRepo.agent),
 			}
 
@@ -569,7 +576,7 @@ func TestOAuth2TokenHandler_ServeHTTP_ResponseStreaming(t *testing.T) {
 	defer mockUpstream.Close()
 
 	handler := &OAuth2TokenHandler{
-		GrantHandler:  NewProxyTokenGrantStrategy(mockUpstream.URL, nil, nil, nil),
+		GrantHandler:  newProxyTokenGrantStrategyForTest(mockUpstream.URL, nil),
 		OAuth2Service: newResolvingOAuth2Service(agentRepo.agent),
 	}
 
@@ -640,7 +647,7 @@ func TestOAuth2TokenHandler_ClientIDValidation(t *testing.T) {
 			for _, v := range verifiers {
 				t.Run(v.name, func(t *testing.T) {
 					handler := &OAuth2TokenHandler{
-						GrantHandler:  NewProxyTokenGrantStrategy(mockUpstream.URL, nil, v.verifier, nil),
+						GrantHandler:  newProxyTokenGrantStrategyForTest(mockUpstream.URL, v.verifier),
 						OAuth2Service: newFailingOAuth2Service(&ports.ClientIDError{Code: "invalid_client", Desc: "client authentication failed"}),
 					}
 
@@ -680,7 +687,7 @@ func TestOAuth2TokenHandler_ProxyToUpstream_ClientIDReplacement(t *testing.T) {
 
 	agentRepo := newStubAgentRepo(agentID, upstreamClientID)
 	handler := &OAuth2TokenHandler{
-		GrantHandler:  NewProxyTokenGrantStrategy(mockUpstream.URL, nil, nil, nil),
+		GrantHandler:  newProxyTokenGrantStrategyForTest(mockUpstream.URL, nil),
 		OAuth2Service: newResolvingOAuth2Service(agentRepo.agent),
 	}
 
@@ -712,7 +719,7 @@ func TestOAuth2TokenHandler_ProxyToUpstream_AgentNotFound(t *testing.T) {
 
 	// OAuth2Service returns an error for agent not found
 	handler := &OAuth2TokenHandler{
-		GrantHandler:  NewProxyTokenGrantStrategy(mockUpstream.URL, nil, nil, nil),
+		GrantHandler:  newProxyTokenGrantStrategyForTest(mockUpstream.URL, nil),
 		OAuth2Service: newFailingOAuth2Service(&ports.ClientIDError{Code: "invalid_client", Desc: "agent not found"}),
 	}
 
@@ -740,7 +747,7 @@ func TestProxyGrantStrategy_NilClientID_ReturnsServerError(t *testing.T) {
 	}))
 	defer mockUpstream.Close()
 
-	strategy := NewProxyTokenGrantStrategy(mockUpstream.URL, nil, nil, nil)
+	strategy := newProxyTokenGrantStrategyForTest(mockUpstream.URL, nil)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/oauth2/token", strings.NewReader("grant_type=authorization_code&code=abc"))
 

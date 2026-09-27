@@ -10,6 +10,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/enduser"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
@@ -40,9 +41,11 @@ func newTestTokenHandler(upstreamURL string, agentID id.AgentID) *enduser.OAuth2
 		ID:       agentID,
 		ClientID: ptr.To(id.ClientID("test-upstream-client-id")),
 	}
+	transport := enduser.NewOAuth2TokenProxy(upstreamURL, nil)
+	outcomes := oauth2.NewTokenOutcomeService(transport, nil)
 	return &enduser.OAuth2TokenHandler{
 		OAuth2Service: &stubOAuth2Service{agent: agent},
-		GrantHandler:  enduser.NewProxyTokenGrantStrategy(upstreamURL, nil, nil, nil),
+		GrantHandler:  enduser.NewProxyTokenGrantStrategy(upstreamURL, outcomes, nil),
 	}
 }
 

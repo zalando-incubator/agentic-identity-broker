@@ -33,7 +33,7 @@ func (r *RefreshTokenSessionRepo) Create(ctx context.Context, session *storage.R
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.oauth2Executor(execCtx).ExecContext(execCtx,
+	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`INSERT INTO refresh_token_sessions (signature, request_id, agent_id, client_id, principal, scope, expires_at, used_at, created_at, email, display_name)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		session.Signature, session.RequestID, session.AgentID, session.ClientID, session.Principal,
@@ -78,7 +78,7 @@ func (r *RefreshTokenSessionRepo) MarkUsed(ctx context.Context, signature string
 	defer cancel()
 
 	now := time.Now()
-	result, err := r.adapter.oauth2Executor(execCtx).ExecContext(execCtx,
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`UPDATE refresh_token_sessions SET used_at = $1 WHERE signature = $2 AND used_at IS NULL`, now, signature)
 	if err != nil {
 		return storage.NewStorageError("RefreshTokenSessionRepo.MarkUsed", storage.ErrorKindUnknown, err, "failed to mark refresh token session as used")
@@ -95,7 +95,7 @@ func (r *RefreshTokenSessionRepo) RevokeByRequestID(ctx context.Context, request
 	defer cancel()
 
 	now := time.Now()
-	_, err := r.adapter.oauth2Executor(execCtx).ExecContext(execCtx,
+	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`UPDATE refresh_token_sessions SET used_at = $1 WHERE request_id = $2 AND used_at IS NULL`, now, requestID)
 	if err != nil {
 		return storage.NewStorageError("RefreshTokenSessionRepo.RevokeByRequestID", storage.ErrorKindUnknown, err, "failed to revoke refresh token sessions")

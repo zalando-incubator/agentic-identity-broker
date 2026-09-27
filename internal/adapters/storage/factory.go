@@ -14,16 +14,16 @@ import (
 )
 
 // Compile-time interface check
-var _ ports.OAuth2TransactionManager = (*Adapter)(nil)
+var _ ports.StorageTransactionManager = (*Adapter)(nil)
 
-type noOpOAuth2TransactionManager struct{}
+type noOpStorageTransactionManager struct{}
 
-func (noOpOAuth2TransactionManager) BeginTX(ctx context.Context) (context.Context, error) {
+func (noOpStorageTransactionManager) BeginTX(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
 
-func (noOpOAuth2TransactionManager) Commit(context.Context) error   { return nil }
-func (noOpOAuth2TransactionManager) Rollback(context.Context) error { return nil }
+func (noOpStorageTransactionManager) Commit(context.Context) error   { return nil }
+func (noOpStorageTransactionManager) Rollback(context.Context) error { return nil }
 
 // lifecycleAdapter defines the lifecycle operations expected on storage adapters.
 type lifecycleAdapter interface {
@@ -55,7 +55,7 @@ type Adapter struct {
 	brokerCredentials    ports.ClientCredentialRepository
 	signingKeys          signingKeyAdapter
 	refreshTokenSessions ports.RefreshTokenSessionRepository
-	oauth2Transactions   ports.OAuth2TransactionManager
+	transactions         ports.StorageTransactionManager
 	authorizationCodes   ports.AuthorizationCodeRepository
 	pkceSessions         ports.PKCESessionRepository
 }
@@ -109,7 +109,7 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		signingKeys:          signingKeys,
 		authorizationCodes:   memory.NewAuthorizationCodeStore(),
 		refreshTokenSessions: memory.NewRefreshTokenSessionStore(),
-		oauth2Transactions:   noOpOAuth2TransactionManager{},
+		transactions:         noOpStorageTransactionManager{},
 		pkceSessions:         memory.NewPKCESessionStore(),
 	}, nil
 }
@@ -143,7 +143,7 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		signingKeys:          signingKeys,
 		authorizationCodes:   postgres.NewAuthorizationCodeRepo(pgAdapter),
 		refreshTokenSessions: postgres.NewRefreshTokenSessionRepo(pgAdapter),
-		oauth2Transactions:   pgAdapter,
+		transactions:         pgAdapter,
 		pkceSessions:         postgres.NewPKCESessionRepo(pgAdapter),
 	}, nil
 }
@@ -269,19 +269,19 @@ func (a *Adapter) RefreshTokenSessions() ports.RefreshTokenSessionRepository {
 	return a.refreshTokenSessions
 }
 
-// BeginTX begins a transaction for a Fosite token flow.
+// BeginTX starts the configured backend's transaction scope.
 func (a *Adapter) BeginTX(ctx context.Context) (context.Context, error) {
-	return a.oauth2Transactions.BeginTX(ctx)
+	return a.transactions.BeginTX(ctx)
 }
 
-// Commit commits a Fosite token-flow transaction.
+// Commit commits the configured backend's transaction scope.
 func (a *Adapter) Commit(ctx context.Context) error {
-	return a.oauth2Transactions.Commit(ctx)
+	return a.transactions.Commit(ctx)
 }
 
-// Rollback rolls back a Fosite token-flow transaction.
+// Rollback rolls back the configured backend's transaction scope.
 func (a *Adapter) Rollback(ctx context.Context) error {
-	return a.oauth2Transactions.Rollback(ctx)
+	return a.transactions.Rollback(ctx)
 }
 
 // PKCESessions returns the PKCESessionRepository interface implementation.
