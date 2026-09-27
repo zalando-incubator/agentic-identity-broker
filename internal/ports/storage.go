@@ -36,8 +36,8 @@ type HealthChecker interface {
 	HealthCheck(ctx context.Context) error
 }
 
-// OAuth2TransactionManager supplies atomic storage operations for Fosite token flows.
-type OAuth2TransactionManager interface {
+// StorageTransactionManager supplies a context shared by participating repository operations.
+type StorageTransactionManager interface {
 	BeginTX(ctx context.Context) (context.Context, error)
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error

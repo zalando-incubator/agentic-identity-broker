@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -29,10 +27,9 @@ type TokenGrantStrategy interface {
 
 // proxyTokenGrantStrategy forwards token grant requests to an upstream OAuth2 server.
 type proxyTokenGrantStrategy struct {
-	upstreamTokenURL   string
-	client             *http.Client
-	multiAgentVerifier ports.MultiAgentVerifier
-	logger             *slog.Logger
+	upstreamTokenURL string
+	outcomes         ports.TokenOutcomeService
+	logger           *slog.Logger
 }
 
 var proxyTokenResponseHeaders = [...]string{
@@ -42,84 +39,60 @@ var proxyTokenResponseHeaders = [...]string{
 	"WWW-Authenticate",
 }
 
-// NewProxyTokenGrantStrategy returns a strategy that proxies token grants to an upstream server.
+// NewProxyTokenGrantStrategy forwards responses after domain completion.
 func NewProxyTokenGrantStrategy(
 	upstreamTokenURL string,
-	client *http.Client,
-	multiAgentVerifier ports.MultiAgentVerifier,
+	outcomes ports.TokenOutcomeService,
 	logger *slog.Logger,
 ) *proxyTokenGrantStrategy {
-	return &proxyTokenGrantStrategy{
-		upstreamTokenURL:   upstreamTokenURL,
-		client:             client,
-		multiAgentVerifier: multiAgentVerifier,
-		logger:             logger,
-	}
+	return &proxyTokenGrantStrategy{upstreamTokenURL: upstreamTokenURL, outcomes: outcomes, logger: logger}
 }
 
-// HandleTokenGrant proxies the token request to the upstream OAuth2 server.
-// The agent is pre-resolved by the domain layer; this method replaces the broker-internal
-// UUID with the upstream client_id before forwarding. When MultiAgentVerifier is set,
-// the upstream response body is buffered and the agent ID claim is verified before forwarding.
+// HandleTokenGrant retains streaming when no agent-claim verification is required.
 func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Request, _ string, formData url.Values, resolution *ports.TokenGrantResolution) {
 	ctx, span := otel.Tracer("upstream").Start(r.Context(), "oauth2.token_proxy")
 	defer span.End()
 	span.SetAttributes(attribute.String("http.method", "POST"))
 
-	if resolution.ClientID == nil {
-		writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "agent has no upstream client_id configured")
-		return
-	}
-	formData.Set("client_id", resolution.ClientID.String())
-	body := formData.Encode()
-
-	upstreamReq, err := http.NewRequestWithContext(ctx, "POST", s.upstreamTokenURL, strings.NewReader(body))
+	response, failure, err := s.outcomes.Proxy(ctx, formData, r.Header.Get("Content-Type"), resolution)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.ErrorContext(ctx, "failed to create upstream token request",
-				"upstream_url", s.upstreamTokenURL, "error", err)
+		switch failure {
+		case ports.TokenProxyClientMissing:
+			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "agent has no upstream client_id configured")
+		case ports.TokenProxyRequestCreationFailed:
+			if s.logger != nil {
+				s.logger.ErrorContext(ctx, "failed to create upstream token request",
+					"upstream_url", s.upstreamTokenURL, "error", err)
+			}
+			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "failed to create upstream request")
+		default:
+			if s.logger != nil {
+				s.logger.ErrorContext(ctx, "upstream token request failed",
+					"upstream_url", s.upstreamTokenURL, "error", err)
+			}
+			writeOAuth2ErrorJSON(w, http.StatusBadGateway, "server_error", "failed to contact upstream server")
 		}
-		writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "failed to create upstream request")
 		return
 	}
+	defer func() { _ = response.CloseBody() }()
 
-	if contentType := r.Header.Get("Content-Type"); contentType != "" {
-		upstreamReq.Header.Set("Content-Type", contentType)
-	}
-
-	client := s.client
-	if client == nil {
-		client = http.DefaultClient
-	}
-
-	upstreamResp, err := client.Do(upstreamReq)
-	if err != nil {
-		if s.logger != nil {
-			s.logger.ErrorContext(ctx, "upstream token request failed",
-				"upstream_url", s.upstreamTokenURL, "error", err)
-		}
-		writeOAuth2ErrorJSON(w, http.StatusBadGateway, "server_error", "failed to contact upstream server")
-		return
-	}
-	defer func() { _ = upstreamResp.Body.Close() }()
-
-	span.SetAttributes(attribute.Int("http.status_code", upstreamResp.StatusCode))
-
+	statusCode := response.ResponseStatus()
+	span.SetAttributes(attribute.Int("http.status_code", statusCode))
 	for _, headerName := range proxyTokenResponseHeaders {
-		for _, value := range upstreamResp.Header.Values(headerName) {
+		for _, value := range response.HeaderValues(headerName) {
 			w.Header().Add(headerName, value)
 		}
 	}
 
 	agentID := resolution.AgentID
-	if s.multiAgentVerifier != nil && upstreamResp.StatusCode == http.StatusOK {
-		responseBody, readErr := io.ReadAll(upstreamResp.Body)
-		if readErr != nil {
+	completion, failure, err := s.outcomes.CompleteProxy(r.Context(), response, agentID)
+	if err != nil {
+		if failure == ports.TokenProxyResponseReadFailed {
 			if s.logger != nil {
 				s.logger.ErrorContext(r.Context(), "AgentIDClaimMissing",
 					"agent_id", agentID.String(),
 					"reason", "failed to read upstream response body",
-					"error", readErr,
+					"error", err,
 				)
 			}
 			w.Header().Del("Content-Length")
@@ -128,40 +101,39 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 			return
 		}
 
-		if verifyErr := s.multiAgentVerifier.VerifyAgentIDClaim(r.Context(), responseBody, agentID); verifyErr != nil {
-			if s.logger != nil {
-				if mismatch, ok := verifyErr.(*oauth2.AgentIDMismatchError); ok {
-					s.logger.ErrorContext(r.Context(), "AgentIDClaimMismatch",
-						"expected_agent_id", mismatch.Expected,
-						"received_agent_id", mismatch.Received,
-						"claim_name", mismatch.ClaimName,
-					)
-				} else {
-					s.logger.ErrorContext(r.Context(), "AgentIDClaimMissing",
-						"agent_id", agentID.String(),
-						"error", verifyErr.Error(),
-					)
-				}
+		if s.logger != nil {
+			if mismatch, ok := err.(*oauth2.AgentIDMismatchError); ok {
+				s.logger.ErrorContext(r.Context(), "AgentIDClaimMismatch",
+					"expected_agent_id", mismatch.Expected,
+					"received_agent_id", mismatch.Received,
+					"claim_name", mismatch.ClaimName,
+				)
+			} else {
+				s.logger.ErrorContext(r.Context(), "AgentIDClaimMissing",
+					"agent_id", agentID.String(),
+					"error", err.Error(),
+				)
 			}
-			w.Header().Del("Content-Length")
-			w.Header().Del("Transfer-Encoding")
-			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "agent ID claim verification failed")
-			return
 		}
+		w.Header().Del("Content-Length")
+		w.Header().Del("Transfer-Encoding")
+		writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "agent ID claim verification failed")
+		return
+	}
 
+	if completion.Verified {
 		if s.logger != nil {
 			s.logger.InfoContext(r.Context(), "AgentIDClaimVerified",
 				"agent_id", agentID.String(),
 			)
 		}
-
-		w.WriteHeader(upstreamResp.StatusCode)
-		_, _ = w.Write(responseBody)
+		w.WriteHeader(statusCode)
+		_, _ = w.Write(completion.Body)
 		return
 	}
 
-	w.WriteHeader(upstreamResp.StatusCode)
-	if _, err := io.Copy(w, upstreamResp.Body); err != nil {
+	w.WriteHeader(statusCode)
+	if _, err := response.StreamBody(w); err != nil {
 		if s.logger != nil {
 			s.logger.ErrorContext(r.Context(), "failed to stream upstream token response", "error", err)
 		}
