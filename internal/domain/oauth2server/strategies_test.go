@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -237,6 +238,242 @@ func (s *strategySigningKeyStore) CountActive(_ context.Context) (int, error) {
 		}
 	}
 	return count, nil
+}
+
+type countingMintSigningKeyStore struct {
+	*strategySigningKeyStore
+	currentCalls atomic.Int32
+}
+
+func (s *countingMintSigningKeyStore) GetCurrent(ctx context.Context) (*storage.SigningKey, error) {
+	s.currentCalls.Add(1)
+	return s.strategySigningKeyStore.GetCurrent(ctx)
+}
+
+type countingMintEncryptor struct {
+	testEncryptor
+	decryptCalls atomic.Int32
+}
+
+func (e *countingMintEncryptor) Decrypt(ctx context.Context, ciphertext []byte, encCtx map[string]string) ([]byte, error) {
+	e.decryptCalls.Add(1)
+	return e.testEncryptor.Decrypt(ctx, ciphertext, encCtx)
+}
+
+func TestJWXAccessTokenStrategy_ReusesCurrentSigner(t *testing.T) {
+	ctx := context.Background()
+	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
+	encryptor := &countingMintEncryptor{}
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+
+	first, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+	second, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+	assert.NotEqual(t, first, second, "each mint must receive a fresh token ID")
+	assert.EqualValues(t, 2, repo.currentCalls.Load(), "each mint must reselect the current signer")
+	assert.EqualValues(t, 1, encryptor.decryptCalls.Load(), "private key should be decrypted once")
+
+	set, err := svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+	_, ok := set.LookupKeyID(key.KID.String())
+	require.True(t, ok)
+	for _, token := range []string{first, second} {
+		parsed, err := jwt.Parse([]byte(token), jwt.WithKeySet(set))
+		require.NoError(t, err)
+		subject, ok := parsed.Subject()
+		require.True(t, ok)
+		assert.Equal(t, "user@example.com", subject)
+	}
+}
+
+func requireMintedKID(t *testing.T, token string, expected id.KeyID) {
+	t.Helper()
+	message, err := jws.Parse([]byte(token))
+	require.NoError(t, err)
+	require.Len(t, message.Signatures(), 1)
+	kid, ok := message.Signatures()[0].ProtectedHeaders().KeyID()
+	require.True(t, ok)
+	assert.Equal(t, expected.String(), kid)
+}
+
+func TestJWXAccessTokenStrategy_RefreshesCachedSignerAcrossReplicas(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
+		encryptor := &countingMintEncryptor{}
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+		otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+		require.NoError(t, err)
+		strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+		require.NoError(t, err)
+		mint := func() string {
+			token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+			require.NoError(t, err)
+			return token
+		}
+		requireMintedKID(t, mint(), first.KID)
+
+		next, err := otherReplica.GenerateAndStoreKey(ctx, "ES256", true)
+		require.NoError(t, err)
+		requireMintedKID(t, mint(), first.KID)
+		time.Sleep(46 * time.Second)
+		requireMintedKID(t, mint(), first.KID)
+		time.Sleep(jwksGracePeriod)
+		requireMintedKID(t, mint(), next.KID)
+		assert.EqualValues(t, 4, repo.currentCalls.Load(), "remote key activation must be checked on every mint")
+		assert.EqualValues(t, 3, encryptor.decryptCalls.Load())
+	})
+}
+
+func TestJWXAccessTokenStrategy_RemotePromotionStopsOldSignerImmediately(t *testing.T) {
+	ctx := context.Background()
+	repo := newStrategySigningKeyStore()
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	mint := func() string {
+		token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+		require.NoError(t, err)
+		return token
+	}
+	requireMintedKID(t, mint(), first.KID)
+	second, err := otherReplica.GenerateAndStoreKey(ctx, "ES256", false)
+	require.NoError(t, err)
+	_, err = otherReplica.PromoteKey(ctx, second.KID)
+	require.NoError(t, err)
+	requireMintedKID(t, mint(), second.KID)
+	require.NoError(t, otherReplica.DeleteKey(ctx, first.KID))
+	requireMintedKID(t, mint(), second.KID)
+}
+
+func TestJWXAccessTokenStrategy_GenerationInvalidatesCachedSigner(t *testing.T) {
+	ctx := context.Background()
+	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
+	encryptor := &countingMintEncryptor{}
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	firstToken, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+	requireMintedKID(t, firstToken, first.KID)
+
+	second, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	secondToken, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+	requireMintedKID(t, secondToken, second.KID)
+	assert.EqualValues(t, 2, repo.currentCalls.Load())
+	assert.EqualValues(t, 2, encryptor.decryptCalls.Load())
+}
+
+func TestJWXAccessTokenStrategy_InvalidatesCachedSignerOnMutation(t *testing.T) {
+	ctx := context.Background()
+	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
+	encryptor := &countingMintEncryptor{}
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	second, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
+	require.NoError(t, err)
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	mint := func() string {
+		token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+		require.NoError(t, err)
+		return token
+	}
+	requireMintedKID(t, mint(), first.KID)
+	_, err = svc.PromoteKey(ctx, second.KID)
+	require.NoError(t, err)
+	requireMintedKID(t, mint(), second.KID)
+	require.NoError(t, svc.DeleteKey(ctx, first.KID))
+	requireMintedKID(t, mint(), second.KID)
+	assert.EqualValues(t, 3, repo.currentCalls.Load())
+	assert.EqualValues(t, 3, encryptor.decryptCalls.Load())
+}
+
+func TestJWXAccessTokenStrategy_ConcurrentMintsShareSigner(t *testing.T) {
+	ctx := context.Background()
+	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
+	encryptor := &countingMintEncryptor{}
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+
+	const callers = 8
+	tokens := make(chan string, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Go(func() {
+			token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+			tokens <- token
+			errs <- err
+		})
+	}
+	wg.Wait()
+	close(tokens)
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	for token := range tokens {
+		requireMintedKID(t, token, key.KID)
+	}
+	assert.EqualValues(t, callers, repo.currentCalls.Load())
+	assert.EqualValues(t, 1, encryptor.decryptCalls.Load())
+}
+
+type switchableMintSigningKeyStore struct {
+	*strategySigningKeyStore
+	unavailable atomic.Bool
+}
+
+func (s *switchableMintSigningKeyStore) GetCurrent(ctx context.Context) (*storage.SigningKey, error) {
+	if s.unavailable.Load() {
+		return nil, storage.NewStorageError("SigningKeyRepo.GetCurrent", storage.ErrorKindConnection, nil, "database unavailable")
+	}
+	return s.strategySigningKeyStore.GetCurrent(ctx)
+}
+
+func TestJWXAccessTokenStrategy_ExpiredSignerFailsClosed(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		repo := &switchableMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+		require.NoError(t, err)
+		strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+		require.NoError(t, err)
+		request := func() fosite.Requester { return buildTestRequest("agent", "user@example.com", []string{"read"}) }
+		token, _, err := strategy.GenerateAccessToken(ctx, request())
+		require.NoError(t, err)
+		requireMintedKID(t, token, key.KID)
+
+		repo.unavailable.Store(true)
+		_, _, err = strategy.GenerateAccessToken(ctx, request())
+		require.ErrorContains(t, err, "failed to get current signing key")
+		time.Sleep(46 * time.Second)
+		_, _, err = strategy.GenerateAccessToken(ctx, request())
+		require.ErrorContains(t, err, "failed to get current signing key")
+		repo.unavailable.Store(false)
+		token, _, err = strategy.GenerateAccessToken(ctx, request())
+		require.NoError(t, err)
+		requireMintedKID(t, token, key.KID)
+	})
 }
 
 func TestJWXAccessTokenStrategy_GenerateAccessToken_DecryptFailure(t *testing.T) {
