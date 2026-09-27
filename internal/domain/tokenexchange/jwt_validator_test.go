@@ -793,3 +793,66 @@ func TestMapClientAssertionParseError_RealLibraryErrors(t *testing.T) {
 		})
 	}
 }
+
+type verificationKeySet interface{ jwk.Set }
+
+type countingVerificationKeySet struct {
+	verificationKeySet
+	lookups int
+}
+
+func (s *countingVerificationKeySet) LookupKeyID(kid string) (jwk.Key, bool) {
+	s.lookups++
+	return s.verificationKeySet.LookupKeyID(kid)
+}
+
+func TestJWTValidator_MultipleIssuersVerifyOnlyOnce(t *testing.T) {
+	const firstIssuer = "https://first.example.com"
+	const secondIssuer = "https://second.example.com"
+	const audience = "broker-id"
+	privateKey, keySet := newTestKeyPair(t)
+	for _, tc := range []struct {
+		name      string
+		issuer    string
+		audience  []string
+		expires   time.Time
+		wantError string
+	}{
+		{"second issuer accepted", secondIssuer, []string{audience}, time.Now().Add(time.Hour), ""},
+		{"untrusted issuer rejected", "https://other.example.com", []string{audience}, time.Now().Add(time.Hour), "issuer validation failed"},
+		{"expired second issuer rejected", secondIssuer, []string{audience}, time.Now().Add(-time.Hour), "has expired"},
+		{"wrong audience rejected", secondIssuer, []string{"other-audience"}, time.Now().Add(time.Hour), "audience validation failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			countingSet := &countingVerificationKeySet{verificationKeySet: keySet}
+			validator, err := NewJWTValidatorWithPolicies(
+				JWTValidationPolicy{JWKSProvider: &MockJWKSProvider{keySet: countingSet}, ExpectedIssuers: []string{firstIssuer, secondIssuer}},
+				JWTValidationPolicy{JWKSProvider: &MockJWKSProvider{keySet: countingSet}, ExpectedIssuers: []string{firstIssuer}},
+				audience, 60,
+			)
+			require.NoError(t, err)
+			signed := newSignedToken(t, privateKey, tc.issuer, tc.audience, "subject", tc.expires)
+			_, err = validator.ValidateSubjectToken(context.Background(), signed)
+			if tc.wantError == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.wantError)
+			}
+			assert.Equal(t, 1, countingSet.lookups, "each credential needs only one cryptographic verification")
+		})
+	}
+	t.Run("invalid signature rejected without issuer retries", func(t *testing.T) {
+		untrustedKey, _ := newTestKeyPair(t)
+		countingSet := &countingVerificationKeySet{verificationKeySet: keySet}
+		validator, err := NewJWTValidatorWithPolicies(
+			JWTValidationPolicy{JWKSProvider: &MockJWKSProvider{keySet: countingSet}, ExpectedIssuers: []string{firstIssuer, secondIssuer}},
+			JWTValidationPolicy{JWKSProvider: &MockJWKSProvider{keySet: countingSet}, ExpectedIssuers: []string{firstIssuer}},
+			audience, 60,
+		)
+		require.NoError(t, err)
+		credential := newSignedToken(t, untrustedKey, secondIssuer, []string{audience}, "subject", time.Now().Add(time.Hour))
+		_, err = validator.ValidateSubjectToken(context.Background(), credential)
+		require.ErrorContains(t, err, "malformed or signature verification failed")
+		assert.Equal(t, 1, countingSet.lookups)
+	})
+}
