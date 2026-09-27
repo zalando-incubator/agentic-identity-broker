@@ -53,6 +53,29 @@ For proxy mode, separate upstream transport from the domain completion decision 
 - Expiry: domain reads that currently filter away expired state must recognize candidates internally and atomically mark them before retaining the existing filtered result. Erasure/retention must not erase these business-row markers. A validity change reopens only a genuinely different effective expiry.
 - Signing selection: the catalogue records selecting the current key, not proof of a signature or completion of the JWKS waiting period. `activates_at` explicitly retains the eligibility time. Bootstrap losers and repeated current-key selection do not generate new promotion facts.
 
+### Pinned Fosite failure-side revocation boundaries
+
+T002 inspected Fosite v0.49.0 and the broker's `FositeStorage` implementation.
+The shared transaction rename does not move these boundaries:
+
+| Path | Fosite v0.49.0 behavior | Required preservation |
+|---|---|---|
+| Authorization-code replay | `handler/oauth2/flow_authorize_code_token.go:32-52` receives the original requester with `ErrInvalidatedAuthorizeCode`. It calls `RevokeAccessToken` and `RevokeRefreshToken`, then returns `invalid_grant`. This request-validation path does not begin a transaction. | Keep request-chain revocation outside the later issuance-success transaction. Failure-event recording must not undo the revocation. |
+| Refresh-token reuse | `handler/oauth2/flow_refresh.go:47-56` calls `handleRefreshTokenReuse`. Lines 178-203 begin a transaction, invalidate the presented token, revoke its request chain, and commit before the caller returns `invalid_grant`. | Let this scope commit independently of the denied refresh request. Do not join it to an outer scope that rolls back the request. |
+| Authorization-code success | `flow_authorize_code_token.go:155-187` begins a transaction for code invalidation and token-session writes, populates the response, and commits. Its deferred handler rolls back errors. | The later ledger owner must enclose response population, not the earlier replay-detection path. Inner scopes must join that owner. |
+| Refresh success | `flow_refresh.go:135-163` begins a transaction for rotation and replacement-token writes. Its error helper rolls back storage errors. | The later ledger owner must enclose these success writes without absorbing the independent reuse-revocation transaction. |
+
+The broker maps refresh revocation to `RefreshTokenSessionRepository.RevokeByRequestID`.
+`DeleteRefreshTokenSession` marks the presented token used and treats an absent or already-used token as success.
+`RevokeAccessToken` remains a no-op because access tokens are stateless JWTs.
+This refactor does not add access-token revocation guarantees.
+
+The provider must complete `HandleTokenEndpointRequest` validation before it starts the future issuance-success owner.
+`fosite.NewAccessRequest` only constructs the request.
+Independent failure recording starts only after an unsuccessful success scope ends.
+The PostgreSQL context and executor retain their existing behavior in Phase 0.
+Memory also retains its existing no-op manager until the foundation supplies real rollback and isolation.
+
 ### Trust mapping
 
 Ordinary user mutations take subject from the owned business object and actor from the established principal context. Administrative object actions generally have null subject. Exchange takes affected subject from the verified domain result and initiating caller from the verified client assertion/calling peer; `actor.on_behalf_of` carries the established represented principal. Gateway approval authentication supplies the gateway identity and agent association; caller-supplied agent/principal strings are not independently authoritative.
