@@ -678,6 +678,7 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 
 - **OAuth2SessionService**: Transparently encrypts tokens on CreateSession, decrypts on retrieval
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
+- **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Both automatic and explicit refresh re-read the session under a storage lock before contacting the provider. PostgreSQL uses `SELECT ... FOR UPDATE` in a transaction that commits the rotated encrypted tokens before releasing the row; the in-memory adapter holds its repository lock. Replicas therefore use the latest refresh token instead of racing on a stale one.
 - **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of confidential provider `client_secret` values via the `Secret` value object. Public services have no client secret. No other layer touches `EncryptionPort` for provider secrets.
 - No manual encryption steps required in calling code - encryption is transparent
 

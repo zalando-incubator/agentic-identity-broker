@@ -573,6 +573,7 @@ func (b *Builder) Build() (*App, error) {
 	app.OAuth2SessionService = oauth2session.NewOAuth2SessionService(
 		app.ProviderService,
 		b.storage.UserSessions(),
+		b.storage.SessionRefresh(),
 		b.storage.UserGrants(),
 		b.storage.Agents(),
 		encryptor,

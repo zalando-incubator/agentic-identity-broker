@@ -47,6 +47,7 @@ type Adapter struct {
 	providers            ports.ThirdpartyOAuth2ProviderRepository
 	userGrants           ports.UserGrantRepository
 	userSessions         ports.UserSessionRepository
+	sessionRefresh       ports.UserSessionRefreshRepository
 	toolApprovals        ports.ToolApprovalRepository
 	toolApprovalQueries  ports.ToolApprovalQueryRepository
 	toolApprovalMetrics  ports.ToolApprovalMetricsRepository
@@ -93,13 +94,15 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	userGrants := memory.NewUserGrantRepository().WithPermissionSetRepository(permissionSets)
 	toolApprovalRepo := memory.NewToolApprovalRepository()
 	signingKeys := memory.NewSigningKeyStore()
+	sessions := memory.NewInMemoryUserSessionRepository()
 	return &Adapter{
 		lifecycle:            memAdapter,
 		users:                memAdapter,
 		agents:               agentRepo,
 		providers:            memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
 		userGrants:           userGrants,
-		userSessions:         memory.NewInMemoryUserSessionRepository(),
+		userSessions:         sessions,
+		sessionRefresh:       sessions,
 		toolApprovals:        toolApprovalRepo,
 		toolApprovalQueries:  toolApprovalRepo,
 		toolApprovalMetrics:  toolApprovalRepo,
@@ -126,6 +129,7 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 
 	toolApprovalRepo := postgres.NewToolApprovalRepository(pgAdapter)
 	signingKeys := postgres.NewSigningKeyRepo(pgAdapter)
+	sessions := postgres.NewUserSessionRepository(pgAdapter)
 
 	return &Adapter{
 		lifecycle:            pgAdapter,
@@ -133,7 +137,8 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		agents:               postgres.NewAgentRepository(pgAdapter),
 		providers:            postgres.NewPostgresThirdpartyOAuth2ProviderRepository(pgAdapter),
 		userGrants:           postgres.NewUserGrantRepository(pgAdapter),
-		userSessions:         postgres.NewUserSessionRepository(pgAdapter),
+		userSessions:         sessions,
+		sessionRefresh:       sessions,
 		toolApprovals:        toolApprovalRepo,
 		toolApprovalQueries:  toolApprovalRepo,
 		toolApprovalMetrics:  toolApprovalRepo,
@@ -216,6 +221,11 @@ func (a *Adapter) UserGrants() ports.UserGrantRepository {
 // Used for user session CRUD operations.
 func (a *Adapter) UserSessions() ports.UserSessionRepository {
 	return a.userSessions
+}
+
+// SessionRefresh returns the refresh transaction interface for user sessions.
+func (a *Adapter) SessionRefresh() ports.UserSessionRefreshRepository {
+	return a.sessionRefresh
 }
 
 // ToolApprovals returns the ToolApprovalRepository interface implementation.

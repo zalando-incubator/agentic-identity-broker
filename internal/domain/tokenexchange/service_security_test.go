@@ -131,6 +131,7 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 				sessionRepo,
 				nil,
 				nil,
+				nil,
 				&MockEncryption{},
 				nil,
 				nil,
@@ -228,7 +229,7 @@ func TestResolveEffectiveScopes_RejectsRemovedDeclaration(t *testing.T) {
 	svc := &TokenExchangeService{
 		permissionSetService: psService,
 		oauth2SessionService: oauth2session.NewOAuth2SessionService(
-			nil, nil, nil, nil, nil, nil, nil,
+			nil, nil, nil, nil, nil, nil, nil, nil,
 			oauth2session.Config{CallbackBaseURL: "https://broker.example.com/"}, nil,
 		),
 	}

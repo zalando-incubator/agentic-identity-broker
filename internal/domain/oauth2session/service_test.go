@@ -1398,6 +1398,7 @@ func setupServiceWithConfig(
 	svc := oauth2session.NewOAuth2SessionService(
 		providerService,
 		sessionRepo,
+		sessionRepo,
 		grantRepo,
 		agentRepo,
 		encryption,
@@ -1920,6 +1921,7 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 
 	service := oauth2session.NewOAuth2SessionService(
 		providerService,
+		sessionRepo,
 		sessionRepo,
 		grantRepo,
 		agentRepo,

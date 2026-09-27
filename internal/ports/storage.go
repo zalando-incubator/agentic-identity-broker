@@ -252,6 +252,14 @@ type UserSessionRepository interface {
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 
+// UserSessionRefreshRepository serializes a read-modify-write refresh for one session.
+// The callback sees the latest session under a lock; it returns true only when it
+// has replaced the encrypted tokens and the adapter must persist them atomically.
+// A nil session means the principal has no session for that service.
+type UserSessionRefreshRepository interface {
+	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
+}
+
 // PermissionSetRepository defines storage operations for permission set entities.
 // Permission sets are admin-defined bundles of OAuth2 scopes spanning one or more third-party services.
 // Following Interface Segregation Principle: focused interface for permission set operations.

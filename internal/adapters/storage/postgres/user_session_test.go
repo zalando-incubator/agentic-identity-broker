@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -149,4 +150,98 @@ func TestUserSessionRepository(t *testing.T) {
 		require.Len(t, sessions, 1)
 		assert.Equal(t, []string{"genie"}, sessions[0].Scope)
 	})
+}
+
+func TestUserSessionRefreshLocksAcrossRepositories(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	firstRepo := &PostgresUserSessionRepository{adapter: adapter}
+	secondRepo := &PostgresUserSessionRepository{adapter: adapter}
+	serviceID := id.NewServiceID()
+	principal := id.Principal("refresh-user@example.com")
+	insertTestService(t, adapter, serviceID)
+	expired := time.Now().Add(-time.Hour)
+	session := &storage.UserSession{
+		ID:                    id.NewSessionID(),
+		Principal:             principal,
+		ServiceID:             serviceID,
+		EncryptedAccessToken:  []byte("old-access"),
+		EncryptedRefreshToken: []byte("old-refresh"),
+		TokenType:             "Bearer",
+		AccessTokenExpiresAt:  &expired,
+		Scope:                 []string{"repo"},
+		EncryptionContext:     storage.EncryptionContext{ServiceID: serviceID},
+		InitiatedAt:           time.Now().UTC(),
+		CreatedAt:             time.Now().UTC(),
+		UpdatedAt:             time.Now().UTC(),
+	}
+	require.NoError(t, firstRepo.Create(ctx, session))
+
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseFirst:
+		default:
+			close(releaseFirst)
+		}
+	}()
+	secondEntered := make(chan struct{}, 1)
+	firstDone := make(chan error, 1)
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := firstRepo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+			close(firstEntered)
+			<-releaseFirst
+			if string(current.EncryptedRefreshToken) != "old-refresh" {
+				return false, errors.New("unexpected initial refresh token")
+			}
+			expires := time.Now().Add(time.Hour)
+			current.EncryptedAccessToken = []byte("new-access")
+			current.EncryptedRefreshToken = []byte("new-refresh")
+			current.AccessTokenExpiresAt = &expires
+			current.UpdatedAt = time.Now()
+			return true, nil
+		})
+		firstDone <- err
+	}()
+	select {
+	case <-firstEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first refresh did not acquire the session")
+	}
+	go func() {
+		_, err := secondRepo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+			secondEntered <- struct{}{}
+			if string(current.EncryptedRefreshToken) != "new-refresh" || !current.HasValidAccessToken() {
+				return false, errors.New("second refresh observed a stale session")
+			}
+			return false, nil
+		})
+		secondDone <- err
+	}()
+	select {
+	case <-secondEntered:
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(releaseFirst)
+	require.NoError(t, <-firstDone)
+	require.NoError(t, <-secondDone)
+
+	persisted, err := firstRepo.FindByPrincipalAndService(ctx, principal, serviceID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	assert.Equal(t, []byte("new-refresh"), persisted.EncryptedRefreshToken)
+	assert.Equal(t, []byte("new-access"), persisted.EncryptedAccessToken)
+
+	rejection := errors.New("upstream rejected refresh")
+	_, err = firstRepo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		current.EncryptedRefreshToken = []byte("discarded-refresh")
+		return true, rejection
+	})
+	require.ErrorIs(t, err, rejection)
+	persisted, err = secondRepo.FindByPrincipalAndService(ctx, principal, serviceID)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("new-refresh"), persisted.EncryptedRefreshToken)
 }

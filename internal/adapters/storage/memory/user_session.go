@@ -7,7 +7,6 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 // InMemoryUserSessionRepository is an in-memory implementation for testing/development.
@@ -18,7 +17,7 @@ type InMemoryUserSessionRepository struct {
 }
 
 // NewInMemoryUserSessionRepository creates a new in-memory repository.
-func NewInMemoryUserSessionRepository() ports.UserSessionRepository {
+func NewInMemoryUserSessionRepository() *InMemoryUserSessionRepository {
 	return &InMemoryUserSessionRepository{
 		sessions: make(map[id.SessionID]*storage.UserSession),
 		index:    make(map[string]*storage.UserSession),
@@ -82,6 +81,37 @@ func (r *InMemoryUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 		return nil, nil // Not found is not an error
 	}
 	return session, nil
+}
+
+// WithLockedSession holds the repository lock until a refreshed session is committed.
+func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+	if principal.IsZero() || serviceID.IsZero() {
+		return nil, errors.New("principal and serviceID required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key := principalServiceKey(principal, serviceID)
+	current := r.index[key]
+	if current == nil {
+		return nil, nil
+	}
+	session := *current
+	updated, err := refresh(ctx, &session)
+	if err != nil {
+		return nil, err
+	}
+	if updated {
+		if err := session.Validate(); err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		r.index[key] = &session
+		r.sessions[session.ID] = &session
+	}
+	return &session, nil
 }
 
 // ListByPrincipal retrieves all sessions for a principal, including expired ones.
