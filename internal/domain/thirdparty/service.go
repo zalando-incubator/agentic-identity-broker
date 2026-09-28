@@ -475,7 +475,7 @@ func (s *ThirdpartyOAuth2ProviderService) decryptSecret(
 	result := entity.Copy()
 	result.Secret = model.NewPlaintextSecret(string(plaintext))
 
-	s.logger.DebugContext(ctx, "service_secret_decrypted",
+	s.logger.InfoContext(ctx, "service_secret_decrypted",
 		"service_id", entity.ID)
 
 	return result, nil

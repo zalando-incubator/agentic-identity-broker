@@ -991,7 +991,8 @@ func TestThirdpartyOAuth2ProviderService_Update_TransitionsCredentialStorage(t *
 func TestThirdpartyOAuth2ProviderService_List_DecryptsAll(t *testing.T) {
 	mockRepo := new(MockRepository)
 	mockEnc := new(MockEncryption)
-	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.Default())
+	var logs bytes.Buffer
+	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.New(slog.NewJSONHandler(&logs, nil)))
 
 	ctx := context.Background()
 	svc1ID := id.NewServiceID()
@@ -1014,6 +1015,24 @@ func TestThirdpartyOAuth2ProviderService_List_DecryptsAll(t *testing.T) {
 	pt2, _ := results[1].Secret.GetPlaintext()
 	assert.Equal(t, "secret-1", pt1)
 	assert.Equal(t, "secret-2", pt2)
+
+	require.NotEmpty(t, logs.String(), "successful decryptions must be auditable at the default Info level")
+	audited := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var event map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &event))
+		if event["msg"] != "service_secret_decrypted" {
+			continue
+		}
+		assert.Equal(t, "INFO", event["level"])
+		serviceID, ok := event["service_id"].(string)
+		require.True(t, ok)
+		assert.False(t, audited[serviceID], "duplicate decryption audit event for %s", serviceID)
+		audited[serviceID] = true
+	}
+	assert.Equal(t, map[string]bool{svc1ID.String(): true, svc2ID.String(): true}, audited)
+	assert.NotContains(t, logs.String(), "secret-1")
+	assert.NotContains(t, logs.String(), "secret-2")
 	mockEnc.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
 }
