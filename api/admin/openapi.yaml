@@ -1373,17 +1373,17 @@ paths:
       description: |
         Generate a new signing key for the broker's OAuth2 server.
         The new key is marked as `is_current: true` but does not start signing tokens
-        until `activates_at` has passed (grace period = 2 × JWKS `Cache-Control: max-age`
-        value, currently 600 s). During this window the key is already present in the JWKS
-        response, so every client cache will have learned about it before the first token
-        signed with it appears.
+        until `activates_at` (600 s after key preparation). This covers a 300 s
+        compliant JWKS cache lifetime and a 30 s rebuild budget with 270 s of margin
+        under healthy-service conditions. External verifiers must refresh their own
+        caches; publication cannot force them to learn the key.
 
         **Algorithm Support**:
         - `ES256`: ECDSA using P-256 curve and SHA-256 (default, only supported algorithm)
 
         **Key Lifecycle**:
-        - New key is immediately published to `GET /oauth2/jwks.json`
-        - New key starts signing tokens only after `activates_at` (now + 600 s)
+        - New key is available on the next direct `GET /oauth2/jwks.json` after storage commits
+        - New key starts signing tokens only after `activates_at` (key preparation + 600 s)
         - Previous current key continues signing during the grace period
         - Private key material is never exposed via the API
       operationId: createSigningKey

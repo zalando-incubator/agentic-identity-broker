@@ -23,6 +23,7 @@ type SigningKeyStore struct {
 	bootstrapCh chan struct{}
 	byID        map[id.SigningKeyID]*storage.SigningKey
 	byKID       map[id.KeyID]*storage.SigningKey
+	version     int64
 }
 
 // NewSigningKeyStore creates a new in-memory signing key store.
@@ -65,6 +66,7 @@ func (s *SigningKeyStore) createLocked(key *storage.SigningKey) error {
 	clone := cloneSigningKey(key)
 	s.byID[clone.ID] = clone
 	s.byKID[clone.KID] = clone
+	s.version++
 	return nil
 }
 
@@ -92,6 +94,7 @@ func (s *SigningKeyStore) createAndSetCurrentLocked(key *storage.SigningKey) err
 	clone.IsCurrent = true
 	s.byID[clone.ID] = clone
 	s.byKID[clone.KID] = clone
+	s.version++
 	return nil
 }
 
@@ -168,6 +171,15 @@ func (s *SigningKeyStore) listActiveLocked() []*storage.SigningKey {
 	return result
 }
 
+func (s *SigningKeyStore) KeySetVersion(ctx context.Context) (int64, error) {
+	if bootstrapWriteLockHeld(ctx) {
+		return s.version, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.version, nil
+}
+
 // SetCurrent promotes a key to be the current signing key using the domain-supplied
 // activation timestamp.
 func (s *SigningKeyStore) SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
@@ -192,10 +204,11 @@ func (s *SigningKeyStore) setCurrentLocked(kid id.KeyID, activatesAt time.Time) 
 	}
 	target.IsCurrent = true
 	target.ActivatesAt = activatesAt
+	s.version++
 	return cloneSigningKey(target), nil
 }
 
-func (s *SigningKeyStore) SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) error {
+func (s *SigningKeyStore) SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) (bool, error) {
 	if !bootstrapWriteLockHeld(ctx) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -203,16 +216,18 @@ func (s *SigningKeyStore) SetPublicJWK(ctx context.Context, kid id.KeyID, public
 	return s.setPublicJWKLocked(kid, publicJWK)
 }
 
-func (s *SigningKeyStore) setPublicJWKLocked(kid id.KeyID, publicJWK []byte) error {
+func (s *SigningKeyStore) setPublicJWKLocked(kid id.KeyID, publicJWK []byte) (bool, error) {
 	key, exists := s.byKID[kid]
 	if !exists || key.RemovedAt != nil {
-		return storage.NewStorageError("SigningKeyStore.SetPublicJWK", storage.ErrorKindNotFound, nil,
+		return false, storage.NewStorageError("SigningKeyStore.SetPublicJWK", storage.ErrorKindNotFound, nil,
 			fmt.Sprintf("signing key with kid %s not found", kid))
 	}
 	if key.PublicJWK == nil {
 		key.PublicJWK = append([]byte(nil), publicJWK...)
+		s.version++
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
 func (s *SigningKeyStore) Delete(ctx context.Context, kid id.KeyID) error {
@@ -251,6 +266,7 @@ func (s *SigningKeyStore) deleteLocked(kid id.KeyID) error {
 	}
 
 	key.RemovedAt = &now
+	s.version++
 	return nil
 }
 

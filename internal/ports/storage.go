@@ -371,13 +371,17 @@ type SigningKeyRepository interface {
 	// ListActive returns all signing keys that have not been removed.
 	ListActive(ctx context.Context) ([]*storage.SigningKey, error)
 
+	// KeySetVersion returns the database-backed revision of the signing-key set.
+	// It must change atomically with every committed key mutation.
+	KeySetVersion(ctx context.Context) (int64, error)
+
 	// SetCurrent promotes a key to be the current signing key using the domain-supplied
 	// activation timestamp and returns the updated metadata.
 	SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error)
 
-	// SetPublicJWK backfills a legacy signing key's public JWK if it is missing.
-	// Implementations must not overwrite an existing value.
-	SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) error
+	// SetPublicJWK backfills a legacy key without overwriting an existing value.
+	// It reports true only when this call writes the public trust anchor.
+	SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) (bool, error)
 
 	// Delete soft-deletes a signing key by setting removed_at.
 	// Implementations must enforce signing-key invariants atomically:

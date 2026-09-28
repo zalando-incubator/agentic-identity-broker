@@ -4,7 +4,6 @@
 package postgres
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -40,6 +39,38 @@ func TestSigningKeyRepo_Create(t *testing.T) {
 
 	err := repo.Create(context.Background(), key)
 	require.NoError(t, err)
+}
+
+func TestSigningKeyRepo_KeySetVersionTracksCommittedChanges(t *testing.T) {
+	adapter, cleanup := setupSigningKeyTestDB(t)
+	defer cleanup()
+	repo := NewSigningKeyRepo(adapter)
+	ctx := context.Background()
+	version, err := repo.KeySetVersion(ctx)
+	require.NoError(t, err)
+
+	first := &storage.SigningKey{ID: id.NewSigningKeyID(), KID: id.NewKeyID("version-first"), Algorithm: "ES256", PrivateKeyEncrypted: []byte("encrypted"), IsCurrent: true, ActivatesAt: time.Now().Add(-time.Minute), CreatedAt: time.Now()}
+	require.NoError(t, repo.Create(ctx, first))
+	next, err := repo.KeySetVersion(ctx)
+	require.NoError(t, err)
+	assert.Greater(t, next, version)
+
+	second := &storage.SigningKey{ID: id.NewSigningKeyID(), KID: id.NewKeyID("version-second"), Algorithm: "ES256", PrivateKeyEncrypted: []byte("encrypted"), CreatedAt: time.Now()}
+	require.NoError(t, repo.Create(ctx, second))
+	version, err = repo.KeySetVersion(ctx)
+	require.NoError(t, err)
+	assert.Greater(t, version, next)
+
+	_, err = repo.SetCurrent(ctx, second.KID, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+	next, err = repo.KeySetVersion(ctx)
+	require.NoError(t, err)
+	assert.Greater(t, next, version)
+
+	require.NoError(t, repo.Delete(ctx, first.KID))
+	version, err = repo.KeySetVersion(ctx)
+	require.NoError(t, err)
+	assert.Greater(t, version, next)
 }
 
 func TestSigningKeyRepo_CreateRejectsSecondActiveCurrentKey(t *testing.T) {
@@ -180,8 +211,12 @@ func TestSigningKeyRepo_SetPublicJWK(t *testing.T) {
 
 	first := []byte(`{"alg":"ES256","kid":"kid-legacy-public","kty":"EC"}`)
 	second := []byte(`{"alg":"RS256","kid":"kid-legacy-public","kty":"RSA"}`)
-	require.NoError(t, repo.SetPublicJWK(ctx, legacy.KID, first))
-	require.NoError(t, repo.SetPublicJWK(ctx, legacy.KID, second))
+	written, err := repo.SetPublicJWK(ctx, legacy.KID, first)
+	require.NoError(t, err)
+	assert.True(t, written)
+	written, err = repo.SetPublicJWK(ctx, legacy.KID, second)
+	require.NoError(t, err)
+	assert.False(t, written)
 
 	stored, err := repo.GetByKID(ctx, legacy.KID)
 	require.NoError(t, err)
@@ -207,24 +242,37 @@ func TestSigningKeyRepo_SetPublicJWKConcurrentBackfill(t *testing.T) {
 
 	first := []byte(`{"alg":"ES256","kid":"kid-concurrent-public","kty":"EC"}`)
 	second := []byte(`{"alg":"RS256","kid":"kid-concurrent-public","kty":"RSA"}`)
-	errs := make(chan error, 2)
+	type backfillResult struct {
+		publicJWK []byte
+		written   bool
+		err       error
+	}
+	results := make(chan backfillResult, 2)
 	var wg sync.WaitGroup
 	for _, publicJWK := range [][]byte{first, second} {
 		wg.Add(1)
 		go func(publicJWK []byte) {
 			defer wg.Done()
-			errs <- repo.SetPublicJWK(ctx, legacy.KID, publicJWK)
+			written, err := repo.SetPublicJWK(ctx, legacy.KID, publicJWK)
+			results <- backfillResult{publicJWK, written, err}
 		}(publicJWK)
 	}
 	wg.Wait()
-	close(errs)
-	for err := range errs {
-		assert.NoError(t, err)
+	close(results)
+	writes := 0
+	var writtenJWK []byte
+	for result := range results {
+		require.NoError(t, result.err)
+		if result.written {
+			writes++
+			writtenJWK = result.publicJWK
+		}
 	}
+	require.Equal(t, 1, writes)
 
 	stored, err := repo.GetByKID(ctx, legacy.KID)
 	require.NoError(t, err)
-	assert.True(t, bytes.Equal(first, stored.PublicJWK) || bytes.Equal(second, stored.PublicJWK))
+	assert.Equal(t, writtenJWK, stored.PublicJWK)
 }
 
 func TestSigningKeyRepo_GetCurrent(t *testing.T) {

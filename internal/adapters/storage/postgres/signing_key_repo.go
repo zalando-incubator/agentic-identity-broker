@@ -197,6 +197,21 @@ func (r *SigningKeyRepo) ListActive(ctx context.Context) ([]*storage.SigningKey,
 	return keys, nil
 }
 
+func (r *SigningKeyRepo) KeySetVersion(ctx context.Context) (int64, error) {
+	if r.adapter.db == nil {
+		return 0, storage.NewStorageError("SigningKeyRepo.KeySetVersion", storage.ErrorKindConnection, nil, "database not initialized")
+	}
+
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+
+	var version int64
+	if err := r.adapter.db.GetContext(queryCtx, &version, `SELECT version FROM signing_key_set_state WHERE id = 1`); err != nil {
+		return 0, classifySigningKeyRepoError("SigningKeyRepo.KeySetVersion", err, "failed to read signing key set version")
+	}
+	return version, nil
+}
+
 // SetCurrent promotes a key to be the current signing key using the domain-supplied
 // activation timestamp.
 func (r *SigningKeyRepo) SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
@@ -252,9 +267,9 @@ func (r *SigningKeyRepo) SetCurrent(ctx context.Context, kid id.KeyID, activates
 	return &key, nil
 }
 
-func (r *SigningKeyRepo) SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) error {
+func (r *SigningKeyRepo) SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) (bool, error) {
 	if r.adapter.db == nil {
-		return storage.NewStorageError("SigningKeyRepo.SetPublicJWK", storage.ErrorKindConnection, nil, "database not initialized")
+		return false, storage.NewStorageError("SigningKeyRepo.SetPublicJWK", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
@@ -265,26 +280,26 @@ func (r *SigningKeyRepo) SetPublicJWK(ctx context.Context, kid id.KeyID, publicJ
 		 SET public_jwk = $2
 		 WHERE kid = $1 AND removed_at IS NULL AND public_jwk IS NULL`, kid, publicJWK)
 	if err != nil {
-		return classifySigningKeyRepoError("SigningKeyRepo.SetPublicJWK", err, "failed to backfill signing key public JWK")
+		return false, classifySigningKeyRepoError("SigningKeyRepo.SetPublicJWK", err, "failed to backfill signing key public JWK")
 	}
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return storage.NewStorageError("SigningKeyRepo.SetPublicJWK", storage.ErrorKindUnknown, err, "failed to determine rows affected")
+		return false, storage.NewStorageError("SigningKeyRepo.SetPublicJWK", storage.ErrorKindUnknown, err, "failed to determine rows affected")
 	}
 	if rowsAffected != 0 {
-		return nil
+		return true, nil
 	}
 
 	var exists bool
 	err = r.adapter.db.GetContext(execCtx, &exists,
 		`SELECT EXISTS(SELECT 1 FROM signing_keys WHERE kid = $1 AND removed_at IS NULL)`, kid)
 	if err != nil {
-		return classifySigningKeyRepoError("SigningKeyRepo.SetPublicJWK", err, "failed to query signing key")
+		return false, classifySigningKeyRepoError("SigningKeyRepo.SetPublicJWK", err, "failed to query signing key")
 	}
 	if !exists {
-		return storage.NewStorageError("SigningKeyRepo.SetPublicJWK", storage.ErrorKindNotFound, nil, "signing key not found")
+		return false, storage.NewStorageError("SigningKeyRepo.SetPublicJWK", storage.ErrorKindNotFound, nil, "signing key not found")
 	}
-	return nil
+	return false, nil
 }
 
 func (r *SigningKeyRepo) Delete(ctx context.Context, kid id.KeyID) error {

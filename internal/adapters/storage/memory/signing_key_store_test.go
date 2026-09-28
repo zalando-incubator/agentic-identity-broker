@@ -170,8 +170,12 @@ func TestSigningKeyStore_SetPublicJWK(t *testing.T) {
 
 	first := []byte(`{"alg":"ES256","kid":"legacy-public-kid","kty":"EC"}`)
 	second := []byte(`{"alg":"RS256","kid":"legacy-public-kid","kty":"RSA"}`)
-	require.NoError(t, store.SetPublicJWK(ctx, key.KID, first))
-	require.NoError(t, store.SetPublicJWK(ctx, key.KID, second))
+	written, err := store.SetPublicJWK(ctx, key.KID, first)
+	require.NoError(t, err)
+	assert.True(t, written)
+	written, err = store.SetPublicJWK(ctx, key.KID, second)
+	require.NoError(t, err)
+	assert.False(t, written)
 
 	stored, err := store.GetByKID(ctx, key.KID)
 	require.NoError(t, err)

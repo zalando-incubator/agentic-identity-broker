@@ -480,7 +480,8 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 			operation: "SigningKeyRepo.SetPublicJWK",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
-				return repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
+				_, err := repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
+				return err
 			},
 		},
 		{
@@ -492,7 +493,8 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 			operation: "SigningKeyRepo.SetPublicJWK",
 			kind:      storage.ErrorKindNotFound,
 			call: func(repo *SigningKeyRepo) error {
-				return repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
+				_, err := repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
+				return err
 			},
 		},
 		{
@@ -651,10 +653,21 @@ func TestSigningKeyRepo_SetPublicJWKUsesConditionalUpdate(t *testing.T) {
 		recordedExecs: &execs,
 	})
 
-	err := repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
+	written, err := repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
 	require.NoError(t, err)
+	assert.True(t, written)
 	require.Len(t, execs, 1)
 	assert.Contains(t, execs[0], "public_jwk IS NULL")
+}
+
+func TestSigningKeyRepo_SetPublicJWKAlreadySet(t *testing.T) {
+	repo := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{
+		queryColumns: []string{"exists"},
+		queryRows:    [][]driver.Value{{true}},
+	})
+	written, err := repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
+	require.NoError(t, err)
+	assert.False(t, written)
 }
 
 func TestSigningKeyRepo_MutationPathsLockActiveKeysInDeterministicOrder(t *testing.T) {

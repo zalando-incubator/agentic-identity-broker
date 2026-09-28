@@ -2,11 +2,13 @@ package oauth2server
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -27,19 +29,16 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
-// jwksCacheMaxAge is the max-age value (in seconds) sent in the Cache-Control header on
-// GET /oauth2/jwks.json. The grace period below must be a multiple of this value.
-// Keep in sync with the constant in internal/adapters/http/handlers/enduser/jwks_handler.go.
+// Keep this aligned with the public JWKS Cache-Control max-age.
 const jwksCacheMaxAge = 300 * time.Second
 
-// jwksGracePeriod is how long a newly created current key waits before it starts signing tokens.
-// During this window the key is already present in the JWKS response, so every client cache
-// will have learned about it before the first token signed with it appears.
+const jwksRebuildTimeout = 30 * time.Second
+
+// A 300-second HTTP cache plus a 30-second rebuild leaves 270 seconds of margin
+// within this grace period when storage and key publication remain healthy.
 const jwksGracePeriod = 2 * jwksCacheMaxAge
 
 const jwksCacheTTL = 45 * time.Second
-
-const jwksRebuildTimeout = 30 * time.Second
 
 var errJWKSCacheInvalidated = errors.New("JWKS cache invalidated during rebuild")
 
@@ -57,6 +56,7 @@ type SigningKeyService struct {
 	jwksMu         sync.RWMutex
 	jwksSet        jwk.Set
 	jwksExpiresAt  time.Time
+	jwksVersion    int64
 	jwksGeneration uint64
 	jwksFlight     singleflight.Group
 }
@@ -78,21 +78,15 @@ func NewSigningKeyService(
 	}
 }
 
-// GenerateAndStoreKey generates a new ES256 signing key, encrypts the private material,
-// and stores it. When makeCurrent is true the key is marked as current but will not begin
-// signing tokens until jwksGracePeriod has elapsed, giving JWKS caches time to pick up the
-// new key before any token signed with it is issued.
+// GenerateAndStoreKey stores a new signing key. A new current key waits for the
+// publication grace period before signing; independent verifiers must refresh
+// their JWKS caches to discover it.
 func (s *SigningKeyService) GenerateAndStoreKey(ctx context.Context, algorithm string, makeCurrent bool) (*storage.SigningKey, error) {
-	activatesAt := time.Now().UTC()
-	if makeCurrent {
-		activatesAt = activatesAt.Add(jwksGracePeriod)
-	}
-	return s.generateAndStore(ctx, algorithm, makeCurrent, activatesAt)
+	return s.generateAndStore(ctx, algorithm, makeCurrent, time.Time{})
 }
 
-// generateAndStore creates and persists a signing key with an explicit activatesAt timestamp.
-// The caller controls the activation time, allowing tests to bypass the
-// jwksGracePeriod that GenerateAndStoreKey applies.
+// generateAndStore accepts an explicit activation time for bootstrap and tests.
+// A zero time selects the normal publication grace period immediately before storage.
 func (s *SigningKeyService) generateAndStore(ctx context.Context, algorithm string, makeCurrent bool, activatesAt time.Time) (*storage.SigningKey, error) {
 	if algorithm == "" {
 		algorithm = "ES256"
@@ -133,6 +127,12 @@ func (s *SigningKeyService) generateAndStore(ctx context.Context, algorithm stri
 		s.warnOrphanedBranchKey("orphaned branch key after encryption failure; manual cleanup required", kid, branchKeyID)
 		return nil, fmt.Errorf("failed to encrypt private key: %w", err)
 	}
+	if activatesAt.IsZero() {
+		activatesAt = time.Now().UTC()
+		if makeCurrent {
+			activatesAt = activatesAt.Add(jwksGracePeriod)
+		}
+	}
 
 	key := &storage.SigningKey{
 		ID:                  id.NewSigningKeyID(),
@@ -167,9 +167,13 @@ func (s *SigningKeyService) generateAndStore(ctx context.Context, algorithm stri
 // JWKS during the grace period and clients can cache them before they start signing.
 func (s *SigningKeyService) BuildJWKS(ctx context.Context) (jwk.Set, error) {
 	for {
+		version, err := s.repo.KeySetVersion(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check signing key set version: %w", err)
+		}
 		now := time.Now().UTC()
 		s.jwksMu.RLock()
-		if s.jwksSet != nil && now.Before(s.jwksExpiresAt) {
+		if s.jwksSet != nil && s.jwksVersion == version && now.Before(s.jwksExpiresAt) {
 			set := s.jwksSet
 			s.jwksMu.RUnlock()
 			return set, nil
@@ -177,6 +181,15 @@ func (s *SigningKeyService) BuildJWKS(ctx context.Context) (jwk.Set, error) {
 		s.jwksMu.RUnlock()
 
 		s.jwksMu.Lock()
+		if s.jwksVersion > version {
+			s.jwksMu.Unlock()
+			continue
+		}
+		if s.jwksVersion != version {
+			s.jwksGeneration++
+			s.jwksSet = nil
+			s.jwksVersion = version
+		}
 		now = time.Now().UTC()
 		if s.jwksSet != nil && now.Before(s.jwksExpiresAt) {
 			set := s.jwksSet
@@ -187,7 +200,7 @@ func (s *SigningKeyService) BuildJWKS(ctx context.Context) (jwk.Set, error) {
 		resultCh := s.jwksFlight.DoChan(strconv.FormatUint(generation, 10), func() (interface{}, error) {
 			rebuildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jwksRebuildTimeout)
 			defer cancel()
-			return s.rebuildJWKS(rebuildCtx, generation)
+			return s.rebuildJWKS(rebuildCtx, generation, version)
 		})
 		s.jwksMu.Unlock()
 
@@ -199,6 +212,9 @@ func (s *SigningKeyService) BuildJWKS(ctx context.Context) (jwk.Set, error) {
 			currentGeneration := s.jwksGeneration
 			s.jwksMu.RUnlock()
 			if currentGeneration != generation {
+				continue
+			}
+			if errors.Is(result.Err, errJWKSCacheInvalidated) {
 				continue
 			}
 			if result.Err != nil {
@@ -214,10 +230,17 @@ func (s *SigningKeyService) BuildJWKS(ctx context.Context) (jwk.Set, error) {
 	}
 }
 
-func (s *SigningKeyService) rebuildJWKS(ctx context.Context, generation uint64) (jwk.Set, error) {
+func (s *SigningKeyService) rebuildJWKS(ctx context.Context, generation uint64, version int64) (jwk.Set, error) {
 	set, err := s.buildJWKS(ctx)
 	if err != nil {
 		return nil, err
+	}
+	currentVersion, err := s.repo.KeySetVersion(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check signing key set version after rebuild: %w", err)
+	}
+	if currentVersion != version {
+		return nil, errJWKSCacheInvalidated
 	}
 
 	s.jwksMu.Lock()
@@ -281,12 +304,36 @@ func (s *SigningKeyService) publicJWKForSigningKey(ctx context.Context, key *sto
 	if err != nil {
 		return nil, fmt.Errorf("failed to build legacy public JWK: %w", err)
 	}
-	if err := s.repo.SetPublicJWK(ctx, key.KID, publicJWK); err != nil {
+	fingerprint, err := jwkKey.Thumbprint(crypto.SHA256)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fingerprint derived public JWK: %w", err)
+	}
+	updated, err := s.repo.SetPublicJWK(ctx, key.KID, publicJWK)
+	if err != nil {
 		if ports.IsNotFoundErr(err) {
 			return nil, fmt.Errorf("failed to backfill public JWK: %w", err)
 		}
 		s.logger.Warn("failed to backfill public JWK; publishing derived key", "kid", key.KID, "error", err)
+		return jwkKey, nil
 	}
+	outcome := "written"
+	if !updated {
+		stored, err := s.repo.GetByKID(ctx, key.KID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read existing public JWK after backfill race: %w", err)
+		}
+		publicKey, err := publicJWKFromJSON(stored.PublicJWK, stored.KID, stored.Algorithm)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse existing public JWK after backfill race: %w", err)
+		}
+		fingerprint, err = publicKey.Thumbprint(crypto.SHA256)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fingerprint existing public JWK: %w", err)
+		}
+		outcome = "already_set"
+	}
+	s.logger.InfoContext(ctx, "signing key public JWK backfill", "kid", key.KID, "outcome", outcome,
+		"at", time.Now().UTC(), "public_key_fingerprint", base64.RawURLEncoding.EncodeToString(fingerprint))
 	return jwkKey, nil
 }
 
