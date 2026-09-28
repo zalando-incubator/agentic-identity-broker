@@ -859,6 +859,8 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 - Singleflight deduplication for concurrent exchange requests
 - HTTP client for RFC 8693 token exchange requests
 
+**Broker HTTP Transport**: ExtProc clones Go's default transport, preserving proxy and keep-alive behavior while enabling HTTP/2 with its configured TLS trust. Each client allows up to 100 idle and 100 total connections per host. New connections have a 1s TCP dial timeout and, for HTTPS, a 2s TLS handshake timeout. These are failure ceilings, not the <200ms typical cache-miss target. The separately configured `oauth2.exchange_timeout` defaults to 5s as an overall failure bound for token exchange and client-credentials grants.
+
 **CachedToken**: Value object representing a cached token with:
 
 - `accessToken`: The exchanged token value

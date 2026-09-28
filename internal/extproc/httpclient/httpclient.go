@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -34,9 +35,13 @@ func New(cfg *extprocconfig.Config, timeout time.Duration) (*http.Client, error)
 		tlsCfg.RootCAs = pool
 	}
 
-	transport := &http.Transport{
-		TLSClientConfig: tlsCfg,
-	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsCfg
+	transport.MaxIdleConnsPerHost = 100
+	transport.MaxConnsPerHost = 100
+	transport.ForceAttemptHTTP2 = true
+	transport.DialContext = (&net.Dialer{Timeout: time.Second, KeepAlive: 30 * time.Second}).DialContext
+	transport.TLSHandshakeTimeout = 2 * time.Second
 
 	// Wrap with otelhttp for automatic span creation on outbound requests.
 	// otelhttp resolves the TracerProvider lazily (from otel.GetTracerProvider() at
