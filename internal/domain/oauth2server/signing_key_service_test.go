@@ -11,7 +11,9 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/uuid"
@@ -557,6 +559,147 @@ func (e *countingDecryptor) DecryptCalls() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.decryptCalls
+}
+
+type blockingSignerDecryptor struct {
+	*testEncryptor
+	started    chan context.Context
+	release    chan struct{}
+	firstError error
+	calls      atomic.Int32
+}
+
+func (e *blockingSignerDecryptor) Decrypt(ctx context.Context, ciphertext []byte, encryptionContext map[string]string) ([]byte, error) {
+	if e.calls.Add(1) == 1 {
+		e.started <- ctx
+		select {
+		case <-e.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if e.firstError != nil {
+			return nil, e.firstError
+		}
+	}
+	return e.testEncryptor.Decrypt(ctx, ciphertext, encryptionContext)
+}
+
+func TestSigningKeyService_FailedSignerLoadSharesFlightAndAllowsCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		repo := newTestSigningKeyStore()
+		encryptor := &blockingSignerDecryptor{
+			testEncryptor: &testEncryptor{},
+			started:       make(chan context.Context, 1),
+			release:       make(chan struct{}),
+			firstError:    errors.New("decrypt unavailable"),
+		}
+		released := false
+		defer func() {
+			if !released {
+				close(encryptor.release)
+			}
+		}()
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+		key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+		require.NoError(t, err)
+
+		firstDone := make(chan error, 1)
+		go func() {
+			_, err := svc.signingMaterial(ctx)
+			firstDone <- err
+		}()
+		loadCtx := <-encryptor.started
+		deadline, ok := loadCtx.Deadline()
+		require.True(t, ok, "shared signer load must have a finite deadline")
+		assert.True(t, deadline.After(time.Now()) && deadline.Before(time.Now().Add(time.Minute)))
+
+		waitCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		cancelledDone := make(chan error, 1)
+		go func() {
+			_, err := svc.signingMaterial(waitCtx)
+			cancelledDone <- err
+		}()
+		activeDone := make(chan error, 1)
+		go func() {
+			_, err := svc.signingMaterial(ctx)
+			activeDone <- err
+		}()
+		synctest.Wait()
+		cancel()
+		select {
+		case err := <-cancelledDone:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(time.Second):
+			t.Fatal("canceled waiter blocked behind signer decryption")
+		}
+		require.NoError(t, loadCtx.Err(), "canceling one waiter must not cancel the shared load")
+
+		close(encryptor.release)
+		released = true
+		require.ErrorContains(t, <-firstDone, "decrypt unavailable")
+		require.ErrorContains(t, <-activeDone, "decrypt unavailable")
+		require.EqualValues(t, 1, encryptor.calls.Load(), "overlapping failures must share a single decrypt")
+
+		signer, err := svc.signingMaterial(ctx)
+		require.NoError(t, err, "a subsequent request must retry after failure")
+		assert.Equal(t, key.KID, signer.kid)
+		assert.EqualValues(t, 2, encryptor.calls.Load())
+	})
+}
+
+func TestSigningKeyService_InvalidateDuringSignerLoad(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestSigningKeyStore()
+	encryptor := &blockingSignerDecryptor{
+		testEncryptor: &testEncryptor{},
+		started:       make(chan context.Context, 1),
+		release:       make(chan struct{}),
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(encryptor.release)
+		}
+	}()
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	next, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
+	require.NoError(t, err)
+
+	type result struct {
+		signer *cachedSigningKey
+		err    error
+	}
+	firstDone := make(chan result, 1)
+	go func() {
+		signer, err := svc.signingMaterial(ctx)
+		firstDone <- result{signer, err}
+	}()
+	<-encryptor.started
+	promoted := make(chan error, 1)
+	go func() {
+		_, err := svc.PromoteKey(ctx, next.KID)
+		promoted <- err
+	}()
+	select {
+	case err := <-promoted:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("promotion blocked behind signer decryption")
+	}
+	close(encryptor.release)
+	released = true
+	got := <-firstDone
+	require.NoError(t, got.err)
+	assert.Equal(t, next.KID, got.signer.kid, "stale flight must reselect the promoted key")
+	svc.signerMu.RLock()
+	cached := svc.cachedSigner
+	svc.signerMu.RUnlock()
+	require.NotNil(t, cached)
+	assert.Equal(t, next.KID, cached.kid)
 }
 
 func requirePublishedPublicJWK(t *testing.T, publicJWK []byte) jwk.Key {

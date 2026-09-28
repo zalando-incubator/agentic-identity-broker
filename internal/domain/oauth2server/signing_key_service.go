@@ -43,10 +43,14 @@ const jwksCacheTTL = 45 * time.Second
 
 var errJWKSCacheInvalidated = errors.New("JWKS cache invalidated during rebuild")
 
+var errSignerCacheInvalidated = errors.New("signer cache invalidated during load")
+
 const bootstrapRecoveryProbeTimeout = 5 * time.Second
 
 // Limits reuse of decrypted signing material, even when the selected key does not change.
 const signingKeyCacheTTL = 45 * time.Second
+
+const signerLoadTimeout = 30 * time.Second
 
 type cachedSigningKey struct {
 	kid        id.KeyID
@@ -71,6 +75,7 @@ type SigningKeyService struct {
 	jwksVersion    int64
 	jwksGeneration uint64
 	jwksFlight     singleflight.Group
+	signerFlight   singleflight.Group
 	signerMu       sync.RWMutex
 	cachedSigner   *cachedSigningKey
 	signerTimer    *time.Timer
@@ -386,26 +391,57 @@ func (s *SigningKeyService) GetCurrent(ctx context.Context) (*storage.SigningKey
 }
 
 func (s *SigningKeyService) signingMaterial(ctx context.Context) (*cachedSigningKey, error) {
-	key, err := s.GetCurrent(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current signing key: %w", err)
-	}
+	for {
+		key, err := s.GetCurrent(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current signing key: %w", err)
+		}
 
-	s.signerMu.RLock()
-	if signer := s.cachedSigner; signer != nil && len(key.PublicJWK) > 0 && signer.kid == key.KID && bytes.Equal(signer.publicJWK, key.PublicJWK) && time.Now().Before(signer.expiresAt) {
+		s.signerMu.RLock()
+		if signer := s.cachedSigner; signer != nil && len(key.PublicJWK) > 0 && signer.kid == key.KID && bytes.Equal(signer.publicJWK, key.PublicJWK) && time.Now().Before(signer.expiresAt) {
+			s.signerMu.RUnlock()
+			return signer, nil
+		}
 		s.signerMu.RUnlock()
-		return signer, nil
+
+		s.signerMu.Lock()
+		if signer := s.cachedSigner; signer != nil && len(key.PublicJWK) > 0 && signer.kid == key.KID && bytes.Equal(signer.publicJWK, key.PublicJWK) && time.Now().Before(signer.expiresAt) {
+			s.signerMu.Unlock()
+			return signer, nil
+		}
+		s.clearSignerLocked()
+		generation := s.signerVersion
+		flightKey := strconv.FormatUint(generation, 10) + ":" + key.KID.String() + ":" + string(key.PublicJWK)
+		resultCh := s.signerFlight.DoChan(flightKey, func() (interface{}, error) {
+			return s.loadAndCacheSigner(ctx, key, generation)
+		})
+		s.signerMu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result := <-resultCh:
+			if errors.Is(result.Err, errSignerCacheInvalidated) {
+				continue
+			}
+			if result.Err != nil {
+				return nil, result.Err
+			}
+			return result.Val.(*cachedSigningKey), nil
+		}
 	}
-	s.signerMu.RUnlock()
+}
+
+func (s *SigningKeyService) loadAndCacheSigner(ctx context.Context, key *storage.SigningKey, generation uint64) (*cachedSigningKey, error) {
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signerLoadTimeout)
+	defer cancel()
+	signer, err := s.loadSigner(loadCtx, key)
 
 	s.signerMu.Lock()
 	defer s.signerMu.Unlock()
-	if signer := s.cachedSigner; signer != nil && len(key.PublicJWK) > 0 && signer.kid == key.KID && bytes.Equal(signer.publicJWK, key.PublicJWK) && time.Now().Before(signer.expiresAt) {
-		return signer, nil
+	if s.signerVersion != generation {
+		return nil, errSignerCacheInvalidated
 	}
-	s.clearSignerLocked()
-
-	signer, err := s.loadSigner(ctx, key)
 	if err != nil {
 		return nil, err
 	}
@@ -467,6 +503,7 @@ func (s *SigningKeyService) loadSigner(ctx context.Context, key *storage.Signing
 func (s *SigningKeyService) invalidateSigner() {
 	s.signerMu.Lock()
 	s.clearSignerLocked()
+	s.signerVersion++
 	s.signerMu.Unlock()
 }
 

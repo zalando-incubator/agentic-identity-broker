@@ -250,20 +250,10 @@ func (s *countingMintSigningKeyStore) GetCurrent(ctx context.Context) (*storage.
 	return s.strategySigningKeyStore.GetCurrent(ctx)
 }
 
-type countingMintEncryptor struct {
-	testEncryptor
-	decryptCalls atomic.Int32
-}
-
-func (e *countingMintEncryptor) Decrypt(ctx context.Context, ciphertext []byte, encCtx map[string]string) ([]byte, error) {
-	e.decryptCalls.Add(1)
-	return e.testEncryptor.Decrypt(ctx, ciphertext, encCtx)
-}
-
 func TestJWXAccessTokenStrategy_ReusesCurrentSigner(t *testing.T) {
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
-	encryptor := &countingMintEncryptor{}
+	encryptor := newCountingDecryptor()
 	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
 	key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
@@ -276,7 +266,7 @@ func TestJWXAccessTokenStrategy_ReusesCurrentSigner(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, first, second, "each mint must receive a fresh token ID")
 	assert.EqualValues(t, 2, repo.currentCalls.Load(), "each mint must reselect the current signer")
-	assert.EqualValues(t, 1, encryptor.decryptCalls.Load(), "private key should be decrypted once")
+	assert.Equal(t, 1, encryptor.DecryptCalls(), "private key should be decrypted once")
 
 	set, err := svc.BuildJWKS(ctx)
 	require.NoError(t, err)
@@ -354,7 +344,7 @@ func TestJWXAccessTokenStrategy_RefreshesCachedSignerAcrossReplicas(t *testing.T
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.Background()
 		repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
-		encryptor := &countingMintEncryptor{}
+		encryptor := newCountingDecryptor()
 		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
 		otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
 		first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
@@ -381,7 +371,7 @@ func TestJWXAccessTokenStrategy_RefreshesCachedSignerAcrossReplicas(t *testing.T
 		_, err = jwt.Parse([]byte(rotated), jwt.WithKeySet(freshJWKS))
 		require.NoError(t, err, "the rotated token must verify against the other replica's JWKS")
 		assert.EqualValues(t, 4, repo.currentCalls.Load(), "remote key activation must be checked on every mint")
-		assert.EqualValues(t, 3, encryptor.decryptCalls.Load())
+		assert.Equal(t, 3, encryptor.DecryptCalls())
 	})
 }
 
@@ -422,7 +412,7 @@ func TestJWXAccessTokenStrategy_RemotePromotionStopsOldSignerImmediately(t *test
 func TestJWXAccessTokenStrategy_GenerationInvalidatesCachedSigner(t *testing.T) {
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
-	encryptor := &countingMintEncryptor{}
+	encryptor := newCountingDecryptor()
 	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
 	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
@@ -438,13 +428,13 @@ func TestJWXAccessTokenStrategy_GenerationInvalidatesCachedSigner(t *testing.T) 
 	require.NoError(t, err)
 	requireMintedKID(t, secondToken, second.KID)
 	assert.EqualValues(t, 2, repo.currentCalls.Load())
-	assert.EqualValues(t, 2, encryptor.decryptCalls.Load())
+	assert.Equal(t, 2, encryptor.DecryptCalls())
 }
 
 func TestJWXAccessTokenStrategy_InvalidatesCachedSignerOnMutation(t *testing.T) {
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
-	encryptor := &countingMintEncryptor{}
+	encryptor := newCountingDecryptor()
 	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
 	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
@@ -464,13 +454,13 @@ func TestJWXAccessTokenStrategy_InvalidatesCachedSignerOnMutation(t *testing.T) 
 	require.NoError(t, svc.DeleteKey(ctx, first.KID))
 	requireMintedKID(t, mint(), second.KID)
 	assert.EqualValues(t, 3, repo.currentCalls.Load())
-	assert.EqualValues(t, 3, encryptor.decryptCalls.Load())
+	assert.Equal(t, 3, encryptor.DecryptCalls())
 }
 
 func TestJWXAccessTokenStrategy_ConcurrentMintsShareSigner(t *testing.T) {
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
-	encryptor := &countingMintEncryptor{}
+	encryptor := newCountingDecryptor()
 	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
 	key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
@@ -494,11 +484,15 @@ func TestJWXAccessTokenStrategy_ConcurrentMintsShareSigner(t *testing.T) {
 	for err := range errs {
 		require.NoError(t, err)
 	}
+	set, err := svc.BuildJWKS(ctx)
+	require.NoError(t, err)
 	for token := range tokens {
 		requireMintedKID(t, token, key.KID)
+		_, err := jwt.Parse([]byte(token), jwt.WithKeySet(set))
+		require.NoError(t, err, "concurrently minted token must verify against the public JWKS")
 	}
 	assert.EqualValues(t, callers, repo.currentCalls.Load())
-	assert.EqualValues(t, 1, encryptor.decryptCalls.Load())
+	assert.Equal(t, 1, encryptor.DecryptCalls())
 }
 
 type switchableMintSigningKeyStore struct {
