@@ -174,7 +174,7 @@ testcontainer path would leave `just compose-extproc-up` with a gateway that fai
 the matching RSA private key as `mocks/agentgateway/jwks-dev-key.pem`, clearly labelled as a
 non-secret development fixture, so a developer can mint a token and actually drive traffic through
 port 4000. This matches the mount pattern every other Compose service already uses
-(`config.extproc.docker.yaml`, `mocks/opa/opa-config.yaml`, `mocks/mcp-server/config.yaml`) and
+(`configs/config.extproc.docker.yaml`, `mocks/opa/opa-config.yaml`, `mocks/mcp-server/config.yaml`) and
 keeps the gateway's boot contract self-contained: no cross-service startup ordering, no network
 fetch, no YAML-embedded JSON blob.
 
