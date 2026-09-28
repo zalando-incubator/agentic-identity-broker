@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -1187,6 +1188,82 @@ func TestSigningKeyService_BuildJWKS_CanceledRequestDoesNotCancelSharedRebuild(t
 		t.Fatal("rebuild context must be canceled when the shared work exits")
 	}
 	require.Equal(t, 1, repo.ListCalls())
+}
+
+func TestJWXAccessTokenStrategy_WarmSignerVerifiesAcrossReplicasWithoutDecryption(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newTestSigningKeyService()
+	_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+
+	otherReplica := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger())
+	set, err := otherReplica.BuildJWKS(ctx)
+	require.NoError(t, err, "persisted public JWK must be served without private-key decryption")
+	_, err = jwt.Parse([]byte(token), jwt.WithKeySet(set))
+	require.NoError(t, err, "a token must verify using another replica's public JWKS")
+
+	svc.encryption = &failingDecryptor{}
+	warmToken, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err, "cached signer remains usable when its public JWK is persisted")
+	_, err = jwt.Parse([]byte(warmToken), jwt.WithKeySet(set))
+	require.NoError(t, err)
+	require.NoError(t, strategy.ValidateAccessToken(ctx, nil, warmToken))
+}
+
+func TestJWXAccessTokenStrategy_LegacyCachedSignerFailsWhenJWKSUnavailable(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestSigningKeyStore()
+	privatePEM, err := generateES256KeyPEM()
+	require.NoError(t, err)
+	legacy := &storage.SigningKey{
+		ID:                  id.NewSigningKeyID(),
+		KID:                 id.NewKeyID(uuid.New().String()),
+		Algorithm:           "ES256",
+		PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
+		IsCurrent:           true,
+		ActivatesAt:         time.Now().Add(-time.Second),
+	}
+	require.NoError(t, repo.Create(ctx, legacy))
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	_, _, err = strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+
+	svc.encryption = &failingDecryptor{}
+	_, err = svc.BuildJWKS(ctx)
+	require.Error(t, err)
+	token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.Error(t, err, "a legacy signer without a persisted public JWK cannot issue when its verification key cannot be served")
+	assert.Empty(t, token)
+}
+
+func TestJWXAccessTokenStrategy_RejectsMismatchedStoredPublicKey(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newTestSigningKeyService()
+	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	other, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
+	require.NoError(t, err)
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	_, _, err = strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+
+	otherJWK := requirePublishedPublicJWK(t, other.PublicJWK)
+	require.NoError(t, otherJWK.Set(jwk.KeyIDKey, first.KID.String()))
+	mismatchedPublicJWK, err := json.Marshal(otherJWK)
+	require.NoError(t, err)
+	repo.mu.Lock()
+	repo.byKID[first.KID].PublicJWK = mismatchedPublicJWK
+	repo.mu.Unlock()
+	token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.ErrorContains(t, err, "public key does not match private key")
+	assert.Empty(t, token)
 }
 
 type failingSetJWK struct {

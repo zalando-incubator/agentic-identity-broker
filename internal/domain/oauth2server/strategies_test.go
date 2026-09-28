@@ -291,6 +291,55 @@ func TestJWXAccessTokenStrategy_ReusesCurrentSigner(t *testing.T) {
 	}
 }
 
+func TestSigningKeyService_EvictsIdleSignerAtExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		svc, _ := newTestSigningKeyService()
+		_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+		require.NoError(t, err)
+		signer, err := svc.signingMaterial(ctx)
+		require.NoError(t, err)
+		svc.signerMu.RLock()
+		cached := svc.cachedSigner
+		svc.signerMu.RUnlock()
+		require.Same(t, signer, cached)
+
+		time.Sleep(signingKeyCacheTTL)
+		synctest.Wait()
+		svc.signerMu.RLock()
+		defer svc.signerMu.RUnlock()
+		assert.Nil(t, svc.cachedSigner, "idle cache must release decrypted private material at expiry")
+	})
+}
+
+func TestSigningKeyService_OldExpiryDoesNotEvictReplacement(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		svc, _ := newTestSigningKeyService()
+		_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+		require.NoError(t, err)
+		first, err := svc.signingMaterial(ctx)
+		require.NoError(t, err)
+		time.Sleep(signingKeyCacheTTL / 2)
+		svc.invalidateSigner()
+		second, err := svc.signingMaterial(ctx)
+		require.NoError(t, err)
+		require.NotSame(t, first, second)
+
+		time.Sleep(signingKeyCacheTTL / 2)
+		synctest.Wait()
+		svc.signerMu.RLock()
+		assert.Same(t, second, svc.cachedSigner, "the old expiry must not evict the replacement")
+		svc.signerMu.RUnlock()
+
+		time.Sleep(signingKeyCacheTTL / 2)
+		synctest.Wait()
+		svc.signerMu.RLock()
+		defer svc.signerMu.RUnlock()
+		assert.Nil(t, svc.cachedSigner, "the replacement must expire at its own deadline")
+	})
+}
+
 func requireMintedKID(t *testing.T, token string, expected id.KeyID) {
 	t.Helper()
 	message, err := jws.Parse([]byte(token))
@@ -325,7 +374,12 @@ func TestJWXAccessTokenStrategy_RefreshesCachedSignerAcrossReplicas(t *testing.T
 		time.Sleep(46 * time.Second)
 		requireMintedKID(t, mint(), first.KID)
 		time.Sleep(jwksGracePeriod)
-		requireMintedKID(t, mint(), next.KID)
+		rotated := mint()
+		requireMintedKID(t, rotated, next.KID)
+		freshJWKS, err := otherReplica.BuildJWKS(ctx)
+		require.NoError(t, err)
+		_, err = jwt.Parse([]byte(rotated), jwt.WithKeySet(freshJWKS))
+		require.NoError(t, err, "the rotated token must verify against the other replica's JWKS")
 		assert.EqualValues(t, 4, repo.currentCalls.Load(), "remote key activation must be checked on every mint")
 		assert.EqualValues(t, 3, encryptor.decryptCalls.Load())
 	})
@@ -350,9 +404,19 @@ func TestJWXAccessTokenStrategy_RemotePromotionStopsOldSignerImmediately(t *test
 	require.NoError(t, err)
 	_, err = otherReplica.PromoteKey(ctx, second.KID)
 	require.NoError(t, err)
-	requireMintedKID(t, mint(), second.KID)
+	rotated := mint()
+	requireMintedKID(t, rotated, second.KID)
+	freshJWKS, err := otherReplica.BuildJWKS(ctx)
+	require.NoError(t, err)
+	_, err = jwt.Parse([]byte(rotated), jwt.WithKeySet(freshJWKS))
+	require.NoError(t, err, "the promoted token must verify against the other replica's JWKS")
 	require.NoError(t, otherReplica.DeleteKey(ctx, first.KID))
-	requireMintedKID(t, mint(), second.KID)
+	rotated = mint()
+	requireMintedKID(t, rotated, second.KID)
+	freshJWKS, err = otherReplica.BuildJWKS(ctx)
+	require.NoError(t, err)
+	_, err = jwt.Parse([]byte(rotated), jwt.WithKeySet(freshJWKS))
+	require.NoError(t, err, "the surviving token must verify after deletion")
 }
 
 func TestJWXAccessTokenStrategy_GenerationInvalidatesCachedSigner(t *testing.T) {

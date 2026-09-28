@@ -1,6 +1,7 @@
 package oauth2server
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -50,6 +51,7 @@ const signingKeyCacheTTL = 45 * time.Second
 type cachedSigningKey struct {
 	kid        id.KeyID
 	privateKey jwk.Key
+	publicJWK  []byte
 	algorithm  jwa.SignatureAlgorithm
 	expiresAt  time.Time
 }
@@ -71,6 +73,8 @@ type SigningKeyService struct {
 	jwksFlight     singleflight.Group
 	signerMu       sync.RWMutex
 	cachedSigner   *cachedSigningKey
+	signerTimer    *time.Timer
+	signerVersion  uint64
 }
 
 // NewSigningKeyService creates a new SigningKeyService.
@@ -388,7 +392,7 @@ func (s *SigningKeyService) signingMaterial(ctx context.Context) (*cachedSigning
 	}
 
 	s.signerMu.RLock()
-	if signer := s.cachedSigner; signer != nil && signer.kid == key.KID && time.Now().Before(signer.expiresAt) {
+	if signer := s.cachedSigner; signer != nil && len(key.PublicJWK) > 0 && signer.kid == key.KID && bytes.Equal(signer.publicJWK, key.PublicJWK) && time.Now().Before(signer.expiresAt) {
 		s.signerMu.RUnlock()
 		return signer, nil
 	}
@@ -396,11 +400,31 @@ func (s *SigningKeyService) signingMaterial(ctx context.Context) (*cachedSigning
 
 	s.signerMu.Lock()
 	defer s.signerMu.Unlock()
-	if signer := s.cachedSigner; signer != nil && signer.kid == key.KID && time.Now().Before(signer.expiresAt) {
+	if signer := s.cachedSigner; signer != nil && len(key.PublicJWK) > 0 && signer.kid == key.KID && bytes.Equal(signer.publicJWK, key.PublicJWK) && time.Now().Before(signer.expiresAt) {
 		return signer, nil
 	}
-	s.cachedSigner = nil
+	s.clearSignerLocked()
 
+	signer, err := s.loadSigner(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if len(key.PublicJWK) > 0 {
+		s.cachedSigner = signer
+		s.signerVersion++
+		version := s.signerVersion
+		s.signerTimer = time.AfterFunc(time.Until(signer.expiresAt), func() {
+			s.signerMu.Lock()
+			defer s.signerMu.Unlock()
+			if s.signerVersion == version {
+				s.clearSignerLocked()
+			}
+		})
+	}
+	return signer, nil
+}
+
+func (s *SigningKeyService) loadSigner(ctx context.Context, key *storage.SigningKey) (*cachedSigningKey, error) {
 	algorithm, err := algorithmToJWA(key.Algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("signing key %s has unrecognized algorithm %q: %w", key.KID, key.Algorithm, err)
@@ -413,17 +437,45 @@ func (s *SigningKeyService) signingMaterial(ctx context.Context) (*cachedSigning
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}
+	if len(key.PublicJWK) > 0 {
+		publicKey, err := jwk.PublicKeyOf(privateKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive signing public key: %w", err)
+		}
+		storedPublicKey, err := publicJWKFromJSON(key.PublicJWK, key.KID, key.Algorithm)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse stored signing public JWK: %w", err)
+		}
+		derivedThumbprint, err := publicKey.Thumbprint(crypto.SHA256)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fingerprint signing public key: %w", err)
+		}
+		storedThumbprint, err := storedPublicKey.Thumbprint(crypto.SHA256)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fingerprint stored signing public key: %w", err)
+		}
+		if !bytes.Equal(derivedThumbprint, storedThumbprint) {
+			return nil, fmt.Errorf("signing key %s public key does not match private key", key.KID)
+		}
+	}
 	if err := privateKey.Set(jwk.KeyIDKey, key.KID.String()); err != nil {
 		return nil, fmt.Errorf("failed to set signing key ID: %w", err)
 	}
-	s.cachedSigner = &cachedSigningKey{kid: key.KID, privateKey: privateKey, algorithm: algorithm, expiresAt: time.Now().Add(signingKeyCacheTTL)}
-	return s.cachedSigner, nil
+	return &cachedSigningKey{kid: key.KID, privateKey: privateKey, publicJWK: key.PublicJWK, algorithm: algorithm, expiresAt: time.Now().Add(signingKeyCacheTTL)}, nil
 }
 
 func (s *SigningKeyService) invalidateSigner() {
 	s.signerMu.Lock()
-	s.cachedSigner = nil
+	s.clearSignerLocked()
 	s.signerMu.Unlock()
+}
+
+func (s *SigningKeyService) clearSignerLocked() {
+	if s.signerTimer != nil {
+		s.signerTimer.Stop()
+		s.signerTimer = nil
+	}
+	s.cachedSigner = nil
 }
 
 // CountActive returns the number of non-removed signing keys.
