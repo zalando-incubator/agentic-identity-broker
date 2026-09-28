@@ -1452,6 +1452,8 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 The public JWK is a verification trust anchor: write access to `signing_keys.public_jwk` must be protected as strictly as write access to signing keys, since substituting it could authorize tokens signed outside the broker without decrypting the stored private key.
 
+Legacy JWKS rebuilds share work across requests but have their own 30-second deadline; canceling one request does not cancel a rebuild needed by other callers. If a legacy public key was derived but the backfill write fails, the broker logs a warning and publishes the derived key for that rebuild. A not-found result from concurrent key removal still prevents publication; malformed stored public JWKs are never replaced with decrypted material.
+
 **SigningKeyBootstrapCoordinator**: Port in `internal/ports/oauth2server.go` that serializes `EnsureInitialKey` across broker replicas sharing a backend. Memory uses an in-process lock; PostgreSQL uses an advisory transaction lock. Callers must perform all bootstrap work with the callback context supplied by the coordinator.
 
 **AuthorizationCode**: Ephemeral, single-use code issued by the authorization endpoint and exchanged for an access token. Stored as SHA-256 hash. Expires after 60 seconds. Invalidated atomically on first use via `UPDATE ... SET used_at WHERE used_at IS NULL`. PKCE (S256) always required. Located in `internal/domain/storage/authorization_code.go`.

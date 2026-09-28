@@ -39,6 +39,8 @@ const jwksGracePeriod = 2 * jwksCacheMaxAge
 
 const jwksCacheTTL = 45 * time.Second
 
+const jwksRebuildTimeout = 30 * time.Second
+
 var errJWKSCacheInvalidated = errors.New("JWKS cache invalidated during rebuild")
 
 const bootstrapRecoveryProbeTimeout = 5 * time.Second
@@ -111,7 +113,7 @@ func (s *SigningKeyService) generateAndStore(ctx context.Context, algorithm stri
 		return nil, fmt.Errorf("failed to generate key pair: %w", err)
 	}
 
-	publicJWK, err := publicJWKFromPrivatePEM(privKeyPEM, kid, algorithm)
+	_, publicJWK, err := publicJWKAndJSONFromPrivatePEM(privKeyPEM, kid, algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive public JWK: %w", err)
 	}
@@ -183,7 +185,9 @@ func (s *SigningKeyService) BuildJWKS(ctx context.Context) (jwk.Set, error) {
 		}
 		generation := s.jwksGeneration
 		resultCh := s.jwksFlight.DoChan(strconv.FormatUint(generation, 10), func() (interface{}, error) {
-			return s.rebuildJWKS(context.WithoutCancel(ctx), generation)
+			rebuildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), jwksRebuildTimeout)
+			defer cancel()
+			return s.rebuildJWKS(rebuildCtx, generation)
 		})
 		s.jwksMu.Unlock()
 
@@ -278,7 +282,10 @@ func (s *SigningKeyService) publicJWKForSigningKey(ctx context.Context, key *sto
 		return nil, fmt.Errorf("failed to build legacy public JWK: %w", err)
 	}
 	if err := s.repo.SetPublicJWK(ctx, key.KID, publicJWK); err != nil {
-		return nil, fmt.Errorf("failed to backfill public JWK: %w", err)
+		if ports.IsNotFoundErr(err) {
+			return nil, fmt.Errorf("failed to backfill public JWK: %w", err)
+		}
+		s.logger.Warn("failed to backfill public JWK; publishing derived key", "kid", key.KID, "error", err)
 	}
 	return jwkKey, nil
 }
@@ -490,11 +497,6 @@ func (s *SigningKeyService) publicJWKFromLegacyKey(ctx context.Context, key *sto
 		return nil, nil, fmt.Errorf("failed to decrypt signing key: %w", err)
 	}
 	return publicJWKAndJSONFromPrivatePEM(privatePEM, key.KID, key.Algorithm)
-}
-
-func publicJWKFromPrivatePEM(privPEM []byte, kid id.KeyID, algorithm string) ([]byte, error) {
-	_, publicJWK, err := publicJWKAndJSONFromPrivatePEM(privPEM, kid, algorithm)
-	return publicJWK, err
 }
 
 func publicJWKAndJSONFromPrivatePEM(privPEM []byte, kid id.KeyID, algorithm string) (jwk.Key, []byte, error) {

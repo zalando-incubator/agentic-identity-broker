@@ -557,6 +557,15 @@ func expireJWKSCache(svc *SigningKeyService) {
 	svc.jwksMu.Unlock()
 }
 
+type backfillErrorSigningKeyStore struct {
+	*testSigningKeyStore
+	err error
+}
+
+func (r *backfillErrorSigningKeyStore) SetPublicJWK(context.Context, id.KeyID, []byte) error {
+	return r.err
+}
+
 func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 	t.Run("generated keys publish without decryption", func(t *testing.T) {
 		ctx := context.Background()
@@ -678,6 +687,48 @@ func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "sig", usage)
 	})
+}
+
+func TestSigningKeyService_BuildJWKS_BackfillFailure(t *testing.T) {
+	tests := []struct {
+		name          string
+		backfillError error
+		publish       bool
+	}{
+		{"read-only storage still publishes derived key", errors.New("read-only storage"), true},
+		{"concurrent removal rejects derived key", storage.NewStorageError("SetPublicJWK", storage.ErrorKindNotFound, nil, "signing key removed"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newTestSigningKeyStore()
+			repo := &backfillErrorSigningKeyStore{testSigningKeyStore: store, err: tt.backfillError}
+			privatePEM, err := generateES256KeyPEM()
+			require.NoError(t, err)
+			legacy := &storage.SigningKey{
+				ID:                  id.NewSigningKeyID(),
+				KID:                 id.NewKeyID(uuid.NewString()),
+				Algorithm:           "ES256",
+				PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
+				IsCurrent:           true,
+				ActivatesAt:         time.Now().UTC().Add(-time.Minute),
+			}
+			require.NoError(t, store.Create(ctx, legacy))
+			svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+
+			set, err := svc.BuildJWKS(ctx)
+			if tt.publish {
+				require.NoError(t, err)
+				_, found := set.LookupKeyID(legacy.KID.String())
+				assert.True(t, found, "the current signer must remain verifiable when backfill cannot write")
+			} else {
+				require.ErrorContains(t, err, "current signing key")
+			}
+			stored, err := store.GetByKID(ctx, legacy.KID)
+			require.NoError(t, err)
+			assert.Empty(t, stored.PublicJWK)
+		})
+	}
 }
 
 func TestSigningKeyService_BuildJWKS_CacheLifecycle(t *testing.T) {
@@ -921,6 +972,9 @@ func TestSigningKeyService_BuildJWKS_CanceledRequestDoesNotCancelSharedRebuild(t
 	}()
 	<-repo.firstListStarted
 	rebuildCtx := <-repo.firstListContext
+	deadline, ok := rebuildCtx.Deadline()
+	require.True(t, ok, "a detached rebuild must have its own finite deadline")
+	assert.True(t, deadline.After(time.Now()) && deadline.Before(time.Now().Add(time.Minute)))
 	cancel()
 	require.ErrorIs(t, <-firstDone, context.Canceled)
 	require.NoError(t, rebuildCtx.Err(), "one canceled HTTP request must not cancel the shared refresh")
@@ -938,6 +992,11 @@ func TestSigningKeyService_BuildJWKS_CanceledRequestDoesNotCancelSharedRebuild(t
 	}()
 	close(repo.releaseFirstList)
 	require.NoError(t, <-secondDone)
+	select {
+	case <-rebuildCtx.Done():
+	default:
+		t.Fatal("rebuild context must be canceled when the shared work exits")
+	}
 	require.Equal(t, 1, repo.ListCalls())
 }
 
