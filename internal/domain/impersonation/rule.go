@@ -2,6 +2,7 @@ package impersonation
 
 import (
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v4/jwa"
@@ -28,19 +29,9 @@ type compiledRole struct {
 // compiledIssuer pairs a trusted issuer with its signed-credential validator and the signed
 // roles it may sign (CR-008).
 type compiledIssuer struct {
-	issuerURI   string
-	signsRoles  map[ports.CredentialRole]bool
-	trustSource jwksTrustSource
-	validator   *signedValidator
-}
-
-// jwksTrustSource identifies a JWKS trust configuration. Its full value, not only the URI,
-// scopes request-local verification reuse.
-type jwksTrustSource struct {
 	issuerURI  string
-	jwksURI    string
-	minRefresh time.Duration
-	maxRefresh time.Duration
+	signsRoles map[ports.CredentialRole]bool
+	validator  *signedValidator
 }
 
 // compiledRule is a startup-compiled impersonation rule ready for first-match evaluation.
@@ -133,17 +124,13 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 		issuers = append(issuers, &compiledIssuer{
 			issuerURI:  issuerCfg.IssuerURI,
 			signsRoles: signs,
-			trustSource: jwksTrustSource{
-				issuerURI:  issuerCfg.IssuerURI,
-				jwksURI:    issuerCfg.JWKSURI,
-				minRefresh: issuerCfg.JWKSMinRefresh,
-				maxRefresh: issuerCfg.JWKSMaxRefresh,
-			},
 			validator: &signedValidator{
 				jwksProvider:      provider,
 				issuerURI:         issuerCfg.IssuerURI,
 				allowedAlgorithms: allowed,
 				clockSkew:         clockSkew,
+				// Value providers have no stable instance identity for verification reuse.
+				cacheByProvider: reflect.TypeOf(provider).Kind() == reflect.Pointer,
 			},
 		})
 	}

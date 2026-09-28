@@ -26,6 +26,7 @@ type signedValidator struct {
 	issuerURI         string
 	allowedAlgorithms map[jwa.SignatureAlgorithm]struct{}
 	clockSkew         time.Duration
+	cacheByProvider   bool
 }
 
 // verifiedCredentialCache memoizes verification outcomes only during one impersonation request.
@@ -34,10 +35,9 @@ type verifiedCredentialCache struct {
 }
 
 type verificationCacheKey struct {
-	role        ports.CredentialRole
-	token       string
-	issuer      string
-	trustSource jwksTrustSource
+	role     ports.CredentialRole
+	token    string
+	provider tokenexchange.JWKSProvider
 }
 
 type verificationResult struct {
@@ -46,11 +46,13 @@ type verificationResult struct {
 }
 
 func (c *verifiedCredentialCache) verify(ctx context.Context, role ports.CredentialRole, tokenString string, issuer *compiledIssuer) (jwt.Token, error) {
+	if !issuer.validator.cacheByProvider {
+		return issuer.validator.verify(ctx, tokenString)
+	}
 	key := verificationCacheKey{
-		role:        role,
-		token:       tokenString,
-		issuer:      issuer.issuerURI,
-		trustSource: issuer.trustSource,
+		role:     role,
+		token:    tokenString,
+		provider: issuer.validator.jwksProvider,
 	}
 	if result, ok := c.verified[key]; ok {
 		return result.token, result.err

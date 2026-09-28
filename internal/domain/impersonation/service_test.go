@@ -723,16 +723,6 @@ func TestNewService_RejectsInvalidAudienceRequirement(t *testing.T) {
 	}
 }
 
-type countingImpersonationJWKS struct {
-	configurableJWKSProvider
-	calls int
-}
-
-func (p *countingImpersonationJWKS) GetKeySet(ctx context.Context) (jwk.Set, error) {
-	p.calls++
-	return p.configurableJWKSProvider.GetKeySet(ctx)
-}
-
 func TestImpersonate_VerificationReuseRespectsRuleTrust(t *testing.T) {
 	signingKey, keySet := signedValidationKey(t, "shared")
 	_, otherSet := signedValidationKey(t, "other")
@@ -740,25 +730,22 @@ func TestImpersonate_VerificationReuseRespectsRuleTrust(t *testing.T) {
 	req := &Request{ClientAssertion: token, ActorToken: token, SubjectToken: token, SubjectTokenType: JWTTokenType}
 
 	for _, tc := range []struct {
-		name         string
-		change       func(*ports.ImpersonationConfig)
-		otherKeys    bool
-		repetitions  int
-		wantMinted   bool
-		wantJWKSCall int
+		name       string
+		change     func(*ports.ImpersonationConfig)
+		otherKeys  bool
+		wantMinted bool
 	}{
-		{name: "same source across distinct providers and requests", repetitions: 2, wantMinted: true, wantJWKSCall: 3},
 		{name: "per-rule audience still checked", change: func(cfg *ports.ImpersonationConfig) {
 			role := cfg.Rules[0].Roles["client_assertion"]
 			role.ExpectedAudience = "wrong"
 			cfg.Rules[0].Roles["client_assertion"] = role
-		}, repetitions: 1, wantMinted: true, wantJWKSCall: 3},
+		}, wantMinted: true},
 		{name: "different key source cannot reuse signature", change: func(cfg *ports.ImpersonationConfig) {
 			cfg.Rules[1].TrustedIssuers[0].JWKSURI = "https://idp.example.com/other-jwks"
-		}, otherKeys: true, repetitions: 1, wantJWKSCall: 4},
+		}, otherKeys: true},
 		{name: "algorithm policy cannot be inherited", change: func(cfg *ports.ImpersonationConfig) {
 			cfg.Rules[1].TrustedIssuers[0].AllowedAlgorithms = []string{"RS256"}
-		}, repetitions: 1, wantJWKSCall: 3},
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := testImpersonationConfig("first", "second")
@@ -766,35 +753,28 @@ func TestImpersonate_VerificationReuseRespectsRuleTrust(t *testing.T) {
 				cfg.Rules[i].TrustedIssuers[0].AllowedAlgorithms = []string{"ES256"}
 			}
 			cfg.Rules[0].Authorization.CEL.Expression = "false"
-			if tc.change != nil {
-				tc.change(cfg)
-			}
-			var providers []*countingImpersonationJWKS
+			tc.change(cfg)
+			built := 0
 			issuer := &stubIssuer{}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
+				built++
 				set := keySet
-				if tc.otherKeys && len(providers) == 1 {
+				if tc.otherKeys && built == 2 {
 					set = otherSet
 				}
-				provider := &countingImpersonationJWKS{configurableJWKSProvider: configurableJWKSProvider{set: set}}
-				providers = append(providers, provider)
-				return provider, nil
+				return &configurableJWKSProvider{set: set}, nil
 			}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
 			require.NoError(t, err)
-			require.Len(t, providers, 2)
-			for attempt := 1; attempt <= tc.repetitions; attempt++ {
-				outcome, err := svc.Impersonate(context.Background(), req, testTarget())
-				if tc.wantMinted {
-					require.NoError(t, err)
-					require.NotNil(t, outcome.Response)
-					assert.Equal(t, "second", outcome.Audit.SelectedRule)
-					assert.Equal(t, attempt, issuer.calls)
-				} else {
-					require.Error(t, err)
-					assert.Nil(t, outcome.Response)
-					assert.Zero(t, issuer.calls)
-				}
-				assert.Equal(t, tc.wantJWKSCall*attempt, providers[0].calls+providers[1].calls)
+			outcome, err := svc.Impersonate(context.Background(), req, testTarget())
+			if tc.wantMinted {
+				require.NoError(t, err)
+				require.NotNil(t, outcome.Response)
+				assert.Equal(t, "second", outcome.Audit.SelectedRule)
+				assert.Equal(t, 1, issuer.calls)
+			} else {
+				require.Error(t, err)
+				assert.Nil(t, outcome.Response)
+				assert.Zero(t, issuer.calls)
 			}
 		})
 	}

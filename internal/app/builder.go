@@ -1206,10 +1206,24 @@ func newTokenExchangeAgentIDResolver(agentService *agentsservice.Service, timeou
 // jwks_uri is not set explicitly.
 const impersonationDiscoveryTimeout = 30 * time.Second
 
-// newImpersonationJWKSFactory returns a factory that builds a cached JWKS provider per trusted
-// impersonation issuer, discovering the JWKS URI from issuer metadata when it is not configured.
+// newImpersonationJWKSFactory shares a cached JWKS provider across rules with the same
+// issuer and JWKS settings, discovering the JWKS URI when it is not configured.
 func (b *Builder) newImpersonationJWKSFactory(httpClient *http.Client) impersonation.JWKSProviderFactory {
+	type source struct {
+		issuerURI, jwksURI     string
+		minRefresh, maxRefresh time.Duration
+	}
+	providers := make(map[source]tokenexchange.JWKSProvider)
 	return func(issuer ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
+		key := source{
+			issuerURI:  issuer.IssuerURI,
+			jwksURI:    issuer.JWKSURI,
+			minRefresh: issuer.JWKSMinRefresh,
+			maxRefresh: issuer.JWKSMaxRefresh,
+		}
+		if provider, ok := providers[key]; ok {
+			return provider, nil
+		}
 		jwksURI := issuer.JWKSURI
 		if jwksURI == "" {
 			discoveryCtx, cancel := context.WithTimeout(context.Background(), impersonationDiscoveryTimeout)
@@ -1236,6 +1250,7 @@ func (b *Builder) newImpersonationJWKSFactory(httpClient *http.Client) impersona
 		if err != nil {
 			return nil, err
 		}
+		providers[key] = adapter
 		return adapter, nil
 	}
 }

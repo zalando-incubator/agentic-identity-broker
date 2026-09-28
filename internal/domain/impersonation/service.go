@@ -322,14 +322,7 @@ func (s *Service) validateCredential(
 	}
 
 	credentialRole := rule.roles[role]
-	if credentialRole.requireAbsentAudience {
-		claims, err := issuer.validator.validateClaims(verified, "", true)
-		if err != nil {
-			return nil, nil, err
-		}
-		return claims, issuer, nil
-	}
-	claims, err := issuer.validator.validateClaims(verified, credentialRole.expectedAudience, false)
+	claims, err := issuer.validator.validateClaims(verified, credentialRole.expectedAudience, credentialRole.requireAbsentAudience)
 	if err != nil {
 		return nil, nil, err
 	}
