@@ -6,6 +6,7 @@ This document serves as a critical, living template designed to equip agents wit
 
 This section provides a high-level overview of the project's directory and file structure, categorised by architectural layer or major functional area. It is essential for quickly navigating the codebase, locating relevant files, and understanding the overall organization and separation of concerns.
 
+```
 [Project Root]/
 
 ├── cmd/                  # Main source code for backend services
@@ -47,14 +48,17 @@ This section provides a high-level overview of the project's directory and file 
 ├── .gitignore            # Specifies intentionally untracked files to ignore
 ├── README.md             # Project overview and quick start guide
 └── ARCHITECTURE.md       # This document
+```
 
 ## 2. High-Level System Diagram
 
 Provide a simple block diagram (e.g., a C4 Model Level 1: System Context diagram, or a basic component diagram) or a clear text-based description of the major components and their interactions. Focus on how data flows, services communicate, and key architectural boundaries.
 
+```
 [User] <--> [Frontend Application] <--> [Backend Service 1] <--> [Database 1]
                                     |
                                     +--> [Backend Service 2] <--> [External API]
+```
 
 ## 3. Core Components
 
