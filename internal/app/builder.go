@@ -553,6 +553,15 @@ func (b *Builder) Build() (*App, error) {
 	// Build service configuration from application config
 	// Constitution Principle VII: Configuration-Driven Design
 	cfg := oauth2session.NewConfigFromPorts(b.config.ThirdPartyOAuth2, b.config.Server.EndUser.PublicURL)
+	readTimeout := b.config.Storage.Timeouts.Read
+	if readTimeout <= 0 {
+		readTimeout = 5 * time.Second
+	}
+	writeTimeout := b.config.Storage.Timeouts.Write
+	if writeTimeout <= 0 {
+		writeTimeout = 10 * time.Second
+	}
+	cfg.RefreshStorageTimeout = 2*readTimeout + 2*writeTimeout
 
 	upstreamClient := &http.Client{
 		Timeout: ov.upstreamTimeout,

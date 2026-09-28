@@ -156,16 +156,24 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 		return nil, storage.NewStorageError("WithLockedSession", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
-	writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
-	defer cancel()
-	tx, err := r.adapter.db.BeginTxx(writeCtx, nil)
+	acquireCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	conn, err := r.adapter.db.Connx(acquireCtx)
+	cancel()
+	if err != nil {
+		return nil, r.wrapError(err, "WithLockedSession")
+	}
+	defer conn.Close() //nolint:errcheck
+
+	tx, err := conn.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, r.wrapError(err, "WithLockedSession")
 	}
 	defer tx.Rollback() //nolint:errcheck
 
 	var rec userSessionRecord
-	err = tx.GetContext(writeCtx, &rec, `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
+	readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	err = tx.GetContext(readCtx, &rec, `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
+	cancel()
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -173,7 +181,7 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 		return nil, r.wrapError(err, "WithLockedSession")
 	}
 	session := recordToSession(&rec)
-	updated, err := refresh(writeCtx, session)
+	updated, err := refresh(ctx, session)
 	if err != nil {
 		return nil, err
 	}
@@ -181,9 +189,11 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 		if err := session.Validate(); err != nil {
 			return nil, err
 		}
+		writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 		_, err = tx.ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
 			access_token_expires_at = $3, updated_at = $4 WHERE id = $5`,
 			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt, session.UpdatedAt, session.ID)
+		cancel()
 		if err != nil {
 			return nil, r.wrapError(err, "WithLockedSession")
 		}

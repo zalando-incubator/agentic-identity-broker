@@ -14,6 +14,12 @@ type InMemoryUserSessionRepository struct {
 	mu       sync.RWMutex
 	sessions map[id.SessionID]*storage.UserSession // Key: session ID
 	index    map[string]*storage.UserSession       // Key: "{principal}#{serviceID}"
+	locks    map[string]*sessionLock
+}
+
+type sessionLock struct {
+	available chan struct{}
+	users     int
 }
 
 // NewInMemoryUserSessionRepository creates a new in-memory repository.
@@ -21,6 +27,7 @@ func NewInMemoryUserSessionRepository() *InMemoryUserSessionRepository {
 	return &InMemoryUserSessionRepository{
 		sessions: make(map[id.SessionID]*storage.UserSession),
 		index:    make(map[string]*storage.UserSession),
+		locks:    make(map[string]*sessionLock),
 	}
 }
 
@@ -33,11 +40,15 @@ func (r *InMemoryUserSessionRepository) Create(ctx context.Context, session *sto
 		return err
 	}
 
+	key := principalServiceKey(session.Principal, session.ServiceID)
+	gate, err := r.lockSession(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer r.unlockSession(key, gate)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	key := principalServiceKey(session.Principal, session.ServiceID)
-
 	// If session exists for this principal+service, update it
 	if existing, ok := r.index[key]; ok {
 		// Reuse ID
@@ -83,20 +94,26 @@ func (r *InMemoryUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	return session, nil
 }
 
-// WithLockedSession holds the repository lock until a refreshed session is committed.
+// WithLockedSession serializes refreshes for one session while leaving other sessions available.
 func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
 	if principal.IsZero() || serviceID.IsZero() {
 		return nil, errors.New("principal and serviceID required")
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	key := principalServiceKey(principal, serviceID)
+	gate, err := r.lockSession(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	defer r.unlockSession(key, gate)
+
+	r.mu.RLock()
 	current := r.index[key]
 	if current == nil {
+		r.mu.RUnlock()
 		return nil, nil
 	}
 	session := *current
+	r.mu.RUnlock()
 	updated, err := refresh(ctx, &session)
 	if err != nil {
 		return nil, err
@@ -108,8 +125,10 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		r.mu.Lock()
 		r.index[key] = &session
 		r.sessions[session.ID] = &session
+		r.mu.Unlock()
 	}
 	return &session, nil
 }
@@ -155,17 +174,33 @@ func (r *InMemoryUserSessionRepository) Delete(ctx context.Context, sessionID id
 	if sessionID.IsZero() {
 		return errors.New("session ID cannot be empty")
 	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	session, ok := r.sessions[sessionID]
-	if ok {
-		delete(r.sessions, sessionID)
+	for {
+		r.mu.RLock()
+		session := r.sessions[sessionID]
+		r.mu.RUnlock()
+		if session == nil {
+			return nil
+		}
 		key := principalServiceKey(session.Principal, session.ServiceID)
-		delete(r.index, key)
+		gate, err := r.lockSession(ctx, key)
+		if err != nil {
+			return err
+		}
+		r.mu.Lock()
+		current := r.sessions[sessionID]
+		if current != nil && principalServiceKey(current.Principal, current.ServiceID) != key {
+			r.mu.Unlock()
+			r.unlockSession(key, gate)
+			continue
+		}
+		if current != nil {
+			delete(r.sessions, sessionID)
+			delete(r.index, key)
+		}
+		r.mu.Unlock()
+		r.unlockSession(key, gate)
+		return nil
 	}
-	return nil
 }
 
 // DeleteByPrincipalAndService deletes the session for a principal and service.
@@ -174,10 +209,15 @@ func (r *InMemoryUserSessionRepository) DeleteByPrincipalAndService(ctx context.
 		return errors.New("principal and serviceID required")
 	}
 
+	key := principalServiceKey(principal, serviceID)
+	gate, err := r.lockSession(ctx, key)
+	if err != nil {
+		return err
+	}
+	defer r.unlockSession(key, gate)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	key := principalServiceKey(principal, serviceID)
 	session, ok := r.index[key]
 	if ok {
 		delete(r.sessions, session.ID)
@@ -207,4 +247,43 @@ func (r *InMemoryUserSessionRepository) CountByService(ctx context.Context, serv
 // Helper function
 func principalServiceKey(principal id.Principal, serviceID id.ServiceID) string {
 	return principal.String() + "#" + serviceID.String()
+}
+
+func (r *InMemoryUserSessionRepository) lockSession(ctx context.Context, key string) (*sessionLock, error) {
+	r.mu.Lock()
+	gate := r.locks[key]
+	if gate == nil {
+		gate = &sessionLock{available: make(chan struct{}, 1)}
+		gate.available <- struct{}{}
+		r.locks[key] = gate
+	}
+	gate.users++
+	r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		r.mu.Lock()
+		gate.users--
+		if gate.users == 0 {
+			delete(r.locks, key)
+		}
+		r.mu.Unlock()
+		return nil, ctx.Err()
+	case <-gate.available:
+	}
+	if err := ctx.Err(); err != nil {
+		r.unlockSession(key, gate)
+		return nil, err
+	}
+	return gate, nil
+}
+
+func (r *InMemoryUserSessionRepository) unlockSession(key string, gate *sessionLock) {
+	gate.available <- struct{}{}
+	r.mu.Lock()
+	gate.users--
+	if gate.users == 0 {
+		delete(r.locks, key)
+	}
+	r.mu.Unlock()
 }

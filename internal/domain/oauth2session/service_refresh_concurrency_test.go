@@ -2,9 +2,12 @@ package oauth2session_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,7 +15,9 @@ import (
 
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -211,4 +216,61 @@ func TestForceRefreshSession_ConcurrentRotatingRefresh(t *testing.T) {
 	_, accessToken, err := service.GetValidAccessToken(ctx, principal, serviceID)
 	require.NoError(t, err)
 	assert.Equal(t, "second-access", accessToken)
+}
+
+type failedCommitRefreshRepo struct {
+	underlying ports.UserSessionRefreshRepository
+}
+
+func (r failedCommitRefreshRepo) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+	return r.underlying.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, session *storage.UserSession) (bool, error) {
+		updated, err := refresh(ctx, session)
+		if err != nil || !updated {
+			return updated, err
+		}
+		return false, errors.New("failed to commit refreshed session")
+	})
+}
+
+func TestGetValidAccessToken_DoesNotAuditRefreshSuccessBeforePersistence(t *testing.T) {
+	ctx := context.Background()
+	_, _, sessions, _, _, providers := setupServiceWithConfig(t, nil)
+	principal := id.Principal("audit-user@example.com")
+	serviceID := id.NewServiceID()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"new-access","token_type":"Bearer","expires_in":3600,"refresh_token":"new-refresh"}`)
+	}))
+	defer upstream.Close()
+	provider := createTestService(serviceID)
+	provider.Endpoints.TokenEndpoint = upstream.URL
+	require.NoError(t, providers.Create(ctx, provider))
+
+	encryption := newTestEncryption(t)
+	encryptionContext := domainencryption.NewServiceBranchKeySubject(serviceID).EncryptionContext()
+	access, err := encryption.Encrypt(ctx, []byte("old-access"), encryptionContext)
+	require.NoError(t, err)
+	refresh, err := encryption.Encrypt(ctx, []byte("old-refresh"), encryptionContext)
+	require.NoError(t, err)
+	expired := time.Now().Add(-time.Hour)
+	require.NoError(t, sessions.Create(ctx, &storage.UserSession{
+		ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
+		EncryptedAccessToken: access, EncryptedRefreshToken: refresh, TokenType: "Bearer",
+		AccessTokenExpiresAt: &expired, Scope: []string{"repo"},
+		EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+		InitiatedAt:       time.Now(), CreatedAt: time.Now(),
+	}))
+	var logs strings.Builder
+	service := oauth2session.NewOAuth2SessionService(
+		providers, sessions, failedCommitRefreshRepo{sessions.(ports.UserSessionRefreshRepository)},
+		nil, nil, encryption, &http.Client{}, nil, oauth2session.DefaultConfig(), slog.New(slog.NewJSONHandler(&logs, nil)),
+	)
+	_, _, err = service.GetValidAccessToken(ctx, principal, serviceID)
+	require.ErrorContains(t, err, "failed to commit refreshed session")
+	assert.NotContains(t, logs.String(), "session.oauth2.token_refreshed")
+	persisted, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
+	require.NoError(t, err)
+	currentRefresh, err := service.DecryptRefreshToken(ctx, persisted)
+	require.NoError(t, err)
+	assert.Equal(t, "old-refresh", currentRefresh)
 }
