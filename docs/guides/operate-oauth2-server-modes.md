@@ -194,7 +194,7 @@ After a successful deletion commits, two separate broker targets apply:
   the commit must omit the removed key or return an error, never a stale successful set.
   In-flight requests that began before the commit are not covered by either target.
 
-These targets require migration 034 and revision-aware code on every serving replica;
+These targets require migration 033 and revision-aware code on every serving replica;
 mixed-version rolling deployments do not meet them.
 
 Successful JWKS responses retain `Cache-Control: public, max-age=300`. A verifier that
