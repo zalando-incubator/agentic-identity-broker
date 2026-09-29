@@ -68,7 +68,7 @@ Launch these sub-agents simultaneously, providing each with the PR diff, file li
 
 | Sub-Agent | Focus | Key Context to Provide |
 |---|---|---|
-| **concept-analysis** | Dimensions 1 + 4 (Ubiquitous Language + Data Authority) | PR new types/packages, ARCHITECTURE.md glossary, existing domain packages |
+| **concept-analysis** | Dimensions 1 + 4 (Ubiquitous Language + Data Authority) | PR new types/packages, `ARCHITECTURE.md` glossary, existing domain packages |
 | **hexagonal-compliance** | Dimension 2 (Hexagonal Architecture) | PR handlers + services, `internal/ports/` interfaces, `internal/app/builder.go` |
 | **pattern-consistency** | Dimensions 3 + 5 (ADR Compliance + Coupling/Cohesion) | PR new patterns, pre-existing ADRs, existing handler/service patterns for comparison |
 | **test-and-observability** | Dimensions 6 + 7 (OTel Parity + E2E Test Quality) | PR test files, 2-3 existing e2e tests, existing OTel usage in same packages |
@@ -91,7 +91,7 @@ Each sub-agent prompt MUST include:
 ### 1. Ubiquitous Language & Concept Analysis
 
 - **New terms**: List architecturally significant new domain concepts, types, packages, or API resource names
-- **Overlap detection**: For each, ask: "Does this concept already exist under a different name?" Compare against ARCHITECTURE.md glossary AND existing package names. Be aggressive in detecting synonyms (e.g., `PolicyRule` vs `AccessPolicy` vs `AuthorizationRule` — are these genuinely different concepts or the same idea with different names?)
+- **Overlap detection**: For each, ask: "Does this concept already exist under a different name?" Compare against `ARCHITECTURE.md` glossary AND existing package names. Be aggressive in detecting synonyms (e.g., `PolicyRule` vs `AccessPolicy` vs `AuthorizationRule` — are these genuinely different concepts or the same idea with different names?)
 - **API contract precision**: Flag field/parameter names that are ambiguous about representation format, lifecycle, or authority (e.g., a field named "credential" without clarifying its encoding, or "context" without distinguishing request-scoped from persistent)
 - **Verdict**: Is the ubiquitous language growing coherently, or is the glossary accumulating near-synonyms?
 
@@ -261,7 +261,7 @@ Findings:
 - **Do NOT suggest refactoring that isn't architecturally motivated.**
 - **DO provide links** to changed files using `https://github.com/zalando-incubator/agentic-identity-broker/blob/{headRefOid}/{path}` format, where `{headRefOid}` is the value of the `headRefOid` field from `pr-details.json`.
 - **DO reference specific pre-existing ADRs** by number when flagging contradictions.
-- **DO compare against ARCHITECTURE.md glossary** explicitly.
+- **DO compare against `ARCHITECTURE.md` glossary** explicitly.
 - **BE CONCISE** — each finding is 1-3 sentences + a file link. Entire review scannable in 2 minutes.
 - **NEVER say "this is acceptable because the new ADR justifies it"** — new ADRs in the same PR are not self-justifying.
 - **Default stance is skeptical.** If something *might* be a concern, surface it as 🟡 DISCUSS rather than silently approving.

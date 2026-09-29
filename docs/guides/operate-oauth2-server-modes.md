@@ -140,10 +140,13 @@ curl -X POST https://broker.internal:14000/api/oauth2-server/signing-keys \
   -d '{"algorithm": "ES256"}'
 ```
 
-The broker immediately publishes a new key to the JWKS. It marks the key as current. The key
-does not sign tokens until `activates_at`. This grace period is twice the JWKS cache lifetime,
-or 600 seconds. It lets verifiers obtain the public key before the broker issues a token with
-it. The response contains `kid`, `algorithm`, `is_current`, `activates_at`, and `created_at`.
+The broker publishes a new key on the next JWKS request after storage commits and marks it
+current. It begins signing at `activates_at`, 600 seconds after key preparation. Each JWKS
+request checks the shared key-set revision; the 300-second HTTP cache lifetime plus the
+30-second JWKS rebuild limit leaves 270 seconds of grace margin under healthy-service
+conditions. This gives compliant caches time to refresh; it cannot force external
+verifiers to fetch a key. The response contains `kid`, `algorithm`, `is_current`,
+`activates_at`, and `created_at`.
 
 ### List keys
 
@@ -181,6 +184,23 @@ curl -X DELETE https://broker.internal:14000/api/oauth2-server/signing-keys/{kid
 Add a new key. Wait for its activation period. Promote it to current. Retire the old key
 only after tokens that use it have expired.
 :::
+
+After a successful deletion commits, two separate broker targets apply:
+
+- **Broker-local validation:** the first validation request that starts on any replica after
+  the commit must reject a token signed by the removed key. If the database-backed key-set
+  revision cannot be read, validation fails closed rather than using cached keys.
+- **Public JWKS:** the first direct `GET /oauth2/jwks.json` that starts on any replica after
+  the commit must omit the removed key or return an error, never a stale successful set.
+  In-flight requests that began before the commit are not covered by either target.
+
+These targets require migration 033 and revision-aware code on every serving replica;
+mixed-version rolling deployments do not meet them.
+
+Successful JWKS responses retain `Cache-Control: public, max-age=300`. A verifier that
+cached a pre-deletion response may continue accepting the key until its own cache expires;
+intermediary and noncompliant verifier caches are outside the broker's control. Do not use
+the broker's removal targets as a deadline for third-party token rejection.
 
 ## Custom token claims with CEL
 

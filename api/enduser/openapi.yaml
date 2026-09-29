@@ -2214,12 +2214,15 @@ paths:
         503 if the upstream JWKS is unavailable (proxy/hybrid modes). Returns 500 if a
         duplicate `kid` is detected across local and upstream key sets (hybrid mode).
 
-        **Caching**: Responses include `Cache-Control: public, max-age=300` to allow
-        clients to cache the key set for 5 minutes. Clients should respect this header
-        and implement key rotation by periodically refreshing the JWKS.
+        **Caching**: Successful responses include `Cache-Control: public, max-age=300`.
+        After a signing-key removal commits, a direct request beginning on any broker
+        replica omits the key or returns an error if the key-set revision cannot be
+        checked. Requests already in flight may still return an earlier snapshot.
+        Previously fetched responses can remain in verifier or intermediary caches;
+        the broker cannot enforce a third-party verification deadline.
 
-        **Key Rotation**: When signing keys are rotated, the new key appears in the
-        JWKS immediately. Previous keys remain in the set until removed by an admin.
+        **Key Rotation**: Newly stored keys are available on the next direct JWKS
+        request. Previous keys remain in the broker's set until removed by an admin.
       operationId: getJWKS
       tags:
         - OAuth2 Discovery

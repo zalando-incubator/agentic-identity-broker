@@ -976,7 +976,7 @@ Create `mocks/agentgateway/config.yaml` with MCP backend and ExtProc policy.
 
 ### Step 5.3: Create ExtProc docker configuration
 
-Create `config.extproc.docker.yaml` in the project root directory (next to other Docker Compose configs):
+Create `configs/config.extproc.docker.yaml` in the project `configs/` directory:
 
 ```yaml
 grpc:

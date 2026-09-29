@@ -652,7 +652,7 @@ IDENTITY_BROKER_LOG_FORMAT=json
 ```
 
 ### `.env.production`
-Production-specific settings in version control (no secrets):
+Production-specific settings. Not in version control:
 ```
 IDENTITY_BROKER_LOG_LEVEL=info
 IDENTITY_BROKER_LOG_FORMAT=json

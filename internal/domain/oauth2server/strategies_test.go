@@ -26,6 +26,7 @@ type strategySigningKeyStore struct {
 	bootstrapMu sync.Mutex
 	byID        map[id.SigningKeyID]*storage.SigningKey
 	byKID       map[id.KeyID]*storage.SigningKey
+	version     int64
 }
 
 var _ ports.SigningKeyRepository = (*strategySigningKeyStore)(nil)
@@ -46,6 +47,7 @@ func newStrategyTestSigningKeyService() (*SigningKeyService, *strategySigningKey
 func cloneStrategySigningKey(key *storage.SigningKey) *storage.SigningKey {
 	clone := *key
 	clone.PrivateKeyEncrypted = append([]byte(nil), key.PrivateKeyEncrypted...)
+	clone.PublicJWK = append([]byte(nil), key.PublicJWK...)
 	return &clone
 }
 
@@ -60,6 +62,7 @@ func (s *strategySigningKeyStore) Create(_ context.Context, key *storage.Signing
 	clone := cloneStrategySigningKey(key)
 	s.byID[clone.ID] = clone
 	s.byKID[clone.KID] = clone
+	s.version++
 	return nil
 }
 
@@ -79,6 +82,7 @@ func (s *strategySigningKeyStore) CreateAndSetCurrent(_ context.Context, key *st
 	clone.IsCurrent = true
 	s.byID[clone.ID] = clone
 	s.byKID[clone.KID] = clone
+	s.version++
 	return nil
 }
 
@@ -132,6 +136,12 @@ func (s *strategySigningKeyStore) ListActive(_ context.Context) ([]*storage.Sign
 	return keys, nil
 }
 
+func (s *strategySigningKeyStore) KeySetVersion(_ context.Context) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.version, nil
+}
+
 func (s *strategySigningKeyStore) SetCurrent(_ context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -145,7 +155,24 @@ func (s *strategySigningKeyStore) SetCurrent(_ context.Context, kid id.KeyID, ac
 	}
 	target.IsCurrent = true
 	target.ActivatesAt = activatesAt
+	s.version++
 	return cloneStrategySigningKey(target), nil
+}
+
+func (s *strategySigningKeyStore) SetPublicJWK(_ context.Context, kid id.KeyID, publicJWK []byte) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key, exists := s.byKID[kid]
+	if !exists || key.RemovedAt != nil {
+		return false, storage.NewStorageError("strategySigningKeyStore.SetPublicJWK", storage.ErrorKindNotFound, nil, "signing key not found")
+	}
+	if len(key.PublicJWK) == 0 {
+		key.PublicJWK = append([]byte(nil), publicJWK...)
+		s.version++
+		return true, nil
+	}
+	return false, nil
 }
 
 func currentUsableStrategySigningKey(keys map[id.SigningKeyID]*storage.SigningKey, now time.Time) *storage.SigningKey {
@@ -189,6 +216,7 @@ func (s *strategySigningKeyStore) Delete(_ context.Context, kid id.KeyID) error 
 	}
 
 	key.RemovedAt = &now
+	s.version++
 	return nil
 }
 
@@ -520,6 +548,30 @@ func TestNewJWXAccessTokenStrategy_Validation(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, validIssuer, iss, "stored issuer must be trimmed, not padded")
 	})
+}
+
+func TestJWXAccessTokenStrategy_RejectsRemotelyRemovedKey(t *testing.T) {
+	ctx := context.Background()
+	repo := newStrategySigningKeyStore()
+	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	old, err := svcA.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+	issuer := "https://issuer.example.com"
+	issuerStrategy, err := NewJWXAccessTokenStrategy(svcA, issuer, time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	validator, err := NewJWXAccessTokenStrategy(svcB, issuer, time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	token, _, err := issuerStrategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+	require.NoError(t, validator.ValidateAccessToken(ctx, nil, token))
+
+	newKey, err := svcA.generateAndStore(ctx, "ES256", false, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+	_, err = svcA.PromoteKey(ctx, newKey.KID)
+	require.NoError(t, err)
+	require.NoError(t, svcA.DeleteKey(ctx, old.KID))
+	require.Error(t, validator.ValidateAccessToken(ctx, nil, token))
 }
 
 func TestJWXAccessTokenStrategy_SubClaimNotOverridable(t *testing.T) {

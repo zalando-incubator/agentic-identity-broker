@@ -3,6 +3,9 @@ package oauth2server
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"log/slog"
@@ -312,6 +315,21 @@ func TestSigningKeyService_GenerateAndStoreKey(t *testing.T) {
 		assert.Error(t, err, "key should not be available for signing during grace period")
 	})
 
+	t.Run("grace period starts after key material is prepared", func(t *testing.T) {
+		repo := newTestSigningKeyStore()
+		manager := newNoopBranchKeyManager()
+		var preparedAt time.Time
+		manager.createFn = func(context.Context, domainencryption.BranchKeySubject) (string, error) {
+			preparedAt = time.Now()
+			time.Sleep(2 * time.Millisecond)
+			return "", nil
+		}
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, manager, testSlogger())
+		key, err := svc.GenerateAndStoreKey(context.Background(), "ES256", true)
+		require.NoError(t, err)
+		assert.False(t, key.ActivatesAt.Before(preparedAt.Add(jwksGracePeriod)), "activation %s, preparation %s", key.ActivatesAt, preparedAt)
+	})
+
 	t.Run("private key is encrypted (has ENC: prefix)", func(t *testing.T) {
 		svc, _ := newTestSigningKeyService()
 		key, err := svc.GenerateAndStoreKey(context.Background(), "ES256", true)
@@ -489,6 +507,686 @@ func TestSigningKeyService_BuildJWKS(t *testing.T) {
 		kid, _ := k.KeyID()
 		assert.Equal(t, goodKID.String(), kid)
 	})
+}
+
+type countingJWKSRepo struct {
+	*testSigningKeyStore
+	listCalls int
+}
+
+func (r *countingJWKSRepo) ListActive(ctx context.Context) ([]*storage.SigningKey, error) {
+	r.listCalls++
+	return r.testSigningKeyStore.ListActive(ctx)
+}
+
+func TestSigningKeyService_BuildJWKS_CachesActiveKeys(t *testing.T) {
+	ctx := context.Background()
+	repo := &countingJWKSRepo{testSigningKeyStore: newTestSigningKeyStore()}
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	key, err := svc.GenerateAndStoreKey(ctx, "ES256", true)
+	require.NoError(t, err)
+
+	for range 2 {
+		set, err := svc.BuildJWKS(ctx)
+		require.NoError(t, err)
+		_, ok := set.LookupKeyID(key.KID.String())
+		require.True(t, ok)
+	}
+	require.Equal(t, 1, repo.listCalls, "repeated JWKS reads should not reload signing keys")
+}
+
+type countingDecryptor struct {
+	*testEncryptor
+	mu           sync.Mutex
+	decryptCalls int
+}
+
+func newCountingDecryptor() *countingDecryptor {
+	return &countingDecryptor{testEncryptor: &testEncryptor{}}
+}
+
+func (e *countingDecryptor) Decrypt(ctx context.Context, ciphertext []byte, encryptionContext map[string]string) ([]byte, error) {
+	e.mu.Lock()
+	e.decryptCalls++
+	e.mu.Unlock()
+	return e.testEncryptor.Decrypt(ctx, ciphertext, encryptionContext)
+}
+
+func (e *countingDecryptor) DecryptCalls() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.decryptCalls
+}
+
+func requirePublishedPublicJWK(t *testing.T, publicJWK []byte) jwk.Key {
+	t.Helper()
+	key, err := jwk.ParseKey(publicJWK)
+	require.NoError(t, err)
+	asymmetricKey, ok := key.(jwk.AsymmetricKey)
+	require.True(t, ok)
+	assert.False(t, asymmetricKey.IsPrivate())
+	return key
+}
+
+func expireJWKSCache(svc *SigningKeyService) {
+	svc.jwksMu.Lock()
+	svc.jwksExpiresAt = time.Now().UTC().Add(-time.Second)
+	svc.jwksMu.Unlock()
+}
+
+type backfillErrorSigningKeyStore struct {
+	*testSigningKeyStore
+	err error
+}
+
+func (r *backfillErrorSigningKeyStore) SetPublicJWK(context.Context, id.KeyID, []byte) (bool, error) {
+	return false, r.err
+}
+
+type competingBackfillSigningKeyStore struct {
+	*testSigningKeyStore
+	winner []byte
+}
+
+func (r *competingBackfillSigningKeyStore) SetPublicJWK(ctx context.Context, kid id.KeyID, candidate []byte) (bool, error) {
+	if _, err := r.testSigningKeyStore.SetPublicJWK(ctx, kid, r.winner); err != nil {
+		return false, err
+	}
+	return r.testSigningKeyStore.SetPublicJWK(ctx, kid, candidate)
+}
+
+func TestSigningKeyService_BuildJWKS_UsesStoredPublicJWK(t *testing.T) {
+	t.Run("generated keys publish without decryption", func(t *testing.T) {
+		ctx := context.Background()
+		repo := newTestSigningKeyStore()
+		encryptor := newCountingDecryptor()
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+
+		generated, err := svc.GenerateAndStoreKey(ctx, "ES256", true)
+		require.NoError(t, err)
+		stored, err := repo.GetByKID(ctx, generated.KID)
+		require.NoError(t, err)
+		publicKey := requirePublishedPublicJWK(t, stored.PublicJWK)
+		kid, ok := publicKey.KeyID()
+		require.True(t, ok)
+		assert.Equal(t, generated.KID.String(), kid)
+
+		for range 2 {
+			set, err := svc.BuildJWKS(ctx)
+			require.NoError(t, err)
+			_, ok := set.LookupKeyID(generated.KID.String())
+			require.True(t, ok)
+		}
+		assert.Equal(t, 0, encryptor.DecryptCalls())
+	})
+
+	t.Run("legacy key is backfilled after one decryption", func(t *testing.T) {
+		ctx := context.Background()
+		repo := newTestSigningKeyStore()
+		encryptor := newCountingDecryptor()
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+		privatePEM, err := generateES256KeyPEM()
+		require.NoError(t, err)
+		legacy := &storage.SigningKey{
+			ID:                  id.NewSigningKeyID(),
+			KID:                 id.NewKeyID(uuid.NewString()),
+			Algorithm:           "ES256",
+			PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
+			IsCurrent:           true,
+			ActivatesAt:         time.Now().UTC().Add(-time.Minute),
+			CreatedAt:           time.Now().UTC(),
+		}
+		require.NoError(t, repo.Create(ctx, legacy))
+
+		set, err := svc.BuildJWKS(ctx)
+		require.NoError(t, err)
+		_, ok := set.LookupKeyID(legacy.KID.String())
+		require.True(t, ok)
+		assert.Equal(t, 1, encryptor.DecryptCalls())
+
+		stored, err := repo.GetByKID(ctx, legacy.KID)
+		require.NoError(t, err)
+		require.NotEmpty(t, stored.PublicJWK)
+		requirePublishedPublicJWK(t, stored.PublicJWK)
+
+		expireJWKSCache(svc)
+		_, err = svc.BuildJWKS(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 1, encryptor.DecryptCalls())
+	})
+
+	t.Run("corrupt stored public JWK fails closed without decryption", func(t *testing.T) {
+		ctx := context.Background()
+		repo := newTestSigningKeyStore()
+		encryptor := newCountingDecryptor()
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+		key := &storage.SigningKey{
+			ID:                  id.NewSigningKeyID(),
+			KID:                 id.NewKeyID(uuid.NewString()),
+			Algorithm:           "ES256",
+			PrivateKeyEncrypted: []byte("ENC:must-not-decrypt"),
+			PublicJWK:           []byte("not a JWK"),
+			IsCurrent:           true,
+			ActivatesAt:         time.Now().UTC().Add(-time.Minute),
+			CreatedAt:           time.Now().UTC(),
+		}
+		require.NoError(t, repo.Create(ctx, key))
+
+		_, err := svc.BuildJWKS(ctx)
+		require.ErrorContains(t, err, "current signing key")
+		assert.Equal(t, 0, encryptor.DecryptCalls())
+	})
+
+	t.Run("stored private JWK is sanitized before publication", func(t *testing.T) {
+		ctx := context.Background()
+		repo := newTestSigningKeyStore()
+		privatePEM, err := generateES256KeyPEM()
+		require.NoError(t, err)
+		privateKey, err := jwk.ParseKey(privatePEM, jwk.WithX509(true))
+		require.NoError(t, err)
+		require.NoError(t, privateKey.Set(jwk.KeyIDKey, "untrusted-kid"))
+		require.NoError(t, privateKey.Set(jwk.AlgorithmKey, jwa.RS256()))
+		require.NoError(t, privateKey.Set(jwk.KeyUsageKey, "enc"))
+		privateJWK, err := json.Marshal(privateKey)
+		require.NoError(t, err)
+		key := &storage.SigningKey{
+			ID:                  id.NewSigningKeyID(),
+			KID:                 id.NewKeyID(uuid.NewString()),
+			Algorithm:           "ES256",
+			PrivateKeyEncrypted: []byte("must-not-decrypt"),
+			PublicJWK:           privateJWK,
+			IsCurrent:           true,
+			ActivatesAt:         time.Now().UTC().Add(-time.Minute),
+			CreatedAt:           time.Now().UTC(),
+		}
+		require.NoError(t, repo.Create(ctx, key))
+		svc := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger())
+
+		set, err := svc.BuildJWKS(ctx)
+		require.NoError(t, err)
+		published, ok := set.LookupKeyID(key.KID.String())
+		require.True(t, ok)
+		asymmetricKey, ok := published.(jwk.AsymmetricKey)
+		require.True(t, ok)
+		assert.False(t, asymmetricKey.IsPrivate())
+		algorithm, ok := published.Algorithm()
+		require.True(t, ok)
+		assert.Equal(t, jwa.ES256(), algorithm)
+		usage, ok := published.KeyUsage()
+		require.True(t, ok)
+		assert.Equal(t, "sig", usage)
+	})
+}
+
+func TestSigningKeyService_BuildJWKS_AuditsTrustAnchorBackfill(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestSigningKeyStore()
+	privatePEM, err := generateES256KeyPEM()
+	require.NoError(t, err)
+	legacy := &storage.SigningKey{
+		ID:                  id.NewSigningKeyID(),
+		KID:                 id.NewKeyID(uuid.NewString()),
+		Algorithm:           "ES256",
+		PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
+		IsCurrent:           true,
+		ActivatesAt:         time.Now().Add(-time.Minute),
+	}
+	require.NoError(t, repo.Create(ctx, legacy))
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger)
+	before := time.Now().UTC()
+	_, err = svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+
+	var event struct {
+		KID         string    `json:"kid"`
+		Outcome     string    `json:"outcome"`
+		At          time.Time `json:"at"`
+		Fingerprint string    `json:"public_key_fingerprint"`
+	}
+	require.NoError(t, json.NewDecoder(&logs).Decode(&event))
+	assert.Equal(t, legacy.KID.String(), event.KID)
+	assert.Equal(t, "written", event.Outcome)
+	assert.False(t, event.At.Before(before))
+	assert.False(t, event.At.After(time.Now().UTC()))
+	stored, err := repo.GetByKID(ctx, legacy.KID)
+	require.NoError(t, err)
+	publicKey := requirePublishedPublicJWK(t, stored.PublicJWK)
+	thumbprint, err := publicKey.Thumbprint(crypto.SHA256)
+	require.NoError(t, err)
+	assert.Equal(t, base64.RawURLEncoding.EncodeToString(thumbprint), event.Fingerprint)
+	assert.NotContains(t, logs.String(), "PRIVATE KEY")
+}
+
+func TestSigningKeyService_BuildJWKS_AuditsConcurrentBackfillWinner(t *testing.T) {
+	ctx := context.Background()
+	privatePEM, err := generateES256KeyPEM()
+	require.NoError(t, err)
+	winnerPEM, err := generateES256KeyPEM()
+	require.NoError(t, err)
+	kid := id.NewKeyID(uuid.NewString())
+	_, winnerJWK, err := publicJWKAndJSONFromPrivatePEM(winnerPEM, kid, "ES256")
+	require.NoError(t, err)
+	repo := &competingBackfillSigningKeyStore{testSigningKeyStore: newTestSigningKeyStore(), winner: winnerJWK}
+	require.NoError(t, repo.Create(ctx, &storage.SigningKey{
+		ID:                  id.NewSigningKeyID(),
+		KID:                 kid,
+		Algorithm:           "ES256",
+		PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
+		IsCurrent:           true,
+		ActivatesAt:         time.Now().Add(-time.Minute),
+	}))
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), logger)
+	before := time.Now().UTC()
+	_, err = svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+
+	var event struct {
+		KID         string    `json:"kid"`
+		Outcome     string    `json:"outcome"`
+		At          time.Time `json:"at"`
+		Fingerprint string    `json:"public_key_fingerprint"`
+	}
+	require.NoError(t, json.NewDecoder(&logs).Decode(&event))
+	assert.Equal(t, kid.String(), event.KID)
+	assert.Equal(t, "already_set", event.Outcome)
+	assert.False(t, event.At.Before(before))
+	assert.False(t, event.At.After(time.Now().UTC()))
+	winnerKey := requirePublishedPublicJWK(t, winnerJWK)
+	thumbprint, err := winnerKey.Thumbprint(crypto.SHA256)
+	require.NoError(t, err)
+	assert.Equal(t, base64.RawURLEncoding.EncodeToString(thumbprint), event.Fingerprint)
+}
+
+func TestSigningKeyService_BuildJWKS_BackfillFailure(t *testing.T) {
+	tests := []struct {
+		name          string
+		backfillError error
+		publish       bool
+	}{
+		{"read-only storage still publishes derived key", errors.New("read-only storage"), true},
+		{"concurrent removal rejects derived key", storage.NewStorageError("SetPublicJWK", storage.ErrorKindNotFound, nil, "signing key removed"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newTestSigningKeyStore()
+			repo := &backfillErrorSigningKeyStore{testSigningKeyStore: store, err: tt.backfillError}
+			privatePEM, err := generateES256KeyPEM()
+			require.NoError(t, err)
+			legacy := &storage.SigningKey{
+				ID:                  id.NewSigningKeyID(),
+				KID:                 id.NewKeyID(uuid.NewString()),
+				Algorithm:           "ES256",
+				PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
+				IsCurrent:           true,
+				ActivatesAt:         time.Now().UTC().Add(-time.Minute),
+			}
+			require.NoError(t, store.Create(ctx, legacy))
+			svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+
+			set, err := svc.BuildJWKS(ctx)
+			if tt.publish {
+				require.NoError(t, err)
+				_, found := set.LookupKeyID(legacy.KID.String())
+				assert.True(t, found, "the current signer must remain verifiable when backfill cannot write")
+			} else {
+				require.ErrorContains(t, err, "current signing key")
+			}
+			stored, err := store.GetByKID(ctx, legacy.KID)
+			require.NoError(t, err)
+			assert.Empty(t, stored.PublicJWK)
+		})
+	}
+}
+
+func TestSigningKeyService_BuildJWKS_CacheLifecycle(t *testing.T) {
+	t.Run("caches an empty key set", func(t *testing.T) {
+		repo := &countingJWKSRepo{testSigningKeyStore: newTestSigningKeyStore()}
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+
+		for range 2 {
+			set, err := svc.BuildJWKS(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, 0, set.Len())
+		}
+		assert.Equal(t, 1, repo.listCalls)
+	})
+
+	t.Run("refreshes another replica after key creation", func(t *testing.T) {
+		ctx := context.Background()
+		repo := &countingJWKSRepo{testSigningKeyStore: newTestSigningKeyStore()}
+		svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		first, err := svcA.GenerateAndStoreKey(ctx, "ES256", true)
+		require.NoError(t, err)
+
+		_, err = svcA.BuildJWKS(ctx)
+		require.NoError(t, err)
+		set, err := svcB.BuildJWKS(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 1, set.Len())
+		svcB.jwksMu.RLock()
+		expiresAt := svcB.jwksExpiresAt
+		svcB.jwksMu.RUnlock()
+		assert.WithinDuration(t, time.Now().UTC().Add(jwksCacheTTL), expiresAt, time.Second)
+
+		second, err := svcA.GenerateAndStoreKey(ctx, "ES256", false)
+		require.NoError(t, err)
+		set, err = svcB.BuildJWKS(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 2, set.Len())
+		_, found := set.LookupKeyID(first.KID.String())
+		assert.True(t, found)
+		_, found = set.LookupKeyID(second.KID.String())
+		assert.True(t, found)
+		assert.Equal(t, 3, repo.listCalls)
+	})
+}
+
+func TestSigningKeyService_BuildJWKS_RemoteRemoval(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestSigningKeyStore()
+	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	old, err := svcA.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+	newKey, err := svcA.generateAndStore(ctx, "ES256", false, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+	set, err := svcB.BuildJWKS(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, set.Len())
+
+	_, err = svcA.PromoteKey(ctx, newKey.KID)
+	require.NoError(t, err)
+	require.NoError(t, svcA.DeleteKey(ctx, old.KID))
+
+	set, err = svcB.BuildJWKS(ctx)
+	require.NoError(t, err)
+	_, found := set.LookupKeyID(old.KID.String())
+	assert.False(t, found, "a replica must not publish a removed key after the deletion commits")
+	_, found = set.LookupKeyID(newKey.KID.String())
+	assert.True(t, found)
+}
+
+type failingRevisionSigningKeyStore struct {
+	*testSigningKeyStore
+	err error
+}
+
+func (r *failingRevisionSigningKeyStore) KeySetVersion(ctx context.Context) (int64, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	return r.testSigningKeyStore.KeySetVersion(ctx)
+}
+
+func TestSigningKeyService_BuildJWKS_FailsClosedWhenRevisionUnavailable(t *testing.T) {
+	ctx := context.Background()
+	repo := &failingRevisionSigningKeyStore{testSigningKeyStore: newTestSigningKeyStore()}
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+	_, err = svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+
+	repo.err = errors.New("revision database unavailable")
+	_, err = svc.BuildJWKS(ctx)
+	require.ErrorContains(t, err, "revision database unavailable")
+}
+
+func TestSigningKeyService_BuildJWKS_DoesNotServeStaleOnRebuildFailure(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestSigningKeyStore()
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().UTC().Add(-time.Minute))
+	require.NoError(t, err)
+	_, err = svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+
+	repo.mu.Lock()
+	repo.byKID[key.KID].PublicJWK = []byte("not a JWK")
+	repo.mu.Unlock()
+	expireJWKSCache(svc)
+
+	_, err = svc.BuildJWKS(ctx)
+	require.ErrorContains(t, err, "current signing key")
+}
+
+func TestSigningKeyService_BuildJWKS_InvalidatesAfterMutation(t *testing.T) {
+	ctx := context.Background()
+	repo := &countingJWKSRepo{testSigningKeyStore: newTestSigningKeyStore()}
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().UTC().Add(-time.Minute))
+	require.NoError(t, err)
+
+	_, err = svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.listCalls)
+
+	second, err := svc.generateAndStore(ctx, "ES256", false, time.Now().UTC().Add(-time.Minute))
+	require.NoError(t, err)
+	set, err := svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, set.Len())
+	require.Equal(t, 2, repo.listCalls)
+
+	_, err = svc.PromoteKey(ctx, second.KID)
+	require.NoError(t, err)
+	_, err = svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 3, repo.listCalls)
+
+	require.NoError(t, svc.DeleteKey(ctx, first.KID))
+	set, err = svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, set.Len())
+	_, found := set.LookupKeyID(second.KID.String())
+	assert.True(t, found)
+	require.Equal(t, 5, repo.listCalls)
+
+	_, err = svc.PromoteKey(ctx, id.NewKeyID("missing"))
+	require.Error(t, err)
+	_, err = svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 5, repo.listCalls)
+}
+
+type blockingJWKSRepo struct {
+	*testSigningKeyStore
+	mu               sync.Mutex
+	listCalls        int
+	firstListStarted chan struct{}
+	firstListContext chan context.Context
+	releaseFirstList chan struct{}
+}
+
+func (r *blockingJWKSRepo) ListActive(ctx context.Context) ([]*storage.SigningKey, error) {
+	keys, err := r.testSigningKeyStore.ListActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	r.mu.Lock()
+	r.listCalls++
+	first := r.listCalls == 1
+	r.mu.Unlock()
+	if first {
+		r.firstListContext <- ctx
+		close(r.firstListStarted)
+		select {
+		case <-r.releaseFirstList:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return keys, nil
+}
+
+func (r *blockingJWKSRepo) ListCalls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.listCalls
+}
+
+func newBlockingJWKSRepo() *blockingJWKSRepo {
+	return &blockingJWKSRepo{
+		testSigningKeyStore: newTestSigningKeyStore(),
+		firstListStarted:    make(chan struct{}),
+		firstListContext:    make(chan context.Context, 1),
+		releaseFirstList:    make(chan struct{}),
+	}
+}
+
+func TestSigningKeyService_BuildJWKS_SingleflightAndMutationRace(t *testing.T) {
+	t.Run("concurrent rebuilds list once", func(t *testing.T) {
+		ctx := context.Background()
+		repo := newBlockingJWKSRepo()
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().UTC().Add(-time.Minute))
+		require.NoError(t, err)
+
+		const callers = 8
+		start := make(chan struct{})
+		errs := make(chan error, callers)
+		var wg sync.WaitGroup
+		for range callers {
+			wg.Go(func() {
+				<-start
+				set, err := svc.BuildJWKS(ctx)
+				if err == nil {
+					_, found := set.LookupKeyID(key.KID.String())
+					if !found {
+						err = errors.New("rebuilt JWKS is missing generated key")
+					}
+				}
+				errs <- err
+			})
+		}
+		close(start)
+		<-repo.firstListStarted
+		close(repo.releaseFirstList)
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			require.NoError(t, err)
+		}
+		assert.Equal(t, 1, repo.ListCalls())
+	})
+
+	t.Run("mutation rejects an in-flight stale rebuild", func(t *testing.T) {
+		ctx := context.Background()
+		repo := newBlockingJWKSRepo()
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().UTC().Add(-time.Minute))
+		require.NoError(t, err)
+
+		oldResult := make(chan jwk.Set, 1)
+		oldErr := make(chan error, 1)
+		go func() {
+			set, err := svc.BuildJWKS(ctx)
+			oldResult <- set
+			oldErr <- err
+		}()
+		<-repo.firstListStarted
+
+		second, err := svc.generateAndStore(ctx, "ES256", false, time.Now().UTC().Add(-time.Minute))
+		require.NoError(t, err)
+		freshSet, err := svc.BuildJWKS(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 2, freshSet.Len())
+		_, found := freshSet.LookupKeyID(second.KID.String())
+		assert.True(t, found)
+
+		close(repo.releaseFirstList)
+		set := <-oldResult
+		require.NoError(t, <-oldErr)
+		assert.Equal(t, 2, set.Len())
+		_, found = set.LookupKeyID(first.KID.String())
+		assert.True(t, found)
+		_, found = set.LookupKeyID(second.KID.String())
+		assert.True(t, found)
+		assert.Equal(t, 2, repo.ListCalls())
+	})
+}
+
+func TestSigningKeyService_BuildJWKS_RemoteRemovalDuringRebuild(t *testing.T) {
+	ctx := context.Background()
+	repo := newBlockingJWKSRepo()
+	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	old, err := svcA.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+	newKey, err := svcA.generateAndStore(ctx, "ES256", false, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+
+	type result struct {
+		set jwk.Set
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		set, err := svcB.BuildJWKS(ctx)
+		done <- result{set, err}
+	}()
+	<-repo.firstListStarted
+	_, err = svcA.PromoteKey(ctx, newKey.KID)
+	require.NoError(t, err)
+	require.NoError(t, svcA.DeleteKey(ctx, old.KID))
+	close(repo.releaseFirstList)
+
+	got := <-done
+	require.NoError(t, got.err)
+	_, found := got.set.LookupKeyID(old.KID.String())
+	assert.False(t, found)
+	_, found = got.set.LookupKeyID(newKey.KID.String())
+	assert.True(t, found)
+}
+
+func TestSigningKeyService_BuildJWKS_CanceledRequestDoesNotCancelSharedRebuild(t *testing.T) {
+	repo := newBlockingJWKSRepo()
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	key, err := svc.generateAndStore(context.Background(), "ES256", true, time.Now().UTC().Add(-time.Minute))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := svc.BuildJWKS(ctx)
+		firstDone <- err
+	}()
+	<-repo.firstListStarted
+	rebuildCtx := <-repo.firstListContext
+	deadline, ok := rebuildCtx.Deadline()
+	require.True(t, ok, "a detached rebuild must have its own finite deadline")
+	assert.True(t, deadline.After(time.Now()) && deadline.Before(time.Now().Add(time.Minute)))
+	cancel()
+	require.ErrorIs(t, <-firstDone, context.Canceled)
+	require.NoError(t, rebuildCtx.Err(), "one canceled HTTP request must not cancel the shared refresh")
+
+	secondDone := make(chan error, 1)
+	go func() {
+		set, err := svc.BuildJWKS(context.Background())
+		if err == nil {
+			_, ok := set.LookupKeyID(key.KID.String())
+			if !ok {
+				err = errors.New("shared JWKS rebuild is missing the signing key")
+			}
+		}
+		secondDone <- err
+	}()
+	close(repo.releaseFirstList)
+	require.NoError(t, <-secondDone)
+	select {
+	case <-rebuildCtx.Done():
+	default:
+		t.Fatal("rebuild context must be canceled when the shared work exits")
+	}
+	require.Equal(t, 1, repo.ListCalls())
 }
 
 type failingSetJWK struct {
@@ -1341,8 +2039,16 @@ func (r *deleteValidationSpyRepo) ListActive(context.Context) ([]*storage.Signin
 	return r.activeKeys, nil
 }
 
+func (r *deleteValidationSpyRepo) KeySetVersion(context.Context) (int64, error) {
+	return 0, nil
+}
+
 func (r *deleteValidationSpyRepo) SetCurrent(context.Context, id.KeyID, time.Time) (*storage.SigningKey, error) {
 	return nil, nil
+}
+
+func (r *deleteValidationSpyRepo) SetPublicJWK(context.Context, id.KeyID, []byte) (bool, error) {
+	return false, nil
 }
 
 func (r *deleteValidationSpyRepo) Delete(_ context.Context, _ id.KeyID) error {

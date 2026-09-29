@@ -21,7 +21,8 @@ yarn.lock
 pnpm-lock.yaml
 
 # Build artifacts
-build/
+build/*
+!build/air/
 bin/
 !bin/linux/
 dist/*
