@@ -934,7 +934,7 @@ api.example.com {
 
 **Development** (no authentication):
 ```yaml
-# config.dev.yaml
+# configs/config.dev.yaml
 servers:
   api:
     port: 8080
@@ -944,7 +944,7 @@ servers:
 
 **Production** (with authentication):
 ```yaml
-# config.prod.yaml
+# configs/config.prod.yaml
 servers:
   api:
     port: 8080

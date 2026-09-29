@@ -48,6 +48,7 @@ type EnduserRouteConfig struct {
 //	OAuth2 Session Routes (authenticated, optional):
 //	GET    /api/third-party/sessions                  - List sessions
 //	GET    /api/third-party/{serviceId}/oauth2/authorize - Initiate auth
+//	POST   /api/third-party/{serviceId}/oauth2/authorize - Initiate auth with consent selection
 //	GET    /api/third-party/{serviceId}/oauth2/callback  - Handle callback
 //	GET    /api/third-party/{serviceId}/session       - Get session details
 //	DELETE /api/third-party/{serviceId}/session       - Terminate session

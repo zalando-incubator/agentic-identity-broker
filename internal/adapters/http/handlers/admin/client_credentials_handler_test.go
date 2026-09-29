@@ -11,6 +11,7 @@ import (
 	encryptionnoop "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -68,7 +69,8 @@ func (g credentialGeneratorFake) GenerateCredentials(agentID id.AgentID) (*stora
 func newClientCredentialsHandlerForTest(agentRepo *MockAgentRepository, serviceRepo *MockProviderRepository, credentialRepo ports.ClientCredentialRepository, generator ports.CredentialGenerator) *ClientCredentialsHandler {
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(serviceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
 	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true)
-	return NewClientCredentialsHandler(credentialRepo, agentService, generator, slog.Default())
+	credentialService := oauth2server.NewCredentialService(agentRepo, credentialRepo, generator, slog.Default())
+	return NewClientCredentialsHandler(credentialService, agentService, slog.Default())
 }
 
 func canonicalCredentialRequest(method, canonicalID string) *http.Request {

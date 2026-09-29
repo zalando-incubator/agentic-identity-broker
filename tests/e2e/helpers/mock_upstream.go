@@ -53,11 +53,12 @@ type CapturedTokenRequest struct {
 // It captures requests for assertion and supports both successful and error responses.
 // This is stable because it only depends on HTTP contract, not internal implementation.
 type MockUpstreamOAuth2Server struct {
-	Server        *httptest.Server
-	LastRequest   *http.Request
-	LastBody      string
-	requestMutex  sync.RWMutex
-	tokenRequests []CapturedTokenRequest
+	Server           *httptest.Server
+	LastRequest      *http.Request
+	LastBody         string
+	lastAuthorizeURL string
+	requestMutex     sync.RWMutex
+	tokenRequests    []CapturedTokenRequest
 
 	// Response configuration
 	authorizeCalled         bool
@@ -246,6 +247,13 @@ func (m *MockUpstreamOAuth2Server) GetLastRequest() *http.Request {
 	return m.LastRequest
 }
 
+// GetLastAuthorizeURL returns the last authorization request URL.
+func (m *MockUpstreamOAuth2Server) GetLastAuthorizeURL() string {
+	m.requestMutex.RLock()
+	defer m.requestMutex.RUnlock()
+	return m.lastAuthorizeURL
+}
+
 // GetLastBody returns the last captured request body (thread-safe).
 func (m *MockUpstreamOAuth2Server) GetLastBody() string {
 	m.requestMutex.RLock()
@@ -313,6 +321,7 @@ func (m *MockUpstreamOAuth2Server) Reset() {
 
 	m.LastRequest = nil
 	m.LastBody = ""
+	m.lastAuthorizeURL = ""
 	m.tokenRequests = nil
 	m.authorizeCalled = false
 	m.tokenCalled = false
@@ -326,6 +335,7 @@ func (m *MockUpstreamOAuth2Server) Reset() {
 func (m *MockUpstreamOAuth2Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	m.requestMutex.Lock()
 	m.LastRequest = r
+	m.lastAuthorizeURL = r.URL.String()
 	m.authorizeCalled = true
 	// Read body if present
 	if r.Body != nil {

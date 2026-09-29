@@ -215,9 +215,9 @@ Enable runtime storage backend selection without code changes.
 
 ### Configuration Examples & Documentation
 
-- [x] T082 [US3] Create development configuration (`config.dev.yaml`) with in-memory backend
-- [x] T083 [US3] Create production configuration (`config.prod.yaml`) with PostgreSQL backend
-- [x] T084 [US3] Create testing configuration (`config.test.yaml`) with in-memory backend for automated tests
+- [x] T082 [US3] Create development configuration (`configs/config.dev.yaml`) with in-memory backend
+- [x] T083 [US3] Create production configuration (`configs/config.prod.yaml`) with PostgreSQL backend
+- [x] T084 [US3] Create testing configuration (`configs/config.test.yaml`) with in-memory backend for automated tests
 - [x] T085 [US3] Document configuration switching procedures for operators
 - [x] T086 [US3] Add configuration precedence documentation (env > YAML > defaults)
 

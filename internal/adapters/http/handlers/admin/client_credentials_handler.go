@@ -18,24 +18,21 @@ import (
 
 // ClientCredentialsHandler handles admin API requests for broker client credentials.
 type ClientCredentialsHandler struct {
-	credentialRepo ports.ClientCredentialRepository
-	agentService   *agents.Service
-	clientAuth     ports.CredentialGenerator
-	logger         *slog.Logger
+	credentials  ports.ClientCredentialManager
+	agentService *agents.Service
+	logger       *slog.Logger
 }
 
 // NewClientCredentialsHandler creates a new ClientCredentialsHandler.
 func NewClientCredentialsHandler(
-	credentialRepo ports.ClientCredentialRepository,
+	credentials ports.ClientCredentialManager,
 	agentService *agents.Service,
-	clientAuth ports.CredentialGenerator,
 	logger *slog.Logger,
 ) *ClientCredentialsHandler {
 	return &ClientCredentialsHandler{
-		credentialRepo: credentialRepo,
-		agentService:   agentService,
-		clientAuth:     clientAuth,
-		logger:         logger,
+		credentials:  credentials,
+		agentService: agentService,
+		logger:       logger,
 	}
 }
 
@@ -88,39 +85,18 @@ func (h *ClientCredentialsHandler) Generate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	_, err = h.agentService.Get(r.Context(), agentID)
-	if err != nil {
+	result, err := h.credentials.Generate(r.Context(), agentID)
+	if errors.Is(err, ports.ErrCredentialAgentNotFound) {
 		h.writeError(w, http.StatusNotFound, "agent not found", "")
 		return
 	}
-
-	// Check if credentials already exist (rotation)
-	existing, _ := h.credentialRepo.GetByAgentID(r.Context(), agentID)
-	isRotation := existing != nil
-
-	credential, plaintextSecret, err := h.clientAuth.GenerateCredentials(agentID)
 	if err != nil {
-		h.logger.Error("failed to generate credentials", "agent_id", agentID, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
-
-	now := time.Now()
-	credential.CreatedAt = now
-	if isRotation {
-		credential.RotatedAt = &now
-		if err := h.credentialRepo.Rotate(r.Context(), agentID, credential); err != nil {
-			h.logger.Error("failed to rotate credentials", "agent_id", agentID, "error", err)
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
-			return
-		}
-	} else {
-		if err := h.credentialRepo.Create(r.Context(), credential); err != nil {
-			h.logger.Error("failed to store credentials", "agent_id", agentID, "error", err)
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
-			return
-		}
-	}
+	credential := result.Credential
+	plaintextSecret := result.PlaintextSecret
+	isRotation := result.Rotated
 
 	resp := credentialGenerateResponse{
 		ClientID:     credential.AgentID.String(),
@@ -168,7 +144,7 @@ func (h *ClientCredentialsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cred, err := h.credentialRepo.GetByAgentID(r.Context(), agentID)
+	cred, err := h.credentials.Get(r.Context(), agentID)
 	if err != nil {
 		if ports.IsNotFoundErr(err) {
 			h.writeError(w, http.StatusNotFound, "credentials not found", "")
@@ -211,7 +187,7 @@ func (h *ClientCredentialsHandler) Revoke(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err = h.credentialRepo.Delete(r.Context(), agentID)
+	err = h.credentials.Revoke(r.Context(), agentID)
 	if err != nil {
 		if ports.IsNotFoundErr(err) {
 			h.writeError(w, http.StatusNotFound, "credentials not found", "")

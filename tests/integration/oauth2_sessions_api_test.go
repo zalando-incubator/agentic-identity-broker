@@ -1696,7 +1696,10 @@ func assertSessionError(t *testing.T, w *httptest.ResponseRecorder, status int, 
 func createOAuth2SessionService(
 	t *testing.T,
 	serviceRepo ports.ThirdpartyOAuth2ProviderRepository,
-	sessionRepo ports.UserSessionRepository,
+	sessionRepo interface {
+		ports.UserSessionRepository
+		ports.UserSessionRefreshRepository
+	},
 	grantRepo ports.UserGrantRepository,
 	encryption ports.EncryptionPort,
 	jweKey jwk.Key,
@@ -1710,7 +1713,10 @@ func createOAuth2SessionService(
 func createOAuth2SessionServiceWithAgentRepository(
 	t *testing.T,
 	serviceRepo ports.ThirdpartyOAuth2ProviderRepository,
-	sessionRepo ports.UserSessionRepository,
+	sessionRepo interface {
+		ports.UserSessionRepository
+		ports.UserSessionRefreshRepository
+	},
 	grantRepo ports.UserGrantRepository,
 	agentRepo ports.AgentRepository,
 	encryption ports.EncryptionPort,
@@ -1733,6 +1739,7 @@ func createOAuth2SessionServiceWithAgentRepository(
 
 	return oauth2session.NewOAuth2SessionService(
 		providerService,
+		sessionRepo,
 		sessionRepo,
 		grantRepo,
 		agentRepo,

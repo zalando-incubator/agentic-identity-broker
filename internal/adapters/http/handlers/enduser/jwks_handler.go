@@ -10,8 +10,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
-// jwksCacheMaxAgeSeconds is the Cache-Control max-age value for the JWKS endpoint.
-// The signing key grace period in signing_key_service.go must be a multiple of this value.
+// Broker-managed keys are revision-checked on each request before this public
+// cache age applies; external verifier caches remain outside broker control.
 const jwksCacheMaxAgeSeconds = 300
 
 // JWKSHandler serves the aggregated JWKS endpoint for public key discovery.

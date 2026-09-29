@@ -553,6 +553,15 @@ func (b *Builder) Build() (*App, error) {
 	// Build service configuration from application config
 	// Constitution Principle VII: Configuration-Driven Design
 	cfg := oauth2session.NewConfigFromPorts(b.config.ThirdPartyOAuth2, b.config.Server.EndUser.PublicURL)
+	readTimeout := b.config.Storage.Timeouts.Read
+	if readTimeout <= 0 {
+		readTimeout = 5 * time.Second
+	}
+	writeTimeout := b.config.Storage.Timeouts.Write
+	if writeTimeout <= 0 {
+		writeTimeout = 10 * time.Second
+	}
+	cfg.RefreshStorageTimeout = 2*readTimeout + 2*writeTimeout
 
 	upstreamClient := &http.Client{
 		Timeout: ov.upstreamTimeout,
@@ -573,6 +582,7 @@ func (b *Builder) Build() (*App, error) {
 	app.OAuth2SessionService = oauth2session.NewOAuth2SessionService(
 		app.ProviderService,
 		b.storage.UserSessions(),
+		b.storage.SessionRefresh(),
 		b.storage.UserGrants(),
 		b.storage.Agents(),
 		encryptor,
@@ -869,7 +879,8 @@ func (b *Builder) Build() (*App, error) {
 	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
 		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
 		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
-		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(b.storage.BrokerCredentials(), agentService, clientAuthService, b.logger)
+		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), clientAuthService, b.logger)
+		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
 		return signingKeyService
 	}
@@ -877,12 +888,9 @@ func (b *Builder) Build() (*App, error) {
 	// buildProxyStrategies constructs the proxy path strategies.
 	// Used in both "proxy" and "hybrid" modes.
 	buildProxyStrategies := func(upstreamTokenEndpoint string) (enduser.TokenGrantStrategy, enduser.AuthorizationProceedStrategy) {
-		grant := enduser.NewProxyTokenGrantStrategy(
-			upstreamTokenEndpoint,
-			upstreamClient,
-			multiAgentVerifier,
-			b.logger,
-		)
+		transport := enduser.NewOAuth2TokenProxy(upstreamTokenEndpoint, upstreamClient)
+		outcomes := oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier)
+		grant := enduser.NewProxyTokenGrantStrategy(upstreamTokenEndpoint, outcomes, b.logger)
 		proceed := enduser.NewProxyProceedStrategy()
 		return grant, proceed
 	}

@@ -469,9 +469,11 @@ func newSecurityTestOAuth2SessionService(
 	config.MaxRetries = maxRetries
 	config.RetryBaseDelay = time.Millisecond
 
+	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	return oauth2session.NewOAuth2SessionService(
 		providerService,
-		memory.NewInMemoryUserSessionRepository(),
+		sessionRepo,
+		sessionRepo,
 		memory.NewUserGrantRepository(),
 		memory.NewAgentRepository(),
 		encryption,
