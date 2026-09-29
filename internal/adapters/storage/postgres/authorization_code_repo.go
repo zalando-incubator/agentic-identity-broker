@@ -34,7 +34,7 @@ func (r *AuthorizationCodeRepo) Create(ctx context.Context, code *storage.Author
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.oauth2Executor(execCtx).ExecContext(execCtx,
+	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`INSERT INTO authorization_codes (id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, used_at, created_at, email, display_name)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		code.ID, code.CodeHash, code.AgentID, code.ClientID, code.Principal,
@@ -80,7 +80,7 @@ func (r *AuthorizationCodeRepo) MarkUsed(ctx context.Context, codeID id.Authoriz
 	defer cancel()
 
 	now := time.Now()
-	result, err := r.adapter.oauth2Executor(execCtx).ExecContext(execCtx,
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`UPDATE authorization_codes SET used_at = $1 WHERE id = $2 AND used_at IS NULL`, now, codeID)
 	if err != nil {
 		return storage.NewStorageError("AuthorizationCodeRepo.MarkUsed", storage.ErrorKindUnknown, err, "failed to mark code as used")

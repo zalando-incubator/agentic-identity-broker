@@ -477,29 +477,28 @@ func TestFindByProtectedResource_MixedScenarios(t *testing.T) {
 	}
 }
 
-// TestFindByProtectedResource_ClientSecretDecrypted tests that client_secret is properly decrypted
-func TestFindByProtectedResource_ClientSecretDecrypted(t *testing.T) {
+func TestFindByProtectedResource_LeavesSecretEncryptedUntilGet(t *testing.T) {
 	ctx, _, providerService, cleanup := setupThirdpartyProviderTestHarness(t)
 	defer cleanup()
-	var err error
 
-	// Create service with a specific secret
 	entity := createTestService(
 		"service-with-secret",
 		"Service With Secret",
 		[]string{"https://api.example.com"},
 	)
 	entity.Secret = model.NewPlaintextSecret("my-super-secret")
-	err = providerService.Create(ctx, entity)
-	require.NoError(t, err)
+	require.NoError(t, providerService.Create(ctx, entity))
 
-	// Find by resource via service to get decrypted secret
 	found, err := providerService.FindByProtectedResource(ctx, "https://api.example.com")
 	require.NoError(t, err)
-	require.NotNil(t, found)
-	p, err := found.Secret.GetPlaintext()
+	require.Equal(t, entity.ID, found.ID)
+	require.True(t, found.Secret.IsEncrypted(), "resource lookup must not decrypt the provider secret")
+
+	retrieved, err := providerService.Get(ctx, found.ID)
 	require.NoError(t, err)
-	require.Equal(t, "my-super-secret", p)
+	plaintext, err := retrieved.Secret.GetPlaintext()
+	require.NoError(t, err)
+	require.Equal(t, "my-super-secret", plaintext)
 }
 
 // TestFindByProtectedResource_InvalidResourceURI tests validation of empty resource URI

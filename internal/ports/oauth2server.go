@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	ErrLastActiveKey       = errors.New("cannot remove the last active signing key")
-	ErrCurrentKey          = errors.New("cannot remove the current signing key; promote another key first")
-	ErrEffectiveCurrentKey = errors.New("cannot remove a key that is still signing tokens; wait for the promoted key to activate or promote a different key")
+	ErrLastActiveKey           = errors.New("cannot remove the last active signing key")
+	ErrCurrentKey              = errors.New("cannot remove the current signing key; promote another key first")
+	ErrEffectiveCurrentKey     = errors.New("cannot remove a key that is still signing tokens; wait for the promoted key to activate or promote a different key")
+	ErrCredentialAgentNotFound = errors.New("agent not found")
 )
 
 // SigningKeyManager is the port for signing key lifecycle operations.
@@ -39,4 +40,17 @@ type SigningKeyBootstrapCoordinator interface {
 // Implemented by domain/oauth2server.ClientAuthService.
 type CredentialGenerator interface {
 	GenerateCredentials(agentID id.AgentID) (credential *storage.ClientCredential, plaintextSecret string, err error)
+}
+
+type CredentialGenerationResult struct {
+	Credential      *storage.ClientCredential
+	PlaintextSecret string
+	Rotated         bool
+}
+
+// ClientCredentialManager owns broker credential creation, replacement, and removal.
+type ClientCredentialManager interface {
+	Generate(ctx context.Context, agentID id.AgentID) (CredentialGenerationResult, error)
+	Get(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error)
+	Revoke(ctx context.Context, agentID id.AgentID) error
 }

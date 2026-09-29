@@ -56,6 +56,10 @@ Both commands must pass before you open a pull request.
 
 ## Making Changes
 
+### Repository Root
+
+Root contains only files that a tool requires there or that GitHub/Zalando OSS renders. Variants go in a subdirectory.
+
 ### Specification-Driven Development
 
 For new features, follow this workflow using [Speckit](https://speckit.org/):

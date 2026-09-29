@@ -8,7 +8,6 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/lib/pq"
 )
 
@@ -60,7 +59,7 @@ type PostgresUserSessionRepository struct {
 }
 
 // NewUserSessionRepository creates a new PostgreSQL user session repository.
-func NewUserSessionRepository(adapter *Adapter) ports.UserSessionRepository {
+func NewUserSessionRepository(adapter *Adapter) *PostgresUserSessionRepository {
 	return &PostgresUserSessionRepository{adapter: adapter}
 }
 
@@ -146,6 +145,63 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 		return nil, r.wrapError(err, "FindByPrincipalAndService")
 	}
 	return recordToSession(&rec), nil
+}
+
+// WithLockedSession re-reads and updates one session in a row-locked transaction.
+func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+	if principal.IsZero() || serviceID.IsZero() {
+		return nil, errors.New("principal and serviceID required")
+	}
+	if r.adapter.db == nil {
+		return nil, storage.NewStorageError("WithLockedSession", storage.ErrorKindConnection, nil, "database not initialized")
+	}
+
+	acquireCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	conn, err := r.adapter.db.Connx(acquireCtx)
+	cancel()
+	if err != nil {
+		return nil, r.wrapError(err, "WithLockedSession")
+	}
+	defer conn.Close() //nolint:errcheck
+
+	tx, err := conn.BeginTxx(ctx, nil)
+	if err != nil {
+		return nil, r.wrapError(err, "WithLockedSession")
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var rec userSessionRecord
+	readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	err = tx.GetContext(readCtx, &rec, `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
+	cancel()
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, r.wrapError(err, "WithLockedSession")
+	}
+	session := recordToSession(&rec)
+	updated, err := refresh(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	if updated {
+		if err := session.Validate(); err != nil {
+			return nil, err
+		}
+		writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+		_, err = tx.ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
+			access_token_expires_at = $3, updated_at = $4 WHERE id = $5`,
+			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt, session.UpdatedAt, session.ID)
+		cancel()
+		if err != nil {
+			return nil, r.wrapError(err, "WithLockedSession")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, r.wrapError(err, "WithLockedSession")
+	}
+	return session, nil
 }
 
 // ListByPrincipal retrieves all sessions for a principal, including expired ones.

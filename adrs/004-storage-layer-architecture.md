@@ -129,14 +129,14 @@ The storage backend is selected through configuration with the following precede
 **Example Configurations**:
 
 ```yaml
-# Development (config.dev.yaml)
+# Development (configs/config.dev.yaml)
 storage:
   backend: memory
   timeouts:
     read: 5s
     write: 10s
 
-# Production (config.prod.yaml)
+# Production (configs/config.prod.yaml)
 storage:
   backend: postgres
   postgres:
@@ -198,10 +198,10 @@ Moving from in-memory to PostgreSQL requires only configuration changes:
 
 ```bash
 # Development
-agentic-identity-broker --config config.dev.yaml
+agentic-identity-broker --config configs/config.dev.yaml
 
 # Production
-agentic-identity-broker --config config.prod.yaml
+agentic-identity-broker --config configs/config.prod.yaml
 ```
 
 No code changes needed - the same application binary works with both backends.

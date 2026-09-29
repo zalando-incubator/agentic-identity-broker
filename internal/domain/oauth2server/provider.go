@@ -52,7 +52,7 @@ func NewProvider(
 	refreshTokenTTL time.Duration,
 	tokenClaimsExpression string,
 	logger *slog.Logger,
-	transactions ...ports.OAuth2TransactionManager,
+	transactions ...ports.StorageTransactionManager,
 ) (*Provider, error) {
 	// Compile token claims CEL expression at startup (FR-013b: fail if invalid)
 	customClaimsEval, err := NewTokenClaimsEvaluator(tokenClaimsExpression)
