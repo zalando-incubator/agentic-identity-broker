@@ -351,33 +351,13 @@ func (s *ThirdpartyOAuth2ProviderService) Delete(
 	return nil
 }
 
-// FindByProtectedResource retrieves a provider by resource URI and decrypts confidential secrets.
-// Public providers are returned with their Secret in absent state. If decryption fails (e.g. after
-// switching encryption backends), the entity is returned with its Secret still in encrypted state.
-// This ensures that callers performing existence/ID checks (such as duplicate resource URI detection
-// in PUT/POST handlers) continue to work even when old ciphertexts cannot be decrypted.
+// FindByProtectedResource resolves a provider without decrypting its secret.
+// Confidential secrets remain encrypted until a caller retrieves the provider with Get or List.
 func (s *ThirdpartyOAuth2ProviderService) FindByProtectedResource(
 	ctx context.Context,
 	resourceURI string,
 ) (*model.ThirdpartyOAuth2ProviderEntity, error) {
-	entity, err := s.repo.FindByProtectedResource(ctx, resourceURI)
-	if err != nil {
-		return nil, err
-	}
-
-	if entity.IsPublicClient() {
-		return entity, nil
-	}
-
-	dec, decErr := s.decryptSecret(ctx, entity)
-	if decErr != nil {
-		s.logger.Warn("secret_decryption_failed_returning_encrypted",
-			"operation", "find_by_protected_resource",
-			"service_id", entity.ID,
-			"reason", decErr)
-		return entity, nil
-	}
-	return dec, nil
+	return s.repo.FindByProtectedResource(ctx, resourceURI)
 }
 
 // AddProtectedResource validates and atomically adds one protected resource.

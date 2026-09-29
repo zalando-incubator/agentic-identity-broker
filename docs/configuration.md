@@ -241,8 +241,10 @@ This section lists all configuration options. See [Available Settings](#availabl
 
 | Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
 |--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
-| `log.level` | enum | `info` | `debug`, `info`, `warn`, `error` | No | `IDENTITY_BROKER_LOG_LEVEL` | `--log-level` | Sets logging verbosity level. Use `debug` for troubleshooting, `info` for normal operation, `warn` for production. |
+| `log.level` | enum | `info` | `debug`, `info`, `warn`, `error` | No | `IDENTITY_BROKER_LOG_LEVEL` | `--log-level` | Sets logging verbosity. Use `info` to retain security audit events; `warn` and `error` suppress Info-level success records. |
 | `log.format` | enum | `text` | `text`, `json` | No | `IDENTITY_BROKER_LOG_FORMAT` | `--log-format` | Sets log output format. Use `json` for production and log aggregation systems. |
+
+Each successful confidential-provider secret decryption emits `service_secret_decrypted` at Info with the provider's `service_id`, including when listing services. The event does not include the secret.
 
 #### Encryption Configuration
 
