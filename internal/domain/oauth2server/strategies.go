@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/lestrrat-go/jwx/v4/jwt"
 	"github.com/ory/fosite"
 	fositeOAuth2 "github.com/ory/fosite/handler/oauth2"
@@ -81,22 +80,12 @@ func (s *JWXAccessTokenStrategy) GenerateAccessToken(ctx context.Context, reques
 }
 
 func (s *JWXAccessTokenStrategy) mintAccessToken(ctx context.Context, requester fosite.Requester, actor *actorClaim) (token string, signature string, err error) {
-	key, err := s.signingKeyService.GetCurrent(ctx)
+	signer, err := s.signingKeyService.signingMaterial(ctx)
 	if err != nil {
 		if isStorageNotFound(err) {
 			return "", "", fmt.Errorf("no signing key provisioned: create one via the admin API (POST /api/oauth2-server/signing-keys)")
 		}
-		return "", "", fmt.Errorf("failed to get current signing key: %w", err)
-	}
-
-	privPEM, err := s.signingKeyService.DecryptPrivateKey(ctx, key)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to decrypt signing key: %w", err)
-	}
-
-	privKey, err := jwk.ParseKey(privPEM, jwk.WithX509(true))
-	if err != nil {
-		return "", "", fmt.Errorf("failed to parse private key: %w", err)
+		return "", "", err
 	}
 
 	now := time.Now()
@@ -153,12 +142,7 @@ func (s *JWXAccessTokenStrategy) mintAccessToken(ctx context.Context, requester 
 		return "", "", buildErr
 	}
 
-	_ = privKey.Set(jwk.KeyIDKey, string(key.KID))
-	alg, err := algorithmToJWA(key.Algorithm)
-	if err != nil {
-		return "", "", fmt.Errorf("signing key %s has unrecognized algorithm %q: %w", key.KID, key.Algorithm, err)
-	}
-	signed, err := jwt.Sign(jwtToken, jwt.WithKey(alg, privKey))
+	signed, err := jwt.Sign(jwtToken, jwt.WithKey(signer.algorithm, signer.privateKey))
 	if err != nil {
 		return "", "", fmt.Errorf("failed to sign JWT: %w", err)
 	}

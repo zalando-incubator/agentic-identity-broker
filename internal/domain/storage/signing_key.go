@@ -8,7 +8,9 @@ import (
 
 // SigningKey represents an asymmetric key pair used to sign locally-issued JWT access tokens.
 // Exactly one key is marked is_current at any time. Private material is stored PEM-encoded
-// and encrypted via EncryptionPort. Keys remain in JWKS until explicitly removed.
+// and encrypted via EncryptionPort; public material is stored separately as a public JWK.
+// Legacy rows without public material derive it from the encrypted private key at read time.
+// Keys remain in JWKS until explicitly removed.
 //
 // ActivatesAt controls when the key becomes eligible for token signing. New keys are published
 // to the JWKS endpoint immediately but must wait until ActivatesAt before they sign tokens,

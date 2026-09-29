@@ -11,12 +11,15 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -556,6 +559,147 @@ func (e *countingDecryptor) DecryptCalls() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.decryptCalls
+}
+
+type blockingSignerDecryptor struct {
+	*testEncryptor
+	started    chan context.Context
+	release    chan struct{}
+	firstError error
+	calls      atomic.Int32
+}
+
+func (e *blockingSignerDecryptor) Decrypt(ctx context.Context, ciphertext []byte, encryptionContext map[string]string) ([]byte, error) {
+	if e.calls.Add(1) == 1 {
+		e.started <- ctx
+		select {
+		case <-e.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if e.firstError != nil {
+			return nil, e.firstError
+		}
+	}
+	return e.testEncryptor.Decrypt(ctx, ciphertext, encryptionContext)
+}
+
+func TestSigningKeyService_FailedSignerLoadSharesFlightAndAllowsCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		repo := newTestSigningKeyStore()
+		encryptor := &blockingSignerDecryptor{
+			testEncryptor: &testEncryptor{},
+			started:       make(chan context.Context, 1),
+			release:       make(chan struct{}),
+			firstError:    errors.New("decrypt unavailable"),
+		}
+		released := false
+		defer func() {
+			if !released {
+				close(encryptor.release)
+			}
+		}()
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+		key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+		require.NoError(t, err)
+
+		firstDone := make(chan error, 1)
+		go func() {
+			_, err := svc.signingMaterial(ctx)
+			firstDone <- err
+		}()
+		loadCtx := <-encryptor.started
+		deadline, ok := loadCtx.Deadline()
+		require.True(t, ok, "shared signer load must have a finite deadline")
+		assert.True(t, deadline.After(time.Now()) && deadline.Before(time.Now().Add(time.Minute)))
+
+		waitCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		cancelledDone := make(chan error, 1)
+		go func() {
+			_, err := svc.signingMaterial(waitCtx)
+			cancelledDone <- err
+		}()
+		activeDone := make(chan error, 1)
+		go func() {
+			_, err := svc.signingMaterial(ctx)
+			activeDone <- err
+		}()
+		synctest.Wait()
+		cancel()
+		select {
+		case err := <-cancelledDone:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(time.Second):
+			t.Fatal("canceled waiter blocked behind signer decryption")
+		}
+		require.NoError(t, loadCtx.Err(), "canceling one waiter must not cancel the shared load")
+
+		close(encryptor.release)
+		released = true
+		require.ErrorContains(t, <-firstDone, "decrypt unavailable")
+		require.ErrorContains(t, <-activeDone, "decrypt unavailable")
+		require.EqualValues(t, 1, encryptor.calls.Load(), "overlapping failures must share a single decrypt")
+
+		signer, err := svc.signingMaterial(ctx)
+		require.NoError(t, err, "a subsequent request must retry after failure")
+		assert.Equal(t, key.KID, signer.kid)
+		assert.EqualValues(t, 2, encryptor.calls.Load())
+	})
+}
+
+func TestSigningKeyService_InvalidateDuringSignerLoad(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestSigningKeyStore()
+	encryptor := &blockingSignerDecryptor{
+		testEncryptor: &testEncryptor{},
+		started:       make(chan context.Context, 1),
+		release:       make(chan struct{}),
+	}
+	released := false
+	defer func() {
+		if !released {
+			close(encryptor.release)
+		}
+	}()
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	next, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
+	require.NoError(t, err)
+
+	type result struct {
+		signer *cachedSigningKey
+		err    error
+	}
+	firstDone := make(chan result, 1)
+	go func() {
+		signer, err := svc.signingMaterial(ctx)
+		firstDone <- result{signer, err}
+	}()
+	<-encryptor.started
+	promoted := make(chan error, 1)
+	go func() {
+		_, err := svc.PromoteKey(ctx, next.KID)
+		promoted <- err
+	}()
+	select {
+	case err := <-promoted:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("promotion blocked behind signer decryption")
+	}
+	close(encryptor.release)
+	released = true
+	got := <-firstDone
+	require.NoError(t, got.err)
+	assert.Equal(t, next.KID, got.signer.kid, "stale flight must reselect the promoted key")
+	svc.signerMu.RLock()
+	cached := svc.cachedSigner
+	svc.signerMu.RUnlock()
+	require.NotNil(t, cached)
+	assert.Equal(t, next.KID, cached.kid)
 }
 
 func requirePublishedPublicJWK(t *testing.T, publicJWK []byte) jwk.Key {
@@ -1187,6 +1331,82 @@ func TestSigningKeyService_BuildJWKS_CanceledRequestDoesNotCancelSharedRebuild(t
 		t.Fatal("rebuild context must be canceled when the shared work exits")
 	}
 	require.Equal(t, 1, repo.ListCalls())
+}
+
+func TestJWXAccessTokenStrategy_WarmSignerVerifiesAcrossReplicasWithoutDecryption(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newTestSigningKeyService()
+	_, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+
+	otherReplica := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger())
+	set, err := otherReplica.BuildJWKS(ctx)
+	require.NoError(t, err, "persisted public JWK must be served without private-key decryption")
+	_, err = jwt.Parse([]byte(token), jwt.WithKeySet(set))
+	require.NoError(t, err, "a token must verify using another replica's public JWKS")
+
+	svc.encryption = &failingDecryptor{}
+	warmToken, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err, "cached signer remains usable when its public JWK is persisted")
+	_, err = jwt.Parse([]byte(warmToken), jwt.WithKeySet(set))
+	require.NoError(t, err)
+	require.NoError(t, strategy.ValidateAccessToken(ctx, nil, warmToken))
+}
+
+func TestJWXAccessTokenStrategy_LegacyCachedSignerFailsWhenJWKSUnavailable(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestSigningKeyStore()
+	privatePEM, err := generateES256KeyPEM()
+	require.NoError(t, err)
+	legacy := &storage.SigningKey{
+		ID:                  id.NewSigningKeyID(),
+		KID:                 id.NewKeyID(uuid.New().String()),
+		Algorithm:           "ES256",
+		PrivateKeyEncrypted: append([]byte("ENC:"), privatePEM...),
+		IsCurrent:           true,
+		ActivatesAt:         time.Now().Add(-time.Second),
+	}
+	require.NoError(t, repo.Create(ctx, legacy))
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	_, _, err = strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+
+	svc.encryption = &failingDecryptor{}
+	_, err = svc.BuildJWKS(ctx)
+	require.Error(t, err)
+	token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.Error(t, err, "a legacy signer without a persisted public JWK cannot issue when its verification key cannot be served")
+	assert.Empty(t, token)
+}
+
+func TestJWXAccessTokenStrategy_RejectsMismatchedStoredPublicKey(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := newTestSigningKeyService()
+	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
+	require.NoError(t, err)
+	other, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
+	require.NoError(t, err)
+	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
+	require.NoError(t, err)
+	_, _, err = strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.NoError(t, err)
+
+	otherJWK := requirePublishedPublicJWK(t, other.PublicJWK)
+	require.NoError(t, otherJWK.Set(jwk.KeyIDKey, first.KID.String()))
+	mismatchedPublicJWK, err := json.Marshal(otherJWK)
+	require.NoError(t, err)
+	repo.mu.Lock()
+	repo.byKID[first.KID].PublicJWK = mismatchedPublicJWK
+	repo.mu.Unlock()
+	token, _, err := strategy.GenerateAccessToken(ctx, buildTestRequest("agent", "user@example.com", []string{"read"}))
+	require.ErrorContains(t, err, "public key does not match private key")
+	assert.Empty(t, token)
 }
 
 type failingSetJWK struct {
