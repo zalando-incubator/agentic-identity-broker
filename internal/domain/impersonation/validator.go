@@ -29,7 +29,8 @@ type signedValidator struct {
 	cacheByProvider   bool
 }
 
-// verifiedCredentialCache memoizes verification outcomes only during one impersonation request.
+// verifiedCredentialCache is local to one Service.Impersonate call and shared only across its rules.
+// Equal keys in later calls use a new cache.
 type verifiedCredentialCache struct {
 	verified map[verificationCacheKey]verificationResult
 }
