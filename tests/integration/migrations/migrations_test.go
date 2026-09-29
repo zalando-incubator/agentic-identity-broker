@@ -515,7 +515,7 @@ func TestMigration033VerifiesLegacySignature(t *testing.T) {
 	signedBeforeMigration, err := jwt.Sign(token, jwt.WithKey(jwa.ES256(), signingJWK))
 	require.NoError(t, err)
 
-	require.NoError(t, f.Up(t, 33))
+	require.NoError(t, f.Up(t, 34))
 	adapter, err := postgres.NewAdapter(&ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: f.connStr}})
 	require.NoError(t, err)
 	require.NoError(t, adapter.Initialize(ctx))
@@ -540,15 +540,15 @@ func TestMigration033VerifiesLegacySignature(t *testing.T) {
 	assert.Equal(t, "legacy-user", subject)
 }
 
-func TestMigration033KeyDomain(t *testing.T) {
+func TestMigration034KeyDomain(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
 
-	// Step 1: Create legacy signing keys before migration 033 adds their domain.
-	require.NoError(t, f.Up(t, 32))
+	// Step 1: Create legacy signing keys before migration 034 adds their domain.
+	require.NoError(t, f.Up(t, 33))
 	exists, err := f.ColumnExists(t, "signing_keys", "key_domain")
 	require.NoError(t, err)
-	assert.False(t, exists, "key_domain must not exist before migration 033")
+	assert.False(t, exists, "key_domain must not exist before migration 034")
 	require.NoError(t, f.ExecuteSQL(t, `
 		INSERT INTO signing_keys
 			(id, kid, algorithm, private_key_encrypted, is_current, activates_at, created_at)
@@ -557,11 +557,11 @@ func TestMigration033KeyDomain(t *testing.T) {
 			('32000000-0000-0000-0000-000000000002', 'legacy-previous-signing-key', 'ES256', '\x02', false, NOW(), NOW());
 	`))
 
-	// Step 2: Migration 033 backfills every legacy key into the token-signing domain.
-	require.NoError(t, f.Up(t, 33))
+	// Step 2: Migration 034 backfills every legacy key into the token-signing domain.
+	require.NoError(t, f.Up(t, 34))
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(33), version)
+	assert.Equal(t, uint(34), version)
 	assert.False(t, dirty)
 
 	exists, err = f.ColumnExists(t, "signing_keys", "key_domain")
@@ -575,20 +575,20 @@ func TestMigration033KeyDomain(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "true", strings.TrimSpace(legacyDomains), "legacy signing keys must become token-signing keys")
 
-	// Step 3: Migration 033 permits only the defined signing-key domains.
+	// Step 3: Migration 034 permits only the defined signing-key domains.
 	err = f.ExecuteSQL(t, `
 		INSERT INTO signing_keys
 			(id, kid, key_domain, algorithm, private_key_encrypted, is_current, activates_at, created_at)
 		VALUES
 			('32000000-0000-0000-0000-000000000004', 'unsupported-signing-key-domain', 'unsupported_domain', 'ES256', '\x04', false, NOW(), NOW());
 	`)
-	assert.Error(t, err, "migration 033 must reject unsupported signing-key domains")
+	assert.Error(t, err, "migration 034 must reject unsupported signing-key domains")
 
 	// Step 4: Replaying the applied migration is a no-op.
-	require.NoError(t, f.Up(t, 33))
+	require.NoError(t, f.Up(t, 34))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(33), version)
+	assert.Equal(t, uint(34), version)
 	assert.False(t, dirty)
 
 	// Step 5: A current CIMD key can coexist with a current token-signing key.
@@ -599,12 +599,12 @@ func TestMigration033KeyDomain(t *testing.T) {
 			('32000000-0000-0000-0000-000000000003', 'cimd-client-authentication-key', 'cimd_client_authentication', 'ES256', '\x03', true, NOW(), NOW());
 	`))
 
-	// Step 6: Migration 033 must not discard CIMD key material during rollback.
-	err = f.Down(t, 32)
-	require.Error(t, err, "migration 033 rollback must refuse while CIMD keys exist")
+	// Step 6: Migration 034 must not discard CIMD key material during rollback.
+	err = f.Down(t, 33)
+	require.Error(t, err, "migration 034 rollback must refuse while CIMD keys exist")
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(32), version)
+	assert.Equal(t, uint(33), version)
 	assert.True(t, dirty)
 
 	cimdKeyIsIntact, err := f.QuerySQL(t, `
@@ -619,23 +619,23 @@ func TestMigration033KeyDomain(t *testing.T) {
 	assert.Equal(t, "true", strings.TrimSpace(cimdKeyIsIntact), "failed rollback must preserve the blocking CIMD key identity and ciphertext")
 
 	// Step 7: Once the CIMD key is gone, rollback and a subsequent replay both succeed.
-	require.NoError(t, f.Force(t, 33))
+	require.NoError(t, f.Force(t, 34))
 	require.NoError(t, f.ExecuteSQL(t, `
 		DELETE FROM signing_keys WHERE kid = 'cimd-client-authentication-key';
 	`))
-	require.NoError(t, f.Down(t, 32))
+	require.NoError(t, f.Down(t, 33))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(32), version)
+	assert.Equal(t, uint(33), version)
 	assert.False(t, dirty)
 	exists, err = f.ColumnExists(t, "signing_keys", "key_domain")
 	require.NoError(t, err)
 	assert.False(t, exists)
 
-	require.NoError(t, f.Up(t, 33))
+	require.NoError(t, f.Up(t, 34))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(33), version)
+	assert.Equal(t, uint(34), version)
 	assert.False(t, dirty)
 	legacyDomains, err = f.QuerySQL(t, `
 		SELECT bool_and(key_domain = 'token_signing')
@@ -646,12 +646,12 @@ func TestMigration033KeyDomain(t *testing.T) {
 	assert.Equal(t, "true", strings.TrimSpace(legacyDomains), "migration replay must backfill legacy signing keys again")
 }
 
-func TestMigration034PrivateKeyJWTAuthentication(t *testing.T) {
+func TestMigration035PrivateKeyJWTAuthentication(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
 
-	// Step 1: Preserve legacy static and public service rows before migration 034.
-	require.NoError(t, f.Up(t, 33))
+	// Step 1: Preserve legacy static and public service rows before migration 035.
+	require.NoError(t, f.Up(t, 34))
 	require.NoError(t, f.ExecuteSQL(t, `
 		INSERT INTO thirdparty_oauth2_services
 			(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method, issuer_uri, enable_discovery, scopes)
@@ -662,11 +662,11 @@ func TestMigration034PrivateKeyJWTAuthentication(t *testing.T) {
 			 NULL, 'none', 'https://oauth.example.com', false, '[]');
 	`))
 
-	// Step 2: Migration 034 preserves existing authentication states.
-	require.NoError(t, f.Up(t, 34))
+	// Step 2: Migration 035 preserves existing authentication states.
+	require.NoError(t, f.Up(t, 35))
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(34), version)
+	assert.Equal(t, uint(35), version)
 	assert.False(t, dirty)
 
 	legacyRowsPreserved, err := f.QuerySQL(t, `
@@ -685,7 +685,7 @@ func TestMigration034PrivateKeyJWTAuthentication(t *testing.T) {
 		);
 	`)
 	require.NoError(t, err)
-	assert.Equal(t, "true", strings.TrimSpace(legacyRowsPreserved), "migration 034 must preserve legacy static and public services")
+	assert.Equal(t, "true", strings.TrimSpace(legacyRowsPreserved), "migration 035 must preserve legacy static and public services")
 
 	// Step 3: private_key_jwt services must not retain shared-secret ciphertext.
 	err = f.ExecuteSQL(t, `
@@ -696,7 +696,7 @@ func TestMigration034PrivateKeyJWTAuthentication(t *testing.T) {
 			 'https://broker.example.com/.well-known/oauth-client/33000000-0000-0000-0000-000000000004',
 			 '\x04', 'private_key_jwt', 'https://oauth.example.com', false, '[]');
 	`)
-	assert.Error(t, err, "migration 034 must reject private_key_jwt services with shared-secret ciphertext")
+	assert.Error(t, err, "migration 035 must reject private_key_jwt services with shared-secret ciphertext")
 
 	// Step 4: A CIMD service may use private_key_jwt only without a shared secret.
 	require.NoError(t, f.ExecuteSQL(t, `
@@ -709,18 +709,18 @@ func TestMigration034PrivateKeyJWTAuthentication(t *testing.T) {
 	`))
 
 	// Step 5: Replaying an applied migration is a no-op.
-	require.NoError(t, f.Up(t, 34))
+	require.NoError(t, f.Up(t, 35))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(34), version)
+	assert.Equal(t, uint(35), version)
 	assert.False(t, dirty)
 
 	// Step 6: Rollback must not discard CIMD authentication state.
-	err = f.Down(t, 33)
-	require.Error(t, err, "migration 034 rollback must refuse while CIMD services exist")
+	err = f.Down(t, 34)
+	require.Error(t, err, "migration 035 rollback must refuse while CIMD services exist")
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(33), version)
+	assert.Equal(t, uint(34), version)
 	assert.True(t, dirty)
 
 	cimdServiceIsIntact, err := f.QuerySQL(t, `
@@ -732,15 +732,15 @@ func TestMigration034PrivateKeyJWTAuthentication(t *testing.T) {
 	assert.Equal(t, "true", strings.TrimSpace(cimdServiceIsIntact))
 
 	// Step 7: Once CIMD state is removed, rollback restores the preceding authentication constraint.
-	require.NoError(t, f.Force(t, 34))
+	require.NoError(t, f.Force(t, 35))
 	require.NoError(t, f.ExecuteSQL(t, `
 		DELETE FROM thirdparty_oauth2_services
 		WHERE id = '33000000-0000-0000-0000-000000000003';
 	`))
-	require.NoError(t, f.Down(t, 33))
+	require.NoError(t, f.Down(t, 34))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(33), version)
+	assert.Equal(t, uint(34), version)
 	assert.False(t, dirty)
 
 	err = f.ExecuteSQL(t, `
@@ -751,10 +751,10 @@ func TestMigration034PrivateKeyJWTAuthentication(t *testing.T) {
 			 'https://broker.example.com/.well-known/oauth-client/33000000-0000-0000-0000-000000000005',
 			 NULL, 'private_key_jwt', 'https://oauth.example.com', false, '[]');
 	`)
-	assert.Error(t, err, "migration 034 rollback must reject private_key_jwt services")
+	assert.Error(t, err, "migration 035 rollback must reject private_key_jwt services")
 
-	// Step 8: Reapplying migration 034 preserves the legacy authentication states.
-	require.NoError(t, f.Up(t, 34))
+	// Step 8: Reapplying migration 035 preserves the legacy authentication states.
+	require.NoError(t, f.Up(t, 35))
 	legacyRowsPreserved, err = f.QuerySQL(t, `
 		SELECT bool_and(
 			(id = '33000000-0000-0000-0000-000000000001'

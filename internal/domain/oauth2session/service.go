@@ -58,8 +58,8 @@ func addProviderAuthorizationParams(values url.Values, params map[string]string)
 type OAuth2SessionService struct {
 	providerService     *thirdparty.ThirdpartyOAuth2ProviderService // Domain service that handles encryption/decryption
 	sessionRepo         ports.UserSessionRepository
-	refreshRepo     ports.UserSessionRefreshRepository
-	refreshGroup    singleflight.Group
+	refreshRepo         ports.UserSessionRefreshRepository
+	refreshGroup        singleflight.Group
 	grantRepo           ports.UserGrantRepository // For dependent agents
 	agentRepo           ports.AgentRepository     // For agent display names
 	encryption          ports.EncryptionPort

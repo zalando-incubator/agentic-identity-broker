@@ -679,7 +679,7 @@ func TestPostgresAdapter_CIMDKeyDomainPersistence(t *testing.T) {
 }
 
 func TestPostgresAdapter_CIMDKeyDomainRollbackPreservesState(t *testing.T) {
-	sharedPostgres, dbName, connStr, cleanupDatabase := setupCIMDKeyDomainDatabase(t, 33)
+	sharedPostgres, dbName, connStr, cleanupDatabase := setupCIMDKeyDomainDatabase(t, 34)
 	defer cleanupDatabase()
 
 	store, cleanupStore := newCIMDKeyDomainStorage(t, connStr)
