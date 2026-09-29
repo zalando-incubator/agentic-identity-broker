@@ -591,7 +591,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
-	opaInput, buildErr := builder.Build(bodyBytes, decodeJSONBody(bodyBytes))
+	opaInput, buildErr := builder.Build(bodyBytes, decodeJSONBody(bodyBytes, state.protocol == "mcp"))
 	if buildErr != nil {
 		logger.WarnContext(ctx, "OPA: failed to parse request body — denying", "resource", sanitizedURI, "error", buildErr)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
@@ -761,14 +761,88 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 	return echoRequestBody(body)
 }
 
-func decodeJSONBody(body []byte) any {
+func decodeJSONBody(body []byte, isMCP bool) any {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	var parsed any
-	if decoder.Decode(&parsed) != nil || len(bytes.TrimSpace(body[decoder.InputOffset():])) != 0 {
+	var err error
+	if isMCP {
+		parsed, err = decodeMCPMessage(decoder)
+	} else {
+		err = decoder.Decode(&parsed)
+	}
+	if err != nil || len(bytes.TrimSpace(body[decoder.InputOffset():])) != 0 {
 		return nil
 	}
 	return parsed
+}
+
+func decodeMCPMessage(decoder *json.Decoder) (map[string]any, error) {
+	opening, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if opening != json.Delim('{') {
+		return nil, errors.New("MCP message must be a JSON object")
+	}
+	return decodeMCPObject(decoder, false)
+}
+
+func decodeMCPObject(decoder *json.Decoder, params bool) (map[string]any, error) {
+	object := make(map[string]any)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		key := token.(string)
+		if params {
+			switch {
+			case strings.EqualFold(key, "name"):
+				key = "name"
+			case strings.EqualFold(key, "arguments"):
+				key = "arguments"
+			}
+		} else {
+			for _, field := range [...]string{"jsonrpc", "id", "method", "params"} {
+				if strings.EqualFold(key, field) {
+					key = field
+					break
+				}
+			}
+		}
+		if _, exists := object[key]; exists {
+			return nil, errors.New("duplicate MCP object member")
+		}
+		var value any
+		if !params && key == "params" {
+			var opening json.Token
+			opening, err = decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			if opening != nil {
+				if opening != json.Delim('{') {
+					return nil, errors.New("MCP params must be an object")
+				}
+				value, err = decodeMCPObject(decoder, true)
+			}
+		} else {
+			err = decoder.Decode(&value)
+		}
+		if err != nil {
+			return nil, err
+		}
+		object[key] = value
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if closing != json.Delim('}') {
+		return nil, errors.New("invalid MCP object")
+	}
+	return object, nil
 }
 
 type decodedBatchMessage struct {
@@ -789,8 +863,8 @@ func decodeJSONBatch(body []byte) ([]decodedBatchMessage, error) {
 	var messages []decodedBatchMessage
 	for decoder.More() {
 		start := decoder.InputOffset()
-		var parsed any
-		if err := decoder.Decode(&parsed); err != nil {
+		parsed, err := decodeMCPMessage(decoder)
+		if err != nil {
 			return nil, err
 		}
 		raw := bytes.TrimLeft(body[start:decoder.InputOffset()], " \t\r\n,")

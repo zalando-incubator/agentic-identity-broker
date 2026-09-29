@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -33,6 +34,7 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	httpv3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"github.com/mark3labs/mcp-go/mcp"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -2166,15 +2168,27 @@ func TestServer_OPA_BatchBodyPhase_MalformedEnvelopeDeniesBeforeEvaluation(t *te
 	assert.Zero(t, evaluateCalls)
 }
 
-func TestServer_OPA_CaseFoldedEnvelopeKeys_DeniedBeforePolicy(t *testing.T) {
+func TestServer_OPA_AmbiguousMCPMembers_DeniedBeforePolicy(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		body []byte
+		name                string
+		body                []byte
+		downstreamArguments map[string]any
 	}{
-		{name: "standalone", body: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}`)},
-		{name: "batch", body: []byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}]`)},
+		{name: "standalone case-folded method", body: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}`)},
+		{name: "batch case-folded method", body: []byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}]`)},
+		{name: "standalone repeated params", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}`), downstreamArguments: map[string]any{"env": "prod"}},
+		{name: "batch repeated params", body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}]`)},
+		{name: "case-folded tool name", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"read","Name":"delete"}}`)},
+		{name: "standalone case-folded arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`), downstreamArguments: map[string]any{"env": "prod"}},
+		{name: "repeated arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"arguments":{"env":"prod"}}}`)},
+		{name: "batch case-folded arguments", body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}]`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.downstreamArguments != nil {
+				var downstream mcp.CallToolRequest
+				require.NoError(t, json.Unmarshal(tc.body, &downstream))
+				assert.Equal(t, tc.downstreamArguments, downstream.GetArguments(), "downstream would execute these arguments")
+			}
 			var policyCalls int
 			auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
 				policyCalls++
@@ -2189,9 +2203,9 @@ func TestServer_OPA_CaseFoldedEnvelopeKeys_DeniedBeforePolicy(t *testing.T) {
 			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, tc.body)
 			require.NotNil(t, bodyResp)
 			immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-			require.True(t, ok, "ambiguous MCP method must be denied")
+			require.True(t, ok, "ambiguous MCP request must be denied")
 			assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
-			assert.Zero(t, policyCalls, "ambiguous MCP method must not reach policy")
+			assert.Zero(t, policyCalls, "ambiguous MCP request must not reach policy")
 		})
 	}
 }
@@ -2251,13 +2265,17 @@ result := {"action": "allow"} if {
 func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
+		idKey        string
 		id           json.RawMessage
+		params       string
 		invocationID string
 	}{
-		{name: "numeric id", id: json.RawMessage(`42`), invocationID: "42"},
-		{name: "string id", id: json.RawMessage(`"call-42"`), invocationID: "call-42"},
-		{name: "large numeric id", id: json.RawMessage(`9007199254740993`), invocationID: "9007199254740993"},
-		{name: "exponent id", id: json.RawMessage(`1e+3`), invocationID: "1e+3"},
+		{name: "numeric id", idKey: "id", id: json.RawMessage(`42`), invocationID: "42"},
+		{name: "case-insensitive numeric id", idKey: "ID", id: json.RawMessage(`42`), invocationID: "42"},
+		{name: "case-insensitive tool params", idKey: "ID", id: json.RawMessage(`42`), params: `{"Name":"deploy","Arguments":{"environment":"production"}}`, invocationID: "42"},
+		{name: "string id", idKey: "id", id: json.RawMessage(`"call-42"`), invocationID: "call-42"},
+		{name: "large numeric id", idKey: "id", id: json.RawMessage(`9007199254740993`), invocationID: "9007199254740993"},
+		{name: "exponent id", idKey: "id", id: json.RawMessage(`1e+3`), invocationID: "1e+3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -2292,7 +2310,10 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 					}
 					if mcpInput, ok := input["mcp"].(map[string]any); ok {
 						gotMCPSession, _ = mcpInput["session_id"].(string)
+						assert.Equal(t, tc.invocationID, fmt.Sprint(mcpInput["id"]))
 					}
+					parsedBody := input["parsed_body"].(map[string]any)
+					assert.Equal(t, tc.invocationID, fmt.Sprint(parsedBody["id"]))
 					mu.Unlock()
 					return &authorization.OPADecision{Action: authorization.ActionApprovalRequired, ApprovalContext: &authorization.ApprovalContext{Description: "Review deployment", RiskLevel: "medium"}}, nil
 				},
@@ -2309,7 +2330,11 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, cfg, exchanger, auth, gate)
 			defer cleanup()
 
-			body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":` + string(tc.id) + `,"params":{"name":"deploy","arguments":{"environment":"production"}}}`)
+			params := tc.params
+			if params == "" {
+				params = `{"name":"deploy","arguments":{"environment":"production"}}`
+			}
+			body := []byte(`{"jsonrpc":"2.0","method":"tools/call","` + tc.idKey + `":` + string(tc.id) + `,"params":` + params + `}`)
 			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
 				":method":         "POST",
 				":path":           "http://mcp-server:9003/mcp",
@@ -2423,6 +2448,51 @@ func TestServer_OPA_ApprovalRequired_UsesBrokerAuthoritativeIdentityForCacheKey(
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Zero(t, brokerCalls)
+}
+
+func TestServer_OPA_AmbiguousArgumentsCannotUseCachedApproval(t *testing.T) {
+	permanent := "permanent"
+	approvedAt := time.Now()
+	cache := approval.NewCache(time.Minute, time.Minute)
+	cache.Replace([]approval.Pair{{
+		Identity: approval.Identity{Principal: "verified@example.com", AgentID: "canonical-agent-id"},
+		Approvals: []approval.Record{{
+			ID: "dev-approval", ToolPattern: "deploy", ParamsPattern: map[string]string{"env": "dev"},
+			Status: "approved", Persistence: &permanent, ApprovedAt: &approvedAt,
+		}},
+	}}, "etag-1")
+	var policyCalls int
+	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+		policyCalls++
+		return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
+	}}
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id"}, nil
+	}}
+	broker := &mockApprovalBroker{
+		readFunc: func(context.Context, string, []string) ([]approval.Pair, string, error) {
+			return nil, "", errors.New("ambiguous request must not reach approval broker")
+		},
+		createFunc: func(context.Context, string, approval.CreateRequest) (string, error) {
+			return "", errors.New("ambiguous request must not create approval")
+		},
+		consumeFunc: func(context.Context, string, string) error {
+			return errors.New("ambiguous request must not consume approval")
+		},
+	}
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker))
+	defer cleanup()
+
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`)
+	var downstream mcp.CallToolRequest
+	require.NoError(t, json.Unmarshal(body, &downstream))
+	assert.Equal(t, "prod", downstream.GetString("env", ""))
+	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, body)
+	require.NotNil(t, bodyResp)
+	immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+	require.True(t, ok, "a dev approval must not allow a prod tool invocation")
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+	assert.Zero(t, policyCalls, "ambiguous arguments must not reach policy or approval")
 }
 
 func TestServer_OPA_ApprovalRequired_WithoutGateDenies(t *testing.T) {

@@ -899,7 +899,7 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 
 **Body input construction**: In OPA mode, ExtProc decodes each body or JSON-RPC batch element once, preserving JSON numbers with `json.Number` and the original raw bytes for `attributes.request.http.body`. MCP fields and approval invocations use the decoded value. `InputBuilder` converts Envoy-compatible headers once per request; batch elements receive independent input documents. The authorizer converts each document to `ast.Value` before policy evaluation. Header-only requests retain their separate input path, and requests without OPA do not inspect bodies.
 
-**MCP envelope ambiguity**: With OPA enabled, ExtProc rejects standalone requests and batch elements containing case-folded duplicates of `jsonrpc`, `id`, `method`, or `params` before evaluating the affected message. This keeps policy decisions aligned with downstream struct decoders that accept case-insensitive keys.
+**MCP member ambiguity**: With OPA enabled, ExtProc rejects standalone requests and batch elements with repeated JSON-RPC envelope members, including case-folded variants of `jsonrpc`, `id`, `method`, and `params`. It also rejects repeated `params.name` and `params.arguments`, including case-folded variants, before policy or approval evaluation. Unique case-insensitive spellings of these members are normalized for policy input and approval correlation, while the forwarded body remains unchanged. This keeps decisions aligned with downstream struct decoders.
 
 #### 3.2.2. gRPC Server
 
