@@ -679,6 +679,7 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 - **OAuth2SessionService**: Transparently encrypts tokens on CreateSession, decrypts on retrieval
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
 - **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of confidential provider `client_secret` values via the `Secret` value object. Public services have no client secret. No other layer touches `EncryptionPort` for provider secrets.
+- Protected-resource resolution leaves confidential provider secrets encrypted and public-provider secrets absent. Token exchange uses only the provider ID and display name; a refresh retrieves credentials separately through `ThirdpartyOAuth2ProviderService.Get()`. Successful secret decryption is logged at Debug.
 - No manual encryption steps required in calling code - encryption is transparent
 
 **Secret Value Object** (`internal/domain/model/secret.go`):
@@ -1461,6 +1462,8 @@ The public JWK is a verification trust anchor: write access to `signing_keys.pub
 Legacy JWKS rebuilds share work across requests but have their own 30-second deadline; canceling one request does not cancel a rebuild needed by other callers. If a legacy public key was derived but the backfill write fails, the broker logs a warning and publishes the derived key for that rebuild. A not-found result from concurrent key removal still prevents publication; malformed stored public JWKs are never replaced with decrypted material.
 
 The conditional legacy public-JWK backfill reports whether this call wrote the trust anchor or another writer already set it. A structured event records `kid`, `outcome` (`written` or `already_set`), UTC `at`, and an RFC 7638 SHA-256 public-key thumbprint; for `already_set`, the fingerprint is read from the persisted key. No private material is logged.
+
+**Token signing cache**: `SigningKeyService` caches the current signer's parsed private JWK, identified by `kid` and its published public key, for up to 45 seconds per process; a deadline timer clears idle entries. Repeated local-token issuance reuses it without decrypting or parsing the PEM again; simultaneous misses, including failed decryptions, share one in-flight load with a 30-second deadline, and each request can cancel its wait independently. Keys without persisted public material are never cached because their JWKS availability still depends on decrypting the private key on each request. Successful key generation, promotion, and deletion invalidate the local cache; loads still in progress when invalidation occurs are discarded and reselect the current key. Every mint still reads `GetCurrent` from the repository before using cached material, so a different replica's promotion or deletion changes key selection immediately rather than allowing an old signer to issue tokens against a newer JWKS. Failed lookups or decryptions do not fall back to cached material.
 
 **SigningKeyBootstrapCoordinator**: Port in `internal/ports/oauth2server.go` that serializes `EnsureInitialKey` across broker replicas sharing a backend. Memory uses an in-process lock; PostgreSQL uses an advisory transaction lock. Callers must perform all bootstrap work with the callback context supplied by the coordinator.
 

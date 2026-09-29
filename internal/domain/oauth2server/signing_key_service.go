@@ -1,6 +1,7 @@
 package oauth2server
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -42,7 +43,22 @@ const jwksCacheTTL = 45 * time.Second
 
 var errJWKSCacheInvalidated = errors.New("JWKS cache invalidated during rebuild")
 
+var errSignerCacheInvalidated = errors.New("signer cache invalidated during load")
+
 const bootstrapRecoveryProbeTimeout = 5 * time.Second
+
+// Limits reuse of decrypted signing material, even when the selected key does not change.
+const signingKeyCacheTTL = 45 * time.Second
+
+const signerLoadTimeout = 30 * time.Second
+
+type cachedSigningKey struct {
+	kid        id.KeyID
+	privateKey jwk.Key
+	publicJWK  []byte
+	algorithm  jwa.SignatureAlgorithm
+	expiresAt  time.Time
+}
 
 // SigningKeyService manages signing key lifecycle including generation,
 // encryption, storage, and JWKS building.
@@ -59,6 +75,11 @@ type SigningKeyService struct {
 	jwksVersion    int64
 	jwksGeneration uint64
 	jwksFlight     singleflight.Group
+	signerFlight   singleflight.Group
+	signerMu       sync.RWMutex
+	cachedSigner   *cachedSigningKey
+	signerTimer    *time.Timer
+	signerVersion  uint64
 }
 
 // NewSigningKeyService creates a new SigningKeyService.
@@ -157,6 +178,7 @@ func (s *SigningKeyService) generateAndStore(ctx context.Context, algorithm stri
 		}
 	}
 	s.invalidateJWKSCache()
+	s.invalidateSigner()
 
 	s.logger.Info("signing key generated", "kid", kid, "algorithm", algorithm, "is_current", makeCurrent, "activates_at", activatesAt)
 	return key, nil
@@ -359,12 +381,138 @@ func (s *SigningKeyService) PromoteKey(ctx context.Context, kid id.KeyID) (*stor
 		return nil, err
 	}
 	s.invalidateJWKSCache()
+	s.invalidateSigner()
 	return key, nil
 }
 
 // GetCurrent returns the active signing key used for token signing.
 func (s *SigningKeyService) GetCurrent(ctx context.Context) (*storage.SigningKey, error) {
 	return s.repo.GetCurrent(ctx)
+}
+
+func (s *SigningKeyService) signingMaterial(ctx context.Context) (*cachedSigningKey, error) {
+	for {
+		key, err := s.GetCurrent(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current signing key: %w", err)
+		}
+
+		s.signerMu.RLock()
+		if signer := s.cachedSigner; signer != nil && len(key.PublicJWK) > 0 && signer.kid == key.KID && bytes.Equal(signer.publicJWK, key.PublicJWK) && time.Now().Before(signer.expiresAt) {
+			s.signerMu.RUnlock()
+			return signer, nil
+		}
+		s.signerMu.RUnlock()
+
+		s.signerMu.Lock()
+		if signer := s.cachedSigner; signer != nil && len(key.PublicJWK) > 0 && signer.kid == key.KID && bytes.Equal(signer.publicJWK, key.PublicJWK) && time.Now().Before(signer.expiresAt) {
+			s.signerMu.Unlock()
+			return signer, nil
+		}
+		s.clearSignerLocked()
+		generation := s.signerVersion
+		flightKey := strconv.FormatUint(generation, 10) + ":" + key.KID.String() + ":" + string(key.PublicJWK)
+		resultCh := s.signerFlight.DoChan(flightKey, func() (interface{}, error) {
+			return s.loadAndCacheSigner(ctx, key, generation)
+		})
+		s.signerMu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result := <-resultCh:
+			if errors.Is(result.Err, errSignerCacheInvalidated) {
+				continue
+			}
+			if result.Err != nil {
+				return nil, result.Err
+			}
+			return result.Val.(*cachedSigningKey), nil
+		}
+	}
+}
+
+func (s *SigningKeyService) loadAndCacheSigner(ctx context.Context, key *storage.SigningKey, generation uint64) (*cachedSigningKey, error) {
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signerLoadTimeout)
+	defer cancel()
+	signer, err := s.loadSigner(loadCtx, key)
+
+	s.signerMu.Lock()
+	defer s.signerMu.Unlock()
+	if s.signerVersion != generation {
+		return nil, errSignerCacheInvalidated
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(key.PublicJWK) > 0 {
+		s.cachedSigner = signer
+		s.signerVersion++
+		version := s.signerVersion
+		s.signerTimer = time.AfterFunc(time.Until(signer.expiresAt), func() {
+			s.signerMu.Lock()
+			defer s.signerMu.Unlock()
+			if s.signerVersion == version {
+				s.clearSignerLocked()
+			}
+		})
+	}
+	return signer, nil
+}
+
+func (s *SigningKeyService) loadSigner(ctx context.Context, key *storage.SigningKey) (*cachedSigningKey, error) {
+	algorithm, err := algorithmToJWA(key.Algorithm)
+	if err != nil {
+		return nil, fmt.Errorf("signing key %s has unrecognized algorithm %q: %w", key.KID, key.Algorithm, err)
+	}
+	privatePEM, err := s.DecryptPrivateKey(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt signing key: %w", err)
+	}
+	privateKey, err := jwk.ParseKey(privatePEM, jwk.WithX509(true))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
+	}
+	if len(key.PublicJWK) > 0 {
+		publicKey, err := jwk.PublicKeyOf(privateKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to derive signing public key: %w", err)
+		}
+		storedPublicKey, err := publicJWKFromJSON(key.PublicJWK, key.KID, key.Algorithm)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse stored signing public JWK: %w", err)
+		}
+		derivedThumbprint, err := publicKey.Thumbprint(crypto.SHA256)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fingerprint signing public key: %w", err)
+		}
+		storedThumbprint, err := storedPublicKey.Thumbprint(crypto.SHA256)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fingerprint stored signing public key: %w", err)
+		}
+		if !bytes.Equal(derivedThumbprint, storedThumbprint) {
+			return nil, fmt.Errorf("signing key %s public key does not match private key", key.KID)
+		}
+	}
+	if err := privateKey.Set(jwk.KeyIDKey, key.KID.String()); err != nil {
+		return nil, fmt.Errorf("failed to set signing key ID: %w", err)
+	}
+	return &cachedSigningKey{kid: key.KID, privateKey: privateKey, publicJWK: key.PublicJWK, algorithm: algorithm, expiresAt: time.Now().Add(signingKeyCacheTTL)}, nil
+}
+
+func (s *SigningKeyService) invalidateSigner() {
+	s.signerMu.Lock()
+	s.clearSignerLocked()
+	s.signerVersion++
+	s.signerMu.Unlock()
+}
+
+func (s *SigningKeyService) clearSignerLocked() {
+	if s.signerTimer != nil {
+		s.signerTimer.Stop()
+		s.signerTimer = nil
+	}
+	s.cachedSigner = nil
 }
 
 // CountActive returns the number of non-removed signing keys.
@@ -454,6 +602,7 @@ func (s *SigningKeyService) DeleteKey(ctx context.Context, kid id.KeyID) error {
 		return err
 	}
 	s.invalidateJWKSCache()
+	s.invalidateSigner()
 	return nil
 }
 

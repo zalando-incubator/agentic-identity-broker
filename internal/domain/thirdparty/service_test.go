@@ -991,7 +991,8 @@ func TestThirdpartyOAuth2ProviderService_Update_TransitionsCredentialStorage(t *
 func TestThirdpartyOAuth2ProviderService_List_DecryptsAll(t *testing.T) {
 	mockRepo := new(MockRepository)
 	mockEnc := new(MockEncryption)
-	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.Default())
+	var logs bytes.Buffer
+	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.New(slog.NewJSONHandler(&logs, nil)))
 
 	ctx := context.Background()
 	svc1ID := id.NewServiceID()
@@ -1014,6 +1015,24 @@ func TestThirdpartyOAuth2ProviderService_List_DecryptsAll(t *testing.T) {
 	pt2, _ := results[1].Secret.GetPlaintext()
 	assert.Equal(t, "secret-1", pt1)
 	assert.Equal(t, "secret-2", pt2)
+
+	require.NotEmpty(t, logs.String(), "successful decryptions must be auditable at the default Info level")
+	audited := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var event map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &event))
+		if event["msg"] != "service_secret_decrypted" {
+			continue
+		}
+		assert.Equal(t, "INFO", event["level"])
+		serviceID, ok := event["service_id"].(string)
+		require.True(t, ok)
+		assert.False(t, audited[serviceID], "duplicate decryption audit event for %s", serviceID)
+		audited[serviceID] = true
+	}
+	assert.Equal(t, map[string]bool{svc1ID.String(): true, svc2ID.String(): true}, audited)
+	assert.NotContains(t, logs.String(), "secret-1")
+	assert.NotContains(t, logs.String(), "secret-2")
 	mockEnc.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
 }
@@ -1106,53 +1125,21 @@ func TestThirdpartyOAuth2ProviderService_Delete(t *testing.T) {
 // FindByProtectedResource tests
 // =============================================================================
 
-func TestThirdpartyOAuth2ProviderService_FindByProtectedResource_DecryptsSecret(t *testing.T) {
-	mockRepo := new(MockRepository)
-	mockEnc := new(MockEncryption)
-	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.Default())
-
+func TestThirdpartyOAuth2ProviderService_FindByProtectedResource_DoesNotDecryptSecret(t *testing.T) {
 	ctx := context.Background()
-	svcID := id.NewServiceID()
-	storedEntity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:     svcID,
+	stored := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:     id.NewServiceID(),
 		Secret: model.NewEncryptedSecret([]byte("ciphertext")),
 	}
-	mockRepo.On("FindByProtectedResource", ctx, "https://api.example.com").Return(storedEntity, nil)
-	mockEnc.On("Decrypt", ctx, []byte("ciphertext"), map[string]string{"service_id": svcID.String()}).
-		Return([]byte("plaintext"), nil)
-
-	result, err := svc.FindByProtectedResource(ctx, "https://api.example.com")
-
-	require.NoError(t, err)
-	assert.Equal(t, svcID, result.ID)
-	assert.True(t, result.Secret.IsPlaintext())
-	mockEnc.AssertExpectations(t)
-	mockRepo.AssertExpectations(t)
-}
-
-func TestThirdpartyOAuth2ProviderService_FindByProtectedResource_DecryptionFailure_ReturnsEncryptedEntity(t *testing.T) {
 	mockRepo := new(MockRepository)
 	mockEnc := new(MockEncryption)
-	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.Default())
+	mockRepo.On("FindByProtectedResource", ctx, "https://api.example.com").Return(stored, nil)
+	service := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.Default())
 
-	ctx := context.Background()
-	svcID := id.NewServiceID()
-	storedEntity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:     svcID,
-		Secret: model.NewEncryptedSecret([]byte("old-ciphertext")),
-	}
-	mockRepo.On("FindByProtectedResource", ctx, "https://api.example.com").Return(storedEntity, nil)
-	mockEnc.On("Decrypt", ctx, []byte("old-ciphertext"), map[string]string{"service_id": svcID.String()}).
-		Return(nil, errors.New("decryption failed: wrong encryption backend"))
-
-	result, err := svc.FindByProtectedResource(ctx, "https://api.example.com")
-
-	// Returns entity with encrypted secret instead of failing
+	provider, err := service.FindByProtectedResource(ctx, "https://api.example.com")
 	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, svcID, result.ID)
-	assert.True(t, result.Secret.IsEncrypted(), "secret should remain encrypted on decryption failure")
-	mockEnc.AssertExpectations(t)
+	require.True(t, provider.Secret.IsEncrypted(), "resource resolution must not expose a plaintext secret")
+	mockEnc.AssertNotCalled(t, "Decrypt")
 	mockRepo.AssertExpectations(t)
 }
 

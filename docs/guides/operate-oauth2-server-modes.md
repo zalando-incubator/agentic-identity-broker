@@ -148,6 +148,13 @@ conditions. This gives compliant caches time to refresh; it cannot force externa
 verifiers to fetch a key. The response contains `kid`, `algorithm`, `is_current`,
 `activates_at`, and `created_at`.
 
+Keys created before migration 033 have no stored public JWK until a JWKS rebuild
+derives it and its conditional backfill succeeds. Before that backfill,
+publication depends on decrypting the private key. After backfill, the public
+key remains available through a decryption outage; issuing new tokens still
+needs the private key unless a valid local signer is cached. Retire an old key
+only after its tokens expire.
+
 ### List keys
 
 `GET /api/oauth2-server/signing-keys` returns the keys, newest first, wrapped in an `items`
