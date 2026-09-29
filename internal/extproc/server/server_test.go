@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sync"
 	"testing"
@@ -2072,12 +2073,16 @@ func TestServer_OPA_BodyPhase_RequestTooLarge_DeniesWithoutAuthorizerCall(t *tes
 
 // Spec: A batch where every element is allowed must evaluate each element and echo the full body.
 func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
-	var seenToolNames []string
+	var seenToolNames, seenElementBodies []string
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "batch element must expose parsed MCP input")
-			seenToolNames = append(seenToolNames, mcp.ToolName)
+			seenToolNames = append(seenToolNames, mcp["tool_name"].(string))
+			attributes := input["attributes"].(map[string]any)
+			request := attributes["request"].(map[string]any)
+			http := request["http"].(map[string]any)
+			seenElementBodies = append(seenElementBodies, http["body"].(string))
 			return &authorization.OPADecision{Action: "allow"}, nil
 		},
 	}
@@ -2089,7 +2094,9 @@ func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
 	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
 	defer cleanup()
 
-	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}},{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"read_config","arguments":{}}}]`)
+	first := `{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}}`
+	second := `{ "jsonrpc": "2.0", "method": "tools/call", "id": 9007199254740993, "params": {"name":"read_config","arguments":{}} }`
+	batch := []byte("[ " + first + ", " + second + " ]")
 	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
 		":method": "POST",
 	}, batch)
@@ -2101,6 +2108,7 @@ func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
 	require.True(t, ok, "allowed batch must use streamed body echo")
 	assert.Equal(t, batch, streamed.StreamedResponse.Body)
 	assert.Equal(t, []string{"list_files", "read_config"}, seenToolNames)
+	assert.Equal(t, []string{first, second}, seenElementBodies)
 }
 
 // Spec: A denied batch must aggregate reasons from every denying element into one 403.
@@ -2109,9 +2117,9 @@ func TestServer_OPA_BatchBodyPhase_Deny_AggregatesReasons(t *testing.T) {
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
 			evaluateCalls++
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "batch element must expose parsed MCP input")
-			return &authorization.OPADecision{Action: "deny", Reasons: []string{"denied tool: " + mcp.ToolName}}, nil
+			return &authorization.OPADecision{Action: "deny", Reasons: []string{"denied tool: " + mcp["tool_name"].(string)}}, nil
 		},
 	}
 	exchanger := &mockExchanger{
@@ -2136,6 +2144,110 @@ func TestServer_OPA_BatchBodyPhase_Deny_AggregatesReasons(t *testing.T) {
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "denied tool: drop_db")
 }
 
+func TestServer_OPA_BatchBodyPhase_MalformedEnvelopeDeniesBeforeEvaluation(t *testing.T) {
+	var evaluateCalls int
+	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+		evaluateCalls++
+		return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
+	}}
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "batch-token"}, nil
+	}}
+	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+	defer cleanup()
+
+	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","params":{"name":"read"}},`)
+	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, batch)
+	require.NotNil(t, bodyResp)
+	immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+	require.True(t, ok)
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+	assert.Contains(t, string(immediate.ImmediateResponse.Body), "failed to parse batch request")
+	assert.Zero(t, evaluateCalls)
+}
+
+func TestServer_OPA_CaseFoldedEnvelopeKeys_DeniedBeforePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body []byte
+	}{
+		{name: "standalone", body: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}`)},
+		{name: "batch", body: []byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}]`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var policyCalls int
+			auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+				policyCalls++
+				return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
+			}}
+			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{Token: "batch-token"}, nil
+			}}
+			client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+			defer cleanup()
+
+			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, tc.body)
+			require.NotNil(t, bodyResp)
+			immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+			require.True(t, ok, "ambiguous MCP method must be denied")
+			assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+			assert.Zero(t, policyCalls, "ambiguous MCP method must not reach policy")
+		})
+	}
+}
+
+func TestServer_OPA_BatchBodyPhase_LargeIDsHonorPolicy(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "authz.rego")
+	require.NoError(t, os.WriteFile(policyPath, []byte(`package aib.extproc.authz
+import rego.v1
+
+result := {"action": "allow"} if {
+	input.parsed_body.id == 9007199254740993
+} else := {"action": "deny", "reasons": ["request ID is not authorized"]}`), 0o600))
+	cfg := testConfig()
+	cfg.Authorization = extprocconfig.AuthorizationConfig{
+		Enabled:           true,
+		Policy:            extprocconfig.PolicyConfig{Path: policyPath, Package: "aib.extproc.authz", Decision: "result"},
+		DefaultDecision:   "deny",
+		EvaluationTimeout: 5 * time.Second,
+		MaxBodySize:       1048576,
+	}
+	auth, err := authorization.NewOPAAuthorizer(&cfg.Authorization, testLogger())
+	require.NoError(t, err)
+	defer auth.Stop(context.Background())
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "batch-token"}, nil
+	}}
+	client, cleanup := startTestServerWithAuthorizerConfig(t, cfg, exchanger, auth)
+	defer cleanup()
+
+	for _, tc := range []struct {
+		name      string
+		body      []byte
+		wantAllow bool
+	}{
+		{name: "allowed exact ID", body: []byte(`[{"jsonrpc":"2.0","method":"initialize","id":9007199254740993}]`), wantAllow: true},
+		{name: "denied adjacent ID", body: []byte(`[{"jsonrpc":"2.0","method":"initialize","id":9007199254740993},{"jsonrpc":"2.0","method":"initialize","id":9007199254740992}]`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, tc.body)
+			require.NotNil(t, bodyResp)
+			if tc.wantAllow {
+				response, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
+				require.True(t, ok, "policy must allow the exact large ID")
+				streamed, ok := response.RequestBody.Response.BodyMutation.Mutation.(*extprocv3.BodyMutation_StreamedResponse)
+				require.True(t, ok)
+				assert.Equal(t, tc.body, streamed.StreamedResponse.Body)
+				return
+			}
+			immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+			require.True(t, ok, "policy must deny a batch containing the adjacent ID")
+			assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+			assert.Contains(t, string(immediate.ImmediateResponse.Body), "request ID is not authorized")
+		})
+	}
+}
+
 func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -2144,6 +2256,8 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 	}{
 		{name: "numeric id", id: json.RawMessage(`42`), invocationID: "42"},
 		{name: "string id", id: json.RawMessage(`"call-42"`), invocationID: "call-42"},
+		{name: "large numeric id", id: json.RawMessage(`9007199254740993`), invocationID: "9007199254740993"},
+		{name: "exponent id", id: json.RawMessage(`1e+3`), invocationID: "1e+3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -2176,8 +2290,8 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 					if contextInput, ok := input["context"].(authorization.ContextInput); ok {
 						gotAgentSession = contextInput.AgentSessionID
 					}
-					if mcpInput, ok := input["mcp"].(*authorization.MCPInput); ok {
-						gotMCPSession = mcpInput.SessionID
+					if mcpInput, ok := input["mcp"].(map[string]any); ok {
+						gotMCPSession, _ = mcpInput["session_id"].(string)
 					}
 					mu.Unlock()
 					return &authorization.OPADecision{Action: authorization.ActionApprovalRequired, ApprovalContext: &authorization.ApprovalContext{Description: "Review deployment", RiskLevel: "medium"}}, nil
@@ -2407,6 +2521,7 @@ func TestServer_OPA_ApprovalGateOnlyHandlesStandaloneMCPToolCalls(t *testing.T) 
 		body     []byte
 	}{
 		{name: "MCP method", protocol: "mcp", body: []byte(`{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}`)},
+		{name: "malformed tool arguments", protocol: "mcp", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":[]}}`)},
 		{name: "non MCP tool call", protocol: "a2a", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{}}}`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3601,10 +3716,10 @@ func TestServer_OPA_BodyPhase_MCPServerMetadata_PropagatedToOPAInput(t *testing.
 	var sawMCPInput bool
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "body-phase input must expose parsed MCP input")
 			sawMCPInput = true
-			seenTargetServerName = mcp.TargetServerName
+			seenTargetServerName, _ = mcp["target_server_name"].(string)
 			return &authorization.OPADecision{Action: "allow"}, nil
 		},
 	}
@@ -3684,9 +3799,9 @@ func TestServer_OPA_HeadersOnly_MCPServerMetadata_PropagatedToOPAInput(t *testin
 	var seenTargetServerName string
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "header-only input must expose parsed MCP input")
-			seenTargetServerName = mcp.TargetServerName
+			seenTargetServerName, _ = mcp["target_server_name"].(string)
 			return &authorization.OPADecision{Action: "allow"}, nil
 		},
 	}
@@ -3715,9 +3830,9 @@ func TestServer_OPA_BatchBodyPhase_SameTargetServerNameAcrossElements(t *testing
 	var seenServers []string
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "batch element must expose parsed MCP input")
-			seenServers = append(seenServers, mcp.TargetServerName)
+			seenServers = append(seenServers, mcp["target_server_name"].(string))
 			return &authorization.OPADecision{Action: "allow"}, nil
 		},
 	}

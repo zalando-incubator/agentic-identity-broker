@@ -897,6 +897,10 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can further restrict the request after broker token exchange. The approval gate runs only for a standalone MCP tool call after OPA returns `approval_required`.
 
+**Body input construction**: In OPA mode, ExtProc decodes each body or JSON-RPC batch element once, preserving JSON numbers with `json.Number` and the original raw bytes for `attributes.request.http.body`. MCP fields and approval invocations use the decoded value. `InputBuilder` converts Envoy-compatible headers once per request; batch elements receive independent input documents. The authorizer converts each document to `ast.Value` before policy evaluation. Header-only requests retain their separate input path, and requests without OPA do not inspect bodies.
+
+**MCP envelope ambiguity**: With OPA enabled, ExtProc rejects standalone requests and batch elements containing case-folded duplicates of `jsonrpc`, `id`, `method`, or `params` before evaluating the affected message. This keeps policy decisions aligned with downstream struct decoders that accept case-insensitive keys.
+
 #### 3.2.2. gRPC Server
 
 **Server**: Implements Envoy's `ExternalProcessorServer` interface with:
@@ -1540,13 +1544,13 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **ClientResolution**: DTO returned by `ClientResolver.ResolveClient()`. Contains the resolved `*storage.Agent` and an optional `*cimd.ClientIDMetadataDocument` (nil for opaque UUID client IDs). Used by `OAuth2AuthorizationService` to carry CIMD metadata into the consent session.
 
-**OPAInput**: Map-based OPA document constructed by ExtProc for policy evaluation. Starts with the opa-envoy-plugin-compatible base document and adds top-level `type`, `mcp`, `request`, and `context` keys so policies can use both Envoy-compatible fields and protocol-specific ExtProc fields.
+**OPAInput**: Map-based OPA document constructed by ExtProc for policy evaluation. Starts with the opa-envoy-plugin-compatible base document and adds top-level `type`, `mcp`, and `context` keys so policies can use both Envoy-compatible fields and protocol-specific ExtProc fields.
 
 **OPADecision**: Result of OPA policy evaluation — a structured object with an action (`allow` or `deny`) and an optional `reasons` array of strings. ExtProc parses the configured decision document and includes deny reasons in the 403 response body.
 
 **Authorizer**: Interface for evaluating authorization policies in ExtProc. Accepts an `OPAInput` document and returns an `OPADecision`. The production implementation wraps `rego.PreparedEvalQuery` or the OPA SDK depending on policy source. Authorization is disabled by constructing the server with `authorizer == nil`.
 
-**ProtocolParser**: Conceptual parsing stage implemented by `BuildOPAInput`, `BuildOPAInputHeadersOnly`, `ParseMCPMessage`, and `ParseMCPBatch`; not a standalone Go interface or struct in the current code.
+**ProtocolParser**: Conceptual stage implemented by `ParseMCPMessage` over already-decoded JSON-RPC messages; `InputBuilder` builds the body-bearing policy input, while `BuildOPAInputHeadersOnly` handles requests without a body.
 
 ### General Acronyms
 

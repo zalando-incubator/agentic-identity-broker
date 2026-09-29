@@ -585,7 +585,13 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		}
 	}
 
-	opaInput, buildErr := authorization.BuildOPAInput(state.protocol, bodyBytes, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+	builder, buildErr := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+	if buildErr != nil {
+		logger.WarnContext(ctx, "OPA: failed to build request input — denying", "resource", sanitizedURI, "error", buildErr)
+		return immediateResponse(httpv3.StatusCode_Forbidden,
+			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
+	}
+	opaInput, buildErr := builder.Build(bodyBytes, decodeJSONBody(bodyBytes))
 	if buildErr != nil {
 		logger.WarnContext(ctx, "OPA: failed to parse request body — denying", "resource", sanitizedURI, "error", buildErr)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
@@ -604,7 +610,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 			logger.WarnContext(ctx, "OPA approval-required action is not an MCP tool call", "protocol", state.protocol, "resource", sanitizedURI)
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
-		invocation, rawID, invocationErr := approvalInvocation(bodyBytes, state, decision)
+		invocation, rawID, invocationErr := approvalInvocation(opaInput["parsed_body"].(map[string]any), state, decision)
 		if invocationErr != nil {
 			logger.WarnContext(ctx, "OPA approval-required request is not a standalone tool call", "error", invocationErr)
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
@@ -684,37 +690,41 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 	return replaceAuthorizationHeader("Bearer " + exchangeResult.Token)
 }
 
-// processRequestBodyBatch evaluates a JSON-RPC batch body (FR-023).
-// Each element is evaluated independently; if any is denied the entire batch is denied
-// with a 403 response that aggregates reasons from all denying messages.
-// Original raw JSON bytes are passed to BuildOPAInput to preserve any extra top-level fields.
+// processRequestBodyBatch evaluates each JSON-RPC batch element independently.
+// A malformed envelope denies the whole batch before any policy evaluation.
 func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestState, bodyBytes []byte, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
 	ctx, logger := s.withRequestLogger(ctx, "", "")
-	var rawMessages []json.RawMessage
 	sanitizedURI := sanitizeURIForTelemetry(state.resourceURI)
-	if err := json.Unmarshal(bodyBytes, &rawMessages); err != nil {
+	messages, err := decodeJSONBatch(bodyBytes)
+	if err != nil {
 		logger.WarnContext(ctx, "OPA: failed to parse batch body — denying", "resource", sanitizedURI, "error", err)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse batch request"}`)
 	}
-	if len(rawMessages) == 0 {
+	if len(messages) == 0 {
 		logger.WarnContext(ctx, "OPA: empty batch body — rejecting as malformed", "resource", sanitizedURI)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"empty batch is not valid JSON-RPC 2.0"}`)
+	}
+	builder, err := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+	if err != nil {
+		logger.WarnContext(ctx, "OPA: failed to build input for batch — denying", "resource", sanitizedURI, "error", err)
+		return immediateResponse(httpv3.StatusCode_Forbidden,
+			`{"error":"access_denied","error_description":"failed to parse batch request"}`)
 	}
 
 	var (
 		denied      bool
 		denyReasons []string
 	)
-	for i, raw := range rawMessages {
-		if _, err := authorization.ParseMCPMessage(raw); err != nil {
+	for i, message := range messages {
+		if _, err := authorization.ParseMCPMessage(message.parsed); err != nil {
 			logger.WarnContext(ctx, "OPA: invalid batch element — denying", "resource", sanitizedURI, "index", i, "error", err)
 			denied = true
 			denyReasons = append(denyReasons, "batch element could not be evaluated")
 			continue
 		}
-		opaInput, buildErr := authorization.BuildOPAInput(state.protocol, raw, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+		opaInput, buildErr := builder.Build(message.raw, message.parsed)
 		if buildErr != nil {
 			logger.WarnContext(ctx, "OPA: failed to build input for batch element — denying", "resource", sanitizedURI, "index", i, "error", buildErr)
 			denied = true
@@ -749,6 +759,51 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 
 	logger.DebugContext(ctx, "OPA allowed batch, echoing body", "resource", sanitizedURI)
 	return echoRequestBody(body)
+}
+
+func decodeJSONBody(body []byte) any {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var parsed any
+	if decoder.Decode(&parsed) != nil || len(bytes.TrimSpace(body[decoder.InputOffset():])) != 0 {
+		return nil
+	}
+	return parsed
+}
+
+type decodedBatchMessage struct {
+	raw    []byte
+	parsed any
+}
+
+func decodeJSONBatch(body []byte) ([]decodedBatchMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	opening, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if opening != json.Delim('[') {
+		return nil, errors.New("batch must be a JSON array")
+	}
+	var messages []decodedBatchMessage
+	for decoder.More() {
+		start := decoder.InputOffset()
+		var parsed any
+		if err := decoder.Decode(&parsed); err != nil {
+			return nil, err
+		}
+		raw := bytes.TrimLeft(body[start:decoder.InputOffset()], " \t\r\n,")
+		messages = append(messages, decodedBatchMessage{raw: raw, parsed: parsed})
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if closing != json.Delim(']') || len(bytes.TrimSpace(body[decoder.InputOffset():])) != 0 {
+		return nil, errors.New("invalid batch JSON")
+	}
+	return messages, nil
 }
 
 // tokenExchangeErrorResponse maps a token exchange error to the appropriate ImmediateResponse.
@@ -1213,45 +1268,44 @@ func configuredHeader(headers map[string]string, name string) string {
 	return ""
 }
 
-func approvalInvocation(body []byte, state *requestState, decision *authorization.OPADecision) (approval.Invocation, json.RawMessage, error) {
-	var request struct {
-		ID     json.RawMessage `json:"id"`
-		Method string          `json:"method"`
-		Params struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
-		} `json:"params"`
-	}
-	if err := json.Unmarshal(body, &request); err != nil {
-		return approval.Invocation{}, nil, err
-	}
-	if request.Method != "tools/call" || request.Params.Name == "" {
+func approvalInvocation(message map[string]any, state *requestState, decision *authorization.OPADecision) (approval.Invocation, json.RawMessage, error) {
+	params, _ := message["params"].(map[string]any)
+	name, _ := params["name"].(string)
+	if message["method"] != "tools/call" || name == "" {
 		return approval.Invocation{}, nil, errors.New("request is not an MCP tools/call")
 	}
-	if request.Params.Arguments == nil {
-		request.Params.Arguments = map[string]any{}
+	arguments, ok := params["arguments"].(map[string]any)
+	if params["arguments"] != nil && !ok {
+		return approval.Invocation{}, nil, errors.New("MCP tool arguments must be an object")
 	}
-	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: request.Params.Name, Arguments: request.Params.Arguments, AgentSessionID: state.agentSessionID, MCPSessionID: configuredHeader(state.headers, "Mcp-Session-Id"), RequestID: semanticRequestID(request.ID), SubjectToken: state.subjectToken}
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
+	var rawID json.RawMessage
+	id := message["id"]
+	if id != nil {
+		var err error
+		rawID, err = json.Marshal(id)
+		if err != nil {
+			return approval.Invocation{}, nil, err
+		}
+	}
+	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: name, Arguments: arguments, AgentSessionID: state.agentSessionID, MCPSessionID: configuredHeader(state.headers, "Mcp-Session-Id"), RequestID: semanticRequestID(id, rawID), SubjectToken: state.subjectToken}
 	if decision.ApprovalContext != nil {
 		invocation.Description = decision.ApprovalContext.Description
 		invocation.RiskLevel = decision.ApprovalContext.RiskLevel
 	}
-	return invocation, request.ID, nil
+	return invocation, rawID, nil
 }
 
-func semanticRequestID(rawID json.RawMessage) string {
-	trimmedID := bytes.TrimSpace(rawID)
-	if len(trimmedID) == 0 || bytes.Equal(trimmedID, []byte("null")) {
+func semanticRequestID(id any, rawID json.RawMessage) string {
+	if id == nil {
 		return ""
 	}
-	if trimmedID[0] != '"' {
-		return string(rawID)
+	if stringID, ok := id.(string); ok {
+		return stringID
 	}
-	var stringID string
-	if json.Unmarshal(trimmedID, &stringID) != nil {
-		return string(rawID)
-	}
-	return stringID
+	return string(rawID)
 }
 
 // passThrough builds a ProcessingResponse_RequestHeaders with no mutations,
