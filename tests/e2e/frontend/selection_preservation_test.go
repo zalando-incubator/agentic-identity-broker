@@ -1,19 +1,21 @@
-// Package e2e_test provides end-to-end tests for consent state preservation
-// across third-party OAuth2 login redirects.
-// This file verifies that the consent_state URL parameter (currently containing
-// permission set and service selections) survives the OAuth2 redirect round-trip.
+// Package e2e_test provides end-to-end tests for compact consent-selection
+// references across third-party OAuth2 login redirects.
 package e2e_test
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/url"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/pages"
 	"github.com/mxschmitt/playwright-go"
@@ -21,7 +23,11 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-// Well-known UUIDs for selection preservation test fixtures.
+const (
+	consentStateIDPattern                    = "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+	selectionPreservationLargeSelectionCount = 250
+)
+
 var (
 	selGitHubServiceID = id.MustParseServiceID("d0000000-0000-0000-0000-000000000001")
 	selGoogleServiceID = id.MustParseServiceID("d0000000-0000-0000-0000-000000000002")
@@ -31,8 +37,6 @@ var (
 	selOptionalPSID  = id.MustParsePermissionSetID("e0000000-0000-0000-0000-000000000002")
 )
 
-// selPreservationService creates a ThirdpartyOAuth2ProviderEntity for selection preservation tests,
-// using fixtures.ServiceWithID as a base and configuring service-specific fields.
 func selPreservationService(svcID id.ServiceID, displayName, clientID, issuerURI string, scopes []model.OAuthScope) *model.ThirdpartyOAuth2ProviderEntity {
 	now := time.Now()
 	svc := fixtures.ServiceWithID(svcID.String())
@@ -51,7 +55,6 @@ func selPreservationService(svcID id.ServiceID, displayName, clientID, issuerURI
 	return svc
 }
 
-// selPreservationPermissionSet creates a PermissionSet for selection preservation tests.
 func selPreservationPermissionSet(psID id.PermissionSetID, name, description string, scopes []storage.ServiceScope) *storage.PermissionSet {
 	now := time.Now()
 	return &storage.PermissionSet{
@@ -64,17 +67,53 @@ func selPreservationPermissionSet(psID id.PermissionSetID, name, description str
 	}
 }
 
+func selectOptionalPermissionSet(ctx context.Context, consentPage *pages.ConsentPage) {
+	Expect(consentPage.TogglePermissionSet(ctx, "Productivity Suite")).To(Succeed())
+	Expect(consentPage.WaitForServiceToAppear(ctx, "Google")).To(Succeed())
+	Expect(consentPage.WaitForServiceToAppear(ctx, "Slack")).To(Succeed())
+}
+
+func expectOptionalSelectionRestored(ctx context.Context, consentPage *pages.ConsentPage, serviceNames ...string) {
+	selected, err := consentPage.IsPermissionSetSelected(ctx, "Productivity Suite")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(selected).To(BeTrue())
+	for _, serviceName := range serviceNames {
+		Expect(consentPage.WaitForServiceToAppear(ctx, serviceName)).To(Succeed())
+	}
+}
+func addLargeActiveSelectionMap(ctx context.Context, agent *storage.Agent) {
+	permissionSets := make([]storage.AgentPermissionSetEntry, selectionPreservationLargeSelectionCount)
+	for index := range permissionSets {
+		permissionSetID := id.NewPermissionSetID()
+		permissionSet := selPreservationPermissionSet(
+			permissionSetID,
+			fmt.Sprintf("Large Selection %d", index),
+			"Ensures the current-tab selection map exceeds the legacy URL transport limit",
+			[]storage.ServiceScope{
+				{ServiceID: selGoogleServiceID, Scopes: []string{"calendar"}, RequirementType: storage.RequirementTypeOptional},
+			},
+		)
+		Expect(GetTestStorage().PermissionSets().Create(ctx, permissionSet)).To(Succeed())
+		permissionSets[index] = storage.AgentPermissionSetEntry{
+			PermissionSetID: permissionSetID,
+			RequirementType: storage.RequirementTypeMandatory,
+		}
+	}
+	agent.PermissionSets = append(agent.PermissionSets, permissionSets...)
+	Expect(GetTestStorage().Agents().Update(ctx, agent)).To(Succeed())
+}
+
 var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 	var (
 		ctx         context.Context
 		consentPage *pages.ConsentPage
 		testAgentID string
+		testAgent   *storage.Agent
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
 
-		// Create services using helper to reduce inline struct duplication.
 		githubSvc := selPreservationService(
 			selGitHubServiceID, "GitHub", "client-github-sel", "https://github.example.com",
 			[]model.OAuthScope{{ScopeValue: "repo", Description: "Repository access"}},
@@ -89,11 +128,9 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		)
 
 		for _, svc := range []*model.ThirdpartyOAuth2ProviderEntity{githubSvc, googleSvc, slackSvc} {
-			err := GetTestStorage().Services().Create(ctx, svc)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create service %q", svc.DisplayName)
+			Expect(GetTestStorage().Services().Create(ctx, svc)).To(Succeed())
 		}
 
-		// Create permission sets using helper.
 		mandatoryPS := selPreservationPermissionSet(
 			selMandatoryPSID, "Code Access", "Access to code repositories",
 			[]storage.ServiceScope{
@@ -107,12 +144,9 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 				{ServiceID: selSlackServiceID, Scopes: []string{"chat:write"}, RequirementType: storage.RequirementTypeOptional},
 			},
 		)
-		err := GetTestStorage().PermissionSets().Create(ctx, mandatoryPS)
-		Expect(err).NotTo(HaveOccurred())
-		err = GetTestStorage().PermissionSets().Create(ctx, optionalPS)
-		Expect(err).NotTo(HaveOccurred())
+		Expect(GetTestStorage().PermissionSets().Create(ctx, mandatoryPS)).To(Succeed())
+		Expect(GetTestStorage().PermissionSets().Create(ctx, optionalPS)).To(Succeed())
 
-		// Create agent with mandatory + optional permission sets
 		agent := fixtures.ValidAgent()
 		testAgentID = agent.ID.String()
 		agent.DisplayName = "Selection Test Agent"
@@ -126,189 +160,273 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 			{ServiceID: selGoogleServiceID, RequirementType: storage.RequirementTypeOptional, RequiredScopes: []string{"calendar"}},
 			{ServiceID: selSlackServiceID, RequirementType: storage.RequirementTypeOptional, RequiredScopes: []string{"chat:write"}},
 		}
-		err = GetTestStorage().Agents().Create(ctx, agent)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create test agent")
+		testAgent = agent
+		Expect(GetTestStorage().Agents().Create(ctx, testAgent)).To(Succeed())
 
 		consentPage = pages.NewConsentPage(GetTestPage(), GetFrontendURL())
 	})
 
-	// Scenario 5.1 from specs/008-thirdparty-oauth2-sessions/spec.md
-	It("should encode selections in service login URL for state preservation", func() {
-		// Navigate to the consent page and toggle the optional PS ON
-		err := consentPage.NavigateToAgent(ctx, testAgentID)
-		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
+	// Feature 008 User Story 5 Amendment, Scenario 1: Compact reference creation
+	It("keeps a large selection map compact through the provider callback", func() {
+		addLargeActiveSelectionMap(ctx, testAgent)
+
+		config := fixtures.OAuth2ConfigWithUpstream(GetMockUpstream().URL())
+		serverFactory := bootstrap.NewServerFactory(config, GetLogger())
+		serverBuilder, err := bootstrap.NewTestServerBuilder(config, GetTestStorage(), serverFactory, GetLogger())
+		Expect(err).NotTo(HaveOccurred())
+		alignedServer, err := serverBuilder.Build()
+		Expect(err).NotTo(HaveOccurred())
+		defer alignedServer.Close()
+
+		consentPage = pages.NewConsentPage(GetTestPage(), alignedServer.BaseURL())
+		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
+		selectOptionalPermissionSet(ctx, consentPage)
+		Expect(consentPage.ExcludePermissionSetService(ctx, "Productivity Suite", "Slack")).To(Succeed())
+		Eventually(func() (bool, error) {
+			return consentPage.IsPermissionSetServiceExcluded(ctx, "Productivity Suite", "Slack")
+		}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
+		GetMockUpstream().WithSuccessfulTokenResponse()
 
 		page := consentPage.GetPlaywrightPage()
-
-		// Find and toggle the optional PS switch
-		optionalCard := page.Locator("[data-testid='permission-set-optional']").First()
-		optionalCardCount, err := optionalCard.Count()
+		previousAuthorizeURL := GetMockUpstream().GetLastAuthorizeURL()
+		Expect(consentPage.DelegateService(ctx, "Google")).To(Succeed())
+		var upstreamState string
+		Eventually(func() string {
+			lastAuthorizeURL := GetMockUpstream().GetLastAuthorizeURL()
+			if lastAuthorizeURL == previousAuthorizeURL {
+				return ""
+			}
+			authorizeURL, err := url.Parse(lastAuthorizeURL)
+			if err != nil {
+				return ""
+			}
+			upstreamState = authorizeURL.Query().Get("state")
+			return upstreamState
+		}, 10*time.Second, 100*time.Millisecond).ShouldNot(BeEmpty())
+		Expect(len(upstreamState)).To(BeNumerically("<", 6000))
+		Eventually(func() string {
+			return page.URL()
+		}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("success=true"))
+		Eventually(func() string {
+			stateID, _ := consentPage.GetURLQueryParam("consent_state_id")
+			return stateID
+		}, 10*time.Second, 100*time.Millisecond).Should(BeEmpty())
+		legacyState, err := consentPage.GetURLQueryParam("consent_state")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(optionalCardCount).To(BeNumerically(">=", 1), "Optional PS card should exist")
-
-		toggle := optionalCard.GetByRole("switch", playwright.LocatorGetByRoleOptions{
-			Name: "Toggle Productivity Suite",
-		})
-		toggleCount, err := toggle.Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(toggleCount).To(BeNumerically(">=", 1), "Optional PS should have a toggle switch")
-
-		err = toggle.Click()
-		Expect(err).NotTo(HaveOccurred(), "Failed to toggle optional PS")
-
-		// Wait for the optional PS service to appear after selecting it.
-		Expect(consentPage.WaitForServiceToAppear(ctx, "Google")).To(Succeed(),
-			"Google service should appear after toggling optional PS")
-		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_selected_before_login")).NotTo(HaveOccurred())
-
-		// Intercept the navigation that happens when Login is clicked.
-		// We expect the URL to contain consent_state with both PSes.
-		capturedNavigation := make(chan struct {
-			url string
-			err error
-		}, 1)
-		err = page.Route("**/api/third-party/*/oauth2/authorize*", func(route playwright.Route) {
-			url := route.Request().URL()
-			err := route.Fulfill(playwright.RouteFulfillOptions{Status: playwright.Int(204)})
-			capturedNavigation <- struct {
-				url string
-				err error
-			}{url, err}
-		})
-		Expect(err).NotTo(HaveOccurred(), "Failed to set up route intercept")
-
-		// Click Login on Google service (from the optional PS we just toggled)
-		err = consentPage.DelegateService(ctx, "Google")
-		Expect(err).NotTo(HaveOccurred(), "Failed to click Login on Google service")
-
-		var navigation struct {
-			url string
-			err error
-		}
-		Eventually(capturedNavigation).Should(Receive(&navigation), "Should intercept the OAuth2 authorize request")
-		Expect(navigation.err).NotTo(HaveOccurred(), "Failed to fulfill intercepted navigation")
-		capturedURL := navigation.url
-
-		// Parse redirect_uri from the intercepted URL
-		parsedURL, err := url.Parse(capturedURL)
-		Expect(err).NotTo(HaveOccurred())
-		redirectURI := parsedURL.Query().Get("redirect_uri")
-		Expect(redirectURI).NotTo(BeEmpty(), "redirect_uri should be present in authorize URL")
-
-		// Parse consent_state from the redirect_uri
-		parsedRedirect, err := url.Parse(redirectURI)
-		Expect(err).NotTo(HaveOccurred())
-		psSelectionsEncoded := parsedRedirect.Query().Get("consent_state")
-		Expect(psSelectionsEncoded).NotTo(BeEmpty(), "consent_state should be encoded in redirect_uri")
-
-		// Decode and verify the selections contain both PSes
-		decoded, err := base64.RawURLEncoding.DecodeString(psSelectionsEncoded)
-		Expect(err).NotTo(HaveOccurred(), "consent_state should be valid base64url")
-
-		var selections map[string][]string
-		err = json.Unmarshal(decoded, &selections)
-		Expect(err).NotTo(HaveOccurred(), "consent_state should be valid JSON")
-
-		// Mandatory PS should be present
-		Expect(selections).To(HaveKey(selMandatoryPSID.String()),
-			"Selections should include mandatory PS")
-		// Optional PS should be present (we toggled it ON)
-		Expect(selections).To(HaveKey(selOptionalPSID.String()),
-			"Selections should include optional PS after toggling")
-
+		Expect(legacyState).To(BeEmpty())
+		expectOptionalSelectionRestored(ctx, consentPage)
+		Eventually(func() (bool, error) {
+			return consentPage.IsPermissionSetServiceExcluded(ctx, "Productivity Suite", "Slack")
+		}, 5*time.Second, 100*time.Millisecond).Should(BeTrue())
 	})
 
-	// Scenario 5.2 from specs/008-thirdparty-oauth2-sessions/spec.md
-	It("should restore optional PS selection when navigating with consent_state parameter", func() {
-		// Encode selections that include the optional PS (simulating return from OAuth2 redirect)
-		selections := map[string][]string{
-			selMandatoryPSID.String(): {selGitHubServiceID.String()},
-			selOptionalPSID.String():  {selGoogleServiceID.String(), selSlackServiceID.String()},
-		}
-
-		err := consentPage.NavigateToAgentWithSelections(ctx, testAgentID, selections)
-		Expect(err).NotTo(HaveOccurred(), "Failed to navigate with selections")
+	// Feature 008 User Story 5 Amendment, edge case: failed selection storage
+	It("blocks login when current-tab selections cannot be saved", func() {
+		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
+		selectOptionalPermissionSet(ctx, consentPage)
 
 		page := consentPage.GetPlaywrightPage()
-
-		// The optional PS "Productivity Suite" should be selected (toggle ON)
-		optionalCard := page.Locator("[data-testid='permission-set-optional']").First()
-		optionalCardCount, err := optionalCard.Count()
+		originalURL := page.URL()
+		var authorizeRequested atomic.Bool
+		Expect(page.Route("**/api/third-party/*/oauth2/authorize*", func(route playwright.Route) {
+			authorizeRequested.Store(true)
+			Expect(route.Abort()).To(Succeed())
+		})).To(Succeed())
+		_, err := page.Evaluate(`() => {
+			Storage.prototype.setItem = () => { throw new DOMException('Storage unavailable', 'QuotaExceededError'); };
+		}`)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(optionalCardCount).To(BeNumerically(">=", 1), "Optional PS card should exist")
 
-		// The optional PS toggle switch should be checked (selected from consent_state)
-		toggle := optionalCard.GetByRole("switch", playwright.LocatorGetByRoleOptions{
-			Name: "Toggle Productivity Suite",
-		})
-		toggleCount, err := toggle.Count()
+		Expect(consentPage.DelegateService(ctx, "Google")).To(Succeed())
+		message, err := consentPage.WaitForGrantError(ctx)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(toggleCount).To(BeNumerically(">=", 1), "Optional PS 'Productivity Suite' should have a toggle switch")
-		ariaChecked, err := toggle.GetAttribute("aria-checked")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(ariaChecked).To(Equal("true"), "Optional PS 'Productivity Suite' toggle should be ON from consent_state")
-
-		// Services from the optional PS (Google, Slack) should appear in the service connections section
-		err = consentPage.WaitForServiceToAppear(ctx, "Google")
-		Expect(err).NotTo(HaveOccurred(), "Google service should appear when optional PS is selected")
-
-		err = consentPage.WaitForServiceToAppear(ctx, "Slack")
-		Expect(err).NotTo(HaveOccurred(), "Slack service should appear when optional PS is selected")
-
-		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_restored_from_url")).NotTo(HaveOccurred())
+		Expect(message).To(ContainSubstring("Unable to preserve selections. Please try again."))
+		Expect(page.URL()).To(Equal(originalURL))
+		Expect(authorizeRequested.Load()).To(BeFalse())
 	})
 
-	// Scenario 5.3 from specs/008-thirdparty-oauth2-sessions/spec.md
-	It("should complete full OAuth2 redirect round-trip preserving selections", func() {
-		// This test exercises the complete flow:
-		// 1. Navigate with consent_state (simulating return from successful OAuth2 callback)
-		// 2. Verify page loads with the optional PS selected and services visible
-		// 3. Verify the success query param is present (as added by the callback handler)
-
-		selections := map[string][]string{
-			selMandatoryPSID.String(): {selGitHubServiceID.String()},
-			selOptionalPSID.String():  {selGoogleServiceID.String(), selSlackServiceID.String()},
-		}
-
-		// Simulate the callback redirect URL pattern: consent page URL + success=true + service_id + consent_state
-		selectionsJSON, err := json.Marshal(selections)
+	// Feature 008 User Story 5 Amendment, edge case: no selections or return data
+	It("uses GET to reach the provider when no selections or return data exist", func() {
+		config := fixtures.OAuth2ConfigWithUpstream(GetMockUpstream().URL())
+		serverFactory := bootstrap.NewServerFactory(config, GetLogger())
+		serverBuilder, err := bootstrap.NewTestServerBuilder(config, GetTestStorage(), serverFactory, GetLogger())
 		Expect(err).NotTo(HaveOccurred())
-		encoded := base64.RawURLEncoding.EncodeToString(selectionsJSON)
+		alignedServer, err := serverBuilder.Build()
+		Expect(err).NotTo(HaveOccurred())
+		defer alignedServer.Close()
 
-		path := "/agents/" + testAgentID + "?success=true&service_id=" +
-			selGitHubServiceID.String() + "&consent_state=" + url.QueryEscape(encoded)
+		consentPage = pages.NewConsentPage(GetTestPage(), alignedServer.BaseURL())
+		page := consentPage.GetPlaywrightPage()
+		// New agents require permission sets; model a legacy detail response with none.
+		Expect(page.Route("**/api/consent/agents/"+testAgentID, func(route playwright.Route) {
+			response, err := route.Fetch()
+			Expect(err).NotTo(HaveOccurred())
+			var body map[string]any
+			Expect(response.JSON(&body)).To(Succeed())
+			body["data"].(map[string]any)["permission_sets"] = []any{}
+			payload, err := json.Marshal(body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(route.Fulfill(playwright.RouteFulfillOptions{
+				Response: response,
+				Body:     string(payload),
+			})).To(Succeed())
+		})).To(Succeed())
+		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
+		Expect(page.URL()).To(Equal(alignedServer.BaseURL() + "/agents/" + testAgentID))
+		GetMockUpstream().WithSuccessfulTokenResponse()
 
-		err = consentPage.Navigate(ctx, path)
-		Expect(err).NotTo(HaveOccurred(), "Failed to navigate with callback-style URL")
+		var loginMethod string
+		Expect(page.Route("**/api/third-party/*/oauth2/authorize*", func(route playwright.Route) {
+			loginMethod = route.Request().Method()
+			Expect(route.Continue()).To(Succeed())
+		})).To(Succeed())
+		Expect(consentPage.DelegateService(ctx, "Google")).To(Succeed())
+		Eventually(func() string {
+			return loginMethod
+		}, 10*time.Second, 100*time.Millisecond).Should(Equal("GET"))
+		Eventually(GetMockUpstream().GetAuthorizeCalled, 10*time.Second, 100*time.Millisecond).Should(BeTrue())
+		Eventually(func() string {
+			return page.URL()
+		}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("success=true"))
+	})
 
-		err = consentPage.WaitForPageLoad(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Page did not load after callback redirect")
+	// Feature 008 User Story 5 Amendment, Scenario 2: Same-tab restoration
+	It("restores selected permission sets from the captured current-tab reference", func() {
+		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
+		selectOptionalPermissionSet(ctx, consentPage)
 
 		page := consentPage.GetPlaywrightPage()
+		var capturedLoginURL, postData, loginMethod string
+		Expect(page.Route("**/api/third-party/*/oauth2/authorize*", func(route playwright.Route) {
+			request := route.Request()
+			capturedLoginURL = request.URL()
+			loginMethod = request.Method()
+			var err error
+			postData, err = request.PostData()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loginMethod).To(Equal("POST"))
+			Expect(postData).NotTo(BeEmpty())
+			form, err := url.ParseQuery(postData)
+			Expect(err).NotTo(HaveOccurred())
+			returnURL, err := url.Parse(form.Get("redirect_uri"))
+			Expect(err).NotTo(HaveOccurred())
+			callbackQuery := returnURL.Query()
+			callbackQuery.Set("success", "true")
+			callbackQuery.Set("service_id", selGoogleServiceID.String())
+			callbackQuery.Set("consent_state_id", form.Get("consent_state_id"))
+			returnURL.RawQuery = callbackQuery.Encode()
+			status := 302
+			Expect(route.Fulfill(playwright.RouteFulfillOptions{
+				Status:  &status,
+				Headers: map[string]string{"Location": returnURL.String()},
+			})).To(Succeed())
+		})).To(Succeed())
 
-		// Verify optional PS is selected
-		optionalCard := page.Locator("[data-testid='permission-set-optional']").First()
-		optionalCardCount, err := optionalCard.Count()
+		Expect(consentPage.DelegateService(ctx, "Google")).To(Succeed())
+		Eventually(func() string {
+			return capturedLoginURL
+		}, 5*time.Second, 100*time.Millisecond).ShouldNot(BeEmpty())
+		Eventually(func() string {
+			return page.URL()
+		}, 5*time.Second, 100*time.Millisecond).Should(ContainSubstring("success=true"))
+		Eventually(func() string {
+			stateID, _ := consentPage.GetURLQueryParam("consent_state_id")
+			return stateID
+		}, 5*time.Second, 100*time.Millisecond).Should(BeEmpty())
+
+		loginURL, err := url.Parse(capturedLoginURL)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(optionalCardCount).To(BeNumerically(">=", 1), "Optional PS card should exist after round-trip")
+		Expect(loginURL.Query().Get("consent_state_id")).To(BeEmpty())
+		Expect(loginMethod).To(Equal("POST"))
 
-		toggle := optionalCard.GetByRole("switch", playwright.LocatorGetByRoleOptions{
-			Name: "Toggle Productivity Suite",
-		})
-		toggleCount, err := toggle.Count()
+		form, err := url.ParseQuery(postData)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(toggleCount).To(BeNumerically(">=", 1), "Optional PS should have a toggle switch after round-trip")
-		ariaChecked, err := toggle.GetAttribute("aria-checked")
+		stateID := form.Get("consent_state_id")
+		Expect(stateID).To(MatchRegexp(consentStateIDPattern))
+		returnURL, err := url.Parse(form.Get("redirect_uri"))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ariaChecked).To(Equal("true"), "Optional PS should remain selected after OAuth2 round-trip")
+		Expect(returnURL.Query().Get("consent_state_id")).To(BeEmpty())
+		expectOptionalSelectionRestored(ctx, consentPage, "Google", "Slack")
+		Expect(consentPage.TogglePermissionSet(ctx, "Productivity Suite")).To(Succeed())
+		Eventually(func() (bool, error) {
+			return consentPage.IsPermissionSetSelected(ctx, "Productivity Suite")
+		}, 5*time.Second, 100*time.Millisecond).Should(BeFalse())
+		_, err = page.Reload()
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(func() (bool, error) {
+			return consentPage.IsPermissionSetSelected(ctx, "Productivity Suite")
+		}, 5*time.Second, 100*time.Millisecond).Should(BeFalse())
+	})
 
-		// Verify Google and Slack services are visible (from the optional PS)
-		err = consentPage.WaitForServiceToAppear(ctx, "Google")
-		Expect(err).NotTo(HaveOccurred(), "Google service should be visible after round-trip")
+	// Feature 008 User Story 5 Amendment, Scenario 3: Complete provider callback
+	It("preserves authorization session callback parameters and restores selections", func() {
+		config := fixtures.OAuth2ConfigWithUpstream(GetMockUpstream().URL())
+		serverFactory := bootstrap.NewServerFactory(config, GetLogger())
+		serverBuilder, err := bootstrap.NewTestServerBuilder(config, GetTestStorage(), serverFactory, GetLogger())
+		Expect(err).NotTo(HaveOccurred())
+		alignedServer, err := serverBuilder.Build()
+		Expect(err).NotTo(HaveOccurred())
+		defer alignedServer.Close()
 
-		err = consentPage.WaitForServiceToAppear(ctx, "Slack")
-		Expect(err).NotTo(HaveOccurred(), "Slack service should be visible after round-trip")
+		agentID, err := id.ParseAgentID(testAgentID)
+		Expect(err).NotTo(HaveOccurred())
+		claims, err := sessiontoken.NewAuthorizationSessionClaims(
+			agentID,
+			id.Principal(fixtures.DefaultPrincipal().String()),
+			"/oauth2/authorize?client_id=selection-test&redirect_uri=https%3A%2F%2Fclient.example.com%2Fcallback&response_type=code&state="+strings.Repeat("client-state-", 350),
+			nil,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		sessionToken, err := alignedServer.App().SessionTokenService.Create(claims)
+		Expect(err).NotTo(HaveOccurred())
 
-		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_full_roundtrip")).NotTo(HaveOccurred())
+		consentPage = pages.NewConsentPage(GetTestPage(), alignedServer.BaseURL())
+		Expect(consentPage.NavigateToAgentWithSessionToken(ctx, testAgentID, sessionToken)).To(Succeed())
+		selectOptionalPermissionSet(ctx, consentPage)
+		GetMockUpstream().WithSuccessfulTokenResponse()
+
+		page := consentPage.GetPlaywrightPage()
+		previousAuthorizeURL := GetMockUpstream().GetLastAuthorizeURL()
+		Expect(consentPage.DelegateService(ctx, "Google")).To(Succeed())
+		var upstreamState string
+		Eventually(func() string {
+			lastAuthorizeURL := GetMockUpstream().GetLastAuthorizeURL()
+			if lastAuthorizeURL == previousAuthorizeURL {
+				return ""
+			}
+			authorizeURL, parseErr := url.Parse(lastAuthorizeURL)
+			if parseErr != nil {
+				return ""
+			}
+			upstreamState = authorizeURL.Query().Get("state")
+			return upstreamState
+		}, 10*time.Second, 100*time.Millisecond).ShouldNot(BeEmpty())
+		Expect(len(upstreamState)).To(BeNumerically("<", 6000))
+		stateClaims, err := alignedServer.App().OAuth2SessionService.ValidateStateToken(
+			upstreamState, id.Principal(fixtures.DefaultPrincipal().String()), selGoogleServiceID,
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stateClaims.RedirectURI).To(Equal(alignedServer.BaseURL() + "/agents/" + testAgentID))
+		Expect(stateClaims.ConsentStateID).To(MatchRegexp(consentStateIDPattern))
+		Eventually(func() string {
+			return page.URL()
+		}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("success=true"))
+		Eventually(func() string {
+			returnedSessionToken, _ := consentPage.GetURLQueryParam("session_token")
+			return returnedSessionToken
+		}, 10*time.Second, 100*time.Millisecond).Should(Equal(sessionToken))
+		success, err := consentPage.GetURLQueryParam("success")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(success).To(Equal("true"))
+		serviceID, err := consentPage.GetURLQueryParam("service_id")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(serviceID).To(Equal(selGoogleServiceID.String()))
+		selectionStateID, err := consentPage.GetURLQueryParam("consent_state_id")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(selectionStateID).To(BeEmpty())
+		legacyState, err := consentPage.GetURLQueryParam("consent_state")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(legacyState).To(BeEmpty())
+		expectOptionalSelectionRestored(ctx, consentPage, "Slack")
 	})
 })

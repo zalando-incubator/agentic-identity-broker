@@ -267,6 +267,7 @@ func TestStateTokenSecurityTampered_WrongKeyDecryption(t *testing.T) {
 	service1 := oauth2session.NewOAuth2SessionService(
 		providerService1,
 		sessionRepo1,
+		sessionRepo1,
 		grantRepo1,
 		agentRepo1,
 		nil,
@@ -301,6 +302,7 @@ func TestStateTokenSecurityTampered_WrongKeyDecryption(t *testing.T) {
 
 	service2 := oauth2session.NewOAuth2SessionService(
 		providerService2,
+		sessionRepo2,
 		sessionRepo2,
 		grantRepo2,
 		agentRepo2,

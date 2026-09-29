@@ -4,11 +4,29 @@
 package migrations_test
 
 import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
+	awsencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/aws"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/postgres"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval/toolpattern"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2server"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -433,4 +451,90 @@ func TestMigration031(t *testing.T) {
 			 NULL, 'https://oauth.example.com', false, '[]');
 	`)
 	require.Error(t, err, "rollback must restore the confidential client-secret constraint")
+}
+
+func TestMigration033SigningKeyPublicJWK(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+
+	require.NoError(t, f.Up(t, 32))
+	require.NoError(t, f.ExecuteSQL(t, `
+		INSERT INTO signing_keys (id, kid, private_key_encrypted)
+		VALUES ('30000000-0000-0000-0000-000000000033', 'legacy-kid', '\x0102');
+	`))
+	require.NoError(t, f.Up(t, 33))
+	columnType, err := f.GetColumnType(t, "signing_keys", "public_jwk")
+	require.NoError(t, err)
+	assert.Equal(t, "bytea", columnType)
+	missing, err := f.QuerySQL(t, `SELECT (public_jwk IS NULL)::text FROM signing_keys WHERE kid = 'legacy-kid'`)
+	require.NoError(t, err)
+	assert.Equal(t, "true", strings.TrimSpace(missing))
+
+	require.NoError(t, f.ExecuteSQL(t, `UPDATE signing_keys SET public_jwk = convert_to('{"kty":"EC"}', 'UTF8') WHERE kid = 'legacy-kid'`))
+	require.NoError(t, f.Down(t, 32))
+	exists, err := f.ColumnExists(t, "signing_keys", "public_jwk")
+	require.NoError(t, err)
+	assert.False(t, exists)
+	ciphertext, err := f.QuerySQL(t, `SELECT encode(private_key_encrypted, 'hex') FROM signing_keys WHERE kid = 'legacy-kid'`)
+	require.NoError(t, err)
+	assert.Equal(t, "0102", strings.TrimSpace(ciphertext))
+
+	require.NoError(t, f.Up(t, 33))
+	missing, err = f.QuerySQL(t, `SELECT (public_jwk IS NULL)::text FROM signing_keys WHERE kid = 'legacy-kid'`)
+	require.NoError(t, err)
+	assert.Equal(t, "true", strings.TrimSpace(missing))
+}
+
+func TestMigration033VerifiesLegacySignature(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+	ctx := context.Background()
+	const kid = "legacy-kid"
+
+	require.NoError(t, f.Up(t, 32))
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	privateDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	require.NoError(t, err)
+	privatePEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})
+	encryptor, _, err := awsencryption.NewAWSEncryption(base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")), "", 0)
+	require.NoError(t, err)
+	ciphertext, err := encryptor.Encrypt(ctx, privatePEM, map[string]string{"kid": kid})
+	require.NoError(t, err)
+	_, err = f.db.ExecContext(ctx, `INSERT INTO signing_keys (id, kid, private_key_encrypted, is_current, activates_at)
+		VALUES ('30000000-0000-0000-0000-000000000033', $1, $2, true, NOW() - INTERVAL '1 minute')`, kid, ciphertext)
+	require.NoError(t, err)
+
+	signingJWK, err := jwk.Import[jwk.Key](privateKey)
+	require.NoError(t, err)
+	require.NoError(t, signingJWK.Set(jwk.KeyIDKey, kid))
+	now := time.Now()
+	token, err := jwt.NewBuilder().Subject("legacy-user").IssuedAt(now).Expiration(now.Add(time.Hour)).Build()
+	require.NoError(t, err)
+	signedBeforeMigration, err := jwt.Sign(token, jwt.WithKey(jwa.ES256(), signingJWK))
+	require.NoError(t, err)
+
+	require.NoError(t, f.Up(t, 33))
+	adapter, err := postgres.NewAdapter(&ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: f.connStr}})
+	require.NoError(t, err)
+	require.NoError(t, adapter.Initialize(ctx))
+	defer func() { require.NoError(t, adapter.Close(ctx)) }()
+	repo := postgres.NewSigningKeyRepo(adapter)
+	svc := oauth2server.NewSigningKeyService(repo, repo, encryptor, &noop.BranchKeyManager{}, slog.Default())
+	_, err = svc.BuildJWKS(ctx)
+	require.NoError(t, err)
+	stored, err := repo.GetByKID(ctx, id.NewKeyID(kid))
+	require.NoError(t, err)
+	require.NotEmpty(t, stored.PublicJWK)
+
+	freshEncryptor, _, err := awsencryption.NewAWSEncryption(base64.StdEncoding.EncodeToString([]byte("fedcba9876543210fedcba9876543210")), "", 0)
+	require.NoError(t, err)
+	freshService := oauth2server.NewSigningKeyService(repo, repo, freshEncryptor, &noop.BranchKeyManager{}, slog.Default())
+	set, err := freshService.BuildJWKS(ctx)
+	require.NoError(t, err)
+	verified, err := jwt.Parse(signedBeforeMigration, jwt.WithKeySet(set))
+	require.NoError(t, err, "pre-migration signature must verify against persisted public JWK")
+	subject, ok := verified.Subject()
+	require.True(t, ok)
+	assert.Equal(t, "legacy-user", subject)
 }

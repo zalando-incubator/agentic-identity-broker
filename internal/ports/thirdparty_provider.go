@@ -14,7 +14,7 @@ import (
 //
 // IMPORTANT CONTRACT (Encryption Invariant):
 //   - Input (Create/Update): Entity must have an encrypted or absent Secret
-//   - Output (Get/List/Find): Entity has an encrypted or absent Secret; the domain service decrypts encrypted values
+//   - Output (Get/List/Find): Entity has an encrypted or absent Secret; the domain service decrypts only Get/List results
 //   - The repository is unaware of encryption mechanics; it treats Secret as opaque ciphertext or explicit absence
 //
 // All third-party OAuth2 provider storage operations use ThirdpartyOAuth2ProviderEntity.

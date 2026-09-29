@@ -1748,6 +1748,7 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 		sessionRepo,
 		nil,
 		nil,
+		nil,
 		&MockEncryption{},
 		nil,
 		nil,

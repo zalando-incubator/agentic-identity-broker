@@ -25,7 +25,7 @@ var _ fositestorage.Transactional = (*FositeStorage)(nil)
 type FositeStorage struct {
 	codeRepo       ports.AuthorizationCodeRepository
 	refreshRepo    ports.RefreshTokenSessionRepository
-	transactions   ports.OAuth2TransactionManager
+	transactions   ports.StorageTransactionManager
 	pkceRepo       ports.PKCESessionRepository
 	credRepo       ports.ClientCredentialRepository
 	clientResolver ports.ClientResolver
@@ -40,7 +40,7 @@ func NewFositeStorage(
 	credRepo ports.ClientCredentialRepository,
 	clientResolver ports.ClientResolver,
 	logger *slog.Logger,
-	transactions ...ports.OAuth2TransactionManager,
+	transactions ...ports.StorageTransactionManager,
 ) *FositeStorage {
 	storage := &FositeStorage{
 		codeRepo:       codeRepo,

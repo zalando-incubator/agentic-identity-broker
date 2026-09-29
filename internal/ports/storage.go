@@ -36,8 +36,8 @@ type HealthChecker interface {
 	HealthCheck(ctx context.Context) error
 }
 
-// OAuth2TransactionManager supplies atomic storage operations for Fosite token flows.
-type OAuth2TransactionManager interface {
+// StorageTransactionManager supplies a context shared by participating repository operations.
+type StorageTransactionManager interface {
 	BeginTX(ctx context.Context) (context.Context, error)
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
@@ -252,6 +252,14 @@ type UserSessionRepository interface {
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 
+// UserSessionRefreshRepository serializes a read-modify-write refresh for one session.
+// The callback sees the latest session under a lock; it returns true only when it
+// has replaced the encrypted tokens and the adapter must persist them atomically.
+// A nil session means the principal has no session for that service.
+type UserSessionRefreshRepository interface {
+	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
+}
+
 // PermissionSetRepository defines storage operations for permission set entities.
 // Permission sets are admin-defined bundles of OAuth2 scopes spanning one or more third-party services.
 // Following Interface Segregation Principle: focused interface for permission set operations.
@@ -371,9 +379,17 @@ type SigningKeyRepository interface {
 	// ListActive returns all signing keys that have not been removed.
 	ListActive(ctx context.Context) ([]*storage.SigningKey, error)
 
+	// KeySetVersion returns the database-backed revision of the signing-key set.
+	// It must change atomically with every committed key mutation.
+	KeySetVersion(ctx context.Context) (int64, error)
+
 	// SetCurrent promotes a key to be the current signing key using the domain-supplied
 	// activation timestamp and returns the updated metadata.
 	SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error)
+
+	// SetPublicJWK backfills a legacy key without overwriting an existing value.
+	// It reports true only when this call writes the public trust anchor.
+	SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) (bool, error)
 
 	// Delete soft-deletes a signing key by setting removed_at.
 	// Implementations must enforce signing-key invariants atomically:
