@@ -1,28 +1,34 @@
 ---
 title: "Verify release artifacts"
-description: Check that the images, binaries and Helm chart of a release come from our release workflow at that tag before you deploy them.
+description: Verify that release images, archives, and the Helm chart come from our workflow at the selected tag before deployment.
 ---
 
 # Verify release artifacts
 
-Every `vX.Y.Z` tag runs our release workflow, and the workflow signs SLSA build provenance for
-everything it publishes. Before you deploy a release, check that its artifacts come from that
-workflow at that tag. It takes one command per artifact.
+Every `vX.Y.Z` tag starts our release workflow. The workflow signs SLSA build provenance
+for its images and release assets.
 
-We attest two groups of artifacts:
+Before you deploy a release, verify that each artifact came from this workflow
+at that tag.
 
-| Artifact | Where we store the attestation |
-| --- | --- |
-| Images `ghcr.io/zalando-incubator/agentic-identity-broker`, `-migrate` and `-extproc` | In GHCR, next to each image |
-| Binary archives (`*.tar.gz`), Helm chart (`*.tgz`) and `checksums.txt` on the GitHub Release | In one Sigstore bundle on the same release, `agentic-identity-broker_<version>_provenance.sigstore.json` |
+The workflow stores attestations in two places:
 
-Each command below pins the repository, the release workflow and the tag. An attestation from a
-fork, from another workflow or from an older release fails the check.
+- GHCR stores attestations with each image: `ghcr.io/zalando-incubator/agentic-identity-broker`,
+  `-migrate`, and `-extproc`.
+- The GitHub Release stores one Sigstore bundle for the binary archives
+  (`*.tar.gz`), the Helm chart (`*.tgz`), and `checksums.txt`.
+  The bundle is `agentic-identity-broker_<version>_provenance.sigstore.json`.
+
+Each verification command specifies the repository, the release workflow,
+and the tag.
+Attestations from a fork, a different workflow, or a different tag fail verification.
 
 ## Verify with GitHub CLI
 
-You need a logged-in `gh`. To check images, `gh` also has to read them from GHCR, so log in there
-first (`docker login ghcr.io`). Set the release you plan to install:
+Log in to GitHub with `gh`. Before you verify images, log in to GHCR with
+`docker login ghcr.io`.
+
+Set the repository, release tag, and workflow:
 
 ```bash
 REPO=zalando-incubator/agentic-identity-broker
@@ -39,8 +45,7 @@ for IMAGE in "ghcr.io/$REPO" "ghcr.io/$REPO-migrate" "ghcr.io/$REPO-extproc"; do
 done
 ```
 
-Download the release assets you need and verify each file. The example uses the broker binary
-for amd64:
+To verify the broker archive for amd64, run these commands:
 
 ```bash
 FILE="agentic-identity-broker_${TAG#v}_linux_amd64.tar.gz"
@@ -49,10 +54,17 @@ gh attestation verify "$FILE" --repo "$REPO" \
   --signer-workflow "$WORKFLOW" --source-ref "refs/tags/$TAG"
 ```
 
+To verify a different release asset, replace the `FILE` value in the example
+with its filename.
+
 ## Verify with cosign
 
-Use cosign 3.0 or later. Older versions look for a different attestation format by default and
-don't find ours. Set the release and the expected signing identity:
+Use cosign 3.0 or later.
+
+Older versions search for a different attestation format by default.
+As a result, they do not find our attestations.
+
+Set the repository, release tag, identity, and issuer:
 
 ```bash
 REPO=zalando-incubator/agentic-identity-broker
@@ -71,8 +83,7 @@ for IMAGE in "ghcr.io/$REPO" "ghcr.io/$REPO-migrate" "ghcr.io/$REPO-extproc"; do
 done
 ```
 
-Download the release assets you need together with the provenance bundle, and verify each file
-against the bundle:
+To verify the broker archive for amd64, run these commands:
 
 ```bash
 FILE="agentic-identity-broker_${TAG#v}_linux_amd64.tar.gz"
@@ -86,10 +97,16 @@ cosign verify-blob-attestation --bundle "$BUNDLE" --type slsaprovenance1 \
   "$FILE"
 ```
 
+To verify a different release asset, replace the `FILE` value in the example
+with its filename.
+
 ## Verify many files at once
 
-We also attest `checksums.txt`, which lists every archive and the chart. Verify it once with
-either tool above (set `FILE=checksums.txt`), then check the files you downloaded against it:
+The `checksums.txt` file lists every archive and the Helm chart.
+
+In either asset example, replace the `FILE` assignment with `FILE=checksums.txt`.
+Run that example to verify the checksum file.
+Then compare the downloaded files with it:
 
 ```bash
 sha256sum --check --ignore-missing checksums.txt
@@ -99,17 +116,27 @@ On macOS, use `shasum -a 256 --check --ignore-missing checksums.txt`.
 
 ## Verify the Helm chart from GHCR
 
-We push the same chart archive to `oci://ghcr.io/zalando-incubator/agentic-identity-broker`.
-Pull it and set `FILE` to the pulled archive:
+The workflow publishes the same chart archive to GHCR and the GitHub Release.
+
+Pull the archive from `oci://ghcr.io/zalando-incubator/agentic-identity-broker`:
 
 ```bash
 helm pull oci://ghcr.io/zalando-incubator/agentic-identity-broker --version "${TAG#v}"
 FILE="agentic-identity-broker-${TAG#v}.tgz"
 ```
 
-Then run the `gh attestation verify` or `cosign verify-blob-attestation` command from above,
-without the download step, and install from the verified file. Deploy images by the exact `vX.Y.Z`
-tag you verified. We also move the `vX.Y` tag to each new patch release.
+If you use GitHub CLI, run the `gh attestation verify` command from the GitHub
+CLI asset example.
 
-If a check fails, don't deploy the artifact. Report it through our
+If you use cosign, set `BUNDLE` as shown in the cosign asset example.
+Download that bundle from the GitHub Release.
+Then run the `cosign verify-blob-attestation` command from the cosign asset example.
+
+Install the chart from the verified archive.
+
+Deploy images with the exact `vX.Y.Z` tag that you verified.
+
+The `vX.Y` tag changes with each patch release.
+
+If verification fails, do not deploy the artifact. Report the failure through our
 [security policy](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/SECURITY.md).
