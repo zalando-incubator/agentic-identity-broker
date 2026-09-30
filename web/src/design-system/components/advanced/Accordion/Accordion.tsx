@@ -5,7 +5,6 @@
  * Follows the "Refined Trust Architecture" design system.
  *
  * Features:
- * - Built on Headless UI Disclosure for full accessibility
  * - Multiple collapsible panels
  * - Single or multiple open panels (exclusive vs non-exclusive)
  * - Header with title, optional icon, chevron indicator
@@ -19,7 +18,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Disclosure, Transition } from '@headlessui/react';
+import { Transition } from '@headlessui/react';
 import { cva } from 'class-variance-authority';
 import { cn } from '@design-system/utils';
 
@@ -132,7 +131,6 @@ export interface AccordionProps {
 
 /**
  * Accordion component for collapsible content sections.
- * Uses Headless UI Disclosure for full accessibility and keyboard support.
  *
  * @example
  * ```tsx
@@ -266,81 +264,71 @@ export const Accordion = React.forwardRef<HTMLDivElement, AccordionProps>(
     return (
       <div ref={ref} className={cn(accordionVariants({ size }), className)}>
         {items.map((item, index) => {
-          const isOpen = openItems.has(item.id);
+          const isItemOpen = openItems.has(item.id);
 
           return (
-            <Disclosure key={item.id} as="div">
-              {() => {
-                // Sync Disclosure open state with our controlled state
-                const isItemOpen = isOpen;
-
-                return (
-                  <>
-                    <Disclosure.Button
-                      as="button"
-                      disabled={item.disabled}
-                      onClick={() => handleToggle(item.id)}
-                      onKeyDown={(e) => handleKeyDown(e, index)}
-                      data-accordion-button={item.id}
-                      className={cn(
-                        accordionItemVariants({
-                          size,
-                          disabled: item.disabled,
-                          open: isItemOpen,
-                        }),
-                      )}
-                      aria-expanded={isItemOpen}
-                      aria-controls={`accordion-content-${item.id}`}
-                    >
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
-                        {item.icon && (
-                          <div className="flex-shrink-0 w-5 h-5 text-trust-deep mt-0.5">
-                            {item.icon}
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-neutral-900">
-                            {item.title}
-                          </div>
-                          {item.description && (
-                            <div className="mt-1 text-sm text-neutral-600">
-                              {item.description}
-                            </div>
-                          )}
-                        </div>
-                        {item.badge && (
-                          <div className="flex-shrink-0">{item.badge}</div>
-                        )}
+            <div key={item.id}>
+              <button
+                type="button"
+                disabled={item.disabled}
+                onClick={() => handleToggle(item.id)}
+                onKeyDown={(e) => handleKeyDown(e, index)}
+                data-accordion-button={item.id}
+                className={cn(
+                  accordionItemVariants({
+                    size,
+                    disabled: item.disabled,
+                    open: isItemOpen,
+                  }),
+                )}
+                aria-expanded={isItemOpen}
+                aria-controls={`accordion-content-${item.id}`}
+              >
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  {item.icon && (
+                    <div className="flex-shrink-0 w-5 h-5 text-trust-deep mt-0.5">
+                      {item.icon}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-neutral-900">
+                      {item.title}
+                    </div>
+                    {item.description && (
+                      <div className="mt-1 text-sm text-neutral-600">
+                        {item.description}
                       </div>
-                      <ChevronDownIcon
-                        className={cn(
-                          'flex-shrink-0 text-neutral-400',
-                          isItemOpen && 'rotate-180',
-                        )}
-                      />
-                    </Disclosure.Button>
+                    )}
+                  </div>
+                  {item.badge && (
+                    <div className="flex-shrink-0">{item.badge}</div>
+                  )}
+                </div>
+                <ChevronDownIcon
+                  className={cn(
+                    'flex-shrink-0 text-neutral-400',
+                    isItemOpen && 'rotate-180',
+                  )}
+                />
+              </button>
 
-                    <Transition
-                      show={isItemOpen}
-                      enter="transition duration-200 ease-out"
-                      enterFrom="transform scale-95 opacity-0"
-                      enterTo="transform scale-100 opacity-100"
-                      leave="transition duration-150 ease-out"
-                      leaveFrom="transform scale-100 opacity-100"
-                      leaveTo="transform scale-95 opacity-0"
-                    >
-                      <Disclosure.Panel
-                        static
-                        id={`accordion-content-${item.id}`}
-                        className={accordionContentVariants({ size })}
-                      >
-                        {item.content}
-                      </Disclosure.Panel>
-                    </Transition>
-                  </>
-                );
-              }}
-            </Disclosure>
+              <Transition
+                show={isItemOpen}
+                enter="transition duration-200 ease-out"
+                enterFrom="transform scale-95 opacity-0"
+                enterTo="transform scale-100 opacity-100"
+                leave="transition duration-150 ease-out"
+                leaveFrom="transform scale-100 opacity-100"
+                leaveTo="transform scale-95 opacity-0"
+              >
+                <div
+                  id={`accordion-content-${item.id}`}
+                  className={accordionContentVariants({ size })}
+                >
+                  {item.content}
+                </div>
+              </Transition>
+            </div>
           );
         })}
       </div>
