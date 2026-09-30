@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -238,7 +239,7 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 	}
 
 	if len(argumentsJSON) > 0 {
-		if err := json.Unmarshal(argumentsJSON, &existing.Arguments); err != nil {
+		if err := unmarshalApprovalArguments(argumentsJSON, &existing.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"CreateToolApproval",
 				storage.ErrorKindValidation,
@@ -361,7 +362,7 @@ func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.Approval
 	}
 
 	if len(argumentsJSON) > 0 {
-		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
+		if err := unmarshalApprovalArguments(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"GetToolApproval",
 				storage.ErrorKindValidation,
@@ -483,7 +484,7 @@ func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.Appr
 	}
 
 	if len(argumentsJSON) > 0 {
-		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
+		if err := unmarshalApprovalArguments(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"ApproveToolApproval",
 				storage.ErrorKindValidation,
@@ -598,7 +599,7 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 	}
 
 	if len(argumentsJSON) > 0 {
-		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
+		if err := unmarshalApprovalArguments(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"DenyToolApproval",
 				storage.ErrorKindValidation,
@@ -713,7 +714,7 @@ func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.Appr
 	}
 
 	if len(argumentsJSON) > 0 {
-		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
+		if err := unmarshalApprovalArguments(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"ConsumeToolApproval",
 				storage.ErrorKindValidation,
@@ -794,7 +795,7 @@ func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID
 		return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindConnection, err, "failed to revoke permanent tool approval")
 	}
 	if len(argumentsJSON) > 0 {
-		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
+		if err := unmarshalApprovalArguments(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal arguments from JSON")
 		}
 	}
@@ -1065,7 +1066,7 @@ func scanApprovalRows(rows *sql.Rows, operation string) ([]*storage.ToolApproval
 			)
 		}
 		if len(argumentsJSON) > 0 {
-			if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
+			if err := unmarshalApprovalArguments(argumentsJSON, &approval.Arguments); err != nil {
 				return nil, storage.NewStorageError(
 					operation,
 					storage.ErrorKindValidation,
@@ -1088,6 +1089,12 @@ func scanApprovalRows(rows *sql.Rows, operation string) ([]*storage.ToolApproval
 		)
 	}
 	return approvals, nil
+}
+
+func unmarshalApprovalArguments(data []byte, target *map[string]any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode(target)
 }
 
 func marshalParamsPattern(params map[string]string) ([]byte, error) {

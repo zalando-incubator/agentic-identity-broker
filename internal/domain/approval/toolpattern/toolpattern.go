@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"reflect"
 	"sort"
 	"strconv"
@@ -74,7 +75,7 @@ func Canonical(v any) string {
 	case float32:
 		return strconv.FormatFloat(float64(value), 'f', -1, 64)
 	case json.Number:
-		return string(value)
+		return canonicalNumber(string(value))
 	case int:
 		return strconv.FormatInt(int64(value), 10)
 	case int8:
@@ -102,6 +103,50 @@ func Canonical(v any) string {
 	default:
 		return canonicalJSON(v)
 	}
+}
+
+func canonicalNumber(number string) string {
+	if len(number) <= 1024 && !strings.ContainsAny(number, ".eE") {
+		if number == "-0" {
+			return "0"
+		}
+		return number
+	}
+	sign := ""
+	if strings.HasPrefix(number, "-") {
+		sign, number = "-", number[1:]
+	}
+	var point big.Int
+	if i := strings.IndexAny(number, "eE"); i >= 0 {
+		point.SetString(number[i+1:], 10)
+		number = number[:i]
+	}
+	integer, fraction, _ := strings.Cut(number, ".")
+	digits := integer + fraction
+	trimmed := strings.TrimLeft(digits, "0")
+	if trimmed == "" {
+		return "0"
+	}
+	point.Add(&point, big.NewInt(int64(len(integer)-(len(digits)-len(trimmed)))))
+	digits = strings.TrimRight(trimmed, "0")
+	// Bound decimal expansion by the maximum approval-pattern length, not the exponent.
+	if point.IsInt64() {
+		p := point.Int64()
+		switch {
+		case p >= int64(len(digits)) && p <= int64(1024-len(sign)):
+			return sign + digits + strings.Repeat("0", int(p)-len(digits))
+		case p > 0 && p < int64(len(digits)) && len(sign)+len(digits)+1 <= 1024:
+			return sign + digits[:p] + "." + digits[p:]
+		case p <= 0 && p >= -1024 && int64(len(sign)+len(digits)+2)-p <= 1024:
+			return sign + "0." + strings.Repeat("0", int(-p)) + digits
+		}
+	}
+	point.Sub(&point, big.NewInt(1))
+	coefficient := digits[:1]
+	if len(digits) > 1 {
+		coefficient += "." + digits[1:]
+	}
+	return sign + coefficient + "e" + point.String()
 }
 
 // ExactParams returns the fully constrained params pattern for a concrete argument map.
@@ -208,7 +253,7 @@ func canonicalJSON(v any) string {
 	case float32:
 		return strconv.FormatFloat(float64(value), 'f', -1, 64)
 	case json.Number:
-		return string(value)
+		return canonicalNumber(string(value))
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return Canonical(value)
 	}
