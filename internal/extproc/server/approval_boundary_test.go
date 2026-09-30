@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -92,4 +94,52 @@ func TestServerForwardsOnlyApprovedMCPView(t *testing.T) {
 	require.NoError(t, decoder.Decode(&upstreamBody))
 	assert.Equal(t, opaBody, upstreamBody)
 	assert.JSONEq(t, `{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"path":"/prod"}},"extension":{"source":"client"}}`, string(forwarded.Body))
+}
+
+func TestServerPreservesOnceApprovalWhenSerializedBodyIsTooLarge(t *testing.T) {
+	once := "once"
+	approvedAt := time.Now()
+	cache := approval.NewCache(time.Minute, time.Minute)
+	cache.Replace([]approval.Pair{{
+		Identity: approval.Identity{Principal: "alice", AgentID: "agent"},
+		Approvals: []approval.Record{{
+			ID: "approval-1", ToolPattern: "deploy", ParamsPattern: map[string]string{},
+			Status: "approved", Persistence: &once, ApprovedAt: &approvedAt,
+		}},
+	}}, "etag-1")
+	var consumes atomic.Int32
+	broker := &mockApprovalBroker{
+		readFunc: func(context.Context, string, []string) ([]approval.Pair, string, error) {
+			t.Error("unspent cached approval must cover the retry")
+			return nil, "", nil
+		},
+		createFunc: func(context.Context, string, approval.CreateRequest) (string, error) {
+			t.Error("retry must not require another approval")
+			return "", nil
+		},
+		consumeFunc: func(context.Context, string, string) error {
+			consumes.Add(1)
+			return nil
+		},
+	}
+	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+		return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
+	}}
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "exchanged", Principal: "alice", AgentID: "agent"}, nil
+	}}
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{}},"extension":"` + strings.Repeat("\u2028", 30) + `"}`)
+	cfg := testConfig()
+	cfg.Authorization.MaxBodySize = len(body)
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, cfg, exchanger, auth, approval.NewGate(cache, broker))
+	defer cleanup()
+
+	_, rejected := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, body)
+	require.NotNil(t, rejected.GetImmediateResponse())
+	assert.Contains(t, string(rejected.GetImmediateResponse().Body), "request_too_large")
+	assert.Zero(t, consumes.Load(), "serialization rejection must not spend the approval")
+
+	_, retry := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{}}}`))
+	require.NotNil(t, retry.GetRequestBody().GetResponse().GetBodyMutation().GetStreamedResponse())
+	assert.Equal(t, int32(1), consumes.Load(), "only the forwarded retry spends the approval")
 }

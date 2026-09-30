@@ -2102,12 +2102,15 @@ func TestServer_OPA_AllowedMCPBodyPreservesNumericLexemes(t *testing.T) {
 }
 
 func TestServer_OPA_RejectsExpandedMCPBody(t *testing.T) {
+	element := `{"jsonrpc":"2.0","method":"initialize","params":{"text":"` + strings.Repeat("\u2028", 30) + `"}}`
 	for _, tc := range []struct {
-		name string
-		body string
+		name    string
+		body    string
+		element string
 	}{
-		{"standalone", `{"jsonrpc":"2.0","method":"initialize","params":{"text":"` + strings.Repeat("\u2028", 30) + `"}}`},
-		{"batch", `[{"jsonrpc":"2.0","method":"initialize","params":{"text":"` + strings.Repeat("\u2028", 30) + `"}}]`},
+		{"standalone", element, ""},
+		{"batch", "[" + element + "]", ""},
+		{"aggregate batch", "[" + element + "," + element + "]", element},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := testConfig()
@@ -2120,6 +2123,14 @@ func TestServer_OPA_RejectsExpandedMCPBody(t *testing.T) {
 			}}
 			client, cleanup := startTestServerWithAuthorizerConfig(t, cfg, exchanger, auth)
 			defer cleanup()
+
+			if tc.element != "" {
+				_, single := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, []byte(tc.element))
+				streamed := single.GetRequestBody().GetResponse().GetBodyMutation().GetStreamedResponse()
+				require.NotNil(t, streamed, "each serialized element must fit the cap")
+				require.LessOrEqual(t, len(streamed.Body), cfg.Authorization.MaxBodySize)
+				require.Greater(t, 2*len(streamed.Body)+3, cfg.Authorization.MaxBodySize, "the complete serialized array must exceed the cap")
+			}
 
 			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, []byte(tc.body))
 			immediate := bodyResp.GetImmediateResponse()

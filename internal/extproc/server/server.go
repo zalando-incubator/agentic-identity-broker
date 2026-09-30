@@ -609,9 +609,13 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 			logger.WarnContext(ctx, "OPA approval-required request is not a standalone tool call", "error", invocationErr)
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
+		forward := canonicalMCPBody(opaInput["parsed_body"], body, maxSize)
+		if forward.GetImmediateResponse() != nil {
+			return forward
+		}
 		outcome := s.approvalGate.Evaluate(ctx, invocation)
 		if outcome.Proceed {
-			return canonicalMCPBody(opaInput["parsed_body"], body, s.cfg.Authorization.MaxBodySize)
+			return forward
 		}
 		if outcome.URL != "" {
 			return urlElicitationResponse(outcome.URL, "approval required", rawID)
