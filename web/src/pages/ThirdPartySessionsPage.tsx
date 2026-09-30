@@ -138,6 +138,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
 
   const handleTerminate = async (serviceId: string) => {
     try {
+      setAlert(null);
       setTerminatingLoading(true);
       setTerminationError(null);
 
@@ -147,7 +148,10 @@ export const ThirdPartySessionsPage: React.FC = () => {
       setSelectedSessionDetails(details);
     } catch (err) {
       console.error('Failed to fetch session details', err);
-      setTerminationError('Failed to load session details. Please try again.');
+      setAlert({
+        type: 'error',
+        message: 'Failed to load session details. Please try again.',
+      });
     } finally {
       setTerminatingLoading(false);
     }

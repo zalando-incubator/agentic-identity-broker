@@ -63,6 +63,7 @@ Main page component that displays all OAuth2 sessions in a responsive grid layou
 - Empty state when no sessions exist
 - Confirmation dialog before session termination
 - Real-time error handling with user feedback
+- If session details fail to load, the page shows an error alert. A new Terminate attempt clears the alert.
 
 **Route:**
 
