@@ -31,6 +31,17 @@ type userSessionRecord struct {
 	UpdatedAt             time.Time                 `db:"updated_at"`
 }
 
+type userSessionSummaryRecord struct {
+	ID                    id.SessionID   `db:"id"`
+	ServiceID             id.ServiceID   `db:"service_id"`
+	TokenType             string         `db:"token_type"`
+	Scope                 pq.StringArray `db:"scope"`
+	InitiatedAt           time.Time      `db:"initiated_at"`
+	AccessTokenExpiresAt  *time.Time     `db:"access_token_expires_at"`
+	RefreshTokenExpiresAt *time.Time     `db:"refresh_token_expires_at"`
+	HasRefreshToken       bool           `db:"has_refresh_token"`
+}
+
 func recordToSession(r *userSessionRecord) *storage.UserSession {
 	s := &storage.UserSession{
 		ID:                    r.ID,
@@ -95,7 +106,9 @@ func (r *PostgresUserSessionRepository) Create(ctx context.Context, session *sto
 			updated_at = NOW()
 	`
 
-	_, err := r.adapter.db.ExecContext(ctx, query,
+	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+	_, err := r.adapter.db.ExecContext(execCtx, query,
 		session.ID, session.Principal, session.ServiceID,
 		session.EncryptedAccessToken, session.EncryptedRefreshToken,
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
@@ -118,7 +131,9 @@ func (r *PostgresUserSessionRepository) Get(ctx context.Context, sessionID id.Se
 	var rec userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE id = $1`
 
-	err := r.adapter.db.GetContext(ctx, &rec, query, sessionID)
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	err := r.adapter.db.GetContext(queryCtx, &rec, query, sessionID)
 	if err == sql.ErrNoRows {
 		return nil, storage.NewStorageError("Get", storage.ErrorKindNotFound, err, "session not found")
 	}
@@ -137,7 +152,9 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	var rec userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2`
 
-	err := r.adapter.db.GetContext(ctx, &rec, query, principal, serviceID)
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	err := r.adapter.db.GetContext(queryCtx, &rec, query, principal, serviceID)
 	if err == sql.ErrNoRows {
 		return nil, nil // Not found is not an error
 	}
@@ -214,7 +231,9 @@ func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 	var records []*userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 ORDER BY created_at DESC`
 
-	err := r.adapter.db.SelectContext(ctx, &records, query, principal)
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	err := r.adapter.db.SelectContext(queryCtx, &records, query, principal)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, r.wrapError(err, "ListByPrincipal")
 	}
@@ -223,6 +242,52 @@ func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 		sessions[i] = recordToSession(rec)
 	}
 	return sessions, nil
+}
+
+func (r *PostgresUserSessionRepository) ListSummariesByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSessionSummary, error) {
+	if principal.IsZero() {
+		return nil, errors.New("principal required")
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	var records []userSessionSummaryRecord
+	err := r.adapter.db.SelectContext(queryCtx, &records, `SELECT id, service_id, token_type, scope, initiated_at,
+		access_token_expires_at, refresh_token_expires_at,
+		COALESCE(octet_length(encrypted_refresh_token), 0) > 0 AS has_refresh_token
+		FROM user_sessions WHERE principal = $1 ORDER BY created_at DESC`, principal)
+	if err != nil {
+		return nil, r.wrapError(err, "ListSummariesByPrincipal")
+	}
+	summaries := make([]*storage.UserSessionSummary, 0, len(records))
+	for _, record := range records {
+		session := storage.UserSession{
+			ID: record.ID, ServiceID: record.ServiceID, TokenType: record.TokenType,
+			Scope: []string(record.Scope), InitiatedAt: record.InitiatedAt,
+			AccessTokenExpiresAt: record.AccessTokenExpiresAt, RefreshTokenExpiresAt: record.RefreshTokenExpiresAt,
+		}
+		if session.Scope == nil {
+			session.Scope = []string{}
+		}
+		summary := storage.NewUserSessionSummary(&session, "", 0)
+		summary.HasRefreshToken = record.HasRefreshToken
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
+}
+
+func (r *PostgresUserSessionRepository) ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error) {
+	if principal.IsZero() {
+		return nil, errors.New("principal required")
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	ids := make([]id.ServiceID, 0)
+	err := r.adapter.db.SelectContext(queryCtx, &ids, `SELECT service_id FROM user_sessions WHERE principal = $1
+		AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW()) ORDER BY created_at DESC`, principal)
+	if err != nil {
+		return nil, r.wrapError(err, "ListActiveServiceIDsByPrincipal")
+	}
+	return ids, nil
 }
 
 // ListActiveByPrincipal retrieves only non-expired sessions for a principal.
@@ -235,7 +300,9 @@ func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 	var records []*userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW()) ORDER BY created_at DESC`
 
-	err := r.adapter.db.SelectContext(ctx, &records, query, principal)
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	err := r.adapter.db.SelectContext(queryCtx, &records, query, principal)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, r.wrapError(err, "ListActiveByPrincipal")
 	}
@@ -253,7 +320,9 @@ func (r *PostgresUserSessionRepository) Delete(ctx context.Context, sessionID id
 	}
 
 	query := `DELETE FROM user_sessions WHERE id = $1`
-	_, err := r.adapter.db.ExecContext(ctx, query, sessionID)
+	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+	_, err := r.adapter.db.ExecContext(execCtx, query, sessionID)
 	if err != nil {
 		return r.wrapError(err, "Delete")
 	}
@@ -267,7 +336,9 @@ func (r *PostgresUserSessionRepository) DeleteByPrincipalAndService(ctx context.
 	}
 
 	query := `DELETE FROM user_sessions WHERE principal = $1 AND service_id = $2`
-	_, err := r.adapter.db.ExecContext(ctx, query, principal, serviceID)
+	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+	_, err := r.adapter.db.ExecContext(execCtx, query, principal, serviceID)
 	if err != nil {
 		return r.wrapError(err, "DeleteByPrincipalAndService")
 	}
@@ -283,7 +354,9 @@ func (r *PostgresUserSessionRepository) CountByService(ctx context.Context, serv
 	var count int
 	query := `SELECT COUNT(*) FROM user_sessions WHERE service_id = $1`
 
-	err := r.adapter.db.GetContext(ctx, &count, query, serviceID)
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	err := r.adapter.db.GetContext(queryCtx, &count, query, serviceID)
 	if err != nil {
 		return 0, r.wrapError(err, "CountByService")
 	}
@@ -295,7 +368,7 @@ func (r *PostgresUserSessionRepository) wrapError(err error, operation string) e
 	if err == sql.ErrNoRows {
 		return storage.NewStorageError(operation, storage.ErrorKindNotFound, err, "not found")
 	}
-	if err.Error() == "context deadline exceeded" {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "timeout")
 	}
 	return storage.NewStorageError(operation, storage.ErrorKindUnknown, err, err.Error())

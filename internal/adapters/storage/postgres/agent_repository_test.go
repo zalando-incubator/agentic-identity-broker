@@ -650,6 +650,26 @@ func TestAgentRepository_List_Empty(t *testing.T) {
 	assert.Empty(t, agents)
 }
 
+func TestAgentRepository_GetByIDs(t *testing.T) {
+	adapter, cleanup := setupAgentTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewAgentRepository(adapter)
+	first := createTestAgent(t, adapter)
+	second := createTestAgent(t, adapter)
+	second.ClientID = nil
+	second.ClientURIs = []string{"https://client.example.com/metadata.json"}
+	require.NoError(t, repo.Update(ctx, second))
+
+	agents, err := repo.GetByIDs(ctx, []id.AgentID{second.ID, id.NewAgentID(), first.ID, second.ID})
+	require.NoError(t, err)
+	require.Len(t, agents, 2)
+	assert.Equal(t, second.ID, agents[0].ID)
+	assert.Equal(t, second.ClientURIs, agents[0].ClientURIs)
+	assert.Equal(t, first.ID, agents[1].ID)
+	assert.Equal(t, first.PermissionSets, agents[1].PermissionSets)
+}
+
 func TestAgentRepository_List(t *testing.T) {
 	adapter, cleanup := setupAgentTestDB(t)
 	defer cleanup()

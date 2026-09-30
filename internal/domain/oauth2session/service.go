@@ -1026,35 +1026,40 @@ func (s *OAuth2SessionService) ListUserSessions(
 	ctx context.Context,
 	principal id.Principal,
 ) ([]*storage.UserSessionSummary, error) {
-	// Fetch all sessions for principal
-	sessions, err := s.sessionRepo.ListByPrincipal(ctx, principal)
+	summaries, err := s.sessionRepo.ListSummariesByPrincipal(ctx, principal)
 	if err != nil {
 		s.logger.Error("failed to list sessions", "principal", principal, "err", err)
 		return nil, err
 	}
-
-	// Convert to summaries with agent counts
-	summaries := make([]*storage.UserSessionSummary, 0, len(sessions))
-	for _, session := range sessions {
-		// Fetch service details (with decrypted client secret via service manager)
-		service, err := s.providerService.Get(ctx, session.ServiceID)
-		if err != nil {
-			s.logger.Warn("service not found", "service_id", session.ServiceID, "err", err)
+	ids := make([]id.ServiceID, len(summaries))
+	for i, summary := range summaries {
+		ids[i] = summary.ServiceID
+	}
+	services, err := s.providerService.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load session services: %w", err)
+	}
+	servicesByID := make(map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity, len(services))
+	for _, service := range services {
+		servicesByID[service.ID] = service
+	}
+	result := make([]*storage.UserSessionSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		service := servicesByID[summary.ServiceID]
+		if service == nil {
+			s.logger.Warn("service not found", "service_id", summary.ServiceID)
 			continue
 		}
-
-		// Count dependent agents
-		agentCount, err := s.grantRepo.CountAgentsByPrincipalAndServiceID(ctx, principal, session.ServiceID)
+		agentCount, err := s.grantRepo.CountAgentsByPrincipalAndServiceID(ctx, principal, summary.ServiceID)
 		if err != nil {
-			s.logger.Warn("failed to count agents", "service_id", session.ServiceID, "err", err)
+			s.logger.Warn("failed to count agents", "service_id", summary.ServiceID, "err", err)
 			agentCount = 0
 		}
-
-		summary := storage.NewUserSessionSummary(session, service.DisplayName, agentCount)
-		summaries = append(summaries, summary)
+		summary.ServiceDisplayName = service.DisplayName
+		summary.DependentAgentCount = agentCount
+		result = append(result, summary)
 	}
-
-	return summaries, nil
+	return result, nil
 }
 
 // TerminateSession deletes a session and its encrypted tokens.

@@ -551,17 +551,11 @@ func (s *Service) findExistingPendingApproval(ctx context.Context, principal id.
 	if s.queries == nil {
 		return nil, nil
 	}
-	approvals, err := s.queries.ListActiveByPrincipalAndAgent(ctx, principal, agentID)
+	approval, err := s.queries.FindPendingByKey(ctx, principal, agentID, toolName, argumentsHash)
 	if err != nil {
-		return nil, fmt.Errorf("list active approvals: %w", err)
+		return nil, fmt.Errorf("find pending approval: %w", err)
 	}
-	for _, approval := range approvals {
-		if approval.ToolName == toolName && approval.ArgumentsHash == argumentsHash &&
-			approval.Status == storage.ApprovalStatusPending && !approval.Consumed && !approval.IsExpired(time.Now()) {
-			return approval, nil
-		}
-	}
-	return nil, nil
+	return approval, nil
 }
 
 // SyncPair represents a (principal, agent_id) pair with its active approvals.

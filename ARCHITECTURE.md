@@ -464,6 +464,8 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 
 **Rate Limiting**: Per (principal, agent) pair using `golang.org/x/time/rate` token bucket. Configured via `approvals.rate_limit.max_pending_per_pair` and `approvals.rate_limit.max_requests_per_minute`.
 
+**Approval creation reads**: A narrow lookup by `(principal, agent_id, tool_name, arguments_hash)` lets existing pending approvals bypass rate limits before insertion. The partial unique index and repository upsert remain the final concurrent deduplication guard. The separate pair-wide pending count enforces `max_pending_per_pair`; the index cannot replace it.
+
 **Trace Context**: `POST /api/approvals` accepts an optional W3C `traceparent` header. The broker persists the validated remote context so later browser lifecycle spans can link to the originating tool call.
 
 #### 3.1.6. Long-Poll Sync with PostgreSQL LISTEN/NOTIFY
@@ -734,6 +736,7 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 
 - **OAuth2SessionService**: Transparently encrypts tokens on CreateSession, decrypts on retrieval
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
+- **Listing reads**: Consent delegations and session/consent requirements batch-load existing agents and providers by ID; missing records are omitted. Batch provider reads decrypt static confidential secrets and leave public and CIMD confidential providers unchanged. Consent connection status uses a narrow active-service-ID query instead of loading encrypted tokens per requirement. User-visible session summaries include expired sessions and derive refresh-token presence in PostgreSQL without selecting token ciphertext. PostgreSQL session repository reads and writes use configured read/write timeouts; refresh's row-lock transaction retains separate bounded acquisition and query phases.
 - **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Provider metadata is loaded before the session lock, then automatic and explicit refresh re-read the latest session under that lock. PostgreSQL holds a row lock through the provider exchange and commits rotated encrypted tokens before releasing it; database acquisition, reads, and writes have separate configured timeouts. The in-memory adapter serializes refresh, upsert, and deletion per session while holding its map mutex only for lookup and commit. Replicas therefore use the latest refresh token without racing on a stale one.
 - **Refresh cancellation and audit**: Automatic refresh has an operation deadline covering the configured upstream HTTP timeout and storage work. Caller cancellation stops that caller's wait without aborting a shared refresh that may already have rotated the provider token. Success audit events are emitted only after session persistence succeeds.
 - **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of confidential provider `client_secret` values via the `Secret` value object. Public services have no client secret. No other layer touches `EncryptionPort` for provider secrets.

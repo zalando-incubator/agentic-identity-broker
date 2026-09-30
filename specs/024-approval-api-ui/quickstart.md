@@ -89,17 +89,24 @@ func (a *ToolApproval) IsActionable(now time.Time) bool {
 Add to `internal/ports/storage.go`:
 
 ```go
-// ToolApprovalRepository defines storage operations for tool approval entities.
+// Core CRUD, read-side queries, and rate-limit metrics are separate ports.
 type ToolApprovalRepository interface {
     Create(ctx context.Context, approval *storage.ToolApproval) (*storage.ToolApproval, error)
     Get(ctx context.Context, id id.ApprovalID) (*storage.ToolApproval, error)
     Approve(ctx context.Context, id id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error)
     Deny(ctx context.Context, id id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (*storage.ToolApproval, error)
+    RevokePermanent(ctx context.Context, id id.ApprovalID, revokedAt time.Time) (*storage.ToolApproval, error)
     Consume(ctx context.Context, id id.ApprovalID, consumedAt time.Time) (*storage.ToolApproval, error)
-    ListActiveByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error)
-    CountPendingByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (int, error)
-    ListAllActive(ctx context.Context, principalFilter *id.Principal) ([]*storage.ToolApproval, error)
+}
+
+type ToolApprovalQueryRepository interface {
+    ListAllActive(ctx context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) ([]*storage.ToolApproval, error)
+    FindPendingByKey(ctx context.Context, principal id.Principal, agentID id.AgentID, toolName, argumentsHash string) (*storage.ToolApproval, error)
     ListPermanentByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.ToolApproval, error)
+}
+
+type ToolApprovalMetricsRepository interface {
+    CountPendingByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (int, error)
 }
 
 // ApprovalSyncStateRepository manages the global approval sync version counter.

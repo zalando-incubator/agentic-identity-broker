@@ -26,6 +26,7 @@ import (
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
@@ -1475,6 +1476,44 @@ func createMockOAuth2TokenEndpoint(t *testing.T, config mockTokenConfig) *httpte
 func newTestEncryption(t *testing.T) ports.EncryptionPort {
 	t.Helper()
 	return testutil.NewTestEncryptionAdapter(t)
+}
+
+type batchOnlyProviderRepository struct {
+	ports.ThirdpartyOAuth2ProviderRepository
+}
+
+func (batchOnlyProviderRepository) Get(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	return nil, errors.New("scalar provider lookup is not available")
+}
+
+func TestListUserSessions_BatchesProvidersAndPreservesExpiredSessions(t *testing.T) {
+	ctx := context.Background()
+	principal := id.Principal("user@example.com")
+	providerRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	provider := createTestService(id.NewServiceID())
+	provider.Secret = model.NewAbsentSecret()
+	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	require.NoError(t, providerRepo.Create(ctx, provider))
+	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(
+		batchOnlyProviderRepository{providerRepo}, newTestEncryption(t), newNoopBranchKeyManager(), nil, false, slog.Default())
+	sessions := memory.NewInMemoryUserSessionRepository()
+	for _, serviceID := range []id.ServiceID{provider.ID, id.NewServiceID()} {
+		past := time.Now().Add(-time.Minute)
+		require.NoError(t, sessions.Create(ctx, &storage.UserSession{
+			ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
+			EncryptedAccessToken: []byte("ciphertext"), EncryptedRefreshToken: []byte("refresh"),
+			TokenType: "Bearer", Scope: []string{"read"}, RefreshTokenExpiresAt: &past,
+		}))
+	}
+	svc := oauth2session.NewOAuth2SessionService(providerService, sessions, sessions,
+		memory.NewUserGrantRepository(), nil, nil, nil, nil, oauth2session.DefaultConfig(), slog.Default())
+	summaries, err := svc.ListUserSessions(ctx, principal)
+	require.NoError(t, err)
+	require.Len(t, summaries, 1, "sessions for deleted providers are omitted")
+	assert.Equal(t, provider.ID, summaries[0].ServiceID)
+	assert.Equal(t, provider.DisplayName, summaries[0].ServiceDisplayName)
+	assert.True(t, summaries[0].HasRefreshToken)
+	assert.True(t, summaries[0].IsExpired)
 }
 
 func setupService(t *testing.T) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
