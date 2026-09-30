@@ -14,7 +14,7 @@ import (
 //
 // IMPORTANT CONTRACT (Encryption Invariant):
 //   - Input (Create/Update): Entity must have an encrypted or absent Secret
-//   - Output (Get/List/Find): Entity has an encrypted or absent Secret; the domain service decrypts only Get/List results
+//   - Output (Get/GetByIDs/List/Find): Entity has an encrypted or absent Secret; the domain service decrypts only Get/GetByIDs/List results
 //   - The repository is unaware of encryption mechanics; it treats Secret as opaque ciphertext or explicit absence
 //
 // All third-party OAuth2 provider storage operations use ThirdpartyOAuth2ProviderEntity.
@@ -31,6 +31,8 @@ type ProtectedResourceMutationResult struct {
 type ThirdpartyOAuth2ProviderRepository interface {
 	Create(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) error
 	Get(ctx context.Context, id id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error)
+	// GetByIDs retrieves existing providers once per ID, in requested order; missing IDs are omitted.
+	GetByIDs(ctx context.Context, ids []id.ServiceID) ([]*model.ThirdpartyOAuth2ProviderEntity, error)
 	Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error
 	Delete(ctx context.Context, id id.ServiceID) error
 	List(ctx context.Context) ([]*model.ThirdpartyOAuth2ProviderEntity, error)

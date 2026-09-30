@@ -17,6 +17,7 @@ import (
 // --- hand-rolled mocks (domain convention) ---
 
 type mockAgentRepo struct {
+	ports.AgentRepository
 	agents map[id.AgentID]*storage.Agent
 
 	createFn         func(ctx context.Context, agent *storage.Agent) error

@@ -16,6 +16,26 @@ import (
 	"time"
 )
 
+func TestPostgresThirdpartyOAuth2ProviderRepository_GetByIDs(t *testing.T) {
+	adapter, cleanup := setupMigratedAdapter(t)
+	defer cleanup()
+	repo := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	ctx := context.Background()
+	first, second := newTestEntity(), newTestEntity()
+	first.ID, second.ID = id.NewServiceID(), id.NewServiceID()
+	first.ProtectedResources = []string{"https://api.example.com/first"}
+	second.ProtectedResources = nil
+	require.NoError(t, repo.Create(ctx, first))
+	require.NoError(t, repo.Create(ctx, second))
+
+	providers, err := repo.GetByIDs(ctx, []id.ServiceID{first.ID, id.NewServiceID(), second.ID, first.ID})
+	require.NoError(t, err)
+	require.Len(t, providers, 2)
+	assert.Equal(t, first.ID, providers[0].ID)
+	assert.Equal(t, first.ProtectedResources, providers[0].ProtectedResources)
+	assert.Equal(t, second.ID, providers[1].ID)
+}
+
 func TestPostgresThirdpartyOAuth2ProviderRepository_ProtectedResources(t *testing.T) {
 	adapter, cleanup := setupMigratedAdapter(t)
 	defer cleanup()

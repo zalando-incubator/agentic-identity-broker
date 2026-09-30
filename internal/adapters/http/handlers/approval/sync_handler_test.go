@@ -35,14 +35,14 @@ func (m *testQueryRepo) ListAllActive(_ context.Context, principalFilter *id.Pri
 	return result, nil
 }
 
-func (m *testQueryRepo) ListActiveByPrincipalAndAgent(_ context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error) {
-	var result []*storage.ToolApproval
-	for _, a := range m.approvals {
-		if a.Principal == principal && a.AgentID == agentID {
-			result = append(result, a)
+func (m *testQueryRepo) FindPendingByKey(_ context.Context, principal id.Principal, agentID id.AgentID, toolName, hash string) (*storage.ToolApproval, error) {
+	for _, approval := range m.approvals {
+		if approval.Principal == principal && approval.AgentID == agentID && approval.ToolName == toolName && approval.ArgumentsHash == hash &&
+			approval.Status == storage.ApprovalStatusPending && !approval.Consumed && !approval.IsExpired(time.Now()) {
+			return approval, nil
 		}
 	}
-	return result, nil
+	return nil, nil
 }
 
 func (m *testQueryRepo) ListPermanentByPrincipal(_ context.Context, _ id.Principal) ([]*storage.ToolApproval, error) {
