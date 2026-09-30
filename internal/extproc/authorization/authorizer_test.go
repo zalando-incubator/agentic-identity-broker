@@ -407,6 +407,35 @@ func TestOPAAuthorizer_Allow(t *testing.T) {
 	assert.Empty(t, decision.Reasons)
 }
 
+func TestOPAAuthorizer_PreservesNumericInputForPolicy(t *testing.T) {
+	path := writePolicy(t, `package aib.extproc.authz
+import rego.v1
+
+result := {"action": "allow"} if {
+	input.mcp.id == 9007199254740993
+	input.mcp.arguments.count == 9007199254740993
+} else := {"action": "deny"}
+`)
+	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), nil)
+	require.NoError(t, err)
+	defer auth.Stop(context.Background())
+
+	for _, tc := range []struct {
+		count  string
+		action string
+	}{
+		{"9007199254740993", authorization.ActionAllow},
+		{"9007199254740992", authorization.ActionDeny},
+	} {
+		body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":9007199254740993,"params":{"name":"deploy","arguments":{"count":` + tc.count + `}}}`)
+		input, err := authorization.BuildOPAInput("mcp", body, nil, "", authorization.ContextInput{})
+		require.NoError(t, err)
+		decision, err := auth.Evaluate(context.Background(), input)
+		require.NoError(t, err)
+		assert.Equal(t, tc.action, decision.Action)
+	}
+}
+
 func TestOPAAuthorizer_Deny(t *testing.T) {
 	// Scenario: policy returns deny with reasons → decision is deny with reasons
 	path := writePolicy(t, denyAllPolicy)

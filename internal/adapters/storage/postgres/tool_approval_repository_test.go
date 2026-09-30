@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"testing"
 	"time"
@@ -365,6 +366,47 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(results), 1)
 	})
+}
+
+func TestToolApprovalRepository_PreservesExactNumericArguments(t *testing.T) {
+	adapter, cleanup := setupApprovalTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewToolApprovalRepository(adapter)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	agentID := id.NewAgentID()
+	seedAgent(t, adapter, agentID)
+	original := &storage.ToolApproval{
+		ID: id.NewApprovalID(), Principal: "numeric@example.com", AgentID: agentID,
+		GatewayClientID: "test-gateway", ToolName: "pay", ArgumentsHash: "exact-numeric",
+		Arguments: map[string]any{"amount": json.Number("1.0"), "count": json.Number("9007199254740993"), "nested": []any{json.Number("0.1e6"), json.Number("9007199254740993")}},
+		Status:    storage.ApprovalStatusPending, ApprovalURL: "https://broker.example.com/approvals/test",
+		CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+	}
+	_, err := createPatternedApproval(ctx, repo, original)
+	require.NoError(t, err)
+	expected := map[string]string{"amount": "1", "count": "9007199254740993", "nested": "[100000,9007199254740993]"}
+	check := func(record *storage.ToolApproval) {
+		t.Helper()
+		assert.Equal(t, expected, storageExactParams(t, record), "persisted arguments must regenerate the exact approval scope")
+	}
+
+	duplicate, err := repo.Create(ctx, original)
+	require.NoError(t, err)
+	check(duplicate)
+	loaded, err := repo.Get(ctx, original.ID)
+	require.NoError(t, err)
+	check(loaded)
+	active, err := repo.ListActiveByPrincipalAndAgent(ctx, original.Principal, agentID)
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	check(active[0])
+	approved, err := repo.Approve(ctx, original.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: "pay", ParamsPattern: expected}, now)
+	require.NoError(t, err)
+	check(approved)
+	consumed, err := repo.Consume(ctx, original.ID, now)
+	require.NoError(t, err)
+	check(consumed)
 }
 
 func TestToolApprovalRepository_MutationsAdvanceSyncVersion(t *testing.T) {
