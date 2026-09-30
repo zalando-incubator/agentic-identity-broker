@@ -615,7 +615,7 @@ func minimalValidCIMDProvider(
 
 type readyCIMDKeyReadiness struct{}
 
-func (readyCIMDKeyReadiness) RequirePublishedKey(context.Context) error { return nil }
+func (readyCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error { return nil }
 
 func assertCIMDProviderAuditRecord(t *testing.T, logs *bytes.Buffer, serviceID id.ServiceID, operation, wantOutcome string, sentinels ...string) {
 	t.Helper()
@@ -786,6 +786,75 @@ func TestThirdpartyOAuth2ProviderService_CreateAndGet_CIMDUsesAllocatedIdentityW
 	assert.Equal(t, generatedClientID, provider.ClientID)
 	assert.True(t, provider.Secret.IsAbsent())
 	assert.Zero(t, decryptCalls)
+}
+
+func TestThirdpartyOAuth2ProviderService_CIMDProvisionsServiceBranchKeyBeforePersistence(t *testing.T) {
+	for _, operation := range []string{"create", "update"} {
+		t.Run(operation, func(t *testing.T) {
+			ctx := context.Background()
+			serviceID := id.NewServiceID()
+			entity := minimalValidCIMDProvider(serviceID, "", model.TokenEndpointAuthMethodPrivateKeyJWT)
+			var calls []string
+			repo := &functionFieldProviderRepository{
+				getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+					return minimalValidEntity(serviceID, model.NewEncryptedSecret([]byte("previous-secret"))), nil
+				},
+				createFn: func(_ context.Context, stored *model.ThirdpartyOAuth2ProviderEntity) error {
+					calls = append(calls, "persist")
+					assert.True(t, stored.Secret.IsAbsent())
+					return nil
+				},
+				updateFn: func(_ context.Context, stored *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+					calls = append(calls, "persist")
+					assert.True(t, stored.Secret.IsAbsent())
+					return nil
+				},
+			}
+			branchKeys := &functionFieldBranchKeyManager{createFn: func(_ context.Context, subject domainencryption.BranchKeySubject) (string, error) {
+				assert.Equal(t, serviceSubject(serviceID), subject)
+				calls = append(calls, "provision")
+				return "service-key", nil
+			}}
+			service := NewThirdpartyOAuth2ProviderService(repo, &functionFieldEncryption{}, branchKeys, nil, false, slog.Default()).WithCIMDPublicURL("https://broker.example").WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
+			var err error
+			if operation == "create" {
+				err = service.Create(ctx, entity)
+			} else {
+				err = service.Update(ctx, entity, nil)
+			}
+			require.NoError(t, err)
+			assert.Equal(t, []string{"provision", "persist"}, calls)
+		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderService_CIMDBranchKeyFailureRejectsWrite(t *testing.T) {
+	for _, operation := range []string{"create", "update"} {
+		t.Run(operation, func(t *testing.T) {
+			ctx := context.Background()
+			serviceID := id.NewServiceID()
+			entity := minimalValidCIMDProvider(serviceID, "", model.TokenEndpointAuthMethodPrivateKeyJWT)
+			persisted := minimalValidEntity(serviceID, model.NewEncryptedSecret([]byte("previous-secret")))
+			repo := &functionFieldProviderRepository{getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+				return persisted, nil
+			}}
+			branchKeys := &functionFieldBranchKeyManager{createFn: func(_ context.Context, subject domainencryption.BranchKeySubject) (string, error) {
+				assert.Equal(t, serviceSubject(serviceID), subject)
+				return "", errors.New("key store unavailable")
+			}}
+			logs := new(bytes.Buffer)
+			service := NewThirdpartyOAuth2ProviderService(repo, &functionFieldEncryption{}, branchKeys, nil, false, slog.New(slog.NewJSONHandler(logs, nil))).WithCIMDPublicURL("https://broker.example").WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
+			var err error
+			if operation == "create" {
+				err = service.Create(ctx, entity)
+			} else {
+				err = service.Update(ctx, entity, nil)
+			}
+			require.ErrorContains(t, err, "branch key provisioning failed")
+			assert.True(t, persisted.Secret.IsEncrypted())
+			assertCIMDProviderAuditRecord(t, logs, serviceID, operation, "rejected")
+		})
+	}
 }
 
 func TestThirdpartyOAuth2ProviderService_CIMDRejectsCallerSuppliedIdentityBeforeSideEffects(t *testing.T) {

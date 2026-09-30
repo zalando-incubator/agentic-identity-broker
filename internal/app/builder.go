@@ -443,7 +443,7 @@ func (b *Builder) Build() (*App, error) {
 	app.CIMDKeyService = cimdKeyService
 	app.CIMDKeyReadiness = cimdKeyService
 	app.CIMDAssertionSigner = cimdclient.NewAssertionSigner(cimdKeyService)
-	app.CIMDMetadataProvider = cimdclient.NewMetadataService(app.ProviderService, cimdKeyService, b.config.Server.EndUser.PublicURL)
+	app.CIMDMetadataProvider = cimdclient.NewMetadataService(app.ProviderService, cimdKeyService, cimdKeyService, b.config.Server.EndUser.PublicURL)
 	if app.ProviderService != nil {
 		app.ProviderService.WithCIMDKeyReadiness(cimdKeyService)
 	}
@@ -457,7 +457,7 @@ func (b *Builder) Build() (*App, error) {
 			if _, _, err := cimdKeyService.EnsureInitialKey(context.Background()); err != nil {
 				return nil, fmt.Errorf("initialize CIMD client-authentication key: %w", err)
 			}
-			if err := cimdKeyService.RequirePublishedKey(context.Background()); err != nil {
+			if err := cimdKeyService.RequireUsablePublishedKey(context.Background()); err != nil {
 				return nil, fmt.Errorf("verify CIMD client-authentication key publication: %w", err)
 			}
 		}

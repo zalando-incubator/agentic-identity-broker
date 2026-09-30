@@ -19,6 +19,10 @@ import (
 
 const cimdMetadataTestPublicURL = "https://broker.example.test"
 
+type cimdMetadataReadiness struct{ err error }
+
+func (r cimdMetadataReadiness) RequireUsablePublishedKey(context.Context) error { return r.err }
+
 func TestMetadataService_MetadataContainsExactCIMDPublicFields(t *testing.T) {
 	serviceID := id.MustParseServiceID("00000000-0000-0000-0000-000000000101")
 	reader := &cimdMetadataServiceReader{
@@ -31,7 +35,7 @@ func TestMetadataService_MetadataContainsExactCIMDPublicFields(t *testing.T) {
 			return cimdMetadataJWKSet(t, cimdMetadataPublicJWK(t, elliptic.P256(), "cimd-current", jwa.ES256())), nil
 		},
 	}
-	service := NewMetadataService(reader, publicKeys, cimdMetadataTestPublicURL)
+	service := NewMetadataService(reader, publicKeys, cimdMetadataReadiness{}, cimdMetadataTestPublicURL)
 
 	metadata, err := service.Metadata(context.Background(), serviceID)
 
@@ -66,7 +70,7 @@ func TestMetadataService_JWKSetPublishesOnlyPublicES256P256SigningKeys(t *testin
 			return cimdMetadataJWKSet(t, currentKey, graceKey, privateInputKey, wrongAlgorithm, wrongCurve), nil
 		},
 	}
-	service := NewMetadataService(reader, publicKeys, cimdMetadataTestPublicURL)
+	service := NewMetadataService(reader, publicKeys, cimdMetadataReadiness{}, cimdMetadataTestPublicURL)
 
 	set, err := service.JWKSet(context.Background(), serviceID)
 
@@ -96,7 +100,7 @@ func TestMetadataService_ClientAndJWKURLsStayStableAcrossKeyPublicationChanges(t
 			return published, nil
 		},
 	}
-	service := NewMetadataService(reader, publicKeys, cimdMetadataTestPublicURL)
+	service := NewMetadataService(reader, publicKeys, cimdMetadataReadiness{}, cimdMetadataTestPublicURL)
 
 	beforeRotation, err := service.Metadata(context.Background(), serviceID)
 	require.NoError(t, err)
@@ -174,6 +178,7 @@ func TestMetadataService_UnavailableServicesExposeNeitherMetadataNorKeys(t *test
 			service := NewMetadataService(
 				&cimdMetadataServiceReader{getCIMDClientServiceFn: tt.readService},
 				&cimdMetadataPublicKeyProvider{publicJWKSetFn: tt.publicKeys},
+				cimdMetadataReadiness{},
 				cimdMetadataTestPublicURL,
 			)
 
@@ -187,6 +192,24 @@ func TestMetadataService_UnavailableServicesExposeNeitherMetadataNorKeys(t *test
 			assert.NotErrorIs(t, keyErr, ports.ErrNotFound)
 			assert.Nil(t, set)
 		})
+	}
+}
+func TestMetadataService_PendingOnlyPublicKeyCannotIdentifyActiveClient(t *testing.T) {
+	serviceID := id.MustParseServiceID("00000000-0000-0000-0000-000000000105")
+	reader := &cimdMetadataServiceReader{getCIMDClientServiceFn: func(context.Context, id.ServiceID) (*ports.CIMDClientServiceProjection, error) {
+		return cimdMetadataServiceProjection(serviceID), nil
+	}}
+	publicKeys := &cimdMetadataPublicKeyProvider{publicJWKSetFn: func(context.Context) (jwk.Set, error) {
+		return cimdMetadataJWKSet(t, cimdMetadataPublicJWK(t, elliptic.P256(), "pending-only", jwa.ES256())), nil
+	}}
+	for _, readiness := range []ports.CIMDClientKeyReadiness{nil, cimdMetadataReadiness{err: ports.ErrCIMDPublicKeyUnavailable}} {
+		service := NewMetadataService(reader, publicKeys, readiness, cimdMetadataTestPublicURL)
+		metadata, err := service.Metadata(context.Background(), serviceID)
+		require.ErrorIs(t, err, ports.ErrCIMDPublicKeyUnavailable)
+		assert.Nil(t, metadata)
+		set, err := service.JWKSet(context.Background(), serviceID)
+		require.ErrorIs(t, err, ports.ErrCIMDPublicKeyUnavailable)
+		assert.Nil(t, set)
 	}
 }
 

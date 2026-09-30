@@ -12,6 +12,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -118,7 +119,9 @@ func TestKeyService_PublicJWKSetUsesOnlyPublicCIMDES256Keys(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, set)
 	require.Equal(t, 1, set.Len())
-	assert.Equal(t, []storage.KeyDomain{storage.KeyDomainCIMDClientAuthentication}, repository.listedDomains)
+	for _, domain := range repository.listedDomains {
+		assert.Equal(t, storage.KeyDomainCIMDClientAuthentication, domain)
+	}
 
 	key, ok := set.Key(0)
 	require.True(t, ok)
@@ -142,7 +145,7 @@ func TestKeyService_PublicJWKSetUsesOnlyPublicCIMDES256Keys(t *testing.T) {
 	assert.Len(t, encryption.decryptContexts, 1, "a legacy key must decrypt only until its public JWK is persisted")
 }
 
-func TestKeyService_RequirePublishedKeyAcceptsUsableCIMDPublicKey(t *testing.T) {
+func TestKeyService_RequireUsablePublishedKeyAcceptsEffectiveCIMDPublicKey(t *testing.T) {
 	privatePEM := newCIMDTestES256PEM(t)
 	now := time.Now().UTC()
 	repository := newCIMDKeyServiceRepository()
@@ -160,8 +163,35 @@ func TestKeyService_RequirePublishedKeyAcceptsUsableCIMDPublicKey(t *testing.T) 
 	}
 	service := newCIMDKeyServiceForTest(repository, &cimdKeyServiceEncryptor{}, &cimdKeyServiceBranchKeyManager{})
 
-	require.NoError(t, service.RequirePublishedKey(context.Background()))
-	assert.Equal(t, []storage.KeyDomain{storage.KeyDomainCIMDClientAuthentication}, repository.listedDomains)
+	require.NoError(t, service.RequireUsablePublishedKey(context.Background()))
+	assert.NotEmpty(t, repository.listedDomains)
+	for _, domain := range repository.listedDomains {
+		assert.Equal(t, storage.KeyDomainCIMDClientAuthentication, domain)
+	}
+}
+
+func TestKeyService_ReadinessRejectsPendingOnlyButPreservesOverlap(t *testing.T) {
+	ctx := context.Background()
+	repository := newCIMDKeyServiceRepository()
+	service := newCIMDKeyServiceForTest(repository, &cimdKeyServiceEncryptor{}, &cimdKeyServiceBranchKeyManager{})
+
+	pending, err := service.GenerateKey(ctx, "ES256")
+	require.NoError(t, err)
+	_, err = repository.SetCurrentInDomain(ctx, storage.KeyDomainCIMDClientAuthentication, pending.KID, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	set, err := service.PublicJWKSet(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{pending.KID.String()}, cimdJWKSetKIDs(t, set))
+	require.ErrorIs(t, service.RequireUsablePublishedKey(ctx), ports.ErrCIMDPublicKeyUnavailable)
+
+	previous, err := service.GenerateKey(ctx, "ES256")
+	require.NoError(t, err)
+	_, err = repository.SetCurrentInDomain(ctx, storage.KeyDomainCIMDClientAuthentication, previous.KID, time.Now().UTC())
+	require.NoError(t, err)
+	require.NoError(t, service.RequireUsablePublishedKey(ctx))
+	set, err = service.PublicJWKSet(ctx)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{previous.KID.String(), pending.KID.String()}, cimdJWKSetKIDs(t, set))
 }
 
 func TestKeyService_UnavailabilityUsesTypedSentinels(t *testing.T) {
@@ -172,7 +202,7 @@ func TestKeyService_UnavailabilityUsesTypedSentinels(t *testing.T) {
 	)
 
 	t.Run("public key readiness", func(t *testing.T) {
-		err := service.RequirePublishedKey(context.Background())
+		err := service.RequireUsablePublishedKey(context.Background())
 		require.ErrorIs(t, err, ports.ErrCIMDPublicKeyUnavailable)
 	})
 
@@ -499,6 +529,166 @@ func assertCIMDKeyLifecycleAuditRecord(t *testing.T, records []map[string]any, k
 	assert.Failf(t, "missing CIMD key lifecycle audit record", "key_id=%q operation=%q outcome=%q", keyID, operation, outcome)
 }
 
+func TestKeyService_PublicJWKSetRejectsNilRowAlongsideValidKey(t *testing.T) {
+	base := newCIMDKeyServiceRepository()
+	repository := &nilRowCIMDKeyRepository{
+		SigningKeyRepository: base,
+		keys:                 []*storage.SigningKey{newCachedCIMDKey(t, "valid"), nil},
+	}
+	service := NewKeyService(repository, base, &cimdKeyServiceEncryptor{}, &cimdKeyServiceBranchKeyManager{}, slog.Default())
+	var set jwk.Set
+	var err error
+	require.NotPanics(t, func() { set, err = service.PublicJWKSet(context.Background()) })
+	require.ErrorIs(t, err, ports.ErrCIMDPublicKeyUnavailable)
+	assert.Nil(t, set, "a malformed row must not publish a partial set")
+}
+
+type nilRowCIMDKeyRepository struct {
+	ports.SigningKeyRepository
+	keys []*storage.SigningKey
+}
+
+func (r *nilRowCIMDKeyRepository) ListActiveInDomain(_ context.Context, _ storage.KeyDomain) ([]*storage.SigningKey, error) {
+	return r.keys, nil
+}
+
+func TestKeyService_PublicJWKSetCachesByCommittedRevision(t *testing.T) {
+	ctx := context.Background()
+	repository := newCIMDKeyServiceRepository()
+	service := newCIMDKeyServiceForTest(repository, &cimdKeyServiceEncryptor{}, &cimdKeyServiceBranchKeyManager{})
+	first, err := service.GenerateKey(ctx, "ES256")
+	require.NoError(t, err)
+	for range 3 {
+		set, err := service.PublicJWKSet(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, []string{first.KID.String()}, cimdJWKSetKIDs(t, set))
+	}
+	assert.Len(t, repository.listedDomains, 1, "unchanged revision must not reparse the public key")
+
+	remote := newCIMDKeyServiceForTest(repository, &cimdKeyServiceEncryptor{}, &cimdKeyServiceBranchKeyManager{})
+	second, err := remote.GenerateKey(ctx, "ES256")
+	require.NoError(t, err)
+	set, err := service.PublicJWKSet(ctx)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{first.KID.String(), second.KID.String()}, cimdJWKSetKIDs(t, set))
+	_, err = remote.PromoteKey(ctx, second.KID)
+	require.NoError(t, err)
+	require.NoError(t, remote.DeleteKey(ctx, first.KID))
+	set, err = service.PublicJWKSet(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{second.KID.String()}, cimdJWKSetKIDs(t, set), "a remote removal must be visible on the next read")
+}
+
+func TestKeyService_PublicJWKSetFailsClosedAfterWarmCache(t *testing.T) {
+	ctx := context.Background()
+	repository := &failingCIMDKeyServiceRepository{cimdKeyServiceRepository: newCIMDKeyServiceRepository()}
+	service := NewKeyService(repository, repository, &cimdKeyServiceEncryptor{}, &cimdKeyServiceBranchKeyManager{}, slog.Default())
+	_, err := service.GenerateKey(ctx, "ES256")
+	require.NoError(t, err)
+	_, err = service.PublicJWKSet(ctx)
+	require.NoError(t, err)
+
+	repository.versionErr = errors.New("revision unavailable")
+	set, err := service.PublicJWKSet(ctx)
+	require.Error(t, err)
+	assert.Nil(t, set)
+	repository.versionErr = nil
+	repository.version++
+	repository.listErr = errors.New("rebuild unavailable")
+	set, err = service.PublicJWKSet(ctx)
+	require.Error(t, err)
+	assert.Nil(t, set)
+}
+
+func TestKeyService_PublicJWKSetCoalescesAndFencesConcurrentRebuild(t *testing.T) {
+	ctx := context.Background()
+	base := newCIMDKeyServiceRepository()
+	repository := &concurrentCIMDKeyRepository{cimdKeyServiceRepository: base, entered: make(chan struct{}), release: make(chan struct{})}
+	service := NewKeyService(repository, repository, &cimdKeyServiceEncryptor{}, &cimdKeyServiceBranchKeyManager{}, slog.Default())
+	first := newCachedCIMDKey(t, "first")
+	require.NoError(t, repository.Create(ctx, first))
+
+	type readResult struct {
+		set jwk.Set
+		err error
+	}
+	results := make(chan readResult, 12)
+	for range 12 {
+		go func() {
+			set, err := service.PublicJWKSet(ctx)
+			results <- readResult{set, err}
+		}()
+	}
+	select {
+	case <-repository.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cold build never reached repository")
+	}
+	second := newCachedCIMDKey(t, "second")
+	require.NoError(t, repository.Create(ctx, second))
+	close(repository.release)
+	for range 12 {
+		select {
+		case result := <-results:
+			require.NoError(t, result.err)
+			assert.ElementsMatch(t, []string{"first", "second"}, cimdJWKSetKIDs(t, result.set))
+		case <-time.After(5 * time.Second):
+			t.Fatal("concurrent reader did not finish")
+		}
+	}
+	assert.Equal(t, 2, repository.listCount(), "one invalidated build and one shared rebuild")
+}
+
+func newCachedCIMDKey(t *testing.T, kid string) *storage.SigningKey {
+	t.Helper()
+	privatePEM := newCIMDTestES256PEM(t)
+	public, err := cimdPublicJWKFromPEM(privatePEM, id.NewKeyID(kid))
+	require.NoError(t, err)
+	publicJSON, err := json.Marshal(public)
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	return &storage.SigningKey{ID: id.NewSigningKeyID(), KID: id.NewKeyID(kid), KeyDomain: storage.KeyDomainCIMDClientAuthentication, Algorithm: "ES256", PrivateKeyEncrypted: privatePEM, PublicJWK: publicJSON, ActivatesAt: now, CreatedAt: now}
+}
+
+type concurrentCIMDKeyRepository struct {
+	*cimdKeyServiceRepository
+	mu      sync.Mutex
+	entered chan struct{}
+	release chan struct{}
+	lists   int
+}
+
+func (r *concurrentCIMDKeyRepository) KeySetVersion(ctx context.Context) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cimdKeyServiceRepository.KeySetVersion(ctx)
+}
+
+func (r *concurrentCIMDKeyRepository) Create(ctx context.Context, key *storage.SigningKey) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cimdKeyServiceRepository.Create(ctx, key)
+}
+
+func (r *concurrentCIMDKeyRepository) ListActiveInDomain(ctx context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error) {
+	r.mu.Lock()
+	keys, err := r.cimdKeyServiceRepository.ListActiveInDomain(ctx, domain)
+	r.lists++
+	first := r.lists == 1
+	r.mu.Unlock()
+	if first {
+		close(r.entered)
+		<-r.release
+	}
+	return keys, err
+}
+
+func (r *concurrentCIMDKeyRepository) listCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lists
+}
+
 func newCIMDKeyServiceForTest(
 	repository *cimdKeyServiceRepository,
 	encryption *cimdKeyServiceEncryptor,
@@ -511,6 +701,7 @@ type cimdKeyServiceRepository struct {
 	activeByDomain map[storage.KeyDomain][]*storage.SigningKey
 	listedDomains  []storage.KeyDomain
 	created        []*storage.SigningKey
+	version        int64
 }
 
 func newCIMDKeyServiceRepository() *cimdKeyServiceRepository {
@@ -520,6 +711,7 @@ func newCIMDKeyServiceRepository() *cimdKeyServiceRepository {
 func (r *cimdKeyServiceRepository) Create(_ context.Context, key *storage.SigningKey) error {
 	r.created = append(r.created, cloneCIMDSigningKey(key))
 	r.activeByDomain[key.KeyDomain] = append(r.activeByDomain[key.KeyDomain], cloneCIMDSigningKey(key))
+	r.version++
 	return nil
 }
 
@@ -531,6 +723,7 @@ func (r *cimdKeyServiceRepository) CreateAndSetCurrent(_ context.Context, key *s
 	clone.IsCurrent = true
 	r.created = append(r.created, cloneCIMDSigningKey(clone))
 	r.activeByDomain[key.KeyDomain] = append(r.activeByDomain[key.KeyDomain], clone)
+	r.version++
 	return nil
 }
 
@@ -572,7 +765,7 @@ func (r *cimdKeyServiceRepository) ListActiveInDomain(_ context.Context, domain 
 }
 
 func (r *cimdKeyServiceRepository) KeySetVersion(context.Context) (int64, error) {
-	return 0, nil
+	return r.version, nil
 }
 
 func (r *cimdKeyServiceRepository) SetPublicJWK(_ context.Context, kid id.KeyID, publicJWK []byte) (bool, error) {
@@ -583,6 +776,7 @@ func (r *cimdKeyServiceRepository) SetPublicJWK(_ context.Context, kid id.KeyID,
 					return false, nil
 				}
 				key.PublicJWK = append([]byte(nil), publicJWK...)
+				r.version++
 				return true, nil
 			}
 		}
@@ -598,6 +792,7 @@ func (r *cimdKeyServiceRepository) SetCurrentInDomain(_ context.Context, domain 
 			}
 			key.IsCurrent = true
 			key.ActivatesAt = activatesAt
+			r.version++
 			return cloneCIMDSigningKey(key), nil
 		}
 	}
@@ -609,6 +804,7 @@ func (r *cimdKeyServiceRepository) DeleteInDomain(_ context.Context, domain stor
 		if key.KID == kid && key.RemovedAt == nil {
 			now := time.Now().UTC()
 			key.RemovedAt = &now
+			r.version++
 			return nil
 		}
 	}
@@ -686,6 +882,7 @@ type failingCIMDKeyServiceRepository struct {
 	*cimdKeyServiceRepository
 	countErr     error
 	listErr      error
+	versionErr   error
 	bootstrapErr error
 }
 
@@ -694,6 +891,13 @@ func (r *failingCIMDKeyServiceRepository) CountActiveInDomain(ctx context.Contex
 		return 0, r.countErr
 	}
 	return r.cimdKeyServiceRepository.CountActiveInDomain(ctx, domain)
+}
+
+func (r *failingCIMDKeyServiceRepository) KeySetVersion(ctx context.Context) (int64, error) {
+	if r.versionErr != nil {
+		return 0, r.versionErr
+	}
+	return r.cimdKeyServiceRepository.KeySetVersion(ctx)
 }
 
 func (r *failingCIMDKeyServiceRepository) ListActiveInDomain(ctx context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error) {

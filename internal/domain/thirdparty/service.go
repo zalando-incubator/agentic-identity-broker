@@ -175,21 +175,22 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 			s.auditCIMD(entity.ID, "create", "rejected")
 			return fmt.Errorf("CIMD client-authentication key readiness: %w", ports.ErrCIMDPublicKeyUnavailable)
 		}
-		if err := s.cimdKeyReadiness.RequirePublishedKey(ctx); err != nil {
+		if err := s.cimdKeyReadiness.RequireUsablePublishedKey(ctx); err != nil {
 			s.auditCIMD(entity.ID, "create", "rejected")
 			return fmt.Errorf("CIMD client-authentication key readiness: %w", err)
 		}
 	}
 
-	if !entity.IsCIMDConfidentialClient() {
-		serviceSubject := domainencryption.NewServiceBranchKeySubject(entity.ID)
-		branchKeyID, err := s.branchKeyManager.Create(ctx, serviceSubject)
-		if err != nil {
-			s.logger.Error("failed to provision branch key", "service_id", entity.ID, "error", err)
-			return fmt.Errorf("branch key provisioning failed: %w", err)
+	serviceSubject := domainencryption.NewServiceBranchKeySubject(entity.ID)
+	branchKeyID, err := s.branchKeyManager.Create(ctx, serviceSubject)
+	if err != nil {
+		s.logger.Error("failed to provision branch key", "service_id", entity.ID, "error", err)
+		if entity.IsCIMDConfidentialClient() {
+			s.auditCIMD(entity.ID, "create", "rejected")
 		}
-		s.logger.Info("branch key provisioned", "service_id", entity.ID, "branch_key_id", branchKeyID)
+		return fmt.Errorf("branch key provisioning failed: %w", err)
 	}
+	s.logger.Info("branch key provisioned", "service_id", entity.ID, "branch_key_id", branchKeyID)
 
 	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
 		serviceSubject := domainencryption.NewServiceBranchKeySubject(entity.ID)
@@ -329,21 +330,22 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 			s.auditCIMD(entity.ID, "update", "rejected")
 			return fmt.Errorf("CIMD client-authentication key readiness: %w", ports.ErrCIMDPublicKeyUnavailable)
 		}
-		if err := s.cimdKeyReadiness.RequirePublishedKey(ctx); err != nil {
+		if err := s.cimdKeyReadiness.RequireUsablePublishedKey(ctx); err != nil {
 			s.auditCIMD(entity.ID, "update", "rejected")
 			return fmt.Errorf("CIMD client-authentication key readiness: %w", err)
 		}
 	}
 
-	if !entity.IsCIMDConfidentialClient() {
-		serviceSubject := domainencryption.NewServiceBranchKeySubject(entity.ID)
-		branchKeyID, err := s.branchKeyManager.Create(ctx, serviceSubject)
-		if err != nil {
-			s.logger.Error("failed to ensure branch key for update", "service_id", entity.ID, "error", err)
-			return fmt.Errorf("branch key provisioning failed: %w", err)
+	serviceSubject := domainencryption.NewServiceBranchKeySubject(entity.ID)
+	branchKeyID, err := s.branchKeyManager.Create(ctx, serviceSubject)
+	if err != nil {
+		s.logger.Error("failed to ensure branch key for update", "service_id", entity.ID, "error", err)
+		if entity.IsCIMDConfidentialClient() {
+			s.auditCIMD(entity.ID, "update", "rejected")
 		}
-		s.logger.Info("branch key ready for update", "service_id", entity.ID, "branch_key_id", branchKeyID)
+		return fmt.Errorf("branch key provisioning failed: %w", err)
 	}
+	s.logger.Info("branch key ready for update", "service_id", entity.ID, "branch_key_id", branchKeyID)
 
 	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
 		serviceSubject := domainencryption.NewServiceBranchKeySubject(entity.ID)

@@ -1710,7 +1710,7 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 			assert.NotNil(t, app.CIMDKeyService)
 			assert.NotNil(t, app.CIMDKeyReadiness)
 			if app.CIMDKeyReadiness != nil {
-				assert.ErrorIs(t, app.CIMDKeyReadiness.RequirePublishedKey(context.Background()), ports.ErrCIMDPublicKeyUnavailable)
+				assert.ErrorIs(t, app.CIMDKeyReadiness.RequireUsablePublishedKey(context.Background()), ports.ErrCIMDPublicKeyUnavailable)
 			}
 		})
 
@@ -1728,7 +1728,7 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 			key, err := adapter.SigningKeys().GetCurrentInDomain(context.Background(), domstorage.KeyDomainCIMDClientAuthentication)
 			require.NoError(t, err)
 			assert.False(t, key.ActivatesAt.After(time.Now()), "the first CIMD key must be usable immediately")
-			require.NoError(t, app.CIMDKeyReadiness.RequirePublishedKey(context.Background()))
+			require.NoError(t, app.CIMDKeyReadiness.RequireUsablePublishedKey(context.Background()))
 
 			publicKeys, err := app.CIMDKeyService.PublicJWKSet(context.Background())
 			require.NoError(t, err)

@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
+	"golang.org/x/sync/singleflight"
 
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -21,12 +24,24 @@ import (
 
 const cimdKeyGracePeriod = 10 * time.Minute
 
+const cimdPublicJWKCacheTTL = 45 * time.Second
+const cimdPublicJWKRebuildTimeout = 30 * time.Second
+
+var errCIMDPublicJWKCacheInvalidated = errors.New("CIMD public JWK cache invalidated during rebuild")
+
 // KeyService manages the dedicated CIMD client-authentication key domain.
 type KeyService struct {
 	repository ports.SigningKeyRepository
 	encryption ports.EncryptionPort
 	logger     *slog.Logger
 	engine     *keylifecycle.Engine
+
+	publicMu         sync.RWMutex
+	publicSet        jwk.Set
+	publicExpiresAt  time.Time
+	publicVersion    int64
+	publicGeneration uint64
+	publicFlight     singleflight.Group
 }
 
 // NewKeyService creates a CIMD key-domain service.
@@ -64,6 +79,7 @@ func (s *KeyService) GenerateKey(ctx context.Context, algorithm string) (*storag
 		s.audit("", "generate", "rejected")
 		return nil, fmt.Errorf("generate CIMD key: %w", err)
 	}
+	s.invalidatePublicJWKCache()
 	s.audit(key.KID, "generate", "success")
 	return key, nil
 }
@@ -80,6 +96,7 @@ func (s *KeyService) PromoteKey(ctx context.Context, kid id.KeyID) (*storage.Sig
 		s.audit(kid, "promote", "rejected")
 		return nil, err
 	}
+	s.invalidatePublicJWKCache()
 	s.audit(key.KID, "promote", "success")
 	return key, nil
 }
@@ -90,6 +107,7 @@ func (s *KeyService) DeleteKey(ctx context.Context, kid id.KeyID) error {
 		s.audit(kid, "remove", "rejected")
 		return err
 	}
+	s.invalidatePublicJWKCache()
 	s.audit(kid, "remove", "success")
 	return nil
 }
@@ -97,19 +115,18 @@ func (s *KeyService) DeleteKey(ctx context.Context, kid id.KeyID) error {
 // EnsureInitialKey creates one immediately usable CIMD key when the domain is empty.
 func (s *KeyService) EnsureInitialKey(ctx context.Context) (*storage.SigningKey, bool, error) {
 	key, created, err := s.engine.EnsureInitialKey(ctx, cimdClientAuthenticationPolicy(), time.Now().UTC())
+	if err == nil && created {
+		s.invalidatePublicJWKCache()
+	}
 	if err != nil {
 		s.audit("", "bootstrap", "rejected")
 	}
 	return key, created, err
 }
 
-// RequirePublishedKey confirms that at least one public CIMD verification key is usable.
-func (s *KeyService) RequirePublishedKey(ctx context.Context) error {
-	set, err := s.PublicJWKSet(ctx)
-	if err != nil {
-		return err
-	}
-	if set.Len() == 0 {
+// RequireUsablePublishedKey requires an effective CIMD signing key whose kid is advertised.
+func (s *KeyService) RequireUsablePublishedKey(ctx context.Context) error {
+	if _, err := s.currentUsableCIMDAssertionKey(ctx); err != nil {
 		return ports.ErrCIMDPublicKeyUnavailable
 	}
 	return nil
@@ -117,12 +134,105 @@ func (s *KeyService) RequirePublishedKey(ctx context.Context) error {
 
 // PublicJWKSet returns public ES256 CIMD verification keys only.
 func (s *KeyService) PublicJWKSet(ctx context.Context) (jwk.Set, error) {
+	for {
+		version, err := s.repository.KeySetVersion(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("check CIMD key set version: %w", err)
+		}
+		now := time.Now().UTC()
+		s.publicMu.RLock()
+		if s.publicSet != nil && s.publicVersion == version && now.Before(s.publicExpiresAt) {
+			set := s.publicSet
+			s.publicMu.RUnlock()
+			return set, nil
+		}
+		s.publicMu.RUnlock()
+
+		s.publicMu.Lock()
+		if s.publicVersion > version {
+			s.publicMu.Unlock()
+			continue
+		}
+		if s.publicVersion != version {
+			s.publicGeneration++
+			s.publicSet = nil
+			s.publicVersion = version
+		}
+		if s.publicSet != nil && time.Now().UTC().Before(s.publicExpiresAt) {
+			set := s.publicSet
+			s.publicMu.Unlock()
+			return set, nil
+		}
+		generation := s.publicGeneration
+		resultCh := s.publicFlight.DoChan(strconv.FormatUint(generation, 10), func() (interface{}, error) {
+			rebuildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cimdPublicJWKRebuildTimeout)
+			defer cancel()
+			return s.rebuildPublicJWKSet(rebuildCtx, generation, version)
+		})
+		s.publicMu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result := <-resultCh:
+			s.publicMu.RLock()
+			currentGeneration := s.publicGeneration
+			s.publicMu.RUnlock()
+			if currentGeneration != generation || errors.Is(result.Err, errCIMDPublicJWKCacheInvalidated) {
+				continue
+			}
+			if result.Err != nil {
+				return nil, result.Err
+			}
+			set, ok := result.Val.(jwk.Set)
+			if !ok {
+				return nil, fmt.Errorf("build CIMD public JWK set: unexpected result %T", result.Val)
+			}
+			return set, nil
+		}
+	}
+}
+
+func (s *KeyService) rebuildPublicJWKSet(ctx context.Context, generation uint64, version int64) (jwk.Set, error) {
+	set, err := s.buildPublicJWKSet(ctx)
+	if err != nil {
+		return nil, err
+	}
+	currentVersion, err := s.repository.KeySetVersion(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("check CIMD key set version after rebuild: %w", err)
+	}
+	if currentVersion != version {
+		return nil, errCIMDPublicJWKCacheInvalidated
+	}
+	s.publicMu.Lock()
+	defer s.publicMu.Unlock()
+	if s.publicGeneration != generation {
+		return nil, errCIMDPublicJWKCacheInvalidated
+	}
+	s.publicSet = set
+	s.publicExpiresAt = time.Now().UTC().Add(cimdPublicJWKCacheTTL)
+	return set, nil
+}
+
+func (s *KeyService) invalidatePublicJWKCache() {
+	s.publicMu.Lock()
+	defer s.publicMu.Unlock()
+	s.publicGeneration++
+	s.publicSet = nil
+	s.publicExpiresAt = time.Time{}
+}
+
+func (s *KeyService) buildPublicJWKSet(ctx context.Context) (jwk.Set, error) {
 	keys, err := s.repository.ListActiveInDomain(ctx, storage.KeyDomainCIMDClientAuthentication)
 	if err != nil {
 		return nil, fmt.Errorf("list CIMD keys: %w", err)
 	}
 	set := jwk.NewSet()
 	for _, key := range keys {
+		if key == nil {
+			return nil, fmt.Errorf("%w: nil CIMD key returned from repository", ports.ErrCIMDPublicKeyUnavailable)
+		}
 		if key.Algorithm != "ES256" {
 			continue
 		}

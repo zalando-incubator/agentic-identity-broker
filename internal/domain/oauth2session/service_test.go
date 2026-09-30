@@ -1486,7 +1486,7 @@ func setupService(t *testing.T) (*oauth2session.OAuth2SessionService, *memory.In
 
 type readyCIMDKeyReadiness struct{}
 
-func (readyCIMDKeyReadiness) RequirePublishedKey(context.Context) error { return nil }
+func (readyCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error { return nil }
 
 func setupServiceWithConfig(
 	t *testing.T,

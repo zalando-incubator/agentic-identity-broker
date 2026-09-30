@@ -129,7 +129,7 @@ func newTestEncryption() ports.EncryptionPort {
 
 type readyCIMDKeyReadiness struct{}
 
-func (readyCIMDKeyReadiness) RequirePublishedKey(context.Context) error { return nil }
+func (readyCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error { return nil }
 
 // setupHandler creates a handler backed by a mock repository and test encryption.
 func setupHandler(t *testing.T, mockRepo *MockProviderRepository) *ServicesHandler {

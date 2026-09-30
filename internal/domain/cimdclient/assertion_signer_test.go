@@ -216,11 +216,13 @@ func newAssertionSignerKeyService(
 }
 
 type assertionSignerRepository struct {
-	keys []*storage.SigningKey
+	keys    []*storage.SigningKey
+	version int64
 }
 
 func (r *assertionSignerRepository) Create(_ context.Context, key *storage.SigningKey) error {
 	r.keys = append(r.keys, cloneAssertionSignerKey(key))
+	r.version++
 	return nil
 }
 
@@ -255,7 +257,7 @@ func (r *assertionSignerRepository) ListActiveInDomain(_ context.Context, domain
 }
 
 func (r *assertionSignerRepository) KeySetVersion(context.Context) (int64, error) {
-	return 0, nil
+	return r.version, nil
 }
 
 func (r *assertionSignerRepository) SetPublicJWK(_ context.Context, kid id.KeyID, publicJWK []byte) (bool, error) {
@@ -265,6 +267,7 @@ func (r *assertionSignerRepository) SetPublicJWK(_ context.Context, kid id.KeyID
 				return false, nil
 			}
 			key.PublicJWK = append([]byte(nil), publicJWK...)
+			r.version++
 			return true, nil
 		}
 	}

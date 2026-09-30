@@ -32,7 +32,7 @@ type CIMDClientKeyBootstrapper interface {
 
 // CIMDClientKeyReadiness guards operations that require a usable published CIMD public key.
 type CIMDClientKeyReadiness interface {
-	RequirePublishedKey(ctx context.Context) error
+	RequireUsablePublishedKey(ctx context.Context) error
 }
 
 // CIMDClientPublicKeyProvider publishes verification keys for CIMD client assertions.

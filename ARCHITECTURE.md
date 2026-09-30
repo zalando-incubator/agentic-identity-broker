@@ -841,6 +841,8 @@ OAuth2 /authorize request
 
 CIMD client-authentication keys use ES256 only. Their private material uses a CIMD branch-key namespace and an encryption context with one `kid` subject. The token issuer uses only `token_signing`. `/oauth2/jwks.json` uses `token_signing` and mode-appropriate upstream sources. It never uses `cimd_client_authentication`. The CIMD metadata service, public JWK publisher, and assertion signer use only `cimd_client_authentication`.
 
+On create and update, the broker provisions a service-scoped branch key before it stores the service configuration. This includes CIMD services without shared secrets. The token vault encrypts their session tokens with the service ID as authenticated context. The broker-global CIMD assertion key uses a separate `kid` subject.
+
 **Outbound client-authentication flow**:
 
 ```
@@ -854,6 +856,10 @@ Authorization-code exchange after PKCE, or token refresh
 The assertion has `iss` and `sub` equal to the broker-hosted client ID URL. Its sole `aud` equals the configured token endpoint. It expires within five minutes and has a new `jti` for every attempt. Authorization-code exchange uses `AuthStyleInParams`, an empty client secret, and a fresh assertion pair inside the existing retry loop. Refresh uses the manual form-post path and adds a fresh assertion pair. No CIMD request sends a shared secret or HTTP Basic credential. A metadata, key, assertion, or provider-validation error fails the affected operation closed without an authentication downgrade.
 
 **Public documents**: The anonymous metadata route returns the broker-hosted Client ID Metadata Document only for an existing CIMD confidential service with a usable published key. Its JWK route publishes public CIMD verification keys only. Both routes use `Cache-Control: public, max-age=300`. All unavailable service states return the existing JSON `404` response without a redirect, partial document, or key material.
+
+An advertised CIMD key can remain pending during its activation grace period. Metadata and JWK routes require an effective signing key whose `kid` appears in the public JWK set. The set still includes pending and retained prior keys. A pending-only set produces JSON `404` responses.
+
+The broker caches only the public CIMD JWK set for 45 seconds per process. Each read checks the database-backed key-set revision. A revision change rebuilds the set, so another replica sees a committed key removal on its next read. Concurrent rebuilds share one bounded operation. Revision or rebuild errors never return a stale set.
 
 **SC-008 normal load**: After one warm-up request per route, ten concurrent clients send 100 anonymous requests to each public metadata and CIMD JWK route. Each request must return `200 OK`. The p95 retrieval latency for each route must be less than one second.
 
@@ -1516,6 +1522,8 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **SigningKey**: An asymmetric key pair scoped to a `key_domain`. `token_signing` keys support ES256 or RS256 and sign locally-issued JWT access tokens; `cimd_client_authentication` keys support ES256 only and sign outbound client assertions. Each domain has separate current-key and activation-grace state, while `kid` remains globally unique. Private material is PEM-encoded and encrypted via `EncryptionPort`; the corresponding public JWK is stored alongside it for publication without decryption. Migration 033 leaves existing public JWKs nullable; the first JWKS rebuild for an older token-signing key derives and backfills its public JWK once. Newly added current keys may wait behind an `activates_at` grace period so JWKS caches can learn them before they begin signing; if local or hybrid mode starts with no active token-signing key, `Builder` calls `SigningKeyService.EnsureInitialKey` to auto-generate one immediately. Keys remain in their public key set until explicitly soft-deleted via `removed_at`. Located in `internal/domain/storage/signing_key.go`.
 
 **SigningKeySetVersion**: Database-backed, monotonically increasing revision of signing-key rows. Migration 033 updates it in the same transaction as each PostgreSQL key mutation; the memory adapter tracks it under the store lock. Every broker JWKS request and broker-local token validation reads the revision before using the 45-second in-process JWKS cache and rechecks after a rebuild. A failed revision read fails closed. A validation or direct JWKS request started after a key removal commits therefore rejects or omits that key on every replica under a healthy shared database; a JWKS error never serves a stale set. Requests already in flight are not covered. HTTP `max-age=300` only bounds compliant consumers of successful JWKS responses; independent verifier caches and intermediaries have no broker-enforced revocation deadline. New current keys start their 600-second activation grace immediately before persistence, leaving 270 seconds beyond one 300-second cache lifetime and a 30-second rebuild under healthy-service conditions.
+
+The outbound CIMD public JWK cache uses the same revision and 45-second lifetime. It stays separate from the broker token-signing JWK cache. It does not cache decrypted CIMD private keys.
 
 The public JWK is a verification trust anchor: write access to `signing_keys.public_jwk` must be protected as strictly as write access to signing keys, since substituting it could authorize tokens signed outside the broker without decrypting the stored private key.
 

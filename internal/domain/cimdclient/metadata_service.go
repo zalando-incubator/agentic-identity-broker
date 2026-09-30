@@ -17,6 +17,7 @@ import (
 type MetadataService struct {
 	serviceReader ports.CIMDClientServiceReader
 	publicKeys    ports.CIMDClientPublicKeyProvider
+	readiness     ports.CIMDClientKeyReadiness
 	publicURL     string
 }
 
@@ -24,11 +25,13 @@ type MetadataService struct {
 func NewMetadataService(
 	serviceReader ports.CIMDClientServiceReader,
 	publicKeys ports.CIMDClientPublicKeyProvider,
+	readiness ports.CIMDClientKeyReadiness,
 	publicURL string,
 ) *MetadataService {
 	return &MetadataService{
 		serviceReader: serviceReader,
 		publicKeys:    publicKeys,
+		readiness:     readiness,
 		publicURL:     strings.TrimRight(publicURL, "/"),
 	}
 }
@@ -80,7 +83,7 @@ func (s *MetadataService) eligibleService(ctx context.Context, serviceID id.Serv
 }
 
 func (s *MetadataService) publishedJWKSet(ctx context.Context) (jwk.Set, error) {
-	if s.publicKeys == nil {
+	if s.readiness == nil || s.readiness.RequireUsablePublishedKey(ctx) != nil || s.publicKeys == nil {
 		return nil, ports.ErrCIMDPublicKeyUnavailable
 	}
 	input, err := s.publicKeys.PublicJWKSet(ctx)

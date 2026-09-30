@@ -315,6 +315,22 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 		// US4-S3 from specs/046-cimd-upstream-client/spec.md
 		It("should fail closed without sending a token request", Label("cimd-upstream-client"), func() {
 			Expect(listCIMDKeys(adminServer)).To(BeEmpty())
+			pendingKeyID := seedCIMDClientAuthenticationKey(testStorage)
+			_, err := testStorage.SigningKeys().SetCurrentInDomain(
+				context.Background(), domainstorage.KeyDomainCIMDClientAuthentication,
+				id.NewKeyID(pendingKeyID), time.Now().UTC().Add(time.Hour),
+			)
+			Expect(err).NotTo(HaveOccurred())
+			for _, path := range []string{
+				"/.well-known/oauth-client/" + service.ID.String(),
+				"/.well-known/oauth-client/" + service.ID.String() + "/jwks.json",
+			} {
+				publicResponse, err := enduserServer.PublicGET(path)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(publicResponse.StatusCode).To(Equal(http.StatusNotFound))
+				Expect(publicResponse.Header.Get("Content-Type")).To(ContainSubstring("application/json"))
+				Expect(decodeJSON[map[string]any](publicResponse)).To(HaveKey("error"))
+			}
 
 			response := refreshSession()
 			Expect(response.StatusCode).NotTo(Equal(http.StatusOK))
