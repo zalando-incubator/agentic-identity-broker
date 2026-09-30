@@ -309,41 +309,23 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 		return nil, fosite.ErrServerError.WithDebugf("client lookup failed: %v", err)
 	}
 
-	// Domain-level credential pre-check: peek at stored code to enforce binding.
-	authCode, err := p.fositeStorage.codeRepo.FindByCodeHash(ctx, p.authCodeHandler.AuthorizeCodeStrategy.AuthorizeCodeSignature(ctx, code))
-	if err != nil {
-		if isStorageNotFound(err) {
-			return nil, fosite.ErrInvalidGrant.WithHintf("authorization code not found")
-		}
-		return nil, fosite.ErrServerError.WithDebugf("failed to look up authorization code: %v", err)
-	}
-
 	switch bc := fositeClient.(type) {
 	case *confidentialClient:
 		authedClient, err := p.clientAuth.Authenticate(ctx, bc.agent.ID, secret)
 		if err != nil {
 			return nil, err
 		}
-		if authedClient.Credential.AgentID != authCode.AgentID {
-			return nil, fosite.ErrInvalidGrant.WithHintf("authorization code was issued to a different client credential")
-		}
-		// Rebuild client with authenticated credential
 		fositeClient = &confidentialClient{clientID: clientID, agent: authedClient.Agent, credential: authedClient.Credential}
 	case *publicClient:
-		if bc.agent.ID != authCode.AgentID {
-			return nil, fosite.ErrInvalidGrant.WithHintf("authorization code was issued to a different client")
-		}
 	default:
 		return nil, fosite.ErrServerError.WithDebugf("unexpected client type %T", fositeClient)
 	}
 
 	session := &fosite.DefaultSession{
-		Subject: authCode.Principal.String(),
 		ExpiresAt: map[fosite.TokenType]time.Time{
 			fosite.AccessToken: time.Now().Add(p.config.AccessTokenLifespan),
 		},
 	}
-	setSessionProfile(session, authCode.Email, authCode.DisplayName)
 	req := fosite.NewAccessRequest(session)
 	req.Client = fositeClient
 	req.GrantTypes = fosite.Arguments{"authorization_code"}
@@ -353,6 +335,7 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 		"code_verifier": {codeVerifier},
 		"grant_type":    {"authorization_code"},
 	}
+	ctx = context.WithValue(ctx, exchangeClientContextKey{}, fositeClient)
 
 	// redirect_uri binding: fosite's AuthorizeExplicitGrantHandler.HandleTokenEndpointRequest
 	// compares this redirect_uri against the one stored in the authorization code session,

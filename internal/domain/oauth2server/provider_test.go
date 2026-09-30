@@ -605,6 +605,25 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		assert.Equal(t, "Bearer", resp.TokenType)
 	})
 
+	t.Run("same agent with different original client ID cannot redeem code", func(t *testing.T) {
+		provider, agents, _ := newTestProvider(t)
+		agent, _, secret := setupTestCredentials(t, provider, agents)
+		code := "code-bound-to-another-client-id"
+		record := &dstorage.AuthorizationCode{
+			ID: id.NewAuthorizationCodeID(), CodeHash: sha256Hex(code), AgentID: agent.ID,
+			ClientID: id.ClientID("different-original-client-id"), Principal: id.NewPrincipal("user@example.com"),
+			RedirectURI: "http://localhost:8080/callback", ExpiresAt: time.Now().Add(time.Minute), CreatedAt: time.Now(),
+		}
+		require.NoError(t, provider.fositeStorage.codeRepo.Create(context.Background(), record))
+
+		response, err := provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(), secret, code, record.RedirectURI, "verifier")
+		assert.ErrorIs(t, err, ErrInvalidGrant)
+		assert.Nil(t, response)
+		stored, err := provider.fositeStorage.codeRepo.FindByCodeHash(context.Background(), record.CodeHash)
+		require.NoError(t, err)
+		assert.Nil(t, stored.UsedAt)
+	})
+
 	t.Run("code replay rejected", func(t *testing.T) {
 		provider, agentRepo, _ := newTestProvider(t)
 		agent, _, plaintext := setupTestCredentials(t, provider, agentRepo)
@@ -783,6 +802,46 @@ func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
 		assert.Error(t, err)
 		assert.ErrorIs(t, err, ErrInvalidGrant)
 	})
+}
+
+type countingAuthorizationCodeRepo struct {
+	ports.AuthorizationCodeRepository
+	reads int
+}
+
+func (r *countingAuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash string) (*dstorage.AuthorizationCode, error) {
+	r.reads++
+	return r.AuthorizationCodeRepository.FindByCodeHash(ctx, codeHash)
+}
+
+func TestProvider_AuthorizationCodeExchangeReusesClient(t *testing.T) {
+	provider, agents, _ := newTestProvider(t)
+	agent, _, secret := setupTestCredentials(t, provider, agents)
+	agent.RedirectURIs = []string{"http://localhost:8080/callback"}
+	require.NoError(t, agents.Update(context.Background(), agent))
+	verifier := "exchange-query-verifier-1234567890123456789"
+	code, err := provider.HandleAuthorize(context.Background(), agent.ID.String(), agent.RedirectURIs[0], "code", "read", "state", generateS256Challenge(verifier), "S256", id.NewPrincipal("user@example.com"))
+	require.NoError(t, err)
+
+	codeReads := &countingAuthorizationCodeRepo{AuthorizationCodeRepository: provider.fositeStorage.codeRepo}
+	provider.fositeStorage.codeRepo = codeReads
+	clientReads := 0
+	resolver := provider.fositeStorage.clientResolver
+	countedResolver := &mockClientResolver{resolveFunc: func(ctx context.Context, clientID id.ClientID) (*ports.ClientResolution, error) {
+		clientReads++
+		return resolver.ResolveClient(ctx, clientID)
+	}}
+	provider.fositeStorage.clientResolver = countedResolver
+	provider.clientAuth.clientResolver = countedResolver
+
+	response, err := provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+	require.NoError(t, err)
+	require.NotEmpty(t, response.AccessToken)
+	assert.Equal(t, 3, codeReads.reads, "fosite rechecks the code before token issuance and invalidation")
+	assert.Equal(t, 2, clientReads, "exchange resolves the client once and authenticates its credentials")
+
+	_, err = provider.HandleAuthorizationCodeExchange(context.Background(), agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+	assert.ErrorIs(t, err, ErrInvalidGrant, "a used code must still be rejected")
 }
 
 // TestProvider_HandleAuthorizationCodeExchange_ConcurrentReplay verifies that when MarkUsed
