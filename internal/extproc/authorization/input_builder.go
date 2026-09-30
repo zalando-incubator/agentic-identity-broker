@@ -45,17 +45,14 @@ func BuildOPAInput(protocol string, body []byte, headers map[string]string, targ
 	if err != nil {
 		return nil, fmt.Errorf("input builder: envoyauth.RequestToInput failed: %w", err)
 	}
-	if protocol == "mcp" {
-		input["parsed_body"] = msg.body
-	} else {
-		input["parsed_body"] = parseJSONBody(body)
-	}
 	input["truncated_body"] = false
 	input["context"] = contextInput
 	switch protocol {
 	case "mcp":
+		input["parsed_body"] = msg.body
 		return buildMCPInput(input, msg, headers, targetServerName)
 	default:
+		input["parsed_body"] = parseJSONBody(body)
 		input["type"] = "unknown"
 		return input, nil
 	}
