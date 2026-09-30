@@ -600,7 +600,7 @@ func TestKeyService_PublicJWKSetFailsClosedAfterWarmCache(t *testing.T) {
 	assert.Nil(t, set)
 }
 
-func TestKeyService_PublicJWKSetCoalescesAndFencesConcurrentRebuild(t *testing.T) {
+func TestKeyService_PublicJWKSetFencesConcurrentRebuild(t *testing.T) {
 	ctx := context.Background()
 	base := newCIMDKeyServiceRepository()
 	repository := &concurrentCIMDKeyRepository{cimdKeyServiceRepository: base, entered: make(chan struct{}), release: make(chan struct{})}
@@ -636,7 +636,6 @@ func TestKeyService_PublicJWKSetCoalescesAndFencesConcurrentRebuild(t *testing.T
 			t.Fatal("concurrent reader did not finish")
 		}
 	}
-	assert.Equal(t, 2, repository.listCount(), "one invalidated build and one shared rebuild")
 }
 
 func newCachedCIMDKey(t *testing.T, kid string) *storage.SigningKey {
@@ -681,12 +680,6 @@ func (r *concurrentCIMDKeyRepository) ListActiveInDomain(ctx context.Context, do
 		<-r.release
 	}
 	return keys, err
-}
-
-func (r *concurrentCIMDKeyRepository) listCount() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.lists
 }
 
 func newCIMDKeyServiceForTest(

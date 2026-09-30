@@ -193,7 +193,6 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 	s.logger.Info("branch key provisioned", "service_id", entity.ID, "branch_key_id", branchKeyID)
 
 	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
-		serviceSubject := domainencryption.NewServiceBranchKeySubject(entity.ID)
 		plaintext, err := entity.Secret.GetPlaintext()
 		if err != nil {
 			return fmt.Errorf("entity secret must be in plaintext state for create: %w", err)
@@ -348,7 +347,6 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 	s.logger.Info("branch key ready for update", "service_id", entity.ID, "branch_key_id", branchKeyID)
 
 	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
-		serviceSubject := domainencryption.NewServiceBranchKeySubject(entity.ID)
 		plaintext, err := entity.Secret.GetPlaintext()
 		if err != nil {
 			return fmt.Errorf("failed to read plaintext secret for update: %w", err)

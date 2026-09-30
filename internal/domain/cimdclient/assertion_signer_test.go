@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/keylifecycle"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -240,7 +241,7 @@ func (r *assertionSignerRepository) GetByKIDInDomain(_ context.Context, domain s
 }
 
 func (r *assertionSignerRepository) GetCurrentInDomain(_ context.Context, domain storage.KeyDomain) (*storage.SigningKey, error) {
-	key := currentUsableKey(r.activeKeys(domain), time.Now().UTC())
+	key := keylifecycle.EffectiveCurrent(r.activeKeys(domain), time.Now().UTC())
 	if key == nil {
 		return nil, ports.ErrNotFound
 	}

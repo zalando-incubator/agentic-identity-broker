@@ -2,7 +2,6 @@ package cimdclient
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -323,24 +322,12 @@ func cimdClientAuthenticationPolicy() keylifecycle.Policy {
 	}
 }
 
-func cimdPublicKeyFromPEM(privatePEM []byte) (*ecdsa.PublicKey, error) {
-	publicKey, err := keylifecycle.PublicKeyFromPEM(privatePEM, "ES256")
-	if err != nil {
-		return nil, err
-	}
-	ecdsaKey, ok := publicKey.(*ecdsa.PublicKey)
-	if !ok {
-		return nil, errors.New("CIMD private key is not ECDSA")
-	}
-	return ecdsaKey, nil
-}
-
 func cimdPublicJWKFromPEM(privatePEM []byte, kid id.KeyID) (jwk.Key, error) {
-	publicKey, err := cimdPublicKeyFromPEM(privatePEM)
+	privateKey, err := cimdES256PrivateKeyFromPEM(privatePEM)
 	if err != nil {
 		return nil, err
 	}
-	key, err := jwk.Import[jwk.Key](publicKey)
+	key, err := jwk.Import[jwk.Key](&privateKey.PublicKey)
 	if err != nil {
 		return nil, err
 	}
@@ -354,10 +341,6 @@ func cimdPublicJWKFromPEM(privatePEM []byte, kid id.KeyID) (jwk.Key, error) {
 		return nil, err
 	}
 	return key, nil
-}
-
-func currentUsableKey(keys []*storage.SigningKey, now time.Time) *storage.SigningKey {
-	return keylifecycle.EffectiveCurrent(keys, now)
 }
 
 func (s *KeyService) audit(kid id.KeyID, operation, outcome string) {

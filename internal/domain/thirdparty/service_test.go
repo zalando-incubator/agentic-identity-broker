@@ -617,6 +617,12 @@ type readyCIMDKeyReadiness struct{}
 
 func (readyCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error { return nil }
 
+type unavailableCIMDKeyReadiness struct{}
+
+func (unavailableCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error {
+	return ports.ErrCIMDPublicKeyUnavailable
+}
+
 func assertCIMDProviderAuditRecord(t *testing.T, logs *bytes.Buffer, serviceID id.ServiceID, operation, wantOutcome string, sentinels ...string) {
 	t.Helper()
 
@@ -825,6 +831,49 @@ func TestThirdpartyOAuth2ProviderService_CIMDProvisionsServiceBranchKeyBeforePer
 			require.NoError(t, err)
 			assert.Equal(t, []string{"provision", "persist"}, calls)
 		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderService_CIMDRejectsUnavailableKeyBeforeSideEffects(t *testing.T) {
+	for _, readiness := range []struct {
+		name  string
+		check ports.CIMDClientKeyReadiness
+	}{
+		{name: "missing"},
+		{name: "unavailable", check: unavailableCIMDKeyReadiness{}},
+	} {
+		for _, operation := range []string{"create", "update"} {
+			t.Run(readiness.name+"/"+operation, func(t *testing.T) {
+				ctx := context.Background()
+				serviceID := id.NewServiceID()
+				entity := minimalValidCIMDProvider(serviceID, "", model.TokenEndpointAuthMethodPrivateKeyJWT)
+				repo := new(MockRepository)
+				if operation == "update" {
+					persisted := minimalValidEntity(serviceID, model.NewEncryptedSecret([]byte("previous-secret")))
+					repo.On("Get", ctx, serviceID).Return(persisted, nil).Once()
+				}
+				encryption := new(MockEncryption)
+				branchKeys := new(MockBranchKeyManager)
+				logs := new(bytes.Buffer)
+				service := NewThirdpartyOAuth2ProviderService(repo, encryption, branchKeys, nil, false, slog.New(slog.NewJSONHandler(logs, nil))).WithCIMDPublicURL("https://broker.example").WithCIMDKeyReadiness(readiness.check)
+
+				var err error
+				if operation == "create" {
+					err = service.Create(ctx, entity)
+				} else {
+					err = service.Update(ctx, entity, nil)
+				}
+
+				require.ErrorIs(t, err, ports.ErrCIMDPublicKeyUnavailable)
+				assert.True(t, entity.Secret.IsAbsent())
+				repo.AssertExpectations(t)
+				repo.AssertNotCalled(t, "Create")
+				repo.AssertNotCalled(t, "Update")
+				branchKeys.AssertNotCalled(t, "Create")
+				encryption.AssertNotCalled(t, "Encrypt")
+				assertCIMDProviderAuditRecord(t, logs, serviceID, operation, "rejected")
+			})
+		}
 	}
 }
 
