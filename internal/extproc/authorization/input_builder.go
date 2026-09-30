@@ -32,17 +32,29 @@ import (
 //
 // The returned OPAInput (map[string]any) is safe for direct use as the OPA input document.
 func BuildOPAInput(protocol string, body []byte, headers map[string]string, targetServerName string, contextInput ContextInput) (OPAInput, error) {
+	var msg *MCPMessage
+	if protocol == "mcp" {
+		var err error
+		msg, err = ParseMCPMessage(body)
+		if err != nil {
+			return nil, fmt.Errorf("input builder: %w", err)
+		}
+	}
 	checkReq := buildCheckRequest(headers, body)
 	input, err := envoyauth.RequestToInput(checkReq, nopLogger{}, nil, true)
 	if err != nil {
 		return nil, fmt.Errorf("input builder: envoyauth.RequestToInput failed: %w", err)
 	}
-	input["parsed_body"] = parseJSONBody(body)
+	if protocol == "mcp" {
+		input["parsed_body"] = msg.body
+	} else {
+		input["parsed_body"] = parseJSONBody(body)
+	}
 	input["truncated_body"] = false
 	input["context"] = contextInput
 	switch protocol {
 	case "mcp":
-		return buildMCPInput(input, body, headers, targetServerName)
+		return buildMCPInput(input, msg, headers, targetServerName)
 	default:
 		input["type"] = "unknown"
 		return input, nil
@@ -111,12 +123,7 @@ func BuildOPAInputHeadersOnly(protocol string, headers map[string]string, target
 // buildMCPInput adds MCP-specific fields to the OPA input map.
 // For tools/call: type="mcp_tool_call", populates mcp.tool_name + mcp.arguments.
 // For other methods: type="mcp_method", populates mcp.method + mcp.params.
-func buildMCPInput(input OPAInput, body []byte, headers map[string]string, targetServerName string) (OPAInput, error) {
-	msg, err := ParseMCPMessage(body)
-	if err != nil {
-		return nil, fmt.Errorf("input builder: %w", err)
-	}
-
+func buildMCPInput(input OPAInput, msg *MCPMessage, headers map[string]string, targetServerName string) (OPAInput, error) {
 	mcpInput := &MCPInput{
 		JSONRPC:          msg.JSONRPC,
 		Method:           msg.Method,
@@ -137,7 +144,11 @@ func buildMCPInput(input OPAInput, body []byte, headers map[string]string, targe
 			return nil, fmt.Errorf("input builder: tools/call missing or invalid params.name")
 		}
 		mcpInput.ToolName = name
-		if args, ok := msg.Params["arguments"].(map[string]any); ok {
+		if value, present := msg.Params["arguments"]; present {
+			args, ok := value.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("input builder: tools/call invalid params.arguments")
+			}
 			mcpInput.Arguments = args
 		}
 		input["type"] = "mcp_tool_call"

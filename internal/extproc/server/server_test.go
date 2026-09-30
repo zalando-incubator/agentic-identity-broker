@@ -2070,39 +2070,6 @@ func TestServer_OPA_BodyPhase_RequestTooLarge_DeniesWithoutAuthorizerCall(t *tes
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "request_too_large")
 }
 
-// Spec: A batch where every element is allowed must evaluate each element and echo the full body.
-func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
-	var seenToolNames []string
-	auth := &mockAuthorizer{
-		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
-			require.True(t, ok, "batch element must expose parsed MCP input")
-			seenToolNames = append(seenToolNames, mcp.ToolName)
-			return &authorization.OPADecision{Action: "allow"}, nil
-		},
-	}
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			return server.ExchangeResult{Token: "batch-token"}, nil
-		},
-	}
-	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
-	defer cleanup()
-
-	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}},{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"read_config","arguments":{}}}]`)
-	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method": "POST",
-	}, batch)
-
-	require.NotNil(t, bodyResp)
-	requestBodyResp, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
-	require.True(t, ok, "allowed batch must echo a RequestBody response")
-	streamed, ok := requestBodyResp.RequestBody.Response.BodyMutation.Mutation.(*extprocv3.BodyMutation_StreamedResponse)
-	require.True(t, ok, "allowed batch must use streamed body echo")
-	assert.Equal(t, batch, streamed.StreamedResponse.Body)
-	assert.Equal(t, []string{"list_files", "read_config"}, seenToolNames)
-}
-
 // Spec: A denied batch must aggregate reasons from every denying element into one 403.
 func TestServer_OPA_BatchBodyPhase_Deny_AggregatesReasons(t *testing.T) {
 	var evaluateCalls int
@@ -3710,14 +3677,16 @@ func TestServer_OPA_HeadersOnly_MCPServerMetadata_PropagatedToOPAInput(t *testin
 
 // Spec 044 Edge Case (batch requests): every element in a JSON-RPC batch must receive
 // the identical mcp.target_server_name value, sourced once from the agentgateway
-// metadata at the headers phase.
+// metadata at the headers phase; the allowed batch forwards the parsed elements.
 func TestServer_OPA_BatchBodyPhase_SameTargetServerNameAcrossElements(t *testing.T) {
 	var seenServers []string
+	var opaBodies []any
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
 			mcp, ok := input["mcp"].(*authorization.MCPInput)
 			require.True(t, ok, "batch element must expose parsed MCP input")
 			seenServers = append(seenServers, mcp.TargetServerName)
+			opaBodies = append(opaBodies, input["parsed_body"])
 			return &authorization.OPADecision{Action: "allow"}, nil
 		},
 	}
@@ -3729,14 +3698,18 @@ func TestServer_OPA_BatchBodyPhase_SameTargetServerNameAcrossElements(t *testing
 	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
 	defer cleanup()
 
-	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}},{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"read_config","arguments":{}}}]`)
+	batch := []byte(`[ {"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}}, {"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"read_config","arguments":{"path":"/tmp","path":"/prod"}}} ]`)
 	_, bodyResp := sendHeadersThenBodyWithMetadata(t, client, map[string]string{
 		":method": "POST",
 	}, tokenExchangeMetadataWithMCPServer("github-mcp"), batch)
 
-	require.NotNil(t, bodyResp)
-	_, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
-	require.True(t, ok, "allowed batch must echo a RequestBody response")
-	assert.Equal(t, []string{"github-mcp", "github-mcp"}, seenServers,
-		"every batch element must receive the identical mcp.target_server_name value")
+	requestBodyResp, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
+	require.True(t, ok)
+	streamed, ok := requestBodyResp.RequestBody.Response.BodyMutation.Mutation.(*extprocv3.BodyMutation_StreamedResponse)
+	require.True(t, ok)
+	var upstreamBodies any
+	require.NoError(t, json.Unmarshal(streamed.StreamedResponse.Body, &upstreamBodies))
+	assert.True(t, streamed.StreamedResponse.EndOfStream)
+	assert.Equal(t, opaBodies, upstreamBodies)
+	assert.Equal(t, []string{"github-mcp", "github-mcp"}, seenServers)
 }

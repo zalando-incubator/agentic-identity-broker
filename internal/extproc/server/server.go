@@ -555,7 +555,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 // processRequestBody handles the RequestBody phase when OPA is enabled.
 // Token exchange has already occurred in the headers phase; this phase only
 // evaluates OPA policy using the body and returns:
-//   - allow: echo the request body unchanged (Authorization was already set)
+//   - allow: forward the parsed MCP body (or echo non-MCP bodies)
 //   - deny: 403 ImmediateResponse with JSON access_denied body
 func (s *Server) processRequestBody(ctx context.Context, state *requestState, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
 	ctx, logger := s.withRequestLogger(ctx, "", "")
@@ -604,14 +604,14 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 			logger.WarnContext(ctx, "OPA approval-required action is not an MCP tool call", "protocol", state.protocol, "resource", sanitizedURI)
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
-		invocation, rawID, invocationErr := approvalInvocation(bodyBytes, state, decision)
+		invocation, rawID, invocationErr := approvalInvocation(opaInput, state, decision)
 		if invocationErr != nil {
 			logger.WarnContext(ctx, "OPA approval-required request is not a standalone tool call", "error", invocationErr)
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
 		outcome := s.approvalGate.Evaluate(ctx, invocation)
 		if outcome.Proceed {
-			return echoRequestBody(body)
+			return canonicalMCPBody(opaInput["parsed_body"], body)
 		}
 		if outcome.URL != "" {
 			return urlElicitationResponse(outcome.URL, "approval required", rawID)
@@ -625,7 +625,9 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		logger.InfoContext(ctx, "OPA denied request", "reasons", decision.Reasons, "resource", sanitizedURI)
 		return accessDeniedResponse(decision.Reasons)
 	}
-	logger.DebugContext(ctx, "OPA allowed request, echoing body", "resource", sanitizedURI)
+	if state.protocol == "mcp" {
+		return canonicalMCPBody(opaInput["parsed_body"], body)
+	}
 	return echoRequestBody(body)
 }
 
@@ -687,7 +689,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 // processRequestBodyBatch evaluates a JSON-RPC batch body (FR-023).
 // Each element is evaluated independently; if any is denied the entire batch is denied
 // with a 403 response that aggregates reasons from all denying messages.
-// Original raw JSON bytes are passed to BuildOPAInput to preserve any extra top-level fields.
+// Each element's parsed OPA body is re-serialized after every element is allowed.
 func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestState, bodyBytes []byte, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
 	ctx, logger := s.withRequestLogger(ctx, "", "")
 	var rawMessages []json.RawMessage
@@ -703,24 +705,22 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 			`{"error":"access_denied","error_description":"empty batch is not valid JSON-RPC 2.0"}`)
 	}
 
+	inputs := make([]authorization.OPAInput, len(rawMessages))
+	for i, raw := range rawMessages {
+		opaInput, buildErr := authorization.BuildOPAInput(state.protocol, raw, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+		if buildErr != nil {
+			logger.WarnContext(ctx, "OPA: failed to build input for batch element — denying", "resource", sanitizedURI, "index", i, "error", buildErr)
+			return accessDeniedResponse([]string{"failed to parse batch element"})
+		}
+		inputs[i] = opaInput
+	}
 	var (
 		denied      bool
 		denyReasons []string
 	)
-	for i, raw := range rawMessages {
-		if _, err := authorization.ParseMCPMessage(raw); err != nil {
-			logger.WarnContext(ctx, "OPA: invalid batch element — denying", "resource", sanitizedURI, "index", i, "error", err)
-			denied = true
-			denyReasons = append(denyReasons, "batch element could not be evaluated")
-			continue
-		}
-		opaInput, buildErr := authorization.BuildOPAInput(state.protocol, raw, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
-		if buildErr != nil {
-			logger.WarnContext(ctx, "OPA: failed to build input for batch element — denying", "resource", sanitizedURI, "index", i, "error", buildErr)
-			denied = true
-			denyReasons = append(denyReasons, "failed to parse batch element")
-			continue
-		}
+	parsedBodies := make([]any, len(inputs))
+	for i, opaInput := range inputs {
+		parsedBodies[i] = opaInput["parsed_body"]
 		decision, evalErr := s.authorizer.Evaluate(ctx, opaInput)
 		if evalErr != nil {
 			logger.ErrorContext(ctx, "OPA evaluation error for batch element — denying", "resource", sanitizedURI, "index", i, "error", evalErr)
@@ -747,8 +747,7 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 		return accessDeniedResponse(denyReasons)
 	}
 
-	logger.DebugContext(ctx, "OPA allowed batch, echoing body", "resource", sanitizedURI)
-	return echoRequestBody(body)
+	return canonicalMCPBody(parsedBodies, body)
 }
 
 // tokenExchangeErrorResponse maps a token exchange error to the appropriate ImmediateResponse.
@@ -1213,30 +1212,21 @@ func configuredHeader(headers map[string]string, name string) string {
 	return ""
 }
 
-func approvalInvocation(body []byte, state *requestState, decision *authorization.OPADecision) (approval.Invocation, json.RawMessage, error) {
-	var request struct {
-		ID     json.RawMessage `json:"id"`
-		Method string          `json:"method"`
-		Params struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
-		} `json:"params"`
-	}
-	if err := json.Unmarshal(body, &request); err != nil {
-		return approval.Invocation{}, nil, err
-	}
-	if request.Method != "tools/call" || request.Params.Name == "" {
+func approvalInvocation(input authorization.OPAInput, state *requestState, decision *authorization.OPADecision) (approval.Invocation, json.RawMessage, error) {
+	mcpInput, ok := input["mcp"].(*authorization.MCPInput)
+	if input["type"] != "mcp_tool_call" || !ok || mcpInput.Method != "tools/call" || mcpInput.ToolName == "" {
 		return approval.Invocation{}, nil, errors.New("request is not an MCP tools/call")
 	}
-	if request.Params.Arguments == nil {
-		request.Params.Arguments = map[string]any{}
+	rawID, err := json.Marshal(mcpInput.ID)
+	if err != nil {
+		return approval.Invocation{}, nil, err
 	}
-	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: request.Params.Name, Arguments: request.Params.Arguments, AgentSessionID: state.agentSessionID, MCPSessionID: configuredHeader(state.headers, "Mcp-Session-Id"), RequestID: semanticRequestID(request.ID), SubjectToken: state.subjectToken}
+	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: mcpInput.ToolName, Arguments: mcpInput.Arguments, AgentSessionID: state.agentSessionID, MCPSessionID: mcpInput.SessionID, RequestID: semanticRequestID(rawID), SubjectToken: state.subjectToken}
 	if decision.ApprovalContext != nil {
 		invocation.Description = decision.ApprovalContext.Description
 		invocation.RiskLevel = decision.ApprovalContext.RiskLevel
 	}
-	return invocation, request.ID, nil
+	return invocation, rawID, nil
 }
 
 func semanticRequestID(rawID json.RawMessage) string {
@@ -1262,6 +1252,18 @@ func passThrough() *extprocv3.ProcessingResponse {
 			RequestHeaders: &extprocv3.HeadersResponse{},
 		},
 	}
+}
+
+// canonicalMCPBody forwards only values present in the body OPA evaluated.
+func canonicalMCPBody(parsed any, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
+	if parsed == nil {
+		return accessDeniedResponse([]string{"failed to serialize authorized request"})
+	}
+	canonical, err := json.Marshal(parsed)
+	if err != nil {
+		return accessDeniedResponse([]string{"failed to serialize authorized request"})
+	}
+	return echoRequestBody(&extprocv3.HttpBody{Body: canonical, EndOfStream: body.GetEndOfStream()})
 }
 
 // echoRequestBody echoes the request body bytes back unchanged using StreamedBodyResponse.

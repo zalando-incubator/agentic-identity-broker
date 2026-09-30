@@ -897,6 +897,8 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can further restrict the request after broker token exchange. The approval gate runs only for a standalone MCP tool call after OPA returns `approval_required`.
 
+For MCP POST bodies with OPA enabled, ExtProc rejects duplicate or case-fold-equivalent keys in JSON-RPC envelopes and `params` before evaluation, including within batch elements. OPA and the approval gate use the same parsed tool name and arguments. Once every applicable policy and approval decision permits a call, ExtProc forwards a JSON re-serialization of the OPA-parsed body (each element for a batch), not the original bytes; non-MCP requests retain pass-through body behavior.
+
 #### 3.2.2. gRPC Server
 
 **Server**: Implements Envoy's `ExternalProcessorServer` interface with:

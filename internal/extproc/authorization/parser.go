@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strings"
+	"unicode"
 )
 
 // MCPMessage represents a parsed JSON-RPC 2.0 message from the MCP protocol.
@@ -13,6 +16,7 @@ type MCPMessage struct {
 	Method  string         `json:"method"`
 	ID      any            `json:"id"`
 	Params  map[string]any `json:"params"`
+	body    map[string]any
 }
 
 // ParseMCPMessage parses a single JSON-RPC 2.0 message from body bytes.
@@ -24,22 +28,90 @@ func ParseMCPMessage(body []byte) (*MCPMessage, error) {
 		return nil, fmt.Errorf("mcp parser: empty body")
 	}
 
-	var msg MCPMessage
-	if err := json.Unmarshal(body, &msg); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	start, err := decoder.Token()
+	if err != nil {
 		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: %w", err)
 	}
+	if start != json.Delim('{') {
+		return nil, fmt.Errorf("mcp parser: JSON-RPC message must be an object")
+	}
+	envelope, err := parseMCPObject(decoder, "envelope")
+	if err != nil {
+		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: trailing data")
+	}
 
-	// Validate required JSON-RPC 2.0 fields to prevent misclassification of
-	// arbitrary JSON as MCP messages (e.g. when protocol="mcp" is set by the proxy
-	// but the body is not valid JSON-RPC 2.0).
+	msg := &MCPMessage{body: envelope, ID: envelope["id"]}
+	msg.JSONRPC, _ = envelope["jsonrpc"].(string)
+	msg.Method, _ = envelope["method"].(string)
+	if params := envelope["params"]; params != nil {
+		msg.Params = params.(map[string]any)
+	}
 	if msg.JSONRPC != "2.0" {
 		return nil, fmt.Errorf("mcp parser: missing or invalid jsonrpc field (expected \"2.0\", got %q)", msg.JSONRPC)
 	}
 	if msg.Method == "" {
 		return nil, fmt.Errorf("mcp parser: missing or empty method field")
 	}
+	return msg, nil
+}
 
-	return &msg, nil
+func parseMCPObject(decoder *json.Decoder, scope string) (map[string]any, error) {
+	values := make(map[string]any)
+	seen := make(map[string]struct{})
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		key := token.(string)
+		folded := strings.Map(func(r rune) rune {
+			minimum := r
+			for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+				if next < minimum {
+					minimum = next
+				}
+			}
+			return minimum
+		}, key)
+		if _, exists := seen[folded]; exists {
+			return nil, fmt.Errorf("duplicate %s key", scope)
+		}
+		seen[folded] = struct{}{}
+
+		var value any
+		if scope == "envelope" && key == "params" {
+			start, err := decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			switch start {
+			case nil:
+			case json.Delim('{'):
+				value, err = parseMCPObject(decoder, "params")
+				if err != nil {
+					return nil, err
+				}
+			default:
+				return nil, fmt.Errorf("params must be an object")
+			}
+		} else if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		values[key] = value
+	}
+	end, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if end != json.Delim('}') {
+		return nil, fmt.Errorf("expected end of %s object", scope)
+	}
+	return values, nil
 }
 
 // ParseMCPBatch detects and parses JSON-RPC 2.0 batch requests (FR-023).
