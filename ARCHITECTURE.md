@@ -1100,25 +1100,25 @@ ExtProc leverages the broker's shared OpenTelemetry infrastructure (ADR 011, ADR
 
 ## 4. Data Stores
 
-(List and describe the databases and other persistent storage solutions used.)
+Production state is in PostgreSQL. The development and test storage adapter keeps the same entities in memory without persistence (ADR 004). AWS KMS holds the root encryption key, not application records.
 
-### 4.1. [Data Store Type 1]
+### 4.1. PostgreSQL application store
 
-Name: [e.g., Primary User Database, Analytics Data Warehouse]
+Name: Broker transactional store
 
-Type: [e.g., PostgreSQL, MongoDB, Redis, S3, Firestore]
+Type: PostgreSQL, accessed through sqlx repositories
 
-Purpose: [Briefly describe what data it stores and why.]
+Purpose: Persists agents, services, permission sets, user grants, encrypted third-party sessions, hashed agent credentials, encrypted signing keys, authorization codes, and tool approvals. The runtime account has data permissions; the separate migration job has schema permissions.
 
-Key Schemas/Collections: [List important tables/collections, e.g., users, products, orders (no need for full schema, just names)]
+Key tables: `agents`, `thirdparty_oauth2_services`, `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `tool_approvals`, `approval_sync_state`.
 
-### 4.2. [Data Store Type 2]
+### 4.2. DynamoDB branch-key store
 
-Name: [e.g., Cache, Message Queue]
+Name: AWS Encryption SDK branch-key store
 
-Type: [e.g., Redis, Kafka, RabbitMQ]
+Type: DynamoDB table keyed by `branch-key-id` and `type` (ADR 010)
 
-Purpose: [Briefly describe its purpose, e.g., "Used for caching frequently accessed data" or "Inter-service communication."]
+Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker caches active branch keys in memory and uses fresh data keys to encrypt individual values (ADR 009). This table does not store grants or user sessions.
 
 ## 5. External Integrations / APIs
 
@@ -1142,15 +1142,12 @@ Monitoring & Logging: [e.g., Prometheus, Grafana, CloudWatch, Stackdriver, ELK S
 
 ## 7. Security Considerations
 
-(Highlight any critical security aspects, authentication mechanisms, or data encryption practices.)
+The [security assurance case](docs/resources/assurance-case.md) records the assets, attackers, trust boundaries, secure design controls, and weakness-to-verification mapping. [Security posture](docs/resources/security.md) gives the operator-facing summary.
 
-Authentication: [e.g., OAuth2, JWT, API Keys]
-
-Authorization: [e.g., RBAC, ACLs]
-
-Data Encryption: [e.g., TLS in transit, AES-256 at rest]
-
-Key Security Tools/Practices: The read-only, trusted-base `CI / security` PR job runs gosec for Go source, govulncheck for reachable Go vulnerabilities, and OSV-Scanner for Go/npm manifests and lockfiles.
+- **Authentication:** The trusted proxy authenticates end users and injects `X-Remote-User`. It restricts port 14000 to administrators. The broker validates signed machine client assertions and subject tokens for token exchange.
+- **Authorization:** Domain services check principal ownership and active delegation. Machine and browser approval endpoints have distinct authentication rules under ADR 018.
+- **Encryption:** Production uses AWS KMS and DynamoDB branch keys to encrypt secrets, sessions, and signing-key material before PostgreSQL storage. Failed encryption or decryption has no plaintext fallback. TLS termination and private backend connectivity are deployment responsibilities.
+- **Verification:** The required `CI gate` runs E2E suites for consent, approval, OAuth2, and token exchange, plus dependency review on pull requests. CodeQL analyzes Go and JavaScript/TypeScript on pull requests. A separate scheduled security workflow runs gosec, govulncheck, and OSV-Scanner. Parser fuzzing is scheduled separately.
 
 ## 8. Development & Testing Environment
 

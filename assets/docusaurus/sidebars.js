@@ -75,6 +75,7 @@ const sidebars = {
       label: 'Resources',
       items: [
         'resources/security',
+        'resources/assurance-case',
         'resources/contributing',
         'resources/public-relations',
       ],
