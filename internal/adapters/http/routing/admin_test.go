@@ -7,8 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,6 +16,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/routing"
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 )
@@ -110,6 +109,131 @@ func TestSetupAdminRoutes_RejectsNonJSONWritesAndBodies(t *testing.T) {
 	}
 }
 
+func TestSetupAdminRoutes_BodylessPromotionRequiresJSON(t *testing.T) {
+	t.Parallel()
+	router := newAdminRouter(t, "https://admin.example.com:14000")
+	type keyMetadata struct {
+		KID       string `json:"kid"`
+		IsCurrent bool   `json:"is_current"`
+	}
+	keys := make([]keyMetadata, 2)
+	for i := range keys {
+		req := httptest.NewRequest(http.MethodPost, "/api/cimd-client-keys", strings.NewReader(`{"algorithm":"ES256"}`))
+		req.Host = "admin.example.com:14000"
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&keys[i]))
+	}
+	keys[0].IsCurrent = false
+	listKeys := func() []keyMetadata {
+		req := httptest.NewRequest(http.MethodGet, "/api/cimd-client-keys", nil)
+		req.Host = "admin.example.com:14000"
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var body struct {
+			Items []keyMetadata `json:"items"`
+		}
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
+		return body.Items
+	}
+	require.ElementsMatch(t, keys, listKeys())
+	for _, tc := range []struct {
+		name, contentType string
+	}{
+		{name: "missing content type"},
+		{name: "non-JSON content type", contentType: "text/plain"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/cimd-client-keys/"+keys[0].KID+"/current", nil)
+			req.Host = "admin.example.com:14000"
+			if tc.contentType != "" {
+				req.Header.Set("Content-Type", tc.contentType)
+			}
+			req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusUnsupportedMediaType, rec.Code, rec.Body.String())
+			require.ElementsMatch(t, keys, listKeys(), "rejected promotion must leave the current key unchanged")
+		})
+	}
+	req := httptest.NewRequest(http.MethodPut, "/api/cimd-client-keys/"+keys[0].KID+"/current", nil)
+	req.Host = "admin.example.com:14000"
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(principal.WithPrincipal(req.Context(), fixtures.AdminPrincipal().String()))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	keys[0].IsCurrent = true
+	keys[1].IsCurrent = false
+	require.ElementsMatch(t, keys, listKeys(), "JSON promotion must change the current key")
+}
+
+func TestSetupAdminRoutes_FixedLengthNonJSONDeletePreservesAgent(t *testing.T) {
+	t.Parallel()
+	router := newAdminRouter(t, "https://admin.example.com:14000")
+	req := httptest.NewRequest(http.MethodPost, "/api/agents", strings.NewReader(`{"display_name":"Retained agent","description":"Fixed-length DELETE regression","permission_sets":[{"permission_set_id":"`+fixtures.PlaceholderPermissionSetID.String()+`","requirement_type":"optional"}]}`))
+	req.Host = "admin.example.com:14000"
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var agent struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&agent))
+	path := "/api/agents/" + agent.ID
+	req = httptest.NewRequest(http.MethodDelete, path, strings.NewReader("delete"))
+	req.Host = "admin.example.com:14000"
+	req.Header.Set("Content-Type", "text/plain")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnsupportedMediaType, rec.Code, rec.Body.String())
+	req = httptest.NewRequest(http.MethodGet, path, nil)
+	req.Host = "admin.example.com:14000"
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var retainedAgent struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&retainedAgent))
+	require.Equal(t, agent, retainedAgent)
+}
+
+func TestSetupAdminRoutes_AllowsCrossOriginReadsAndPreflights(t *testing.T) {
+	t.Parallel()
+	router := newAdminRouter(t, "https://admin.example.com:14000")
+	for _, method := range []string{http.MethodGet, http.MethodOptions} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/api/agents", nil)
+			req.Host = "admin.example.com:14000"
+			req.Header.Set("Origin", "https://console.example.com")
+			req.Header.Set("Sec-Fetch-Site", "cross-site")
+			if method == http.MethodOptions {
+				req.Header.Set("Access-Control-Request-Method", "POST")
+				req.Header.Set("Access-Control-Request-Headers", "Content-Type")
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.Equal(t, "https://console.example.com", rec.Header().Get("Access-Control-Allow-Origin"))
+			require.Contains(t, rec.Header().Values("Vary"), "Origin")
+			if method == http.MethodOptions {
+				require.Equal(t, "POST", rec.Header().Get("Access-Control-Allow-Methods"))
+				require.Equal(t, "Content-Type", rec.Header().Get("Access-Control-Allow-Headers"))
+				require.Contains(t, rec.Header().Values("Vary"), "Access-Control-Request-Method")
+				require.Contains(t, rec.Header().Values("Vary"), "Access-Control-Request-Headers")
+			}
+		})
+	}
+}
+
 func TestSetupAdminRoutes_HostOnReadsAndHealth(t *testing.T) {
 	t.Parallel()
 
@@ -157,11 +281,9 @@ func newAdminRouter(t *testing.T, publicURL string) http.Handler {
 		ID: fixtures.PlaceholderPermissionSetID, Name: "Security test permission set",
 		ServiceScopes: []domainstorage.ServiceScope{{ServiceID: fixtures.PlaceholderServiceID, RequirementType: domainstorage.RequirementTypeOptional}},
 	}))
-	staticPath := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(staticPath, "index.html"), []byte("<!doctype html><title>test</title>"), 0o600))
 	application, err := app.NewBuilder().WithConfig(cfg).WithStorage(storage).
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
-		WithStaticWebResourcesPath(staticPath).WithJWKSPublisher(&mockJWKSPublisher{}).Build()
+		WithJWKSPublisher(&mockJWKSPublisher{}).Build()
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if application.Shutdown != nil {

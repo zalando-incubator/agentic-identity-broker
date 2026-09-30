@@ -122,11 +122,10 @@ var _ = Describe("US1: Client Credential Management (local mode)", func() {
 			response, err := helpers.HTTPClient().Do(request)
 			Expect(err).ToNot(HaveOccurred())
 			Expect(response.StatusCode).To(Equal(attack.status))
-			responseBody, err := io.ReadAll(response.Body)
-			_ = response.Body.Close()
+			responseBody, err := helpers.ReadResponseBody(response)
 			Expect(err).ToNot(HaveOccurred())
-			Expect(string(responseBody)).NotTo(ContainSubstring("client_secret"))
-			Expect(string(responseBody)).NotTo(ContainSubstring(initialSecret))
+			Expect(responseBody).NotTo(ContainSubstring("client_secret"))
+			Expect(responseBody).NotTo(ContainSubstring(initialSecret))
 			Expect(readMetadata()).To(Equal(originalMetadata), "rejected rotations must leave the stored credential unchanged")
 		}
 
