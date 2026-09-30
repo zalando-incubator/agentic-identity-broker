@@ -24,9 +24,11 @@ A user delegates an agent and later revokes that delegation. The agent must stop
 2. **Given** a user authorized an agent and obtained refresh tokens, **When** the user revokes consent through the existing UI and the agent refreshes, **Then** renewal fails with an invalid-grant error and no tokens.
 3. **Given** a grant has a finite validity deadline, **When** the agent refreshes at or after that deadline, **Then** renewal fails with an invalid-grant error and no tokens.
 4. **Given** consent ends while the previous refresh token remains inside its reuse interval, **When** the agent retries that token, **Then** renewal fails without returning the earlier token result.
-5. **Given** the broker cannot determine whether the grant remains active, **When** the agent refreshes, **Then** renewal fails with a server error and no tokens.
-6. **Given** a token belongs to one principal and agent, **When** another client tries to refresh it using its own active grant, **Then** renewal fails without changing the token's owner.
+5. **Given** the broker cannot determine whether the grant remains active, **When** the agent refreshes, **Then** renewal fails with a server error and no tokens. The presented token remains unconsumed, and the client can refresh with it once the broker can determine the grant state.
+6. **Given** a token belongs to one principal and agent, **When** another client tries to refresh it using its own active grant, **Then** renewal fails without changing the token's owner. The request neither revokes nor otherwise changes the session.
 7. **Given** a resource server accepts a broker access token through JWKS validation, **When** the user revokes consent, **Then** refresh cannot supply another token. The existing access token retains its original expiry.
+8. **Given** a time-limited grant expired while an agent held refresh tokens, **When** the user renews that grant and the agent refreshes with a token issued before the expiry, **Then** renewal fails with an invalid-grant error. Fresh authorization can create a new session.
+9. **Given** a user changes an active grant's permission sets or extends its validity before the deadline, **When** the agent refreshes, **Then** renewal succeeds under the current grant. The session keeps its original clocks.
 
 ---
 
@@ -47,6 +49,9 @@ Users and administrators expect grant deletion, agent deletion, and credential r
 5. **Given** a lifecycle action revoked a session, **When** the user grants consent again or an administrator creates replacement credentials, **Then** every token from the revoked session remains unusable. Fresh authorization can create a new session.
 6. **Given** a lifecycle action overlaps a refresh request, **When** the lifecycle action reports success, **Then** all affected refresh tokens, including a concurrent replacement, become unusable on every broker instance.
 7. **Given** a lifecycle action cannot complete session revocation, **When** it finishes, **Then** it reports failure rather than successful completion. It does not leave a partially completed authorization change.
+8. **Given** an agent has credentials and refresh sessions, **When** an administrator replaces the credentials through the existing generation action, **Then** the sessions remain usable only with the replacement credential. The replaced credential cannot refresh them.
+9. **Given** a grant is already absent, **When** the idempotent consent-deletion path runs again for that principal and agent, **Then** any remaining refresh session for that pair becomes unusable and the action reports success.
+10. **Given** an authorization code already produced a refresh session, **When** any party replays that code, **Then** the session's refresh tokens become unusable, as they do today.
 
 ---
 
@@ -68,6 +73,8 @@ An agent can lose a successful refresh response or send overlapping refresh requ
 6. **Given** an eligible retry reaches a different broker instance or follows a restart, **When** the client retries within the interval, **Then** it receives the same token result under the same authorization rules.
 7. **Given** a retry would occur inside the reuse interval but after a session lifetime deadline, **When** the client retries, **Then** renewal fails without returning tokens or extending either deadline.
 8. **Given** the original access token expires before the reuse interval ends, **When** the client retries its predecessor, **Then** retry returns no tokens. The still-valid current refresh token remains usable and its deadlines do not change.
+9. **Given** a client retries the previous token inside the reuse interval, **When** the retry requests a different scope than the original request, **Then** the broker treats the request as prohibited reuse. It returns no stored result.
+10. **Given** a client already received the maximum number of retry results for one consumed token, **When** it presents that token again inside the reuse interval, **Then** renewal fails and the session's remaining refresh tokens become unusable.
 
 ---
 
@@ -108,7 +115,7 @@ An operator can limit how long an agent can leave a refresh session inactive. Su
 
 ### User Story 6 - Deploy the Policy Without Changing Upstream Sessions (Priority: P2)
 
-Operators can configure these controls through existing deployment mechanisms. Existing clients retain the refresh-token lifetime configuration they already use.
+Operators can configure these controls through existing deployment mechanisms. Existing deployments retain the refresh-token lifetime configuration they already use. Sessions issued before this feature can require fresh authorization once.
 
 **Why this priority**: Security configuration must have consistent behavior across deployment methods and must not change upstream provider contracts.
 
@@ -116,12 +123,14 @@ Operators can configure these controls through existing deployment mechanisms. E
 
 **Acceptance Scenarios**:
 
-1. **Given** equivalent configuration through a file, environment variables, command-line flags, or the broker deployment chart, **When** a client refreshes, **Then** the same reuse and lifetime limits apply.
+1. **Given** equivalent configuration through a file, environment variables, or the broker deployment chart, **When** a client refreshes, **Then** the same reuse and lifetime limits apply.
 2. **Given** an existing deployment specifies `local.refresh_token_ttl`, **When** it deploys this feature, **Then** that value remains the session inactivity lifetime without requiring a renamed configuration key.
 3. **Given** malformed or disallowed duration values, **When** the operator starts the broker, **Then** startup fails with a message that identifies the invalid configuration.
-4. **Given** a pre-existing refresh session lacks trustworthy lifetime or authorization-lineage information, **When** the client attempts renewal after deployment, **Then** renewal fails and fresh authorization is required. The broker does not invent a new start time.
+4. **Given** a pre-existing refresh session does not meet the FR-025 criteria for trustworthy lifetime and authorization-lineage information, **When** the client attempts renewal after deployment, **Then** renewal fails and fresh authorization is required. The broker does not invent a new start time.
 5. **Given** a client uses upstream passthrough in proxy mode or hybrid mode, **When** it refreshes, **Then** the upstream server continues to control its rotation and lifetime behavior.
 6. **Given** an existing session, **When** the operator shortens a lifetime and restarts the broker, **Then** the new limit applies to the original clocks. Increasing a limit cannot restore an expired or revoked session.
+7. **Given** a rolling deployment runs instances with and without this feature, **When** an older instance rotates a refresh token, **Then** instances with this feature treat the result as a pre-existing session under scenario 4. No token skips the consent check once the rollout completes.
+8. **Given** the broker runs on non-durable storage, **When** the operator reads the configuration reference, **Then** it states that restart ends all refresh sessions and that multi-instance guarantees require durable shared storage.
 
 ### Edge Cases
 
@@ -133,6 +142,13 @@ Operators can configure these controls through existing deployment mechanisms. E
 - A successful lifecycle action does not allow a racing refresh to leave a usable replacement session behind.
 - A failed refresh, invalid client request, or allowed duplicate retry does not count as session activity.
 - Existing broker access tokens can remain valid until their own expiry at resource servers that only validate signatures and token claims.
+- Only prohibited reuse by the bound client revokes a session. A failed client authentication, a client mismatch, or an unknown token changes no session state, so a third party cannot end another client's session.
+- A server error never consumes the presented token. The client can retry the same token after the broker recovers, inside the unchanged deadlines.
+- With a zero reuse interval, the slower of two concurrent requests counts as prohibited reuse and ends the session. This keeps the strict single-use behavior of feature 033.
+- A renewed grant does not revive sessions that existed while the grant was expired. An extension before the deadline keeps them.
+- An agent that no longer permits the refresh grant or a session scope cannot obtain tokens that exceed its current permissions.
+- A retry inside the reuse interval lets a holder of a stolen predecessor obtain the current token. The retry limit, the short interval, and retry auditing bound that exposure. They do not remove it.
+- A previously public agent that receives credentials must authenticate on every later refresh of its existing sessions.
 
 ## Requirements *(mandatory)*
 
@@ -142,9 +158,9 @@ Operators can configure these controls through existing deployment mechanisms. E
 - **FR-002**: A grant MUST be active only while it exists and its `ValidUntil` is absent or strictly later than the authorization decision.
 - **FR-003**: Missing or expired consent MUST prevent all token returns. Unknown consent state MUST fail closed without a token result.
 - **FR-004**: Refresh MUST preserve the original principal, agent, client binding, and scope ceiling. Caller-provided identity MUST NOT replace session-bound identity.
-- **FR-005**: Every grant-deletion path MUST revoke all local refresh sessions for that principal and agent, across all request chains.
+- **FR-005**: Every grant-deletion path MUST revoke all local refresh sessions for that principal and agent, across all request chains. The paths are the user-facing revocation (`DELETE /api/consent/agents/{agent-id}/grants`) and the idempotent empty-submission revocation (`POST /api/consent/agents/{agent-id}/grants`). The idempotent path MUST revoke remaining sessions even when the grant is already absent.
 - **FR-006**: Agent deletion MUST revoke all local refresh sessions for that agent across all principals.
-- **FR-007**: Credential revocation MUST revoke all local refresh sessions for that agent across all principals. Public-client fallback MUST NOT restore those sessions.
+- **FR-007**: Credential revocation (`DELETE /api/agents/{agent-id}/client-credentials`) MUST revoke all local refresh sessions for that agent across all principals. Public-client fallback MUST NOT restore those sessions.
 - **FR-008**: Revocation MUST be permanent for affected sessions. A replacement grant, recreated agent, or replacement credential MUST NOT reactivate their tokens.
 - **FR-009**: Lifecycle changes and session revocation MUST complete as one consistent outcome. Success MUST mean no affected refresh token remains usable across broker instances.
 - **FR-010**: Revocation MUST include current tokens, retry-eligible predecessors, and replacements from overlapping refresh requests. Unrelated principals and agents MUST remain unaffected.
@@ -159,13 +175,26 @@ Operators can configure these controls through existing deployment mechanisms. E
 - **FR-019**: Inactivity MUST start at initial issuance and reset only after a fresh successful rotation. The default inactivity lifetime MUST be 30 days.
 - **FR-020**: Resource access, rejected requests, and permitted duplicate retries MUST NOT renew inactivity. Retry responses MUST NOT renew absolute or reuse deadlines.
 - **FR-021**: Refresh MUST fail at or after either configured session deadline. A reuse interval MUST NOT permit a response after either deadline.
-- **FR-022**: Operators MUST configure the reuse interval and both session lifetimes through the existing broker configuration mechanisms and deployment chart.
+- **FR-022**: Operators MUST configure the reuse interval and both session lifetimes through the configuration file, environment variables, and the deployment chart.
 - **FR-023**: The existing `local.refresh_token_ttl` configuration MUST remain the single configuration value for session inactivity lifetime.
 - **FR-024**: The broker MUST preserve trustworthy session start, last fresh activity, ownership, and revocation history across restart and instance changes.
-- **FR-025**: Pre-existing sessions without trustworthy information required by this policy MUST require fresh authorization. Deployment MUST NOT reset their lifetime clocks.
+- **FR-025**: A pre-existing session is trustworthy only if the broker retains its principal, agent, client, rotation lineage, last fresh rotation time, and the record of its first issued token. Every other pre-existing session MUST require fresh authorization. Deployment MUST NOT reset lifetime clocks or derive a session start from a later token.
 - **FR-026**: These controls MUST apply to local issuance in local and hybrid modes. Upstream passthrough and vaulted third-party token behavior MUST remain unchanged.
 - **FR-027**: Existing access tokens MUST retain their existing expiry contract. This feature MUST NOT claim immediate invalidation at signature-only resource servers.
 - **FR-028**: An expired original access token MUST prevent retry success without extending deadlines. Expiry alone MUST NOT revoke a still-valid current refresh token.
+- **FR-029**: The broker MUST evaluate a refresh in one fixed order: client authentication and client binding, session revocation state, active consent, session lifetimes, then token classification. The first failing check determines the response and the audit reason.
+- **FR-030**: Only prohibited reuse presented by the bound client MUST revoke a session. Every other rejected request, including failed client authentication and client mismatch, MUST leave session and token state unchanged.
+- **FR-031**: A refresh that ends in a server error MUST NOT consume the presented token, rotate the session, or advance a deadline.
+- **FR-032**: Renewing or re-creating a grant after its validity deadline passed MUST revoke all local refresh sessions for that principal and agent that predate the renewal.
+- **FR-033**: Changing an active grant, including its permission sets or an extension before the deadline, MUST NOT revoke refresh sessions. Every refresh MUST evaluate the grant's current state.
+- **FR-034**: Refresh MUST fail when the agent's current registration no longer permits the refresh grant. Returned tokens MUST NOT carry a scope the agent can no longer request.
+- **FR-035**: A narrower scope requested during refresh MUST limit only the returned access token. It MUST NOT lower the session's scope ceiling.
+- **FR-036**: A retry from the bound client is eligible only if its requested scope equals that of the original request. A retry with a different scope MUST count as prohibited reuse.
+- **FR-037**: The broker MUST return a stored result at most 3 times per consumed token. A further presentation inside the reuse interval MUST count as prohibited reuse.
+- **FR-038**: Credential replacement MUST keep the agent's refresh sessions. Later refreshes MUST authenticate with the replacement credential.
+- **FR-039**: A session created by a public client MUST require client authentication on refresh once the agent has credentials.
+- **FR-040**: Authorization-code replay MUST revoke the refresh session that the code created.
+- **FR-041**: All broker instances MUST evaluate grant, session, and reuse deadlines against one shared time source.
 
 ### Domain Model
 
@@ -179,8 +208,11 @@ flowchart TD
     Lifetime --> Current["Classify current token or permitted retry"]
     Current --> Rotate["Rotate current token and advance inactivity"]
     Current --> Retry["Return original result without extending deadlines"]
-    Consent --> Deny["Deny unauthorized refresh"]
+    Identity --> Deny["Deny refresh without changing session state"]
+    Consent --> Deny
     Lifetime --> Deny
+    Consent --> Unknown["Return server error and keep the presented token unconsumed"]
+    Lifetime --> Unknown
     Current --> Revoke["Reject prohibited reuse and revoke refresh session"]
 ```
 
@@ -189,7 +221,7 @@ flowchart TD
 - **UserGrant**: A principal's delegation to an agent. Its presence and optional validity deadline govern every refresh decision.
 - **Refresh Session**: One authorization lineage for a principal, agent, and client. It owns an original start, last fresh activity, and revocation state.
 - **Refresh Token**: A credential in that session's rotation chain. It is current, a retry-eligible predecessor, consumed, expired, or revoked.
-- **Agent Credential**: A client credential whose revocation ends the agent's existing local refresh sessions.
+- **Agent Credential**: A client credential whose revocation ends the agent's existing local refresh sessions. Its replacement keeps them.
 
 **Aggregates**:
 
@@ -198,15 +230,16 @@ flowchart TD
 
 **Value Objects**:
 
-- **Reuse Interval**: A fixed interval after first consumption that permits recovery with the immediately previous token.
+- **Reuse Interval**: A fixed interval after first consumption that permits recovery with the immediately previous token, up to the retry limit.
 - **Absolute Session Lifetime**: A maximum total duration from original issuance. Zero means no absolute duration limit.
 - **Session Inactivity Lifetime**: The maximum interval between fresh successful rotations, also called Refresh Token Lifetime.
 
 **Domain Events**:
 
-- **RefreshSessionRevoked**: Related authorization ended or prohibited token reuse occurred. The event identifies the affected principal and agent without credentials.
+- **RefreshSessionRevoked**: Related authorization ended or prohibited token reuse occurred. The event identifies the affected principal, agent, session, and reason without credentials.
 - **RefreshRejected**: The broker denied renewal because authorization, lifetime, or session state did not permit it.
 - **RefreshRetryAccepted**: The broker returned an existing token result within the fixed reuse interval without creating a new rotation.
+- **RefreshRotated**: The broker rotated the current token and advanced the inactivity deadline.
 
 ### Configuration Requirements
 
@@ -214,15 +247,18 @@ Configuration applies under `oauth2_authorization_server.local` in local and hyb
 
 | Parameter | Default | Meaning | Valid values |
 |-----------|---------|---------|--------------|
-| `refresh_token_reuse_interval` | `2m` | Fixed previous-token retry interval | Non-negative duration. `0s` disables reuse. |
-| `absolute_session_lifetime` | `0s` | Maximum total refresh-session duration | Non-negative duration. `0s` means non-expiring absolute lifetime. |
+| `refresh_token_reuse_interval` | `2m` | Fixed previous-token retry interval | Non-negative duration shorter than `token_ttl` and `refresh_token_ttl`. `0s` disables reuse. |
+| `absolute_session_lifetime` | `0s` | Maximum total refresh-session duration | `0s` or a duration longer than the reuse interval. `0s` means non-expiring absolute lifetime. |
 | `refresh_token_ttl` | `720h` | Session inactivity lifetime / Refresh Token Lifetime | Positive duration. Omission or `0s` retains the existing 30-day default. |
 
 - **CR-001**: Negative or malformed durations MUST fail startup. Explicit zero values MUST have exactly the meanings in the table.
 - **CR-002**: The reuse interval MUST NOT enlarge either session lifetime. The earliest authorization or lifetime deadline always takes precedence.
-- **CR-003**: Files, environment variables, command-line flags, and the deployment chart MUST expose all three parameters with the existing precedence rules.
-- **CR-004**: Configuration documentation and deployment examples MUST explain default values, zero-value semantics, retry behavior, and required reauthorization of unsupported legacy sessions.
+- **CR-003**: The configuration file, environment variables, and the deployment chart MUST expose all three parameters with the existing precedence rules. The environment variables are `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_REUSE_INTERVAL`, `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_ABSOLUTE_SESSION_LIFETIME`, and the existing `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_TTL`. The chart adds `refreshTokenReuseInterval`, `absoluteSessionLifetime`, and `refreshTokenTtl` under `broker.oauth2AuthorizationServer.local`. This feature adds no command-line flags.
+- **CR-004**: Configuration documentation and deployment examples MUST explain default values, zero-value semantics, retry behavior, and required reauthorization of unsupported legacy sessions. They MUST state that an issued access token stays valid for up to `token_ttl` after revocation and that a shorter `token_ttl` reduces this exposure. They MUST state that the default non-expiring absolute lifetime never returns the user to the identity provider.
 - **CR-005**: Configuration changes MUST apply to new and existing sessions without resetting original clocks. Increasing a limit MUST NOT restore expired or revoked sessions.
+- **CR-006**: Startup MUST fail when the reuse interval is not shorter than `token_ttl` and `refresh_token_ttl`, or when a finite absolute lifetime is not longer than the reuse interval. Startup MUST log a warning when a finite absolute lifetime is shorter than `refresh_token_ttl`.
+- **CR-007**: Cross-instance and restart guarantees MUST apply to durable shared storage. The configuration reference MUST state that non-durable storage loses all refresh sessions on restart and supports one instance.
+- **CR-008**: Release documentation MUST state that deployment can end pre-existing sessions under FR-025 and that a rolling deployment or a rollback can require fresh authorization.
 
 **Example YAML Configuration**:
 
@@ -240,11 +276,13 @@ oauth2_authorization_server:
 ### API Requirements
 
 - **API-001**: Existing refresh requests MUST retain their request and successful response contracts. No separate refresh-token revocation endpoint is required by this feature.
-- **API-002**: Missing or expired consent, revoked sessions, expired lifetimes, and prohibited token reuse MUST return `invalid_grant` without tokens.
-- **API-003**: Unavailable authorization data or failed session-state operations MUST return `server_error` without tokens, not an authorization success or fallback.
+- **API-002**: Missing or expired consent, revoked sessions, expired lifetimes, and prohibited token reuse MUST return `invalid_grant` without tokens. The error response MUST NOT reveal which of these conditions applied.
+- **API-003**: Unavailable authorization data or failed session-state operations MUST return `server_error` without tokens, not an authorization success or fallback. The response MUST use a 5xx status so that clients retry instead of discarding the session.
 - **API-004**: Existing consent-deletion, agent-deletion, and credential-revocation actions MUST keep their authentication, ownership, and unrelated not-found behavior.
 - **API-005**: An eligible retry MUST retain the successful refresh response shape. Its `expires_in` MUST reflect remaining validity, not restart the returned access token's lifetime.
 - **API-006**: Changed refresh, lifecycle, and retry semantics MUST be documented in the existing API contracts before implementation, with stakeholder review under the constitution.
+- **API-007**: Refresh denial for missing consent MUST use `invalid_grant` without `error_uri`. ADR 032 uses `access_denied` with a consent `error_uri` for impersonation. Refresh differs because consent alone cannot restore a session and the client must restart authorization.
+- **API-008**: Authorization-server metadata MUST remain unchanged. It MUST NOT advertise a revocation or introspection endpoint.
 
 ### Database Requirements
 
@@ -252,7 +290,10 @@ oauth2_authorization_server:
 - **DB-002**: Grant-scoped and agent-scoped revocation MUST cover every affected session, including predecessors retained for allowed retries.
 - **DB-003**: Lifecycle success, rotation, and revocation MUST have consistent outcomes across concurrent requests, broker instances, and restart.
 - **DB-004**: State migration MUST retain trustworthy lifetime and revocation history. Sessions that cannot satisfy this policy MUST require fresh authorization.
-- **DB-005**: Persisted retry results MUST receive protection appropriate for credentials. Revocation MUST make those results unavailable to subsequent retry requests.
+- **DB-005**: Persisted retry results MUST use the broker's existing encryption at rest for credentials. Revocation MUST make those results unavailable to subsequent retry requests.
+- **DB-006**: The broker MUST erase a persisted retry result when its reuse interval ends, when its successor rotates, or when its session ends, whichever comes first. A zero reuse interval MUST persist no retry results.
+- **DB-007**: Consumed-token records MUST remain until their session can no longer be refreshed, so that reuse stays detectable. Cleanup MUST NOT remove a session's revocation state before every token of that session has expired.
+- **DB-008**: Agent deletion can remove the agent's session records. The revocation audit record MUST precede that removal.
 
 ### Security Requirements
 
@@ -261,9 +302,12 @@ oauth2_authorization_server:
 - **SR-003**: Credential revocation MUST end existing sessions even if client classification later changes. Old sessions MUST NOT acquire new authorization through fallback.
 - **SR-004**: Unknown or inconsistent authorization or session state MUST fail closed. Infrastructure errors MUST NOT appear as successful lifecycle completion.
 - **SR-005**: Rejected requests MUST NOT return stored retry credentials. Logs and errors MUST NOT expose access tokens, refresh tokens, or client secrets.
-- **SR-006**: Consent denial, lifecycle revocation, prohibited reuse, lifetime expiry, and accepted retries MUST be auditable with principal, agent, reason, and request context.
+- **SR-006**: Consent denial, lifecycle revocation, prohibited reuse, lifetime expiry, rotations, and accepted retries MUST be auditable with principal, agent, client, a non-credential session identifier, reason, and request context.
 - **SR-007**: Local token exchange MUST retain its existing active-grant check. This feature MUST NOT weaken that separate authorization boundary.
 - **SR-008**: Revocation MUST prevent renewal without changing JWKS publication or signature-validation requirements for existing access tokens.
+- **SR-009**: A request that fails client authentication or client binding MUST NOT revoke a session. A party without the bound client's identity MUST NOT be able to end that client's sessions.
+- **SR-010**: The audit record of an accepted retry MUST show whether its request context differs from the original request. Operators MUST be able to count accepted retries and refresh rejections by reason through the existing telemetry.
+- **SR-011**: Persisted retry results MUST NOT outlive the conditions in DB-006. Backups and logs MUST NOT contain them in recoverable form.
 
 ### Key Entities
 
@@ -286,6 +330,10 @@ oauth2_authorization_server:
 - **SC-007**: Every restart and multi-instance journey preserves authorization, revocation, and lifetime outcomes without granting additional time.
 - **SC-008**: Users can end future renewal through the existing consent-revocation flow without an additional action. Fresh authorization restores access without restoring old tokens.
 - **SC-009**: All existing upstream passthrough journeys retain their provider-controlled refresh behavior after deployment.
+- **SC-010**: In every server-error journey, the presented token stays usable after recovery and no deadline changes.
+- **SC-011**: In every journey where an unauthenticated or mismatched client presents a token, zero sessions change state.
+- **SC-012**: After deployment, 100% of pre-existing sessions either meet the FR-025 criteria or require fresh authorization. No session gains lifetime from the deployment.
+- **SC-013**: In every expired-grant renewal journey, zero tokens issued before the renewal succeed.
 
 ## Assumptions
 
@@ -295,7 +343,21 @@ oauth2_authorization_server:
 - The initial successful authorization-code exchange establishes a refresh session. Fresh authorization creates a distinct session with new lifetime clocks.
 - Session inactivity measures fresh successful refresh, not browser activity or calls to downstream resource servers.
 - Configuration changes apply to existing sessions from their original clocks. Operators deploy one consistent policy across broker instances.
-- Credential replacement that revokes an existing credential has the same session-revocation effect as explicit credential revocation.
-- Existing stateless access tokens can remain accepted until their own expiry. Immediate downstream access-token revocation, introspection, and a new public revocation endpoint are outside this feature.
+- Credential replacement keeps refresh sessions because a confidential client's refresh token is unusable without the current credential. Operators who suspect token theft revoke the credential instead.
+- Existing stateless access tokens can remain accepted until their own expiry. Immediate downstream access-token revocation, introspection, and a new public revocation endpoint are outside this feature. So are administrator revocation of a single session or of all sessions of one user, sender-constrained refresh tokens, and revocation triggered by identity-provider deprovisioning.
 - This specification intentionally changes strict single-use behavior from feature 033 only for bounded, authorized retries. Consent and lifecycle revocation remain unconditional.
 - Dependencies include existing offline-access issuance, consent management, lifecycle administration, and configuration delivery. Accepted ADR 032 supplies the existing active-delegation boundary.
+- Cross-instance and restart guarantees assume durable shared storage. The in-memory storage backend supports one instance and loses sessions on restart.
+- Profile claims in refreshed tokens come from the original authorization. A session with a non-expiring absolute lifetime never refreshes them from the identity provider.
+
+## Open Decisions
+
+The requirements above follow the recommended option for each decision. The feature owner confirms or changes them before planning.
+
+| Decision | Recommended option in this specification | Alternative |
+|----------|------------------------------------------|-------------|
+| Expired grant renewed later (FR-032) | Renewal revokes sessions that predate it. | Sessions resume after renewal. This contradicts the rationale of User Story 2. |
+| Credential replacement (FR-038) | Replacement keeps sessions and requires the new credential. | Replacement revokes all sessions of the agent. Every routine rotation then forces all users to reauthorize. |
+| Retry limit (FR-037) | 3 stored results per consumed token, not configurable. | No limit. A holder of a stolen predecessor can then follow every rotation unnoticed. |
+| Pre-existing sessions (FR-025) | Sessions that meet the listed criteria continue. All others reauthorize. | All pre-existing sessions reauthorize once. This is simpler and forces every user through authorization at deployment. |
+| Default absolute lifetime (FR-018) | Non-expiring, as requested, with the documented risk in CR-004. | A finite default, for example 90 days, that returns users to the identity provider. |
