@@ -96,13 +96,16 @@ export function MyComponent() {
 ### Tests
 
 - Tests live next to source files (`*_test.go` or `*.test.tsx`)
-- New features need >80% test coverage
 - Fast Go/package tests: `just test`
 - Integration suites: `just test-integration`
 - All E2E suites: `just test-e2e`
 - Dedicated E2E performance measurement: `just test-e2e-performance` (manual; normal E2E commands exclude performance-labelled specs)
 - Full verification gate, including security scanning: `just verify`
 - Coverage for the fast Go/package suite: `just test-coverage`
+- Coverage summary for fast Go/package tests: `just test-coverage-summary`
+- Frontend coverage report: `just web-test-coverage`
+
+The weekly [Coverage workflow](https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/scheduled-coverage.yml) sends Go and frontend coverage to [Coveralls](https://coveralls.io/github/zalando-incubator/agentic-identity-broker?branch=main). The README badge shows the latest main-branch result.
 
 ## Pull Request Process
 
