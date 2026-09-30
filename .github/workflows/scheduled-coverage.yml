@@ -1,6 +1,8 @@
 name: Coverage
 
 on:
+  pull_request:
+    branches: [main]
   # Scheduled workflows run on the default branch (main).
   schedule:
     - cron: "19 4 * * 2"
