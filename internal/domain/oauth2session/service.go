@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -42,6 +43,8 @@ import (
 )
 
 const maxProviderStateBytes = 6000
+
+const maxTokenResponseBytes = 1 << 20
 
 func addProviderAuthorizationParams(values url.Values, params map[string]string) {
 	for name, value := range params {
@@ -350,6 +353,19 @@ func safeTokenExchangeError(err error) error {
 	return fmt.Errorf("%w: upstream token request failed", ErrTokenExchange)
 }
 
+func shouldRetryTokenExchange(err error) bool {
+	var retrieveErr *oauth2.RetrieveError
+	if errors.As(err, &retrieveErr) {
+		if retrieveErr.ErrorCode == "invalid_grant" || retrieveErr.ErrorCode == "invalid_client" {
+			return false
+		}
+		return retrieveErr.Response != nil &&
+			retrieveErr.Response.StatusCode >= http.StatusInternalServerError && retrieveErr.Response.StatusCode < 600
+	}
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
+}
+
 // exchangeCodeWithRetry exchanges authorization code for tokens with exponential backoff retry.
 func (s *OAuth2SessionService) exchangeCodeWithRetry(
 	ctx context.Context,
@@ -359,6 +375,7 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 	authorizationParams map[string]string,
 ) (*oauth2.Token, error) {
 	lastErr := ErrTokenExchange
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, s.httpClient)
 
 	for attempt := 0; attempt < s.config.MaxRetries; attempt++ {
 		// Try to exchange code for token
@@ -375,8 +392,10 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 		}
 		lastErr = safeTokenExchangeError(err)
 
-		// If this was the last attempt, break
-		if attempt == s.config.MaxRetries-1 {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if attempt == s.config.MaxRetries-1 || !shouldRetryTokenExchange(err) {
 			break
 		}
 
@@ -780,8 +799,15 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		RefreshToken string `json:"refresh_token,omitempty"`
 		Scope        string `json:"scope,omitempty"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+	limited := &io.LimitedReader{R: resp.Body, N: maxTokenResponseBytes + 1}
+	if err := json.NewDecoder(limited).Decode(&tokenResp); err != nil {
 		return nil, fmt.Errorf("failed to decode upstream token response: %w", err)
+	}
+	if _, err := io.Copy(io.Discard, limited); err != nil {
+		return nil, fmt.Errorf("failed to read upstream token response: %w", err)
+	}
+	if limited.N == 0 {
+		return nil, fmt.Errorf("upstream token response exceeds %d byte limit", maxTokenResponseBytes)
 	}
 
 	// Check for HTTP error status

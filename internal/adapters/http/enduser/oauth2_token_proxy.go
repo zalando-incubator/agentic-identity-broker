@@ -2,12 +2,15 @@ package enduser
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
+
+const maxProxyTokenResponseBytes = 1 << 20
 
 type oauth2TokenProxy struct {
 	endpoint string
@@ -49,7 +52,14 @@ func (r *oauth2TokenProxyResponse) HeaderValues(name string) []string {
 }
 
 func (r *oauth2TokenProxyResponse) ReadBody() ([]byte, error) {
-	return io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxProxyTokenResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxProxyTokenResponseBytes {
+		return nil, fmt.Errorf("upstream token response exceeds %d byte limit", maxProxyTokenResponseBytes)
+	}
+	return body, nil
 }
 
 func (r *oauth2TokenProxyResponse) StreamBody(dst io.Writer) (int64, error) {
