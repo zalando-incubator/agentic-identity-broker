@@ -1,6 +1,6 @@
 # Business Event Ledger — Data Model
 
-**Design status**: Proposed implementation contract for [spec.md](spec.md); not an implemented database schema.
+**Design status**: Reviewed implementation design under accepted ADR 037 and the stakeholder-approved event/storage contracts. This is not an implemented database schema.
 
 ## Domain boundary
 
@@ -128,3 +128,10 @@ The exact storage and operational interfaces, lock order, SQL erasure call, main
 ## Migration and rollback
 
 Plan `035_business_event_ledger.{up,down}.sql`, verifying that 035 remains free before implementation (the unmerged `046-cimd-upstream-client` branch holds 033 and 034). Up creates policy/event/delivery parents, indexes, immutable-row protection, the partition-pair, provisioning and maintenance functions, the erasure function, current/future partitions, and object recognition markers. Foundation work provides partition provisioning, which the migration and pre-upgrade job invoke and which never drops partitions. The erasure function, retention drops (scheduled maintenance only) and privilege restrictions join the same unreleased migration during the retention/erasure story, after their tests. Partition names derive only from internal UTC boundaries; dynamic SQL identifiers are quoted, never user supplied. Down removes only feature-owned functions/tables/markers and leaves existing business records intact. Dropping the feature necessarily deletes ledger history; backup/export and operator acknowledgement are required before production rollback, and the old binary must be deployed together with down migration. Real PostgreSQL tests cover up/down/up, business-data survival, permission boundaries, and populated partition deletion. Schema changes ship in the migration image; the broker image remains DML-only.
+
+**T013 review (2026-09-27)**: Migration 035 remains available across the inspected main and open PR branches.
+The review retains paired six-hour partitions, immutable projected envelopes, microsecond policy precision, independent expiry markers, ordered barriers, and separate operational privileges.
+Provisioning never drops history. Scheduled maintenance owns retention drops, and authorized exact-subject erasure owns row deletion.
+The design has no event cascade foreign keys or default partition.
+Production rollback still requires a backup, explicit operator acknowledgement of history loss, and deployment of the matching old binary.
+This design review does not authorize a production rollback or claim an applied migration.

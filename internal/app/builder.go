@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -35,7 +37,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/oauth2_sessions"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/jwks"
 	jwtauthadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/jwtauth"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	postgresstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/postgres"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	agentsservice "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
@@ -45,6 +46,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	domjwtauth "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	oauth2service "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	domaincimd "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
@@ -65,7 +67,7 @@ type App struct {
 	Config *ports.Config
 
 	// Repositories
-	Storage          *storage.Adapter
+	Storage          ports.StorageProvider
 	BranchKeyManager ports.BranchKeyManager
 
 	// Domain services
@@ -78,6 +80,7 @@ type App struct {
 	ApprovalService        *domainapproval.Service
 	ApprovalSyncSubscriber *postgresstorage.ApprovalSyncSubscriber // nil when storage is not postgres
 	SessionTokenService    *sessiontoken.Service
+	LedgerService          *ledger.Service
 
 	// JWT pre-authentication (optional, nil when not configured)
 	JWTAuthenticator             domjwtauth.JWTAuthenticator
@@ -117,12 +120,13 @@ func (a *App) EnduserHealthComponents() map[string]string {
 //		Build()
 type Builder struct {
 	config                 *ports.Config
-	storage                *storage.Adapter
+	storage                ports.StorageProvider
 	logger                 *slog.Logger
 	staticWebResourcesPath string
 	tracerProvider         *sdktrace.TracerProvider // Optional: custom TracerProvider for testing
 	cimdFetcher            ports.CIMDFetcher        // Optional: overrides auto-created CIMD fetcher for testing
 	jwksPublisher          ports.JWKSPublisherPort  // Optional: overrides JWKS publisher for testing
+	businessEventSchemas   []fs.FS
 }
 
 // NewBuilder creates a new application builder.
@@ -139,7 +143,13 @@ func (b *Builder) WithConfig(cfg *ports.Config) *Builder {
 }
 
 // WithStorage sets the storage adapter for the builder.
-func (b *Builder) WithStorage(storage *storage.Adapter) *Builder {
+func (b *Builder) WithStorage(storage ports.StorageProvider) *Builder {
+	if storage != nil {
+		value := reflect.ValueOf(storage)
+		if value.Kind() == reflect.Pointer && value.IsNil() {
+			storage = nil
+		}
+	}
 	b.storage = storage
 	return b
 }
@@ -178,6 +188,11 @@ func (b *Builder) WithCIMDFetcher(f ports.CIMDFetcher) *Builder {
 // upstream metadata discovery for JWKS publishing.
 func (b *Builder) WithJWKSPublisher(p ports.JWKSPublisherPort) *Builder {
 	b.jwksPublisher = p
+	return b
+}
+
+func (b *Builder) WithBusinessEventSchemas(source fs.FS) *Builder {
+	b.businessEventSchemas = append(b.businessEventSchemas, source)
 	return b
 }
 
@@ -303,6 +318,7 @@ func (b *Builder) Build() (*App, error) {
 		Storage: b.storage,
 		Logger:  b.logger,
 	}
+	app.LedgerService = ledger.NewService(b.storage.BusinessEvents(), b.storage.BusinessEventLifecycle())
 
 	// T029: Initialize telemetry provider
 	// Per ADR-011: OTel provider wired at app layer, no port interface needed.

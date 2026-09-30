@@ -838,6 +838,85 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **See Also**: ADR 032 (accepted) — mandatory user delegation for impersonation; spec `037-oauth2-user-impersonation` (FR-013–019, CR-001–010).
 
+#### 3.1.z. Business Event Ledger (Feature 048 — Accepted Design)
+
+**Status**: [ADR 037](adrs/037-business-event-ledger.md) is accepted and binding. The ledger behavior described here is not yet implemented or deployed.
+The prerequisite refactor does not provide atomic memory transactions, ledger persistence, or telemetry delivery.
+
+**Ownership**: The design assigns ledger validation, recording, investigation, and lifecycle invariants to an independent `internal/domain/ledger/` bounded context.
+Existing business services determine whether each catalogued fact occurred.
+Shared immutable values belong in `internal/domain/model/`, and repository contracts belong in `internal/ports/storage.go`.
+The builder owns dependency composition and worker shutdown.
+Handlers parse requests and format responses. They do not append events directly.
+
+**Atomicity**:
+
+- A business mutation and its event share one owning transaction.
+- Joined scopes cannot commit the owner. Joined rollback marks the owner rollback-only.
+- Validation or append failure prevents success and the release of token or secret bytes.
+- Non-mutating failures use a separate transaction after the unsuccessful mutation scope ends.
+- Intentional replay-detection revocations retain their independent commit boundary.
+- Memory uses one visibility gate and a touched-record/index undo journal, not whole-store snapshots.
+- Commit releases notifications and cache invalidations. An external operation is not retried automatically.
+
+**Identity and privacy**: Every event has a generated UUIDv7 ID, immutable envelope, registered type, and closed type-specific data.
+The fixed type prefix is `agentic-identity-broker.`. The fixed source is `urn:agentic-identity-broker:broker`.
+Offline embedded schemas define all 28 initial types. A new type does not require a database migration.
+Unknown types, extra fields, invalid semantic values, and unsafe attribution fail closed.
+Reasons use fixed templates, and user-agent values use recognized family names rather than raw strings.
+No credential, raw error payload, arbitrary request body, or token response enters the event.
+
+The event subject identifies the affected principal.
+Actor Context identifies the initiating caller and an established represented principal, when applicable.
+On delegated exchange, `SecurityContext.Actor` currently identifies the affected principal, not the initiating caller.
+The ledger therefore derives its actor separately from verified caller results.
+Unavailable identities are null, not the anonymous sentinel or an invented agent-as-user identity.
+Trace and span values must belong to the authoritative request context.
+
+**Storage and deletion**: PostgreSQL partitions events and payload-free delivery references by six-hour UTC windows of `recorded_at`.
+Storage assigns recording time. Investigation uses the separate business occurrence time.
+Events retain references without cascading foreign keys to mutable business objects.
+Queries require an exact subject or an explicit no-subject selector and use strict `(occurred_at,id)` continuation.
+
+Append and dispatch acquire the shared lifecycle barrier before sorted shared subject barriers and business locks.
+Exact-subject erasure takes an exclusive subject barrier and removes matching events and delivery references in one transaction.
+Erasure leaves business expiry-recognition markers intact and creates neither identity tombstones nor replacement subject events.
+Retention and policy changes take the exclusive lifecycle barrier.
+Memory applies equivalent lifecycle guarantees with a coarser barrier.
+
+**Retention and operations**: Retention defaults to 90 days and accepts only positive durations, normalized upward to microseconds.
+The migration owner provisions the current window and seven future days.
+The broker performs no partition DDL and has no erasure or maintenance execution privilege.
+A separate five-minute scheduler drops only partition pairs whose upper bound is no later than the retention cutoff.
+No event is removed early.
+Six-hour partitions and five-minute scheduling keep normal grace below 6h05m plus bounded execution, within the required 24-hour maximum.
+Missing maintenance requires an alert before that limit and fails readiness when the current partition is absent.
+
+Deployment hooks provision partitions without dropping history.
+Retention changes require one coordinated policy across replicas and suspension of maintenance until the new policy takes effect.
+Memory applies logical six-hour retention at startup and every five minutes.
+Operational queries and erasure use restricted database roles. The feature adds no public read, erase, export, or ingestion API.
+
+**Recoverable telemetry**: Eligible events commit a payload-free delivery reference with their authoritative record.
+A builder-owned worker reloads each retained event under lifecycle and subject barriers.
+It exports through a separate, non-global, synchronous OpenTelemetry pipeline with the existing destination and Resource.
+The worker acknowledges only successful export and acknowledgement commit.
+Retries preserve the event ID and can produce duplicates.
+No event payload survives the deletion barrier in an SDK queue.
+Erasure cannot recall telemetry already delivered to external systems.
+Existing slog names, levels, messages, fields, and its batch pipeline remain unchanged.
+
+Copying requires all three switches: `telemetry.enabled`, `telemetry.logs.enabled`, and `business_events.telemetry_copy_enabled`.
+Disabled-period events have no delivery references and receive no historical backfill.
+Recording and retention have no disable switch.
+Shutdown drains HTTP, stops the ledger workers, closes their provider, completes existing telemetry shutdown, and closes storage.
+
+**Performance acceptance**: Added transaction p99 and attributable recording-duration p99 must each be at most 5 ms.
+Acceptance requires paired baseline/enabled measurements under the reference profile and an operator-approved deployment profile.
+The current absence of an approved deployment profile remains an explicit release blocker, not a measured pass.
+
+**Canonical contracts**: [Data model](specs/048-business-event-ledger/data-model.md), [events](specs/048-business-event-ledger/contracts/events.md), [storage](specs/048-business-event-ledger/contracts/storage.md), and [configuration](specs/048-business-event-ledger/contracts/configuration.md).
+
 ### 3.2. Envoy External Processor (ExtProc) Token Exchange Service
 
 **Name**: extproc-token-exchange
@@ -1571,3 +1650,22 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **ApprovalConsumed**: Domain event emitted when a once-persistence approval is consumed by ExtProc after use. Carries approval_id and timestamp. Triggers sync version increment.
 
 **ApprovalExpired**: Domain event emitted lazily when an expired approval is first accessed. Carries approval_id and expiry timestamp. Emitted as OTel span linked to originating trace if present.
+
+### Business Event Ledger (Accepted Design)
+
+These definitions describe the accepted design in ADR 037, not deployed ledger behavior.
+
+**Business Event**: An immutable, credential-free historical broker fact. It belongs to a registered Event Type and survives deletion of referenced business objects.
+
+**Event Type**: A fixed `agentic-identity-broker.<event-name>` meaning with a closed schema, outcome, required references, and safe reason templates.
+
+**Event Envelope**: The immutable identity, times, subject, Actor Context, business references, reasons, correlation, and type-specific data for one Business Event.
+
+**Actor Context**: The initiating caller's kind and nullable trusted identity, plus an optional represented principal. It is distinct from the event subject.
+
+**Delivery Reference**: A payload-free pointer to a retained Business Event, committed atomically when telemetry copying is enabled. It contains delivery scheduling state.
+
+**Ledger Telemetry Copy**: An additional recoverable OpenTelemetry log for one retained Business Event. It preserves the envelope and event ID without replacing existing slog.
+
+**Retention Policy**: The positive recorded-time lifetime and bounded deletion grace for Business Events and Delivery References. The default lifetime is 90 days.
+

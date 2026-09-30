@@ -9,12 +9,14 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/postgres"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 // Compile-time interface check
-var _ ports.StorageTransactionManager = (*Adapter)(nil)
+var _ ports.StorageProvider = (*Adapter)(nil)
 
 type noOpStorageTransactionManager struct{}
 
@@ -287,4 +289,50 @@ func (a *Adapter) Rollback(ctx context.Context) error {
 // PKCESessions returns the PKCESessionRepository interface implementation.
 func (a *Adapter) PKCESessions() ports.PKCESessionRepository {
 	return a.pkceSessions
+}
+
+func (a *Adapter) BusinessEvents() ports.BusinessEventRepository {
+	return businessEventContractRepository{}
+}
+
+func (a *Adapter) BusinessEventLifecycle() ports.BusinessEventLifecycleRepository {
+	return businessEventContractRepository{}
+}
+
+func (a *Adapter) BusinessEventDelivery() ports.BusinessEventDeliveryRepository {
+	return businessEventContractRepository{}
+}
+
+type businessEventContractRepository struct{}
+
+func (businessEventContractRepository) Append(context.Context, *model.BusinessEvent, bool) error {
+	return nil
+}
+
+func (businessEventContractRepository) Query(context.Context, model.BusinessEventQuery) ([]*model.BusinessEvent, error) {
+	return nil, nil
+}
+
+func (businessEventContractRepository) Get(context.Context, model.BusinessEventKey) (*model.BusinessEvent, error) {
+	return nil, ports.ErrNotFound
+}
+
+func (businessEventContractRepository) EraseSubject(context.Context, id.Principal) (int64, error) {
+	return 0, nil
+}
+
+func (businessEventContractRepository) ApplyRetention(context.Context) error {
+	return nil
+}
+
+func (businessEventContractRepository) SetRetentionPolicy(context.Context, time.Duration) error {
+	return nil
+}
+
+func (businessEventContractRepository) ListDue(context.Context, int) ([]model.BusinessEventKey, error) {
+	return nil, nil
+}
+
+func (businessEventContractRepository) DispatchOne(context.Context, model.BusinessEventKey, func(context.Context, *model.BusinessEvent) error) (bool, error) {
+	return false, nil
 }

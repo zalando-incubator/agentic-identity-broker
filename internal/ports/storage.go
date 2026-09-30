@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
@@ -41,6 +42,50 @@ type StorageTransactionManager interface {
 	BeginTX(ctx context.Context) (context.Context, error)
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
+}
+
+// StorageProvider composes repository facets for application assembly and decorators.
+// Business services continue to depend on their individual repository interfaces.
+type StorageProvider interface {
+	StorageTransactionManager
+	HealthChecker
+	Close(ctx context.Context) error
+	Users() UserRepository
+	Agents() AgentRepository
+	Services() ThirdpartyOAuth2ProviderRepository
+	UserGrants() UserGrantRepository
+	UserSessions() UserSessionRepository
+	ToolApprovals() ToolApprovalRepository
+	ToolApprovalQueries() ToolApprovalQueryRepository
+	ToolApprovalMetrics() ToolApprovalMetricsRepository
+	ApprovalSyncState() ApprovalSyncStateRepository
+	PermissionSets() PermissionSetRepository
+	BrokerCredentials() ClientCredentialRepository
+	SigningKeys() SigningKeyRepository
+	SigningKeyBootstrapCoordinator() SigningKeyBootstrapCoordinator
+	AuthorizationCodes() AuthorizationCodeRepository
+	RefreshTokenSessions() RefreshTokenSessionRepository
+	PKCESessions() PKCESessionRepository
+	BusinessEvents() BusinessEventRepository
+	BusinessEventLifecycle() BusinessEventLifecycleRepository
+	BusinessEventDelivery() BusinessEventDeliveryRepository
+}
+
+type BusinessEventRepository interface {
+	Append(ctx context.Context, event *model.BusinessEvent, queueDelivery bool) error
+	Query(ctx context.Context, query model.BusinessEventQuery) ([]*model.BusinessEvent, error)
+	Get(ctx context.Context, key model.BusinessEventKey) (*model.BusinessEvent, error)
+}
+
+type BusinessEventLifecycleRepository interface {
+	EraseSubject(ctx context.Context, subject id.Principal) (int64, error)
+	ApplyRetention(ctx context.Context) error
+	SetRetentionPolicy(ctx context.Context, retention time.Duration) error
+}
+
+type BusinessEventDeliveryRepository interface {
+	ListDue(ctx context.Context, limit int) ([]model.BusinessEventKey, error)
+	DispatchOne(ctx context.Context, key model.BusinessEventKey, emit func(context.Context, *model.BusinessEvent) error) (bool, error)
 }
 
 // User represents a user entity in the storage layer.

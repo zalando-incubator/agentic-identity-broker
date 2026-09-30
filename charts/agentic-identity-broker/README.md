@@ -170,6 +170,41 @@ See [values.yaml](values.yaml) for the complete list of configuration options.
 | `broker.requestContext.trustedProxy.forwardedHeader` | Forwarded header to inspect when trusted proxy mode is enabled | `X-Forwarded-For` |
 | `broker.requestContext.trace.responseEnabled` | Emit the additive W3C `traceresponse` response header | `true` |
 
+### Business Event Ledger Configuration
+
+The chart exposes the accepted [ledger configuration contract](../../specs/048-business-event-ledger/contracts/configuration.md).
+The broker ConfigMap includes both `business_events` keys and preserves an explicit `false`.
+Ledger recording, retention, and telemetry copying are not yet implemented.
+The maintenance CronJob, partition provisioning hooks, and ledger grants are not yet implemented.
+The operational role values do not change database privileges in this chart version.
+
+| Parameter | Type | Default | Contract |
+|-----------|------|---------|----------|
+| `broker.businessEvents.retention` | string | `2160h` | Recorded-time retention as a positive Go duration (90 days). |
+| `broker.businessEvents.telemetryCopyEnabled` | bool | `true` | Additional ledger telemetry copies. Also requires `broker.telemetry.enabled` and `broker.telemetry.logs.enabled`. |
+| `migration.grants.businessEvents.readerRole` | string | `""` | Existing operational role for `SELECT` on ledger parent tables. Empty grants nothing. |
+| `migration.grants.businessEvents.erasureRole` | string | `""` | Existing operational role for `EXECUTE` on `public.business_event_erase_subject(text)`. Empty grants nothing. |
+
+The retention contract accepts positive Go durations, such as `2160h` or `720h`, but not `90d`.
+It rejects malformed, zero, negative, and overflowing durations.
+Positive fractions round upward to microseconds.
+No ledger-persistence disable switch exists.
+Disabling telemetry copies does not disable recording or retention.
+Existing telemetry destinations and ordinary logs remain unchanged.
+
+The broker environment variables are `IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION` and `IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED`.
+Their CLI flags are `--business_events.retention` and `--business_events.telemetry_copy_enabled`.
+Precedence is explicit CLI flag, environment variable, configuration file, then default.
+
+Example chart values for shorter retention without additional telemetry copies:
+
+```yaml
+broker:
+  businessEvents:
+    retention: 720h
+    telemetryCopyEnabled: false
+```
+
 ### Custom Values File
 
 Create a `values-production.yaml` file:
@@ -312,6 +347,62 @@ Both images share the same version tag to ensure consistency between migrations 
 - Secret names follow the pattern: `{username}.{teamId}-{instanceName}.credentials.postgresql.acid.zalan.do`
 - Migration user gets: `superuser` and `createdb` role attributes
 - Broker user gets: `login` attribute + database ownership (grants full table access)
+
+### Business Event Ledger Deployment Contract
+
+This section describes the accepted design, not deployed maintenance or grant behavior.
+The PostgreSQL design requires migration-owned maintenance every five minutes, independent of telemetry enablement.
+It uses a CronJob with schedule `*/5 * * * *` and `concurrencyPolicy: Forbid`.
+The Job runs `SELECT public.business_event_maintain_partitions();` through `psql -v ON_ERROR_STOP=1`.
+It reuses `migration.grants.image`, the migration ServiceAccount, migration credentials, and the trusted database endpoint and SSL configuration.
+It also uses the chart's non-root, read-only filesystem security configuration and bounded Job resources and retries.
+
+The maintenance function reads the stored `business_event_policy`.
+Broker startup writes the validated retention policy.
+The Job has no separate retention parser or telemetry switch.
+The initial migration seeds a 90-day policy.
+The broker remains DML-only and never receives the migration Secret.
+The in-memory backend has an in-process retention worker, not a CronJob, in this design.
+
+Migrations and pre-install/pre-upgrade hooks only call `public.business_event_provision_partitions()` to provision current and future partitions.
+Provisioning never drops partitions.
+Only scheduled maintenance drops expired partition pairs.
+The migration Job remains required even when `migration.grants.enabled` is `false`.
+Missing maintenance must trigger an alert before the 24-hour removal limit.
+A missing current partition fails readiness until maintenance provisions it.
+
+#### Coordinated Retention Changes
+
+The following procedure applies after the maintenance and policy components are available.
+Retention is startup-scoped, and all replicas that share a ledger must use the same value.
+The last successful validated startup policy write is authoritative.
+Policy writes serialize with maintenance.
+An old, shorter policy can delete history that an increased retention value must preserve.
+
+For each retention change:
+
+1. Suspend the maintenance CronJob.
+2. Upgrade the release so every broker replica starts with the same new retention value.
+3. With migration credentials, verify that `business_event_policy.retention_microseconds` contains the new normalized duration.
+4. Resume the maintenance CronJob.
+
+The maintenance template must omit `spec.suspend` so that `helm upgrade` preserves the operator's suspension.
+The pre-upgrade provisioning hook must never run a destructive retention sweep.
+
+#### Operational Roles and Custom Grants
+
+The role contract uses existing database roles only.
+The chart does not create roles.
+Empty role values grant nothing, so investigation remains outside the broker and erasure remains with the migration owner.
+Neither operational capability belongs to the broker user.
+
+A custom `migration.grants.sql` replaces the complete default grants script.
+For a ledger deployment, the custom script must apply ledger restrictions and operational role grants itself.
+It must revoke event `UPDATE` and `DELETE` after broad DML grants.
+It must deny broker execution of maintenance, provisioning, and erasure functions.
+It must preserve migration ownership and immutable-update protection for parent tables and future partitions.
+Reader and erasure role values do not supplement a custom script.
+The [storage contract](../../specs/048-business-event-ledger/contracts/storage.md) defines the required privilege boundaries.
 
 ## Static Manifest Generation
 

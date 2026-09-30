@@ -117,7 +117,7 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 	t.Helper()
 
 	sharedPostgres := bootstrap.RequireSharedPostgres(t)
-	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_031", func(t *testing.T, dbName string) {
+	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_031", func(dbName string) {
 		sharedPostgres.ApplyMigrationsUpTo(t, dbName, thirdpartyProviderMigrations, 31)
 	})
 

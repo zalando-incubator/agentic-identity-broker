@@ -125,10 +125,154 @@ The isolated branch is `refactor/048-business-event-ledger-prerequisites`, based
 It contains only the baseline and refactor commits, as `d3c5de45` and `e8ddd218`.
 Its worktree is `.worktrees/ledger-prerequisites`.
 
-T005 still requires submission of the isolated refactor PR.
-The GitHub CLI reported an invalid token for its active account.
-Git's GitHub credential helper also uses that CLI.
-PR submission requires renewed GitHub authentication.
+The isolated refactor PR is [#123](https://github.com/zalando-incubator/agentic-identity-broker/pull/123).
+GitHub authentication completed through its device flow before submission.
+Both branches reached the remote despite an OS keychain storage warning from Git's credential helper.
+The independent assistant reviews and local runtime checks complete T005.
+This statement does not claim human PR approval, CI completion, or approval of the ledger event and operational contracts.
+
+## Setup evidence (T006–T007)
+
+The existing `github.com/google/jsonschema-go v0.4.2` dependency is direct in `go.mod`.
+No dependency version or `go.sum` entry changed.
+`just check` passed with the existing vet fallback.
+`go list -m github.com/google/jsonschema-go` returned `github.com/google/jsonschema-go v0.4.2`.
+
+The setup review covered Go, Node, Docker, ESLint, Prettier, and Helm ignore files.
+Only `.gitignore` needed the missing generic `*.log` pattern.
+This application does not publish an npm package, and the repository contains no Terraform files.
+
+Migration 035 remained free after `git fetch origin` and inspection of all 13 open PR branches.
+The inventory came from:
+
+```bash
+gh pr list --repo zalando-incubator/agentic-identity-broker \
+  --state open --limit 100 \
+  --json number,headRefName,headRepository,headRepositoryOwner
+git ls-tree -r --name-only origin/main -- migrations
+git ls-tree -r --name-only origin/046-cimd-upstream-client -- migrations
+```
+
+The same tree inspection covered each same-repository PR head.
+The two fork heads used their GitHub migration listings:
+[PR 61](https://api.github.com/repos/axsaucedo/agentic-identity-broker/contents/migrations?ref=fix%2Fchart-token-exchange-defaults)
+and [PR 62](https://api.github.com/repos/axsaucedo/agentic-identity-broker/contents/migrations?ref=fix%2Fchart-secret-checksums).
+
+| Inspected heads | Highest migration |
+|---|---:|
+| `main`, PRs 123, 122, 120, 100 | 032 |
+| PR 121 (`feat/cache-public-keys`) | 033 |
+| PR 77 (`046-cimd-upstream-client`) | 034 |
+| PRs 96, 85, 50, 43 | 031 |
+| Fork PRs 61, 62 | 031 |
+| PR 31 | 030 |
+
+Both PR 121 and PR 77 currently contain migration 033.
+This feature retains 035 and does not change those branches.
+The performance comparison retains T001's baseline revision `d500f36378dd914f8a516604a08525f737e8ddff`.
+
+The user reported no approved deployment profile in the implementation conversation on 2026-09-27.
+T095 therefore has an open release blocker.
+The reference profile does not replace operator-approved deployment evidence.
+
+## Design prerequisite evidence (T008–T011)
+
+The architecture and root agent context contain the seven ledger glossary terms and the accepted transaction, privacy, retention, and delivery design.
+Both documents explicitly distinguish accepted design from deployed behavior.
+
+Helm 3.22.0 supplied the chart validation after the initial command reported that Helm was absent.
+The integrated configuration checks passed:
+
+```bash
+env PATH="/opt/homebrew/opt/helm@3/bin:$PATH" just helm-lint
+env PATH="/opt/homebrew/opt/helm@3/bin:$PATH" just helm-template
+env PATH="/opt/homebrew/opt/helm@3/bin:$PATH" just check
+env PATH="/opt/homebrew/opt/helm@3/bin:$PATH" \
+  go test ./tests/integration -run TestHelmTemplate
+```
+
+A rendered ConfigMap with `retention=720h` and `telemetryCopyEnabled=false` contained the string `720h` and the boolean `false`.
+The strict chart schema accepted both optional role names.
+The default-backend render introduced no operational grants.
+The example parsed as one YAML document with `2160h` and boolean `true`.
+The example commands use the actual `just build` output path, `./bin/agentic-identity-broker`.
+These are configuration and template checks, not runtime ledger evidence.
+
+The user approved `contracts/events.md` and `contracts/storage.md` in this implementation conversation on 2026-09-27.
+The recorded answer is `Approve both contracts`.
+ADR 037 separately records maintainer Jan Brennenstuhl's acceptance on 2026-09-26.
+ADR acceptance and assistant code review are not substitutes for that contract approval.
+
+T011 reviewed the existing OpenAPI failure representations:
+
+| Workflow family | Existing failure representation |
+|---|---|
+| Admin agents, credentials, signing keys | HTTP 500, `InternalServerError` using `ErrorResponse` |
+| Consent grants | HTTP 500, `InternalServerError` using `ErrorResponse` |
+| Third-party sessions | HTTP 500, `InternalError` using `Error`; refresh also documents upstream HTTP 502 |
+| OAuth2 authorization/token | HTTP 500 using `OAuth2Error`, including `server_error` |
+| Approvals | Existing handlers return HTTP 500 with `error` and `message`; endpoint response lists omit these existing 5xx cases |
+
+The approval handlers use the existing `ApprovalError` field shape for internal failures.
+The session-deletion response mismatch remains the separate baseline issue recorded in T001.
+Both OpenAPI files remain unchanged.
+No new HTTP or CLI read, erase, export, or ingestion surface is intended.
+An additional public behavior change or correction to these existing contract gaps requires separate approval.
+
+### Schema publication (T012)
+
+`api/events/v1/` contains the 30 approved schemas and 28 synthetic examples.
+The schema files match the reviewed source files byte for byte.
+A temporary Go program used the pinned `google/jsonschema-go v0.4.2` validator with an offline URN loader.
+It resolved all 30 schemas and validated every example against its selected schema and the catalogue.
+It rejected 168 mutated examples covering extra envelope/actor/data fields, invalid outcomes, UUIDv4 event IDs, and unknown types.
+The loader also rejected an external HTTPS schema reference.
+
+```text
+schemas=30 examples=28 negative_cases=168 offline_refs_rejected=1
+```
+
+The temporary program was removed.
+This result validates the published shapes, not domain provenance, semantic time parsing, storage, or ledger runtime behavior.
+
+### Database design review (T013)
+
+The review confirmed migration `035_business_event_ledger.{up,down}.sql` against the data model, storage contract, and binding storage/migration ADRs.
+The approved design retains:
+
+- Paired six-hour event and delivery partitions with the partition-pair helper
+- Drop-free provisioning and separate scheduled maintenance
+- Immutable envelopes, matching projected columns, and positive microsecond policy values
+- Business-row expiry markers behind separate ISP ports
+- Lifecycle, sorted subject, business-row, and delivery-row lock order
+- Separate runtime, reader, erasure, and migration capabilities
+- No event cascade foreign keys and no default partition
+- Feature-only rollback with explicit history-loss acknowledgement, backup, and matching old binary.
+
+T036 owns the foundation migration after its red tests.
+T076, T077, and T081 add erasure, retention drops, and privileges after their own red tests.
+This review applied no migration and supplies no database runtime evidence.
+
+### Acceptance declarations (T014)
+
+The generated `BusinessEventID`, envelope/query values, repository interfaces, lifecycle interface, and `App.LedgerService` compile.
+The builder accepts offline schema sources through `WithBusinessEventSchemas`.
+The configuration DTO also declares the two fields needed by acceptance fixtures.
+Defaults, bindings, validation, schema registration, storage behavior, and producers are not implemented by this declaration step.
+
+`just fmt` and `just check` passed.
+Existing ID, model, storage-factory, app, and configuration package tests passed.
+The ledger package has no tests yet.
+A separate production-builder smoke observed:
+
+```text
+ledger_service_declared=true retained_events=0 default_uuid_version=4
+```
+
+The empty repository results and UUIDv4 constructor are intentional inputs to the required red phase.
+T023 changes only the event ID constructor to UUIDv7 after its failing test.
+The temporary smoke source was removed.
+These declarations are not a working ledger and must not be released.
 
 ## Prerequisites
 
@@ -242,9 +386,10 @@ The fixed acceptance target is added recording transaction p99 <=5 ms. No curren
 
    | Deployment profile | Value |
    |---|---|
-   | Operations owner / approver | *pending (T007)* |
-   | Approval date and reference | *pending (T007)* |
-   | Profile location | *pending (T007)* |
+   | Operations owner / approver | Unavailable: no operator-approved profile supplied |
+   | Approval date and reference | No operator approval. User response: `No approved profile available`, implementation conversation, 2026-09-27 |
+   | Profile location | Not supplied |
+   | Release acceptance | **Blocked (T095)** until an operator approves a profile and its required measurements pass |
 2. Also use a deterministic reference profile: 10,000 principals, 100 agents, 20 services, 1,000,000 preseeded safe ledger events distributed across 90 days, concurrency 32, and a workflow mix of 50% exchanges, 20% approval transitions, 10% grant updates, 10% session refreshes, and 10% admin mutations. This is a reproducible reference, not a claim about production load. Compare equivalent business datasets; the baseline has no ledger table.
 3. Build the pre-feature revision and feature revision in separate worktrees without modifying the active checkout. Warm each for two minutes, then run at least 100,000 measured actions per profile, alternating baseline/enabled order over three repetitions. Use identical collector and backend settings. No production ledger-disable switch is added for benchmarking.
 4. Capture full transaction latency samples for each version plus feature recording-span duration (event validation, serialization, append, delivery-reference insert and attributable transaction work). Report p50/p95/p99, allocation data, throughput and error/rollback counts. Report both the difference of baseline/enabled transaction p99 and the recording-duration p99; do not call the former a paired per-request percentile.

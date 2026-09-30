@@ -14,7 +14,7 @@ This package defines ID types for each entity. The types prevent incompatible ID
 
 ### UUID-backed types
 
-`AgentID`, `ApprovalID`, `AuthorizationCodeID`, `CredentialID`, `GrantID`, `PermissionSetID`, `ServiceID`, `SessionID`, `SigningKeyID`, and `UserID` wrap `uuid.UUID`.
+`AgentID`, `ApprovalID`, `AuthorizationCodeID`, `BusinessEventID`, `CredentialID`, `GrantID`, `PermissionSetID`, `ServiceID`, `SessionID`, `SigningKeyID`, and `UserID` wrap `uuid.UUID`.
 
 See `uuid_ids_gen.go` for methods and the current type catalogue.
 

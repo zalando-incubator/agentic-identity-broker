@@ -25,6 +25,16 @@ type SQLMigration struct {
 	Version int64
 }
 
+// PostgresTestHandle accepts both testing.T and Ginkgo's test proxy.
+type PostgresTestHandle interface {
+	Helper()
+	Errorf(format string, args ...any)
+	FailNow()
+	Fatalf(format string, args ...any)
+	Skip(args ...any)
+	Skipf(format string, args ...any)
+}
+
 type SharedPostgres struct {
 	container testcontainers.Container
 	host      string
@@ -41,7 +51,7 @@ var (
 	sharedPostgresErr  error
 )
 
-func RequireSharedPostgres(t *testing.T) *SharedPostgres {
+func RequireSharedPostgres(t PostgresTestHandle) *SharedPostgres {
 	t.Helper()
 
 	if testing.Short() {
@@ -102,7 +112,7 @@ func startSharedPostgres(ctx context.Context) (*SharedPostgres, error) {
 	}
 
 	req := testcontainers.ContainerRequest{
-		Image:        "postgres:15-alpine",
+		Image:        "postgres:17-alpine",
 		ExposedPorts: []string{"5432/tcp"},
 		Env: map[string]string{
 			"POSTGRES_USER":     "testuser",
@@ -148,9 +158,9 @@ func startSharedPostgres(ctx context.Context) (*SharedPostgres, error) {
 }
 
 func (pg *SharedPostgres) SetupDatabaseFromTemplate(
-	t *testing.T,
+	t PostgresTestHandle,
 	templateKey string,
-	provision func(t *testing.T, dbName string),
+	provision func(dbName string),
 ) (string, string, func()) {
 	t.Helper()
 
@@ -169,7 +179,7 @@ func (pg *SharedPostgres) ConnectionString(dbName string) string {
 	return fmt.Sprintf("postgres://testuser:testpass@%s:%s/%s?sslmode=disable", pg.host, pg.port, dbName)
 }
 
-func (pg *SharedPostgres) ApplyMigrationsUpTo(t *testing.T, dbName string, migrations []SQLMigration, upTo int) {
+func (pg *SharedPostgres) ApplyMigrationsUpTo(t PostgresTestHandle, dbName string, migrations []SQLMigration, upTo int) {
 	t.Helper()
 
 	pg.CreateSchemaMigrationsTable(t, dbName)
@@ -182,7 +192,7 @@ func (pg *SharedPostgres) ApplyMigrationsUpTo(t *testing.T, dbName string, migra
 	}
 }
 
-func (pg *SharedPostgres) CreateSchemaMigrationsTable(t *testing.T, dbName string) {
+func (pg *SharedPostgres) CreateSchemaMigrationsTable(t PostgresTestHandle, dbName string) {
 	t.Helper()
 	pg.ExecuteSQL(t, dbName, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -192,7 +202,7 @@ func (pg *SharedPostgres) CreateSchemaMigrationsTable(t *testing.T, dbName strin
 	`)
 }
 
-func (pg *SharedPostgres) ApplyMigration(t *testing.T, dbName, filename string) {
+func (pg *SharedPostgres) ApplyMigration(t PostgresTestHandle, dbName, filename string) {
 	t.Helper()
 
 	projectRoot, err := FindProjectRoot()
@@ -205,17 +215,17 @@ func (pg *SharedPostgres) ApplyMigration(t *testing.T, dbName, filename string) 
 	pg.ExecuteSQL(t, dbName, string(data))
 }
 
-func (pg *SharedPostgres) QuerySQL(t *testing.T, dbName, query string) string {
+func (pg *SharedPostgres) QuerySQL(t PostgresTestHandle, dbName, query string) string {
 	t.Helper()
 	return strings.TrimSpace(pg.execPSQL(t, dbName, "-t", "-A", "-c", query))
 }
 
-func (pg *SharedPostgres) ExecuteSQL(t *testing.T, dbName, query string) {
+func (pg *SharedPostgres) ExecuteSQL(t PostgresTestHandle, dbName, query string) {
 	t.Helper()
 	_ = pg.execPSQL(t, dbName, "-c", query)
 }
 
-func (pg *SharedPostgres) execPSQL(t *testing.T, dbName string, args ...string) string {
+func (pg *SharedPostgres) execPSQL(t PostgresTestHandle, dbName string, args ...string) string {
 	t.Helper()
 
 	baseArgs := []string{"psql", "-U", "testuser", "-d", dbName}
@@ -223,7 +233,7 @@ func (pg *SharedPostgres) execPSQL(t *testing.T, dbName string, args ...string) 
 	return pg.execContainerCommand(t, baseArgs...)
 }
 
-func (pg *SharedPostgres) execContainerCommand(t *testing.T, args ...string) string {
+func (pg *SharedPostgres) execContainerCommand(t PostgresTestHandle, args ...string) string {
 	t.Helper()
 
 	exitCode, outReader, err := pg.container.Exec(context.Background(), args)
@@ -270,7 +280,7 @@ func decodeExecOutput(raw []byte) []byte {
 	return decoded
 }
 
-func (pg *SharedPostgres) ensureTemplateDatabase(t *testing.T, templateKey string, provision func(t *testing.T, dbName string)) string {
+func (pg *SharedPostgres) ensureTemplateDatabase(t PostgresTestHandle, templateKey string, provision func(dbName string)) string {
 	t.Helper()
 
 	pg.templateMu.Lock()
@@ -282,12 +292,12 @@ func (pg *SharedPostgres) ensureTemplateDatabase(t *testing.T, templateKey strin
 
 	templateName := pg.nextDatabaseName("template_" + templateKey)
 	pg.createDatabase(t, templateName, "")
-	provision(t, templateName)
+	provision(templateName)
 	pg.templateDBs[templateKey] = templateName
 	return templateName
 }
 
-func (pg *SharedPostgres) createDatabase(t *testing.T, dbName, templateName string) {
+func (pg *SharedPostgres) createDatabase(t PostgresTestHandle, dbName, templateName string) {
 	t.Helper()
 
 	args := []string{"createdb", "-U", "testuser", "--maintenance-db=postgres"}
@@ -298,13 +308,13 @@ func (pg *SharedPostgres) createDatabase(t *testing.T, dbName, templateName stri
 	pg.execContainerCommand(t, args...)
 }
 
-func (pg *SharedPostgres) dropDatabase(t *testing.T, dbName string) {
+func (pg *SharedPostgres) dropDatabase(t PostgresTestHandle, dbName string) {
 	t.Helper()
 	pg.terminateDatabaseConnections(t, dbName)
 	pg.execContainerCommand(t, "dropdb", "--if-exists", "-U", "testuser", "--maintenance-db=postgres", dbName)
 }
 
-func (pg *SharedPostgres) terminateDatabaseConnections(t *testing.T, dbName string) {
+func (pg *SharedPostgres) terminateDatabaseConnections(t PostgresTestHandle, dbName string) {
 	t.Helper()
 	pg.execPSQL(t, "postgres", "-c", fmt.Sprintf(
 		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid();",
@@ -312,7 +322,7 @@ func (pg *SharedPostgres) terminateDatabaseConnections(t *testing.T, dbName stri
 	))
 }
 
-func (pg *SharedPostgres) recordMigrationVersion(t *testing.T, dbName string, version int64) {
+func (pg *SharedPostgres) recordMigrationVersion(t PostgresTestHandle, dbName string, version int64) {
 	t.Helper()
 	pg.ExecuteSQL(t, dbName, fmt.Sprintf(
 		"INSERT INTO schema_migrations (version, dirty) VALUES (%d, FALSE) ON CONFLICT DO NOTHING;",
