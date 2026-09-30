@@ -12,6 +12,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
 	"time"
 )
@@ -222,7 +223,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_DeleteProviderReferencedByAc
 	grant := newUserGrant(
 		id.Principal("grant-user@example.com"),
 		agent.ID,
-		newGrantedPermissionSetEntry(t, adapter, provider.ID),
+		newGrantedPermissionSetEntry(t, adapter, id.NewServiceID(), provider.ID),
 	)
 	require.NoError(t, NewUserGrantRepository(adapter).Create(ctx, grant))
 
@@ -233,6 +234,24 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_DeleteProviderReferencedByAc
 	assert.Contains(t, storageErr.Error(), "user grant")
 	_, err = repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
+
+	tx, err := adapter.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `SET LOCAL enable_seqscan = off`)
+	require.NoError(t, err)
+	rows, err := tx.QueryContext(ctx, `EXPLAIN `+activeProviderGrantReferenceQuery, provider.ID.String())
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var plan strings.Builder
+	for rows.Next() {
+		var step string
+		require.NoError(t, rows.Scan(&step))
+		plan.WriteString(step)
+		plan.WriteByte('\n')
+	}
+	require.NoError(t, rows.Err())
+	assert.Contains(t, plan.String(), "idx_grants_permission_sets")
 }
 
 func TestPostgresThirdpartyOAuth2ProviderRepository_DeleteProviderWithSessionReturnsConflict(t *testing.T) {
