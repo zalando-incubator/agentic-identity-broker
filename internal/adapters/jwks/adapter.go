@@ -22,6 +22,7 @@ import (
 )
 
 const staleServeRelogEvery = 10
+const maxJWKSResponseBytes = 1 << 20
 
 // Adapter implements the JWKSPort interface for fetching and caching JWKS from a known upstream JWKS URI.
 // Each adapter instance maintains its own cached key set, refresh schedule, and refresh health.
@@ -61,9 +62,12 @@ type trackingTransformer struct {
 }
 
 func (t trackingTransformer) Transform(_ context.Context, res *http.Response) (jwk.Set, error) {
-	buf, err := io.ReadAll(res.Body)
+	buf, err := io.ReadAll(io.LimitReader(res.Body, maxJWKSResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if len(buf) > maxJWKSResponseBytes {
+		return nil, fmt.Errorf("JWKS response exceeds %d byte limit", maxJWKSResponseBytes)
 	}
 
 	set, err := jwk.Parse(buf, jwk.WithStrictKeySetParsing(true))

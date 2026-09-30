@@ -602,20 +602,16 @@ func (b *Builder) Build() (*App, error) {
 	}
 	cfg.RefreshStorageTimeout = 2*readTimeout + 2*writeTimeout
 
-	upstreamClient := &http.Client{
-		Timeout: ov.upstreamTimeout,
-	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = 100
+	upstreamClient := &http.Client{Transport: transport, Timeout: ov.upstreamTimeout}
 
 	// Wrap the HTTP transport with OTel instrumentation when tracing is enabled.
 	// This is the "last resort" layer: even operations without an explicit custom span will
 	// still emit a client span and propagate W3C traceparent/tracestate headers to every
 	// outgoing HTTP call (JWKS fetches, upstream token proxy, OAuth2 session token exchange).
 	if b.config.Telemetry.Enabled && b.config.Telemetry.Traces.Enabled {
-		base := upstreamClient.Transport
-		if base == nil {
-			base = http.DefaultTransport
-		}
-		upstreamClient.Transport = otelhttp.NewTransport(base)
+		upstreamClient.Transport = otelhttp.NewTransport(transport)
 	}
 
 	app.OAuth2SessionService = oauth2session.NewOAuth2SessionService(
