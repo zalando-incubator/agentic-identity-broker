@@ -611,7 +611,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		}
 		outcome := s.approvalGate.Evaluate(ctx, invocation)
 		if outcome.Proceed {
-			return canonicalMCPBody(opaInput["parsed_body"], body)
+			return canonicalMCPBody(opaInput["parsed_body"], body, s.cfg.Authorization.MaxBodySize)
 		}
 		if outcome.URL != "" {
 			return urlElicitationResponse(outcome.URL, "approval required", rawID)
@@ -626,7 +626,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		return accessDeniedResponse(decision.Reasons)
 	}
 	if state.protocol == "mcp" {
-		return canonicalMCPBody(opaInput["parsed_body"], body)
+		return canonicalMCPBody(opaInput["parsed_body"], body, s.cfg.Authorization.MaxBodySize)
 	}
 	return echoRequestBody(body)
 }
@@ -747,7 +747,7 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 		return accessDeniedResponse(denyReasons)
 	}
 
-	return canonicalMCPBody(parsedBodies, body)
+	return canonicalMCPBody(parsedBodies, body, s.cfg.Authorization.MaxBodySize)
 }
 
 // tokenExchangeErrorResponse maps a token exchange error to the appropriate ImmediateResponse.
@@ -1255,13 +1255,20 @@ func passThrough() *extprocv3.ProcessingResponse {
 }
 
 // canonicalMCPBody forwards only values present in the body OPA evaluated.
-func canonicalMCPBody(parsed any, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
+func canonicalMCPBody(parsed any, body *extprocv3.HttpBody, maxSize int) *extprocv3.ProcessingResponse {
 	if parsed == nil {
 		return accessDeniedResponse([]string{"failed to serialize authorized request"})
 	}
-	canonical, err := json.Marshal(parsed)
-	if err != nil {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(parsed); err != nil {
 		return accessDeniedResponse([]string{"failed to serialize authorized request"})
+	}
+	canonical := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	if maxSize > 0 && len(canonical) > maxSize {
+		return immediateResponse(httpv3.StatusCode_Forbidden,
+			`{"error":"request_too_large","error_description":"request body exceeds maximum allowed size"}`)
 	}
 	return echoRequestBody(&extprocv3.HttpBody{Body: canonical, EndOfStream: body.GetEndOfStream()})
 }

@@ -74,9 +74,6 @@ func Canonical(v any) string {
 	case float32:
 		return strconv.FormatFloat(float64(value), 'f', -1, 64)
 	case json.Number:
-		if number, err := value.Float64(); err == nil {
-			return strconv.FormatFloat(number, 'f', -1, 64)
-		}
 		return string(value)
 	case int:
 		return strconv.FormatInt(int64(value), 10)
@@ -211,9 +208,6 @@ func canonicalJSON(v any) string {
 	case float32:
 		return strconv.FormatFloat(float64(value), 'f', -1, 64)
 	case json.Number:
-		if number, err := value.Float64(); err == nil {
-			return strconv.FormatFloat(number, 'f', -1, 64)
-		}
 		return string(value)
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return Canonical(value)

@@ -29,6 +29,7 @@ func ParseMCPMessage(body []byte) (*MCPMessage, error) {
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
 	start, err := decoder.Token()
 	if err != nil {
 		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: %w", err)
@@ -57,7 +58,23 @@ func ParseMCPMessage(body []byte) (*MCPMessage, error) {
 	if msg.Method == "" {
 		return nil, fmt.Errorf("mcp parser: missing or empty method field")
 	}
+	if msg.Method == "tools/call" {
+		for key := range msg.Params {
+			if noncanonicalMCPKey(key, "name", "arguments") {
+				return nil, fmt.Errorf("mcp parser: noncanonical params key %q", key)
+			}
+		}
+	}
 	return msg, nil
+}
+
+func noncanonicalMCPKey(key string, recognized ...string) bool {
+	for _, name := range recognized {
+		if key != name && strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseMCPObject(decoder *json.Decoder, scope string) (map[string]any, error) {
@@ -69,6 +86,9 @@ func parseMCPObject(decoder *json.Decoder, scope string) (map[string]any, error)
 			return nil, err
 		}
 		key := token.(string)
+		if scope == "envelope" && noncanonicalMCPKey(key, "jsonrpc", "method", "id", "params") {
+			return nil, fmt.Errorf("noncanonical %s key %q", scope, key)
+		}
 		folded := strings.Map(func(r rune) rune {
 			minimum := r
 			for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {

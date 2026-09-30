@@ -1,6 +1,7 @@
 package toolpattern
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -23,6 +24,22 @@ func TestCanonicalVectors(t *testing.T) {
 				t.Fatalf("Canonical() = %q, want %q", got, vector.Canonical)
 			}
 		})
+	}
+}
+
+func TestCanonicalPreservesExactJSONNumbersForApprovalMatching(t *testing.T) {
+	approved := map[string]any{"count": json.Number("9007199254740993"), "nested": []any{json.Number("9007199254740993")}}
+	pattern := ExactParams(approved)
+	if pattern["count"] != "9007199254740993" || pattern["nested"] != `[9007199254740993]` {
+		t.Fatalf("approval pattern rounded argument numbers: %#v", pattern)
+	}
+	if !Matches("deploy", pattern, "deploy", approved) {
+		t.Fatal("exact numeric approval must match its original invocation")
+	}
+	for _, value := range []json.Number{"9007199254740992", "9007199254740994"} {
+		if Matches("deploy", pattern, "deploy", map[string]any{"count": value, "nested": approved["nested"]}) {
+			t.Fatalf("approval for count=9007199254740993 matched %s", value)
+		}
 	}
 }
 

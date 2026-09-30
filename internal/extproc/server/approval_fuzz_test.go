@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 	"testing"
@@ -32,13 +33,15 @@ func FuzzMCPApprovalMatchesOPA(f *testing.F) {
 			t.Fatalf("OPA saw %q %v; approval gate saw %q %v", mcpInput.ToolName, mcpInput.Arguments, invocation.ToolName, invocation.Arguments)
 		}
 
-		response := canonicalMCPBody(input["parsed_body"], &extprocv3.HttpBody{Body: body, EndOfStream: true})
+		response := canonicalMCPBody(input["parsed_body"], &extprocv3.HttpBody{Body: body, EndOfStream: true}, 0)
 		request := response.GetRequestBody()
 		if request == nil || request.GetResponse().GetBodyMutation().GetStreamedResponse() == nil {
 			t.Fatal("authorized message was not forwarded")
 		}
 		var upstream map[string]any
-		if err := json.Unmarshal(request.GetResponse().GetBodyMutation().GetStreamedResponse().Body, &upstream); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(request.GetResponse().GetBodyMutation().GetStreamedResponse().Body))
+		decoder.UseNumber()
+		if err := decoder.Decode(&upstream); err != nil {
 			t.Fatalf("upstream message is not JSON: %v", err)
 		}
 		if !reflect.DeepEqual(upstream, input["parsed_body"]) {

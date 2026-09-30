@@ -1,6 +1,7 @@
 package authorization_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +27,6 @@ func TestParseMCPMessageRejectsAmbiguousKeys(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := authorization.ParseMCPMessage([]byte(tc.body))
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "duplicate")
 
 			_, err = authorization.BuildOPAInput("mcp", []byte(tc.body), nil, "", authorization.ContextInput{})
 			require.Error(t, err)
@@ -37,5 +37,39 @@ func TestParseMCPMessageRejectsAmbiguousKeys(t *testing.T) {
 func TestParseMCPBatchRejectsAmbiguousElement(t *testing.T) {
 	_, err := authorization.ParseMCPBatch([]byte(`[{"jsonrpc":"2.0","method":"tools/call","params":{"name":"safe"}},{"jsonrpc":"2.0","method":"tools/call","params":{"name":"safe","Name":"dangerous"}}]`))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "batch element 1")
+}
+
+func TestParseMCPMessageRejectsNoncanonicalKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"tool arguments alias", `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"deploy","Arguments":{"path":"/prod"}}}`},
+		{"escaped tool arguments alias", `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"deploy","\u0041rguments":{"path":"/prod"}}}`},
+		{"non-tool params alias", `{"jsonrpc":"2.0","method":"initialize","Params":{"capabilities":{"tools":true}}}`},
+		{"request id alias", `{"jsonrpc":"2.0","method":"initialize","ID":42,"params":{}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := authorization.ParseMCPMessage([]byte(tc.body))
+			require.Error(t, err)
+		})
+	}
+
+	_, err := authorization.ParseMCPBatch([]byte(`[{"jsonrpc":"2.0","method":"initialize","params":{}},{"jsonrpc":"2.0","method":"initialize","Params":{}}]`))
+	require.Error(t, err)
+}
+
+func TestParseMCPMessagePreservesNumericLexemes(t *testing.T) {
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":9007199254740993,"params":{"name":"deploy","arguments":{"count":9007199254740993,"nested":[1.234567890123456789]}}}`)
+	msg, err := authorization.ParseMCPMessage(body)
+	require.NoError(t, err)
+	assert.Equal(t, json.Number("9007199254740993"), msg.ID)
+	args := msg.Params["arguments"].(map[string]any)
+	assert.Equal(t, json.Number("9007199254740993"), args["count"])
+	assert.Equal(t, json.Number("1.234567890123456789"), args["nested"].([]any)[0])
+
+	input, err := authorization.BuildOPAInput("mcp", body, nil, "", authorization.ContextInput{})
+	require.NoError(t, err)
+	assert.Equal(t, json.Number("9007199254740993"), input["mcp"].(*authorization.MCPInput).ID)
+	assert.Equal(t, args, input["mcp"].(*authorization.MCPInput).Arguments)
 }

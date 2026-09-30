@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -20,6 +21,9 @@ func TestServerRejectsAmbiguousMCPBeforeAuthorization(t *testing.T) {
 	for _, body := range []string{
 		`{"jsonrpc":"2.0","method":"tools/call","Method":"initialize","params":{"name":"safe"}}`,
 		`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"dangerous","arguments":{"path":"/prod"},"Name":"safe","Arguments":{"path":"/tmp"}}}`,
+		`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"deploy","Arguments":{"path":"/prod"}}}`,
+		`{"jsonrpc":"2.0","method":"initialize","Params":{"capabilities":{"tools":true}}}`,
+		`[{"jsonrpc":"2.0","method":"initialize","params":{}},{"jsonrpc":"2.0","method":"initialize","Params":{}}]`,
 		`[{"jsonrpc":"2.0","method":"tools/call","params":{"name":"safe"}},{"jsonrpc":"2.0","method":"tools/call","params":{"name":"dangerous","Name":"safe"}}]`,
 	} {
 		t.Run(body, func(t *testing.T) {
@@ -80,9 +84,12 @@ func TestServerForwardsOnlyApprovedMCPView(t *testing.T) {
 	require.NotNil(t, forwarded)
 	assert.True(t, forwarded.EndOfStream)
 	assert.NotEqual(t, body, forwarded.Body)
+	assert.Equal(t, 1, bytes.Count(forwarded.Body, []byte(`"path"`)), "approved request must not forward duplicate argument keys")
 
 	var upstreamBody any
-	require.NoError(t, json.Unmarshal(forwarded.Body, &upstreamBody))
+	decoder := json.NewDecoder(bytes.NewReader(forwarded.Body))
+	decoder.UseNumber()
+	require.NoError(t, decoder.Decode(&upstreamBody))
 	assert.Equal(t, opaBody, upstreamBody)
 	assert.JSONEq(t, `{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"path":"/prod"}},"extension":{"source":"client"}}`, string(forwarded.Body))
 }
