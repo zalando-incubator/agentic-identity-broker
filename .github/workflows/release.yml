@@ -44,6 +44,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set source date epoch
+        id: source-date-epoch
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -165,7 +169,9 @@ jobs:
           file: build/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            SOURCE_DATE_EPOCH=${{ steps.source-date-epoch.outputs.SOURCE_DATE_EPOCH }}
           tags: ${{ steps.broker-meta.outputs.tags }}
           labels: ${{ steps.broker-meta.outputs.labels }}
           annotations: ${{ steps.broker-meta.outputs.annotations }}
@@ -187,7 +193,9 @@ jobs:
           file: build/docker/Dockerfile.migrate
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            SOURCE_DATE_EPOCH=${{ steps.source-date-epoch.outputs.SOURCE_DATE_EPOCH }}
           tags: ${{ steps.migrate-meta.outputs.tags }}
           labels: ${{ steps.migrate-meta.outputs.labels }}
           annotations: ${{ steps.migrate-meta.outputs.annotations }}
@@ -209,7 +217,9 @@ jobs:
           file: build/docker/Dockerfile.extproc
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            SOURCE_DATE_EPOCH=${{ steps.source-date-epoch.outputs.SOURCE_DATE_EPOCH }}
           tags: ${{ steps.extproc-meta.outputs.tags }}
           labels: ${{ steps.extproc-meta.outputs.labels }}
           annotations: ${{ steps.extproc-meta.outputs.annotations }}
@@ -222,6 +232,33 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}-extproc
           subject-digest: ${{ steps.extproc.outputs.digest }}
           push-to-registry: true
+
+      - name: Verify release image creation timestamps
+        env:
+          REPO: ${{ github.repository }}
+          EXPECTED_EPOCH: ${{ steps.source-date-epoch.outputs.SOURCE_DATE_EPOCH }}
+          BROKER_DIGEST: ${{ steps.broker.outputs.digest }}
+          MIGRATE_DIGEST: ${{ steps.migrate.outputs.digest }}
+          EXTPROC_DIGEST: ${{ steps.extproc.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for image in "ghcr.io/${REPO}@${BROKER_DIGEST}" \
+                       "ghcr.io/${REPO}-migrate@${MIGRATE_DIGEST}" \
+                       "ghcr.io/${REPO}-extproc@${EXTPROC_DIGEST}"; do
+            index=$(docker buildx imagetools inspect --format '{{json .Manifest}}' "$image")
+            for arch in amd64 arm64; do
+              manifest=$(jq -er --arg arch "$arch" \
+                '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' <<< "$index")
+              created=$(docker buildx imagetools inspect --format '{{json .Image}}' \
+                "${image%@*}@${manifest}" | jq -er '.created')
+              actual_epoch=$(date -u -d "$created" +%s)
+              if [[ $actual_epoch != "$EXPECTED_EPOCH" ]]; then
+                echo "::error::${image} linux/${arch} created ${created}; expected epoch ${EXPECTED_EPOCH}" >&2
+                exit 1
+              fi
+              echo "Verified ${image} linux/${arch}: ${created}"
+            done
+          done
 
       # --- Helm chart ----------------------------------------------------
 

@@ -12,6 +12,7 @@ FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662
 ARG TARGETOS
 ARG TARGETARCH
 
+ARG LDFLAGS="-s -w"
 WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
@@ -20,7 +21,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" \
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="${LDFLAGS}" \
     -o /tmp/extproc-token-exchange \
     ./cmd/extproc-token-exchange
 
