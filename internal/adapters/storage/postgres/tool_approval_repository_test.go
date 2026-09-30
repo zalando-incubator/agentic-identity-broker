@@ -510,6 +510,15 @@ func TestToolApprovalRepository_ActiveQueriesExcludeExpiredAndConsumed(t *testin
 	require.NoError(t, err)
 	_, err = repo.Consume(ctx, once.ID, now)
 	require.NoError(t, err)
+	permanent := createPending(principal, agentID, "permanent", now.Add(2*time.Hour))
+	_, err = repo.Approve(ctx, permanent.ID, storage.ApprovalDecision{
+		Persistence:   storage.ApprovalPersistencePermanent,
+		ToolPattern:   permanent.ToolPattern,
+		ParamsPattern: permanent.ParamsPattern,
+	}, now.Add(-90*time.Minute))
+	require.NoError(t, err)
+	_, err = adapter.db.ExecContext(ctx, `UPDATE tool_approvals SET expires_at = $1 WHERE id = $2`, now.Add(-time.Hour), permanent.ID)
+	require.NoError(t, err)
 	otherAgent := createPending(principal, otherAgentID, "other-agent", now.Add(2*time.Hour))
 	otherPrincipal := createPending(id.Principal("another@example.com"), agentID, "other-principal", now.Add(2*time.Hour))
 
@@ -537,15 +546,15 @@ func TestToolApprovalRepository_ActiveQueriesExcludeExpiredAndConsumed(t *testin
 
 	byPair, err := repo.ListActiveByPrincipalAndAgent(ctx, principal, agentID)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []id.ApprovalID{live.ID, replacement.ID}, approvalIDs(byPair))
+	assert.ElementsMatch(t, []id.ApprovalID{live.ID, replacement.ID, permanent.ID}, approvalIDs(byPair))
 
 	byPrincipal, err := repo.ListAllActive(ctx, &principal, nil)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []id.ApprovalID{live.ID, replacement.ID, otherAgent.ID}, approvalIDs(byPrincipal))
+	assert.ElementsMatch(t, []id.ApprovalID{live.ID, replacement.ID, permanent.ID, otherAgent.ID}, approvalIDs(byPrincipal))
 
 	all, err := repo.ListAllActive(ctx, nil, nil)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []id.ApprovalID{live.ID, replacement.ID, otherAgent.ID, otherPrincipal.ID}, approvalIDs(all))
+	assert.ElementsMatch(t, []id.ApprovalID{live.ID, replacement.ID, permanent.ID, otherAgent.ID, otherPrincipal.ID}, approvalIDs(all))
 }
 
 func TestToolApprovalRepository_FailedCreateDoesNotPersistOrAdvanceSync(t *testing.T) {
@@ -568,13 +577,14 @@ func TestToolApprovalRepository_FailedCreateDoesNotPersistOrAdvanceSync(t *testi
 		Description:     "Keep this request",
 		Status:          storage.ApprovalStatusPending,
 		ApprovalURL:     "https://broker.example.com/approvals/existing",
-		CreatedAt:       now,
-		ExpiresAt:       now.Add(time.Hour),
+		CreatedAt:       now.Add(-2 * time.Hour),
+		ExpiresAt:       now.Add(-time.Hour),
 	}
 	_, err := createPatternedApproval(ctx, repo, existing)
 	require.NoError(t, err)
 	before, err := repo.Get(ctx, existing.ID)
 	require.NoError(t, err)
+	require.False(t, before.Consumed)
 	baseline, err := syncRepo.GetVersion(ctx)
 	require.NoError(t, err)
 
@@ -599,9 +609,19 @@ func TestToolApprovalRepository_FailedCreateDoesNotPersistOrAdvanceSync(t *testi
 	_, err = repo.Get(ctx, invalid.ID)
 	require.ErrorAs(t, err, &storageErr)
 	assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+
+	conflict := *existing
+	conflict.CreatedAt = now
+	conflict.ExpiresAt = now.Add(time.Hour)
+	created, err = createPatternedApproval(ctx, repo, &conflict)
+	require.Nil(t, created)
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindConnection, storageErr.Kind)
+
 	after, err := repo.Get(ctx, existing.ID)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
+	assert.False(t, after.Consumed)
 	versionAfterFailure, err := syncRepo.GetVersion(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, baseline, versionAfterFailure)
