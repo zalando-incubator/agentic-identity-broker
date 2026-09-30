@@ -861,7 +861,7 @@ An advertised CIMD key can remain pending during its activation grace period. Me
 
 The broker caches only the public CIMD JWK set for 45 seconds per process. Each read checks the database-backed key-set revision. A revision change rebuilds the set, so another replica sees a committed key removal on its next read. Concurrent rebuilds share one bounded operation. Revision or rebuild errors never return a stale set.
 
-**SC-008 normal load**: After one warm-up request per route, ten concurrent clients send 100 anonymous requests to each public metadata and CIMD JWK route. Each request must return `200 OK`. The p95 retrieval latency for each route must be less than one second.
+**SC-008 normal load**: After one warm-up request per route, ten concurrent clients send 100 anonymous requests to each public metadata and CIMD JWK route. Each request must return `200 OK`. The p95 retrieval latency for each route, measured through reading and closing the response body, must be less than one second.
 
 **Client-ID continuity**: The broker persists the complete HTTPS client ID derived from `server.enduser.public_url` and the immutable service ID. Startup validates every persisted outbound CIMD identity before key bootstrap or route serving. A changed public origin fails startup rather than rewriting an identity or returning metadata from a fallback location. Restore the prior origin for immediate recovery; any re-registration or identity migration is an explicit, separately approved operation.
 

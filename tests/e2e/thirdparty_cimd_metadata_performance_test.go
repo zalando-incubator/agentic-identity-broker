@@ -137,9 +137,9 @@ func measureCIMDMetadataRoute(clients []*http.Client, routeURL string) ([]time.D
 			for requestIndex := range requests {
 				startedAt := time.Now()
 				response, err := client.Get(routeURL)
-				durations[requestIndex] = time.Since(startedAt)
 				if err != nil {
 					errs[requestIndex] = err
+					durations[requestIndex] = time.Since(startedAt)
 					continue
 				}
 
@@ -149,6 +149,7 @@ func measureCIMDMetadataRoute(clients []*http.Client, routeURL string) ([]time.D
 					err = closeErr
 				}
 				errs[requestIndex] = err
+				durations[requestIndex] = time.Since(startedAt)
 			}
 		}(client)
 	}
