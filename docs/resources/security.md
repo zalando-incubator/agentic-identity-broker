@@ -9,6 +9,8 @@ This page summarizes the security controls for the broker. The broker stores thi
 credentials for users. Its default settings protect those credentials. Security controls
 are enabled by default and are not optional.
 
+For the threat model, trust boundaries, and control evidence, see the [Security assurance case](/docs/resources/assurance-case).
+
 ## Encryption at rest
 
 Encryption at rest is **mandatory**. The broker refuses to start if no encryption backend is
@@ -77,13 +79,13 @@ proxy trust boundary.
 
 ## Automated security verification
 
-The `CI / security` status blocks pull requests. It runs the scanner script from the trusted base branch with read-only repository access.
+On pull requests, the required `CI gate` status includes dependency review, which blocks a change that adds a dependency with a known high-severity vulnerability. CodeQL analyzes Go and JavaScript/TypeScript on pull requests, main, and a schedule. It is not a required status check. The whole-tree `gosec`, `govulncheck`, and OSV-Scanner job runs daily and on relevant pushes to main. It does not gate pull requests.
 
 - `gosec` finds security defects in Go source code.
 - `govulncheck` finds known Go vulnerabilities that project code reaches.
-- OSV-Scanner finds vulnerable dependencies in all Go manifests and npm lockfiles.
+- OSV-Scanner finds vulnerable dependencies in Go manifests and npm lockfiles.
 
-Run `just security` for the focused scanner command. Run `just verify` for the full verification gate.
+The scheduled fuzz workflow exercises parsers. Code-change CI runs E2E suites. Run `just security` for the focused scanners and `just verify` for the full verification gate.
 
 ## Reporting a vulnerability
 

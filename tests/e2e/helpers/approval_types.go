@@ -15,6 +15,7 @@ type ApprovalRecord struct {
 	Arguments        map[string]any    `json:"arguments"`
 	ToolPattern      string            `json:"tool_pattern"`
 	ParamsPattern    map[string]string `json:"params_pattern"`
+	PatternPreview   string            `json:"pattern_preview"`
 	Description      string            `json:"description"`
 	RiskLevel        string            `json:"risk_level"`
 	Status           string            `json:"status"`

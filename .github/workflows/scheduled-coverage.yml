@@ -1,0 +1,68 @@
+name: Coverage
+
+on:
+  # Scheduled workflows run on the default branch (main).
+  schedule:
+    - cron: "19 4 * * 2"
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Go unit and integration coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p coverage
+          package_list=$(go list -tags=integration ./...)
+          packages=()
+          while IFS= read -r package; do
+            case "$package" in
+              */tests/e2e|*/tests/e2e/*|*/web/node_modules/*) ;;
+              *) packages+=("$package") ;;
+            esac
+          done <<< "$package_list"
+          go test -tags=integration -p 2 -coverprofile=coverage/coverage.out -coverpkg=./internal/... "${packages[@]}"
+          go tool cover -func=coverage/coverage.out > coverage/functions.txt
+          total=$(awk '/^total:/ { print $3; found = 1 } END { if (!found) exit 1 }' coverage/functions.txt)
+          echo "Go statement coverage: ${total}"
+          printf 'Go statement coverage: %s\n' "$total" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Go function coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-coverage-functions
+          path: coverage/functions.txt
+          if-no-files-found: warn
+      - name: Install web dependencies
+        run: npm ci --prefix web
+      - name: Frontend coverage report
+        run: npm run test:coverage --prefix web
+      - name: Upload Go and frontend coverage to Coveralls
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2.3.8
+        with:
+          files: coverage/coverage.out web/coverage/lcov.info
+          coverage-reporter-version: v0.6.22

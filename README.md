@@ -14,6 +14,9 @@
     <a href="https://scorecard.dev/viewer/?uri=github.com/zalando-incubator/agentic-identity-broker">
       <img src="https://img.shields.io/ossf-scorecard/github.com/zalando-incubator/agentic-identity-broker?label=openssf+scorecard&style=flat-square" alt="OpenSSF Score" />
     </a>
+    <a href="https://coveralls.io/github/zalando-incubator/agentic-identity-broker?branch=main">
+      <img src="https://coveralls.io/repos/github/zalando-incubator/agentic-identity-broker/badge.svg?branch=main" alt="Go and frontend coverage on Coveralls" />
+    </a>
     <a href="https://www.bestpractices.dev/projects/14703">
       <img src="https://img.shields.io/cii/level/14703?style=flat-square&label=openssf+level" alt="OpenSSF Best Practises Level">
     </a>
@@ -91,7 +94,7 @@ Agentic Identity Broker has a built-in consent management UI:
 
 ## Contributing
 
-For instructions on how to contribute to the agentgateway project, see the [CONTRIBUTION.md](CONTRIBUTION.md) file.
+For contribution rules, test commands, and coverage reports, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Roadmap
 

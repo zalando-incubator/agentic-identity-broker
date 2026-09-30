@@ -1,9 +1,8 @@
 # CI — the single merge gate.
 #
 # Principle: a PR is checked for "does this change make the repository worse?"
-# Everything here is deterministic, diff-scoped and fast enough to wait for.
-# Absolute "state of the world" checks (vulnerability posture, fuzzing,
-# Scorecard) live in their own scheduled workflows and never block a PR.
+# Scheduled coverage lives in its own workflow and never blocks a PR.
+# Vulnerability, fuzzing, and Scorecard checks also run separately.
 #
 # Exactly one status check is required by the branch ruleset: "CI / gate".
 # Every other job is either path-scoped (skipped when unrelated) or optional,
