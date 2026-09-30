@@ -228,6 +228,7 @@ func TestBuilderMinimalConfiguration(t *testing.T) {
 func TestBuilderUpstreamClientReusesConcurrentConnections(t *testing.T) {
 	const parallel = 8
 	var connections atomic.Int32
+	var closed atomic.Int32
 	var arrived [2]atomic.Int32
 	released := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -251,8 +252,11 @@ func TestBuilderUpstreamClientReusesConcurrentConnections(t *testing.T) {
 		_, _ = fmt.Fprint(w, `{"access_token":"token","token_type":"Bearer"}`)
 	}))
 	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-		if state == http.StateNew {
+		switch state {
+		case http.StateNew:
 			connections.Add(1)
+		case http.StateClosed:
+			closed.Add(1)
 		}
 	}
 	server.Start()
@@ -284,7 +288,12 @@ func TestBuilderUpstreamClientReusesConcurrentConnections(t *testing.T) {
 	app, err := NewBuilder().WithConfig(cfg).WithStorage(store).
 		WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))).Build()
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, app.Shutdown(context.Background())) })
+	shutdown := false
+	t.Cleanup(func() {
+		if !shutdown {
+			require.NoError(t, app.Shutdown(context.Background()))
+		}
+	})
 
 	provider := &model.ThirdpartyOAuth2ProviderEntity{
 		ID: id.NewServiceID(), ClientID: id.ClientID("client"),
@@ -311,6 +320,11 @@ func TestBuilderUpstreamClientReusesConcurrentConnections(t *testing.T) {
 	require.Equal(t, int32(parallel), firstConnections)
 	runBurst("second")
 	require.Equal(t, firstConnections, connections.Load(), "idle connections must serve the next burst")
+	require.Zero(t, closed.Load(), "connections should remain idle before shutdown")
+	require.NoError(t, app.Shutdown(context.Background()))
+	shutdown = true
+	require.Eventually(t, func() bool { return closed.Load() == int32(parallel) }, time.Second, 10*time.Millisecond,
+		"app shutdown must close idle upstream connections")
 }
 
 // TestBuilderMissingRequiredDependency validates that the builder rejects invalid configurations.
