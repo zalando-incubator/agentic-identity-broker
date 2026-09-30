@@ -145,7 +145,7 @@ func newMockConsentService() *consent.Service {
 }
 
 // MockAgentRepository mocks the AgentRepository for consent service testing
-type MockAgentRepository struct{}
+type MockAgentRepository struct{ ports.AgentRepository }
 
 func (m *MockAgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storagedomain.Agent, error) {
 	return nil, nil
@@ -249,6 +249,7 @@ func (m *MockOAuth2SessionService) GetSessionWithValidToken(ctx context.Context,
 
 // MockTokenExchangeRepository mocks are defined at the end of this file
 type MockServiceRepository struct {
+	ports.ThirdpartyOAuth2ProviderRepository
 	service *model.ThirdpartyOAuth2ProviderEntity
 	err     error
 }
@@ -347,6 +348,7 @@ func (m *MockGrantRepository) CountGrantsReferencingPermissionSet(_ context.Cont
 }
 
 type MockSessionRepository struct {
+	ports.UserSessionRepository
 	session                        *storagedomain.UserSession
 	err                            error
 	findByPrincipalAndServiceCalls int
@@ -1290,6 +1292,7 @@ func TestResolveEffectiveScopes_EmptySRCeiling_UsesPS(t *testing.T) {
 // trackingAgentRepository is a spy that records whether Get or GetByClientID was called.
 // Returns ErrNotFound for all lookups to stop execution after the agent lookup step.
 type trackingAgentRepository struct {
+	ports.AgentRepository
 	getCalled           bool
 	getByClientIDCalled bool
 }
@@ -1521,6 +1524,7 @@ func TestExchange_AgentLookup_InvalidUUIDReturnsInvalidRequest(t *testing.T) {
 
 // singleAgentRepo is a minimal ports.AgentRepository that returns one fixed agent.
 type singleAgentRepo struct {
+	ports.AgentRepository
 	agentID id.AgentID
 	agent   *storagedomain.Agent
 }

@@ -211,6 +211,27 @@ func (s *ThirdpartyOAuth2ProviderService) Get(
 	return dec, nil
 }
 
+// GetByIDs retrieves existing providers while preserving the Get secret-state contract.
+func (s *ThirdpartyOAuth2ProviderService) GetByIDs(ctx context.Context, ids []id.ServiceID) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
+	entities, err := s.repo.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i, entity := range entities {
+		if entity.IsPublicClient() {
+			continue
+		}
+		dec, decErr := s.decryptSecret(ctx, entity)
+		if decErr != nil {
+			s.logger.Warn("secret_decryption_failed_returning_encrypted",
+				"operation", "get_by_ids", "service_id", entity.ID, "reason", decErr)
+			continue
+		}
+		entities[i] = dec
+	}
+	return entities, nil
+}
+
 // Update validates, provisions a branch key, conditionally encrypts the secret, and stores the entity.
 // A confidential entity.Secret must be in plaintext state on entry and is encrypted on success.
 // A public entity.Secret is absent and remains unchanged.

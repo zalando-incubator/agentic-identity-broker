@@ -733,6 +733,7 @@ func (builderTestRequirementValidator) ValidateServiceRequirements(context.Conte
 }
 
 type builderTestAgentRepo struct {
+	ports.AgentRepository
 	byID                    map[id.AgentID]*domstorage.Agent
 	byClientID              map[id.ClientID]*domstorage.Agent
 	getErr                  error

@@ -160,6 +160,40 @@ func TestUserSessionRepository(t *testing.T) {
 		require.Len(t, sessions, 1)
 		assert.Equal(t, []string{"genie"}, sessions[0].Scope)
 	})
+	t.Run("summary and expiry reads preserve session visibility without tokens", func(t *testing.T) {
+		principal := id.Principal("user-summary@example.com")
+		activeServiceID, expiredServiceID := id.NewServiceID(), id.NewServiceID()
+		insertTestService(t, adapter, activeServiceID)
+		insertTestService(t, adapter, expiredServiceID)
+		past := time.Now().Add(-time.Minute)
+		for _, serviceID := range []id.ServiceID{activeServiceID, expiredServiceID} {
+			session := &storage.UserSession{
+				ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
+				EncryptedAccessToken: []byte("encrypted-token"), EncryptedRefreshToken: []byte("encrypted-refresh"),
+				TokenType: "Bearer", Scope: []string{"repo", "email"},
+				EncryptionContext: storage.EncryptionContext{ServiceID: serviceID},
+				InitiatedAt:       time.Now().UTC(), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+			}
+			if serviceID == expiredServiceID {
+				session.RefreshTokenExpiresAt = &past
+			}
+			require.NoError(t, repo.Create(ctx, session))
+		}
+		activeIDs, err := repo.ListActiveServiceIDsByPrincipal(ctx, principal)
+		require.NoError(t, err)
+		assert.Equal(t, []id.ServiceID{activeServiceID}, activeIDs)
+		summaries, err := repo.ListSummariesByPrincipal(ctx, principal)
+		require.NoError(t, err)
+		require.Len(t, summaries, 2)
+		byService := map[id.ServiceID]*storage.UserSessionSummary{}
+		for _, summary := range summaries {
+			byService[summary.ServiceID] = summary
+		}
+		assert.Equal(t, []string{"repo", "email"}, byService[activeServiceID].Scope)
+		assert.True(t, byService[activeServiceID].HasRefreshToken)
+		assert.False(t, byService[activeServiceID].IsExpired)
+		assert.True(t, byService[expiredServiceID].IsExpired)
+	})
 }
 
 func TestUserSessionRefreshLocksAcrossRepositories(t *testing.T) {

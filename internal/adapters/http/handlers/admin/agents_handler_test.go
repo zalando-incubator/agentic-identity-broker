@@ -28,6 +28,7 @@ import (
 
 // MockAgentRepository is a mock implementation of ports.AgentRepository
 type MockAgentRepository struct {
+	ports.AgentRepository
 	mock.Mock
 }
 

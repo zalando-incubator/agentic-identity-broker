@@ -238,6 +238,23 @@ func (m *mockAgentRepoForAgents) Get(ctx context.Context, agentID id.AgentID) (*
 	}, nil
 }
 
+func (m *mockAgentRepoForAgents) GetByIDs(ctx context.Context, ids []id.AgentID) ([]*storage.Agent, error) {
+	agents := make([]*storage.Agent, 0, len(ids))
+	seen := make(map[id.AgentID]bool)
+	for _, agentID := range ids {
+		if seen[agentID] {
+			continue
+		}
+		agent, err := m.Get(ctx, agentID)
+		if err != nil {
+			return nil, err
+		}
+		agents = append(agents, agent)
+		seen[agentID] = true
+	}
+	return agents, nil
+}
+
 func (m *mockAgentRepoForAgents) Update(ctx context.Context, agent *storage.Agent) error {
 	return nil
 }
@@ -267,7 +284,9 @@ func (m *mockAgentRepoForAgents) ExistsOtherWithClientID(_ context.Context, _ id
 	return false, nil
 }
 
-type mockServiceRepoForAgents struct{}
+type mockServiceRepoForAgents struct {
+	ports.ThirdpartyOAuth2ProviderRepository
+}
 
 func (m *mockServiceRepoForAgents) Create(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) error {
 	return nil

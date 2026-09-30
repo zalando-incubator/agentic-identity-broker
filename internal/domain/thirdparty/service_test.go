@@ -40,6 +40,14 @@ func (m *MockRepository) Get(ctx context.Context, serviceID id.ServiceID) (*mode
 	return args.Get(0).(*model.ThirdpartyOAuth2ProviderEntity), args.Error(1)
 }
 
+func (m *MockRepository) GetByIDs(ctx context.Context, ids []id.ServiceID) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
+	args := m.Called(ctx, ids)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*model.ThirdpartyOAuth2ProviderEntity), args.Error(1)
+}
+
 func (m *MockRepository) GetByCanonicalID(ctx context.Context, canonicalID string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	args := m.Called(ctx, canonicalID)
 	if args.Get(0) == nil {
@@ -624,6 +632,30 @@ func TestThirdpartyOAuth2ProviderService_Get_DecryptsSecret(t *testing.T) {
 	assert.Equal(t, "plaintext-secret", pt)
 	mockEnc.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
+}
+
+func TestThirdpartyOAuth2ProviderService_GetByIDs_DecryptsExistingProviders(t *testing.T) {
+	ctx := context.Background()
+	repo := new(MockRepository)
+	enc := new(MockEncryption)
+	svc := NewThirdpartyOAuth2ProviderService(repo, enc, newNoopBranchKeyManager(), nil, false, slog.Default())
+	confidentialID, publicID, missingID := id.NewServiceID(), id.NewServiceID(), id.NewServiceID()
+	ids := []id.ServiceID{confidentialID, publicID, missingID}
+	repo.On("GetByIDs", ctx, ids).Return([]*model.ThirdpartyOAuth2ProviderEntity{
+		{ID: confidentialID, Secret: model.NewEncryptedSecret([]byte("ciphertext"))},
+		{ID: publicID, Secret: model.NewAbsentSecret()},
+	}, nil)
+	enc.On("Decrypt", ctx, []byte("ciphertext"), map[string]string{"service_id": confidentialID.String()}).Return([]byte("secret"), nil)
+
+	providers, err := svc.GetByIDs(ctx, ids)
+	require.NoError(t, err)
+	require.Len(t, providers, 2)
+	plaintext, err := providers[0].Secret.GetPlaintext()
+	require.NoError(t, err)
+	assert.Equal(t, "secret", plaintext)
+	assert.True(t, providers[1].Secret.IsAbsent())
+	repo.AssertExpectations(t)
+	enc.AssertExpectations(t)
 }
 
 func TestThirdpartyOAuth2ProviderService_Get_PublicClientReturnsAbsentWithoutDecryptWarning(t *testing.T) {
