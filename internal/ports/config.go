@@ -59,7 +59,7 @@ type ServerConfig struct {
 type ServerInstanceConfig struct {
 	Port           int                  `mapstructure:"port" validate:"required,min=1,max=65535"`
 	Bind           string               `mapstructure:"bind" validate:"required"`
-	PublicURL      string               `mapstructure:"public_url" validate:"required_if=Port 8000,http_url"`
+	PublicURL      string               `mapstructure:"public_url" validate:"required,http_url"`
 	Authentication AuthenticationConfig `mapstructure:"authentication"`
 	CORS           CORSConfig           `mapstructure:"cors"`
 }

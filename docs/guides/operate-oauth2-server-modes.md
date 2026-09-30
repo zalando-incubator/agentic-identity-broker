@@ -173,6 +173,7 @@ valid until they expire.
 
 ```bash
 curl -X PUT https://broker.internal:14000/api/oauth2-server/signing-keys/{kid}/current \
+  -H "Content-Type: application/json" \
   -H "X-Remote-User: admin@example.com"
 ```
 
@@ -231,6 +232,7 @@ The first key is immediately usable. Later generated keys remain public during t
 
 ```bash
 curl -X PUT https://broker.internal:14000/api/cimd-client-keys/{kid}/current \
+  -H "Content-Type: application/json" \
   -H "X-Remote-User: admin@example.com"
 ```
 

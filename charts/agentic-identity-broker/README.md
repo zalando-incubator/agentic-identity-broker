@@ -31,6 +31,12 @@ helm install broker ./charts/agentic-identity-broker
 
 ⚠️ **Warning**: In-memory storage is ephemeral. Data is lost on pod restart. Use PostgreSQL for production.
 
+Set `broker.server.admin.publicUrl` (string, default `""`) to the external admin
+URL, for example `https://broker-admin.example.com`. An empty chart value uses
+the broker's default `http://localhost:14000`. Admin `/api` requests must match
+this URL's Host authority; ingress and other reverse proxies must preserve it.
+Forwarded Host headers are not trusted. `/health` probes remain unrestricted.
+
 ### Install with External PostgreSQL
 
 For production deployments with an existing PostgreSQL database:

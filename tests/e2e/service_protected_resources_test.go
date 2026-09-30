@@ -96,12 +96,11 @@ var _ = Describe("Protected Resource Subresources", func() {
 
 	mutate := func(method, path string, body interface{}) *http.Response {
 		var reader *bytes.Reader
-		headers := map[string]string{}
+		headers := map[string]string{"Content-Type": "application/json"}
 		if body != nil {
 			encoded, err := json.Marshal(body)
 			Expect(err).NotTo(HaveOccurred())
 			reader = bytes.NewReader(encoded)
-			headers["Content-Type"] = "application/json"
 		} else {
 			reader = bytes.NewReader(nil)
 		}
