@@ -292,6 +292,20 @@ The Identity Broker runs two independent HTTP servers on separate ports:
 - Both servers provide `/health`.
 - Graceful shutdown waits for active requests until the configured timeout.
 
+**CIMD confidential third-party services:** This outbound client mode adds no
+configuration parameter. The existing `server.enduser.public_url` must be a
+stable, public HTTPS URL. The broker derives each service's client ID from
+this URL.
+
+At startup, the broker compares each stored CIMD client ID with the configured
+public URL. If the URL changes, startup stops before the broker provisions CIMD
+keys or serves requests. The broker does not rewrite stored client IDs or use
+a fallback metadata URL.
+
+To restore service, restore the original public URL and keep it externally
+reachable. Re-registration or identity migration requires a separately
+approved migration flow.
+
 #### Storage Configuration
 
 Storage configuration controls the persistence backend and steady-state timeout budgets used by storage-backed workflows.
@@ -967,14 +981,6 @@ For compliance and troubleshooting, read the JSON audit log. It is the first sta
 ```
 
 ### OAuth2 Authorization Server Configuration
-#### CIMD Confidential Service Prerequisite
-
-CIMD confidential services add no configuration parameter.
-They require the existing `server.enduser.public_url` configuration value to be a stable, public HTTPS URL.
-The broker persists this exact origin in each broker-hosted CIMD client ID.
-
-At startup, the broker verifies every persisted CIMD client ID against `server.enduser.public_url` before it provisions CIMD keys or serves routes. A changed origin stops startup; the broker never rewrites the stored client ID or supplies a fallback metadata URL. Restore the prior public URL and keep it externally reachable for immediate recovery. Re-registration or identity migration requires a separately approved migration flow.
-
 #### oauth2_authorization_server.multi_agent_client
 
 **Description:** Controls whether multiple agents share one upstream OAuth2 `client_id`.

@@ -44,6 +44,22 @@ func (m *noopBranchKeyManager) Create(_ context.Context, _ domainencryption.Bran
 // Tests for InitiateOAuth2Flow
 // =============================================================================
 
+func TestCIMDInitiateOAuth2Flow_UsesAdvertisedCallbackWithTrailingPublicURLSlash(t *testing.T) {
+	service, _, _, _, _, providerService := setupServiceWithConfig(t, func(config *oauth2session.Config) {
+		*config = oauth2session.NewConfigFromPorts(ports.ThirdPartyOAuth2Config{}, "https://broker.example.com/")
+	})
+	providerService.WithCIMDPublicURL("https://broker.example.com/")
+	serviceID := id.NewServiceID()
+	provider := createCIMDTestProvider(serviceID, "https://issuer.example.com/token")
+	require.NoError(t, providerService.Create(context.Background(), provider))
+
+	flow, err := service.InitiateOAuth2Flow(context.Background(), "user@example.com", serviceID, "https://example.com/sessions")
+	require.NoError(t, err)
+	parsed, err := url.Parse(flow.AuthorizationURL)
+	require.NoError(t, err)
+	assert.Equal(t, "https://broker.example.com/api/third-party/"+serviceID.String()+"/oauth2/callback", parsed.Query().Get("redirect_uri"))
+}
+
 func TestInitiateOAuth2Flow_Success(t *testing.T) {
 	ctx := context.Background()
 	service, _, providerService := setupService(t)

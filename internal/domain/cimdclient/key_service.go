@@ -3,6 +3,7 @@ package cimdclient
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -125,26 +126,9 @@ func (s *KeyService) PublicJWKSet(ctx context.Context) (jwk.Set, error) {
 		if key.Algorithm != "ES256" {
 			continue
 		}
-		privatePEM, err := s.encryption.Decrypt(ctx, key.PrivateKeyEncrypted, cimdKeyEncryptionContext(key.KID))
+		jwkKey, err := s.publicJWKForKey(ctx, key)
 		if err != nil {
-			return nil, fmt.Errorf("%w: decrypt CIMD key", ports.ErrCIMDPublicKeyUnavailable)
-		}
-		publicKey, err := cimdPublicKeyFromPEM(privatePEM)
-		if err != nil {
-			return nil, fmt.Errorf("%w: parse CIMD key", ports.ErrCIMDPublicKeyUnavailable)
-		}
-		jwkKey, err := jwk.Import[jwk.Key](publicKey)
-		if err != nil {
-			return nil, fmt.Errorf("%w: import CIMD key", ports.ErrCIMDPublicKeyUnavailable)
-		}
-		if err := jwkKey.Set(jwk.KeyIDKey, key.KID.String()); err != nil {
-			return nil, fmt.Errorf("%w: set CIMD key id", ports.ErrCIMDPublicKeyUnavailable)
-		}
-		if err := jwkKey.Set(jwk.AlgorithmKey, jwa.ES256()); err != nil {
-			return nil, fmt.Errorf("%w: set CIMD key algorithm", ports.ErrCIMDPublicKeyUnavailable)
-		}
-		if err := jwkKey.Set(jwk.KeyUsageKey, "sig"); err != nil {
-			return nil, fmt.Errorf("%w: set CIMD key use", ports.ErrCIMDPublicKeyUnavailable)
+			return nil, err
 		}
 		if err := set.AddKey(jwkKey); err != nil {
 			return nil, fmt.Errorf("%w: add CIMD key", ports.ErrCIMDPublicKeyUnavailable)
@@ -154,6 +138,58 @@ func (s *KeyService) PublicJWKSet(ctx context.Context) (jwk.Set, error) {
 		return nil, ports.ErrCIMDPublicKeyUnavailable
 	}
 	return set, nil
+}
+
+func (s *KeyService) publicJWKForKey(ctx context.Context, key *storage.SigningKey) (jwk.Key, error) {
+	publicJSON := key.PublicJWK
+	if len(publicJSON) == 0 {
+		privatePEM, err := s.encryption.Decrypt(ctx, key.PrivateKeyEncrypted, cimdKeyEncryptionContext(key.KID))
+		if err != nil {
+			return nil, fmt.Errorf("%w: decrypt legacy CIMD key", ports.ErrCIMDPublicKeyUnavailable)
+		}
+		publicKey, err := cimdPublicJWKFromPEM(privatePEM, key.KID)
+		if err != nil {
+			return nil, fmt.Errorf("%w: parse legacy CIMD key", ports.ErrCIMDPublicKeyUnavailable)
+		}
+		publicJSON, err = json.Marshal(publicKey)
+		if err != nil {
+			return nil, fmt.Errorf("%w: serialize legacy CIMD key", ports.ErrCIMDPublicKeyUnavailable)
+		}
+		updated, err := s.repository.SetPublicJWK(ctx, key.KID, publicJSON)
+		if err != nil {
+			return nil, fmt.Errorf("%w: persist legacy CIMD public key", ports.ErrCIMDPublicKeyUnavailable)
+		}
+		if !updated {
+			stored, err := s.repository.GetByKIDInDomain(ctx, storage.KeyDomainCIMDClientAuthentication, key.KID)
+			if err != nil || stored == nil || len(stored.PublicJWK) == 0 {
+				return nil, fmt.Errorf("%w: retrieve legacy CIMD public key", ports.ErrCIMDPublicKeyUnavailable)
+			}
+			publicJSON = stored.PublicJWK
+		}
+	}
+	publicKey, err := jwk.ParseKey(publicJSON)
+	if err != nil {
+		return nil, fmt.Errorf("%w: parse stored CIMD public key", ports.ErrCIMDPublicKeyUnavailable)
+	}
+	kid, hasKID := publicKey.KeyID()
+	algorithm, hasAlgorithm := publicKey.Algorithm()
+	usage, hasUsage := publicKey.KeyUsage()
+	if !hasKID || kid != key.KID.String() || !hasAlgorithm || algorithm != jwa.ES256() || !hasUsage || usage != "sig" {
+		return nil, fmt.Errorf("%w: invalid CIMD public key metadata", ports.ErrCIMDPublicKeyUnavailable)
+	}
+	publicKey, err = jwk.PublicKeyOf(publicKey)
+	if err != nil {
+		return nil, fmt.Errorf("%w: derive CIMD public key", ports.ErrCIMDPublicKeyUnavailable)
+	}
+	ecdsaKey, ok := publicKey.(jwk.ECDSAPublicKey)
+	if !ok {
+		return nil, fmt.Errorf("%w: CIMD key is not ECDSA", ports.ErrCIMDPublicKeyUnavailable)
+	}
+	curve, ok := ecdsaKey.Crv()
+	if !ok || curve != jwa.P256() {
+		return nil, fmt.Errorf("%w: invalid CIMD key curve", ports.ErrCIMDPublicKeyUnavailable)
+	}
+	return publicKey, nil
 }
 
 func cimdKeyEncryptionContext(kid id.KeyID) map[string]string {
@@ -166,6 +202,13 @@ func cimdClientAuthenticationPolicy() keylifecycle.Policy {
 		NewKID: func() id.KeyID { return keylifecycle.UUIDKID(domainencryption.CIMDClientAuthenticationKeyIDPrefix) },
 		NewSubject: func(kid id.KeyID) (domainencryption.BranchKeySubject, error) {
 			return domainencryption.NewCIMDClientAuthenticationKeyBranchKeySubject(kid), nil
+		},
+		PublicJWK: func(privatePEM []byte, kid id.KeyID, _ string) ([]byte, error) {
+			publicKey, err := cimdPublicJWKFromPEM(privatePEM, kid)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(publicKey)
 		},
 	}
 }
@@ -180,6 +223,27 @@ func cimdPublicKeyFromPEM(privatePEM []byte) (*ecdsa.PublicKey, error) {
 		return nil, errors.New("CIMD private key is not ECDSA")
 	}
 	return ecdsaKey, nil
+}
+
+func cimdPublicJWKFromPEM(privatePEM []byte, kid id.KeyID) (jwk.Key, error) {
+	publicKey, err := cimdPublicKeyFromPEM(privatePEM)
+	if err != nil {
+		return nil, err
+	}
+	key, err := jwk.Import[jwk.Key](publicKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := key.Set(jwk.KeyIDKey, kid.String()); err != nil {
+		return nil, err
+	}
+	if err := key.Set(jwk.AlgorithmKey, jwa.ES256()); err != nil {
+		return nil, err
+	}
+	if err := key.Set(jwk.KeyUsageKey, "sig"); err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 
 func currentUsableKey(keys []*storage.SigningKey, now time.Time) *storage.SigningKey {

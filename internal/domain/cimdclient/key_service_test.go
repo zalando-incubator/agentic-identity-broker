@@ -56,6 +56,24 @@ func TestKeyService_GenerateKeyUsesCIMDClientAuthenticationDomainAndES256(t *tes
 	assert.Len(t, repository.createdKeys(), 1, "non-ES256 input must not persist a key")
 }
 
+func TestKeyService_GeneratedPublicJWKDoesNotDecryptOnAnonymousReads(t *testing.T) {
+	ctx := context.Background()
+	repository := newCIMDKeyServiceRepository()
+	encryption := &cimdKeyServiceEncryptor{}
+	service := newCIMDKeyServiceForTest(repository, encryption, &cimdKeyServiceBranchKeyManager{})
+
+	generated, err := service.GenerateKey(ctx, "ES256")
+	require.NoError(t, err)
+	require.NotEmpty(t, generated.PublicJWK)
+
+	for range 2 {
+		set, err := service.PublicJWKSet(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, []string{generated.KID.String()}, cimdJWKSetKIDs(t, set))
+	}
+	assert.Empty(t, encryption.decryptContexts, "anonymous public-key retrieval must not decrypt private key material")
+}
+
 func TestKeyService_PublicJWKSetUsesOnlyPublicCIMDES256Keys(t *testing.T) {
 	ctx := context.Background()
 	privatePEM := newCIMDTestES256PEM(t)
@@ -118,6 +136,10 @@ func TestKeyService_PublicJWKSetUsesOnlyPublicCIMDES256Keys(t *testing.T) {
 
 	require.Len(t, encryption.decryptContexts, 1)
 	assert.Equal(t, map[string]string{domainencryption.ContextKeyKID: cimdES256.KID.String()}, encryption.decryptContexts[0])
+
+	_, err = service.PublicJWKSet(ctx)
+	require.NoError(t, err)
+	assert.Len(t, encryption.decryptContexts, 1, "a legacy key must decrypt only until its public JWK is persisted")
 }
 
 func TestKeyService_RequirePublishedKeyAcceptsUsableCIMDPublicKey(t *testing.T) {
@@ -553,8 +575,19 @@ func (r *cimdKeyServiceRepository) KeySetVersion(context.Context) (int64, error)
 	return 0, nil
 }
 
-func (r *cimdKeyServiceRepository) SetPublicJWK(context.Context, id.KeyID, []byte) (bool, error) {
-	return false, nil
+func (r *cimdKeyServiceRepository) SetPublicJWK(_ context.Context, kid id.KeyID, publicJWK []byte) (bool, error) {
+	for _, keys := range r.activeByDomain {
+		for _, key := range keys {
+			if key.KID == kid && key.RemovedAt == nil {
+				if len(key.PublicJWK) != 0 {
+					return false, nil
+				}
+				key.PublicJWK = append([]byte(nil), publicJWK...)
+				return true, nil
+			}
+		}
+	}
+	return false, ports.ErrNotFound
 }
 
 func (r *cimdKeyServiceRepository) SetCurrentInDomain(_ context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error) {
@@ -603,6 +636,7 @@ func (r *cimdKeyServiceRepository) createdKeys() []*storage.SigningKey {
 func cloneCIMDSigningKey(key *storage.SigningKey) *storage.SigningKey {
 	clone := *key
 	clone.PrivateKeyEncrypted = append([]byte(nil), key.PrivateKeyEncrypted...)
+	clone.PublicJWK = append([]byte(nil), key.PublicJWK...)
 	return &clone
 }
 

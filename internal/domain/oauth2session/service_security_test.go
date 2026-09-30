@@ -289,6 +289,57 @@ func TestRefreshAccessTokenSecurity_CIMDClientAuditsSuccessAndRejection(t *testi
 	})
 }
 
+func TestRefreshAccessTokenSecurity_RejectsPersistedCIMDCredentialInTokenURL(t *testing.T) {
+	service, _ := newSecurityTestOAuth2SessionService(t, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
+	service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
+	var requests atomic.Int64
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"unexpected","token_type":"Bearer"}`))
+	}))
+	defer tokenServer.Close()
+
+	provider := createCIMDTestProvider(id.NewServiceID(), tokenServer.URL+"?client_secret=stale-secret")
+	provider.ClientID = id.ClientID(cimdClientIDForService(provider.ID))
+	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	require.ErrorContains(t, err, "client_secret")
+	assert.Nil(t, token)
+	assert.Zero(t, requests.Load(), "an invalid persisted CIMD configuration must not send a token request")
+}
+
+func TestHandleCallbackSecurity_RejectsPersistedCIMDCredentialBeforeCodeExchange(t *testing.T) {
+	service, repository, _, _, _, providerService := setupServiceWithConfig(t, nil)
+	providerService.WithCIMDPublicURL("https://broker.example.com")
+	service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
+	var requests atomic.Int64
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"unexpected","token_type":"Bearer"}`))
+	}))
+	defer tokenServer.Close()
+
+	serviceID := id.NewServiceID()
+	provider := createCIMDTestProvider(serviceID, tokenServer.URL)
+	require.NoError(t, providerService.Create(context.Background(), provider))
+	principal := id.Principal("user@example.com")
+	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
+	require.NoError(t, err)
+
+	stored, err := repository.Get(context.Background(), serviceID)
+	require.NoError(t, err)
+	stored.Endpoints.TokenEndpoint += "?client_secret=stale-secret"
+	require.NoError(t, repository.Update(context.Background(), stored, nil))
+
+	result, err := service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID, Code: "authorization-code", State: flow.StateToken,
+	})
+	require.ErrorContains(t, err, "client_secret")
+	assert.Nil(t, result)
+	assert.Zero(t, requests.Load(), "invalid persisted CIMD configuration must stop before code exchange")
+}
+
 // T052: A token endpoint can reflect secrets and tokens in its error response; those values must stay internal.
 func TestHandleCallbackSecurity_RedactsUpstreamCredentialMaterialFromErrorsAndLogs(t *testing.T) {
 	const (

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -209,6 +210,34 @@ func TestCIMDMetadataHandler_UnavailableServices(t *testing.T) {
 				} else {
 					assert.Equal(t, serviceID, provider.jwkSetServiceID)
 				}
+			})
+		}
+	}
+}
+
+func TestCIMDMetadataHandler_RejectsNoncanonicalServiceIDPaths(t *testing.T) {
+	serviceID := id.NewServiceID()
+	for _, pathID := range []string{strings.ToUpper(serviceID.String()), strings.ReplaceAll(serviceID.String(), "-", "")} {
+		for _, endpoint := range []struct {
+			name   string
+			handle func(*CIMDMetadataHandler, http.ResponseWriter, *http.Request)
+		}{
+			{name: "metadata", handle: (*CIMDMetadataHandler).Metadata},
+			{name: "jwks", handle: (*CIMDMetadataHandler).JWKS},
+		} {
+			t.Run(endpoint.name+"/"+pathID, func(t *testing.T) {
+				provider := &cimdMetadataProviderFake{metadata: &ports.CIMDClientMetadata{ClientID: "https://broker.example.com/.well-known/oauth-client/" + serviceID.String()}, jwkSet: newPublicCIMDJWKSet(t)}
+				handler := newCIMDMetadataHandlerForTest(provider)
+				req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-client/"+pathID, nil)
+				route := chi.NewRouteContext()
+				route.URLParams.Add("service-id", pathID)
+				req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, route))
+				response := httptest.NewRecorder()
+
+				endpoint.handle(handler, response, req)
+				require.Equal(t, http.StatusNotFound, response.Code)
+				assert.True(t, provider.metadataServiceID.IsZero())
+				assert.True(t, provider.jwkSetServiceID.IsZero())
 			})
 		}
 	}

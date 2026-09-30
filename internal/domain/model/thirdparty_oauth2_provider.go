@@ -40,7 +40,7 @@ var reservedAuthorizationParamNames = map[string]struct{}{
 	"nonce": {}, "request": {}, "request_uri": {}, "refresh_token": {},
 }
 
-func isPublicClientCredentialParameter(name string) bool {
+func isClientCredentialParameter(name string) bool {
 	switch strings.ToLower(name) {
 	case "client_assertion", "client_assertion_type", "client_secret":
 		return true
@@ -48,10 +48,14 @@ func isPublicClientCredentialParameter(name string) bool {
 	return false
 }
 
-func validatePublicClientOutboundConfiguration(params map[string]string, tokenEndpoint string) error {
+func validateSecretlessClientOutboundConfiguration(params map[string]string, tokenEndpoint string, method TokenEndpointAuthMethod) error {
+	clientType := "public clients"
+	if method.IsCIMDConfidential() {
+		clientType = "CIMD confidential clients"
+	}
 	for name := range params {
-		if isPublicClientCredentialParameter(name) {
-			return fmt.Errorf("authorization parameter is not allowed for public clients: %s", name)
+		if isClientCredentialParameter(name) {
+			return fmt.Errorf("authorization parameter is not allowed for %s: %s", clientType, name)
 		}
 	}
 
@@ -63,15 +67,15 @@ func validatePublicClientOutboundConfiguration(params map[string]string, tokenEn
 		return fmt.Errorf("token_endpoint is invalid: %w", err)
 	}
 	if endpoint.User != nil {
-		return errors.New("token_endpoint must not include userinfo for public clients")
+		return fmt.Errorf("token_endpoint must not include userinfo for %s", clientType)
 	}
 	query, err := url.ParseQuery(endpoint.RawQuery)
 	if err != nil {
 		return errors.New("token_endpoint query parameters are invalid")
 	}
 	for name := range query {
-		if isPublicClientCredentialParameter(name) {
-			return fmt.Errorf("token_endpoint must not include client authentication parameter for public clients: %s", name)
+		if isClientCredentialParameter(name) {
+			return fmt.Errorf("token_endpoint must not include client authentication parameter for %s: %s", clientType, name)
 		}
 	}
 	return nil
@@ -138,6 +142,14 @@ func (e *ThirdpartyOAuth2ProviderEntity) IsPublicClient() bool {
 // IsCIMDConfidentialClient reports whether the provider uses broker-managed private_key_jwt authentication.
 func (e *ThirdpartyOAuth2ProviderEntity) IsCIMDConfidentialClient() bool {
 	return e.TokenEndpointAuthMethod.IsCIMDConfidential()
+}
+
+// ValidateOutboundCredentials rejects alternate credentials for clients without a shared secret.
+func (e *ThirdpartyOAuth2ProviderEntity) ValidateOutboundCredentials() error {
+	if !e.IsPublicClient() && !e.IsCIMDConfidentialClient() {
+		return nil
+	}
+	return validateSecretlessClientOutboundConfiguration(e.AuthorizationParams, e.Endpoints.TokenEndpoint, e.TokenEndpointAuthMethod)
 }
 
 // CIMDClientID derives the fixed broker-hosted identifier for a CIMD client.
@@ -329,10 +341,8 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 	if err := validateAuthorizationParams(e.AuthorizationParams); err != nil {
 		return err
 	}
-	if isPublicClient {
-		if err := validatePublicClientOutboundConfiguration(e.AuthorizationParams, e.Endpoints.TokenEndpoint); err != nil {
-			return err
-		}
+	if err := e.ValidateOutboundCredentials(); err != nil {
+		return err
 	}
 
 	return nil
@@ -437,10 +447,8 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 	if err := validateAuthorizationParams(e.AuthorizationParams); err != nil {
 		return err
 	}
-	if isPublicClient {
-		if err := validatePublicClientOutboundConfiguration(e.AuthorizationParams, e.Endpoints.TokenEndpoint); err != nil {
-			return err
-		}
+	if err := e.ValidateOutboundCredentials(); err != nil {
+		return err
 	}
 
 	return nil

@@ -72,8 +72,9 @@ func (h *CIMDMetadataHandler) JWKS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *CIMDMetadataHandler) serviceID(r *http.Request) (id.ServiceID, bool) {
-	serviceID, err := id.ParseServiceID(chi.URLParam(r, "service-id"))
-	if err != nil {
+	rawID := chi.URLParam(r, "service-id")
+	serviceID, err := id.ParseServiceID(rawID)
+	if err != nil || rawID != serviceID.String() {
 		return id.ServiceID{}, false
 	}
 	return serviceID, true

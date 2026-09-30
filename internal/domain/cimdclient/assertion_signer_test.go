@@ -93,6 +93,18 @@ func TestAssertionSigner_FailsClosedForUnusableKeysAndSigningFailures(t *testing
 		assertAssertionSigningFailsClosed(t, NewAssertionSigner(keyService), clientID, tokenEndpoint, key.KID.String(), logOutput.String)
 	})
 
+	t.Run("rejects an assertion when the published key does not match the private key", func(t *testing.T) {
+		var logOutput bytes.Buffer
+		key := newAssertionSignerKey("mismatched-cimd-key", newCIMDTestES256PEM(t), time.Now().UTC().Add(-time.Minute))
+		otherPublic, err := cimdPublicJWKFromPEM(newCIMDTestES256PEM(t), key.KID)
+		require.NoError(t, err)
+		key.PublicJWK, err = json.Marshal(otherPublic)
+		require.NoError(t, err)
+		keyService := newAssertionSignerKeyService([]*storage.SigningKey{key}, &assertionSignerEncryptor{}, slog.New(slog.NewJSONHandler(&logOutput, nil)))
+
+		assertAssertionSigningFailsClosed(t, NewAssertionSigner(keyService), clientID, tokenEndpoint, key.KID.String(), logOutput.String)
+	})
+
 	t.Run("does not emit an assertion when JWX signing cannot obtain entropy", func(t *testing.T) {
 		const entropyFailure = "signing-entropy-secret"
 
@@ -246,8 +258,17 @@ func (r *assertionSignerRepository) KeySetVersion(context.Context) (int64, error
 	return 0, nil
 }
 
-func (r *assertionSignerRepository) SetPublicJWK(context.Context, id.KeyID, []byte) (bool, error) {
-	return false, nil
+func (r *assertionSignerRepository) SetPublicJWK(_ context.Context, kid id.KeyID, publicJWK []byte) (bool, error) {
+	for _, key := range r.keys {
+		if key.KID == kid && key.RemovedAt == nil {
+			if len(key.PublicJWK) != 0 {
+				return false, nil
+			}
+			key.PublicJWK = append([]byte(nil), publicJWK...)
+			return true, nil
+		}
+	}
+	return false, ports.ErrNotFound
 }
 
 func (r *assertionSignerRepository) SetCurrentInDomain(_ context.Context, _ storage.KeyDomain, _ id.KeyID, _ time.Time) (*storage.SigningKey, error) {
@@ -279,6 +300,7 @@ func (r *assertionSignerRepository) activeKeys(domain storage.KeyDomain) []*stor
 func cloneAssertionSignerKey(key *storage.SigningKey) *storage.SigningKey {
 	clone := *key
 	clone.PrivateKeyEncrypted = append([]byte(nil), key.PrivateKeyEncrypted...)
+	clone.PublicJWK = append([]byte(nil), key.PublicJWK...)
 	return &clone
 }
 

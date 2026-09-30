@@ -95,7 +95,7 @@ func DefaultConfig() Config {
 // Constitution Principle VII (Configuration-Driven Design) compliance.
 func NewConfigFromPorts(portsCfg ports.ThirdPartyOAuth2Config, callbackBaseURL string) Config {
 	cfg := Config{
-		CallbackBaseURL: callbackBaseURL,
+		CallbackBaseURL: strings.TrimRight(callbackBaseURL, "/"),
 		MaxRetries:      3,           // Not yet in ports config, use default
 		RetryBaseDelay:  time.Second, // Not yet in ports config, use default
 	}
@@ -310,6 +310,10 @@ func (s *OAuth2SessionService) buildOAuth2Config(
 	entity *model.ThirdpartyOAuth2ProviderEntity,
 	callbackURL string,
 ) (*oauth2.Config, error) {
+	if err := entity.ValidateOutboundCredentials(); err != nil {
+		return nil, fmt.Errorf("invalid outbound client authentication: %w", err)
+	}
+
 	// Extract scopes from entity
 	scopes := make([]string, 0, len(entity.Scopes))
 	for _, scope := range entity.Scopes {
@@ -778,6 +782,12 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	}
 
 	isCIMDClient := entity.IsCIMDConfidentialClient()
+	if err := entity.ValidateOutboundCredentials(); err != nil {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
+		return nil, fmt.Errorf("invalid outbound client authentication: %w", err)
+	}
 	if refreshToken == "" {
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")

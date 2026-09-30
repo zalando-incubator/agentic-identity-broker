@@ -158,6 +158,19 @@ func TestCIMDClientKeysHandler_Create(t *testing.T) {
 		keys.AssertExpectations(t)
 	})
 
+	t.Run("accepts explicit ES256", func(t *testing.T) {
+		keys := &MockCIMDClientKeyLifecycle{}
+		createdAt := time.Now().UTC()
+		key := cimdClientKeyForTest("explicit-es256", true, createdAt, createdAt)
+		keys.On("GenerateKey", mock.Anything, "ES256").Return(key, nil).Once()
+		handler := newTestCIMDClientKeysHandler(keys, slog.Default())
+		w := httptest.NewRecorder()
+		handler.Create(w, withCIMDKeyPrincipal(newCIMDClientKeyRequest(http.MethodPost, "/api/cimd-client-keys", "", `{"algorithm":"ES256"}`), "operator@example.com"))
+
+		require.Equal(t, http.StatusCreated, w.Code)
+		keys.AssertExpectations(t)
+	})
+
 	t.Run("rejects non-ES256 generation before invoking the lifecycle port", func(t *testing.T) {
 		keys := &MockCIMDClientKeyLifecycle{}
 		var audit bytes.Buffer
@@ -181,6 +194,19 @@ func TestCIMDClientKeysHandler_Create(t *testing.T) {
 		assertCIMDKeyDisclosureFree(t, audit.String())
 		keys.AssertNotCalled(t, "GenerateKey", mock.Anything, mock.Anything)
 	})
+
+	for _, body := range []string{`{"algorithm":""}`, `{"algorithm":null}`} {
+		t.Run("rejects explicitly invalid algorithm "+body, func(t *testing.T) {
+			keys := &MockCIMDClientKeyLifecycle{}
+			keys.On("GenerateKey", mock.Anything, "ES256").Return(cimdClientKeyForTest("unexpected-key", true, time.Now(), time.Now()), nil).Maybe()
+			handler := newTestCIMDClientKeysHandler(keys, slog.Default())
+			w := httptest.NewRecorder()
+			handler.Create(w, withCIMDKeyPrincipal(newCIMDClientKeyRequest(http.MethodPost, "/api/cimd-client-keys", "", body), "operator@example.com"))
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			keys.AssertNotCalled(t, "GenerateKey", mock.Anything, mock.Anything)
+		})
+	}
 
 	t.Run("requires an authenticated operator", func(t *testing.T) {
 		keys := &MockCIMDClientKeyLifecycle{}

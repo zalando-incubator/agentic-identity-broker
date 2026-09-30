@@ -30,7 +30,7 @@ func NewCIMDClientKeysHandler(keys ports.CIMDClientKeyLifecycle, logger *slog.Lo
 }
 
 type cimdKeyRequest struct {
-	Algorithm string `json:"algorithm"`
+	Algorithm json.RawMessage `json:"algorithm"`
 }
 
 type cimdKeyResponseBody struct {
@@ -60,16 +60,16 @@ func (h *CIMDClientKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.audit(operator, "", "generate", "rejected")
 		return
 	}
-	if request.Algorithm == "" {
-		request.Algorithm = "ES256"
-	}
-	if request.Algorithm != "ES256" {
-		h.writeError(w, http.StatusBadRequest, "unsupported algorithm", "algorithm must be ES256")
-		h.audit(operator, "", "generate", "rejected")
-		return
+	if len(request.Algorithm) > 0 {
+		var supplied string
+		if err := json.Unmarshal(request.Algorithm, &supplied); err != nil || supplied != "ES256" {
+			h.writeError(w, http.StatusBadRequest, "unsupported algorithm", "algorithm must be ES256")
+			h.audit(operator, "", "generate", "rejected")
+			return
+		}
 	}
 
-	key, err := h.keys.GenerateKey(r.Context(), request.Algorithm)
+	key, err := h.keys.GenerateKey(r.Context(), "ES256")
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 		h.audit(operator, "", "generate", "rejected")

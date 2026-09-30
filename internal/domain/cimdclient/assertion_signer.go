@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/lestrrat-go/jwx/v4/jws"
 	"github.com/lestrrat-go/jwx/v4/jwt"
 
@@ -115,6 +116,14 @@ func (s *KeyService) signCIMDClientAssertion(ctx context.Context, expectedKeyID 
 	}
 	privateKey, err := cimdES256PrivateKeyFromPEM(privatePEM)
 	if err != nil {
+		return "", ports.ErrCIMDKeyUnavailable
+	}
+	published, err := s.publicJWKForKey(ctx, key)
+	if err != nil {
+		return "", ports.ErrCIMDKeyUnavailable
+	}
+	publicKey, err := jwk.Export[*ecdsa.PublicKey](published)
+	if err != nil || !privateKey.PublicKey.Equal(publicKey) {
 		return "", ports.ErrCIMDKeyUnavailable
 	}
 

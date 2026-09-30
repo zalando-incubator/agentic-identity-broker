@@ -91,7 +91,7 @@ mode does not require an external authorization server.
 In `hybrid` mode, the broker uses both strategies. Agent registration selects the strategy:
 
 - An agent with an upstream client ID uses the proxy path.
-- A local agent or a [CIMD](#client-identity-and-cimd) agent receives a locally issued token.
+- A local agent or a [CIMD](#inbound-cimd-client-resolution) agent receives a locally issued token.
 
 Hybrid mode can serve a mixed agent fleet during a migration or permanently. Both upstream
 configuration and local issuance are active. The metadata and JWKS expose the keys for both

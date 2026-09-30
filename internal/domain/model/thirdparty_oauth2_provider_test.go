@@ -534,6 +534,53 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateForCreateAndUpdate_RejectsPublic
 		})
 	}
 }
+
+func TestThirdpartyOAuth2ProviderEntity_ValidateForCreateAndUpdate_RejectsCIMDOutboundCredentials(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                string
+		authorizationParams map[string]string
+		tokenEndpoint       string
+		wantErr             string
+	}{
+		{name: "client secret authorization parameter", authorizationParams: map[string]string{"client_secret": "secret"}, wantErr: "client_secret"},
+		{name: "client assertion authorization parameter", authorizationParams: map[string]string{"Client_Assertion": "assertion"}, wantErr: "Client_Assertion"},
+		{name: "client assertion type authorization parameter", authorizationParams: map[string]string{"CLIENT_ASSERTION_TYPE": "type"}, wantErr: "CLIENT_ASSERTION_TYPE"},
+		{name: "token endpoint client secret", tokenEndpoint: "https://issuer.example.com/token?client_secret=secret", wantErr: "client_secret"},
+		{name: "token endpoint client assertion", tokenEndpoint: "https://issuer.example.com/token?client_assertion=assertion", wantErr: "client_assertion"},
+		{name: "token endpoint client assertion type", tokenEndpoint: "https://issuer.example.com/token?CLIENT_ASSERTION_TYPE=type", wantErr: "CLIENT_ASSERTION_TYPE"},
+		{name: "token endpoint userinfo", tokenEndpoint: "https://username:password@issuer.example.com/token", wantErr: "userinfo"},
+	}
+
+	for _, operation := range []struct {
+		name     string
+		validate func(*ThirdpartyOAuth2ProviderEntity) error
+	}{
+		{name: "create", validate: func(entity *ThirdpartyOAuth2ProviderEntity) error { return entity.ValidateForCreate(false) }},
+		{name: "update", validate: func(entity *ThirdpartyOAuth2ProviderEntity) error { return entity.ValidateForUpdate(false) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			t.Parallel()
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					endpoint := tt.tokenEndpoint
+					if endpoint == "" {
+						endpoint = "https://issuer.example.com/token"
+					}
+					entity := &ThirdpartyOAuth2ProviderEntity{
+						ID: id.NewServiceID(), DisplayName: "CIMD Provider", Secret: NewAbsentSecret(),
+						TokenEndpointAuthMethod: TokenEndpointAuthMethodPrivateKeyJWT,
+						IssuerURI:               "https://issuer.example.com",
+						Endpoints:               OAuth2Endpoints{TokenEndpoint: endpoint, AuthorizeEndpoint: "https://issuer.example.com/authorize"},
+						AuthorizationParams:     tt.authorizationParams,
+					}
+					require.ErrorContains(t, operation.validate(entity), tt.wantErr)
+				})
+			}
+		})
+	}
+}
 func TestThirdpartyOAuth2ProviderEntity_ValidateForCreate_AllowsEmptyScopes(t *testing.T) {
 	t.Parallel()
 
