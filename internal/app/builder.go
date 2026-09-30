@@ -1162,6 +1162,14 @@ func (b *Builder) Build() (*App, error) {
 		}
 	}
 
+	// Keep the transport open until background workers have stopped.
+	prevShutdown := app.Shutdown
+	app.Shutdown = func(ctx context.Context) error {
+		err := prevShutdown(ctx)
+		transport.CloseIdleConnections()
+		return err
+	}
+
 	return app, nil
 }
 
