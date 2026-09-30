@@ -7,8 +7,8 @@
 #     the image) and for the release assets (attached as a Sigstore bundle,
 #     which Scorecard's Signed-Releases check recognises), and
 #   - includes an SBOM and max-detail provenance in each image's attestations.
-# Verify with:  gh attestation verify oci://ghcr.io/<org>/<image>:vX.Y.Z --owner <org>
-#               gh attestation verify <asset> --owner <org>
+# Verify with the commands in docs/deployment/verify-releases.md. They pin the
+# repository, this workflow and the tag, which `--owner <org>` alone does not.
 
 name: Release
 
@@ -280,8 +280,9 @@ jobs:
           - ExtProc: \`ghcr.io/${REPO}-extproc:${TAG}\`
           - Helm chart: \`oci://ghcr.io/${OWNER}/agentic-identity-broker\`
 
-          All images and the attached assets carry SLSA build provenance:
-          \`gh attestation verify oci://ghcr.io/${REPO}:${TAG} --owner ${OWNER}\`
+          All images and attached assets carry SLSA build provenance. Follow the
+          [release verification guide](https://github.com/${REPO}/blob/${TAG}/docs/deployment/verify-releases.md)
+          to verify images and release assets.
           EOF
 
           if release_is_draft="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null)"; then

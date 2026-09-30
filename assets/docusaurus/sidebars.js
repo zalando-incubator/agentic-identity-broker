@@ -47,6 +47,7 @@ const sidebars = {
         'guides/configure-encryption',
         'guides/deploy-on-kubernetes',
         'deployment/kubernetes-irsa',
+        'deployment/verify-releases',
         'operations/deployment-checklist',
       ],
     },
