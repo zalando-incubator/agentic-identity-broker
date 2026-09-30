@@ -511,6 +511,21 @@
               "type": "string",
               "description": "PostgreSQL client image used to run the grants script"
             },
+            "businessEvents": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Operational roles in the accepted ledger deployment contract",
+              "properties": {
+                "readerRole": {
+                  "type": "string",
+                  "description": "Existing operational role for SELECT on ledger parent tables. Empty grants nothing."
+                },
+                "erasureRole": {
+                  "type": "string",
+                  "description": "Existing operational role for EXECUTE on public.business_event_erase_subject(text). Empty grants nothing."
+                }
+              }
+            },
             "sql": {
               "type": "string",
               "description": "Custom grants SQL script (optional)"
@@ -1178,6 +1193,21 @@
             "skipThirdpartyHttpsValidation": {
               "type": "boolean",
               "description": "Skip HTTPS validation for third-party services (dev/test only)"
+            }
+          }
+        },
+        "businessEvents": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Business event ledger configuration",
+          "properties": {
+            "retention": {
+              "type": "string",
+              "description": "Recorded-time retention as a positive Go duration, rounded upward to microseconds"
+            },
+            "telemetryCopyEnabled": {
+              "type": "boolean",
+              "description": "Enable additional ledger telemetry copies. Also requires telemetry.enabled and telemetry.logs.enabled."
             }
           }
         },

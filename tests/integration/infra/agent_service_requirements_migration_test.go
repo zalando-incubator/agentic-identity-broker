@@ -112,7 +112,7 @@ func setupAgentServiceRequirementsDatabase(t *testing.T, templateKey string, upT
 	t.Helper()
 
 	postgres := bootstrap.RequireSharedPostgres(t)
-	dbName, _, cleanup := postgres.SetupDatabaseFromTemplate(t, templateKey, func(t *testing.T, dbName string) {
+	dbName, _, cleanup := postgres.SetupDatabaseFromTemplate(t, templateKey, func(dbName string) {
 		postgres.ApplyMigrationsUpTo(t, dbName, agentServiceRequirementsMigrations, upTo)
 	})
 

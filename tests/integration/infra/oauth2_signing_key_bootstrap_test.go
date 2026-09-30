@@ -229,7 +229,7 @@ func setupMigratedPostgresDatabase(t *testing.T) (string, func()) {
 	t.Helper()
 
 	postgres := testbootstrap.RequireSharedPostgres(t)
-	_, connStr, cleanupDatabase := postgres.SetupDatabaseFromTemplate(t, "oauth2_signing_key_bootstrap_full_migrations", func(t *testing.T, dbName string) {
+	_, connStr, cleanupDatabase := postgres.SetupDatabaseFromTemplate(t, "oauth2_signing_key_bootstrap_full_migrations", func(dbName string) {
 		projectRoot, err := testbootstrap.FindProjectRoot()
 		require.NoError(t, err)
 		migrationsDir, err := filepath.Abs(filepath.Join(projectRoot, "migrations"))

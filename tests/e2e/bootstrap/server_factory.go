@@ -14,7 +14,6 @@ import (
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -105,10 +104,9 @@ func (f *ServerFactory) BuildApp(storage interface{}) (*app.App, error) {
 	// Create production app.Builder (no custom DI)
 	builder := app.NewBuilder()
 
-	// Storage must be *storageadapter.Adapter from production
-	storageAdapter, ok := storage.(*storageadapter.Adapter)
+	storageAdapter, ok := storage.(ports.StorageProvider)
 	if !ok {
-		return nil, fmt.Errorf("storage must be *storageadapter.Adapter")
+		return nil, fmt.Errorf("storage must implement ports.StorageProvider")
 	}
 
 	// Configure with production pattern (using builder methods)
@@ -136,9 +134,9 @@ func (f *ServerFactory) BuildAppWithTracerProvider(storage interface{}, tp *sdkt
 		return nil, fmt.Errorf("factory logger is required")
 	}
 
-	storageAdapter, ok := storage.(*storageadapter.Adapter)
+	storageAdapter, ok := storage.(ports.StorageProvider)
 	if !ok {
-		return nil, fmt.Errorf("storage must be *storageadapter.Adapter")
+		return nil, fmt.Errorf("storage must implement ports.StorageProvider")
 	}
 
 	return app.NewBuilder().
@@ -164,9 +162,9 @@ func (f *ServerFactory) BuildAppWithCIMDFetcher(storage interface{}, cimdFetcher
 		return nil, fmt.Errorf("factory logger is required")
 	}
 
-	storageAdapter, ok := storage.(*storageadapter.Adapter)
+	storageAdapter, ok := storage.(ports.StorageProvider)
 	if !ok {
-		return nil, fmt.Errorf("storage must be *storageadapter.Adapter")
+		return nil, fmt.Errorf("storage must implement ports.StorageProvider")
 	}
 
 	return app.NewBuilder().

@@ -13,6 +13,7 @@ var uuidTypes = []struct {
 }{
 	{"AgentID", "agent"},
 	{"ApprovalID", "approval"},
+	{"BusinessEventID", "business event"},
 	{"ServiceID", "service"},
 	{"GrantID", "grant"},
 	{"SessionID", "session"},

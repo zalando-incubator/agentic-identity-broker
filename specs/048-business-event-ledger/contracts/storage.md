@@ -2,6 +2,22 @@
 
 These are planned internal/operational interfaces, not new HTTP endpoints. The domain service validates registry, authorization context, and lifecycle semantics; handlers never append directly to repositories.
 
+## Stakeholder review
+
+**Approved**: 2026-09-27, in the implementation conversation.
+**Reference**: The user selected `Approve both contracts` for this document and `events.md`.
+The approval covers atomic recording, exact-subject access, partition retention, erasure, and deletion-safe recovery.
+Operational access remains internal or database-based. No HTTP or CLI read/erase API is added.
+Existing HTTP responses remain unchanged, and additional public contract changes require separate confirmation.
+
+[ADR 037](../../../adrs/037-business-event-ledger.md) records maintainer Jan Brennenstuhl's design acceptance on 2026-09-26.
+It is binding, but its acceptance alone does not approve public API changes.
+
+**Database design review**: T013, 2026-09-27, confirms the paired-partition, expiry-marker, lock-order, and privilege design against ADRs 004, 009, and 037.
+Migration 035 is reserved by this feature's reviewed plan.
+Provisioning remains drop-free. Production rollback requires separate operator acknowledgement of ledger-history loss and the matching old binary.
+No migration was applied as part of this design review.
+
 ## Ports and transaction ownership
 
 All repository interfaces live in `internal/ports/storage.go`; shared event/query/reference value types live in `internal/domain/model/`. Use the existing storage factory accessors and builder injection.

@@ -44,7 +44,7 @@ func NewMigrationTestFramework(t *testing.T) *MigrationTestFramework {
 	}
 
 	postgres := bootstrap.RequireSharedPostgres(t)
-	dbName, connStr, cleanup := postgres.SetupDatabaseFromTemplate(t, "migration_framework_blank", func(t *testing.T, dbName string) {})
+	dbName, connStr, cleanup := postgres.SetupDatabaseFromTemplate(t, "migration_framework_blank", func(dbName string) {})
 
 	db, err := sql.Open("pgx", connStr)
 	require.NoError(t, err)

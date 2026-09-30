@@ -1,5 +1,16 @@
 # Event and Telemetry Contracts
 
+## Stakeholder review
+
+**Approved**: 2026-09-27, in the implementation conversation.
+**Reference**: The user selected `Approve both contracts` for this document and `storage.md`.
+The approval covers the closed 28-type catalogue and its event/telemetry contract.
+It preserves existing HTTP responses and adds no HTTP or CLI read/erase API.
+Additional public contract changes require separate confirmation.
+
+[ADR 037](../../../adrs/037-business-event-ledger.md) records maintainer Jan Brennenstuhl's design acceptance on 2026-09-26.
+That design decision does not substitute for the separate stakeholder approval recorded here.
+
 ## Publication and registration
 
 The files in `schemas/` are the Phase 1 contract artifacts. Before producer implementation, publish these exact reviewed contracts under `api/events/v1/`, with the common embedding entry point in `api/events/`. Embed at build time; never fetch schemas over the network. Each `$id` is the URN `urn:agentic-identity-broker:events:v1:<name>`, where `<name>` is `envelope`, `catalogue`, or an event name, and every `$ref` is such an absolute URN. The registry's loader serves these URNs only from its offline sources. Relative references are not used, because a URN base cannot resolve them.

@@ -12,6 +12,7 @@ This guide explains how to configure the Agentic Identity Broker for different d
 - [Overview](#overview)
 - [Configuration Sources](#configuration-sources)
 - [Precedence Rules](#precedence-rules)
+- [Business Event Ledger](#business-event-ledger)
 - [Environment-Specific Configuration](#environment-specific-configuration)
 - [YAML Configuration](#yaml-configuration)
 - [Command-Line Flags](#command-line-flags)
@@ -35,7 +36,7 @@ The Identity Broker supports multiple configuration sources with clear precedenc
 
 ## Configuration Sources
 
-The Identity Broker loads configuration from four sources (in order of precedence):
+The Identity Broker loads configuration from the following sources. [Precedence Rules](#precedence-rules) defines which source wins.
 
 ### 1. Built-in Defaults
 
@@ -100,8 +101,7 @@ agentic-identity-broker --log-level debug --log-format json
 When the same configuration key is provided by multiple sources, the value from the highest-precedence source wins:
 
 ```
-CLI Flags > YAML > .env Files > Defaults
-   (3)       (2)      (1)        (0)
+Explicit CLI flags > Environment variables (including .env files) > YAML file > Defaults
 ```
 
 **Example**:
@@ -112,6 +112,95 @@ CLI Flags > YAML > .env Files > Defaults
 - CLI flag `--log-level=debug` is provided
 
 **Result**: `log.level=debug` (from CLI flag)
+
+## Business Event Ledger
+
+**Status:** This section describes the accepted design. The ledger runtime is not implemented yet.
+The [configuration contract](../specs/048-business-event-ledger/contracts/configuration.md) defines this broker-only configuration.
+It adds no ExtProc configuration.
+
+### Defaults and overrides
+
+| YAML key | Type | Default | Environment variable | CLI flag | Helm value |
+|---|---|---|---|---|---|
+| `business_events.retention` | duration | `2160h` (90 days) | `IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION` | `--business_events.retention` | `broker.businessEvents.retention` |
+| `business_events.telemetry_copy_enabled` | bool | `true` | `IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED` | `--business_events.telemetry_copy_enabled` | `broker.businessEvents.telemetryCopyEnabled` |
+
+The default ledger configuration is:
+
+```yaml
+business_events:
+  retention: 2160h
+  telemetry_copy_enabled: true
+```
+
+A 30-day alternative disables the additional telemetry copies:
+
+```yaml
+business_events:
+  retention: 720h
+  telemetry_copy_enabled: false
+```
+
+An explicitly supplied CLI flag overrides the environment, which overrides the YAML file, which overrides the default.
+An explicit `false` remains `false`, including in Helm values.
+The [example index](../examples/config/README.md#business-event-ledgeryaml) provides startup commands for both configurations.
+
+### Retention and mandatory recording
+
+`business_events.retention` must be a strictly positive Go duration.
+The default is `2160h`, not `90d`: Go duration syntax does not accept a day suffix.
+Malformed, zero, negative, and overflowed values fail validation before storage or workers start.
+There is no one-day or one-month minimum.
+
+Both PostgreSQL and in-memory storage normalize retention upward to whole microseconds.
+For example, `1ns` becomes `1us`, and `1001ns` becomes `2us`.
+A positive duration never becomes zero through truncation.
+
+Ledger recording is mandatory. There is no persistence-disable switch.
+Neither telemetry disablement nor a shorter retention duration disables recording.
+
+### Telemetry precedence
+
+The additional ledger copies require all three values to be `true`:
+
+- `telemetry.enabled`
+- `telemetry.logs.enabled`
+- `business_events.telemetry_copy_enabled`
+
+Global telemetry defaults to `false`, so the new switch alone does not enable export.
+The existing telemetry defaults and destination configuration do not change.
+An explicit `business_events.telemetry_copy_enabled: false` suppresses only the additional ledger records, not existing slog records.
+Disabled global telemetry or log export suppresses the copies but does not disable ledger recording or retention.
+Temporary log exporter initialization or delivery errors leave eligible copies pending. These errors do not change the configuration to disabled.
+
+### Coordinated retention rollout
+
+The broker reads this configuration at startup. All replicas that share a ledger must use the same retention value.
+The last successful validated startup policy write is authoritative. Each policy write serializes with maintenance.
+Per-process values do not create independent retention policies.
+
+PostgreSQL requires partition maintenance every five minutes, independent of telemetry.
+The maintenance function reads the stored database policy, not a separate retention value from the scheduler.
+The migration seeds a 90-day policy for the first installation.
+Pre-install and pre-upgrade provisioning create partitions but never delete them.
+In-memory storage uses an in-process retention worker instead of a CronJob.
+
+For a retention change, use this procedure:
+
+1. Suspend the maintenance CronJob or equivalent PostgreSQL scheduler before the upgrade.
+2. Upgrade and restart all broker replicas with the same new retention value.
+3. Verify that every replica completed startup and applied the new policy.
+4. Verify the stored `business_event_policy` value with migration credentials.
+5. Resume the maintenance scheduler.
+
+An old, shorter policy can delete history that a new, longer policy must retain.
+The suspension prevents an old-policy sweep during the coordinated rollout.
+Pre-upgrade provisioning never performs that sweep.
+
+For PostgreSQL deployments outside Helm, install an equivalent five-minute scheduler with operations credentials.
+Keep migration credentials out of broker replicas. Missing current partitions cause readiness to fail until maintenance restores them.
+
 
 ## ExtProc approval configuration
 
@@ -498,7 +587,7 @@ request_context:
 
 - All configuration options have built-in defaults and are optional unless marked "Required"
 - Environment variables follow the pattern: `IDENTITY_BROKER_{SECTION}_{KEY}` (uppercased)
-- CLI flags follow the pattern: `--{section}-{key}` (lowercase with hyphens)
+- CLI flag names follow the configuration reference. Ledger flags use dotted YAML keys, not hyphen-separated names.
 - See [Precedence Rules](#precedence-rules) for how values from different sources are resolved
 - For YAML configuration syntax, see [YAML Configuration](#yaml-configuration)
 

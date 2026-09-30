@@ -46,6 +46,12 @@ type Config struct {
 	Telemetry        TelemetryConfig        `mapstructure:"telemetry"`
 	RequestContext   RequestContextConfig   `mapstructure:"request_context"`
 	Approvals        ApprovalsConfig        `mapstructure:"approvals"`
+	BusinessEvents   BusinessEventsConfig   `mapstructure:"business_events"`
+}
+
+type BusinessEventsConfig struct {
+	Retention            time.Duration `mapstructure:"retention"`
+	TelemetryCopyEnabled bool          `mapstructure:"telemetry_copy_enabled"`
 }
 
 // ServerConfig contains configuration for both HTTP servers.

@@ -146,6 +146,7 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
+| 037 | `adrs/037-business-event-ledger.md` | Accepted ledger design: atomic facts, recoverable telemetry, and deletion barriers |
 
 ## Domain Glossary
 
@@ -164,6 +165,16 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | **ResourceURI** | Normalized protected-resource URI for RFC 8693 token exchange. |
 | **CEL Expression** | Policy for privileged-client authorization and JWT claim extraction. |
 | **ToolApproval** | Human-in-the-loop authorization for an agent tool call with pending, approved, or denied status. |
+| **Business Event** | Immutable, credential-free broker fact until retention or subject erasure. |
+| **Event Type** | Fixed `agentic-identity-broker.<event-name>` meaning and registered closed schema. |
+| **Event Envelope** | Event identity, times, subject, actor, references, reasons, context, and closed data. |
+| **Actor Context** | Initiating caller and optional represented principal, distinct from the event subject. |
+| **Delivery Reference** | Payload-free pending telemetry pointer committed with its Business Event. |
+| **Ledger Telemetry Copy** | Recoverable OpenTelemetry log for a retained event, separate from existing slog. |
+| **Retention Policy** | Positive recorded-time lifetime, default 90 days, with bounded removal grace. |
+
+**Ledger status**: These terms describe accepted design, not implemented ledger behavior.
+Read the ledger section in `ARCHITECTURE.md` and `specs/048-business-event-ledger/data-model.md` before implementation.
 
 ## Development Workflow
 
