@@ -90,3 +90,4 @@ infra/cdk/cdk.out
 mocks/opa/bundles/
 
 plans/*
+/.specify/feature.json
