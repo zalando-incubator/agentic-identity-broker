@@ -451,6 +451,14 @@ just build-all           # Build Go backend + React frontend
 just docker-build-prod   # Create production Docker image
 ```
 
+The `just` broker and ExtProc build recipes use `-trimpath` and strip debug
+symbols by default. To keep DWARF, run `LDFLAGS="" just build` (or set the
+same variable for an architecture-specific or ExtProc recipe). The CIMD,
+mock-service, and ExtProc development Docker builds support
+`--build-arg LDFLAGS=""`. The release workflow passes the tagged commit's
+`SOURCE_DATE_EPOCH` to Buildx and checks each image's amd64 and arm64 OCI config
+creation timestamp against that commit.
+
 ### Run Production Image
 
 ```bash

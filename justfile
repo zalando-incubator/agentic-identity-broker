@@ -8,6 +8,7 @@ NUM_CPUS := num_cpus()
 VERSION := env_var_or_default("VERSION", `git describe --tags --always 2>/dev/null || echo "latest"`)
 REVISION := env_var_or_default("REVISION", `git rev-parse HEAD 2>/dev/null || echo "unknown"`)
 CREATED := env_var_or_default("CREATED", `git show -s --format=%cI HEAD 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ"`)
+LDFLAGS := env_var_or_default("LDFLAGS", "-s -w")
 # Base image for release Docker builds. Defaults to the public pinned digest
 # each Dockerfile declares; internal release pipelines override this to an
 # internally-mirrored/allowed base image (see delivery.yaml).
@@ -35,35 +36,35 @@ default:
 build:
     @echo "Building {{NAME}}..."
     @mkdir -p bin
-    go build -ldflags="-s -w" -o bin/{{NAME}} ./cmd/{{NAME}}
+    go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/{{NAME}} ./cmd/{{NAME}}
     @echo "✓ Built: bin/{{NAME}}"
 
 # Build Linux binary for arm64
 build-linux-arm64:
     @echo "Building Linux binary for arm64..."
     @mkdir -p bin/linux/arm64
-    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/linux/arm64/{{NAME}} ./cmd/{{NAME}}
+    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/linux/arm64/{{NAME}} ./cmd/{{NAME}}
     @echo "✓ Built: bin/linux/arm64/{{NAME}}"
 
 # Build Linux binary for amd64
 build-linux-amd64:
     @echo "Building Linux binary for amd64..."
     @mkdir -p bin/linux/amd64
-    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/linux/amd64/{{NAME}} ./cmd/{{NAME}}
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/linux/amd64/{{NAME}} ./cmd/{{NAME}}
     @echo "✓ Built: bin/linux/amd64/{{NAME}}"
 
 # Build macOS binary for arm64 (Apple Silicon)
 build-darwin-arm64:
     @echo "Building macOS binary for arm64..."
     @mkdir -p bin/darwin/arm64
-    GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/darwin/arm64/{{NAME}} ./cmd/{{NAME}}
+    GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/darwin/arm64/{{NAME}} ./cmd/{{NAME}}
     @echo "✓ Built: bin/darwin/arm64/{{NAME}}"
 
 # Build Windows binary for amd64
 build-windows-amd64:
     @echo "Building Windows binary for amd64..."
     @mkdir -p bin/windows/amd64
-    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/windows/amd64/{{NAME}}.exe ./cmd/{{NAME}}
+    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/windows/amd64/{{NAME}}.exe ./cmd/{{NAME}}
     @echo "✓ Built: bin/windows/amd64/{{NAME}}.exe"
 
 # Run the fast local Go/package test loop (no E2E or integration suites)
@@ -874,21 +875,21 @@ docs-deploy: docs-build
 extproc-build-linux-arm64:
     @echo "Building ExtProc Linux binary for arm64..."
     @mkdir -p bin/linux/arm64
-    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/linux/arm64/extproc-token-exchange ./cmd/extproc-token-exchange
+    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/linux/arm64/extproc-token-exchange ./cmd/extproc-token-exchange
     @echo "✓ Built: bin/linux/arm64/extproc-token-exchange"
 
 # Build ExtProc Linux binary for amd64
 extproc-build-linux-amd64:
     @echo "Building ExtProc Linux binary for amd64..."
     @mkdir -p bin/linux/amd64
-    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/linux/amd64/extproc-token-exchange ./cmd/extproc-token-exchange
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/linux/amd64/extproc-token-exchange ./cmd/extproc-token-exchange
     @echo "✓ Built: bin/linux/amd64/extproc-token-exchange"
 
 # Build the extproc-token-exchange binary
 extproc-build:
     @echo "Building extproc-token-exchange..."
     @mkdir -p bin
-    go build -ldflags="-s -w" -o bin/extproc-token-exchange ./cmd/extproc-token-exchange
+    go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/extproc-token-exchange ./cmd/extproc-token-exchange
     @echo "✓ Built: bin/extproc-token-exchange"
 
 # Run the extproc-token-exchange binary (requires EXTPROC_* env vars)

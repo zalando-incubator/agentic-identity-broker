@@ -1,9 +1,8 @@
 # CI — the single merge gate.
 #
 # Principle: a PR is checked for "does this change make the repository worse?"
-# Everything here is deterministic, diff-scoped and fast enough to wait for.
-# Absolute "state of the world" checks (vulnerability posture, fuzzing,
-# Scorecard) live in their own scheduled workflows and never block a PR.
+# Scheduled coverage lives in its own workflow and never blocks a PR.
+# Vulnerability, fuzzing, and Scorecard checks also run separately.
 #
 # Exactly one status check is required by the branch ruleset: "CI / gate".
 # Every other job is either path-scoped (skipped when unrelated) or optional,
@@ -122,7 +121,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: just
       - name: Install development tools
@@ -137,6 +136,16 @@ jobs:
         run: |
           just build-all
           test -f web/dist/index.html
+      - name: Verify broker and ExtProc build flags
+        run: |
+          set -euo pipefail
+          scripts/verify-go-binary.sh bin/agentic-identity-broker stripped "$GITHUB_WORKSPACE"
+          just extproc-build
+          scripts/verify-go-binary.sh bin/extproc-token-exchange stripped "$GITHUB_WORKSPACE"
+          LDFLAGS="" just build extproc-build
+          for binary in agentic-identity-broker extproc-token-exchange; do
+            scripts/verify-go-binary.sh "bin/$binary" debug "$GITHUB_WORKSPACE"
+          done
       - name: Upload unit test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -144,6 +153,51 @@ jobs:
           name: unit-test-results
           path: test-results/
           if-no-files-found: warn
+
+  docker-build-flags:
+    name: Development image build flags
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go for artifact inspection
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Verify development image build flags
+        run: |
+          set -euo pipefail
+          artifacts=$(mktemp -d)
+          trap 'rm -rf "$artifacts"' EXIT
+
+          build_and_check() {
+            local name=$1 target=$2 binary=$3
+            shift 3
+            for mode in stripped debug; do
+              local flags=() target_flag=()
+              if [[ $mode == debug ]]; then flags=(--build-arg 'LDFLAGS='); fi
+              if [[ -n $target ]]; then target_flag=(--target "$target"); fi
+              local image="aib-${name}-${mode}:ci"
+              docker build --platform linux/amd64 --file "build/docker/Dockerfile.${name}" \
+                "${target_flag[@]}" --tag "$image" "${flags[@]}" "$@" .
+              local container
+              container=$(docker create "$image")
+              docker cp "$container:$binary" "$artifacts/${name}-${mode}"
+              docker rm "$container"
+              scripts/verify-go-binary.sh "$artifacts/${name}-${mode}" "$mode" /app
+            done
+          }
+
+          build_and_check cimd '' /app/cimd-server
+          build_and_check mock '' /app/mock-service \
+            --build-arg SERVICE_PATH=mocks/upstream-oauth2-server/cmd/mock-upstream-oauth2-server
+          build_and_check extproc development /app/extproc-token-exchange
 
   integration:
     name: Integration tests
@@ -178,7 +232,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: just
       - name: Install development tools
@@ -226,7 +280,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: just
       - name: Install development tools
@@ -272,7 +326,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: just
       - name: Install development tools
@@ -325,7 +379,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: just
       - name: Install development tools
@@ -448,7 +502,7 @@ jobs:
   gate:
     name: CI gate
     if: always()
-    needs: [changes, unit, integration, e2e-backend, e2e-extproc, e2e-frontend, docs, helm, workflows, dependency-review]
+    needs: [changes, unit, docker-build-flags, integration, e2e-backend, e2e-extproc, e2e-frontend, docs, helm, workflows, dependency-review]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

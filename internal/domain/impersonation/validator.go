@@ -11,6 +11,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtclaims"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 // defaultClockSkew is the acceptable clock skew for impersonation credential validation.
@@ -25,6 +26,49 @@ type signedValidator struct {
 	issuerURI         string
 	allowedAlgorithms map[jwa.SignatureAlgorithm]struct{}
 	clockSkew         time.Duration
+	cacheByProvider   bool
+}
+
+// verifiedCredentialCache is local to one Service.Impersonate call and shared only across its rules.
+// Equal keys in later calls use a new cache.
+type verifiedCredentialCache struct {
+	verified map[verificationCacheKey]verificationResult
+}
+
+type verificationCacheKey struct {
+	role     ports.CredentialRole
+	token    string
+	provider tokenexchange.JWKSProvider
+}
+
+type verificationResult struct {
+	token jwt.Token
+	err   error
+}
+
+func (c *verifiedCredentialCache) verify(ctx context.Context, role ports.CredentialRole, tokenString string, issuer *compiledIssuer) (jwt.Token, error) {
+	if !issuer.validator.cacheByProvider {
+		return issuer.validator.verify(ctx, tokenString)
+	}
+	key := verificationCacheKey{
+		role:     role,
+		token:    tokenString,
+		provider: issuer.validator.jwksProvider,
+	}
+	if result, ok := c.verified[key]; ok {
+		return result.token, result.err
+	}
+
+	token, err := issuer.validator.verify(ctx, tokenString)
+	if c.verified == nil {
+		c.verified = make(map[verificationCacheKey]verificationResult)
+	}
+	if err != nil {
+		c.verified[key] = verificationResult{err: err}
+		return nil, err
+	}
+	c.verified[key] = verificationResult{token: token}
+	return token, nil
 }
 
 // validate verifies the token against the issuer's keys and the expected audience, returning
@@ -41,40 +85,57 @@ func (v *signedValidator) validateWithoutAudience(ctx context.Context, tokenStri
 }
 
 func (v *signedValidator) validateCredential(ctx context.Context, tokenString, expectedAudience string, requireAbsentAudience bool) (map[string]interface{}, error) {
-	alg, err := protectedHeaderAlgorithm(tokenString)
-	if err != nil {
-		return nil, fmt.Errorf("cannot read token algorithm: %w", err)
-	}
-	if !isApprovedAlgorithm(alg) {
-		return nil, fmt.Errorf("algorithm %q is not an approved asymmetric algorithm", alg)
-	}
-	if _, ok := v.allowedAlgorithms[alg]; !ok {
-		return nil, fmt.Errorf("algorithm %q is not permitted for issuer", alg)
+	if err := v.validateAlgorithm(tokenString); err != nil {
+		return nil, err
 	}
 
+	token, err := v.verify(ctx, tokenString)
+	if err != nil {
+		return nil, err
+	}
+	return v.validateClaims(token, expectedAudience, requireAbsentAudience)
+}
+
+func (v *signedValidator) validateAlgorithm(tokenString string) error {
+	alg, err := protectedHeaderAlgorithm(tokenString)
+	if err != nil {
+		return fmt.Errorf("cannot read token algorithm: %w", err)
+	}
+	if !isApprovedAlgorithm(alg) {
+		return fmt.Errorf("algorithm %q is not an approved asymmetric algorithm", alg)
+	}
+	if _, ok := v.allowedAlgorithms[alg]; !ok {
+		return fmt.Errorf("algorithm %q is not permitted for issuer", alg)
+	}
+	return nil
+}
+
+func (v *signedValidator) verify(ctx context.Context, tokenString string) (jwt.Token, error) {
 	keyset, err := v.jwksProvider.GetKeySet(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("jwks unavailable for issuer: %w", err)
 	}
+	return jwt.ParseString(
+		tokenString,
+		jwt.WithVerify(true),
+		jwt.WithKeySet(keyset),
+		jwt.WithValidate(false),
+	)
+}
 
-	var token jwt.Token
+func (v *signedValidator) validateClaims(token jwt.Token, expectedAudience string, requireAbsentAudience bool) (map[string]interface{}, error) {
+	var err error
 	if requireAbsentAudience {
-		token, err = jwt.ParseString(
-			tokenString,
-			jwt.WithVerify(true),
-			jwt.WithKeySet(keyset),
+		err = jwt.Validate(
+			token,
 			jwt.WithRequiredClaim(jwt.ExpirationKey),
-			jwt.WithValidate(true),
 			jwt.WithIssuer(v.issuerURI),
 			jwt.WithAcceptableSkew(v.clockSkew),
 		)
 	} else {
-		token, err = jwt.ParseString(
-			tokenString,
-			jwt.WithVerify(true),
-			jwt.WithKeySet(keyset),
+		err = jwt.Validate(
+			token,
 			jwt.WithRequiredClaim(jwt.ExpirationKey),
-			jwt.WithValidate(true),
 			jwt.WithIssuer(v.issuerURI),
 			jwt.WithAudience(expectedAudience),
 			jwt.WithAcceptableSkew(v.clockSkew),

@@ -6,6 +6,7 @@ This document serves as a critical, living template designed to equip agents wit
 
 This section provides a high-level overview of the project's directory and file structure, categorised by architectural layer or major functional area. It is essential for quickly navigating the codebase, locating relevant files, and understanding the overall organization and separation of concerns.
 
+```
 [Project Root]/
 
 ├── cmd/                  # Main source code for backend services
@@ -46,15 +47,19 @@ This section provides a high-level overview of the project's directory and file 
 ├── scripts/              # Automation scripts (e.g., deployment, data seeding)
 ├── .github/              # GitHub Actions or other CI/CD configurations
 ├── .gitignore            # Specifies intentionally untracked files to ignore
-└── README.md             # Project overview and quick start guide
+├── README.md             # Project overview and quick start guide
+└── ARCHITECTURE.md       # This document
+```
 
 ## 2. High-Level System Diagram
 
 Provide a simple block diagram (e.g., a C4 Model Level 1: System Context diagram, or a basic component diagram) or a clear text-based description of the major components and their interactions. Focus on how data flows, services communicate, and key architectural boundaries.
 
+```
 [User] <--> [Frontend Application] <--> [Backend Service 1] <--> [Database 1]
                                     |
                                     +--> [Backend Service 2] <--> [External API]
+```
 
 ## 3. Core Components
 
@@ -560,6 +565,8 @@ End-User Server (Port 8000):
 
 **Upstream JWKS bootstrap policy**: In `proxy` and `hybrid` modes the upstream JWKS remains required by the public `/oauth2/jwks.json` publisher and multi-agent upstream-token verification. The builder resolves upstream OAuth2 metadata at startup for those surfaces, so proxy/hybrid mode does not start with an unknown upstream verifier configuration. If that metadata discovery fails, startup fails. RFC 8693 client-assertion validation instead uses the dedicated `token_exchange.client_assertion.issuer_uri` trust anchor: it defaults to the proxy upstream in `proxy` and `hybrid` modes and works independently in `proxy`, `local`, and `hybrid` modes. A configured anchor without an explicit `jwks_uri` is discovered at startup; discovery or verifier initialization failure prevents startup. An explicit `jwks_uri` supports IdPs without discovery. After startup, upstream JWKS refresh failures return HTTP 503 from `/oauth2/jwks.json`, and client-assertion or other verification-dependent flows fail closed until their required JWKS source recovers.
 
+**Multi-issuer JWT validation**: Token exchange fetches the role-specific JWKS and verifies the signature once per credential, then applies issuer, audience, and time-claim validation for each permitted issuer. The client assertion retains its separate trust anchor; a failed signature never yields claims for authorization.
+
 **Local issuance admin endpoints** (served only when local issuance is active: `local` or `hybrid`):
 
 ```
@@ -893,6 +900,7 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 **Invariants**:
 
 - Signature validation is never optional for signed roles (client assertion, actor, subject).
+- Impersonation keeps verified signed credentials in a request-local memo by role, token, and JWKS provider instance. The builder shares one provider for identical issuer and JWKS settings across rules; independently refreshed providers never share verification results, even when their configured URIs match. Each rule still enforces its own authorized signing roles, algorithm allow-list, audience policy, issuer, expiration, and not-before checks. No verification result is reused across requests, and the unsigned subject exception is unchanged.
 - `actor == subject` is permitted and yields `act.sub == sub`; `act.iss` remains the validated actor-token issuer.
 - The issued token uses normal local issuer, lifetime, signing-key, base claims, token-claims policy, and JWT `scope` claim. The target supplies minted `agent_id`, CEL `agent.*`, request `agent_id`, audit identity, and `AllowedScopes`: empty is unrestricted, listed values are exact, and reserved refresh-token scopes retain normal handling. A rejected scope returns credential-free `invalid_scope`; absent scope yields JWT `scope == ""` and no response field. The assertion supplies privileged-client authorization/audit identity only. `aud` remains policy-owned.
 - A rule-authorized request mints only when the extracted subject (as `id.Principal`) has an active `UserGrant` for the target agent. This check is mandatory for signed and unverified subjects, terminal rather than rule fall-through, and has no configuration opt-out. Missing or expired delegation returns generic `access_denied` with the existing token-error `error_uri`; its credential-free audit category distinguishes the cases. An unavailable verifier fails closed with `server_error`.
@@ -923,6 +931,8 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 - Background client assertion refresh goroutine (startup + 80% TTL/30s threshold)
 - Singleflight deduplication for concurrent exchange requests
 - HTTP client for RFC 8693 token exchange requests
+
+**Broker HTTP Transport**: ExtProc clones Go's default transport, preserving proxy and keep-alive behavior while enabling HTTP/2 with its configured TLS trust. Each client allows up to 100 idle and 100 total connections per host. New connections have a 1s TCP dial timeout and, for HTTPS, a 2s TLS handshake timeout. These are failure ceilings, not the <200ms typical cache-miss target. The separately configured `oauth2.exchange_timeout` defaults to 5s as an overall failure bound for token exchange and client-credentials grants.
 
 **CachedToken**: Value object representing a cached token with:
 
@@ -1151,25 +1161,25 @@ ExtProc leverages the broker's shared OpenTelemetry infrastructure (ADR 011, ADR
 
 ## 4. Data Stores
 
-(List and describe the databases and other persistent storage solutions used.)
+Production state is in PostgreSQL. The development and test storage adapter keeps the same entities in memory without persistence (ADR 004). AWS KMS holds the root encryption key, not application records.
 
-### 4.1. [Data Store Type 1]
+### 4.1. PostgreSQL application store
 
-Name: [e.g., Primary User Database, Analytics Data Warehouse]
+Name: Broker transactional store
 
-Type: [e.g., PostgreSQL, MongoDB, Redis, S3, Firestore]
+Type: PostgreSQL, accessed through sqlx repositories
 
-Purpose: [Briefly describe what data it stores and why.]
+Purpose: Persists agents, services, permission sets, user grants, encrypted third-party sessions, hashed agent credentials, encrypted signing keys, authorization codes, and tool approvals. The runtime account has data permissions; the separate migration job has schema permissions.
 
-Key Schemas/Collections: [List important tables/collections, e.g., users, products, orders (no need for full schema, just names)]
+Key tables: `agents`, `thirdparty_oauth2_services`, `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `tool_approvals`, `approval_sync_state`.
 
-### 4.2. [Data Store Type 2]
+### 4.2. DynamoDB branch-key store
 
-Name: [e.g., Cache, Message Queue]
+Name: AWS Encryption SDK branch-key store
 
-Type: [e.g., Redis, Kafka, RabbitMQ]
+Type: DynamoDB table keyed by `branch-key-id` and `type` (ADR 010)
 
-Purpose: [Briefly describe its purpose, e.g., "Used for caching frequently accessed data" or "Inter-service communication."]
+Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker caches active branch keys in memory and uses fresh data keys to encrypt individual values (ADR 009). This table does not store grants or user sessions.
 
 ## 5. External Integrations / APIs
 
@@ -1193,15 +1203,12 @@ Monitoring & Logging: [e.g., Prometheus, Grafana, CloudWatch, Stackdriver, ELK S
 
 ## 7. Security Considerations
 
-(Highlight any critical security aspects, authentication mechanisms, or data encryption practices.)
+The [security assurance case](docs/resources/assurance-case.md) records the assets, attackers, trust boundaries, secure design controls, and weakness-to-verification mapping. [Security posture](docs/resources/security.md) gives the operator-facing summary.
 
-Authentication: [e.g., OAuth2, JWT, API Keys]
-
-Authorization: [e.g., RBAC, ACLs]
-
-Data Encryption: [e.g., TLS in transit, AES-256 at rest]
-
-Key Security Tools/Practices: The read-only, trusted-base `CI / security` PR job runs gosec for Go source, govulncheck for reachable Go vulnerabilities, and OSV-Scanner for Go/npm manifests and lockfiles.
+- **Authentication:** The trusted proxy authenticates end users and injects `X-Remote-User`. It restricts port 14000 to administrators. The broker validates signed machine client assertions and subject tokens for token exchange.
+- **Authorization:** Domain services check principal ownership and active delegation. Machine and browser approval endpoints have distinct authentication rules under ADR 018.
+- **Encryption:** Production uses AWS KMS and DynamoDB branch keys to encrypt secrets, sessions, and signing-key material before PostgreSQL storage. Failed encryption or decryption has no plaintext fallback. TLS termination and private backend connectivity are deployment responsibilities.
+- **Verification:** The required `CI gate` runs E2E suites for consent, approval, OAuth2, and token exchange, plus dependency review on pull requests. CodeQL analyzes Go and JavaScript/TypeScript on pull requests. A separate scheduled security workflow runs gosec, govulncheck, and OSV-Scanner. Parser fuzzing is scheduled separately.
 
 ## 8. Development & Testing Environment
 

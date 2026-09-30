@@ -20,6 +20,12 @@ export default defineConfig({
     css: true,
     pool: 'threads',
     testTimeout: 10000,
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['**/*.stories.*'],
+      reporter: ['text', 'html', 'clover', 'json', ['lcovonly', { projectRoot: '..' }]],
+    },
   },
   resolve: {
     alias: {

@@ -179,10 +179,10 @@ func (v *JWTValidator) ValidateClientAssertion(ctx context.Context, tokenString 
 	return token, nil
 }
 
-// mapParseError maps jwt.ParseString errors to appropriate domain errors for subject tokens.
+// mapParseError maps JWT parsing and validation errors to appropriate domain errors for subject tokens.
 //
-// The lestrrat-go/jwx library wraps all validation failures inside a ParseError when returned
-// from jwt.ParseString. Specific validation sentinels (InvalidAudienceError, InvalidIssuerError,
+// parseWithPolicy returns parsing or signature errors from jwt.ParseString and claim validation
+// errors from jwt.Validate. Specific validation sentinels (InvalidAudienceError, InvalidIssuerError,
 // etc.) are reachable through the error chain via Unwrap(). Therefore, specific checks MUST
 // appear before the generic ParseError check to avoid misclassifying validation failures as
 // parse/signature errors.
@@ -215,7 +215,7 @@ func (v *JWTValidator) mapParseError(err error, tokenType string, tokenString st
 	}
 }
 
-// mapClientAssertionParseError maps jwt.ParseString errors to InvalidClientError for client assertions.
+// mapClientAssertionParseError maps JWT parsing and validation errors to InvalidClientError for client assertions.
 //
 // Client assertion failures always result in InvalidClientError per RFC 7523.
 // Specific validation sentinels MUST be checked before ParseError (see mapParseError comment).
@@ -401,17 +401,23 @@ func truncateHeaderValue(s string) string {
 
 func (v *JWTValidator) parseWithPolicy(tokenString string, keyset jwk.Set, policy JWTValidationPolicy) (jwt.Token, error) {
 	clockSkew := time.Duration(v.clockSkewSeconds) * time.Second
+	token, err := jwt.ParseString(
+		tokenString,
+		jwt.WithVerify(true),
+		jwt.WithKeySet(keyset),
+		jwt.WithValidate(false),
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	var (
 		firstErr     error
 		preferredErr error
 	)
-
 	for _, issuer := range policy.ExpectedIssuers {
-		token, err := jwt.ParseString(
-			tokenString,
-			jwt.WithVerify(true),
-			jwt.WithKeySet(keyset),
-			jwt.WithValidate(true),
+		err := jwt.Validate(
+			token,
 			jwt.WithIssuer(issuer),
 			jwt.WithAudience(v.brokerAudience),
 			jwt.WithAcceptableSkew(clockSkew),
