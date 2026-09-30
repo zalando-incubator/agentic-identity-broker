@@ -17,7 +17,7 @@ The workflow stores attestations in two places:
   `-migrate`, and `-extproc`.
 - The GitHub Release stores one Sigstore bundle for the binary archives
   (`*.tar.gz`), the Helm chart (`*.tgz`), and `checksums.txt`.
-  The bundle is `agentic-identity-broker_<version>_provenance.sigstore.json`.
+  The bundle is `agentic-identity-broker_<version>.intoto.jsonl`.
 
 Each verification command specifies the repository, the release workflow,
 and the tag.
@@ -87,7 +87,7 @@ To verify the broker archive for amd64, run these commands:
 
 ```bash
 FILE="agentic-identity-broker_${TAG#v}_linux_amd64.tar.gz"
-BUNDLE="agentic-identity-broker_${TAG#v}_provenance.sigstore.json"
+BUNDLE="agentic-identity-broker_${TAG#v}.intoto.jsonl"
 for NAME in "$FILE" "$BUNDLE"; do
   curl --fail --location --remote-name \
     "https://github.com/$REPO/releases/download/$TAG/$NAME"
