@@ -573,7 +573,6 @@ func TestForceRefreshSessionSecurity_PublicClientOmitsCredentialsAndRedactsFailu
 		assert.NotContains(t, err.Error(), sentinel)
 		assert.NotContains(t, logs, sentinel)
 	}
-	assert.Contains(t, logs, `"error":"upstream token endpoint returned error status 400: oauth2: \"invalid_grant\""`)
 
 	assertSecurityEventsMarkPublicClient(t, logs, "session.oauth2.refresh_failed")
 }

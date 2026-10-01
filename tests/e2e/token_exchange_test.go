@@ -1020,8 +1020,8 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(errorResponse).NotTo(HaveKey("access_token"))
 			Expect(string(rawBody)).NotTo(ContainSubstring("sentinel-provider-secret"))
 			Expect(logBuf.String()).NotTo(ContainSubstring("sentinel-provider-secret"))
-			Expect(logBuf.String()).To(ContainSubstring("upstream_status_code=400"))
-			Expect(logBuf.String()).To(ContainSubstring("upstream_error_code=invalid_grant"))
+			Expect(logBuf.String()).To(ContainSubstring("thirdparty_status_code=400"))
+			Expect(logBuf.String()).To(ContainSubstring("thirdparty_error_code=invalid_grant"))
 
 			// And: The stored session is unchanged.
 			after, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubServiceID)
@@ -1067,16 +1067,16 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			rawBody, err := io.ReadAll(resp.Body)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Then: 500 server_error without error_uri; telemetry carries the safe upstream
-			// classification and never the provider description.
+			// Then: 500 server_error without error_uri; telemetry safely classifies the
+			// third-party response without exposing the provider description.
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusInternalServerError))
 			var errorResponse map[string]interface{}
 			Expect(json.Unmarshal(rawBody, &errorResponse)).To(Succeed())
 			Expect(errorResponse["error"]).To(Equal("server_error"))
 			Expect(errorResponse).NotTo(HaveKey("error_uri"))
 			Expect(string(rawBody)).NotTo(ContainSubstring("sentinel-provider-secret"))
-			Expect(logBuf.String()).To(ContainSubstring("upstream_status_code=400"))
-			Expect(logBuf.String()).To(ContainSubstring("upstream_error_code=invalid_client"))
+			Expect(logBuf.String()).To(ContainSubstring("thirdparty_status_code=400"))
+			Expect(logBuf.String()).To(ContainSubstring("thirdparty_error_code=invalid_client"))
 			Expect(logBuf.String()).NotTo(ContainSubstring("sentinel-provider-secret"))
 		})
 	})

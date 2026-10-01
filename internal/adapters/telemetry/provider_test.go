@@ -527,7 +527,7 @@ func TestNewProvider_HTTPLogsDeliverCorrelatedRecords(t *testing.T) {
 
 	logger := slog.New(otelslog.NewHandler(cfg.ServiceName, otelslog.WithLoggerProvider(global.GetLoggerProvider())))
 	spanCtx, span := otel.Tracer("test").Start(ctx, "token-exchange")
-	logger.ErrorContext(spanCtx, "Token exchange failed", "upstream_error_code", "invalid_grant")
+	logger.ErrorContext(spanCtx, "Token exchange failed", "thirdparty_error_code", "invalid_grant")
 	span.End()
 
 	lp, ok := global.GetLoggerProvider().(*sdklog.LoggerProvider)

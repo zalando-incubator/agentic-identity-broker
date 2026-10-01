@@ -2082,11 +2082,11 @@ func TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan(t *testi
 	assert.NotContains(t, resourceAttr, "SUPERSECRET")
 }
 
-// Upstream attribution comes from the wrapped sanitized RetrieveError, not from a child HTTP
+// Third-party attribution comes from the wrapped sanitized RetrieveError, not from a child HTTP
 // span, so singleflight waiters and non-refresh paths are attributed identically.
-func TestOAuth2TokenHandler_TokenExchangeFailureAttributesUpstreamRejection(t *testing.T) {
-	upstreamRejection := func(status int, code string) error {
-		return fmt.Errorf("%w: %w", oauth2session.ErrRefreshFailed, fmt.Errorf("upstream token endpoint returned error status %d: %w", status, &xoauth2.RetrieveError{
+func TestOAuth2TokenHandler_TokenExchangeFailureAttributesThirdpartyRejection(t *testing.T) {
+	thirdpartyRejection := func(status int, code string) error {
+		return fmt.Errorf("%w: %w", oauth2session.ErrRefreshFailed, fmt.Errorf("third-party token endpoint returned error status %d: %w", status, &xoauth2.RetrieveError{
 			Response:  &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status))},
 			ErrorCode: code,
 		}))
@@ -2098,10 +2098,10 @@ func TestOAuth2TokenHandler_TokenExchangeFailureAttributesUpstreamRejection(t *t
 		wantCode   string
 		wantAttrs  bool
 	}{
-		{name: "allowlisted code", err: upstreamRejection(http.StatusUnauthorized, "invalid_client"), wantStatus: http.StatusUnauthorized, wantCode: "invalid_client", wantAttrs: true},
-		{name: "absent code", err: upstreamRejection(http.StatusBadGateway, ""), wantStatus: http.StatusBadGateway, wantCode: "unknown", wantAttrs: true},
-		{name: "non-allowlisted code", err: upstreamRejection(http.StatusBadRequest, "sentinel-provider-code"), wantStatus: http.StatusBadRequest, wantCode: "unknown", wantAttrs: true},
-		{name: "no upstream response", err: errors.New("database unavailable")},
+		{name: "allowlisted code", err: thirdpartyRejection(http.StatusUnauthorized, "invalid_client"), wantStatus: http.StatusUnauthorized, wantCode: "invalid_client", wantAttrs: true},
+		{name: "absent code", err: thirdpartyRejection(http.StatusBadGateway, ""), wantStatus: http.StatusBadGateway, wantCode: "unknown", wantAttrs: true},
+		{name: "non-allowlisted code", err: thirdpartyRejection(http.StatusBadRequest, "sentinel-provider-code"), wantStatus: http.StatusBadRequest, wantCode: "unknown", wantAttrs: true},
+		{name: "no third-party response", err: errors.New("database unavailable")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2161,16 +2161,16 @@ func TestOAuth2TokenHandler_TokenExchangeFailureAttributesUpstreamRejection(t *t
 			record, ok := findTokenEndpointLogRecord(*logCapture.records, "Token exchange failed")
 			require.True(t, ok, "token-exchange failures must be logged")
 			if !tt.wantAttrs {
-				assert.NotContains(t, spanAttrs, "token_exchange.upstream_status_code")
-				assert.NotContains(t, spanAttrs, "token_exchange.upstream_error_code")
-				assert.NotContains(t, record.attrs, "upstream_status_code")
-				assert.NotContains(t, record.attrs, "upstream_error_code")
+				assert.NotContains(t, spanAttrs, "token_exchange.thirdparty_status_code")
+				assert.NotContains(t, spanAttrs, "token_exchange.thirdparty_error_code")
+				assert.NotContains(t, record.attrs, "thirdparty_status_code")
+				assert.NotContains(t, record.attrs, "thirdparty_error_code")
 				return
 			}
-			assert.Equal(t, tt.wantStatus, spanAttrs["token_exchange.upstream_status_code"])
-			assert.Equal(t, tt.wantCode, spanAttrs["token_exchange.upstream_error_code"])
-			assert.EqualValues(t, tt.wantStatus, record.attrs["upstream_status_code"])
-			assert.Equal(t, tt.wantCode, record.attrs["upstream_error_code"])
+			assert.Equal(t, tt.wantStatus, spanAttrs["token_exchange.thirdparty_status_code"])
+			assert.Equal(t, tt.wantCode, spanAttrs["token_exchange.thirdparty_error_code"])
+			assert.EqualValues(t, tt.wantStatus, record.attrs["thirdparty_status_code"])
+			assert.Equal(t, tt.wantCode, record.attrs["thirdparty_error_code"])
 		})
 	}
 }

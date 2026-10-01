@@ -208,11 +208,11 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 				attribute.String("token_exchange.error_description", tokenErrForSpan.Description()),
 			)
 		}
-		upstreamStatus, upstreamCode, hasUpstream := upstreamRejection(err)
-		if hasUpstream {
+		thirdpartyStatus, thirdpartyCode, hasThirdparty := thirdpartyRejection(err)
+		if hasThirdparty {
 			span.SetAttributes(
-				attribute.Int("token_exchange.upstream_status_code", upstreamStatus),
-				attribute.String("token_exchange.upstream_error_code", upstreamCode),
+				attribute.Int("token_exchange.thirdparty_status_code", thirdpartyStatus),
+				attribute.String("token_exchange.thirdparty_error_code", thirdpartyCode),
 			)
 		}
 		if h.Logger != nil {
@@ -221,8 +221,8 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 				"error_type", fmt.Sprintf("%T", err),
 				"resource", sanitizedResource,
 			}
-			if hasUpstream {
-				logAttrs = append(logAttrs, "upstream_status_code", upstreamStatus, "upstream_error_code", upstreamCode)
+			if hasThirdparty {
+				logAttrs = append(logAttrs, "thirdparty_status_code", thirdpartyStatus, "thirdparty_error_code", thirdpartyCode)
 			}
 			var tokenErrForLog *tokenexchange.TokenExchangeError
 			if errors.As(err, &tokenErrForLog) {
@@ -405,10 +405,10 @@ func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err
 	_, _ = w.Write(body)
 }
 
-// upstreamRejection extracts the provider HTTP status and an allowlisted OAuth error code from a
+// thirdpartyRejection extracts the provider HTTP status and an allowlisted OAuth error code from a
 // wrapped RetrieveError. Any non-allowlisted code becomes "unknown" so diagnostics never carry
 // provider-controlled text.
-func upstreamRejection(err error) (status int, code string, ok bool) {
+func thirdpartyRejection(err error) (status int, code string, ok bool) {
 	var retrieveErr *oauth2.RetrieveError
 	if !errors.As(err, &retrieveErr) || retrieveErr.Response == nil {
 		return 0, "", false
