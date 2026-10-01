@@ -2016,6 +2016,7 @@ func TestForceRefreshSession(t *testing.T) {
 
 func TestRefreshAccessToken_SanitizesUpstreamRejection(t *testing.T) {
 	const sentinel = "sentinel-upstream-secret"
+	const invalidGrant = `{"error":"invalid_grant"}`
 	tests := []struct {
 		name       string
 		status     int
@@ -2029,6 +2030,8 @@ func TestRefreshAccessToken_SanitizesUpstreamRejection(t *testing.T) {
 		{name: "non-JSON body", status: http.StatusBadRequest, body: "<html>" + sentinel + "</html>", wantStatus: http.StatusBadRequest},
 		{name: "wrong-typed error field", status: http.StatusBadRequest, body: `{"error":["invalid_grant"],"error_description":"` + sentinel + `"}`, wantStatus: http.StatusBadRequest},
 		{name: "oversized body", status: http.StatusBadRequest, body: `{"error":"invalid_grant","error_description":"` + strings.Repeat("x", 64<<10) + sentinel + `"}`, wantStatus: http.StatusBadRequest},
+		{name: "valid JSON over size cap", status: http.StatusBadRequest, body: invalidGrant + strings.Repeat(" ", 64<<10), wantStatus: http.StatusBadRequest},
+		{name: "valid JSON at size cap", status: http.StatusBadRequest, body: invalidGrant + strings.Repeat(" ", 64<<10-len(invalidGrant)), wantStatus: http.StatusBadRequest, wantCode: "invalid_grant"},
 		{name: "empty body", status: http.StatusBadRequest, wantStatus: http.StatusBadRequest},
 		{name: "server error carrying invalid_grant", status: http.StatusInternalServerError, body: `{"error":"invalid_grant","error_description":"` + sentinel + `"}`, wantStatus: http.StatusInternalServerError, wantCode: "invalid_grant"},
 	}

@@ -730,10 +730,63 @@ func TestRefreshLogsCarryOperationContext(t *testing.T) {
 		assert.Equal(t, "request-marker", recorder.messages[message], "%s must be logged with the operation context", message)
 	}
 }
+
+func TestGetValidAccessTokenRefreshLogsCarryOperationContext(t *testing.T) {
+	recorder := contextRecordingHandler{mu: &sync.Mutex{}, messages: map[string]any{}}
+	sessions := memory.NewInMemoryUserSessionRepository()
+	service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(recorder), 1, sessions)
+	principal := id.Principal("user@example.com")
+	serviceID := id.NewServiceID()
+
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"access","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh"}`))
+	}))
+	defer tokenServer.Close()
+
+	provider := createTestService(serviceID)
+	provider.Endpoints.TokenEndpoint = tokenServer.URL
+	require.NoError(t, providerService.Create(context.Background(), provider))
+	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
+	require.NoError(t, err)
+	_, err = service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID,
+		Code:      "code",
+		State:     flow.StateToken,
+	})
+	require.NoError(t, err)
+	stored, err := sessions.FindByPrincipalAndService(context.Background(), principal, serviceID)
+	require.NoError(t, err)
+	expiredSession := *stored
+	expired := time.Now().Add(-time.Hour)
+	expiredSession.AccessTokenExpiresAt = &expired
+	require.NoError(t, sessions.Create(context.Background(), &expiredSession))
+
+	ctx := context.WithValue(context.Background(), refreshLogContextKey{}, "request-marker")
+	_, _, err = service.GetValidAccessToken(ctx, principal, serviceID)
+	require.NoError(t, err)
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	for _, message := range []string{"access token refreshed", "oauth2_token_refreshed"} {
+		assert.Equal(t, "request-marker", recorder.messages[message], "%s must be logged with the operation context", message)
+	}
+}
+
 func newSecurityTestOAuth2SessionService(
 	t *testing.T,
 	logger *slog.Logger,
 	maxRetries int,
+) (*oauth2session.OAuth2SessionService, *thirdparty.ThirdpartyOAuth2ProviderService) {
+	t.Helper()
+	return newSecurityTestOAuth2SessionServiceWithSessions(t, logger, maxRetries, memory.NewInMemoryUserSessionRepository())
+}
+
+func newSecurityTestOAuth2SessionServiceWithSessions(
+	t *testing.T,
+	logger *slog.Logger,
+	maxRetries int,
+	sessionRepo *memory.InMemoryUserSessionRepository,
 ) (*oauth2session.OAuth2SessionService, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
 
@@ -757,7 +810,6 @@ func newSecurityTestOAuth2SessionService(
 	config.MaxRetries = maxRetries
 	config.RetryBaseDelay = time.Millisecond
 
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	return oauth2session.NewOAuth2SessionService(
 		providerService,
 		sessionRepo,
