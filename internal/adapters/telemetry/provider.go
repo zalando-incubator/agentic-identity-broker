@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -250,6 +251,16 @@ func buildGRPCProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 	return tp, mp, lp, nil
 }
 
+// otlpSignalPath works around WithEndpointURL defaulting an empty path to "/" instead of
+// the signal's standard OTLP path.
+func otlpSignalPath(endpoint, defaultPath string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Path == "" || u.Path == "/" {
+		return defaultPath
+	}
+	return u.Path
+}
+
 // buildHTTPProviders creates TracerProvider, and optionally MeterProvider and LoggerProvider,
 // using HTTP OTLP exporters.
 //
@@ -265,6 +276,7 @@ func buildHTTPProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 	if cfg.Traces.Enabled {
 		traceOpts := []otlptracehttp.Option{
 			otlptracehttp.WithEndpointURL(cfg.Exporter.Endpoint),
+			otlptracehttp.WithURLPath(otlpSignalPath(cfg.Exporter.Endpoint, "/v1/traces")),
 			otlptracehttp.WithTimeout(cfg.Exporter.Timeout),
 			otlptracehttp.WithHeaders(cfg.Exporter.Headers),
 		}
@@ -283,6 +295,7 @@ func buildHTTPProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 	if cfg.Metrics.Enabled {
 		metricOpts := []otlpmetrichttp.Option{
 			otlpmetrichttp.WithEndpointURL(cfg.Exporter.Endpoint),
+			otlpmetrichttp.WithURLPath(otlpSignalPath(cfg.Exporter.Endpoint, "/v1/metrics")),
 			otlpmetrichttp.WithTimeout(cfg.Exporter.Timeout),
 			otlpmetrichttp.WithHeaders(cfg.Exporter.Headers),
 		}
@@ -302,6 +315,7 @@ func buildHTTPProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 	if cfg.Logs.Enabled {
 		logOpts := []otlploghttp.Option{
 			otlploghttp.WithEndpointURL(cfg.Exporter.Endpoint),
+			otlploghttp.WithURLPath(otlpSignalPath(cfg.Exporter.Endpoint, "/v1/logs")),
 			otlploghttp.WithTimeout(cfg.Exporter.Timeout),
 			otlploghttp.WithHeaders(cfg.Exporter.Headers),
 		}
