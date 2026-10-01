@@ -4,7 +4,7 @@
 
 This guide defines validation after implementation. The new journeys and migration do not exist merely because the plan exists. A focused run with zero executed scenarios is not a passing acceptance gate.
 
-Contracts: [refresh grant](contracts/refresh.openapi.yaml), [lifecycle](contracts/lifecycle.md), [configuration](contracts/configuration.md), and [storage](contracts/storage.md). The [data model](data-model.md) defines deadline and recovery semantics.
+The [current API definition](../../api/enduser/openapi.yaml) remains unchanged until implementation. Planned behavior belongs to the [refresh and lifecycle design](contracts/lifecycle.md), [configuration](contracts/configuration.md), and [storage](contracts/storage.md) contracts. The [data model](data-model.md) defines internal deadline and recovery rules.
 
 ## Prerequisites
 

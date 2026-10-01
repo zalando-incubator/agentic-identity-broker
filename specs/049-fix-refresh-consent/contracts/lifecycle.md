@@ -1,6 +1,26 @@
-# Lifecycle API Effects
+# Refresh and Lifecycle Contract
 
 These are changes to existing operations, not new endpoints. Canonical contracts remain `api/enduser/openapi.yaml` and `api/admin/openapi.yaml`.
+
+This is a feature 049 design document, not a claim of implemented behavior. Current canonical APIs remain unchanged until implementation. Approved contract updates belong to T005 before runtime edits.
+
+## Refresh Grant Design
+
+Refresh continues to use the existing `POST /oauth2/token` operation. No separate endpoint or operation ID is added.
+
+- The form uses `grant_type=refresh_token`, the original `client_id`, and a `refresh_token` from that session.
+- Confidential clients supply their current `client_secret`. A previously public client requires authentication once its registration has credentials.
+- Optional `scope` is a space-delimited list. Fresh narrowing affects only the new access token, not the session ceiling.
+- Success retains `access_token`, `refresh_token`, `token_type=Bearer`, `expires_in`, and the existing optional `scope` member.
+- An eligible retry returns the original token strings and response scope or omission. Its `expires_in` reports remaining access-token validity.
+- The default reuse interval is 30 seconds from first consumption, with at most three committed stored-result returns per predecessor.
+- Only the immediate predecessor qualifies while its successor remains current and unused and its original access token remains unexpired.
+- Retry requires the original normalized requested scope, active consent, current client authentication, permitted response scope, and valid session lifetimes.
+- Zero reuse disables recovery. Retry advances no session or token deadline.
+
+The failure rules and lifecycle effects that follow are part of the same planned contract.
+
+## Lifecycle Effects
 
 | Existing operation | Authorization effect added | Existing result retained |
 |--------------------|----------------------------|--------------------------|

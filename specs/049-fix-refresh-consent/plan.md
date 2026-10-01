@@ -74,7 +74,7 @@ The post-design check passes for planning. Approval/release items below are expl
 | Configuration design | PASS: three durations, explicit-zero rules, cross-setting validation, YAML/env/CLI/Helm contract | Implement every source and preserve proxy-mode isolation. |
 | Config examples | PASS: existing local/hybrid examples selected | Update examples and their README. |
 | Helm contract | PASS for design: values, JSON schema, ConfigMap, README named | T004 updates the chart in Phase 2b before runtime work. T062 later proves rendered configuration through the production loader. |
-| API design first | PASS: scoped OpenAPI and lifecycle contracts exist | Merge reviewed changes into canonical OpenAPI before runtime changes. |
+| API design first | PASS for design: proposed refresh behavior is specified in feature Markdown; canonical APIs remain unchanged | T005 updates approved canonical documentation during implementation, before runtime edits. Do not publish pending behavior or add a separate refresh operation. |
 | API documentation | PASS for design: canonical contracts and rendered guide identified | T005 adds docs/api/oauth2-refresh-sessions.md with denial, retry, rollback, and indeterminate-commit examples before runtime work. T070 verifies the examples. |
 | API changes | PASS for design: user explicitly requested remediation | Record final contract review and major-release/version compatibility handling required by the constitution. |
 | Database design | PASS: paired migration 036 and indexes specified | Recheck number; test apply/down/reapply without restoring credential usability. |
@@ -115,7 +115,6 @@ specs/049-fix-refresh-consent/
 ├── quickstart.md
 ├── checklists/requirements.md
 └── contracts/
-    ├── refresh.openapi.yaml
     ├── lifecycle.md
     ├── configuration.md
     └── storage.md
@@ -326,8 +325,10 @@ Known costs are deliberate: per-agent serialization, durable encrypted recovery,
 - The downstream prerequisite command discovered research.md, data-model.md, contracts/, and quickstart.md under feature 049. The documented just recipes were present in just --list.
 - Runtime implementation, new migration execution, and the planned E2E journeys have not run in this planning command.
 - Analysis-remediation validation checked 89 requirement mappings, 75 sequential tasks, and 47 matching primary scenario locations. All task predecessors exist. Helm, API-guide, and semantic-red gates precede runtime work.
-- Markdown fences/tables and the refresh OpenAPI/YAML syntax passed document validation. Scoped ripwire quality-delta reported zero gating regressions. Four non-gating verbosity findings describe OpenAPI container/schema nodes against git HEAD.
+- Earlier document validation checked OpenAPI/YAML syntax and Markdown tables. Its scoped quality check reported zero gating regressions and four non-gating verbosity findings.
 - This remediation changed design artifacts only. It did not execute the planned runtime journeys or mark implementation tasks complete.
 - The approved follow-up addresses C1, I1, A1, A2, U1, and U2 across the specification, tasks, model, contracts, and Proposed ADR. All 75 implementation tasks remain pending.
 - Document validation rendered 11 Markdown artifacts and checked 17 tables, relative links, unique OpenAPI keys, local references, and unchanged endpoint/response shapes. Model field quotations still match their implementation tasks.
 - Traceability validation found 89 mapped requirements and 47 matching primary scenario locations. Every task dependency exists and precedes its consumer. The revised test-first gates precede their implementation tasks. The prerequisite script still resolves feature 049. No runtime tests, migrations, or token journeys ran during this design-only remediation.
+- Contract cleanup keeps proposed refresh behavior in contracts/lifecycle.md and removes the duplicate API definition. Canonical API contents match the pre-cleanup baseline. T005 owns approved canonical documentation updates during implementation, before runtime edits.
+- Cleanup validation rendered 11 Markdown artifacts and resolved 21 relative links. All 89 requirement mappings, 75 pending tasks, and 47 primary scenarios remain intact. No retired contract references remain. Scoped quality-delta reports zero regressions and zero gating findings. No production code or published API behavior changed.
