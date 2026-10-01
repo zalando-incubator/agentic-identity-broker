@@ -3,7 +3,7 @@ module github.com/agentic-identity-broker/agentic-identity-broker/infra/cdk
 go 1.27.1
 
 require (
-	github.com/aws/aws-cdk-go/awscdk/v2 v2.269.0
+	github.com/aws/aws-cdk-go/awscdk/v2 v2.270.0
 	github.com/aws/constructs-go/constructs/v10 v10.8.1
 	github.com/aws/jsii-runtime-go v1.140.0
 	github.com/stretchr/testify v1.12.1
