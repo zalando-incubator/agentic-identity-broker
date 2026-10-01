@@ -52,6 +52,7 @@
 - The downstream Spec Kit path-resolution command returned branch `049-fix-refresh-consent` and directory `specs/049-fix-refresh-consent`.
 - Approved follow-up remediation assigns capability, scope-ceiling, and client-promotion tests before implementation. US2-S10 requires successful identical-result recovery before code replay rejects both tokens.
 - FR-029 fixes capability and candidate response-scope precedence. CR-005 limits inactivity increases to the next fresh rotation. FR-011 fences old-writer consumption. DB-003 and CR-008 preserve terminal expiry across binary-only rollback.
-- Follow-up document validation checked 89 requirement mappings, 75 pending tasks, 47 primary scenarios, test-first dependencies, Markdown tables/links, and OpenAPI syntax/references. The constitution and ADR approval gates remain unchanged.
+- Follow-up document validation checked 89 requirement mappings, 75 pending tasks, 47 primary scenarios, test-first dependencies, Markdown tables/links, and OpenAPI syntax/references. That validation did not complete approval gates.
 - Proposed refresh behavior stays in feature Markdown, not the canonical API. T005 updates approved API documentation during implementation before runtime edits. No separate refresh endpoint or duplicate OpenAPI document is required.
+- The user accepted the narrowed ADR 038 on 2026-10-01. Architectural approval is complete. Open Decisions, API/release approval, and runtime implementation remain pending.
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.

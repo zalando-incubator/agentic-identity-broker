@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](spec.md)  
 **Date**: 2026-09-30  
-**Status**: Reconciled to the current specification for task generation. ADR/API approval remains an implementation gate.
+**Status**: Reconciled to the current specification for task generation. ADR 038 is accepted. API/release approval remains an implementation gate.
 
 ## 1. Continuing authorization
 
@@ -88,7 +88,7 @@ Payload fields bind purpose/version, session, original principal/agent/client, p
 
 **Alternatives considered**: Plaintext results are forbidden. Repurposing `service_id` or `kid` breaks subject isolation. A process-local result cache fails restart/replica requirements. Custom cryptography is unnecessary.
 
-**Approval boundary**: Proposed ADR 038 must supersede ADR 008's closed subject restriction before implementation. This extends typed subject routing, not the one-subject AAD rule. Keep Fosite types and plaintext out of repository interfaces.
+**Approval boundary**: Accepted ADR 038 extends ADR 008's approved subject list. It preserves the exactly-one-subject AAD rule. API/release approval and implementation remain pending. Keep Fosite types and plaintext out of repository interfaces.
 
 **User decision on backups**: Encrypted backup copies are permitted. Live cached results still expire, rotate, or revoke under DB-006. No retry result belongs in logs. Restored copies do not establish live authorization. Restore procedures must clear retry caches and require reauthorization where current revocation history cannot be established.
 
@@ -142,7 +142,7 @@ Terminal absolute or shortened-inactivity expiry commits `ExpiredAt`, reason, ci
 
 Map all 47 acceptance scenarios individually to production-bootstrap E2E journeys. Every primary It needs an acceptance-linked semantic failure before runtime implementation. For US2-S10, first prove a bounded identical-result retry succeeds. Then replay its authorization code and prove both current and still-retry-eligible predecessor tokens fail while an unrelated session remains usable. This is a positive recovery control, not just another replay rejection; complete US2-S10 only after US3/T050/T072. Keep unchanged baseline regressions separate. Use PostgreSQL for restart, replica, shared-clock, acknowledgement-loss, and rolling-version proofs. Test lifetime and retry boundaries at explicit shared times.
 
-Canonical OpenAPI, rendered docs/api/oauth2-refresh-sessions.md examples, the Helm contract, release review, and ADR approval precede runtime implementation. T025 owns the complete core YAML/environment policy. US6 verifies it and adds source parity rather than implementing core defaults again. This feature changes renewal authority, not immediate downstream access-token validity.
+Canonical OpenAPI, rendered docs/api/oauth2-refresh-sessions.md examples, the Helm contract, and release review precede runtime edits. ADR 038 is accepted. T025 owns the complete core YAML/environment policy. US6 verifies it and adds source parity rather than implementing core defaults again. This feature changes renewal authority, not immediate downstream access-token validity.
 
 **Rationale**: Existing history cannot meet the new lineage guarantees. Memory is intentionally ephemeral. A design document cannot claim that new behavior or tests already exist.
 

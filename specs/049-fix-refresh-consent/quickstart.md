@@ -11,7 +11,7 @@ The [current API definition](../../api/enduser/openapi.yaml) remains unchanged u
 - Go 1.27.1, `just`, Ginkgo, frontend build dependencies, and Playwright browsers.
 - Docker or Podman for PostgreSQL acceptance, adapter, and migration tests.
 - Helm for deployment configuration validation.
-- Accept proposed [ADR 038](../../adrs/038-consent-bound-refresh-sessions.md) with its explicit supersession of ADR 008's encryption-subject restriction. Review canonical API and release changes before implementation.
+- [ADR 038](../../adrs/038-consent-bound-refresh-sessions.md) is accepted, including the narrow ADR 008 subject extension and transaction ownership. Complete the remaining API/release and Open Decisions review before runtime implementation.
 - Supply a valid JWE key for the existing OAuth state flow and a working `EncryptionPort` backend for credentials and signing keys. Persisted retry results use `EncryptionPort`, not JWE. Durable replicas share PostgreSQL and can decrypt the same branch keys.
 - Run commands from the repository root. Do not enable `GOEXPERIMENT=jsonv2` on Go 1.27.
 

@@ -1,63 +1,67 @@
-# ADR 038: Consent-Bound Refresh Sessions
+# ADR 038: Refresh-Session Encryption and Transaction Ownership
 
 ## Status
 
-Proposed. Accept this ADR before implementation changes the encryption subject contract or adds the session coordinator. This ADR does not claim acceptance or retroactively amend an accepted decision.
+Accepted on 2026-10-01. User approval: "I accept ADR 038".
+
+Acceptance covers the encryption-subject extension and transaction ownership. API/release approval and feature implementation remain separate.
 
 ## Context
 
-Local refresh issuance currently trusts a grant from initial authorization after that grant expires or is deleted. Credential and agent lifecycle actions do not consistently end refresh sessions on both storage backends. Signature-only resource servers continue to accept existing broker access tokens until their own expiry.
+The [feature specification](../specs/049-fix-refresh-consent/spec.md) defines refresh behavior. This ADR records two architectural choices, not another copy of those requirements.
 
-Feature 049 needs continuing consent, durable original-issuance evidence, one session lineage, bounded response recovery, shared deadline time, and atomic lifecycle revocation. Existing token-only rows have no trustworthy first-token and rotation-chain evidence by themselves. A rolling deployment also needs the old `refresh_token_sessions` table while older binaries can write to it.
+Persisted retry results need an encryption subject that represents their refresh session. ADR 008's 2026-06-01 amendment originally approved only `service_id` and `kid`. It requires an amendment or superseding ADR before another subject is introduced. A refresh session is neither a third-party service nor a signing key.
 
-ADR 008's June 2026 amendment permits exactly one authenticated encryption-context subject per ciphertext. Its closed list names only `service_id` and `kid`; it explicitly requires a new or superseding ADR for another subject. A refresh session is neither a third-party service nor a signing key.
+Refresh and authorization changes must have one consistent outcome across broker instances. Independent repository transactions or a Fosite-owned commit cannot provide that outcome. The [research](../specs/049-fix-refresh-consent/research.md) records the existing transaction limitations.
 
 ## Decision
 
-1. Extend the existing `UserDelegationVerifier`, not a parallel grant query. `VerifyUserDelegation(ctx, principal, agentID, decisionTime)` returns `UserDelegationDecision{Status, GrantID, ValidUntil}` and an error. Initial issuance stores the active decision's nonzero `GrantID` as `OriginalGrantID`. Refresh requires a currently active decision for the bound principal/agent with the same grant ID. Consent checks keep using the decision's explicit time in impersonation, token exchange, initial issuance, refresh, and all other existing verifier callers.
-2. Define `AuthorizationClock.Now(ctx) (time.Time, error)`. PostgreSQL uses `clock_timestamp()` through the ambient transaction executor; the single-instance memory coordinator uses its injected clock. No authorization, grant, token, session, or retry deadline decision uses a broker instance's local wall clock. At any deadline, the resource is expired.
-3. Add `AuthorizationSessionCoordinator.Run(ctx, agentID, operation func(context.Context, time.Time) error) error`. It acquires an agent gate, obtains decision time, and owns one SQL transaction or staged memory write-set. All participating reads and writes use its context. A second shared-clock reading precedes successful commit to recheck consent, lifetimes, current agent capability, and eligible response-scope permissions. Fosite and credential flows borrow, but never commit, the owner transaction. Keep each repository port below seven methods.
-4. Keep Fosite for fresh OAuth protocol validation and issuance; intercept an eligible predecessor retry before Fosite's consumed-token replay handling. Prepare signing and branch-key provisioning outside the SQL lock when the subject is known. Re-read authoritative client, credential, grant, root, and token state under the gate. Lock and re-read the anchored legacy current row before trusting a new-table unused token or consuming it; hold the mirror lock through rotation. Current agent refresh-grant capability and response-scope permissions apply to retries and fresh rotations in their fixed decision order.
-5. Persist a `RefreshSession` root and hashed `RefreshToken` history. The root uses the original authorization-code UUID. Its immutable fields bind `OriginalGrantID`, first `OriginalTokenSignature`, `StartedAt`, original ownership, scope ceiling, and `BranchKeyID`. Every token stores immutable `IssuedAt` and finite `ExpiresAt`. Effective inactivity for the current interval is `min(InactivityExpiresAt, LastFreshAt + configured inactivity, current token ExpiresAt)`. Only fresh valid rotation advances `LastFreshAt` and sets its successor's `ExpiresAt` and new `InactivityExpiresAt` from rotation time and current policy. `RetainUntil` is the nondecreasing maximum of recorded token expiries, including matched old-writer descendants. Keep terminal revocation state and consumed hashes through that bound, except agent deletion after durable revocation audit.
-6. Encrypt persisted retry responses with the existing `EncryptionPort` authenticated-encryption adapters, not the JWE TokenService. Add a typed `RefreshSession` branch-key subject with exactly `{"refresh_session_id":"<session UUID>"}` as AAD and deterministic key ID `refresh_<UUID>_branch_key`, stored as root `BranchKeyID`. Provision through the existing `BranchKeyManager` where the adapter needs a branch key. Keep the vetted raw-key and KMS paths; never reinterpret this subject as `service_id` or `kid`.
-7. **On acceptance, this ADR supersedes only ADR 008's June 2026 closed subject-key list and its rule that any new subject needs another ADR.** It authorizes `refresh_session_id` as a third mutually exclusive one-key subject. ADR 008 continues to govern OAuth2 user-session `service_id`, signing-key `kid`, existing branch-key IDs, and the exactly-one-subject rule. Before this ADR is accepted, ADR 008's existing restriction still applies; implementation must not add the subject early.
-8. Default reuse to **30 seconds from first successful consumption**. Only the immediate predecessor with a current unused successor can recover its original result. The access token must remain unexpired, and normalized requested scope must match. Narrowing affects only the returned access token, never the root ceiling. For an otherwise eligible retry, use the exact original response scope to check current agent permissions, not a newly narrowed request; do not decrypt prohibited reuse to inspect scope. Store requested scope, redacted context fingerprint, and RetryCount in `0..3`. Each committed retry authorization consumes one count, even if its response or acknowledgement is lost. A fourth otherwise eligible presentation revokes the session. Retry advances no lifetime or reuse clock.
-9. Authenticate and bind the client, check terminal revocation, require active consent, check stored and effective session lifetimes, check current agent refresh-grant capability, then classify token reuse. A removed capability retains the existing `unauthorized_client` outcome without mutation. Consent and lifetime failures take precedence over capability removal; capability removal takes precedence over prohibited reuse. Older, out-of-window, scope-mismatched, and fourth otherwise-eligible reuse revokes even if the old response scope was withdrawn. Check current permissions for the response scope only for a fresh or otherwise eligible retry result. Preserve existing `invalid_scope`/`scope_not_granted` behavior without mutation on a withdrawn eligible scope. An unused current token must remain individually unexpired before fresh consumption; consumed signatures remain replay evidence after their individual expiry. Only bound-client prohibited reuse commits an authorization rejection. Other authorization denials and confirmed rollback preserve state. Startup and deadline-driven maintenance own expiry and live ciphertext erasure. Final successful authorization repeats consent, lifetime, capability, and eligible response-scope checks at fresh shared time.
-10. Both consent-deletion paths, agent deletion, explicit credential revocation, and expired-grant renewal revoke affected roots atomically. Idempotent missing-grant deletion still revokes roots. Code replay revokes its original root, including a still-retry-eligible predecessor, without affecting unrelated sessions. Its acceptance proof first obtains a bounded identical-result retry, then replays the code and rejects the current and still-eligible predecessor tokens; an unrelated session stays usable. Credential replacement retains sessions but requires current credentials. Confirmed rollback preserves both authorization and session state. An indeterminate lifecycle commit reports failure without claiming rollback or returning a replacement secret. Public-origin sessions require authentication after credential creation.
-11. Add the root/token tables without dropping `refresh_token_sessions`. Nullable `session_id` and `predecessor_signature` columns let the new issuer write anchored mirrors atomically while older binaries keep their original insert shape. The new issuer never issues an unanchored token. A pre-existing family can continue only with independent proof of its original active grant, first issued token, exact clocks, ownership, full ancestry, and revocation history. The old table alone cannot prove those facts. Unsupported rows and unanchored old-writer descendants require fresh authorization under FR-025. If an old writer consumed an anchored current mirror without matching new-token/history evidence, the original and its unsupported descendant return `invalid_grant` without a result, new successor, or request mutation. Old-first locking exposes that consumption; new-first locking blocks the old writer's conditional `MarkUsed` until rotation commits. Do not invent an issuance time, consumption timestamp, or retry result. Recheck descendants on revocation. Terminal expiry writes `ExpiredAt`, reason, ciphertext erasure, and invalidates matching unconsumed legacy mirrors/current/descendant rows in one scoped transaction. A failed mirror update rolls back the transition and blocks startup readiness. Retain the old table through rollout and rollback, without source-level aliases or legacy authorization fallbacks.
-12. Keep `local.refresh_token_ttl` as inactivity lifetime (default 30 days) and default absolute lifetime to unlimited. File, environment, deployment chart, and **CLI flags** expose all three settings under constitution VII. On startup or maintenance, first reject elapsed stored deadlines; persist a shorter effective inactivity deadline for active roots, bounded by the current token's immutable expiry. A later increase cannot extend that token or activity interval. A nonterminal absolute deadline can be recomputed from the original `StartedAt` under CR-005 after old elapsed deadlines are ruled out. Keep current access-token expiry, JWKS publication, upstream passthrough, vaulted third-party sessions, existing metadata, and public endpoint surface unchanged.
-13. An indeterminate refresh commit returns token-free `server_error` without claiming rollback. A later request resolves authoritative durable state under the normal agent guard, including the locked anchored legacy mirror before trusting an unused new-table token. A consistent unused current token can rotate. Committed consumption permits only its existing eligible retry result. At zero reuse, it remains prohibited reuse and requires fresh authorization. Unavailable or inconsistent state fails closed. Never retry COMMIT blindly, mint another successor, refund a committed retry count, or extend a retry window.
+### 1. Add a refresh-session encryption subject
 
-The encrypted payload binds exact purpose, version, root and original grant/first-token evidence, principal, agent, client, predecessor, successor, original requested and response scopes, request-context fingerprint, exact token strings, and access/retry expiries. Compare every field with authoritative state after authenticated decryption. A missing key, tampering, or mismatch fails closed without minting another pair.
+Use the existing `EncryptionPort` credential-encryption adapters for persisted retry results. Their authenticated context contains exactly `{"refresh_session_id":"<session UUID>"}`. The session identifier is stable and contains no credential material.
 
-DB-008 is backed by an immutable, non-credential refresh_revocation_receipts projection keyed by session and reason. The revocation repository writes it in the same transaction before agent/root cascade deletion. It has no cascade back to those records. A receipt-write failure aborts deletion; post-commit logs report the committed outcome.
+This ADR supersedes only ADR 008's approved subject list to permit `refresh_session_id`. The exactly-one-subject rule and existing `service_id` and `kid` namespaces remain unchanged. Future subject keys still require an ADR amendment or superseding ADR.
+
+### 2. Give one agent-scoped coordinator transaction ownership
+
+An authorization coordinator serializes operations for each agent and owns their complete unit of work. All participating authorization and session repositories use that scope. PostgreSQL uses one transaction and an agent-row lock. Memory stages touched rows and publishes them only after validation.
+
+Fosite retains OAuth protocol handling but borrows the coordinator's transaction. It cannot commit or roll back that transaction independently. Authorization decisions use the backend's shared clock within the coordinated scope. Signing preparation and external metadata retrieval stay outside the database lock.
+
+## Rationale and Alternatives
+
+### Encryption subject
+
+- A session-specific subject binds retry ciphertext to its authorization lineage without changing existing encryption namespaces.
+- Reusing `service_id` or `kid` misrepresents the protected resource and its branch-key namespace.
+- JWE-only persistence uses a different encryption mechanism from the feature's required credential backend.
+- Reusing `EncryptionPort` keeps encryption policy and key ownership in one existing subsystem.
+
+### Transaction ownership
+
+- Independent transactions can commit authorization changes without the corresponding session changes.
+- An inner Fosite commit can publish rotation before the outer operation persists its recovery result.
+- Process-local locks cannot coordinate broker instances. Grant-row locks cannot cover missing grants or agent-wide credential actions.
+- Agent-scoped ownership gives those operations one lock order and one commit boundary.
+- Finer-grained session locks permit more concurrency but add lock-order complexity. The design accepts lower per-agent concurrency instead.
 
 ## Consequences
 
-### Positive
+- Existing service and signing-key encryption identities remain stable. Refresh sessions add a distinct subject namespace using the same vetted adapters.
+- Participating repositories and Fosite must join the coordinator's scope. Their interfaces and wiring belong in the implementation plan.
+- Operations for one agent serialize. A slow operation delays other operations for that agent.
+- Memory needs staged writes rather than no-op rollback or full-store copies.
+- External calls and transaction-unaware database lookups must stay outside the lock to prevent long lock holds and pool deadlocks.
 
-- Revoked or expired consent cannot supply another local token result, including an encrypted predecessor recovery.
-- Lifecycle success and session rotation have a consistent committed outcome across shared PostgreSQL instances and staged memory state.
-- Lost responses can recover one successor without branches; immutable origin and token expiries preserve original policy clocks.
-- Existing third-party and signing-key encryption subjects keep their original branch-key identifiers.
-
-### Costs and constraints
-
-- Refreshes serialize per agent. A full-store memory snapshot, an independent Fosite commit, or a transaction-unaware SQL query inside the guard violates the design.
-- Continuously active sessions without an absolute deadline accumulate consumed signature history. Cleanup keeps terminal revocation state through the greatest recorded token expiry.
-- The new subject requires typed-subject, branch-key ID, and adapter routing updates. All replicas must use compatible vetted encryption configuration; unavailable key material fails closed.
-- Encrypted backup copies of retry results are allowed. Never write plaintext credentials to logs or backups. If restoration cannot establish current revocation history, clear cached results **and require fresh authorization for affected roots**. Physical erasure of encrypted backups is not a guarantee.
-- Rolling old binaries can write unsupported descendants. New binaries require verified lineage or fresh authorization. Before admitting old binaries on rollback, quiesce token traffic and old writers and reconcile expiry under the outgoing policy. Binary-only rollback, even without a down migration, cannot restore terminal sessions; down/reapply must keep expired and revoked legacy mirrors unusable. Unsupported sessions require new authorization.
-- Existing access tokens can remain valid until their original JWT expiry at signature-only resource servers. This proposal adds no immediate access-token revocation or new public endpoint.
+Retry policy, lifetimes, error precedence, payload fields, migration rules, and acceptance tests remain in the feature documents. This ADR does not redefine them.
 
 ## References
 
-- `specs/049-fix-refresh-consent/spec.md`
-- `specs/049-fix-refresh-consent/data-model.md`
-- `specs/049-fix-refresh-consent/contracts/storage.md`
-- `adrs/004-storage-layer-architecture.md`
-- `adrs/008-encryption-context-optimization.md`
-- `adrs/013-strongly-typed-entity-ids.md`
-- `adrs/014-oauth2-server-mode.md`
-- `adrs/016-authorization-session-anti-spoofing.md`
-- `adrs/032-impersonation-requires-user-delegation.md`
+- [Feature specification](../specs/049-fix-refresh-consent/spec.md)
+- [Implementation plan](../specs/049-fix-refresh-consent/plan.md)
+- [Data model and payload fields](../specs/049-fix-refresh-consent/data-model.md)
+- [Storage interfaces and transaction contracts](../specs/049-fix-refresh-consent/contracts/storage.md)
+- [Research and integration evidence](../specs/049-fix-refresh-consent/research.md)
+- [ADR 004: Storage Layer Architecture](004-storage-layer-architecture.md)
+- [ADR 008: Encryption Context Optimization](008-encryption-context-optimization.md)
+- [ADR 014: OAuth2 Server Mode](014-oauth2-server-mode.md)

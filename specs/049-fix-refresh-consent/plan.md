@@ -90,7 +90,7 @@ The post-design check passes for planning. Approval/release items below are expl
 |------------------------|--------------------|
 | Security-first | PASS: consent has no opt-out; every successful retry reauthorizes. |
 | Architecture documentation | PASS: existing architecture sections and glossary will change with implementation. |
-| Binding ADRs | PASS for design: 004/013/014/032 retained. Proposed ADR 038 supersedes ADR 008's closed subject list; accept it before implementation. |
+| Binding ADRs | PASS: 004/013/014/032 retained. Accepted ADR 038 extends ADR 008's subject list and establishes agent-scoped transaction ownership. |
 | Library-first security | PASS: existing EncryptionPort raw-key/KMS adapters, JWX signing, and random-token strategy. No custom crypto. |
 | API guidelines | PASS: existing routes/status shapes; no new endpoint. |
 | End-user docs | PASS: configuration, API behavior, residual JWT expiry, and migration effects are included in scope. |
@@ -100,7 +100,7 @@ The post-design check passes for planning. Approval/release items below are expl
 | DI via Builder | PASS: all dependencies are required and wired in internal/app/builder.go, not routing. |
 | Design-system rules | PASS: no styled UI change; existing consent surface/page objects are reused. |
 
-**Implementation approval gate**: Accept ADR 038, including its ADR 008 supersession, and final API/release handling. Confirm the specification's recommended Open Decisions before runtime work. The feature owner explicitly selected constitution-compliant CLI support and allowed encrypted backup copies during task generation.
+**Implementation approval gate**: ADR 038 was accepted on 2026-10-01. Final API/release handling and the specification's Open Decisions still require T001 review before runtime work. The feature owner already selected constitution-compliant CLI support and allowed encrypted backup copies. Architectural acceptance does not complete implementation or release approval.
 
 ## Project Structure
 
@@ -118,7 +118,7 @@ specs/049-fix-refresh-consent/
     ├── lifecycle.md
     ├── configuration.md
     └── storage.md
-adrs/038-consent-bound-refresh-sessions.md   # proposed
+adrs/038-consent-bound-refresh-sessions.md   # accepted; implementation pending
 ```
 
 The executable task breakdown is in [tasks.md](tasks.md). Its design/test authoring pass precedes foundational runtime work.
@@ -177,7 +177,7 @@ Remove the obsolete token-only RefreshTokenSession model/repository/store after 
 
 | Phase | Purpose | Required? |
 |-------|---------|-----------|
-| Contract approval | Accept ADR 038 and review canonical API/release changes | Mandatory before implementation |
+| Contract approval | Review final API/release changes and Open Decisions; ADR 038 is already accepted | Mandatory before implementation |
 | Design preconditions / red coverage | Domain/config/schema contracts, updated Helm contract, API guide, and 47 semantic-red acceptance journeys | Mandatory |
 | Storage and coordination | Typed root/token state, transaction participation, memory write-set, migration | Mandatory |
 | Consent and lifecycle | Continuing verifier, both grant-delete paths, agent delete, credential revoke/replace | P1 |
@@ -189,7 +189,7 @@ Skip an unrelated refactoring phase. Skip a separately shipped entity-boilerplat
 
 ### Concrete integration sequence
 
-1. Publish reviewed canonical contracts, the rendered API guide, and the approved release decision. Approve the ADR and update the Helm contract before runtime work.
+1. Publish reviewed canonical contracts, the rendered API guide, and the approved release decision during implementation. ADR 038 is already accepted. Update the Helm contract before runtime work.
 2. Write all 47 acceptance journeys and focused boundary tests. Record acceptance-linked semantic failure for every primary journey before runtime implementation.
 3. Introduce RefreshSessionID, aggregate/token models, policy evaluation, and repository facets. Add both backends, migration 036, and the complete core YAML/environment policy in T025.
 4. Add the coordinator and make every participating repository read/write use its context. Credential replacement must join the owner transaction. Memory must stage only touched rows.
@@ -327,8 +327,10 @@ Known costs are deliberate: per-agent serialization, durable encrypted recovery,
 - Analysis-remediation validation checked 89 requirement mappings, 75 sequential tasks, and 47 matching primary scenario locations. All task predecessors exist. Helm, API-guide, and semantic-red gates precede runtime work.
 - Earlier document validation checked OpenAPI/YAML syntax and Markdown tables. Its scoped quality check reported zero gating regressions and four non-gating verbosity findings.
 - This remediation changed design artifacts only. It did not execute the planned runtime journeys or mark implementation tasks complete.
-- The approved follow-up addresses C1, I1, A1, A2, U1, and U2 across the specification, tasks, model, contracts, and Proposed ADR. All 75 implementation tasks remain pending.
+- The approved follow-up addresses C1, I1, A1, A2, U1, and U2 across the specification, tasks, model, contracts, and ADR 038. All 75 implementation tasks remain pending.
 - Document validation rendered 11 Markdown artifacts and checked 17 tables, relative links, unique OpenAPI keys, local references, and unchanged endpoint/response shapes. Model field quotations still match their implementation tasks.
 - Traceability validation found 89 mapped requirements and 47 matching primary scenario locations. Every task dependency exists and precedes its consumer. The revised test-first gates precede their implementation tasks. The prerequisite script still resolves feature 049. No runtime tests, migrations, or token journeys ran during this design-only remediation.
 - Contract cleanup keeps proposed refresh behavior in contracts/lifecycle.md and removes the duplicate API definition. Canonical API contents match the pre-cleanup baseline. T005 owns approved canonical documentation updates during implementation, before runtime edits.
 - Cleanup validation rendered 11 Markdown artifacts and resolved 21 relative links. All 89 requirement mappings, 75 pending tasks, and 47 primary scenarios remain intact. No retired contract references remain. Scoped quality-delta reports zero regressions and zero gating findings. No production code or published API behavior changed.
+- ADR 038 records only the encryption-subject extension and agent-scoped transaction ownership, with rationale, alternatives, and consequences. Feature policy and field definitions remain in the specification and design contracts.
+- On 2026-10-01, the user explicitly approved the narrowed ADR: "I accept ADR 038". Its status is Accepted. ADR 008 and agent routing reflect the narrow subject-list supersession. Open Decisions, API/release approval, and all 75 implementation tasks remain pending.

@@ -10,14 +10,14 @@
 
 **Format**: Every task uses `- [ ] TNNN [P?] [USn?] Description`. `[P]` means a disjoint-file task can run with a ready peer after the listed dependencies. Paths are repository-relative. Story labels appear only in their story phases. Each line lists dependencies and requirement IDs where applicable.
 
-**Approval gate**: T001 records the final Open Decisions/API/release/ADR approval. Do not implement an unaccepted ADR 008 supersession or silently declare stakeholder approval.
+**Approval gate**: ADR 038 was accepted on 2026-10-01. T001 still requires final Open Decisions and API/release approval. ADR acceptance does not complete those separate gates or any implementation task.
 
 
 ## Phase 1: Setup and approval
 
 **Purpose**: Record approval and the complete caller inventory. No new project or runtime dependency is needed.
 
-- [ ] T001 Confirm the specification’s five recommended Open Decisions and record stakeholder API/release approval in specs/049-fix-refresh-consent/plan.md; obtain acceptance of adrs/038-consent-bound-refresh-sessions.md including the ADR 008 subject supersession before runtime implementation. Preserve the already confirmed CLI and encrypted-backup choices. Dependencies: none.
+- [ ] T001 Confirm the specification's five recommended Open Decisions and record stakeholder API/release approval in specs/049-fix-refresh-consent/plan.md before runtime implementation. Reference the user's recorded acceptance of adrs/038-consent-bound-refresh-sessions.md on 2026-10-01, including its narrow ADR 008 subject supersession. Do not request that acceptance again or treat it as API/release approval. Preserve the already confirmed CLI and encrypted-backup choices. Dependencies: none.
 
 - [ ] T002 Inventory exported-signature changes with LSP references and exact production/test callers in specs/049-fix-refresh-consent/research.md for UserDelegationVerifier, consent.Service.VerifyAgentAccess, UserGrant.IsActive, Provider constructors, storage factory accessors, and encryption subjects; use current Go/module/migration versions and no unrelated dependency upgrade. Dependencies: T001.
 
@@ -234,7 +234,7 @@
 
 ### Design Phase Verification — Principles II, IV, V, VII, IX, X, XI, XIII
 
-- [ ] T067 Verify pre-implementation approvals and deliverables in adrs/038-consent-bound-refresh-sessions.md, ARCHITECTURE.md, api/enduser/openapi.yaml, api/admin/openapi.yaml, docs/api/oauth2-refresh-sessions.md, examples/config/, charts/agentic-identity-broker/, and specs/049-fix-refresh-consent/plan.md. Require the early Helm update and all 47 acceptance-linked semantic red records. Do not infer ADR acceptance or completed runtime work from a document. Dependencies: T066. Requirements: API-006. Principles: II, IV, V, VII, IX, X, XI, XIII.
+- [ ] T067 Verify recorded ADR 038 acceptance and the remaining approvals/deliverables in adrs/038-consent-bound-refresh-sessions.md, ARCHITECTURE.md, api/enduser/openapi.yaml, api/admin/openapi.yaml, docs/api/oauth2-refresh-sessions.md, examples/config/, charts/agentic-identity-broker/, and specs/049-fix-refresh-consent/plan.md. Require the early Helm update and all 47 acceptance-linked semantic-red records. ADR acceptance does not establish API/release approval or completed runtime work. Dependencies: T066. Requirements: API-006. Principles: II, IV, V, VII, IX, X, XI, XIII.
 
 ### Implementation Phase Verification — Principles I, III
 

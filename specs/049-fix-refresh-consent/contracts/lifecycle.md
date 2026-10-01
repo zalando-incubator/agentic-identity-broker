@@ -83,4 +83,4 @@ The user's remediation request confirms the intended consent, lifecycle, recover
 
 Record this security behavior change and the new default recovery policy in the changelog. Existing strict-reuse consumers must use the explicit zero interval if required. Handle any released-contract break through the constitution's major-release or approved versioned-contract process. Do not introduce a silent compatibility bypass.
 
-The proposed ADR 038 records the architectural decision. It remains a proposal until accepted. Planning completion does not imply release approval or runtime implementation.
+Accepted ADR 038 records the encryption-subject and transaction-ownership decisions. Its acceptance does not imply API/release approval or runtime implementation.
