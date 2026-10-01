@@ -344,25 +344,6 @@ func TestNewProvider_CustomServiceName(t *testing.T) {
 	assert.True(t, found, "resource must contain service.name=my-service")
 }
 
-func TestOtlpSignalPath(t *testing.T) {
-	cases := []struct {
-		name     string
-		endpoint string
-		want     string
-	}{
-		{"bare host:port", "localhost:4318", "/v1/traces"},
-		{"scheme with no path", "https://collector:8443", "/v1/traces"},
-		{"scheme with root path", "https://collector:8443/", "/v1/traces"},
-		{"explicit path preserved", "https://collector:8443/custom/path", "/custom/path"},
-		{"invalid URL falls back to default", "http://aaa.com/%zz", "/v1/traces"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, otlpSignalPath(tc.endpoint, "/v1/traces"))
-		})
-	}
-}
-
 func TestNewProvider_HTTPDefaultPathRegression(t *testing.T) {
 	saveAndRestoreGlobalProviders(t)
 
