@@ -1,0 +1,248 @@
+openapi: 3.0.3
+info:
+  title: AIB Local Refresh Grant Design Contract
+  version: 049-design
+  description: |
+    Scoped contract for the existing local refresh grant. This document does not
+    replace other grant types in api/enduser/openapi.yaml. Merge the refresh
+    branch into that canonical contract before implementation.
+    Local issuance in local and hybrid modes requires live consent, client binding,
+    current agent permissions, and session lifetimes for rotation and recovery.
+    Existing access-token expiry, upstream passthrough, and authorization-server
+    metadata stay unchanged. No revocation or introspection endpoint is added.
+paths:
+  /oauth2/token:
+    post:
+      operationId: refreshLocalToken
+      summary: Rotate a local refresh token or retry the last refresh without rotating again
+      description: |
+        Authenticate and bind the client under existing local-client rules. A
+        credential replacement keeps the session but requires the new secret.
+        Explicit credential deletion revokes it. A previously public agent with
+        credentials must authenticate on later refreshes. Require the current
+        grant for the session-bound principal and agent. A grant renewed after
+        expiry cannot restore earlier sessions. An active grant changed before
+        expiry keeps them subject to its current permissions.
+
+        A fresh current-token request produces one successor. A narrower requested
+        scope limits only its new access token, never the session's scope ceiling.
+        Concurrent valid requests converge on that successor. An eligible retry
+        of the immediately previous token returns exactly the original access
+        and refresh token strings and the original response scope (or omission).
+        It can return that result at most three times while its successor is
+        current and unused and its original access token remains unexpired.
+        Its normalized requested scope must match the original refresh request.
+        A retry cannot narrow the stored result or extend inactivity, absolute,
+        access-token, or reuse deadlines. Remaining expires_in reflects the
+        original access-token expiry.
+
+        The retry interval defaults to 30 seconds from first successful consumption.
+        It ends at equality. A value of 0s disables recovery. The effective
+        inactivity deadline is the earliest of the stored InactivityExpiresAt,
+        LastFreshAt plus current refresh_token_ttl, and current refresh token
+        ExpiresAt. A policy increase cannot extend the current activity interval
+        or already-issued refresh token. Only a fresh successful rotation advances
+        LastFreshAt and resets the successor's ExpiresAt and InactivityExpiresAt
+        from rotation time under the current inactivity lifetime. Check elapsed
+        stored deadlines before a policy increase. Startup or maintenance persists
+        shorter effective inactivity deadlines for active roots. Grant, session,
+        and reuse deadlines use one shared decision time on every broker instance.
+
+        Evaluate client authentication and binding, revocation, active consent,
+        session lifetimes, current agent refresh-grant capability, token
+        classification, then response-scope eligibility. Check response scope
+        only for a fresh or otherwise eligible stored-result candidate.
+        Consent or lifetime denial wins over missing capability. Missing capability
+        wins over prohibited reuse. Repeat every success check at a fresh shared
+        time immediately before commit.
+
+        Missing/expired consent, revoked/expired sessions, unsupported legacy
+        lineage, and prohibited reuse return token-free invalid_grant. Missing
+        consent has no error_uri. Missing current refresh-grant capability retains
+        token-free HTTP 400 unauthorized_client with no mutation. A disallowed
+        response scope on an otherwise eligible request retains HTTP 400
+        invalid_scope or HTTP 403 scope_not_granted, as appropriate, without
+        credentials or mutation. A retry's exact original response scope must
+        remain permitted by the agent. Prohibited reuse does not return the
+        stored result.
+
+        Only bound-client prohibited reuse revokes remaining refresh tokens.
+        It includes older-predecessor use, a closed reuse window, changed retry
+        request scope, and a fourth otherwise eligible stored-result request.
+        These cases revoke even if the original response scope was withdrawn.
+        A consumed signature remains replay evidence after its individual expiry.
+        Other authorization denials leave request state unchanged, including
+        failed authentication, client mismatch, consent or lifetime denial,
+        missing capability, and disallowed response scope. Expired original
+        access-token recovery does not revoke a valid current refresh token.
+        Confirmed pre-commit failure or rollback returns token-free server_error
+        without consuming the token, rotating, or changing deadlines.
+
+        A lost commit acknowledgement returns token-free server_error without a
+        rollback claim. A later request resolves durable state and applies normal
+        authorization and retry rules. An unused current token can rotate. Committed
+        consumption permits only its existing eligible retry result. With zero reuse,
+        committed consumption is prohibited reuse and requires fresh authorization.
+        Unresolved state fails closed. Recovery never creates another successor,
+        extends a retry window, or refunds a committed retry count.
+
+        Stored recovery credentials use EncryptionPort credential encryption at
+        rest, not JWE TokenService. Live results expire with the retry window or
+        sooner when the successor rotates or the session ends. Encrypted backups
+        can retain copies, but a restore must recheck live authorization, token
+        ancestry, retry count, and deadlines before returning credentials. Tokens
+        and secrets must not appear in logs or plaintext backups.
+
+        During mixed-version rollout, lock and re-read the anchored legacy current
+        mirror before trusting an unused new-table token. Hold the lock through
+        fresh rotation. If an old writer consumed the mirror without matching
+        new-token and history evidence, the original and unsupported descendant
+        return invalid_grant without tokens, a successor, or request-state
+        mutation. An old-first commit is visible on re-read. A new-first rotation
+        consumes the mirror before the old writer can use it. Recheck old-writer
+        descendants when revoking a session.
+
+        Startup and maintenance commit lifetime expiry, live-ciphertext erasure,
+        and invalidation of all matching unconsumed legacy current and descendant
+        mirrors in one scoped transaction. Mirror-update failure rolls back the
+        transition and prevents startup readiness. Before binary-only rollback,
+        quiesce token traffic and old writers, then reconcile outgoing-policy
+        expiry before old binaries receive traffic. Already terminal sessions
+        cannot be restored by binary-only rollback. Down migration and reapplication
+        also keep terminal legacy mirrors unusable.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Committed rotation or authorized recovery of the original result
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: [no-store]
+            Pragma:
+              schema:
+                type: string
+                enum: [no-cache]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Existing invalid request/grant/scope or unauthorized-client failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientError'
+        '401':
+          description: Client authentication fails under the existing contract
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthenticationError'
+        '403':
+          description: Existing granted-scope authorization failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantedScopeError'
+        '500':
+          description: Unknown authorization, persistence, transaction, or decryption state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError'
+components:
+  schemas:
+    RefreshRequest:
+      type: object
+      required: [grant_type, client_id, refresh_token]
+      properties:
+        grant_type:
+          type: string
+          enum: [refresh_token]
+        client_id:
+          type: string
+          minLength: 1
+          description: Original client identifier, including UUID or CIMD URL form
+        client_secret:
+          type: string
+          writeOnly: true
+          description: Required for confidential clients under existing authentication rules
+        refresh_token:
+          type: string
+          minLength: 1
+          writeOnly: true
+        scope:
+          type: string
+          description: |
+            Existing optional scope input. A fresh narrower scope limits only the
+            new access token, not the session ceiling. Recovery requires the
+            original normalized requested scope and the exact original response
+            scope (or omission) to remain permitted by current agent permissions.
+    TokenResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+        refresh_token:
+          type: string
+          minLength: 1
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Remaining validity of the returned access token. Recovery must not
+            restart its lifetime or return an already expired access token.
+        scope:
+          type: string
+          description: Granted scope; retry retains its original value or omission
+    ClientError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, invalid_grant, invalid_scope, unauthorized_client]
+        error_description:
+          type: string
+          description: Safe explanation with no credentials or storage internals
+    GrantedScopeError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [scope_not_granted]
+        error_description:
+          type: string
+    AuthenticationError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_client]
+        error_description:
+          type: string
+    ServerError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [server_error]
+        error_description:
+          type: string
+          description: Safe explanation with no credentials or storage internals
