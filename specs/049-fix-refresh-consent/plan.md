@@ -12,7 +12,7 @@ Keep Fosite for fresh OAuth protocol handling. An agent-scoped coordinator owns 
 
 The default retry interval is 30 seconds. Absolute lifetime defaults to unlimited. Inactivity remains 30 days through `local.refresh_token_ttl`. Existing JWT expiry, JWKS validation, proxy behavior, and third-party sessions remain unchanged.
 
-This plan and tasks.md describe implementation work, not an implemented feature. Analysis remediation maps the current 47 scenarios. It preserves the owner's CLI and encrypted-backup decisions and leaves the constitution unchanged.
+This plan and tasks.md describe pending implementation work, not an implemented feature. The 47-scenario design is provisional until T001 confirms the Open Decisions. A changed choice requires artifact reconciliation and traceability validation before dependent work. The owner's CLI and encrypted-backup decisions remain confirmed. The constitution remains unchanged.
 
 ### Bounded, idempotent retry of the last refresh
 
@@ -155,6 +155,7 @@ internal/adapters/storage/
   postgres/                             # ambient transactions + root/token repositories
 internal/config/{loader.go,validator.go}
 cmd/agentic-identity-broker/root.go
+cmd/agentic-identity-broker/refresh_sessions.go  # new one-shot restore invalidation command
 api/{enduser,admin}/openapi.yaml
 migrations/036_consent_bound_refresh_sessions.{up,down}.sql
 charts/agentic-identity-broker/{values.yaml,values.schema.json,README.md}
@@ -196,18 +197,21 @@ Skip an unrelated refactoring phase. Skip a separately shipped entity-boilerplat
 5. Make FositeStorage borrow the owner transaction. Preserve required standalone behavior. Propagate commit errors without retrying COMMIT or claiming an indeterminate outcome rolled back.
 6. Inject the extended delegation verifier, coordinator, shared clock, EncryptionPort, branch-key manager, refresh facets, and policy through the builder. Migrate every provider and verifier caller; no compatibility bypass remains.
 7. Guard initial refresh issuance and all refresh decisions. Prepare signing material/CIMD resolution outside the guard; re-read local authorization and credential identity inside it.
-8. Revoke on both grant-deletion paths, agent deletion, explicit credential deletion, expired-grant renewal, and code replay. Credential replacement and active-grant edits preserve sessions. Publish lifecycle success and secrets only after commit; record revocation durably before agent cascade removal.
+8. Revoke on both grant-deletion paths, agent deletion, explicit credential deletion, expired-grant renewal, and code replay. FR-040 preserves code replay by a different client authenticated as itself. Refresh-token binding protections do not suppress this exception. Credential replacement and active-grant edits preserve sessions. Publish lifecycle success and secrets only after commit. Record revocation durably before agent cascade removal.
 9. Implement 30-second idempotent retries with matching normalized requested scope and a maximum of three stored returns. Narrow access-token scope only, retain the root ceiling, and compare request-context fingerprints for audit. Use EncryptionPort and the approved refresh-session subject.
-10. Evaluate grant/session/reuse deadlines from the shared clock. Classify consumed signatures before considering individual token expiry. Preserve expired ancestor replay evidence. Startup and maintenance own expiry and ciphertext erasure.
+10. Evaluate grant/session/reuse deadlines from the shared clock. Classify consumed signatures before individual token expiry. Preserve expired ancestor replay evidence. Startup and maintenance own expiry and ciphertext erasure. Persist only shorter effective retry deadlines while keeping sealed original expiry fixed. Deny at equality and meet DB-006's 1-second cleanup bound. Shortened or zero reuse must reconcile before readiness.
 11. Verify the core policy from T025 without reimplementing it. Add CLI delivery and prove parity with YAML, environment, and the Phase 2b chart. Proxy defaults remain valid.
 12. Remove obsolete token-only code and update existing strict-reuse tests to explicitly select zero interval. Add default recovery coverage rather than weakening replay assertions.
 13. Run the verification sequence in quickstart.md and capture the direct-JWKS, browser revoke, restart, and two-replica outcomes.
 
 ### Cutover and rollback
 
-Migration 036 is additive. Keep refresh_token_sessions readable/writable by old binaries and add nullable root/ancestry anchors. New code issues only anchored records. Validate FR-025 evidence independently. Before fresh consumption, lock and re-read the anchored legacy current row and retain its lock through rotation. Old-writer consumption without matching new history makes the original token and unsupported descendant invalid_grant without mutation or another successor. If the new rotation wins first, the old writer's conditional MarkUsed must fail. Unsupported lineage requires reauthorization, not a guessed start time.
+Migration 036 is additive. Keep refresh_token_sessions readable/writable by old binaries and add nullable root/ancestry anchors. New code issues only anchored records. FR-025 evidence comes from new-issuer root/token records, including the original active grant, first issuance, complete ancestry, and revocation history. Every pre-feature unanchored session requires fresh authorization. Before fresh consumption, lock and re-read the anchored legacy current row through rotation. Old-writer consumption without matching new history makes the original and unsupported descendant invalid_grant without mutation or another successor. If new rotation wins first, the old writer's conditional MarkUsed must fail.
 
-Keep the old table through mixed-version operation. Revocation and terminal lifetime expiry invalidate matching legacy current/descendant rows in the same transaction as the root transition. Expiry also commits ExpiredAt/reason and ciphertext erasure. A failed mirror update rolls back the whole transition and blocks startup readiness. Before binary-only rollback, quiesce token traffic and old writers, then run expiry reconciliation under the outgoing policy. Admit old binaries only after reconciliation succeeds. No down migration is necessary for this protection. Revoked or terminally expired authority never returns. Backup restoration clears cached results and requires reauthorization where current history cannot be proved.
+Keep the old table through mixed-version operation. Revocation and terminal expiry invalidate matching legacy current/descendant rows with the root transition. Expiry also commits ExpiredAt/reason and ciphertext erasure. A failed mirror update rolls back that transition and blocks readiness. Before binary-only rollback, quiesce token traffic and old writers, then reconcile expiry under the outgoing policy. Admit old binaries only after reconciliation succeeds. No down migration is necessary for this protection. Revoked or terminally expired authority never returns.
+
+After a database or refresh-state restore, operators keep all brokers and token writers stopped. Run `agentic-identity-broker --config <file> refresh-sessions invalidate-restored` before admission. T059 authors failing command integrations. T063 implements the command and its coordinated maintenance path. T064 documents the procedure, and T065/T074 exercise it. The command invalidates every restored local root and unused legacy row, including unanchored rows. Grants, agents, credentials, signing keys, and third-party sessions remain unchanged. Failed or indeterminate completion keeps traffic stopped until an acknowledged successful idempotent rerun. The [restore procedure](data-model.md#restore-invalidation) defines batching, receipts, terminal-state preservation, and final completeness checks. No snapshot-local evidence or automatic restore detector proves current revocation history.
+
 
 ## Testing Strategy
 
@@ -237,7 +241,7 @@ Use Ginkgo/Gomega with real production app bootstrap, dual end-user/admin server
 | US2-S7 | `tests/e2e/oauth2_refresh_lifecycle_postgres_e2e_test.go` | PostgreSQL HTTP: lifecycle failure rolls back |
 | US2-S8 | `tests/e2e/oauth2_refresh_lifecycle_e2e_test.go` | HTTP/CLI: replacement credentials retain original retry results, clocks, and counts |
 | US2-S9 | `tests/e2e/oauth2_refresh_lifecycle_e2e_test.go` | HTTP/CLI: idempotent missing-grant deletion revokes leftovers |
-| US2-S10 | `tests/e2e/oauth2_refresh_lifecycle_e2e_test.go` | HTTP/CLI: identical predecessor recovery precedes code replay, which rejects both tokens and preserves an unrelated session |
+| US2-S10 | `tests/e2e/oauth2_refresh_lifecycle_e2e_test.go` | HTTP/CLI: identical predecessor recovery precedes code replay by another authenticated client, rejecting both tokens and preserving an unrelated session |
 | US3-S1 | `tests/e2e/oauth2_refresh_retry_e2e_test.go` | HTTP/CLI: lost response returns identical pair |
 | US3-S2 | `tests/e2e/oauth2_refresh_retry_e2e_test.go` | HTTP/CLI: concurrent refresh has one successor |
 | US3-S3 | `tests/e2e/oauth2_refresh_retry_e2e_test.go` | HTTP/CLI: fixed deadline rejects and revokes |
@@ -261,7 +265,7 @@ Use Ginkgo/Gomega with real production app bootstrap, dual end-user/admin server
 | US6-S1 | `tests/e2e/oauth2_refresh_policy_e2e_test.go` | HTTP/CLI: file/env/CLI/chart govern real behavior |
 | US6-S2 | `tests/e2e/oauth2_refresh_policy_e2e_test.go` | HTTP/CLI: existing inactivity key governs rotation, not duplicate retry activity |
 | US6-S3 | `tests/e2e/oauth2_refresh_policy_e2e_test.go` | HTTP/CLI: invalid combinations fail startup |
-| US6-S4 | `tests/e2e/oauth2_refresh_policy_postgres_e2e_test.go` | PostgreSQL HTTP: unsupported legacy session requires reauthorization |
+| US6-S4 | `tests/e2e/oauth2_refresh_policy_postgres_e2e_test.go` | PostgreSQL HTTP: every pre-feature unanchored session reauthorizes; a fully evidenced anchored new-issuer family continues |
 | US6-S5 | `tests/e2e/oauth2_refresh_policy_e2e_test.go` | HTTP/CLI: hybrid local enforcement coexists with upstream independence and proxy parity |
 | US6-S6 | `tests/e2e/oauth2_refresh_policy_postgres_e2e_test.go` | PostgreSQL HTTP: shorter deadlines persist; inactivity increases affect the next rotation only; absolute/shortened inactivity expiry blocks legacy renewal after binary-only rollback |
 | US6-S7 | `tests/e2e/oauth2_refresh_policy_postgres_e2e_test.go` | PostgreSQL HTTP: old-first consumption rejects the anchored original and unsupported descendant; new-first locking defeats old consumption; neither order branches |
@@ -297,17 +301,20 @@ Capture maintained `refresh_consent_before_revoke.png` and `refresh_consent_afte
 
 ### Unit & Integration Tests
 
-**Issuer/domain**: Fixed failure precedence, expired consumed-ancestor replay, and unchanged state after authorization denial or confirmed rollback. Include indeterminate-commit resolution, committed retry counts, zero reuse, shared-time boundaries, and encrypted payload binding. T031 writes and runs fresh capability-removal, response-scope withdrawal, narrow-then-full-ceiling, and public-session promotion tests before T032–T034. T043 writes and runs retry capability/scope/promotion and overlapping-failure tests before T044–T047. Record genuine semantic-red evidence before each implementation wave.
+**Issuer/domain**: Fixed failure precedence, expired consumed-ancestor replay, and unchanged state after refresh authorization denial or confirmed rollback. Include indeterminate-commit resolution, committed counts, zero reuse, shared-time boundaries, and encrypted payload binding. T031 runs fresh capability/scope/promotion tests red before T032–T034. T043 runs retry, overlapping-failure, and cleanup tests red before T044–T049. Cleanup tests cover the 1-second bound, readiness recovery, and shorter effective deadlines without changing sealed original expiry. US2-S10 uses another authenticated client for FR-040's separate code-replay exception.
 
 **Storage parity**: Ambient transaction participation, bounded write-set rollback, one successor, scoped root/legacy revocation, immutable issuance evidence, live tombstone retention, terminal retention through every token expiry, and unrelated-record preservation.
 
 **PostgreSQL**: Additive apply/down/reapply, mixed-version writers, one-connection safety, shared time, race/restart, startup reconciliation, confirmed rollback, and lost commit acknowledgement. Test old-first and new-first lock interleavings on the same anchored current token. A new instance rejects old-only consumption without another successor or request mutation. After absolute or shortened inactivity expiry, retain the schema and exercise legacy redemption with the old binary. It must reject current and descendant mirrors. A failed expiry mirror write preserves the prior transaction state and blocks startup readiness. Unrelated eligible sessions remain usable.
 
-**Configuration**: Omission/zero, source precedence, malformed/numeric/negative durations, cross-setting validation, startup warnings, local/hybrid resolution, and chart-to-loader behavior. Policy-change tests persist shorter deadlines before expiry, then restart with larger values after that deadline. Increased inactivity never extends an issued token or its current interval. A valid fresh rotation applies the new duration to its successor. Absolute changes retain StartedAt and never restore elapsed stored deadlines.
+**Configuration**: Omission/zero, precedence, malformed/numeric/negative durations, relation validation, startup warnings, local/hybrid resolution, and chart-to-loader behavior. Policy-change tests persist shorter deadlines before expiry, then restart with larger values. Increased inactivity never extends an issued token or its current interval. A fresh rotation applies the new duration to its successor. Absolute changes retain StartedAt and cannot restore elapsed stored deadlines. Shorter reuse clamps effective RetryExpiresAt without changing ReuseUntil or sealed payload expiry. Zero reuse erases every cached result before readiness. Tests prove an eligible retry still works after a nonzero shortening.
 
 **Existing regression protection**: Keep strict replay rejection under explicit zero interval. Preserve offline-access eligibility, PKCE, profile claims, current signing-key handling, metadata, upstream flows, and third-party token refresh.
 
 **Coverage goals**: All 47 acceptance scenarios have one primary E2E case and an acceptance-linked semantic-red record. Test encryption and backup restoration without plaintext logs or resurrection. No arbitrary line-coverage percentage is added.
+
+**Restore integration**: T059's focused integrations are separate from the 47 primary acceptance journeys. Restore an encrypted snapshot, stop all token writers, and run the real one-shot maintenance command. Test root/legacy invalidation, unanchored rows without roots, preserved terminal reasons, and receipt/mirror/commit faults. A failed command blocks admission. An acknowledged idempotent rerun rejects restored current and predecessor tokens. Fresh authorization succeeds without changing third-party sessions or credentials.
+
 
 ## Complexity Tracking
 
@@ -334,3 +341,5 @@ Known costs are deliberate: per-agent serialization, durable encrypted recovery,
 - Cleanup validation rendered 11 Markdown artifacts and resolved 21 relative links. All 89 requirement mappings, 75 pending tasks, and 47 primary scenarios remain intact. No retired contract references remain. Scoped quality-delta reports zero regressions and zero gating findings. No production code or published API behavior changed.
 - ADR 038 records only the encryption-subject extension and agent-scoped transaction ownership, with rationale, alternatives, and consequences. Feature policy and field definitions remain in the specification and design contracts.
 - On 2026-10-01, the user explicitly approved the narrowed ADR: "I accept ADR 038". Its status is Accepted. ADR 008 and agent routing reflect the narrow subject-list supersession. Open Decisions, API/release approval, and all 75 implementation tasks remain pending.
+- The user approved remediation of I1, U1, A1, I2, and I3 from the current analysis. C1 is intentionally unchanged. The design preserves the code-replay exception, assigns full-restore invalidation, bounds live-ciphertext erasure, aligns anchored evidence, and makes Open Decisions provisional. All 75 runtime tasks remain pending.
+- Current remediation validation rendered 10 Markdown artifacts and 17 tables, parsed two YAML examples, and found no broken relative links or heading anchors. All 89 requirements map to 75 pending tasks and 47 matching primary scenarios. All 36 model-field constraints match their task quotations. The dependency graph and C1 approval order remain unchanged. Canonical APIs, ADR 038, and the constitution retain their pre-remediation contents. Scoped quality-delta reports zero regressions and zero gating findings. No runtime tests, migrations, restore commands, or token journeys ran.

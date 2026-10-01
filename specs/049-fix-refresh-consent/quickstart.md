@@ -1,8 +1,8 @@
-# Quickstart: Validate Consent-Bound Refresh Sessions
+# Quickstart: Validate Consent-Bound Refresh Sessions After Implementation
 
 ## Scope and status
 
-This guide defines validation after implementation. The new journeys and migration do not exist merely because the plan exists. A focused run with zero executed scenarios is not a passing acceptance gate.
+This is a post-implementation validation guide. It does not claim that the planned journeys, restore command, or migration exist. A focused run with zero executed scenarios is not a passing acceptance gate.
 
 The [current API definition](../../api/enduser/openapi.yaml) remains unchanged until implementation. Planned behavior belongs to the [refresh and lifecycle design](contracts/lifecycle.md), [configuration](contracts/configuration.md), and [storage](contracts/storage.md) contracts. The [data model](data-model.md) defines internal deadline and recovery rules.
 
@@ -34,9 +34,15 @@ Map each scenario to one production-bootstrap journey in [plan.md](plan.md). US1
 
 Before runtime implementation, record acceptance-linked semantic failure for every primary scenario. Each primary It must compile and fail for its actual feature behavior. Keep unchanged baseline regressions separate from these 47 entries. Do not force failures with unrelated assertions or placeholders. After implementation, run all primary scenarios and existing regressions.
 
-US2-S10 must recover the identical pair before replaying its authorization code. Then both refresh tokens must fail and an unrelated session must remain usable. The positive recovery control supplies its feature-specific semantic-red assertion. T050 completes this retry-dependent journey after US3 implementation.
+US2-S10 must recover the identical pair before a different client authenticates as itself and replays the authorization code. Then both refresh tokens must fail and an unrelated session must remain usable. A mismatched client presenting a refresh token does not revoke the session. The positive recovery control supplies the feature-specific semantic-red assertion. T050 completes this retry-dependent journey after US3 implementation.
 
-Run T031's fresh capability/scope/promotion tests red before T032–T034. Run T043's retry and overlapping-failure tests red before T044–T047. With consent denied and capability removed, consent determines the error. With valid consent/lifetimes but capability removed, an older-token request returns the existing capability error without revocation. With capability allowed, prohibited reuse revokes before response-scope checks. A withdrawn scope on an otherwise eligible result rejects without mutation.
+Run T031's fresh capability/scope/promotion tests red before T032–T034. Run T043's retry, overlapping-failure, and cleanup tests red before T044–T049. With consent denied and capability removed, consent determines the error. With valid consent/lifetimes but capability removed, an older-token request returns the existing capability error without revocation. With capability allowed, prohibited reuse revokes before response-scope checks. A withdrawn scope on an otherwise eligible result rejects without mutation.
+
+Add focused T043 regressions with controlled shared-clock times. Shorter reuse denies retry exactly at its effective deadline, even before ciphertext cleanup. Before that deadline, the returned pair and sealed original `retry_expires_at` stay unchanged. An effective `RetryExpiresAt` never increases for the same predecessor, and shrinking it does not reencrypt an unchanged result. Reject mismatched original or effective deadline bindings without a token result.
+
+Drive T049 maintenance with controlled time. With reachable storage, erase overdue ciphertext within one second of the effective deadline. A missed bound or unavailable cleanup storage blocks readiness until the overdue ciphertext is gone. Rotation, revocation, and terminal expiry erase ciphertext in their transactions.
+
+For T053, start with cached results and shorter configured reuse. Persist shorter effective deadlines and erase overdue ciphertext before readiness. Start again with zero reuse and erase **all** cached results before readiness; persist no new zero-reuse results. Use explicit shared times and maintenance ticks, not sleeps for long intervals. These regressions do not increase the 47 primary scenario count.
 
 The infrastructure run must exercise migration apply/down/reapply, a rolling upgrade, two-instance behavior, restart, rollback, and one-connection-pool safety. Database faults must use real isolated schemas, not mock repository echoes.
 
@@ -166,7 +172,7 @@ Run the tagged PostgreSQL journeys against cloned databases and production end-u
 - Race refresh with each lifecycle action. After lifecycle revocation succeeds, no affected successor remains usable. Credential replacement must not terminate a session.
 - Reject revocation writes with a test-owned database failure. The lifecycle action fails and authorization is not partially deleted.
 - Recover a lost response through a second instance and after rebuilding an application over the same database and credential-encryption key material.
-- Apply an additive migration that retains `refresh_token_sessions`. The current legacy format cannot prove first issuance, so unsupported tokens require fresh authorization. An evidenced older family retains original clocks. Old-writer descendants undergo the same FR-025 lineage check during a rolling upgrade. Revocation also blocks legacy current rows.
+- Apply an additive migration that retains `refresh_token_sessions`. Every pre-feature unanchored row requires fresh authorization. Only anchored root/token records written by new issuers can support continuation. Require principal, agent, client, original active grant ID, first issued token and issuance time, full ancestry, last fresh rotation, and revocation history. Verify current authorization on rollout and restart. Unsupported old-writer descendants also require reauthorization. Do not invent origin or retry evidence from a legacy row.
 - Let an old writer consume an anchored current token before the new instance handles that same token. Expect invalid_grant without another successor or request mutation from the new instance. Its unsupported descendant must also require reauthorization.
 - Exercise the opposite lock order. After the new instance rotates, the old writer's conditional MarkUsed must fail. Observe one successor, not independent branches.
 
@@ -179,7 +185,24 @@ Use observable database-lock interleavings and bounded waits, not arbitrary slee
 
 Memory runs prove in-process outcomes and staged rollback. A memory process restart discards sessions and must reject old tokens. It does not prove durable recovery.
 
-For backup recovery, restore an encrypted snapshot in an isolated environment. Verify that live consent, current revocation history, token ancestry, retry count, and shared-time deadlines still gate the result. A stale snapshot cannot revive a revoked or expired session. Do not place plaintext credentials in backups or token strings in logs.
+### Validate a full database or refresh-state restore
+
+This post-implementation procedure covers an additional focused integration regression, not a new primary scenario. The one-shot command is a planned supported interface. It uses existing configuration, storage, coordinator, clock, and maintenance. It starts no HTTP server and returns no credentials.
+
+1. Stop token traffic and all writers, including old broker instances, before restoring an encrypted snapshot.
+2. Restore the full database or refresh state in an isolated environment. Apply the supported schema. Keep brokers offline.
+3. Run the maintenance command against the restored store:
+
+   ```bash
+   agentic-identity-broker --config <file> refresh-sessions invalidate-restored
+   ```
+
+4. Require an acknowledged successful exit and a final scan with zero active roots, retry ciphertext, and unused legacy rows.
+5. If the command exits nonzero or its commit is indeterminate, keep every broker offline. Rerun it until the acknowledged final scan succeeds. Per-agent commits from an earlier attempt remain valid. The command is idempotent.
+6. Admit traffic only after success. Present a restored current token, its retry-eligible predecessor, and an unanchored legacy token without a root. All three must fail renewal without tokens.
+7. Confirm that existing terminal reasons and receipts remain unchanged. Confirm that grants, agents, credentials, signing keys, and provider-controlled third-party sessions remain unchanged. Complete fresh authorization to prove that a new local session works.
+
+In a separate isolated fault run, fail an agent transaction and lose a commit acknowledgement. Each outcome must exit nonzero and keep brokers offline until an idempotent rerun succeeds. A snapshot or local receipt cannot prove post-snapshot history. There is no automatic restore detector. Do not put plaintext credentials in backups or token strings in logs.
 
 ## 6. Browser evidence and completion
 

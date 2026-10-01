@@ -2,7 +2,7 @@
 
 **Feature**: [spec.md](spec.md)  
 **Date**: 2026-09-30  
-**Status**: Reconciled to the current specification for task generation. ADR 038 is accepted. API/release approval remains an implementation gate.
+**Status**: ADR 038 is accepted. Open Decisions and dependent planning remain provisional until T001. API/release approval still precedes runtime implementation.
 
 ## 1. Continuing authorization
 
@@ -32,9 +32,9 @@ The coordinator stages memory changes before publishing them. It does not clone 
 
 For a fresh or otherwise eligible retry candidate, check the response scope against current agent permissions after classification. Preserve existing `invalid_scope`/`scope_not_granted` conventions without mutation. A retry checks the exact original response scope, not a narrower new request. Older, out-of-window, scope-mismatched, or fourth otherwise-eligible reuse still revokes, even if the old response scope was withdrawn; never decrypt prohibited reuse merely to inspect scope.
 
-`FositeStorage.BeginTX` joins the coordinator context when present. Its inner `Commit` and `Rollback` never end the owner transaction. Authorization denials and pre-commit failures roll back request changes. A lost commit acknowledgement returns token-free `server_error` without claiming rollback. Later requests resolve durable state under the normal guard and retry policy. Only bound-client prohibited reuse commits an authorization rejection. Startup and maintenance own expiry transitions. Repeat consent, lifetimes, capability, and eligible response-scope checks before success commits.
+`FositeStorage.BeginTX` joins the coordinator context when present. Its inner `Commit` and `Rollback` never end the owner transaction. Refresh authorization denials and pre-commit failures roll back request changes. Lost commit acknowledgement returns token-free `server_error` without a rollback claim. Later requests resolve durable state under the guard and normal retry policy. For refresh-token presentation, only bound-client prohibited reuse commits an authorization rejection. Code replay separately follows FR-040. Startup and maintenance own expiry transitions. Repeat authorization and eligibility checks before a successful commit.
 
-Authorization-code redemption joins the same guard before creating a refresh session. It rechecks delegation at the issuance boundary. Credential authentication prepared before the guard is revalidated against the current credential identity inside it.
+Authorization-code redemption joins the same guard before creating a refresh session. It rechecks delegation at the issuance boundary. Credential authentication prepared before the guard is revalidated against the current credential identity inside it. Code replay revokes the session created by that code even when another client authenticates as itself to replay it. FR-030 and SR-009 protect refresh-token presentations, not code replay. Unrelated sessions remain usable.
 
 **Rationale**: Fosite v0.49.0 treats an inactive refresh token as replay before checking client binding. It also opens and commits its own mutation transaction. Wrapping it with an unrelated outer transaction is unsafe.
 
@@ -49,6 +49,8 @@ Resolve CIMD metadata before the guard as well. Fosite storage reuses that reque
 ## 4. Durable session root and hashed token history
 
 **Decision**: Replace the token-only storage model with a `RefreshSession` root and `RefreshToken` records. Generate `id.RefreshSessionID`. The root UUID uses the authorization-code UUID already used as Fosite's request ID. Store immutable ownership and original issuance time once per session.
+
+Trust only anchored root/token records written by new issuers. Require the original active grant ID, first issued token and issuance time, principal, agent, client, complete ancestry, last fresh rotation, and revocation history. Every pre-feature unanchored row and unsupported old-writer descendant requires fresh authorization. An anchored new-issuer family can continue across rollout or restart only with complete evidence and current authorization. No external legacy evidence source is assumed.
 
 Keep consumed-token signatures and revocation state through the last recorded token expiry. Store one current signature and at most one previous-token result, its normalized requested scope, accepted-retry count, and original request-context fingerprint. Narrowed access-token scope never replaces the root's original scope ceiling.
 
@@ -90,7 +92,11 @@ Payload fields bind purpose/version, session, original principal/agent/client, p
 
 **Approval boundary**: Accepted ADR 038 extends ADR 008's approved subject list. It preserves the exactly-one-subject AAD rule. API/release approval and implementation remain pending. Keep Fosite types and plaintext out of repository interfaces.
 
-**User decision on backups**: Encrypted backup copies are permitted. Live cached results still expire, rotate, or revoke under DB-006. No retry result belongs in logs. Restored copies do not establish live authorization. Restore procedures must clear retry caches and require reauthorization where current revocation history cannot be established.
+**Restore decision**: After any full database or refresh-state restore, invalidate all restored local refresh authority before admission. Stop token traffic and all writers before restoring. The supported one-shot command is `agentic-identity-broker --config <file> refresh-sessions invalidate-restored`. It uses the existing loader, builder, storage, coordinator, clock, and maintenance. It starts no HTTP server and returns no credentials.
+
+**Rationale**: Snapshot-local rows and receipts cannot prove post-snapshot revocation or authorization. A snapshot-history proof can revive revoked sessions. No automatic restore detector, new public endpoint, or new runtime configuration is part of this design.
+
+**Operation**: Scan agent IDs from roots and legacy rows in bounded batches. Under each agent transaction, revoke active roots with `restore_invalidation`, erase ciphertext, and mark every unused legacy row used. Include unanchored rows without roots. Preserve existing terminal reasons, receipts, grants, agents, credentials, signing keys, and third-party sessions. On failure or an indeterminate commit, exit nonzero and keep all brokers offline. Rerun idempotently until acknowledged success includes a final scan with zero active roots, ciphertext, and unused legacy rows. Fresh authorization creates new sessions after admission.
 
 **Evidence**: `internal/ports/encryption.go`; `internal/domain/encryption/subject.go`; `internal/adapters/encryption/branchkey/id.go`; accepted ADRs 008/009/012. The existing supplier derives branch IDs without a second PostgreSQL lookup. Prepare provisioning before the guard where possible and bound crypto work by the operation context.
 
@@ -100,7 +106,9 @@ Payload fields bind purpose/version, session, original principal/agent/client, p
 
 At startup after a policy change, reconcile active roots before readiness. Check stored deadlines for elapsed expiry before applying a policy increase. Persist a shorter `InactivityExpiresAt` for a still-active root, bounded by its current token's immutable expiry. Later increases cannot lengthen that token or current activity interval; only a fresh valid rotation sets the successor's `ExpiresAt`, new `InactivityExpiresAt`, and `LastFreshAt` from the rotation time and current configured lifetime. A nonterminal absolute deadline can be recomputed from the original `StartedAt` under CR-005 after ruling out old elapsed deadlines. Runtime refresh checks these bounds under the guard without terminalizing on a denied request.
 
-The previous token's recovery interval remains fixed at consumption. New configuration can shorten that interval but cannot extend its already sealed result. Future rotations use the new interval.
+The sealed payload's `retry_expires_at` stays the original `min(ReuseUntil, RetryAccessExpiresAt)` and must match the root's original deadlines. Root `RetryExpiresAt` is the persisted effective minimum of that bound, shorter current reuse, effective session deadlines, and its earlier value. It never increases for one predecessor. The payload deadline must be at least the effective deadline. Both must be after decision time before returning a result. A shorter effective deadline does not reencrypt an unchanged result.
+
+At the effective deadline, deny retries even if cleanup has not run. With reachable storage, deadline-driven maintenance erases ciphertext within one second. A missed bound or unavailable cleanup storage blocks readiness until overdue ciphertext is cleared. Startup persists shorter effective deadlines and erases overdue results before readiness. Zero reuse erases all cached results before readiness and never creates new results. Rotation, revocation, and terminal expiry erase ciphertext in the same transaction.
 
 **Rationale**: Recomputing from a longer inactivity configuration without the stored deadline or current token expiry extends an already-issued session. A shorter configuration must persist its bound before a later increase can erase its history. Recomputing session start on restart resets the absolute limit. Checking elapsed stored deadlines before a policy increase prevents resurrection after downtime.
 
@@ -140,9 +148,11 @@ Memory mirrors the agent-related authorization cascades needed for consistency. 
 
 Terminal absolute or shortened-inactivity expiry commits `ExpiredAt`, reason, ciphertext erasure, and matching unconsumed legacy mirror/current/descendant invalidation atomically under agent scope. A failed mirror update rolls back the whole maintenance transition and blocks startup readiness. Before admitting old binaries during rollback, quiesce token traffic and old writers and reconcile expiry under the outgoing policy. Binary-only rollback without a down migration cannot restore terminal sessions; down/reapply must also keep old mirrors unusable.
 
-Map all 47 acceptance scenarios individually to production-bootstrap E2E journeys. Every primary It needs an acceptance-linked semantic failure before runtime implementation. For US2-S10, first prove a bounded identical-result retry succeeds. Then replay its authorization code and prove both current and still-retry-eligible predecessor tokens fail while an unrelated session remains usable. This is a positive recovery control, not just another replay rejection; complete US2-S10 only after US3/T050/T072. Keep unchanged baseline regressions separate. Use PostgreSQL for restart, replica, shared-clock, acknowledgement-loss, and rolling-version proofs. Test lifetime and retry boundaries at explicit shared times.
+Map all 47 acceptance scenarios individually to production-bootstrap E2E journeys. Every primary It needs an acceptance-linked semantic failure before runtime implementation. For US2-S10, first prove a bounded identical-result retry succeeds. Then have another client authenticate as itself and replay the authorization code. Both current and still-retry-eligible predecessor tokens must fail, while an unrelated session remains usable. Complete US2-S10 only after US3/T050/T072. Keep focused integration regressions and unchanged baseline regressions separate from the 47 primary scenarios. Use PostgreSQL for restart, replica, shared-clock, acknowledgement-loss, and rolling-version proofs. Test lifetime and retry boundaries at explicit shared times.
 
 Canonical OpenAPI, rendered docs/api/oauth2-refresh-sessions.md examples, the Helm contract, and release review precede runtime edits. ADR 038 is accepted. T025 owns the complete core YAML/environment policy. US6 verifies it and adds source parity rather than implementing core defaults again. This feature changes renewal authority, not immediate downstream access-token validity.
+
+**Provisional choice rule**: T001 confirms the Open Decisions before dependent work. If a choice changes, reconcile the spec, plan, contracts, examples, scenario mapping, and tasks. Validate traceability again. Keep the existing API stakeholder-review order unchanged.
 
 **Rationale**: Existing history cannot meet the new lineage guarantees. Memory is intentionally ephemeral. A design document cannot claim that new behavior or tests already exist.
 
