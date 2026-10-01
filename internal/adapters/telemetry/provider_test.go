@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/log/global"
@@ -338,6 +342,52 @@ func TestNewProvider_CustomServiceName(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "resource must contain service.name=my-service")
+}
+
+func TestNewProvider_HTTPDefaultPathRegression(t *testing.T) {
+	saveAndRestoreGlobalProviders(t)
+
+	var mu sync.Mutex
+	var gotPaths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotPaths = append(gotPaths, r.URL.Path)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := minimalEnabledConfig("http")
+	cfg.Exporter.Endpoint = server.URL
+	cfg.Exporter.Timeout = 5 * time.Second
+
+	ctx := context.Background()
+	logger := newTestLogger(new(bytes.Buffer))
+
+	shutdown, err := NewProvider(ctx, cfg, logger)
+	require.NoError(t, err)
+	require.NotNil(t, shutdown)
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = shutdown(shutdownCtx)
+	})
+
+	tp, ok := otel.GetTracerProvider().(*sdktrace.TracerProvider)
+	require.True(t, ok, "global TracerProvider must be *sdktrace.TracerProvider after NewProvider")
+
+	_, span := tp.Tracer("test").Start(ctx, "test-span")
+	span.End()
+
+	flushCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	require.NoError(t, tp.ForceFlush(flushCtx))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, gotPaths, "expected the span export request to reach the test server")
+	assert.Equal(t, "/v1/traces", gotPaths[0],
+		"bare host:port endpoint must default to the OTLP standard traces path, not root")
 }
 
 func TestRegisterPropagators_AllSupported(t *testing.T) {
