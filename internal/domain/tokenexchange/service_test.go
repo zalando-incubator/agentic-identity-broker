@@ -1770,7 +1770,6 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 		repoErr        error
 		encryptionErr  error
 		upstream       http.HandlerFunc
-		closedUpstream bool
 		wantCode       string
 		wantReauthURI  bool
 		wantRefreshErr bool
@@ -1780,7 +1779,7 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 		{name: "provider 400 invalid_client", session: refreshableSession(), upstream: upstream(http.StatusBadRequest, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
 		{name: "provider 500 invalid_grant", session: refreshableSession(), upstream: upstream(http.StatusInternalServerError, `{"error":"invalid_grant"}`), wantCode: "server_error", wantRefreshErr: true},
 		{name: "provider 400 without OAuth code", session: refreshableSession(), upstream: upstream(http.StatusBadRequest, `not json`), wantCode: "server_error", wantRefreshErr: true},
-		{name: "transport failure", session: refreshableSession(), closedUpstream: true, wantCode: "server_error", wantRefreshErr: true},
+		{name: "transport failure", session: refreshableSession(), wantCode: "server_error", wantRefreshErr: true},
 		{name: "decryption failure", session: refreshableSession(), encryptionErr: errors.New("kms unavailable"), wantCode: "server_error"},
 		{name: "storage failure", repoErr: errors.New("database unavailable"), wantCode: "server_error"},
 		{name: "missing session", wantCode: "invalid_grant", wantReauthURI: true},
@@ -1790,17 +1789,10 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			tokenEndpoint := "http://127.0.0.1:0/token"
-			if tt.upstream != nil || tt.closedUpstream {
-				handler := tt.upstream
-				if handler == nil {
-					handler = upstream(http.StatusOK, `{}`)
-				}
-				server := httptest.NewServer(handler)
+			if tt.upstream != nil {
+				server := httptest.NewServer(tt.upstream)
 				t.Cleanup(server.Close)
 				tokenEndpoint = server.URL
-				if tt.closedUpstream {
-					server.Close()
-				}
 			}
 			sessionRepo := &MockSessionRepository{session: tt.session, err: tt.repoErr}
 			fixture := newExchangeFixture(t, exchangeFixtureConfig{
@@ -1830,7 +1822,7 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 			}
 			assert.NotContains(t, tokenErr.Description(), "sentinel-description")
 			assert.Equal(t, tt.wantRefreshErr, errors.Is(err, oauth2session.ErrRefreshFailed), "refresh failure cause must remain discoverable")
-			if tt.wantRefreshErr && !tt.closedUpstream {
+			if tt.wantRefreshErr && tt.upstream != nil {
 				var retrieveErr *oauth2.RetrieveError
 				assert.ErrorAs(t, err, &retrieveErr)
 			}

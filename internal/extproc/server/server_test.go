@@ -3038,14 +3038,7 @@ func TestServer_Process_BrokerErrorTelemetry(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			recorder := tracetest.NewSpanRecorder()
-			tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-			previous := otel.GetTracerProvider()
-			otel.SetTracerProvider(tp)
-			t.Cleanup(func() {
-				otel.SetTracerProvider(previous)
-				_ = tp.Shutdown(context.Background())
-			})
+			recorder := installSpanRecorder(t)
 
 			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 				return server.ExchangeResult{}, fmt.Errorf("broker rejected exchange: %w", &server.BrokerExchangeError{
@@ -3057,16 +3050,7 @@ func TestServer_Process_BrokerErrorTelemetry(t *testing.T) {
 
 			resp, err := sendRequestHeadersWithProtocol(t, client, nil, "mcp")
 			require.NoError(t, err)
-			immediate := resp.GetImmediateResponse()
-			require.NotNil(t, immediate)
-			assert.Equal(t, int32(tt.wantHTTP), int32(immediate.Status.Code))
-			assert.Empty(t, headerMutationValue(immediate.Headers, "authorization"))
-			if tt.wantHTTP == httpv3.StatusCode_OK {
-				assert.Contains(t, string(immediate.Body), `"code":-32042`)
-				assert.Contains(t, string(immediate.Body), recoveryURL)
-			} else {
-				assert.NotContains(t, string(immediate.Body), recoveryURL)
-			}
+			assertBrokerErrorResponse(t, resp, tt.wantHTTP, recoveryURL)
 
 			assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), tt.status, tt.wantCode)
 		})
@@ -3078,14 +3062,7 @@ func TestServer_OPA_BrokerErrorTelemetry(t *testing.T) {
 	for _, phase := range []string{"body-bearing", "header-only"} {
 		for _, statusCode := range []int{400, 500} {
 			t.Run(fmt.Sprintf("%s/broker-%d", phase, statusCode), func(t *testing.T) {
-				recorder := tracetest.NewSpanRecorder()
-				tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-				previous := otel.GetTracerProvider()
-				otel.SetTracerProvider(tp)
-				t.Cleanup(func() {
-					otel.SetTracerProvider(previous)
-					_ = tp.Shutdown(context.Background())
-				})
+				recorder := installSpanRecorder(t)
 
 				code := "invalid_grant"
 				wantHTTP := httpv3.StatusCode_OK
@@ -3114,16 +3091,7 @@ func TestServer_OPA_BrokerErrorTelemetry(t *testing.T) {
 						tokenExchangeMetadataWithMCPServer("mcp"), true)
 					require.NoError(t, err)
 				}
-				immediate := resp.GetImmediateResponse()
-				require.NotNil(t, immediate)
-				assert.Equal(t, int32(wantHTTP), int32(immediate.Status.Code))
-				assert.Empty(t, headerMutationValue(immediate.Headers, "authorization"))
-				if wantHTTP == httpv3.StatusCode_OK {
-					assert.Contains(t, string(immediate.Body), `"code":-32042`)
-					assert.Contains(t, string(immediate.Body), recoveryURL)
-				} else {
-					assert.NotContains(t, string(immediate.Body), recoveryURL)
-				}
+				assertBrokerErrorResponse(t, resp, wantHTTP, recoveryURL)
 				assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), statusCode, code)
 			})
 		}
@@ -3853,6 +3821,33 @@ func findTokenExchangeSpan(t *testing.T, spans []sdktrace.ReadOnlySpan) sdktrace
 	}
 	t.Fatal("extproc.token_exchange span not recorded")
 	return nil
+}
+
+func installSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		_ = tp.Shutdown(context.Background())
+	})
+	return recorder
+}
+
+func assertBrokerErrorResponse(t *testing.T, resp *extprocv3.ProcessingResponse, wantHTTP httpv3.StatusCode, recoveryURL string) {
+	t.Helper()
+	immediate := resp.GetImmediateResponse()
+	require.NotNil(t, immediate)
+	assert.Equal(t, int32(wantHTTP), int32(immediate.Status.Code))
+	assert.Empty(t, headerMutationValue(immediate.Headers, "authorization"))
+	if wantHTTP == httpv3.StatusCode_OK {
+		assert.Contains(t, string(immediate.Body), `"code":-32042`)
+		assert.Contains(t, string(immediate.Body), recoveryURL)
+	} else {
+		assert.NotContains(t, string(immediate.Body), recoveryURL)
+	}
 }
 
 func assertBrokerExchangeSpan(t *testing.T, span sdktrace.ReadOnlySpan, statusCode int, errorCode string) {
