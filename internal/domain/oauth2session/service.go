@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -344,17 +345,25 @@ func (s *OAuth2SessionService) buildOAuth2Config(
 	return config, nil
 }
 
+// IsSafeOAuthErrorCode reports whether code is an RFC 6749 §5.2 token-endpoint error code that
+// may be propagated from a third-party provider without exposing provider-controlled text.
+func IsSafeOAuthErrorCode(code string) bool {
+	switch code {
+	case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope":
+		return true
+	default:
+		return false
+	}
+}
+
 func safeTokenExchangeError(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
 
 	var retrieveErr *oauth2.RetrieveError
-	if errors.As(err, &retrieveErr) {
-		switch retrieveErr.ErrorCode {
-		case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope":
-			return fmt.Errorf("%w: %s", ErrTokenExchange, retrieveErr.ErrorCode)
-		}
+	if errors.As(err, &retrieveErr) && IsSafeOAuthErrorCode(retrieveErr.ErrorCode) {
+		return fmt.Errorf("%w: %s", ErrTokenExchange, retrieveErr.ErrorCode)
 	}
 
 	var urlErr *url.Error
@@ -367,15 +376,7 @@ func safeTokenExchangeError(err error) error {
 
 func tokenExchangeErrorIsPermanent(err error) bool {
 	var retrieveErr *oauth2.RetrieveError
-	if !errors.As(err, &retrieveErr) {
-		return false
-	}
-	switch retrieveErr.ErrorCode {
-	case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope":
-		return true
-	default:
-		return false
-	}
+	return errors.As(err, &retrieveErr) && IsSafeOAuthErrorCode(retrieveErr.ErrorCode)
 }
 
 // exchangeCodeWithRetry exchanges authorization code for tokens with exponential backoff retry.
@@ -850,7 +851,13 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Decode response
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
+		return nil, thirdpartyRefreshError(resp)
+	}
+
 	var tokenResp struct {
 		AccessToken  string `json:"access_token"`
 		TokenType    string `json:"token_type"`
@@ -863,14 +870,6 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
 		return nil, fmt.Errorf("failed to decode upstream token response: %w", err)
-	}
-
-	// Check for HTTP error status
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if isCIMDClient {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-		}
-		return nil, fmt.Errorf("upstream token endpoint returned error status %d", resp.StatusCode)
 	}
 
 	// Validate required fields in response
@@ -898,11 +897,34 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		s.auditCIMDTokenAcquisition(entity.ID, "refresh", "success")
 	}
 
-	s.logger.Info("access token refreshed",
+	s.logger.InfoContext(ctx, "access token refreshed",
 		"service_id", entity.ID,
 		"token_endpoint", entity.Endpoints.TokenEndpoint)
 
 	return token, nil
+}
+
+const maxThirdpartyErrorBodyBytes = 64 << 10
+
+// thirdpartyRefreshError keeps only the HTTP status and an allowlisted OAuth error code so that
+// provider-controlled descriptions, URIs, headers, and bodies never leave this function.
+func thirdpartyRefreshError(resp *http.Response) error {
+	retrieveErr := &oauth2.RetrieveError{
+		Response: &http.Response{
+			StatusCode: resp.StatusCode,
+			Status:     fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)),
+		},
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxThirdpartyErrorBodyBytes+1))
+	if err == nil && len(body) <= maxThirdpartyErrorBodyBytes {
+		var payload struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &payload) == nil && IsSafeOAuthErrorCode(payload.Error) {
+			retrieveErr.ErrorCode = payload.Error
+		}
+	}
+	return fmt.Errorf("third-party token endpoint returned error status %d: %w", resp.StatusCode, retrieveErr)
 }
 
 func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *storage.UserSession, newToken *oauth2.Token) error {
@@ -1292,7 +1314,7 @@ func (s *OAuth2SessionService) refreshExpiredSession(ctx context.Context, princi
 		return nil, "", fmt.Errorf("%w: principal=%s, service=%s", ErrSessionNotFound, principal, serviceID)
 	}
 	if refreshed {
-		s.logRefreshSuccess(principal, serviceID, provider)
+		s.logRefreshSuccess(ctx, principal, serviceID, provider)
 	}
 	token, err := s.DecryptAccessToken(ctx, current)
 	if err != nil {
@@ -1312,7 +1334,7 @@ func (s *OAuth2SessionService) refreshOperationContext(ctx context.Context) (con
 func (s *OAuth2SessionService) getRefreshProvider(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	service, err := s.providerService.Get(ctx, serviceID)
 	if err != nil {
-		s.logger.Error("failed to fetch service for token refresh",
+		s.logger.ErrorContext(ctx, "failed to fetch service for token refresh",
 			"principal", principal,
 			"service_id", serviceID,
 			"err", err)
@@ -1337,7 +1359,7 @@ func (s *OAuth2SessionService) refreshSessionTokens(
 
 	refreshToken, err := s.DecryptRefreshToken(ctx, session)
 	if err != nil {
-		s.logger.Error("failed to decrypt refresh token",
+		s.logger.ErrorContext(ctx, "failed to decrypt refresh token",
 			"principal", principal,
 			"service_id", serviceID,
 			"err", err)
@@ -1350,7 +1372,7 @@ func (s *OAuth2SessionService) refreshSessionTokens(
 
 	newToken, err := s.RefreshAccessToken(ctx, service, refreshToken)
 	if err != nil {
-		s.logger.Error("oauth2_refresh_failed",
+		s.logger.ErrorContext(ctx, "oauth2_refresh_failed",
 			"event", "session.oauth2.refresh_failed",
 			"principal", principal,
 			"service_id", serviceID,
@@ -1366,7 +1388,7 @@ func (s *OAuth2SessionService) refreshSessionTokens(
 	}
 
 	if err := s.setSessionTokens(ctx, session, newToken); err != nil {
-		s.logger.Error("failed to update session with refreshed tokens",
+		s.logger.ErrorContext(ctx, "failed to update session with refreshed tokens",
 			"principal", principal,
 			"service_id", serviceID,
 			"err", err)
@@ -1376,8 +1398,8 @@ func (s *OAuth2SessionService) refreshSessionTokens(
 	return nil
 }
 
-func (s *OAuth2SessionService) logRefreshSuccess(principal id.Principal, serviceID id.ServiceID, service *model.ThirdpartyOAuth2ProviderEntity) {
-	s.logger.Info("oauth2_token_refreshed",
+func (s *OAuth2SessionService) logRefreshSuccess(ctx context.Context, principal id.Principal, serviceID id.ServiceID, service *model.ThirdpartyOAuth2ProviderEntity) {
+	s.logger.InfoContext(ctx, "oauth2_token_refreshed",
 		"event", "session.oauth2.token_refreshed",
 		"principal", principal,
 		"service_id", serviceID,
@@ -1466,7 +1488,7 @@ func (s *OAuth2SessionService) ForceRefreshSession(
 	if session == nil {
 		return nil, fmt.Errorf("%w: principal=%s, service=%s", ErrSessionNotFound, principal, serviceID)
 	}
-	s.logRefreshSuccess(principal, serviceID, service)
+	s.logRefreshSuccess(ctx, principal, serviceID, service)
 
 	agentCount, err := s.grantRepo.CountAgentsByPrincipalAndServiceID(ctx, principal, serviceID)
 	if err != nil {

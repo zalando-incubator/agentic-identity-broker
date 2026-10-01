@@ -84,6 +84,7 @@ The system must verify that the user (identified by subject_token 'sub' claim) h
 2. **Given** user has NOT granted the agent access to the target service, **When** privileged client requests token exchange, **Then** system returns 403 Forbidden with error=access_denied and error_description="User has not granted this agent access to the requested service"
 3. **Given** user's grant for the agent+service has been revoked, **When** privileged client requests token exchange, **Then** system returns 403 Forbidden with error=access_denied
 4. **Given** user's grant exists but has expired, **When** privileged client requests token exchange, **Then** system returns 403 Forbidden with error=access_denied and error_description="User grant has expired"
+5. **Given** user has an active UserGrant for the agent whose permission-set entries do not include the requested service, **When** privileged client requests token exchange, **Then** system denies the request before any token-vault lookup and returns 400 Bad Request with error=invalid_grant and error_uri set to the agent consent-management page (`<public URL>/agents/{agent-id}`); no token or credential is forwarded
 
 ---
 
@@ -119,6 +120,8 @@ When a user has not established a session with a third-party service (no tokens 
 1. **Given** user has no stored session for the target service, **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_description="User has no active session with the requested service"
 2. **Given** user's stored tokens have all expired (both access and refresh), **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_description="User session has expired, re-authentication required"
 3. **Given** error response is returned, **When** privileged client receives response, **Then** response includes sufficient information for agent to redirect user to appropriate re-authentication flow
+4. **Given** user's stored access_token has expired and the third-party service rejects the stored refresh_token with HTTP 400 and error=invalid_grant, **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_uri set to the service re-authentication URL (`<public URL>/api/third-party/{service-id}/oauth2/authorize`), never returns the provider's error_description, and leaves the stored session unchanged so that a later accepted refresh succeeds
+5. **Given** user's stored access_token has expired and the third-party service rejects the refresh request with error=invalid_client (or any non-invalid_grant code, provider 5xx, or unparseable response), **When** privileged client requests token exchange, **Then** system returns 500 Internal Server Error with error=server_error and no error_uri, and records the safe third-party HTTP status and OAuth error code in telemetry
 
 ---
 

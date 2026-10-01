@@ -15,11 +15,13 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"golang.org/x/oauth2"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -206,11 +208,21 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 				attribute.String("token_exchange.error_description", tokenErrForSpan.Description()),
 			)
 		}
+		thirdpartyStatus, thirdpartyCode, hasThirdparty := thirdpartyRejection(err)
+		if hasThirdparty {
+			span.SetAttributes(
+				attribute.Int("token_exchange.thirdparty_status_code", thirdpartyStatus),
+				attribute.String("token_exchange.thirdparty_error_code", thirdpartyCode),
+			)
+		}
 		if h.Logger != nil {
 			logAttrs := []any{
 				"error", err.Error(),
 				"error_type", fmt.Sprintf("%T", err),
 				"resource", sanitizedResource,
+			}
+			if hasThirdparty {
+				logAttrs = append(logAttrs, "thirdparty_status_code", thirdpartyStatus, "thirdparty_error_code", thirdpartyCode)
 			}
 			var tokenErrForLog *tokenexchange.TokenExchangeError
 			if errors.As(err, &tokenErrForLog) {
@@ -391,6 +403,21 @@ func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
+}
+
+// thirdpartyRejection extracts the provider HTTP status and an allowlisted OAuth error code from a
+// wrapped RetrieveError. Any non-allowlisted code becomes "unknown" so diagnostics never carry
+// provider-controlled text.
+func thirdpartyRejection(err error) (status int, code string, ok bool) {
+	var retrieveErr *oauth2.RetrieveError
+	if !errors.As(err, &retrieveErr) || retrieveErr.Response == nil {
+		return 0, "", false
+	}
+	code = "unknown"
+	if oauth2session.IsSafeOAuthErrorCode(retrieveErr.ErrorCode) {
+		code = retrieveErr.ErrorCode
+	}
+	return retrieveErr.Response.StatusCode, code, true
 }
 
 // tokenEndpointStatus maps an OAuth2 error code to the appropriate HTTP status for the token endpoint.
