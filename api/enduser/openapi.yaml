@@ -2069,6 +2069,9 @@ paths:
       summary: Deny a pending tool call
       description: |
         Transitions a pending approval to denied state.
+        With persistence: permanent, blocks the exact tool for this principal and agent
+        until revocation, regardless of arguments or session. Clears parameter constraints.
+        ExtProc enforces the denial before matching approvals and does not create another approval request.
         Auth: acting user principal from the browser auth layer; principal must match.
       tags:
         - Approvals
