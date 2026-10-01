@@ -26,6 +26,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -263,8 +264,6 @@ func (s *Server) beginTokenExchangeObservation(ctx context.Context) (context.Con
 	var span trace.Span
 	if tracesEnabled {
 		ctx, span = otel.Tracer("extproc").Start(ctx, "extproc.token_exchange")
-	} else {
-		span = trace.SpanFromContext(ctx)
 	}
 
 	finished := false
@@ -274,14 +273,19 @@ func (s *Server) beginTokenExchangeObservation(ctx context.Context) (context.Con
 		}
 		finished = true
 
-		if resourceURI != "" {
-			span.SetAttributes(attribute.String("resource.uri", sanitizeURIForTelemetry(resourceURI)))
+		if tracesEnabled {
+			if resourceURI != "" {
+				span.SetAttributes(attribute.String("resource.uri", sanitizeURIForTelemetry(resourceURI)))
+			}
+			if errorType != "" {
+				span.SetAttributes(attribute.String("error.type", errorType))
+			}
+			span.SetAttributes(attribute.String("outcome", outcome))
+			if outcome != "success" {
+				span.SetStatus(otelcodes.Error, outcome)
+			}
+			span.End()
 		}
-		if errorType != "" {
-			span.SetAttributes(attribute.String("error.type", errorType))
-		}
-		span.SetAttributes(attribute.String("outcome", outcome))
-		span.End()
 
 		if metricsEnabled {
 			outcomeAttr := metric.WithAttributes(attribute.String("outcome", outcome))
@@ -419,13 +423,16 @@ func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.Proce
 	var span trace.Span
 	if tracesEnabled {
 		ctx, span = otel.Tracer("extproc").Start(ctx, "extproc.token_exchange")
-	} else {
-		span = trace.SpanFromContext(ctx)
 	}
 	ctx, logger := s.withRequestLogger(ctx, "", "")
 	defer func() {
-		span.SetAttributes(attribute.String("outcome", outcome))
-		span.End()
+		if tracesEnabled {
+			span.SetAttributes(attribute.String("outcome", outcome))
+			if outcome != "success" {
+				span.SetStatus(otelcodes.Error, outcome)
+			}
+			span.End()
+		}
 		if metricsEnabled {
 			outcomeAttr := metric.WithAttributes(attribute.String("outcome", outcome))
 			metricCtx := context.WithoutCancel(ctx)
@@ -442,12 +449,16 @@ func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.Proce
 	if rejection != nil {
 		outcome = rejection.code
 		logger.WarnContext(ctx, "extproc: token-exchange metadata rejected", "reason", rejection.reason)
-		span.SetAttributes(attribute.String("error.type", rejection.code))
+		if tracesEnabled {
+			span.SetAttributes(attribute.String("error.type", rejection.code))
+		}
 		return inputRejectionResponse(rejection)
 	}
 
 	sanitizedURI := sanitizeURIForTelemetry(input.resourceURI)
-	span.SetAttributes(attribute.String("resource.uri", sanitizedURI))
+	if tracesEnabled {
+		span.SetAttributes(attribute.String("resource.uri", sanitizedURI))
+	}
 
 	protocol, _ := extractProtocolFromMetadata(req)
 	if protocol == "" {
@@ -458,7 +469,9 @@ func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.Proce
 	if err != nil {
 		resp, mappedOutcome, mappedErrorType := s.exchangeErrorResponse(ctx, "", protocol, input.resourceURI, err)
 		outcome = mappedOutcome
-		span.SetAttributes(attribute.String("error.type", mappedErrorType))
+		if tracesEnabled {
+			span.SetAttributes(attribute.String("error.type", mappedErrorType))
+		}
 		return resp
 	}
 	logger.DebugContext(ctx, "token exchanged successfully", "resource", sanitizedURI)
@@ -912,10 +925,23 @@ func accessDeniedResponse(reasons []string) *extprocv3.ProcessingResponse {
 }
 
 func (s *Server) exchangeErrorResponse(ctx context.Context, phase, protocol, resourceURI string, err error) (*extprocv3.ProcessingResponse, string, string) {
+	var brokerErr *BrokerExchangeError
+	hasBrokerError := errors.As(err, &brokerErr)
+	if hasBrokerError && s.cfg.Telemetry.Enabled && s.cfg.Telemetry.Traces.Enabled {
+		code := brokerErr.Code
+		switch code {
+		case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope", "invalid_target", "access_denied", "server_error":
+		default:
+			code = "unknown"
+		}
+		trace.SpanFromContext(ctx).SetAttributes(
+			attribute.Int("token_exchange.broker_status_code", brokerErr.StatusCode),
+			attribute.String("token_exchange.broker_error_code", code),
+		)
+	}
 	logger := loggerFromContext(ctx, s.logger)
 	sanitizedURI := sanitizeURIForTelemetry(resourceURI)
-	var brokerErr *BrokerExchangeError
-	if errors.As(err, &brokerErr) && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
+	if hasBrokerError && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
 		if protocol == "mcp" {
 			msg := "token exchange requires re-authentication — returning URLElicitationRequiredError"
 			if phase != "" {

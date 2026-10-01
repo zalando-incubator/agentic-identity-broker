@@ -21,6 +21,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
@@ -223,26 +225,29 @@ var _ = Describe("ExtProc Telemetry", func() {
 
 		// Scenario 1.4 from specs/027-extproc-otel/spec.md
 		It("US1-S4: records error outcome on token exchange failure", func() {
-			env.MockTokenExchange.WithError(500, "server_error")
+			env.MockTokenExchange.WithError(400, "invalid_grant")
 
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
 
-			sendExchangeRequest(client, standardRequestHeaders())
+			response := sendExchangeRequest(client, standardRequestHeaders())
+			Expect(response.GetImmediateResponse()).NotTo(BeNil())
+			Expect(int32(response.GetImmediateResponse().GetStatus().GetCode())).To(Equal(int32(500)),
+				"broker errors without a recovery URI keep the generic HTTP 500 mapping")
 
 			exchangeSpan := findSpan(spanRecorder, "extproc.token_exchange")
 			Expect(exchangeSpan).NotTo(BeNil(), "expected extproc.token_exchange span even on failure")
+			Expect(exchangeSpan.Status().Code).To(Equal(otelcodes.Error))
+			Expect(exchangeSpan.Status().Description).To(Equal("exchange_failure"))
 
-			var outcome string
+			attrs := map[string]attribute.Value{}
 			for _, attr := range exchangeSpan.Attributes() {
-				if string(attr.Key) == "outcome" {
-					outcome = attr.Value.AsString()
-				}
+				attrs[string(attr.Key)] = attr.Value
 			}
-			Expect(outcome).To(Or(
-				Equal("exchange_failure"),
-				Equal("circuit_open"),
-			), "span outcome must reflect the exchange failure")
+			Expect(attrs["outcome"].AsString()).To(Equal("exchange_failure"))
+			Expect(attrs["token_exchange.broker_status_code"].Type()).To(Equal(attribute.INT64))
+			Expect(attrs["token_exchange.broker_status_code"].AsInt64()).To(Equal(int64(400)))
+			Expect(attrs["token_exchange.broker_error_code"].AsString()).To(Equal("invalid_grant"))
 		})
 
 		// Scenario 1.5 from specs/027-extproc-otel/spec.md

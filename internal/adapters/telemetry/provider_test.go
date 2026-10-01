@@ -11,10 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -482,6 +484,80 @@ func TestNewProvider_HTTPDefaultPathRegression(t *testing.T) {
 	require.NotEmpty(t, gotPaths, "expected the span export request to reach the test server")
 	assert.Equal(t, "/v1/traces", gotPaths[0],
 		"bare host:port endpoint must default to the OTLP standard traces path, not root")
+}
+
+// Correlated application logs must reach the OTLP /v1/logs endpoint with the configured
+// service.name and the trace/span IDs of the active span.
+func TestNewProvider_HTTPLogsDeliverCorrelatedRecords(t *testing.T) {
+	saveAndRestoreGlobalProviders(t)
+
+	requests := make(chan *collogpb.ExportLogsServiceRequest, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/logs" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		var req collogpb.ExportLogsServiceRequest
+		require.NoError(t, proto.Unmarshal(body, &req))
+		requests <- &req
+		resp, err := proto.Marshal(&collogpb.ExportLogsServiceResponse{})
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(resp)
+	}))
+	defer server.Close()
+
+	cfg := minimalEnabledConfig("http")
+	cfg.Exporter.Endpoint = server.URL
+	cfg.Exporter.Timeout = 5 * time.Second
+	cfg.Exporter.Compression = ports.OTLPCompressionNone
+	cfg.ServiceName = "log-delivery-service"
+	cfg.Logs.Enabled = true
+
+	ctx := context.Background()
+	shutdown, err := NewProvider(ctx, cfg, newTestLogger(new(bytes.Buffer)))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = shutdown(shutdownCtx)
+	})
+
+	logger := slog.New(otelslog.NewHandler(cfg.ServiceName, otelslog.WithLoggerProvider(global.GetLoggerProvider())))
+	spanCtx, span := otel.Tracer("test").Start(ctx, "token-exchange")
+	logger.ErrorContext(spanCtx, "Token exchange failed", "upstream_error_code", "invalid_grant")
+	span.End()
+
+	lp, ok := global.GetLoggerProvider().(*sdklog.LoggerProvider)
+	require.True(t, ok, "global LoggerProvider must be *sdklog.LoggerProvider after NewProvider")
+	flushCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	require.NoError(t, lp.ForceFlush(flushCtx))
+
+	var req *collogpb.ExportLogsServiceRequest
+	select {
+	case req = <-requests:
+	default:
+		t.Fatal("expected a log export request at /v1/logs after ForceFlush")
+	}
+	require.Len(t, req.ResourceLogs, 1)
+	var serviceName string
+	for _, attr := range req.ResourceLogs[0].Resource.Attributes {
+		if attr.Key == string(semconv.ServiceNameKey) {
+			serviceName = attr.Value.GetStringValue()
+		}
+	}
+	assert.Equal(t, "log-delivery-service", serviceName)
+	require.Len(t, req.ResourceLogs[0].ScopeLogs, 1)
+	require.Len(t, req.ResourceLogs[0].ScopeLogs[0].LogRecords, 1)
+	record := req.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+	assert.Equal(t, "Token exchange failed", record.Body.GetStringValue())
+	traceID := span.SpanContext().TraceID()
+	spanID := span.SpanContext().SpanID()
+	assert.Equal(t, traceID[:], record.TraceId)
+	assert.Equal(t, spanID[:], record.SpanId)
 }
 
 func TestRegisterPropagators_AllSupported(t *testing.T) {

@@ -4,7 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"errors"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -367,6 +371,21 @@ func (m *MockEncryption) Decrypt(ctx context.Context, ciphertext []byte, context
 func (m *MockSessionRepository) FindByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storagedomain.UserSession, error) {
 	m.findByPrincipalAndServiceCalls++
 	return m.session, m.err
+}
+
+func (m *MockSessionRepository) WithLockedSession(ctx context.Context, _ id.Principal, _ id.ServiceID, refresh func(context.Context, *storagedomain.UserSession) (bool, error)) (*storagedomain.UserSession, error) {
+	if m.session == nil {
+		return nil, nil
+	}
+	working := *m.session
+	changed, err := refresh(ctx, &working)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		m.session = &working
+	}
+	return &working, nil
 }
 
 func (m *MockSessionRepository) Create(ctx context.Context, session *storagedomain.UserSession) error {
@@ -1682,9 +1701,188 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 	t.Parallel()
 
+	tests := []struct {
+		name            string
+		coverage        grantCoverage
+		callbackBaseURL string
+		wantDescription string
+	}{
+		{name: "grant excludes requested service", coverage: grantCoversOtherService, callbackBaseURL: "https://broker.example.com", wantDescription: "not authorized by any permission set"},
+		{name: "trailing-slash callback base", coverage: grantCoversOtherService, callbackBaseURL: "https://broker.example.com/", wantDescription: "not authorized by any permission set"},
+		{name: "empty grant", coverage: grantEmpty, callbackBaseURL: "https://broker.example.com", wantDescription: "grant has no permission set entries"},
+		{name: "stale permission set", coverage: grantStalePermissionSet, callbackBaseURL: "https://broker.example.com/", wantDescription: "no longer exists"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			sessionRepo := &MockSessionRepository{session: &storagedomain.UserSession{
+				ID:                   id.NewSessionID(),
+				Principal:            id.Principal("user@example.com"),
+				EncryptedAccessToken: []byte("access-token"),
+				TokenType:            "Bearer",
+			}}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{
+				coverage:        tt.coverage,
+				callbackBaseURL: tt.callbackBaseURL,
+				sessionRepo:     sessionRepo,
+				encryption:      &MockEncryption{},
+			})
+
+			_, err := fixture.svc.Exchange(context.Background(), fixture.req)
+			require.Error(t, err)
+			tokenErr, ok := err.(*TokenExchangeError)
+			require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
+			assert.Equal(t, "invalid_grant", tokenErr.Code())
+			assert.Contains(t, tokenErr.Description(), tt.wantDescription)
+			assert.Equal(t, "https://broker.example.com/agents/"+fixture.agentID.String(), tokenErr.ErrorURI())
+			assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "uncovered service must be rejected before token-vault lookup")
+		})
+	}
+}
+
+// US5-S4 / US5-S5: only a parsed provider HTTP 400 invalid_grant refresh rejection is a
+// user-recoverable re-authentication; every other retrieval failure stays a server error.
+func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
+	t.Parallel()
+
+	expired := time.Now().Add(-time.Hour)
+	refreshableSession := func() *storagedomain.UserSession {
+		return &storagedomain.UserSession{
+			ID:                    id.NewSessionID(),
+			Principal:             id.Principal("user@example.com"),
+			EncryptedAccessToken:  []byte("expired-access-token"),
+			EncryptedRefreshToken: []byte("stored-refresh-token"),
+			TokenType:             "Bearer",
+			AccessTokenExpiresAt:  &expired,
+		}
+	}
+	upstream := func(status int, body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+		}
+	}
+
+	tests := []struct {
+		name           string
+		session        *storagedomain.UserSession
+		repoErr        error
+		encryptionErr  error
+		upstream       http.HandlerFunc
+		closedUpstream bool
+		wantCode       string
+		wantReauthURI  bool
+		wantRefreshErr bool
+	}{
+		{name: "provider 400 invalid_grant", session: refreshableSession(), upstream: upstream(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"sentinel-description"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true},
+		{name: "provider 401 invalid_client", session: refreshableSession(), upstream: upstream(http.StatusUnauthorized, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "provider 400 invalid_client", session: refreshableSession(), upstream: upstream(http.StatusBadRequest, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "provider 500 invalid_grant", session: refreshableSession(), upstream: upstream(http.StatusInternalServerError, `{"error":"invalid_grant"}`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "provider 400 without OAuth code", session: refreshableSession(), upstream: upstream(http.StatusBadRequest, `not json`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "transport failure", session: refreshableSession(), closedUpstream: true, wantCode: "server_error", wantRefreshErr: true},
+		{name: "decryption failure", session: refreshableSession(), encryptionErr: errors.New("kms unavailable"), wantCode: "server_error"},
+		{name: "storage failure", repoErr: errors.New("database unavailable"), wantCode: "server_error"},
+		{name: "missing session", wantCode: "invalid_grant", wantReauthURI: true},
+		{name: "expired session without refresh token", session: &storagedomain.UserSession{ID: id.NewSessionID(), Principal: id.Principal("user@example.com"), EncryptedAccessToken: []byte("expired"), AccessTokenExpiresAt: &expired}, wantCode: "invalid_grant", wantReauthURI: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tokenEndpoint := "http://127.0.0.1:0/token"
+			if tt.upstream != nil || tt.closedUpstream {
+				handler := tt.upstream
+				if handler == nil {
+					handler = upstream(http.StatusOK, `{}`)
+				}
+				server := httptest.NewServer(handler)
+				t.Cleanup(server.Close)
+				tokenEndpoint = server.URL
+				if tt.closedUpstream {
+					server.Close()
+				}
+			}
+			sessionRepo := &MockSessionRepository{session: tt.session, err: tt.repoErr}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{
+				coverage:        grantCoversRequested,
+				callbackBaseURL: "https://broker.example.com",
+				sessionRepo:     sessionRepo,
+				refreshRepo:     sessionRepo,
+				encryption:      &MockEncryption{err: tt.encryptionErr},
+				tokenEndpoint:   tokenEndpoint,
+			})
+			var before storagedomain.UserSession
+			if tt.session != nil {
+				before = *tt.session
+			}
+
+			_, err := fixture.svc.Exchange(context.Background(), fixture.req)
+			require.Error(t, err)
+			tokenErr, ok := err.(*TokenExchangeError)
+			require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
+			assert.Equal(t, tt.wantCode, tokenErr.Code())
+			if tt.wantReauthURI {
+				assert.Equal(t, 400, tokenErr.HTTPStatus())
+				assert.Equal(t, "https://broker.example.com/api/third-party/"+fixture.serviceID.String()+"/oauth2/authorize", tokenErr.ErrorURI())
+			} else {
+				assert.Equal(t, 500, tokenErr.HTTPStatus())
+				assert.Empty(t, tokenErr.ErrorURI())
+			}
+			assert.NotContains(t, tokenErr.Description(), "sentinel-description")
+			assert.Equal(t, tt.wantRefreshErr, errors.Is(err, oauth2session.ErrRefreshFailed), "refresh failure cause must remain discoverable")
+			if tt.wantRefreshErr && !tt.closedUpstream {
+				var retrieveErr *oauth2.RetrieveError
+				assert.ErrorAs(t, err, &retrieveErr)
+			}
+			if tt.session != nil {
+				assert.Same(t, tt.session, sessionRepo.session, "a rejected refresh must not persist session changes")
+				assert.Equal(t, before, *sessionRepo.session)
+			}
+		})
+	}
+}
+
+type grantCoverage int
+
+const (
+	grantCoversRequested grantCoverage = iota
+	grantCoversOtherService
+	grantEmpty
+	grantStalePermissionSet
+)
+
+type exchangeFixtureConfig struct {
+	coverage        grantCoverage
+	callbackBaseURL string
+	sessionRepo     ports.UserSessionRepository
+	refreshRepo     ports.UserSessionRefreshRepository
+	encryption      ports.EncryptionPort
+	tokenEndpoint   string
+}
+
+type exchangeFixture struct {
+	svc       *TokenExchangeService
+	req       *TokenExchangeRequest
+	agentID   id.AgentID
+	serviceID id.ServiceID
+}
+
+type fixedProviderRepository struct {
+	MockServiceRepository
+}
+
+func (r *fixedProviderRepository) Get(_ context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	if r.service != nil && r.service.ID == serviceID {
+		return r.service, nil
+	}
+	return nil, ports.ErrNotFound
+}
+
+func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture {
+	t.Helper()
+
 	privateKey, keySet := generateTestRSAKeySet(t)
 	agentID := id.NewAgentID()
-	coveredServiceID := id.NewServiceID()
 	requestedServiceID := id.NewServiceID()
 	permissionSetID := id.NewPermissionSetID()
 
@@ -1696,72 +1894,66 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 			{PermissionSetID: permissionSetID, RequirementType: storagedomain.RequirementTypeOptional},
 		},
 	}
+	grantedServiceID := requestedServiceID
+	if cfg.coverage == grantCoversOtherService {
+		grantedServiceID = id.NewServiceID()
+	}
+	var entries []storagedomain.GrantedPermissionSetEntry
+	if cfg.coverage != grantEmpty {
+		entries = []storagedomain.GrantedPermissionSetEntry{
+			{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{grantedServiceID}},
+		}
+	}
 	futureTime := time.Now().Add(time.Hour)
 	grant := &storagedomain.UserGrant{
-		ID:         id.NewGrantID(),
-		AgentID:    agentID,
-		Principal:  id.Principal("user@example.com"),
-		ValidUntil: &futureTime,
-		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{
-			{
-				PermissionSetID:    permissionSetID,
-				IncludedServiceIDs: []id.ServiceID{coveredServiceID},
-			},
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:                    id.NewGrantID(),
+		AgentID:               agentID,
+		Principal:             id.Principal("user@example.com"),
+		ValidUntil:            &futureTime,
+		GrantedPermissionSets: entries,
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
 	}
 
 	agentRepo := &singleAgentRepo{agentID: agentID, agent: agent}
 	grantRepo := &MockGrantRepository{grant: grant}
-	psRepo := &MockPermissionSetRepository{psMap: map[id.PermissionSetID]*storagedomain.PermissionSet{
+	psMap := map[id.PermissionSetID]*storagedomain.PermissionSet{
 		permissionSetID: {
-			ID:          permissionSetID,
-			Name:        "Test Permission Set",
-			Description: "Covers only a different service",
-			ServiceScopes: []storagedomain.ServiceScope{
-				{ServiceID: coveredServiceID, RequirementType: storagedomain.RequirementTypeOptional},
-			},
-		},
-	}}
-	psService := permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default())
-	consentSvc := consent.NewService(
-		agentRepo,
-		newTestProviderService(&MockServiceRepository{}),
-		grantRepo,
-		nil,
-		nil,
-		slog.Default(),
-	)
-
-	sessionRepo := &MockSessionRepository{
-		session: &storagedomain.UserSession{
-			ID:                   id.NewSessionID(),
-			Principal:            id.Principal("user@example.com"),
-			ServiceID:            requestedServiceID,
-			EncryptedAccessToken: []byte("access-token"),
-			TokenType:            "Bearer",
+			ID:            permissionSetID,
+			Name:          "Test Permission Set",
+			ServiceScopes: []storagedomain.ServiceScope{{ServiceID: grantedServiceID, RequirementType: storagedomain.RequirementTypeOptional}},
 		},
 	}
+	if cfg.coverage == grantStalePermissionSet {
+		psMap = nil
+	}
+	psService := permissionset.NewPermissionSetService(&MockPermissionSetRepository{psMap: psMap}, grantRepo, slog.Default())
+	consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, slog.Default())
+
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                 requestedServiceID,
+		DisplayName:        "Requested Service",
+		ClientID:           id.ClientID("service-client"),
+		Secret:             model.NewEncryptedSecret([]byte("placeholder")),
+		ProtectedResources: []string{"https://api.example.com/requested"},
+		Endpoints:          model.OAuth2Endpoints{TokenEndpoint: cfg.tokenEndpoint},
+	}
+	sessionConfig := oauth2session.DefaultConfig()
+	sessionConfig.CallbackBaseURL = cfg.callbackBaseURL
 	oauth2SessionService := oauth2session.NewOAuth2SessionService(
-		nil,
-		sessionRepo,
-		nil,
-		nil,
-		nil,
-		&MockEncryption{},
+		newTestProviderService(&fixedProviderRepository{MockServiceRepository{service: provider}}),
+		cfg.sessionRepo,
+		cfg.refreshRepo,
 		nil,
 		nil,
-		oauth2session.DefaultConfig(),
-		slog.Default(),
+		cfg.encryption,
+		&http.Client{Timeout: 5 * time.Second},
+		nil,
+		sessionConfig,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
-	jwtValidator, err := NewJWTValidator(
-		&MockJWKSProvider{keySet: keySet},
-		"https://auth.example.com",
-		"agentic-identity-broker",
-		60,
-	)
+	jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
 	require.NoError(t, err)
 	celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
 		PrincipalExpression:     "subject_token.sub",
@@ -1772,17 +1964,9 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 	require.NoError(t, err)
 
 	svc := &TokenExchangeService{
-		jwtValidator: jwtValidator,
-		celEvaluator: celEvaluator,
-		providerService: newTestProviderService(&MockServiceRepository{
-			service: &model.ThirdpartyOAuth2ProviderEntity{
-				ID:                 requestedServiceID,
-				DisplayName:        "Requested Service",
-				ClientID:           id.ClientID("service-client"),
-				Secret:             model.NewEncryptedSecret([]byte("placeholder")),
-				ProtectedResources: []string{"https://api.example.com/requested"},
-			},
-		}),
+		jwtValidator:         jwtValidator,
+		celEvaluator:         celEvaluator,
+		providerService:      newTestProviderService(&MockServiceRepository{service: provider}),
 		oauth2SessionService: oauth2SessionService,
 		consentService:       consentSvc,
 		permissionSetService: psService,
@@ -1811,14 +1995,7 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 		"https://api.example.com/requested",
 		"",
 	)
-
-	_, err = svc.Exchange(context.Background(), req)
-	require.Error(t, err)
-	tokenErr, ok := err.(*TokenExchangeError)
-	require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
-	assert.Equal(t, "invalid_grant", tokenErr.Code())
-	assert.Contains(t, tokenErr.Description(), "not authorized by any permission set")
-	assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "uncovered service must be rejected before token-vault lookup")
+	return exchangeFixture{svc: svc, req: req, agentID: agentID, serviceID: requestedServiceID}
 }
 
 func TestExchange_FinalizesSecurityContextWithDistinctCallingPeer(t *testing.T) {

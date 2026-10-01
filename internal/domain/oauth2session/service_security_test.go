@@ -573,7 +573,7 @@ func TestForceRefreshSessionSecurity_PublicClientOmitsCredentialsAndRedactsFailu
 		assert.NotContains(t, err.Error(), sentinel)
 		assert.NotContains(t, logs, sentinel)
 	}
-	assert.Contains(t, logs, `"error":"upstream token endpoint returned error status 400"`)
+	assert.Contains(t, logs, `"error":"upstream token endpoint returned error status 400: oauth2: \"invalid_grant\""`)
 
 	assertSecurityEventsMarkPublicClient(t, logs, "session.oauth2.refresh_failed")
 }
@@ -664,6 +664,70 @@ func TestForceRefreshSessionSecurity_PublicClientEmitsRedactedSuccessAudit(t *te
 	}
 	for _, sentinel := range []string{sentinelSecret, sentinelCode, claims.PKCEVerifier, sentinelAccessToken, sentinelRefreshToken} {
 		assert.NotContains(t, logs, sentinel)
+	}
+}
+
+type refreshLogContextKey struct{}
+
+type contextRecordingHandler struct {
+	mu       *sync.Mutex
+	messages map[string]any
+}
+
+func (h contextRecordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h contextRecordingHandler) Handle(ctx context.Context, record slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.messages[record.Message] = ctx.Value(refreshLogContextKey{})
+	return nil
+}
+func (h contextRecordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h contextRecordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// Refresh-path logs must carry the operation context so the OTLP log bridge can correlate
+// them with the request trace.
+func TestRefreshLogsCarryOperationContext(t *testing.T) {
+	recorder := contextRecordingHandler{mu: &sync.Mutex{}, messages: map[string]any{}}
+	service, providerService := newSecurityTestOAuth2SessionService(t, slog.New(recorder), 1)
+	principal := id.Principal("user@example.com")
+	serviceID := id.NewServiceID()
+
+	var rejectRefresh atomic.Bool
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		w.Header().Set("Content-Type", "application/json")
+		if r.Form.Get("grant_type") == "refresh_token" && rejectRefresh.Load() {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"access_token":"access","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh"}`))
+	}))
+	defer tokenServer.Close()
+
+	provider := createTestService(serviceID)
+	provider.Endpoints.TokenEndpoint = tokenServer.URL
+	require.NoError(t, providerService.Create(context.Background(), provider))
+	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
+	require.NoError(t, err)
+	_, err = service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID,
+		Code:      "code",
+		State:     flow.StateToken,
+	})
+	require.NoError(t, err)
+
+	ctx := context.WithValue(context.Background(), refreshLogContextKey{}, "request-marker")
+	_, err = service.ForceRefreshSession(ctx, principal, serviceID)
+	require.NoError(t, err)
+	rejectRefresh.Store(true)
+	_, err = service.ForceRefreshSession(ctx, principal, serviceID)
+	require.ErrorIs(t, err, oauth2session.ErrRefreshFailed)
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	for _, message := range []string{"access token refreshed", "oauth2_token_refreshed", "oauth2_refresh_failed"} {
+		assert.Equal(t, "request-marker", recorder.messages[message], "%s must be logged with the operation context", message)
 	}
 }
 func newSecurityTestOAuth2SessionService(
