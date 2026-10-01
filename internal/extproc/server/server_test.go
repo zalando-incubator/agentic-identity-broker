@@ -3551,6 +3551,9 @@ func TestServer_DisabledLocalTracingDoesNotModifyInheritedSpan(t *testing.T) {
 			recorder := tracetest.NewSpanRecorder()
 			tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 			defer func() { _ = tp.Shutdown(context.Background()) }()
+			prevTP := otel.GetTracerProvider()
+			otel.SetTracerProvider(tp)
+			t.Cleanup(func() { otel.SetTracerProvider(prevTP) })
 			ctx, parent := tp.Tracer("parent").Start(context.Background(), "upstream-parent")
 			defer parent.End()
 
@@ -3579,7 +3582,8 @@ func TestServer_DisabledLocalTracingDoesNotModifyInheritedSpan(t *testing.T) {
 			}}}
 			require.NoError(t, svc.Process(stream))
 			assert.True(t, parent.IsRecording(), "ExtProc must not end an inherited span")
-			assert.Empty(t, recorder.Ended(), "ExtProc must not create or finish a span when tracing is disabled")
+			assert.Len(t, recorder.Started(), 1, "ExtProc must not create a span when tracing is disabled")
+			assert.Empty(t, recorder.Ended(), "ExtProc must not finish a span when tracing is disabled")
 			parent.End()
 			spans := recorder.Ended()
 			require.Len(t, spans, 1)
