@@ -1756,7 +1756,7 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 			AccessTokenExpiresAt:  &expired,
 		}
 	}
-	upstream := func(status int, body string) http.HandlerFunc {
+	thirdpartyResponseHandler := func(status int, body string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
@@ -1765,20 +1765,20 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		session        *storagedomain.UserSession
-		repoErr        error
-		encryptionErr  error
-		upstream       http.HandlerFunc
-		wantCode       string
-		wantReauthURI  bool
-		wantRefreshErr bool
+		name              string
+		session           *storagedomain.UserSession
+		repoErr           error
+		encryptionErr     error
+		thirdpartyHandler http.HandlerFunc
+		wantCode          string
+		wantReauthURI     bool
+		wantRefreshErr    bool
 	}{
-		{name: "provider 400 invalid_grant", session: refreshableSession(), upstream: upstream(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"sentinel-description"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true},
-		{name: "provider 401 invalid_client", session: refreshableSession(), upstream: upstream(http.StatusUnauthorized, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
-		{name: "provider 400 invalid_client", session: refreshableSession(), upstream: upstream(http.StatusBadRequest, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
-		{name: "provider 500 invalid_grant", session: refreshableSession(), upstream: upstream(http.StatusInternalServerError, `{"error":"invalid_grant"}`), wantCode: "server_error", wantRefreshErr: true},
-		{name: "provider 400 without OAuth code", session: refreshableSession(), upstream: upstream(http.StatusBadRequest, `not json`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "provider 400 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"sentinel-description"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true},
+		{name: "provider 401 invalid_client", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusUnauthorized, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "provider 400 invalid_client", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "provider 500 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusInternalServerError, `{"error":"invalid_grant"}`), wantCode: "server_error", wantRefreshErr: true},
+		{name: "provider 400 without OAuth code", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `not json`), wantCode: "server_error", wantRefreshErr: true},
 		{name: "transport failure", session: refreshableSession(), wantCode: "server_error", wantRefreshErr: true},
 		{name: "decryption failure", session: refreshableSession(), encryptionErr: errors.New("kms unavailable"), wantCode: "server_error"},
 		{name: "storage failure", repoErr: errors.New("database unavailable"), wantCode: "server_error"},
@@ -1789,8 +1789,8 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			tokenEndpoint := "http://127.0.0.1:0/token"
-			if tt.upstream != nil {
-				server := httptest.NewServer(tt.upstream)
+			if tt.thirdpartyHandler != nil {
+				server := httptest.NewServer(tt.thirdpartyHandler)
 				t.Cleanup(server.Close)
 				tokenEndpoint = server.URL
 			}
@@ -1822,7 +1822,7 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 			}
 			assert.NotContains(t, tokenErr.Description(), "sentinel-description")
 			assert.Equal(t, tt.wantRefreshErr, errors.Is(err, oauth2session.ErrRefreshFailed), "refresh failure cause must remain discoverable")
-			if tt.wantRefreshErr && tt.upstream != nil {
+			if tt.wantRefreshErr && tt.thirdpartyHandler != nil {
 				var retrieveErr *oauth2.RetrieveError
 				assert.ErrorAs(t, err, &retrieveErr)
 			}

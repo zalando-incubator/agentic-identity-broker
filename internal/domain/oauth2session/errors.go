@@ -66,7 +66,7 @@ type RefreshRejectedError struct {
 }
 
 func (e *RefreshRejectedError) Error() string {
-	return fmt.Sprintf("upstream token endpoint returned error status %d", e.StatusCode)
+	return fmt.Sprintf("third-party token endpoint returned error status %d", e.StatusCode)
 }
 
 // Unwrap exposes ErrRefreshTokenExpired when the third-party service answered invalid_grant, which

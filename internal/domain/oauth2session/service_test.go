@@ -2014,8 +2014,8 @@ func TestForceRefreshSession(t *testing.T) {
 	})
 }
 
-func TestRefreshAccessToken_SanitizesUpstreamRejection(t *testing.T) {
-	const sentinel = "sentinel-upstream-secret"
+func TestRefreshAccessToken_SanitizesThirdpartyRejection(t *testing.T) {
+	const sentinel = "sentinel-thirdparty-secret"
 	const invalidGrant = `{"error":"invalid_grant"}`
 	tests := []struct {
 		name       string

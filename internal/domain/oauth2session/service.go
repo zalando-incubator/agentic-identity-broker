@@ -346,7 +346,7 @@ func (s *OAuth2SessionService) buildOAuth2Config(
 }
 
 // IsSafeOAuthErrorCode reports whether code is an RFC 6749 §5.2 token-endpoint error code that
-// may be propagated from an upstream provider without exposing provider-controlled text.
+// may be propagated from a third-party provider without exposing provider-controlled text.
 func IsSafeOAuthErrorCode(code string) bool {
 	switch code {
 	case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope":
@@ -855,7 +855,7 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		return nil, upstreamRefreshError(resp)
+		return nil, thirdpartyRefreshError(resp)
 	}
 
 	var tokenResp struct {
@@ -904,19 +904,19 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	return token, nil
 }
 
-const maxUpstreamErrorBodyBytes = 64 << 10
+const maxThirdpartyErrorBodyBytes = 64 << 10
 
-// upstreamRefreshError keeps only the HTTP status and an allowlisted OAuth error code so that
+// thirdpartyRefreshError keeps only the HTTP status and an allowlisted OAuth error code so that
 // provider-controlled descriptions, URIs, headers, and bodies never leave this function.
-func upstreamRefreshError(resp *http.Response) error {
+func thirdpartyRefreshError(resp *http.Response) error {
 	retrieveErr := &oauth2.RetrieveError{
 		Response: &http.Response{
 			StatusCode: resp.StatusCode,
 			Status:     fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)),
 		},
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamErrorBodyBytes+1))
-	if err == nil && len(body) <= maxUpstreamErrorBodyBytes {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxThirdpartyErrorBodyBytes+1))
+	if err == nil && len(body) <= maxThirdpartyErrorBodyBytes {
 		var payload struct {
 			Error string `json:"error"`
 		}
