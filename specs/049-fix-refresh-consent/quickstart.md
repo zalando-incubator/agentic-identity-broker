@@ -1,6 +1,8 @@
-# Quickstart: Validate Consent-Bound Refresh Sessions After Implementation
+# Quickstart: Validate Consent-Bound Refresh Sessions for Local Token Minting After Implementation
 
 ## Scope and status
+
+The feature applies only to broker-issued user refresh sessions in `local` mode and the local minting path of `hybrid` mode. Upstream refresh in `proxy` mode and the upstream path of `hybrid` mode remains unchanged. Vaulted third-party provider tokens remain unchanged. Mode-isolation journeys verify this boundary.
 
 This is a post-implementation validation guide. It does not claim that the planned journeys, restore command, or migration exist. A focused run with zero executed scenarios is not a passing acceptance gate.
 

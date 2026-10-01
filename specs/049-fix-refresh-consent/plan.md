@@ -1,10 +1,14 @@
-# Implementation Plan: Consent-Bound Refresh Sessions
+# Implementation Plan: Consent-Bound Refresh Sessions for Local Token Minting
 
 **Branch**: `049-fix-refresh-consent` | **Date**: 2026-09-30 | **Spec**: [spec.md](spec.md)
 
 **Input**: `specs/049-fix-refresh-consent/spec.md`
 
+**Scope**: Local token minting only: `local` mode and the local minting path of `hybrid` mode. No upstream refresh-policy changes.
+
 ## Summary
+
+This plan changes only broker-issued user refresh sessions on the local minting path. It applies in `local` mode and the local path of `hybrid` mode. It does not apply to `proxy` mode or the upstream path of `hybrid` mode. Vaulted third-party provider tokens remain outside scope.
 
 Bind every local refresh to active user delegation and a durable refresh-session root. Revoke roots with their grant, agent, or credential lifecycle. Add a bounded, idempotent retry of the last refresh without branching or lifetime extension.
 
@@ -13,6 +17,18 @@ Keep Fosite for fresh OAuth protocol handling. An agent-scoped coordinator owns 
 The default retry interval is 30 seconds. Absolute lifetime defaults to unlimited. Inactivity remains 30 days through `local.refresh_token_ttl`. Existing JWT expiry, JWKS validation, proxy behavior, and third-party sessions remain unchanged.
 
 This plan and tasks.md describe pending implementation work, not an implemented feature. The 47-scenario design is provisional until T001 confirms the Open Decisions. A changed choice requires artifact reconciliation and traceability validation before dependent work. The owner's CLI and encrypted-backup decisions remain confirmed. The constitution remains unchanged.
+
+### Implementation mode boundary
+
+The [specification's mode table](spec.md#scope-and-mode-boundary) defines the scope for every implementation phase:
+
+- The local issuer owns consent checks, refresh rotation, bounded retries, lifetimes, and local session audit outcomes.
+- Shared consent, agent, and credential services coordinate local session revocation. They introduce no upstream session revocation or third-party refresh policy.
+- Session migration, rollout reauthorization, cleanup, and restore invalidation affect only locally issued refresh authority.
+- Configuration remains under `oauth2_authorization_server.local`. Hybrid deployments use it only for their local minting path. Proxy deployments receive no local policy defaults.
+- Upstream proxy routing, provider-controlled refresh, and vaulted third-party sessions retain their existing behavior. Client-credentials grants without user refresh sessions remain outside scope.
+
+**Local minting only does not mean `mode: local` only.** US6-S5 must prove local enforcement and upstream independence in `hybrid` mode, plus unchanged `proxy` behavior.
 
 ### Bounded, idempotent retry of the last refresh
 
@@ -56,7 +72,7 @@ FR-029 checks authentication/binding, revocation, consent, lifetimes, refresh ca
 
 **Constraints**: Mandatory consent, fail-closed errors, identical-token recovery, no raw credentials at rest/logs, no nested owner commits, no upstream/metadata fetch or transaction-unaware signing lookup under the guard. Preserve exact deadline behavior and permanent invalidation.
 
-**Scale/Scope**: Six stories and 47 acceptance scenarios. Local issuance in local/hybrid modes, lifecycle services, both storage adapters, shared time, at-rest encryption, configuration delivery, and documentation. Excludes immediate access-token revocation and a new public revocation endpoint.
+**Scale/Scope**: Six stories and 47 acceptance scenarios. Broker-issued user refresh sessions in `local` mode and the local minting path of `hybrid` mode only. Includes lifecycle services, both storage adapters, shared time, at-rest encryption, configuration delivery, and documentation for those sessions. Excludes upstream proxy refresh, vaulted third-party refresh, immediate access-token revocation, and a new public revocation endpoint.
 
 ## Constitution Check
 
@@ -218,6 +234,8 @@ After a database or refresh-state restore, operators keep all brokers and token 
 ### End-to-End (E2E) Acceptance Tests
 
 Use Ginkgo/Gomega with real production app bootstrap, dual end-user/admin servers, fixtures, and full authorization-code/PKCE journeys. Use the existing Playwright harness for the actual UI revoke action.
+
+Changed-behavior journeys exercise broker-issued local refresh sessions. US6-S5 is the mode-isolation journey, not an extension of this policy to upstream sessions. It proves local enforcement in `hybrid` mode and unchanged upstream behavior in both `hybrid` and `proxy` modes.
 
 **Primary scenario mapping**: All locations below are planned. No source line numbers or passed-test claims are invented. Each scenario maps to one It block bearing its identifier.
 

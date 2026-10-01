@@ -1,4 +1,4 @@
-# Tasks: Consent-Bound Refresh Sessions
+# Tasks: Consent-Bound Refresh Sessions for Local Token Minting
 
 **Feature**: `049-fix-refresh-consent`  
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [contracts/](contracts/)  

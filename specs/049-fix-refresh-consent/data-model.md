@@ -1,4 +1,4 @@
-# Data Model: Consent-Bound Refresh Sessions
+# Data Model: Consent-Bound Refresh Sessions for Local Token Minting
 
 **Specification**: [spec.md](spec.md)  
 **Decisions**: [research.md](research.md)  

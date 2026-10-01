@@ -1,4 +1,4 @@
-# Specification Quality Checklist: Consent-Bound Refresh Sessions
+# Specification Quality Checklist: Consent-Bound Refresh Sessions for Local Token Minting
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-09-30

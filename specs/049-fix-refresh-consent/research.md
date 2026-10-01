@@ -1,4 +1,4 @@
-# Research: Consent-Bound Refresh Sessions
+# Research: Consent-Bound Refresh Sessions for Local Token Minting
 
 **Feature**: [spec.md](spec.md)  
 **Date**: 2026-09-30  

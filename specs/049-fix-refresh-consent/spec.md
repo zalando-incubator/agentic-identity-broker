@@ -1,10 +1,12 @@
-# Feature Specification: Consent-Bound Refresh Sessions
+# Feature Specification: Consent-Bound Refresh Sessions for Local Token Minting
 
 **Feature Branch**: `049-fix-refresh-consent`
 
 **Created**: 2026-09-30
 
 **Status**: Draft
+
+**Scope**: Local token minting only: `local` mode and the local minting path of `hybrid` mode. No upstream refresh-policy changes.
 
 **Input (original request)**: User description: "Refresh ignores consent. A client can continue rotating refresh tokens after the user revokes consent or the grant expires. Resource servers that trust broker-issued tokens directly remain exposed. Check active consent during refresh. Revoke refresh sessions on grant deletion, agent deletion, and credential revocation. Configure a reuse interval (default: 30 seconds), an absolute session lifetime (default: non-expiring), and a session inactivity lifetime, also called refresh token lifetime (default: 30 days)."
 
@@ -13,6 +15,24 @@
 **Task-generation decisions**: The feature owner selected constitution-compliant CLI support for all three settings and permitted encrypted backup copies of retry results. Live retry results still expire under DB-006. Logs must not contain retry results.
 
 **Analysis remediation decisions**: The constitution remains unchanged. Every primary acceptance journey must first fail on a genuine feature assertion. Confirmed rollback and an indeterminate commit have different recovery guarantees under FR-031.
+
+## Scope and Mode Boundary
+
+This feature changes only user refresh sessions issued by the broker's local token issuer after an authorization-code exchange. It does not change every OAuth2 flow.
+
+| Operating mode or token path | Feature applies? | Boundary |
+|------------------------------|------------------|----------|
+| `local` mode | Yes | Broker-issued user refresh sessions |
+| `hybrid` mode, local minting path | Yes | The same broker-issued user refresh sessions and policy as `local` mode |
+| `hybrid` mode, upstream proxy path | No | Existing upstream-controlled refresh behavior remains unchanged |
+| `proxy` mode | No | Existing upstream-controlled refresh behavior remains unchanged |
+| Vaulted third-party provider tokens, in any mode | No | Existing provider-token storage and refresh behavior remain unchanged |
+
+**Local minting only does not mean `mode: local` only.** Hybrid deployments apply these controls only to their local minting path.
+
+Unless a passage explicitly describes an upstream preservation check, “refresh”, “refresh token”, and “refresh session” refer to broker-issued local user sessions. Consent checks, lifecycle revocation, retries, lifetimes, migration, restore invalidation, and audit requirements all follow this boundary.
+
+Shared consent, agent, and credential actions revoke only the related local refresh sessions under this feature. They do not introduce upstream session revocation. Client-credentials grants without user refresh sessions remain outside scope. Existing access-token expiry and JWKS validation contracts remain unchanged.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -122,7 +142,7 @@ An operator can limit how long an agent can leave a refresh session inactive. Su
 
 ### User Story 6 - Deploy the Policy Without Changing Upstream Sessions (Priority: P2)
 
-Operators can configure these controls through existing deployment mechanisms. Existing deployments retain the refresh-token lifetime configuration they already use. Sessions issued before this feature can require fresh authorization once.
+Operators can configure these local refresh controls through existing deployment mechanisms. Existing deployments retain their local refresh-token lifetime configuration. Pre-feature local sessions can require fresh authorization once. Upstream sessions do not acquire the local policy or its reauthorization requirement.
 
 **Why this priority**: Security configuration must have consistent behavior across deployment methods and must not change upstream provider contracts.
 
@@ -186,7 +206,7 @@ Operators can configure these controls through existing deployment mechanisms. E
 - **FR-023**: The existing `local.refresh_token_ttl` configuration MUST remain the single configuration value for session inactivity lifetime.
 - **FR-024**: The broker MUST preserve trustworthy session start, last fresh activity, ownership, and revocation history across restart and instance changes.
 - **FR-025**: A session is trustworthy only with durable evidence of its principal, agent, client, original active grant ID, and first issuance time. The broker MUST retain its first issued token, complete rotation lineage, last fresh rotation time, and revocation history. Anchored root/token records written by new issuers are the evidence source. Every pre-feature unanchored session and unsupported old-writer descendant MUST require fresh authorization. Deployment MUST NOT reset clocks or infer origin from surviving legacy rows.
-- **FR-026**: These controls MUST apply to local issuance in local and hybrid modes. Upstream passthrough and vaulted third-party token behavior MUST remain unchanged.
+- **FR-026**: These controls MUST apply only to broker-issued user refresh sessions on the local minting path, in `local` mode and `hybrid` mode. They MUST NOT apply to `proxy` mode or the upstream proxy path of `hybrid` mode. Upstream passthrough and vaulted third-party token behavior MUST remain unchanged.
 - **FR-027**: Existing access tokens MUST retain their existing expiry contract. This feature MUST NOT claim immediate invalidation at signature-only resource servers.
 - **FR-028**: An expired original access token MUST prevent retry success without extending deadlines. Expiry alone MUST NOT revoke a still-valid current refresh token.
 - **FR-029**: Refresh MUST check client authentication/binding, revocation, consent, lifetimes, refresh capability, token classification, then candidate response scopes, in that order. The first failing check MUST determine the response and audit reason. Capability failure MUST precede replay revocation and preserve existing `unauthorized_client` behavior without mutation. Response-scope checks MUST apply only to fresh or otherwise eligible retry results and preserve existing scope-error contracts without mutation. With refresh capability allowed, prohibited reuse MUST revoke before response-scope checks, even when an original response scope is no longer permitted.
@@ -260,7 +280,7 @@ flowchart TD
 
 ### Configuration Requirements
 
-Configuration applies under `oauth2_authorization_server.local` in local and hybrid deployments:
+Configuration applies only to local minting under `oauth2_authorization_server.local`, in `local` mode and the local path of `hybrid` mode. It does not configure upstream refresh policy:
 
 | Parameter | Default | Meaning | Valid values |
 |-----------|---------|---------|--------------|
@@ -354,7 +374,7 @@ oauth2_authorization_server:
 
 ## Assumptions
 
-- This feature covers locally issued user refresh sessions, not upstream passthrough, vaulted third-party tokens, or client-credentials grants without refresh sessions.
+- This feature covers broker-issued user refresh sessions in `local` mode and the local minting path of `hybrid` mode only. It excludes `proxy` mode, the upstream path of `hybrid` mode, vaulted third-party tokens, and client-credentials grants without refresh sessions.
 - A reuse interval means recovery of a lost response, not permission to create multiple successor tokens from one predecessor.
 - Only the immediately previous token qualifies for recovery while its successor remains current and unused. Older consumed-token reuse keeps the existing session-revocation behavior.
 - The initial successful authorization-code exchange establishes a refresh session. Fresh authorization creates a distinct session with new lifetime clocks.
