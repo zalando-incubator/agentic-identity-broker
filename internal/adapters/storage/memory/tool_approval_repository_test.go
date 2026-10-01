@@ -82,6 +82,25 @@ func TestToolApprovalRepository_RevokePermanentClearsPermanentDenial(t *testing.
 	require.ErrorIs(t, err, ports.ErrNotFound)
 }
 
+func TestToolApprovalRepository_PermanentDenialClearsParameterScope(t *testing.T) {
+	repo := NewToolApprovalRepository()
+	ctx := context.Background()
+	approval := &storage.ToolApproval{ID: id.NewApprovalID(), ToolName: "read_file", ToolPattern: "read_file",
+		ParamsPattern: map[string]string{"path": "/reviewed"}, Status: storage.ApprovalStatusPending, ExpiresAt: time.Now().Add(time.Minute)}
+	_, err := repo.Create(ctx, approval)
+	require.NoError(t, err)
+	_, err = repo.Deny(ctx, approval.ID, new(storage.ApprovalPersistencePermanent), time.Now())
+	require.NoError(t, err)
+	stored, err := repo.Get(ctx, approval.ID)
+	require.NoError(t, err)
+	require.Equal(t, "read_file", stored.ToolPattern)
+	require.Empty(t, stored.ParamsPattern, "permanent denial must cover every argument value")
+	active, err := repo.ListAllActive(ctx, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	require.Empty(t, active[0].ParamsPattern)
+}
+
 func TestToolApprovalRepository_RejectsExpiredPendingResolution(t *testing.T) {
 	repo := NewToolApprovalRepository()
 	now := time.Now()
