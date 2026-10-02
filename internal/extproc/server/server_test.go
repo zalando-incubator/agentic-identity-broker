@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -2989,7 +2990,7 @@ func TestServer_ProcessRequestHeaders_SpanOutcomeOnSuccess(t *testing.T) {
 // nests under agentgateway's ExtProc span rather than an unrelated ancestor.
 func TestServer_ProcessRequestHeaders_PrefersGRPCMetadataTraceparentOverHTTPHeader(t *testing.T) {
 	prevProp := otel.GetTextMapPropagator()
-	otel.SetTextMapPropagator(propagation.TraceContext{})
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	t.Cleanup(func() { otel.SetTextMapPropagator(prevProp) })
 
 	const grpcTraceparent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
@@ -2997,9 +2998,11 @@ func TestServer_ProcessRequestHeaders_PrefersGRPCMetadataTraceparentOverHTTPHead
 	const httpTraceparent = "00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01"
 
 	var seenTraceID string
+	var seenBaggage string
 	exchanger := &mockExchanger{
 		exchangeFunc: func(ctx context.Context, _, _ string) (server.ExchangeResult, error) {
 			seenTraceID = trace.SpanContextFromContext(ctx).TraceID().String()
+			seenBaggage = baggage.FromContext(ctx).Member("tenant").Value()
 			return server.ExchangeResult{Token: "exchanged-token"}, nil
 		},
 	}
@@ -3016,6 +3019,7 @@ func TestServer_ProcessRequestHeaders_PrefersGRPCMetadataTraceparentOverHTTPHead
 			RequestHeaders: &extprocv3.HttpHeaders{
 				Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
 					{Key: "traceparent", RawValue: []byte(httpTraceparent)},
+					{Key: "baggage", RawValue: []byte("tenant=acme")},
 				}},
 			},
 		},
@@ -3027,6 +3031,8 @@ func TestServer_ProcessRequestHeaders_PrefersGRPCMetadataTraceparentOverHTTPHead
 
 	assert.Equal(t, grpcTraceID, seenTraceID,
 		"trace context must come from agentgateway's own gRPC call metadata, not the proxied HTTP request header")
+	assert.Equal(t, "acme", seenBaggage,
+		"HTTP baggage must survive when the preferred gRPC trace context has no baggage")
 }
 
 // Spec: US1 S2 — Span outcome attribute must be set on exchange_failure

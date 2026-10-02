@@ -167,11 +167,12 @@ func (s *Server) extractTraceContext(ctx context.Context, headers *extprocv3.Htt
 	if !s.cfg.Telemetry.Enabled {
 		return ctx
 	}
+	normalizeTraceparentHeaders(headers)
+	ctx = otel.GetTextMapPropagator().Extract(ctx, (*headerCarrier)(headers))
 	if grpcCtx, ok := extractGRPCTraceContext(ctx); ok {
 		return grpcCtx
 	}
-	normalizeTraceparentHeaders(headers)
-	return otel.GetTextMapPropagator().Extract(ctx, (*headerCarrier)(headers))
+	return ctx
 }
 
 // extractGRPCTraceContext extracts trace context from the ExtProc gRPC stream's
