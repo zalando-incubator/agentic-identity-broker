@@ -28,12 +28,19 @@
 
 ### Session 2026-09-27
 
-- Q: How should the delegation list show granted access, given that the existing list response has no service names? → A: Do not add backend features. Show the number of granted permission sets from the existing `activeGrantCount`. Service names stay one click away in the agent detail.
+- Q: How should the delegation list show granted access, given that the existing list response has no service names? → A: Do not add backend features. Service names stay one click away in the agent detail. The later count clarification in this session removes the count column.
 - Q: What should the delegation status filter show, given that the existing list excludes expired grants? → A: Remove the status column and status filter. The list contains only unexpired delegations, and a row whose expiry passes while the page is open disappears.
 - Q: Where can “No connection” appear, given that `/api/third-party/sessions` lists only stored sessions? → A: Only where an agent requires a service the user has not connected: the agent's Connections tab and the consent view's service prompt. `/sessions` lists stored connections only.
 - Q: What should the UI show for an agent's publisher or a connection's account, given that no existing response has either field? → A: Neither. Show no publisher or account row and never imply that a publisher identity was checked.
 - Q: Can the user remove previously granted access during re-consent? → A: No. Already-granted groups are read-only in the decision view; the console detail view changes or removes them. The duration choice starts from the existing grant's validity, and Allow applies the chosen duration to the whole grant.
 - Q: The OpenAPI description of `GET /api/third-party/sessions` documents `{data: [ThirdPartyServiceWithSession]}`, but the handler, its integration test, and the browser client use `{data: {sessions: [UserSessionSummary]}}`. How should the drift be resolved? → A: Correct the OpenAPI documentation to the existing handler response. This documentation-only correction changes no runtime behavior and is the stakeholder confirmation required by Principles IV and X.
+- Q: Runtime verification showed that `activeGrantCount` counts UserGrant records, not permission sets. How should the Agents table handle the missing count? → A: Remove the count column. Show the agent, expiry, View, and confirmed Revoke. Add no per-agent requests or API changes.
+- Q: May the implementation correct verified existing consent-response documentation mismatches in addition to the session-list correction? → A: Correct the documentation to match the current handlers. Do not change endpoints, runtime responses, response fields, persistence, or authorization behavior.
+
+### Session 2026-09-28
+
+- Q: How should legacy journeys handle raw scope badges and an initially enabled Save button, which conflict with the approved redesign? → A: Use the redesigned behavior. Replace obsolete presentation assertions with permission-group and dirty-only-Save coverage. Make an explicit edit before saving in the CSRF journey, while preserving its security and storage assertions. Move embedded selectors into page objects and migrate consent-state fixtures to the canonical draft envelope.
+- Q: Cold production measurement found 7.30 seconds with uncompressed assets, and the retained-stack decision graphs measured 164.3/155.9 kB gzip. Which performance contract should the UI-only cutover use? → A: Use measured-stack limits: 170 kB gzip and 5 seconds on cold Slow 4G. Add compressed static delivery and reduce code-loading delays without changing API, authorization, or persistence behavior.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -78,7 +85,7 @@ A returning user wants one dense view of their agent delegations and a safe way 
 
 **Acceptance Scenarios**:
 
-1. **AS-06**: **Given** several delegations, **When** the user opens `/delegations` or searches by name, **Then** a dense list shows each agent with an unexpired grant, its number of granted permission sets, and its expiry. Each row offers View and a confirmed Revoke action.
+1. **AS-06**: **Given** several delegations, **When** the user opens `/delegations` or searches by name, **Then** a dense list shows each agent with an unexpired grant and its expiry, without a count column. Each row offers View and a confirmed Revoke action.
 2. **AS-07**: **Given** no delegations or a revoked delegation, **When** the user opens or returns to `/delegations`, **Then** the empty state explains what a delegation is, or the revoked agent disappears from active access after confirmation. The user sees a clear result in either case.
 
 ---
@@ -201,7 +208,7 @@ A user opens a command palette to find an agent, connection, or approval, or cha
 - **FR-011**: On re-consent, compare the requested permission-set/service selections with the existing `granted_permission_sets`. Show only new access as a decision, display already-granted groups collapsed, checked, and read-only, and preserve prior choices when saving. Start the duration choice from the existing grant's validity; Allow applies the chosen duration to the whole grant. Use the existing user grant read response; do not add a delta API (AS-02).
 - **FR-012**: Offer one primary Allow and a secondary Deny in consent, with no destructive styling. Allow resumes the existing validated authorization flow; Deny does not create or revoke a grant. Explain next steps and where access can later be reviewed (AS-01, AS-03).
 - **FR-013**: Tool review identifies tool, agent, acting user, arguments in a collapsible monospace block, the server-provided risk level with a label and accessible explanation, and the approval scope. Preserve once, session, and permanent persistence and existing scope-preview validation; show the resolved outcome without new actions (AS-04, AS-05).
-- **FR-014**: The agent list shows logo or fallback, name, the number of granted permission sets from the existing `activeGrantCount`, expiry, name search, View, and confirmed Revoke. It lists only unexpired delegations, because the existing response excludes expired grants, and has no status column or status filter. Its empty state uses the wordmark and explains a delegation in one sentence (AS-06, AS-07).
+- **FR-014**: The agent list shows logo or fallback, name, expiry, name search, View, and confirmed Revoke. It has no count column and makes no per-agent requests for counts. It lists only unexpired delegations, because the existing response excludes expired grants, and has no status column or status filter. Its empty state uses the wordmark and explains a delegation in one sentence (AS-06, AS-07).
 - **FR-015**: The agent detail has identity, links, Permissions and Connections tabs, editable optional groups, and a sticky Cancel/Save changes bar only for unsaved changes (AS-08).
 - **FR-016**: Move “Revoke all access” to the detail header overflow menu. Require confirmation; do not show it as a resting red primary action (AS-09).
 - **FR-017**: The connections list shows provider, scope count, state, and creation time for each stored connection. Offer Reconnect, supported Refresh, and confirmed Disconnect without changing authorize/callback/refresh behavior (AS-10, AS-11).
@@ -215,7 +222,7 @@ A user opens a command palette to find an agent, connection, or approval, or cha
 - **FR-026**: Escape all agent-supplied strings and CIMD metadata. Truncate long display text with an accessible expansion. Do not load third-party fonts, scripts, or images while rendering the application; keep user-initiated external links and OAuth2 redirects functional (AS-01, AS-04, AS-15).
 - **FR-027**: Collect user-facing copy in one place for later localization. Use second-person, present-tense, action-first wording for sentences and actions; keep proper names, technical scopes, status labels, and route titles accurate (AS-01–AS-18).
 - **FR-028**: Deliver every redesigned route and capability in one cutover. Do not use implementation phases, feature flags, dual presentations, backwards-compatibility layers, or old-server fallbacks. Migrate every consumer and remove obsolete components, tokens, aliases, fonts, animations, and caches in the same release (AS-01–AS-18).
-- **FR-029**: Keep the existing user-facing end-to-end journeys working with selector changes only for existing behaviors. Add traceable acceptance coverage for changed journeys and both themes (AS-01–AS-18).
+- **FR-029**: Keep existing security, authorization, storage, and callback journeys working. Migrate selectors through page objects. Where the approved redesign removes an old presentation, replace its obsolete assertions with the new behavior; the CSRF save journey makes an explicit edit first. Migrate consent-state fixtures without weakening selection-preservation assertions. Add traceable acceptance coverage for changed journeys and both themes (AS-01–AS-18).
 - **FR-030**: Record the `/settings` route and the visual-direction change in an ADR that is accepted before implementation (AS-14, AS-17).
 - **FR-031**: Produce README guidance and documentation screenshots for every original route and the new `/settings` route in light and dark modes, including both agent-detail contexts (AS-01, AS-04, AS-06, AS-08, AS-10, AS-12, AS-14, AS-17).
 
@@ -227,7 +234,7 @@ A connection state summarizes token usability from existing session fields, refr
 
 ### API Requirements *(if applicable - design before database)*
 
-- **API-001**: Keep existing end-user contracts and the consent-grants read response unchanged. The redesign must preserve the existing authorization session, third-party authorization/callback/refresh, scope preview, and approval-decision contracts. The only `api/enduser/openapi.yaml` change is the documentation correction of the existing `GET /api/third-party/sessions` response to `{data: {sessions: [UserSessionSummary]}}` (Clarifications, 2026-09-27).
+- **API-001**: Keep existing end-user runtime contracts and the consent-grants read response unchanged. Preserve authorization sessions, third-party authorization/callback/refresh, scope preview, and approval decisions. Documentation-only corrections may align the existing session-list and consent responses with their current handlers (Clarifications, 2026-09-27). They must not introduce runtime changes.
 - **API-004**: The gateway-only approval long-poll is not a browser data source. Refresh the existing acting-user pending-list response regularly for live browser updates.
 - **API-005**: This feature adds or changes no backend endpoint, response field, runtime response, persistence, or OAuth2/token contract. Every screen uses existing end-user responses. Correcting documentation to match an existing response is not a contract change.
 
@@ -257,20 +264,20 @@ A connection state summarizes token usability from existing session fields, refr
 ### Measurable Outcomes
 
 - **SC-001**: In moderated first-time consent sessions, users decide within 30 seconds and can name each granted service and state what each selected permission set allows.
-- **SC-002**: Under the Chrome DevTools “Slow 4G” network preset, the consent screen's main content appears within 1.5 seconds. Its initial compressed application code is under 150 kB.
+- **SC-002**: With a cold browser cache under the Chrome DevTools “Slow 4G” network preset, consent main content appears within 5 seconds. Each decision route’s entry and static JavaScript/CSS graph is under 170 kB gzip. Compressed public static delivery and code-preload hints may improve this path without API, authorization, or persistence changes.
 - **SC-003**: Every screen passes WCAG 2.2 AA checks in both themes. Automated component checks find no text below 4.5:1 contrast; every flow works by keyboard and announces new approvals, decisions, and toasts.
 - **SC-004**: At 320 px width and 200% zoom, 100% of routes remain usable without horizontal page scrolling.
 - **SC-005**: At least 12 agent rows fit within a 1080 px-high viewport without page scrolling in the standard desktop layout.
 - **SC-006**: Opening and using any application screen makes zero automatic requests to third-party origins. User-initiated OAuth2 navigation and external links still work.
 - **SC-007**: No screen displays more than one accent-colored primary action. At least 90% of moderated participants identify the next action on the consent and tool-review screens without assistance.
 - **SC-008**: Every original and new route has a README reference and a documentation screenshot in light and dark modes. Both agent-detail contexts are represented.
-- **SC-009**: The existing end-to-end journeys pass with only selector changes for their preserved behaviors. Every new acceptance scenario has a corresponding end-to-end journey.
+- **SC-009**: Existing journeys pass with their security, authorization, storage, and callback assertions preserved. Approved presentation changes have replacement behavior coverage, and every new acceptance scenario has a corresponding end-to-end journey.
 - **SC-010**: The release contains every active AS-01–AS-18 capability with one presentation and no feature flags or compatibility paths. Every current-guidance reference in the plan matches the accepted visual decision. Historical records retain their original decisions.
 
 ## Assumptions
 
 - Users use evergreen browsers. System theme, local appearance settings, and keyboard navigation are available.
-- Planning selects a neutral blue accent and Inter as the body face. All fonts are self-hosted. These proposed choices require ADR acceptance.
+- ADR 037 selects a neutral blue accent and Inter as the body face. All fonts are self-hosted. The stakeholder accepted this decision on 2026-09-27.
 - A validated CIMD domain supports a domain-specific verification label only. Registered names alone do not prove a publisher's identity. Existing agent reads outside an authorization session expose no CIMD or verification data.
 - Existing session data exposes service scopes, granted scopes, access-token expiry, refresh-token expiry, and refresh-token presence. Connection state derives only from these fields.
 - Existing agent and session summaries have no last-used timestamp. The redesign does not show last use and never substitutes a modification or connection time.

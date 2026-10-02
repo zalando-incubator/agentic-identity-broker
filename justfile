@@ -142,6 +142,11 @@ test-e2e-frontend: web-build
     set -euo pipefail
     E2E_FRONTEND_MODE=built E2E_CAPTURE_SCREENSHOTS={{E2E_CAPTURE_SCREENSHOTS}} ginkgo -v --procs={{GINKGO_FRONTEND_PROCS}} --output-interceptor-mode=none ./tests/e2e/frontend/
 
+# Compare route and state screenshots with reviewed baselines
+test-e2e-frontend-visual:
+    E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend
+    go run ./tools/imgdiff gate --actual tests/e2e/frontend/coverage/screenshots --baseline tests/e2e/screenshots --required delegations,agent_consent,agent_detail,sessions,approvals,approval_review,settings --manifest tests/e2e/screenshots/visual-gate.txt --threshold 0.5 --out tests/e2e/frontend/coverage/visual-diff
+
 # Run the frontend E2E acceptance suite against a Vite dev server
 # NOTE: Requires 'just web-dev' running in another terminal
 test-e2e-frontend-dev:
@@ -610,6 +615,26 @@ web-test: web-ensure-deps
 web-test-coverage: web-ensure-deps
     @echo "Running web frontend tests with coverage..."
     cd web && npm run test:coverage
+
+# Enforce frontend accessibility and semantic-token rules
+web-lint: web-ensure-deps
+    npm --prefix web run lint
+
+# Build the shared design-system documentation
+web-storybook-build: web-ensure-deps
+    npm --prefix web run build-storybook
+
+# Compare both themes without creating or updating reviewed baselines
+web-storybook-test: web-ensure-deps
+    cd web && CI=true ./node_modules/.bin/vitest run --project storybook-light --project storybook-dark
+
+# Generate separate candidates for human review, never overwrite reviewed baselines
+web-storybook-visual-candidates: web-ensure-deps
+    cd web && ./node_modules/.bin/vitest run --project storybook-light --project storybook-dark --update --browser.screenshotDirectory=.storybook/candidates
+
+# Enforce compressed decision-route size and console-module isolation
+web-bundle-check: web-build
+    cd web && ./node_modules/.bin/vitest run --project bundle
 
 # Build both Go backend and web frontend in release quality
 # Produces artifacts: ./bin/{{NAME}} and ./web/dist/

@@ -67,6 +67,11 @@ tmp
 /agentic-identity-broker
 
 tests/e2e/frontend/coverage/
+coverage/
+*.tsbuildinfo
+web/storybook-static/
+web/.storybook/candidates/
+web/.storybook/test-results/
 
 infra/cdk/cdk
 infra/cdk/cdk.out

@@ -1,7 +1,7 @@
 # Research — Consent UI v2
 
 **Branch**: `047-redesign-consent-console`
-**Status**: Technical choices resolved. ADR acceptance remains the implementation gate. The feature adds no API.
+**Status**: Technical choices resolved. ADR 037 accepted by the stakeholder on 2026-09-27. The feature adds no API.
 
 ## 1. Retain the platform, replace the component layer
 
@@ -125,4 +125,4 @@ Do not add broker configuration, environment or CLI bindings, Helm values, or HT
 
 ## Resolved unknowns and remaining approvals
 
-No technical choice remains marked NEEDS CLARIFICATION. The plan supplies concrete defaults and contracts. ADR acceptance is a governance gate, not an assumed result. The feature adds no API contract. Planning does not authorize runtime changes.
+No technical choice remains marked NEEDS CLARIFICATION. ADR 037 records stakeholder acceptance on 2026-09-27. The feature adds no runtime API contract. The Agents count column is removed, and documentation-only corrections of existing session-list and consent responses are approved. Runtime completion still requires the planned validation.

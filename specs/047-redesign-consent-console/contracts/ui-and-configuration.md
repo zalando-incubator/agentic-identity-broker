@@ -63,6 +63,11 @@ Add color-scheme metadata and CSS. Scope the CSS media fallback to a root withou
 
 CSP uses `font-src 'self'`. The fixed theme script has a build-generated SHA-256 CSP hash. Never enable `unsafe-inline` to make it work. Preserve existing OAuth2 navigation and API behavior. Brand assets and fonts are same-origin.
 
+## Static delivery
+
+The approved performance contract is 170 kB gzip per initial decision graph and 5 seconds for cold consent content on Chrome Slow 4G. Build gzip and Brotli companions for public text assets. The SPA handler negotiates those representations without compressing API responses. Decision HTML may preload only the public entry and selected decision’s static asset graph from the Vite build manifest; it must not embed private bootstrap data or preload console-only code.
+
+
 ## Data and mutation contract
 
 Query keys start with the authenticated principal returned by the existing user endpoint. Lists and details add their resource identifiers and filters. Never infer identity from editable storage.

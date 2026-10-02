@@ -92,15 +92,37 @@ The full request and response schemas for every endpoint below are in the
 |---|---|---|
 | GET | `/api/me` | The current authenticated user's profile. |
 
+The response is `{"data": {"principal": "...", "displayName": "..."}}`, with optional `email` and `pictureUrl` fields.
+The handler omits unavailable optional fields. Without an enriched profile, `displayName` equals `principal`.
+
 ### Consent
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/consent/agents` | List agents that have active delegations for the user. |
 | GET | `/api/consent/agents/{agent-id}` | Agent detail with its requested third-party services. |
-| GET | `/api/consent/agents/{agent-id}/grants` | The user's grants for an agent. |
+| GET | `/api/consent/agents/{agent-id}/grants` | One stored grant for the user and agent, or `data: null`. |
 | POST | `/api/consent/agents/{agent-id}/grants` | Create or update a grant; optionally resume an OAuth2 flow. |
 | DELETE | `/api/consent/agents/{agent-id}/grants` | Revoke all of the agent's permissions. |
+
+Consent responses use these existing wire formats:
+
+| Operation | Success response |
+|---|---|
+| List agents | `200` with `data` as an array. `activeGrantCount` counts active `UserGrant` records, not services or permission sets. |
+| Agent detail | `200` with `data.agent`, `data.services`, `data.permission_sets`, `data.active_session_service_ids`, and `data.service_requirements`. |
+| Get grant | `200` with `data` as one grant object or `null`, never an array. This lookup can return an expired grant. |
+| Create or update grant | `201` with the grant in `data`. A valid `session_token` adds a sibling `redirect_url` for authorization resumption. |
+| Delete grant | `204` with no body. Returns `404` when no grant exists. Connected third-party sessions remain intact. |
+
+Agent detail metadata uses `agentId` with snake_case fields, including `display_name`, `created_at`, and `updated_at`.
+The service entries use camelCase fields, including `serviceId`, `requiredScopes`, and `connectionStatus`.
+Agent detail does not return `available_services` or agent and service logo fields.
+The optional `cimd_metadata` object comes from a validated authorization session token and is omitted when unavailable.
+
+Grant responses omit `valid_until` for indefinite grants. The agent list omits `expiresAt` when all grants are indefinite.
+The agent list excludes expired grants, unlike the individual grant lookup.
+An empty `granted_permission_sets` object or array returns `400` on POST. Revocation requires DELETE, not an empty POST.
 
 ### Third-party sessions
 
@@ -111,7 +133,11 @@ The full request and response schemas for every endpoint below are in the
 | GET | `/api/third-party/{serviceId}/oauth2/callback` | Handle the third-party OAuth2 callback. |
 | GET | `/api/third-party/{serviceId}/session` | Session detail and the agents that depend on it. |
 | DELETE | `/api/third-party/{serviceId}/session` | Terminate the session and delete its stored tokens. |
+| POST | `/api/third-party/{serviceId}/session/refresh` | Refresh the access token through the existing provider flow. |
 | GET | `/api/third-party/{serviceId}/session/affected-agents` | Agents that lose access when the session ends. |
+
+The session list returns `{"data": {"sessions": [<UserSessionSummary>]}}`, with an empty `sessions` array when no stored sessions exist.
+It includes expired stored sessions but excludes services without a stored session. Refresh returns the updated summary in `data`.
 
 ### OAuth2 server
 

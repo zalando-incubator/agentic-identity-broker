@@ -1,18 +1,17 @@
-// Command imgdiff compares two PNG images pixel-by-pixel and reports the
-// percentage of differing pixels.  It is used by the screenshot CI workflow
-// to avoid committing screenshots whose only changes are sub-pixel
-// anti-aliasing or font-hinting noise.
+// Command imgdiff compares PNG images against a pixel-difference threshold.
+// Gate mode requires reviewed light/dark baselines and writes review artifacts.
 //
 // Usage:
 //
 //	imgdiff <file1.png> <file2.png> <threshold%>
+//	imgdiff gate --actual captures --baseline reviewed --manifest states.txt --out diffs
 //
 // The threshold is a floating-point percentage (e.g. 0.5 means 0.5 %).
 // Exit codes:
 //
 //	0  — difference is at or below the threshold (images are "the same")
-//	1  — difference exceeds the threshold (images are meaningfully different)
-//	2  — usage / I/O error
+//	1  — comparison fails, or a gated capture/baseline is missing or invalid
+//	2  — usage / setup error
 //
 // On successful comparisons, the diff percentage is printed to stdout.
 package main
@@ -28,6 +27,9 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "gate" {
+		os.Exit(runGate(os.Args[2:]))
+	}
 	if len(os.Args) != 4 {
 		fmt.Fprintf(os.Stderr, "Usage: imgdiff <image1.png> <image2.png> <threshold%%>\n")
 		os.Exit(2)

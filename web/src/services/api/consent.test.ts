@@ -1,108 +1,91 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { CanceledError, type AxiosAdapter } from 'axios';
+import { afterEach, describe, expect, it } from 'vitest';
 import { ConsentApiService } from './consent';
+import { apiClient } from './client';
 import type { CreateOrUpdateGrantRequest, UserGrant } from '../../types/consent';
 
-vi.mock('./client', () => ({
-  apiClient: {
-    get: vi.fn(),
-    post: vi.fn(),
-    delete: vi.fn(),
-  },
-}));
+const adapter = apiClient.defaults.adapter;
+const service = new ConsentApiService();
+const grant: UserGrant = { id: 'grant', agent_id: 'agent', principal: 'alice', delegated_oauth2_tokens: [{ thirdparty_oauth2_service_id: 'service', scopes: ['read'] }], valid_until: null, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
+const request: CreateOrUpdateGrantRequest = { delegated_oauth2_tokens: grant.delegated_oauth2_tokens };
+const detail = { agent: { agentId: 'agent', display_name: 'Agent', description: 'Description', created_at: '', updated_at: '' }, services: [{ serviceId: 'service', serviceName: 'Service', requirementType: 'mandatory', requiredScopes: [{ name: 'read' }], connectionStatus: 'connected' }] };
+afterEach(() => { apiClient.defaults.adapter = adapter; });
 
-vi.mock('./cache', () => ({
-  apiCache: {
-    get: vi.fn().mockReturnValue(null),
-    set: vi.fn(),
-    invalidate: vi.fn(),
-    invalidatePattern: vi.fn(),
-  },
-}));
+function respond(data: unknown, status = 200): AxiosAdapter {
+  return async (config) => ({ config, data, status, statusText: 'OK', headers: {} });
+}
 
-import { apiClient } from './client';
-
-const mockGrant: UserGrant = {
-  id: 'grant-1',
-  agent_id: 'agent-1',
-  principal: 'user@example.com',
-  delegated_oauth2_tokens: [{ thirdparty_oauth2_service_id: 'svc-1', scopes: ['read'] }],
-  valid_until: null,
-  created_at: '2024-01-01T00:00:00Z',
-  updated_at: '2024-01-01T00:00:00Z',
-};
-
-const request: CreateOrUpdateGrantRequest = {
-  delegated_oauth2_tokens: [{ thirdparty_oauth2_service_id: 'svc-1', scopes: ['read'] }],
-};
-
-describe('ConsentApiService.createOrUpdateGrant', () => {
-  let service: ConsentApiService;
-  let originalLocation: Location;
-
-  beforeEach(() => {
-    service = new ConsentApiService();
-    vi.clearAllMocks();
-
-    originalLocation = window.location;
-    Object.defineProperty(window, 'location', {
-      value: { ...originalLocation, href: '' },
-      writable: true,
-      configurable: true,
-    });
+describe('consent wire contract', () => {
+  it.each([grant, null])('reads one grant or null without wrapping it in an array', async (data) => {
+    apiClient.defaults.adapter = respond({ data });
+    expect(await service.getAgentGrants('agent')).toEqual(data);
   });
 
-  afterEach(() => {
-    Object.defineProperty(window, 'location', {
-      value: originalLocation,
-      writable: true,
-      configurable: true,
-    });
+  it('does not reuse a preceding principal response in the transport service', async () => {
+    apiClient.defaults.adapter = respond({ data: { principal: 'alice', displayName: 'Alice' } });
+    expect((await service.getUserInfo()).principal).toBe('alice');
+    apiClient.defaults.adapter = respond({ data: { principal: 'bob', displayName: 'Bob' } });
+    expect((await service.getUserInfo()).principal).toBe('bob');
   });
 
-  it('returns { kind: "created", grant } on 201 without redirect_url', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({
-      status: 201,
-      data: { data: mockGrant },
-    });
-
-    const result = await service.createOrUpdateGrant('agent-1', request);
-
-    expect(result).toEqual({ kind: 'created', grant: mockGrant });
-    expect(window.location.href).toBe('');
+  it('reads updated delegation, agent and grant data without a second cache', async () => {
+    apiClient.defaults.adapter = respond({ data: [{ agentId: 'old' }] });
+    await service.getAgentDelegations();
+    apiClient.defaults.adapter = respond({ data: [{ agentId: 'new' }] });
+    expect(await service.getAgentDelegations()).toEqual([{ agentId: 'new' }]);
+    apiClient.defaults.adapter = respond({ data: detail });
+    await service.getAgentDetail('agent');
+    apiClient.defaults.adapter = respond({ data: { ...detail, agent: { ...detail.agent, display_name: 'Renamed' } } });
+    expect((await service.getAgentDetail('agent')).agent.displayName).toBe('Renamed');
+    apiClient.defaults.adapter = respond({ data: grant });
+    await service.getAgentGrants('agent');
+    apiClient.defaults.adapter = respond({ data: null });
+    expect(await service.getAgentGrants('agent')).toBeNull();
   });
 
-  it('returns { kind: "redirect", redirectUrl } on 201 with redirect_url and does not navigate', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({
-      status: 201,
-      data: { data: mockGrant, redirect_url: '/agents/agent-1/done' },
-    });
-
-    const result = await service.createOrUpdateGrant('agent-1', request);
-
-    expect(result).toEqual({ kind: 'redirect', redirectUrl: '/agents/agent-1/done' });
-    expect(window.location.href).toBe('');
+  it('decodes service requirements with their declared permission ceiling', async () => {
+    apiClient.defaults.adapter = respond({ data: detail });
+    expect((await service.getAgentDetail('agent')).services).toEqual([{ ...detail.services[0], kind: 'requirement' }]);
   });
 
-  it('returns { kind: "noContent" } on 204', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({
-      status: 204,
-      data: {},
-    });
-
-    const result = await service.createOrUpdateGrant('agent-1', request);
-
-    expect(result).toEqual({ kind: 'noContent' });
+  it('returns the created grant on 201 without navigating', async () => {
+    const location = window.location.href;
+    apiClient.defaults.adapter = respond({ data: grant }, 201);
+    expect(await service.createOrUpdateGrant('agent', request)).toEqual({ kind: 'created', grant });
+    expect(window.location.href).toBe(location);
   });
 
-  it('throws on 201 with an unsafe redirect_url', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue({
-      status: 201,
-      data: { data: mockGrant, redirect_url: 'https://evil.example.com/steal' },
-    });
+  it('preserves the authorization session and sibling safe redirect from a 201', async () => {
+    const location = window.location.href;
+    let url: string | undefined;
+    apiClient.defaults.adapter = async (config) => { url = config.url; return { config, data: { data: grant, redirect_url: '/oauth2/authorize?continue=one' }, status: 201, statusText: 'Created', headers: {} }; };
+    expect(await service.createOrUpdateGrant('agent', request, { sessionToken: 'session/+&' })).toEqual({ kind: 'redirect', redirectUrl: '/oauth2/authorize?continue=one' });
+    expect(url).toBe('/consent/agents/agent/grants?session_token=session%2F%2B%26');
+    expect(window.location.href).toBe(location);
+  });
 
-    await expect(service.createOrUpdateGrant('agent-1', request)).rejects.toThrow(
-      'Redirect URL validation failed',
-    );
-    expect(window.location.href).toBe('');
+  it('rejects an unsafe redirect without changing the browser location', async () => {
+    const location = window.location.href;
+    apiClient.defaults.adapter = respond({ data: grant, redirect_url: 'https://evil.example/steal' }, 201);
+    await expect(service.createOrUpdateGrant('agent', request)).rejects.toThrow('Redirect URL validation failed');
+    expect(window.location.href).toBe(location);
+  });
+
+  it.each([
+    ['identity', (signal: AbortSignal) => service.getUserInfo({ signal }), { principal: 'alice', displayName: 'Alice' }],
+    ['delegations', (signal: AbortSignal) => service.getAgentDelegations({ signal }), []],
+    ['agent', (signal: AbortSignal) => service.getAgentDetail('agent', { signal, sessionToken: 'session' }), detail],
+    ['grant', (signal: AbortSignal) => service.getAgentGrants('agent', { signal }), grant],
+  ] as const)('cancels an in-flight %s read at the transport', async (_, read, data) => {
+    apiClient.defaults.adapter = (config) => {
+      if (!config.signal) return Promise.resolve({ config, data: { data }, status: 200, statusText: 'OK', headers: {} });
+      const pending = Promise.withResolvers<never>();
+      config.signal.addEventListener?.('abort', () => pending.reject(new CanceledError()));
+      return pending.promise;
+    };
+    const controller = new AbortController();
+    const result = read(controller.signal);
+    controller.abort();
+    await expect(result).rejects.toHaveProperty('code', 'ERR_CANCELED');
   });
 });

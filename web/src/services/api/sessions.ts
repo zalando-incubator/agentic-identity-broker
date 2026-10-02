@@ -2,11 +2,10 @@
  * API service for third-party OAuth2 session management.
  *
  * Provides type-safe methods for interacting with the OAuth2 session backend APIs.
- * Includes caching layer for GET requests to reduce network load.
+ * Query owns caching; each read reaches the transport and supports cancellation.
  */
 
 import { apiClient } from './client';
-import { apiCache } from './cache';
 
 /**
  * Summary of a user's OAuth2 session with a third-party service.
@@ -90,93 +89,36 @@ export interface GetSessionDetailResponse {
  * Third-party OAuth2 sessions API service class.
  */
 export class SessionsApiService {
-  /**
-   * Fetch all OAuth2 sessions for the current user.
-   * Results are cached for 2 minutes.
-   *
-   * @returns Array of session summaries
-   * @throws {ApiError} if request fails
-   */
-  async listSessions(): Promise<SessionSummary[]> {
-    const cacheKey = '/third-party/sessions';
-
-    // Check cache first
-    const cached = apiCache.get<SessionSummary[]>(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
-    // Fetch from API
+  /** Read the acting user's stored OAuth2 sessions. */
+  async listSessions(options?: { signal?: AbortSignal }): Promise<SessionSummary[]> {
     const response = await apiClient.get<ListSessionsResponse>(
       '/third-party/sessions',
+      { signal: options?.signal },
     );
-    const sessions = response.data.data.sessions || [];
-
-    // Cache the result (2 minutes TTL)
-    apiCache.set(cacheKey, sessions, 2 * 60 * 1000);
-
-    return sessions;
+    return response.data.data.sessions || [];
   }
 
-  /**
-   * Get detailed information about a specific session including dependent agents.
-   * Results are cached for 2 minutes.
-   *
-   * @param serviceId - Third-party service identifier
-   * @returns Detailed session information
-   * @throws {ApiError} if request fails or session not found
-   */
-  async getSessionDetails(serviceId: string): Promise<SessionDetail> {
-    const cacheKey = `/third-party/${serviceId}/session`;
-
-    // Check cache first
-    const cached = apiCache.get<SessionDetail>(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
-    // Fetch from API
+  /** Read a session and its dependent agents. */
+  async getSessionDetails(
+    serviceId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<SessionDetail> {
     const response = await apiClient.get<GetSessionDetailResponse>(
       `/third-party/${serviceId}/session`,
+      { signal: options?.signal },
     );
-    const data = response.data.data;
-
-    // Cache the result (2 minutes TTL)
-    apiCache.set(cacheKey, data, 2 * 60 * 1000);
-
-    return data;
+    return response.data.data;
   }
 
-  /**
-   * Terminate an OAuth2 session with a third-party service.
-   * Invalidates relevant caches after successful termination.
-   *
-   * @param serviceId - Third-party service identifier
-   * @throws {ApiError} if request fails
-   */
+  /** Disconnect at the broker without claiming to revoke provider-side tokens. */
   async terminateSession(serviceId: string): Promise<void> {
     await apiClient.delete(`/third-party/${serviceId}/session`);
-
-    // Invalidate caches since data changed
-    apiCache.invalidatePattern('/third-party/*');
   }
 
-  /**
-   * Refresh an OAuth2 session (renew access token using refresh token).
-   * Invalidates relevant caches after successful refresh.
-   *
-   * @param serviceId - Third-party service identifier
-   * @returns Updated session information
-   * @throws {ApiError} if request fails or refresh token is invalid
-   */
   async refreshSession(serviceId: string): Promise<SessionSummary> {
     const response = await apiClient.post<{ data: SessionSummary }>(
       `/third-party/${serviceId}/session/refresh`,
     );
-
-    // Invalidate caches since data changed
-    apiCache.invalidatePattern('/third-party/*');
-
     return response.data.data;
   }
 }

@@ -1,10 +1,10 @@
-/**
- * Accordion Component - Barrel Export
- */
-
 export {
   Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
   type AccordionProps,
-  type AccordionItem,
-  Accordion as default,
+  type AccordionItemProps,
+  type AccordionTriggerProps,
+  type AccordionContentProps,
 } from './Accordion';

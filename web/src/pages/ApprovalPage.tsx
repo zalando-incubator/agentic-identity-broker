@@ -1,92 +1,22 @@
-/**
- * ApprovalPage - Route-level page for /approvals/:id
- *
- * Fetches approval by ID from URL params, renders:
- * - Loading skeleton while fetching
- * - Error banner on failure
- * - ApprovalReviewPage for active approvals
- * - Confirmation for already-resolved approvals
- */
-
 import { useParams } from 'react-router-dom';
-import { AppLayout } from '@components/layout/AppLayout';
 import { ApprovalLoadingSkeleton } from '@components/approvals/ApprovalLoadingSkeleton';
 import { ApprovalErrorBanner } from '@components/approvals/ApprovalErrorBanner';
 import { ApprovalReviewPage } from '@components/approvals/ApprovalReviewPage';
-import { useApproval } from '../hooks/useApproval';
+import { useApprovalReview } from '@hooks/useApprovalReview';
+import { usePrincipal } from '@services/query/QueryProvider';
 
 export function ApprovalPage() {
   const { id } = useParams<{ id: string }>();
-
-  // Handle missing/invalid route param
-  if (!id) {
-    return (
-      <AppLayout>
-        <ApprovalErrorBanner errorCode="NOT_FOUND" message="No approval ID provided in the URL." />
-      </AppLayout>
-    );
-  }
-
-  return <ApprovalPageContent approvalId={id} />;
+  if (!id) return <ApprovalErrorBanner errorCode="NOT_FOUND" />;
+  return <ApprovalPageContent key={id} approvalId={id} />;
 }
 
 function ApprovalPageContent({ approvalId }: { approvalId: string }) {
-  const {
-    approval,
-    loading,
-    submitting,
-    errorCode,
-    errorMessage,
-    approveResult,
-    denyResult,
-    approve,
-    deny,
-    refetch,
-  } = useApproval(approvalId);
-
-  if (loading) {
-    return (
-      <AppLayout>
-        <ApprovalLoadingSkeleton />
-      </AppLayout>
-    );
-  }
-
-  if (errorCode && !approval) {
-    return (
-      <AppLayout>
-        <ApprovalErrorBanner
-          errorCode={errorCode}
-          message={errorMessage}
-          onRetry={refetch}
-        />
-      </AppLayout>
-    );
-  }
-
-  if (!approval) {
-    return (
-      <AppLayout>
-        <ApprovalErrorBanner errorCode="NOT_FOUND" />
-      </AppLayout>
-    );
-  }
-
-  return (
-    <AppLayout>
-      <ApprovalReviewPage
-        approval={approval}
-        submitting={submitting}
-        errorCode={errorCode}
-        errorMessage={errorMessage}
-        approveResult={approveResult}
-        denyResult={denyResult}
-        onApprove={approve}
-        onDeny={deny}
-        onRetry={refetch}
-      />
-    </AppLayout>
-  );
+  const { principal } = usePrincipal();
+  const { approval, loading, submitting, errorCode, errorMessage, approveResult, denyResult, approve, deny, refetch } = useApprovalReview(approvalId);
+  if (loading) return <ApprovalLoadingSkeleton />;
+  if (!approval) return <ApprovalErrorBanner errorCode={errorCode ?? 'NOT_FOUND'} message={errorMessage} onRetry={refetch} />;
+  return <ApprovalReviewPage approval={approval} actingPrincipal={principal} submitting={submitting} errorCode={errorCode} errorMessage={errorMessage} approveResult={approveResult} denyResult={denyResult} onApprove={approve} onDeny={deny} onRetry={refetch} />;
 }
 
 export default ApprovalPage;

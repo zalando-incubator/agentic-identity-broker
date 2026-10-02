@@ -5,9 +5,12 @@ package pages
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/mxschmitt/playwright-go"
 )
+
+var inlineDecisionConfirmation = regexp.MustCompile("^(Confirm approve|Deny this request)$")
 
 // ToolAuthorizationsPage represents the tool authorizations management page where users
 // view pending approvals and manage permanent tool permissions.
@@ -15,10 +18,11 @@ import (
 // Route: /approvals
 //
 // Sections:
-//   - Pending Approvals: list of pending tool requests with inline approve/deny
-//   - Permanent Authorizations: list of permanent decisions with revoke action
+//   - Pending requests: tool requests with inline approve/deny
+//   - Standing allow and deny decisions: remembered decisions with confirmed revoke
 type ToolAuthorizationsPage struct {
 	*Page
+	standingRevokeRow playwright.Locator
 }
 
 // NewToolAuthorizationsPage creates a new ToolAuthorizationsPage wrapping a Playwright page.
@@ -41,10 +45,10 @@ func (tp *ToolAuthorizationsPage) NavigateToToolAuthorizations(ctx context.Conte
 
 // --- Page state ---
 
-// WaitForPageHeading waits for the "Tool Authorizations" heading to appear.
+// WaitForPageHeading waits for the Approvals heading to appear.
 func (tp *ToolAuthorizationsPage) WaitForPageHeading(ctx context.Context) error {
 	heading := tp.pwPage().GetByRole("heading", playwright.PageGetByRoleOptions{
-		Name: "Tool Authorizations",
+		Name: "Approvals",
 	})
 	err := heading.WaitFor(playwright.LocatorWaitForOptions{
 		Timeout: new(float64(tp.timeout.Milliseconds())),
@@ -69,11 +73,9 @@ func (tp *ToolAuthorizationsPage) WaitForLoaded(ctx context.Context) error {
 	})
 }
 
-// HasGlobalErrorBoundary returns true if the global Oops error screen is visible.
+// HasGlobalErrorBoundary returns true if the global error screen is visible.
 func (tp *ToolAuthorizationsPage) HasGlobalErrorBoundary(ctx context.Context) (bool, error) {
-	locator := tp.pwPage().GetByText("Oops! Something went wrong", playwright.PageGetByTextOptions{
-		Exact: playwright.Bool(true),
-	})
+	locator := tp.pwPage().GetByTestId("global-error-boundary")
 	count, err := locator.Count()
 	if err != nil {
 		return false, fmt.Errorf("failed to check global error boundary: %w", err)
@@ -85,20 +87,21 @@ func (tp *ToolAuthorizationsPage) HasGlobalErrorBoundary(ctx context.Context) (b
 
 // HasEmptyState returns true if the empty state message is visible.
 func (tp *ToolAuthorizationsPage) HasEmptyState(ctx context.Context) (bool, error) {
-	locator := tp.pwPage().GetByText("No tool authorizations yet")
-	count, err := locator.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to check empty state: %w", err)
+	for _, message := range []string{"No pending approvals", "No standing allow decisions", "No standing deny decisions"} {
+		visible, err := tp.locatorVisible(ctx, tp.pwPage().GetByText(message, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}), "empty approvals section")
+		if err != nil || !visible {
+			return false, err
+		}
 	}
-	return count > 0, nil
+	return true, nil
 }
 
 // --- Pending section ---
 
-// HasPendingSection returns true if the "Pending Approvals" section heading is visible.
+// HasPendingSection returns true if the pending requests heading is visible.
 func (tp *ToolAuthorizationsPage) HasPendingSection(ctx context.Context) (bool, error) {
 	locator := tp.pwPage().GetByRole("heading", playwright.PageGetByRoleOptions{
-		Name: "Pending Approvals",
+		Name: "Pending requests",
 	})
 	count, err := locator.Count()
 	if err != nil {
@@ -107,18 +110,19 @@ func (tp *ToolAuthorizationsPage) HasPendingSection(ctx context.Context) (bool, 
 	return count > 0, nil
 }
 
-// GetPendingCount returns the number of unexpanded pending approval cards.
+// GetPendingCount returns the number of pending rows without an open decision.
 func (tp *ToolAuthorizationsPage) GetPendingCount(ctx context.Context) (int, error) {
-	// Count Approve buttons - one per pending card
-	locator := tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name:  "Approve",
-		Exact: playwright.Bool(true),
-	})
-	count, err := locator.Count()
+	count, err := tp.unexpandedPendingRows().Count()
 	if err != nil {
 		return 0, fmt.Errorf("failed to count pending cards: %w", err)
 	}
 	return count, nil
+}
+
+func (tp *ToolAuthorizationsPage) unexpandedPendingRows() playwright.Locator {
+	return tp.pwPage().GetByTestId("pending-approval-row").Filter(playwright.LocatorFilterOptions{
+		HasNot: tp.pwPage().Locator("button[aria-expanded='true']"),
+	})
 }
 
 // HasToolName returns true if the given tool name text is visible on the page.
@@ -143,24 +147,24 @@ func (tp *ToolAuthorizationsPage) HasRiskBadge(ctx context.Context, level string
 
 // --- Actions on pending cards ---
 
-// ClickApproveOnFirst clicks the "Approve" button on the first pending card.
+// ClickApproveOnFirst opens approval on the first row without an open decision.
 func (tp *ToolAuthorizationsPage) ClickApproveOnFirst(ctx context.Context) error {
-	button := tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
+	button := tp.unexpandedPendingRows().First().GetByRole("button", playwright.LocatorGetByRoleOptions{
 		Name:  "Approve",
 		Exact: playwright.Bool(true),
-	}).First()
+	})
 	if err := button.Click(); err != nil {
 		return fmt.Errorf("failed to click Approve button: %w", err)
 	}
 	return nil
 }
 
-// ClickDenyOnFirst clicks the "Deny" button on the first pending card.
+// ClickDenyOnFirst opens denial on the first row without an open decision.
 func (tp *ToolAuthorizationsPage) ClickDenyOnFirst(ctx context.Context) error {
-	button := tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
+	button := tp.unexpandedPendingRows().First().GetByRole("button", playwright.LocatorGetByRoleOptions{
 		Name:  "Deny",
 		Exact: playwright.Bool(true),
-	}).First()
+	})
 	if err := button.Click(); err != nil {
 		return fmt.Errorf("failed to click Deny button: %w", err)
 	}
@@ -169,9 +173,12 @@ func (tp *ToolAuthorizationsPage) ClickDenyOnFirst(ctx context.Context) error {
 
 // SelectPersistence clicks a persistence option in the first expanded approval.
 func (tp *ToolAuthorizationsPage) SelectPersistence(ctx context.Context, label string) error {
-	radio := tp.pwPage().GetByRole("radio", playwright.PageGetByRoleOptions{
-		Name: label,
-	}).First()
+	if label == "This session" {
+		label = "For this session"
+	}
+	radio := tp.pwPage().GetByTestId("pending-approval-row").Filter(playwright.LocatorFilterOptions{
+		Has: tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Confirm approve", Exact: playwright.Bool(true)}),
+	}).First().GetByRole("radio", playwright.LocatorGetByRoleOptions{Name: label, Exact: playwright.Bool(true)})
 	if err := radio.Click(); err != nil {
 		return fmt.Errorf("failed to click persistence radio %q: %w", label, err)
 	}
@@ -181,7 +188,7 @@ func (tp *ToolAuthorizationsPage) SelectPersistence(ctx context.Context, label s
 // ClickConfirmApprove confirms the first expanded approval.
 func (tp *ToolAuthorizationsPage) ClickConfirmApprove(ctx context.Context) error {
 	button := tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name: "Confirm Approve",
+		Name: "Confirm approve",
 	}).First()
 	if err := button.Click(); err != nil {
 		return fmt.Errorf("failed to click Confirm Approve: %w", err)
@@ -212,11 +219,9 @@ func (tp *ToolAuthorizationsPage) HasPermanentWarning(ctx context.Context) (bool
 
 // --- Permanent section ---
 
-// HasPermanentSection returns true if the "Permanent Authorizations" heading is visible.
+// HasPermanentSection returns true if the standing decisions headings are visible.
 func (tp *ToolAuthorizationsPage) HasPermanentSection(ctx context.Context) (bool, error) {
-	locator := tp.pwPage().GetByRole("heading", playwright.PageGetByRoleOptions{
-		Name: "Permanent Authorizations",
-	})
+	locator := tp.pwPage().GetByTestId("standing-decisions").GetByRole("heading")
 	count, err := locator.Count()
 	if err != nil {
 		return false, fmt.Errorf("failed to check permanent section: %w", err)
@@ -258,11 +263,145 @@ func (tp *ToolAuthorizationsPage) HasRevokeButton(ctx context.Context) (bool, er
 
 // ClickRevokeOnFirst clicks the first "Revoke" button.
 func (tp *ToolAuthorizationsPage) ClickRevokeOnFirst(ctx context.Context) error {
-	button := tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name: "Revoke",
-	}).First()
-	if err := button.Click(); err != nil {
-		return fmt.Errorf("failed to click Revoke button: %w", err)
+	tool, err := tp.locatorText(ctx, tp.pwPage().GetByTestId("standing-decision-row").First().
+		GetByTestId("approval-tool-name").Locator("> span"), "first standing decision tool")
+	if err != nil {
+		return err
 	}
+	return tp.RevokeStanding(ctx, tool)
+}
+
+type PendingApprovalRow struct {
+	Tool         string
+	Agent        string
+	Persistence  string
+	ScopePreview string
+}
+
+type StandingDecisionRow struct {
+	Tool         string
+	Agent        string
+	Decision     string
+	ScopePreview string
+}
+
+func (tp *ToolAuthorizationsPage) SectionOrder(ctx context.Context) ([]string, error) {
+	var sections []string
+	err := tp.evaluateJSON(ctx, tp.pwPage().GetByRole("main"), `root =>
+		Array.from(root.querySelectorAll('[data-testid="approval-section"]')).map(section => {
+			const heading = section.querySelector('h2');
+			if (!heading) throw new Error('Approval section has no heading');
+			return heading.innerText.trim();
+		})`, &sections)
+	return sections, err
+}
+
+func (tp *ToolAuthorizationsPage) PendingRows(ctx context.Context) ([]PendingApprovalRow, error) {
+	var rows []PendingApprovalRow
+	err := tp.evaluateJSON(ctx, tp.pwPage().GetByTestId("pending-approvals"), `root =>
+		Array.from(root.querySelectorAll('[data-testid="pending-approval-row"]')).map(row => {
+			const text = (id, child = '') => {
+				const element = row.querySelector('[data-testid="' + id + '"]' + child);
+				if (!element) throw new Error('Missing pending approval ' + id);
+				return element.innerText.trim();
+			};
+			const radio = row.querySelector('[role="radio"][aria-checked="true"], input[type="radio"]:checked');
+			if (!radio) throw new Error('Pending approval has no selected persistence');
+			const label = radio.getAttribute('aria-label') ||
+				Array.from((radio.getAttribute('aria-labelledby') || '').split(/\s+/)).filter(Boolean)
+					.map(id => document.getElementById(id)?.innerText || '').join(' ') ||
+				Array.from(radio.labels || []).map(element => element.innerText).join(' ') || radio.innerText;
+			return {Tool: text('approval-tool-name', ' > span'), Agent: text('approval-agent-name', ' > span'),
+				Persistence: label.trim(), ScopePreview: text('approval-scope-preview')};
+		})`, &rows)
+	return rows, err
+}
+
+func (tp *ToolAuthorizationsPage) pendingRow(tool string) playwright.Locator {
+	return tp.pwPage().GetByTestId("pending-approval-row").Filter(playwright.LocatorFilterOptions{
+		Has: tp.pwPage().GetByText(tool, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}),
+	})
+}
+
+// ApproveRow opens a row's confirmation without recording a decision.
+func (tp *ToolAuthorizationsPage) ApproveRow(ctx context.Context, tool string) error {
+	return tp.locatorClick(ctx, tp.pendingRow(tool).
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Approve", Exact: playwright.Bool(true)}), "review approval for "+tool)
+}
+
+// DenyRow opens a row's confirmation without recording a decision.
+func (tp *ToolAuthorizationsPage) DenyRow(ctx context.Context, tool string) error {
+	return tp.locatorClick(ctx, tp.pendingRow(tool).
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Deny", Exact: playwright.Bool(true)}), "review denial for "+tool)
+}
+
+func (tp *ToolAuthorizationsPage) ChoosePersistenceForRow(ctx context.Context, tool, label string) error {
+	if label == "This session" {
+		label = "For this session"
+	}
+	return tp.locatorClick(ctx, tp.pendingRow(tool).
+		GetByRole("radio", playwright.LocatorGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "choose approval persistence for "+tool)
+}
+
+func (tp *ToolAuthorizationsPage) ScopePreviewForRow(ctx context.Context, tool string) (string, error) {
+	return tp.locatorText(ctx, tp.pendingRow(tool).GetByTestId("approval-scope-preview"), "approval scope preview for "+tool)
+}
+
+func (tp *ToolAuthorizationsPage) StandingDecisions(ctx context.Context) ([]StandingDecisionRow, error) {
+	var rows []StandingDecisionRow
+	err := tp.evaluateJSON(ctx, tp.pwPage().GetByTestId("standing-decisions"), `root =>
+		Array.from(root.querySelectorAll('[data-testid="standing-decision-row"]')).map(row => {
+			const text = (id, child = '') => {
+				const element = row.querySelector('[data-testid="' + id + '"]' + child);
+				if (!element) throw new Error('Missing standing decision ' + id);
+				return element.innerText.trim();
+			};
+			return {Tool: text('approval-tool-name', ' > span'), Agent: text('approval-agent-name', ' > span'),
+				Decision: text('approval-decision'), ScopePreview: text('approval-scope-preview')};
+		})`, &rows)
+	return rows, err
+}
+
+func (tp *ToolAuthorizationsPage) RevokeStanding(ctx context.Context, tool string) error {
+	row := tp.pwPage().GetByTestId("standing-decision-row").Filter(playwright.LocatorFilterOptions{
+		Has: tp.pwPage().GetByText(tool, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}),
+	})
+	if err := tp.locatorClick(ctx, row.GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Revoke", Exact: playwright.Bool(true)}), "revoke standing decision for "+tool); err != nil {
+		return err
+	}
+	tp.standingRevokeRow = row
+	return nil
+}
+
+func (tp *ToolAuthorizationsPage) ConfirmInlineDecision(ctx context.Context, tool string) error {
+	return tp.locatorClick(ctx, tp.pendingRow(tool).
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: inlineDecisionConfirmation}), "confirm tool decision for "+tool)
+}
+
+func (tp *ToolAuthorizationsPage) ConfirmRevokeStanding(ctx context.Context) error {
+	if tp.standingRevokeRow == nil {
+		return fmt.Errorf("no standing decision selected for revocation")
+	}
+	if err := tp.locatorClick(ctx, tp.pwPage().GetByRole("dialog").
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Revoke decision", Exact: playwright.Bool(true)}), "confirm standing decision revocation"); err != nil {
+		return err
+	}
+	timeout, err := tp.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	if err := tp.standingRevokeRow.WaitFor(playwright.LocatorWaitForOptions{State: playwright.WaitForSelectorStateDetached, Timeout: timeout}); err != nil {
+		return fmt.Errorf("wait for revoked standing decision removal: %w", err)
+	}
+	tp.standingRevokeRow = nil
+	return nil
+}
+
+func (tp *ToolAuthorizationsPage) CancelRevokeStanding(ctx context.Context) error {
+	if err := tp.locatorClick(ctx, tp.pwPage().GetByRole("dialog").
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Cancel", Exact: playwright.Bool(true)}), "cancel standing decision revocation"); err != nil {
+		return err
+	}
+	tp.standingRevokeRow = nil
 	return nil
 }

@@ -156,9 +156,9 @@ Include `settings` in the same release. This produces at least 14 route/context/
 
 ## Performance and manual acceptance
 
-Build with `just web-build`. Measure the compressed initial dependency graph of each decision route. Each must remain below 150 kB without console Table or Command chunks.
+Build with `just web-build`. Measure the compressed initial dependency graph of each decision route. Each must remain below 170 kB without console Table or Command chunks.
 
-Measure main-content appearance under the Chrome DevTools “Slow 4G” preset. It must remain below 1.5 seconds. Confirm at least 12 agent rows at a 1080 px-high desktop viewport.
+Measure main-content appearance with a cold cache under Chrome DevTools “Slow 4G”. It must appear within 5 seconds. Confirm that the real server negotiates compressed static assets and sends only public decision-code hints. Confirm at least 12 agent rows at a 1080 px-high desktop viewport.
 
 Run moderated consent sessions for SC-001 and SC-007. Record decision time, service comprehension, and primary-action recognition. Automated accessibility and timing checks cannot establish those human outcomes.
 

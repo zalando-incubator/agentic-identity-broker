@@ -6,134 +6,142 @@
 
 Use this React consent SPA for agent permissions and tool approvals. The Go backend serves it at root `/` (ADR 035).
 
-## Consent UI v2 Planning
+## Consent UI v2: Accepted Direction
 
-Feature 046 replaces the design-system layer, not the application stack. Runtime migration has not started. ADR 037 remains proposed.
+Feature 047 replaces the design-system layer, not the retained application stack.
+The stakeholder accepted ADR 037 on 2026-09-27. The source uses the replacement components and routes.
+Use the feature task list and cutover inventory for validation status; source migration does not imply release acceptance.
 
 | Reference | Purpose |
 | --- | --- |
 | `../specs/047-redesign-consent-console/spec.md` | Requirements and AS-01–AS-18 |
 | `../specs/047-redesign-consent-console/plan.md` | Single-cutover implementation and acceptance gates |
 | `../specs/047-redesign-consent-console/research.md` | Technology choices and integration evidence |
-| `../specs/047-redesign-consent-console/contracts/` | Proposed API and single-cutover UI contracts |
+| `../specs/047-redesign-consent-console/contracts/` | UI, data-ownership, and single-cutover contracts without a new API |
 | `../specs/047-redesign-consent-console/quickstart.md` | Storybook themes and validation commands |
-| `../adrs/037-design-system-rebuilt-on-shadcn-radix.md` | Proposed replacement of ADR 006 component and server-cache choices |
+| `../specs/047-redesign-consent-console/tasks.md` | Dependency order, implementation status, and acceptance requirements |
+| `../specs/047-redesign-consent-console/data-model.md` | ConsentDraft, ConnectionState precedence, and browser preferences |
+| `../adrs/037-design-system-rebuilt-on-shadcn-radix.md` | Accepted component, animation, and server-state decision |
 | `../adrs/035-root-mounted-spa.md` | Binding root-mounted route behavior |
 | `../api/enduser/openapi.yaml` | Canonical API contract |
 | `../ARCHITECTURE.md` | Architecture and domain glossary |
 | `../.specify/memory/constitution.md` | Binding principles |
 
-Principle XI does not prescribe an aesthetic. `DESIGN_PRINCIPLES.md` defines the current direction until an accepted ADR changes it.
+### Constitutional requirements
 
-The proposed target uses owned shadcn/Radix components, Lucide, TanStack Table, TanStack Query over Axios, and cmdk. Keep CVA and `cn()`.
+Principle XI requires the shared design system, semantic tokens, self-hosted assets, and WCAG 2.1 AA.
+Every component story requires accessibility checks and visual regression in light and dark themes.
+The constitution does not prescribe an aesthetic.
 
-The proposed target uses semantic OKLCH tokens, Zalando Sans, Inter, JetBrains Mono, local outlined wordmarks, and 120–200 ms CSS transitions.
+### Accepted implementation contract
 
-After ADR acceptance, place ConsoleShell and DecisionShell in `src/design-system/components/layout/`. Keep console-only Table and Command outside decision-route imports.
+Use owned shadcn/Radix source inside the existing design-system categories.
+Use Lucide, TanStack Table, TanStack Query over Axios, cmdk, and Sonner.
+Keep CVA, `tailwind-merge`, and `cn()`. Do not create a competing primitive library.
 
-Deliver all routes and consumers in one cutover. Do not add phases, feature flags, backwards-compatibility layers, or older-server fallbacks.
+Use semantic OKLCH tokens, local outlined wordmarks, and self-hosted Zalando Sans Variable, Inter Variable, and JetBrains Mono.
+Use CSS-only feedback at 120–200 ms with ease-out. Remove movement under reduced motion.
+The exact visual contract lives in `src/design-system/docs/COLOR_GUIDE.md` and `TOKEN_GUIDE.md`.
 
-The browser refreshes only `/api/approvals/pending`. Never expose the gateway-wide long-poll. Keep authentication, scope preview, authorization-session validation, and callbacks unchanged.
+Place ConsoleShell, DecisionShell, and PageHeader in `src/design-system/components/layout/`.
+Shells are presentational and fetch no data.
+Keep Table and Command outside decision bundles, including re-exports from barrels those routes import.
 
-Run every Storybook component in both themes with blocking a11y checks. Add visual comparisons through the existing Ginkgo/Playwright harness. Feature 046 targets WCAG 2.2 AA.
+Application components obtain UI strings from `@copy`.
+Primitives receive strings through props and never import the catalogue.
 
-After ADR acceptance, update every current guide listed in the plan before implementation. Preserve historical feature decisions.
+Deliver every route and consumer in one cutover.
+Do not add feature flags, compatibility aliases, parallel presentations, or older-server fallbacks.
+Preserve historical feature decisions without treating their styling as current instructions.
+
+The browser refreshes only the acting-user `/api/approvals/pending` list, never the gateway-wide `GET /api/approvals`.
+Keep authentication, scope preview, authorization-session validation, and callbacks unchanged.
+An invalid authorization session remains a decision error, never an editable console fallback.
+
+The Agents table shows agent, expiry, View, and confirmed Revoke.
+`activeGrantCount` counts UserGrant records, not permission sets.
+Show no count column and make no per-agent count requests.
+
+Feature 047 targets WCAG 2.2 AA, visible unobscured focus, and announcements.
+Use both-theme story accessibility and visual gates, plus Ginkgo/Playwright acceptance journeys.
+These are requirements, not completed validation results.
 
 ## Current Runtime Stack
 
-| Technology            | Version | Role                                           |
-| --------------------- | ------- | ---------------------------------------------- |
-| React                 | 19      | UI framework (StrictMode)                      |
-| TypeScript            | 5.3+    | Type safety                                    |
-| Vite                  | 7       | Build tool + dev server                        |
-| Tailwind CSS          | 4       | Utility-first styling via semantic tokens      |
-| Headless UI           | 2       | Accessible unstyled component primitives       |
-| React Router          | 7       | Client-side routing (basename `/`)             |
-| Axios                 | 1       | HTTP client with interceptors                  |
-| Framer Motion         | 12      | Page transitions and animations                |
-| Vitest                | 4       | Unit/integration testing                       |
-| React Testing Library | 16      | Component testing                              |
-| Storybook             | 10      | Design system documentation and visual testing |
+| Technology | Role |
+| --- | --- |
+| React 19 and TypeScript 5 | UI and type safety |
+| Vite 7 and Tailwind CSS 4 | Build and CSS-first semantic styling |
+| Owned Radix-based components | Accessible primitives in `src/design-system/` |
+| React Router 7 | Root-mounted, lazy routes |
+| Axios and TanStack Query 5 | Transport and principal-scoped server state |
+| TanStack Table 8 | Console table state |
+| Lucide, cmdk, and Sonner | Icons, command search, and notifications |
+| Vitest 4 and Testing Library 16 | Behavior tests |
+| Storybook 10 and Playwright | Component accessibility and visual checks |
 
-## Source Structure
+Use `package.json` and the lockfile for exact installed versions.
 
-```
-src/
-  App.tsx              Router setup for consent, sessions, approvals, and tool authorizations
-  main.tsx             Entry point — React.StrictMode mount
+## Source Routes
 
-  components/
-    consent/           Consent-specific components (DelegationCard, ServiceCard, ScopeList,
-                       GrantValidityControl, ServiceRequirementCard, GrantStatusBadge, etc.)
-    approvals/         Tool-approval review components
-    layout/            AppLayout, Header — page chrome
-    sessions/          SessionCard, TerminationDialog — OAuth2 session management
-    ui/                Reusable UI primitives (Button, Toast, ErrorBoundary, Skeleton,
-                       EmptyState, Switch, InlineError, PageTransition, DatePicker)
+Read these files before you change their behavior:
 
-  design-system/       ★ AUTHORITATIVE design reference — read before styling anything
-    components/        Design system component library (8 categories):
-      primitives/        Button, Badge, Avatar, Spinner, Divider
-      inputs/            TextInput, TextArea, Select, Checkbox, Radio, Switch, DatePicker
-      data-display/      Card, Table, ScopeList, StatusIndicator
-      layout/            AppLayout, Container, Stack, Grid, PageTransition
-      navigation/        Tabs, Pagination, Breadcrumb
-      overlays/          Modal, Tooltip, Dropdown, Popover
-      feedback/          EmptyState, InlineError, Skeleton, Alert
-      advanced/          Accordion, Progress
-    tokens/            Colors, typography, spacing, shadows, radius, animation, z-index, and breakpoints
-    utils/             cn() (clsx + tailwind-merge), a11y helpers, focus utilities
-    docs/              ★ Read before any UI work:
-      INDEX.md                Complete documentation index
-      DESIGN_PRINCIPLES.md    Current direction and proposed replacement
-      COLOR_GUIDE.md          Current palette and proposed semantic OKLCH contract
-      TOKEN_GUIDE.md          All design tokens with usage examples
-      COMPONENT_ARCHETYPES.md Foundational component specifications
-      COMMON_MISTAKES.md      Anti-patterns with correct solutions
-      MOTION_GUIDE.md         Animation timing and easing specifications
-      COMPONENT_PAIRING_GUIDE.md  Component composition patterns
-      COMPOSITION_PATTERNS.md     Complex layout recipes
-      DECISION_TREES.md           Which component to use when
-      ACCESSIBILITY_GUIDE.md      WCAG 2.1 AA compliance requirements
+`src/App.tsx` | Lazy routes and decision/console layout boundaries
+`src/main.tsx` | ThemeProvider, QueryProvider, and application mount
+`src/components/layout/ConsoleLayout.tsx` | One pending-approval provider, Toaster, navigation, user menu, and lazy command search
+`src/components/layout/AgentRoute.tsx` | Decision context selected by the presence of `session_token`, including an empty value
+`src/components/consent/consentDraft.ts` | Permission locks, prior selections, validity, dirty state, and canonical callback drafts
+`src/components/sessions/connectionState.ts` | Connection-state precedence and authoritative refresh results
+`src/hooks/` | Principal-scoped reads and server-confirmed mutations
+`src/services/query/` | Identity boundary, query ownership, and cache lifecycle
+`src/services/api/` | Typed Axios clients and normalized errors
+`src/copy/index.ts` | Shared copy catalogue and view-specific exports
+`src/types/consent.ts`, `src/types/approval.ts` | Existing request and response contracts
+`src/utils/validation.ts` | Safe continuation URL checks
 
-  hooks/               Custom React hooks
-    useConsent          Consent overview data fetching + state
-    useAgentGrants      Agent detail + grant management
-    useSessions         OAuth2 session listing + operations
-    useToggleGrant      Grant enable/disable toggle logic
-    useUpdateValidity   Grant expiration date management
-    useApproval         Tool-approval data and actions
+| Route | Page |
+| --- | --- |
+| `/delegations` | `src/pages/DelegationsPage.tsx` |
+| `/agents/:agentId?session_token=…` | `src/pages/AgentDecisionPage.tsx` |
+| `/agents/:agentId` | `src/pages/AgentConsolePage.tsx` |
+| `/sessions` | `src/pages/ConnectionsPage.tsx` |
+| `/approvals` | `src/pages/ApprovalsPage.tsx` |
+| `/approvals/:id` | `src/pages/ApprovalPage.tsx` |
+| `/settings` | `src/pages/SettingsPage.tsx` |
+| Unknown path | `src/pages/ErrorPage.tsx` |
 
-  pages/               Route components (lazy-loaded with React.lazy)
-    ConsentOverviewPage     /delegations — agent delegation list
-    AgentGrantDetailPage    /agents/:agentId — per-agent grants
-    ThirdPartySessionsPage  /sessions — session management
-    ApprovalPage            /approvals/:id — tool-approval review
-    ToolAuthorizationsPage  /approvals — permanent approvals
-    ErrorPage               * — fallback
+### Shared design system
 
-  services/
-    api/
-      client.ts        Axios instance — baseURL: /api, 30s timeout, error interceptors
-      consent.ts       Consent data and grant requests
-      sessions.ts      Session list, detail, termination, and refresh requests
-      approvals.ts     Tool-approval get, approve, deny, list, and revoke requests
-      cache.ts         In-memory cache for GET responses
-      index.ts         Barrel export
+`src/design-system/components/primitives/` | Button, Badge, Avatar, Separator, Wordmark
+`src/design-system/components/inputs/` | Input, TextArea, Select, Checkbox, RadioGroup, Switch, DatePicker
+`src/design-system/components/data-display/` | Card, Table parts, TruncatedText
+`src/design-system/components/layout/` | ConsoleShell, DecisionShell, PageHeader
+`src/design-system/components/navigation/` | Tabs
+`src/design-system/components/overlays/` | Dialog, Sheet, DropdownMenu, Tooltip, Popover
+`src/design-system/components/feedback/` | EmptyState, errors, Skeleton, Alert, Toaster
+`src/design-system/components/advanced/` | Accordion and concrete Command module
+`src/design-system/theme/` | Safe preferences, first-paint script, ThemeProvider, ThemeChoice
+`src/design-system/tokens/theme.css` | Semantic light/dark tokens
+`src/styles/index.css`, `src/styles/fonts.css` | Tailwind token mapping and local font faces
+`src/design-system/utils/` | `cn()`, accessibility and focus utilities
+`public/brand/`, `public/fonts/` | Local outlined artwork and licensed fonts
+`build/themeInitPlugin.ts` | Fixed inline script and CSP hash artifact
+`build/decisionModulesPlugin.ts`, `build/decisionBundle.test.ts` | Decision import isolation and compressed-size gate
+`build/assetCompressionPlugin.ts` | Build-time gzip and Brotli companions for public text assets
 
-  styles/
-    index.css          Global styles + Tailwind directives
-    fonts.css          Font imports (Crimson Pro, Manrope, JetBrains Mono)
+### Detailed design guides
 
-  types/
-    consent.ts         All API response/request TypeScript types (UserInfo, AgentDelegation,
-                       AgentDetail, service, grant, scope, and permission-set types
-    approval.ts         Tool-approval request and response types
-
-  utils/
-    validation.ts      Input validation (URL safety, etc.)
-    scrollToError.ts   Scroll-to-first-error UX helper
-```
+`src/design-system/docs/INDEX.md` | Documentation index
+`src/design-system/docs/DESIGN_PRINCIPLES.md` | Current direction and historical context
+`src/design-system/docs/COLOR_GUIDE.md` | Semantic color contract
+`src/design-system/docs/TOKEN_GUIDE.md` | Token use
+`src/design-system/docs/COMPONENT_ARCHETYPES.md` | Component contracts
+`src/design-system/docs/COMMON_MISTAKES.md` | Patterns to avoid
+`src/design-system/docs/MOTION_GUIDE.md` | CSS feedback and reduced motion
+`src/design-system/docs/COMPONENT_PAIRING_GUIDE.md` | Component combinations
+`src/design-system/docs/COMPOSITION_PATTERNS.md` | Layout composition
+`src/design-system/docs/DECISION_TREES.md` | Component selection
+`src/design-system/docs/ACCESSIBILITY_GUIDE.md` | WCAG requirements
 
 ## Path Aliases
 
@@ -142,6 +150,7 @@ Vite and Vitest define these aliases. In Storybook, define only the aliases that
 | Alias            | Path                  |
 | ---------------- | --------------------- |
 | `@design-system` | `./src/design-system` |
+| `@copy`         | `./src/copy`          |
 | `@components`    | `./src/components`    |
 | `@hooks`         | `./src/hooks`         |
 | `@services`      | `./src/services`      |
@@ -152,32 +161,30 @@ Vite and Vitest define these aliases. In Storybook, define only the aliases that
 
 Use these aliases in imports. Do not use relative imports across alias boundaries.
 
+
 ## Design System Rules
 
 Use `src/design-system/` as the **single source of truth** for visual decisions.
 Before you write a styled component, read `src/design-system/docs/COMMON_MISTAKES.md`.
 
-### Current Runtime Rules
+### Accepted Design Rules
 
-These rules describe the current system. ADR 037 does not replace them until acceptance. Update this guidance for the accepted direction.
+1. Use semantic color roles from the approved contract, never raw palette utilities or component-local colors.
+2. Use `font-display`, `font-sans`, and `font-mono` for display text, body text, and technical values.
+3. Use neutral surfaces and 1 px semantic borders. Do not add decorative gradients, strong card shadows, or hover lifts.
+4. Use CSS-only 120–200 ms ease-out feedback. Do not add page-entry animation.
+5. Use Button variants `primary`, `secondary`, `outline`, `ghost`, and `destructive`.
+6. Show at most one accent action per view, not per section. Use non-accent controls for repeated row actions.
+7. Use Dialog, DropdownMenu, Input, RadioGroup, Separator, and Toaster for their accepted component roles.
+8. Use ConsoleShell with PageHeader for console pages, and DecisionShell for focused decisions.
+9. Keep control boundaries, visible focus, labels, and announcements accessible in both themes.
+10. Read `src/design-system/docs/DECISION_TREES.md` and `COMPONENT_PAIRING_GUIDE.md` before adding a composition.
 
-1. **Semantic colors only** — Use semantic tokens. Do not use raw gray tokens.
-2. **Typography** — Use `font-display`, `font-sans`, and `font-mono` for headings, body text, and code.
-3. **Elevation** — Use shadows for cards. Use borders only for containment.
-4. **Animation** — Use 150ms for hover. Use 200ms for state changes. Use 300ms for modals. Use 500ms for pages. Respect reduced motion.
-5. **WCAG 2.1 AA** — Give interactive elements visible focus. Text and UI colors must meet AA contrast.
-6. **Component composition** — Use design-system components before ad-hoc components. Read `src/design-system/docs/DECISION_TREES.md`.
+Remove obsolete components and callers together. Do not preserve their APIs through wrappers.
 
-### Current Runtime Palette
-
-| Token Family | Hex (primary)                            | Use                                 |
-| ------------ | ---------------------------------------- | ----------------------------------- |
-| `trust-*`    | #0A2540 (deep), #1E4D6B, #E8F1F5 (light) | Primary brand, headings, actions    |
-| `cta-*`      | #D97706                                  | Call-to-action buttons and links    |
-| `success-*`  | #059669                                  | Granted permissions, success states |
-| `error-*`    | #DC2626                                  | Error states, destructive actions   |
-| `warning-*`  | #D97706                                  | Warnings, attention signals         |
-| `neutral-*`  | #faf9f7 → #1a1a1a (50–900 scale)         | Backgrounds, body text, borders     |
+Use local outlined assets in `public/brand/` and self-hosted fonts in `public/fonts/`.
+If an agent or service image is off-origin, show a local fallback without an external request.
+Appearance preferences never submit or preselect a consent or tool decision.
 
 ## API Client Pattern
 
@@ -185,7 +192,11 @@ These rules describe the current system. ADR 037 does not replace them until acc
 - The base URL is `/api`. In development, Vite forwards requests to Go. In production, use the upstream proxy.
 - **Authentication is external** — The Vite proxy adds `X-Remote-User` in development. An upstream proxy handles production authentication.
 - `ConsentApiService`, `SessionsApiService`, and `approvalApi` provide typed `apiClient` methods.
-- Current GET responses use `apiCache`. The proposed cutover replaces it with TanStack Query over Axios and removes all old callers.
+- TanStack Query owns server state. Query keys start with the acting principal; API clients do not keep a separate cache.
+- QueryProvider waits for `/api/me` and removes departed-principal data before rendering a new identity.
+- Reads forward AbortSignal. Mutations do not retry. Grant, approval, and refresh results remain server-authoritative.
+- Confirm revocation before a request. Keep only the affected row pending and report success after the server accepts it.
+- Store only `aib.theme` and `aib.sidebar-collapsed` in localStorage. Do not persist API responses or authorization context.
 - The response interceptor normalizes errors to `ApiError`.
 
 ### Key API Endpoints
@@ -217,6 +228,10 @@ just web-dev              # Start Vite on :3000
 just web-build            # Build the production frontend
 just web-test             # Run frontend tests
 just web-test-coverage    # Run frontend tests with coverage
+just web-lint             # Accessibility and semantic-token rules
+just web-bundle-check     # Decision-route budget and import isolation
+just web-storybook-build  # Build component documentation
+just web-storybook-test   # Compare both themes without updating baselines
 ```
 
 Vite uses port 3000. Vite forwards non-frontend requests to the Go server. Vite adds `X-Remote-User` in development. Set `VITE_USE_POLLING=true` for Docker.
@@ -228,6 +243,7 @@ cd web && npm run storybook     # Port 6006
 ```
 
 Storybook renders `src/design-system/` stories and MDX. Do not add application components.
+Use `just web-storybook-visual-candidates` to write separate review candidates. Only human-approved Linux Chromium captures belong in `.storybook/__screenshots__/`.
 
 ## Testing Conventions
 
@@ -246,3 +262,7 @@ It has no Go imports or shared backend types. Keep TypeScript API types in sync 
 ## Code Splitting
 
 Page components load with `React.lazy()` inside `<Suspense>`. Load route bundles during navigation.
+
+Decision routes must not import Table, Command, or console-only state through shared barrels.
+`/settings` is a lazy console route.
+It provides browser theme choice, not a saved approval-persistence default.

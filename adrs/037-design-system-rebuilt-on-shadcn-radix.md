@@ -1,10 +1,11 @@
 # ADR 037: Design system rebuilt on shadcn/Radix
 
-**Status**: Proposed
-**Date**: 2026-09-25
+**Status**: Accepted
+**Date**: 2026-09-27
+**Decision reference**: The stakeholder selected "Accept ADR 037" in the `/speckit-implement` approval prompt on 2026-09-27.
 **Feature**: [047-redesign-consent-console](../specs/047-redesign-consent-console/spec.md)
-**Supersedes on acceptance**: ADR 006's UI Components clause, animation choice, and custom-hook server-state ownership. Its client UI-state guidance remains unchanged.
-**Extends on acceptance**: ADR 035's browser route list with `/settings`. Root mounting and protocol precedence remain unchanged.
+**Partially supersedes**: ADR 006's UI Components clause, animation choice, and custom-hook server-state ownership. Its client UI-state guidance remains unchanged.
+**Extends**: ADR 035's browser route list with `/settings`. Root mounting and protocol precedence remain unchanged.
 
 ## Context
 
@@ -79,7 +80,7 @@ The cutover removes old primitives, fonts, animations, tokens, wrappers, and cac
 
 Table, Command, and console-only dependencies must stay outside the initial decision-route bundle. The consent route retains the under-150-kB compressed-code target.
 
-A proposed ADR does not authorize implementation against accepted ADRs. Acceptance of this ADR is an implementation gate. The feature adds no API contract.
+The stakeholder accepted this ADR on 2026-09-27. This acceptance clears T013, but it does not establish implementation or validation completion.
 
 ## Alternatives considered
 

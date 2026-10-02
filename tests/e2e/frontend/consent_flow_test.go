@@ -125,43 +125,21 @@ var _ = Describe("Consent Flow", func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create optional-only agent")
 		})
 
-		It("approves consent after selecting optional services", func() {
+		// US4-S1 from specs/019-permission-sets/spec.md; AS-08 from specs/047-redesign-consent-console/spec.md.
+		It("should save consent after selecting optional services", func() {
 			err := consentPage.NavigateToAgent(ctx, testAgentID)
 			Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 
 			err = consentPage.TogglePermissionSet(ctx, "Optional Services")
 			Expect(err).NotTo(HaveOccurred(), "Failed to select optional services")
 
-			err = consentPage.SubmitConsent(ctx)
-			Expect(err).NotTo(HaveOccurred(), "SubmitConsent should succeed after selecting optional services")
-			Expect(consentPage.WaitForGrantSuccess(ctx)).To(Succeed(), "Expected successful grant after approving optional services")
+			err = consentPage.SaveChanges(ctx)
+			Expect(err).NotTo(HaveOccurred(), "Save should succeed after selecting optional services")
+			Expect(consentPage.WaitForGrantSuccess(ctx)).To(Succeed(), "Expected successful grant after selecting optional services")
 			hasError, err := consentPage.HasError(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hasError).To(BeFalse(), "No validation error should remain after a successful grant")
 		})
-	})
-
-	// Minimal test: Verify Playwright works and frontend renders
-	It("should load consent page and display basic UI elements", func() {
-		// When: Navigate to consent page for the test agent
-		err := consentPage.NavigateToAgent(ctx, testAgentID)
-		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
-
-		// Then: Agent name heading should be visible
-		agentName, err := consentPage.GetAgentName(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Failed to get agent name")
-		Expect(agentName).NotTo(BeEmpty(), "Agent name should not be empty")
-
-		// And: Available scopes should be present
-		scopes, err := consentPage.GetAvailableScopes(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Failed to get available scopes")
-		Expect(scopes).NotTo(BeEmpty(), "Should have at least one scope available")
-
-		// And: Take screenshot for verification
-		err = consentPage.TakeScreenshot(ctx, "consent_page_loaded")
-		Expect(err).NotTo(HaveOccurred(), "Failed to take screenshot")
-
-		GetLogger().Info("Test passed: Consent page renders correctly with UI elements visible")
 	})
 
 	// Scenario 10 from specs/007-consent-frontend/spec.md
@@ -181,31 +159,18 @@ var _ = Describe("Consent Flow", func() {
 		Expect(actualEndDate).To(Equal(endDate.Format("2006-01-02")))
 	})
 
-	// Test: Verify scopes are displayed correctly
-	// Note: In the current UI (Phase 8), scopes are displayed as read-only badges based on service requirements.
-	// Service delegation happens at the service level (Login/Delegate buttons), not at individual scope level.
-	It("should display service scopes as read-only badges based on requirements", func() {
-		// Given: User navigates to consent page
-		err := consentPage.NavigateToAgent(ctx, testAgentID)
-		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
-
-		// When: Get available scopes displayed on the page
-		scopes, err := consentPage.GetAvailableScopes(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Failed to get scopes")
-		Expect(scopes).NotTo(BeEmpty(), "Must have at least one scope")
-
-		// Then: Verify expected scopes from service definition are present
-		Expect(scopes).To(ContainElement("repo"), "Service should display 'repo' scope")
-		Expect(scopes).To(ContainElement("user"), "Service should display 'user' scope")
-
-		// And: Take screenshot for verification
-		err = consentPage.TakeScreenshot(ctx, "service_scopes_displayed")
-		Expect(err).NotTo(HaveOccurred(), "Failed to take screenshot")
-
-		GetLogger().Info("Test passed: Service scopes are displayed correctly as read-only badges",
-			"scopes_count", len(scopes),
-			"scopes", scopes,
-		)
+	// AS-08 and FR-008 from specs/047-redesign-consent-console/spec.md.
+	It("should expose locked permission groups and their services without raw scopes", func() {
+		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
+		groups, err := consentPage.PermissionGroups(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(groups).To(ContainElement(And(
+			HaveField("Name", "GitHub Access"), HaveField("Required", true),
+			HaveField("Checked", true), HaveField("ReadOnly", true),
+		)))
+		Expect(consentPage.ExpandPermissionGroup(ctx, "GitHub Access")).To(Succeed())
+		Expect(consentPage.GroupServices(ctx, "GitHub Access")).To(ConsistOf("GitHub"))
+		Expect(consentPage.GroupShowsScopeStrings(ctx, "GitHub Access")).To(BeFalse())
 	})
 
 })

@@ -12,11 +12,11 @@ Replace the design-system layer while preserving the application stack and all e
 
 Keep React 19, TypeScript, Vite 7, Tailwind 4, React Router 7, Axios, CVA, `tailwind-merge`, Vitest, Testing Library, Storybook 10, and Ginkgo/Playwright. Add TanStack Query, TanStack Table, Lucide, and cmdk. Use Sonner for notifications and CSS-only motion.
 
-Deliver all six routes, both agent contexts, settings, and command search in one cutover. The feature adds no API, persistence, or migration. It corrects the OpenAPI documentation of the existing `GET /api/third-party/sessions` response to match the handler. Keep decision and console bundles separate.
+Deliver all six routes, both agent contexts, settings, and command search in one cutover. The feature adds no API, persistence, or migration. Correct verified documentation mismatches in the existing session-list and consent responses to match their handlers, as approved on 2026-09-27. Keep decision and console bundles separate.
 
 **Security resolution**: ADR 014's gateway long-poll is not a browser source. Refresh the existing acting-user pending list every 10 seconds. This follows ADR 018 and spec API-004 despite the user's long-poll shorthand.
 
-**Approval status**: ADR 037 is proposed. Planning is complete only as a design deliverable. Runtime implementation remains blocked until its acceptance.
+**Approval status**: The stakeholder accepted ADR 037 on 2026-09-27. The decision reference is recorded in the ADR. Acceptance authorizes implementation, not a claim that runtime validation is complete.
 
 **Delivery constraint**: No implementation phases, feature flags, parallel old/new presentations, backwards-compatibility layers, or old-server fallbacks. Migrate every consumer together.
 
@@ -36,7 +36,7 @@ Deliver all six routes, both agent contexts, settings, and command search in one
 | Storage | Browser-only appearance preferences. No backend storage change. Connection state derives from existing session fields |
 | Testing | Vitest 4 + Testing Library, Storybook 10.3.5 with a11y/themes and browser-mode Vitest addon, story-level `toMatchScreenshot`, Ginkgo + playwright-go, existing imgdiff |
 | Target | Evergreen browsers, broker-served production SPA, Vite development, standalone Storybook |
-| Performance | Consent content under 1.5 seconds under the Chrome DevTools “Slow 4G” preset. Initial compressed application code under 150 kB. Pending update within 15 seconds on a reachable foreground console |
+| Performance | Cold consent content within 5 seconds under Chrome DevTools “Slow 4G”; each initial decision graph under 170 kB gzip. Use precompressed public assets and decision-specific code hints. Pending updates remain within 15 seconds on a reachable foreground console |
 | Accessibility | WCAG 2.2 AA, text 4.5:1, controls 3:1, keyboard paths, visible unobscured focus, announcements |
 | Layout | Decision column at most 640 px. No page overflow at 320 px or 200% zoom. At least 12 agent rows at 1080 px height |
 | Scope | Five existing routes, one new `/settings` route, both agent contexts, all 17 active acceptance scenarios in one release |
@@ -55,19 +55,19 @@ Research resolved the accent, body face, brand format, browser synchronization, 
 | Principle or precondition | Design evidence | Implementation gate |
 | --- | --- | --- |
 | I Security-first | Principal-scoped reads, escaped metadata, no automatic external resources, preserved authorization and audit logging | Cross-user, unsafe redirect, expiry, callback, and no-external-request scenarios pass |
-| II Architecture/ADRs | ADR 037 proposed, architecture includes a labeled design section and new glossary entries | Accept ADR 037 before departing from ADR 006 or extending ADR 035 |
+| II Architecture/ADRs | ADR 037 accepted on 2026-09-27, architecture includes its design section and glossary entries | Follow the accepted replacement of ADR 006 and extension of ADR 035 |
 | III Library-first security | No custom crypto or new token format. Fixed script hash uses standard build tooling | Preserve existing cryptographic validation |
-| IV/X API-first | No API contract change. The session-list documentation is corrected to the existing handler response, with stakeholder confirmation recorded in the spec (2026-09-27) | Any API change requires a separate, approved specification |
+| IV/X API-first | No runtime API contract change. Approved documentation-only corrections align existing session-list and consent responses with their handlers | Any runtime API change requires a separate, approved specification |
 | V Domain model | ConsentDraft, ConnectionState, and preferences defined in data-model.md as UI state | Keep glossary and model synchronized |
-| VI Hexagonal boundaries | No domain, port, or storage change. The HTTP adapter only gains the theme-script CSP hash | No handler-to-repository bypass or adapter cross-import |
+| VI Hexagonal boundaries | No domain, port, or storage change. The HTTP adapter gains the theme-script CSP hash, negotiated precompressed public assets, and build-manifest code hints | No handler-to-repository bypass, private bootstrap data, or adapter cross-import |
 | VII Configuration | No redesign flag, environment variable, CLI option, HTML flag bootstrap, or configuration endpoint | No redesign-specific configuration or Helm change |
 | VIII TDD | Behavior-level tests precede their runtime changes | Demonstrate semantic red then green. No skipped or placeholder assertions |
 | IX Persistence | No repository, schema, or migration change | None |
-| XI Design system | Aesthetic-neutral principle, current direction in DESIGN_PRINCIPLES.md, proposed ADR 037, and the guidance inventory below | Accept the ADR, then align current guidance. Preserve history. Validate semantic tokens, both-theme stories, story visual regression, local assets, and accessibility |
+| XI Design system | Aesthetic-neutral principle, accepted ADR 037, DESIGN_PRINCIPLES.md, and the guidance inventory below | Align current guidance. Preserve history. Validate semantic tokens, both-theme stories, visual regression, local assets, and accessibility |
 | XII Builder wiring | No new service or worker | None |
 | XIII E2E traceability | AS-01–AS-18 mapping below, Playwright journeys and screenshots | One canonical Ginkgo It per scenario, with real production bootstrap |
 
-**Gate result**: The design introduces no unapproved runtime deviation. No technical clarification remains unresolved. ADR acceptance is still mandatory before implementation. Do not mark that approval complete merely because planning generated documents.
+**Gate result**: ADR acceptance is recorded from the stakeholder decision, not inferred from planning. The Agents count column is removed by explicit approval. Existing-response documentation corrections are also approved. Runtime implementation must satisfy the remaining design and validation gates.
 
 ## Project Structure
 
@@ -86,7 +86,7 @@ specs/047-redesign-consent-console/
 
 `tasks.md` is one dependency-ordered task list without partial-release milestones. It keeps the constitution's mandatory Phase 2 and Phase N headings verbatim. Its other headings group responsibilities, not implementation phases.
 
-Planning artifacts describe the proposed direction. They do not make it current guidance before ADR acceptance.
+The stakeholder accepted the planned direction on 2026-09-27. Planning artifacts remain requirements, not proof of runtime completion.
 
 ### Implementation locations
 
@@ -150,7 +150,7 @@ Never cache authorization context as ordinary agent detail. Do not optimisticall
 
 Use TanStack Table and owned Table styles for agents, connections, and approvals.
 Add name search, truthful state, confirmed revocation, sticky draft controls, and pending-first approval triage.
-The delegation list shows the existing `activeGrantCount` as granted permission sets and removes a row whose expiry passes. It adds no per-row requests.
+The delegation list shows the agent and expiry and removes a row whose expiry passes. It has no count column and adds no per-row requests. The stakeholder removed the permission-set count requirement on 2026-09-27 after runtime verification showed that `activeGrantCount` counts grants instead.
 Share the user-scoped pending query between the queue and sidebar. Announce count changes without moving focus.
 Use record-scoped optimistic revoke with rollback. Derive connection state from existing session fields, refresh responses, and agent requirement status, without a Missing scopes state. No connection appears only on the agent Connections tab and in the consent service prompt.
 
@@ -174,19 +174,19 @@ Publish README guidance and screenshots for all routes, including both agent con
 ## Guidance Review and Decision Gate
 
 Principle XI sets design-system and accessibility requirements without prescribing an aesthetic.
-`web/src/design-system/docs/DESIGN_PRINCIPLES.md` remains the current visual authority until an accepted ADR changes it.
-ADR 037 remains proposed. Its target is not an instruction to restyle existing components before acceptance.
+`web/src/design-system/docs/DESIGN_PRINCIPLES.md` defines the accepted visual direction under ADR 037.
+The stakeholder accepted ADR 037 on 2026-09-27.
 
-Review results belong to this planning change. Adoption of target guidance depends on ADR acceptance.
-After acceptance, update every current guide for the approved direction before implementation.
+The review inventory records the current-guidance files that must follow the accepted direction.
+Update those guides before runtime implementation.
 Deliver matching components, examples, tokens, stories, and documentation together. Do not leave guides for two active visual systems.
 
 **Review completed on 2026-09-26**: All 19 current-guidance files and all 16 historical files in the inventories were reviewed.
 Templates now reference the governing visual decision instead of a fixed aesthetic.
-Current guides distinguish existing source, constitutional requirements, and the proposed replacement.
+The 2026-09-26 review distinguished existing source, constitutional requirements, and the then-proposed replacement.
 The root context no longer attributes Refined Trust Architecture to Principle XI.
 Fifteen historical files have scoped authority notes. Feature 008's task record required no change.
-Approval of ADR 037 and adoption of its target guidance remain open decision gates, not completed implementation.
+The 2026-09-27 acceptance clears the decision gate. Guidance adoption and runtime validation remain separate tasks.
 
 ### Current guidance inventory
 
@@ -232,7 +232,7 @@ Only read-only assertions run once per theme, each in a fresh browser context: A
 | AS-03 | Duration persists through Allow/callback, while Deny and expiry make no new grant |
 | AS-04 | Tool review exposes identity, arguments, risk, exact scope, and one accent action |
 | AS-05 | Once/session/permanent decisions preserve scope, resolved/expired requests cannot resubmit |
-| AS-06 | Search agents, see permission-set counts and expiry without an Agent Origin Label, confirm the expired fixture is absent, confirm revoke |
+| AS-06 | Search agents, see expiry without a count or Agent Origin Label column, confirm the expired fixture is absent, confirm revoke |
 | AS-07 | Empty delegation explanation and confirmed-revoke result, including rollback on failure |
 | AS-08 | Console detail with Permissions and Connections tabs edits only optional groups, Cancel discards and Save persists |
 | AS-09 | Overflow revoke names the agent, cancel preserves access, confirm affects only owner |
@@ -247,7 +247,7 @@ Only read-only assertions run once per theme, each in a fresh browser context: A
 
 Use production builder/bootstrap and fresh servers, storage, principals, and browser contexts. Reuse existing mock provider fixtures. Add deterministic clock/data fixtures for expired grants, approval races, and long metadata.
 
-Tests must compile and fail for absent behavior before implementation. Never use skips, source-text assertions, mock echoes, or trivial failures. Keep existing journey assertions intact when behavior is preserved. Update selectors through page objects only.
+Tests must compile and fail for absent behavior before implementation. Never use skips, source-text assertions, mock echoes, or trivial failures. Keep existing security, authorization, storage, and callback assertions intact. Under the 2026-09-28 stakeholder clarification, replace obsolete raw-scope and initial-Save assertions with permission-group and dirty-only-Save coverage, make an explicit edit in the CSRF save journey, and migrate consent-state fixtures to the canonical draft envelope. Move embedded selectors into page objects.
 
 ### Unit coverage
 

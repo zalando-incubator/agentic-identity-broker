@@ -1,0 +1,130 @@
+import { createElement, type ReactNode } from 'react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { approvalApi } from '@services/api/approvals';
+import type { QueryClient } from '@tanstack/react-query';
+import { consentApi } from '@services/api/consent';
+import { QueryProvider } from '@services/query/QueryProvider';
+import { createQueryClient } from '@services/query/queryClient';
+import { queryKeys } from '@services/query/queryKeys';
+import type { ToolApprovalDetail, ApproveResponseData, DenyResponseData } from '../types/approval';
+import { useApprovalReview } from './useApprovalReview';
+
+const approval: ToolApprovalDetail = { id: 'one', principal: 'alice', agent_id: 'agent', tool_name: 'read', arguments: {}, tool_pattern: 'read', params_pattern: {}, pattern_preview: 'read()', status: 'pending', approval_url: '/approvals/one', created_at: '2026-01-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z' };
+let client: QueryClient;
+const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryProvider, { client }, children);
+beforeEach(() => {
+  client = createQueryClient();
+  client.setDefaultOptions({ queries: { retry: false }, mutations: { retry: false } });
+  vi.spyOn(consentApi, 'getUserInfo').mockResolvedValue({ principal: 'alice', displayName: 'Alice' });
+  vi.spyOn(approvalApi, 'getApproval').mockResolvedValue(approval);
+});
+afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); });
+
+describe('approval review server ownership', () => {
+  it('isolates cached details by the authenticated principal and route ID', async () => {
+    client.setQueryData(queryKeys.approval('bob', 'one'), { ...approval, principal: 'bob', status: 'approved' });
+    const { result, rerender } = renderHook(({ id }) => useApprovalReview(id), { initialProps: { id: 'one' }, wrapper });
+    await waitFor(() => expect(result.current?.approval?.status).toBe('pending'));
+    expect(client.getQueryData(queryKeys.approval('alice', 'one'))).toEqual(approval);
+    vi.mocked(approvalApi.getApproval).mockResolvedValue({ ...approval, id: 'two', tool_name: 'write' });
+    rerender({ id: 'two' });
+    await waitFor(() => expect(result.current.approval?.tool_name).toBe('write'));
+    expect(client.getQueryData(queryKeys.approval('alice', 'two'))).toMatchObject({ id: 'two' });
+  });
+
+  it.each(['approve', 'deny'] as const)('does not record %s before the server accepts it, and invalidates pending on settlement', async (action) => {
+    const approved = Promise.withResolvers<ApproveResponseData>();
+    const denied = Promise.withResolvers<DenyResponseData>();
+    const mutation = action === 'approve'
+      ? vi.spyOn(approvalApi, 'approveApproval').mockReturnValue(approved.promise)
+      : vi.spyOn(approvalApi, 'denyApproval').mockReturnValue(denied.promise);
+    client.setQueryData(queryKeys.pending('alice'), [approval]);
+    const { result } = renderHook(() => useApprovalReview('one'), { wrapper });
+    await waitFor(() => expect(result.current?.approval).toEqual(approval));
+    act(() => { void (action === 'approve' ? result.current.approve({ persistence: 'once' }) : result.current.deny()); });
+    await waitFor(() => expect(result.current.submitting).toBe(true));
+    expect(result.current.approval?.status).toBe('pending');
+    expect(result.current.approveResult).toBeNull();
+    expect(result.current.denyResult).toBeNull();
+    expect(client.getQueryData(queryKeys.pending('alice'))).toEqual([approval]);
+    await act(async () => {
+      if (action === 'approve') approved.resolve({ id: 'one', status: 'approved', persistence: 'once', approved_at: '2026-01-01T00:01:00Z' });
+      else denied.resolve({ id: 'one', status: 'denied', denied_at: '2026-01-01T00:01:00Z' });
+    });
+    await waitFor(() => expect(action === 'approve' ? result.current.approveResult : result.current.denyResult).not.toBeNull());
+    expect(mutation).toHaveBeenCalledTimes(1);
+    expect(client.getQueryState(queryKeys.pending('alice'))?.isInvalidated).toBe(true);
+  });
+
+  it.each([409, 410])('refreshes authoritative state after HTTP %s without retrying the decision', async (status) => {
+    const deny = vi.spyOn(approvalApi, 'denyApproval').mockRejectedValue({ status, message: 'Decision is no longer available' });
+    const { result } = renderHook(() => useApprovalReview('one'), { wrapper });
+    await waitFor(() => expect(result.current?.approval?.status).toBe('pending'));
+    vi.mocked(approvalApi.getApproval).mockResolvedValue({ ...approval, status: 'approved', persistence: 'session' });
+    await act(async () => { await result.current.deny(); });
+    await waitFor(() => expect(result.current.approval?.status).toBe('approved'));
+    expect(deny).toHaveBeenCalledTimes(1);
+    expect(result.current.denyResult).toBeNull();
+  });
+
+  it.each(['approve', 'deny'] as const)('does not let a pre-decision read overwrite a successful %s', async (action) => {
+    const staleRead = Promise.withResolvers<ToolApprovalDetail>();
+    const { result } = renderHook(() => useApprovalReview('one'), { wrapper });
+    await waitFor(() => expect(result.current?.approval?.status).toBe('pending'));
+    vi.mocked(approvalApi.getApproval).mockReturnValueOnce(staleRead.promise);
+    act(() => { void result.current.refetch(); });
+    await waitFor(() => expect(approvalApi.getApproval).toHaveBeenCalledTimes(2));
+    vi.spyOn(approvalApi, 'approveApproval').mockResolvedValue({ id: 'one', status: 'approved', persistence: 'once', approved_at: '2026-01-01T00:01:00Z' });
+    vi.spyOn(approvalApi, 'denyApproval').mockResolvedValue({ id: 'one', status: 'denied', denied_at: '2026-01-01T00:01:00Z' });
+    const status = action === 'approve' ? 'approved' : 'denied';
+    try {
+      await act(async () => {
+        if (action === 'approve') await result.current.approve({ persistence: 'once' });
+        else await result.current.deny();
+      });
+      await waitFor(() => expect(result.current.approval?.status).toBe(status));
+      await act(async () => { staleRead.resolve(approval); });
+      await waitFor(() => expect(client.isFetching({ queryKey: queryKeys.approval('alice', 'one'), exact: true })).toBe(0));
+      expect(result.current.approval?.status).toBe(status);
+      expect(client.getQueryData<ToolApprovalDetail>(queryKeys.approval('alice', 'one'))?.status).toBe(status);
+    } finally {
+      staleRead.resolve(approval);
+    }
+  });
+
+  it.each([409, 410])('starts a fresh authoritative read after HTTP %s instead of joining an older pending read', async (status) => {
+    const staleRead = Promise.withResolvers<ToolApprovalDetail>();
+    const { result } = renderHook(() => useApprovalReview('one'), { wrapper });
+    await waitFor(() => expect(result.current?.approval?.status).toBe('pending'));
+    vi.mocked(approvalApi.getApproval)
+      .mockReturnValueOnce(staleRead.promise)
+      .mockResolvedValue({ ...approval, status: 'approved', persistence: 'session' });
+    act(() => { void result.current.refetch(); });
+    await waitFor(() => expect(approvalApi.getApproval).toHaveBeenCalledTimes(2));
+    const deny = vi.spyOn(approvalApi, 'denyApproval').mockRejectedValue({ status, message: 'Decision is no longer available' });
+    let decision!: Promise<void>;
+    act(() => { decision = result.current.deny(); });
+    try {
+      await waitFor(() => expect(approvalApi.getApproval).toHaveBeenCalledTimes(3));
+      await act(async () => { await decision; });
+      await waitFor(() => expect(result.current.approval?.status).toBe('approved'));
+      await act(async () => { staleRead.resolve(approval); });
+      expect(result.current.approval?.status).toBe('approved');
+      expect(deny).toHaveBeenCalledTimes(1);
+    } finally {
+      staleRead.resolve(approval);
+    }
+  });
+
+  it('retains the pending decision after failure and never automatically retries it', async () => {
+    const approve = vi.spyOn(approvalApi, 'approveApproval').mockRejectedValue({ status: 503, message: 'Unavailable' });
+    const { result } = renderHook(() => useApprovalReview('one'), { wrapper });
+    await waitFor(() => expect(result.current?.approval).toEqual(approval));
+    await act(async () => { await result.current.approve({ persistence: 'once' }); });
+    await waitFor(() => expect(result.current.errorCode).toBe('SERVER_ERROR'));
+    expect(result.current.approval?.status).toBe('pending');
+    expect(result.current.approveResult).toBeNull();
+    expect(approve).toHaveBeenCalledTimes(1);
+  });
+});

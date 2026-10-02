@@ -146,6 +146,7 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
+| 037 | `adrs/037-design-system-rebuilt-on-shadcn-radix.md` | Accepted redesign: owned shadcn/Radix components, TanStack Query, CSS motion, and `/settings`. Runtime migration remains incomplete |
 
 ## Domain Glossary
 

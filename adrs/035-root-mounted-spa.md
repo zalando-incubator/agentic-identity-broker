@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-09-04
+**Extended by**: [ADR 037](037-design-system-rebuilt-on-shadcn-radix.md) (`/settings`).
 
 ---
 

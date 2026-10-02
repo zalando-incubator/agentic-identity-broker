@@ -1,51 +1,20 @@
 # Color Guide
 
-## Status
+## Authority and delivery status
 
-The current approved direction is **Refined Trust Architecture**, as documented in [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md).
-[ADR 037](../../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) remains **Proposed**.
-Its OKLCH palette does not replace current tokens before acceptance and the single cutover.
+[ADR 037](../../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) became Accepted on 2026-09-27.
+This guide defines the approved color contract for [feature 047](../../../../specs/047-redesign-consent-console/spec.md).
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current visual direction.
 
-## Current token inventory and usage
+Acceptance establishes the contract, not runtime completion or accessibility results.
+T054 implements these values in `web/src/design-system/tokens/theme.css`.
+The feature [tasks](../../../../specs/047-redesign-consent-console/tasks.md) record implementation and verification separately.
 
-`web/src/design-system/tokens/colors.css` defines the current Tailwind tokens.
-The current families are trust navy, amber action, success, error, warning, information, and warm neutrals.
-The palette is a design decision, not a constitutional mandate.
+## Semantic OKLCH contract
 
-| Existing role token | Value in `colors.css` | Generated utility example |
-| --- | --- | --- |
-| `text-primary` | `#0a2540` | `text-text-primary` |
-| `text-secondary` | `#6b6561` | `text-text-secondary` |
-| `text-inverse` | `#ffffff` | `text-text-inverse` |
-| `bg-primary` | `#faf9f7` | `bg-bg-primary` |
-| `bg-secondary` | `#f5f1ed` | `bg-bg-secondary` |
-| `bg-elevated` | `#ffffff` | `bg-bg-elevated` |
-| `border-primary` | `#ddd8d1` | `border-border-primary` |
-| `border-secondary` | `#e8e3de` | `border-border-secondary` |
-| `border-focus` | `#1e4d6b` | `ring-border-focus` |
-
-`web/src/styles/index.css` currently overrides some text variables.
-The table records token-source values, not guaranteed computed colors.
-These scattered overrides are existing implementation debt, not an approved exception to centralized tokens.
-
-Use existing role tokens and component variants according to their purpose.
-Do not copy raw `neutral-*`, `gray-*`, or other palette utilities from older examples.
-Some older examples abbreviate generated utility names. The token source, not those abbreviations, defines available utilities.
-If a required semantic role is missing, define it centrally before component use.
-Do not substitute proposed tokens that the runtime does not define.
-
-Principle XI requires semantic tokens, light/dark story accessibility checks, self-hosted assets, and WCAG 2.1 AA.
-The current color file contains fixed values, not the proposed theme contract.
-Neither token names nor existing examples prove contrast or theme compliance. Verify rendered combinations in both themes.
-
-## Proposed OKLCH contract — not current tokens
-
-The remaining sections retain the feature 046 proposal for review.
-They require ADR 037 acceptance and implementation in the single cutover.
-
-### Semantic OKLCH tokens
-
-Store all values in `web/src/design-system/tokens/`. The following table specifies the starting palette. Each value uses `oklch(L C H)`.
+This table is the single authority for color names and light/dark values.
+[TOKEN_GUIDE.md](TOKEN_GUIDE.md) defines their use without a second palette.
+All values retain the approved palette and its specified role mappings.
 
 | Token | Light | Dark | Purpose |
 | --- | --- | --- | --- |
@@ -53,80 +22,144 @@ Store all values in `web/src/design-system/tokens/`. The following table specifi
 | `--foreground` | `oklch(0.20 0 0)` | `oklch(0.96 0 0)` | Main text |
 | `--card` | `oklch(1 0 0)` | `oklch(0.21 0 0)` | Contained surface |
 | `--card-foreground` | `oklch(0.20 0 0)` | `oklch(0.96 0 0)` | Card text |
+| `--popover` | `oklch(1 0 0)` | `oklch(0.21 0 0)` | Floating surface |
+| `--popover-foreground` | `oklch(0.20 0 0)` | `oklch(0.96 0 0)` | Floating content text |
 | `--muted` | `oklch(0.95 0 0)` | `oklch(0.26 0 0)` | Secondary surface |
 | `--muted-foreground` | `oklch(0.45 0 0)` | `oklch(0.78 0 0)` | Supporting text |
-| `--border` | `oklch(0.62 0 0)` | `oklch(0.58 0 0)` | Required control boundaries |
-| `--border-soft` | `oklch(0.90 0 0)` | `oklch(0.32 0 0)` | Decorative separators only |
 | `--primary` | `oklch(0.48 0.14 255)` | `oklch(0.78 0.10 250)` | Primary action and links |
 | `--primary-foreground` | `oklch(1 0 0)` | `oklch(0.16 0 0)` | Primary action text |
+| `--secondary` | `oklch(0.95 0 0)` | `oklch(0.26 0 0)` | Secondary action surface |
+| `--secondary-foreground` | `oklch(0.20 0 0)` | `oklch(0.96 0 0)` | Secondary action text |
+| `--accent` | `oklch(0.95 0 0)` | `oklch(0.26 0 0)` | Neutral hover and selection surface |
+| `--accent-foreground` | `oklch(0.20 0 0)` | `oklch(0.96 0 0)` | Hover and selection text |
+| `--border` | `oklch(0.62 0 0)` | `oklch(0.58 0 0)` | Required boundaries |
+| `--border-soft` | `oklch(0.90 0 0)` | `oklch(0.32 0 0)` | Decorative separators only |
+| `--input` | `oklch(0.62 0 0)` | `oklch(0.58 0 0)` | Input boundary |
 | `--ring` | `oklch(0.48 0.14 255)` | `oklch(0.78 0.10 250)` | Focus indicator |
 | `--destructive` | `oklch(0.45 0.12 25)` | `oklch(0.78 0.10 25)` | Error and confirmed destruction |
+| `--destructive-foreground` | `oklch(1 0 0)` | `oklch(0.16 0 0)` | Filled destructive text |
 | `--success` | `oklch(0.45 0.09 150)` | `oklch(0.78 0.10 150)` | Successful result |
+| `--success-foreground` | `oklch(1 0 0)` | `oklch(0.16 0 0)` | Filled success text |
 | `--warning` | `oklch(0.45 0.08 75)` | `oklch(0.78 0.10 75)` | Attention needed |
+| `--warning-foreground` | `oklch(1 0 0)` | `oklch(0.16 0 0)` | Filled warning text |
 | `--info` | `oklch(0.48 0.14 255)` | `oklch(0.78 0.10 250)` | Informational state |
+| `--info-foreground` | `oklch(1 0 0)` | `oklch(0.16 0 0)` | Filled information text |
 | `--risk-low` | `oklch(0.45 0.09 150)` | `oklch(0.78 0.10 150)` | Authoritative low risk |
+| `--risk-low-foreground` | `oklch(1 0 0)` | `oklch(0.16 0 0)` | Filled low-risk text |
 | `--risk-medium` | `oklch(0.45 0.08 75)` | `oklch(0.78 0.10 75)` | Authoritative medium risk |
+| `--risk-medium-foreground` | `oklch(1 0 0)` | `oklch(0.16 0 0)` | Filled medium-risk text |
 | `--risk-high` | `oklch(0.45 0.12 25)` | `oklch(0.78 0.10 25)` | Authoritative high risk |
+| `--risk-high-foreground` | `oklch(1 0 0)` | `oklch(0.16 0 0)` | Filled high-risk text |
+| `--sidebar` | `oklch(0.985 0 0)` | `oklch(0.16 0 0)` | Sidebar surface |
+| `--sidebar-foreground` | `oklch(0.20 0 0)` | `oklch(0.96 0 0)` | Sidebar text |
+| `--sidebar-primary` | `oklch(0.48 0.14 255)` | `oklch(0.78 0.10 250)` | Sidebar primary role |
+| `--sidebar-primary-foreground` | `oklch(1 0 0)` | `oklch(0.16 0 0)` | Sidebar primary text |
+| `--sidebar-accent` | `oklch(0.95 0 0)` | `oklch(0.26 0 0)` | Sidebar hover and selection surface |
+| `--sidebar-accent-foreground` | `oklch(0.20 0 0)` | `oklch(0.96 0 0)` | Sidebar hover and selection text |
+| `--sidebar-border` | `oklch(0.62 0 0)` | `oklch(0.58 0 0)` | Sidebar boundary |
+| `--sidebar-ring` | `oklch(0.48 0.14 255)` | `oklch(0.78 0.10 250)` | Sidebar focus indicator |
 
-Status text and icons sit on background, card, or muted surfaces. Filled status badges use a paired `--*-foreground`: white in light mode and background in dark mode. Define each pair explicitly in the token file.
+Popover uses the card pair. Secondary and accent use the muted surface with the main foreground.
+Sidebar uses the background pair and the corresponding primary, accent, border, and ring roles.
+These component roles are not compatibility aliases for retired tokens.
 
-Map shadcn roles without extra palettes: popover to card, secondary and accent surfaces to muted, input to border, and sidebar to background. Their foregrounds use the corresponding semantic text token. These are component roles, not legacy compatibility aliases.
+The `accent` token is neutral interaction feedback, not another colored primary action.
+Neutral blue remains the sole primary accent. Sidebar selection does not authorize another accent-colored action.
 
-Unknown risk uses muted text and a textual explanation. Low risk is not proof of safety. Do not derive risk from scope names.
+## Choosing a color role
 
-### Tailwind mapping
+Use semantic utility pairs:
 
-Map semantic values through `@theme inline`, for example `--color-background: var(--background)` and `--color-primary: var(--primary)`. Map every token in the table and each paired foreground.
+| Context | Utilities |
+| --- | --- |
+| Page | `bg-background text-foreground` |
+| Card | `bg-card text-card-foreground border-border` |
+| Floating content | `bg-popover text-popover-foreground` |
+| Supporting text | `text-muted-foreground` |
+| Primary action | `bg-primary text-primary-foreground` |
+| Secondary action | `bg-secondary text-secondary-foreground` |
+| Neutral interaction | `bg-accent text-accent-foreground` |
+| Input boundary | `border-input` |
+| Focus | `ring-ring` |
+| Filled status | The status background and its matching foreground |
 
-Use `bg-background text-foreground`, `bg-card text-card-foreground`, `text-muted-foreground`, `border-border`, and `ring-ring`. A primary action uses `bg-primary text-primary-foreground`.
+Use status and risk text on background, card, or muted surfaces.
+Use `border-border-soft` only for decorative separators.
+Use the stronger boundary token for controls and required indicators.
+Do not lower text or boundary contrast through opacity without rendered evidence.
 
-Use `border-border-soft` only when the border is decorative. Input boundaries, focus, and state indicators require the stronger token.
+Pair status colors with text and an icon where useful.
+Use risk tokens only for a server-provided tool risk level.
+For an unrated tool, use muted text and the label “Risk not rated”.
+Do not derive risk from scope names or label permission groups with risk.
+Low risk is not proof of safety.
 
-Do not add palette values in component styles. Do not reintroduce `trust-*`, `cta-*`, `neutral-50`, or raw Tailwind color families.
+## Tailwind mapping and theme precedence
 
-### Theme precedence
+Define every table entry in `:root, [data-theme="light"]` and `[data-theme="dark"]` in `tokens/theme.css`.
+Map every role through `@theme inline` in `web/src/styles/index.css`.
+For example, `--color-background: var(--background)` exposes `bg-background`.
+`--color-primary-foreground: var(--primary-foreground)` exposes `text-primary-foreground`.
 
-The light values are the default. `[data-theme="dark"]` defines every dark value. `[data-theme="light"]` always keeps the light values.
+Use a `prefers-color-scheme: dark` fallback only for `:root:not([data-theme])`.
+An explicit light or dark preference takes precedence over system appearance.
+System mode follows later OS changes.
 
-A `prefers-color-scheme: dark` rule applies dark values only to `:root:not([data-theme])`. This fallback does not override an explicit preference.
+The first-paint script and React provider must share the `aib.theme` preference contract.
+The script sets the resolved `data-theme` before first paint.
+A fixed CSP hash permits the script without `unsafe-inline`.
+Set the matching CSS `color-scheme` and the `light dark` color-scheme metadata.
+Theme native controls and scrollbars with semantic roles.
+Portaled content must inherit the root theme.
 
-Before first paint, the inline script reads the browser preference and resolves system appearance. It sets `data-theme` to `light` or `dark`. React keeps that attribute current after system or preference changes.
+## Raw-palette enforcement
 
-Use `<meta name="color-scheme" content="light dark">`. Set CSS `color-scheme: light` or `dark` for the resolved theme. Form controls and scrollbars must match. A fixed CSP script hash permits the bootstrap without `unsafe-inline`.
+T046 requires `web/eslint-rules/no-raw-palette.js` as an error for `src/**/*.{ts,tsx}` in `web/eslint.config.js`.
+The `web-lint` recipe and the CI web job must run that rule.
+The rule must report existing violations until their migration completes. There are no legacy-file exceptions.
 
-### Palette enforcement
+The rule must enforce these behaviors:
 
-Add an ESLint rule to the existing flat configuration. It must fail on raw palette utilities in JSX, template strings, `clsx`, `cn`, and CVA variants.
+- Reject raw Tailwind palette utilities, including numbered families, named black/white colors, and gradient stops.
+- Reject arbitrary literal colors in utility classes, including hexadecimal, RGB, HSL, and OKLCH values.
+- Inspect `className` strings, template literals, `cn()`, `clsx()`, and `cva()` base and variant values.
+- Apply the same restrictions through responsive, state, and theme prefixes, opacity suffixes, and important modifiers.
+- Reject dynamically assembled color classes that bypass analysis.
+- Accept the semantic color utilities from this contract.
+- Permit `currentColor` and transparent presentation where appropriate.
 
-The rule must recognize variant prefixes, opacity suffixes, important modifiers, and arbitrary literal colors. Examples include `hover:bg-blue-500/50`, `dark:text-gray-100`, and `bg-[#ffffff]`.
+Raw color definitions belong only in the token source and local brand artwork.
+Do not add a second palette in component CSS, inline styles, or application configuration.
+A Tailwind source allow-list does not replace the ESLint failure.
+[TOKEN_GUIDE.md](TOKEN_GUIDE.md) describes how variants select these roles.
 
-Permit semantic color utilities, `currentColor`, and transparent presentation where appropriate. Reject dynamically assembled color class names that bypass analysis. Raw color definitions belong only in the token source and local brand artwork.
+## Contrast and release evidence
 
-A Tailwind source allow-list alone does not produce a clear lint failure. Use ESLint for enforcement without legacy-file exceptions.
-
-### Contrast acceptance
-
-Validate rendered colors in both themes after opacity, overlays, hover, disabled presentation, and focus styles apply. Do not claim compliance from token names.
+Principle XI requires WCAG 2.1 AA. Feature 047 targets WCAG 2.2 AA.
+Token names and opaque color calculations do not prove rendered compliance.
 
 | Pair | Minimum |
 | --- | --- |
-| Foreground on background/card | 4.5:1 |
-| Muted foreground on muted/background/card | 4.5:1 |
+| Main foreground on its surface | 4.5:1 |
+| Muted foreground on muted, background, and card | 4.5:1 |
 | Primary foreground on primary | 4.5:1 |
 | Status and risk text on supported surfaces | 4.5:1 |
-| Paired foreground on filled status | 4.5:1 |
-| Control border against adjacent surface | 3:1 |
-| Focus ring against adjacent surface | 3:1 |
+| Paired foreground on each filled status or risk color | 4.5:1 |
+| Required control boundary against its adjacent surface | 3:1 |
+| Focus ring against its adjacent surface | 3:1 |
 
-Soft separators are decorative and do not establish control boundaries. Never use color alone for status, risk, or selection. Labels and icons carry the same meaning.
+Measure rendered combinations in both themes, including hover, focus, disabled presentation, opacity, and overlays.
+T053 covers the research matrix of 74 text/control pairs and 14 filled-status pairs.
+The [research](../../../../specs/047-redesign-consent-console/research.md#2-tokens-accent-and-enforcement) records planning calculations, not release evidence.
 
-Storybook must run every component story in both themes with `parameters.a11y.test = 'error'`. Browser validation still checks focus, native controls, theme flash, and forced-color behavior.
+Every component story needs light and dark accessibility checks and a reviewed visual baseline per theme.
+Storybook accessibility uses `parameters.a11y.test = 'error'`. Accessibility and visual-regression failures must block CI.
+Browser checks also cover focus, native controls, theme flash, and forced colors.
+See [ACCESSIBILITY_GUIDE.md](ACCESSIBILITY_GUIDE.md) for the full state matrix.
 
-### Single cutover
+## Cutover rule
 
-Replace existing token callers by semantic purpose, not by matching numeric shades.
-Remove obsolete palette exports and overrides in the same cutover.
-Align all detailed guides, `GettingStarted.mdx`, and session-component guidance with the implementation.
-Do not use phases, feature flags, or compatibility aliases.
-
-See [research](../../../../specs/047-redesign-consent-console/research.md) for the accent decision and [quickstart](../../../../specs/047-redesign-consent-console/quickstart.md) for validation.
+Replace token callers by semantic purpose, not by matching numeric shades.
+Remove obsolete palette exports and scattered overrides in the same cutover.
+Do not preserve retired token names as aliases or add a second active visual system.
+Historical design decisions remain historical records, not component styling instructions.

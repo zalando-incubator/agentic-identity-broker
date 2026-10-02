@@ -1,33 +1,18 @@
-/**
- * ApprovalReviewPage - Main approval review component.
- *
- * Composes ToolCallCard + PersistenceSelector + action buttons.
- * Handles the complete approve/deny flow with transitions to confirmation.
- */
-
-import { useState } from 'react';
-import { Button } from '@components/ui/Button';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Button } from '@design-system/components/primitives/Button';
+import { accessCopy, commonCopy } from '@copy';
+import { approvalCopy } from '@copy/approvals';
 import { ToolCallCard } from './ToolCallCard';
-import { PersistenceSelector } from './PersistenceSelector';
-import { ApprovalScopeEditor } from './ApprovalScopeEditor';
 import { ApprovalConfirmation } from './ApprovalConfirmation';
 import { ApprovalErrorBanner } from './ApprovalErrorBanner';
-import type {
-  ToolApprovalDetail,
-  ApprovalPersistence,
-  ApprovalErrorCode,
-  ApproveResponseData,
-  DenyResponseData,
-  ApproveRequest,
-} from '../../types/approval';
+import type { ToolApprovalDetail, ApprovalPersistence, ApprovalErrorCode, ApproveResponseData, DenyResponseData, ApproveRequest } from '../../types/approval';
 
-const INLINE_ERROR_CODES = new Set<ApprovalErrorCode>([
-  'NETWORK_ERROR',
-  'INVALID_PATTERN',
-]);
+const RememberApprovalForm = lazy(() => import('./RememberApprovalForm'));
+const PermanentDenialDialog = lazy(() => import('./PermanentDenialDialog'));
 
-interface ApprovalReviewPageProps {
+export interface ApprovalReviewPageProps {
   approval: ToolApprovalDetail;
+  actingPrincipal: string;
   submitting: boolean;
   errorCode: ApprovalErrorCode | null;
   errorMessage: string | null;
@@ -38,162 +23,84 @@ interface ApprovalReviewPageProps {
   onRetry?: () => void;
 }
 
-export function ApprovalReviewPage({
-  approval,
-  submitting,
-  errorCode,
-  errorMessage,
-  approveResult,
-  denyResult,
-  onApprove,
-  onDeny,
-  onRetry,
-}: ApprovalReviewPageProps) {
-  const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
-  const [paramsPattern, setParamsPattern] = useState(
-    approval.params_pattern ?? {},
-  );
-  const [scopeValid, setScopeValid] = useState(false);
-
-  const handlePersistenceChange = (value: ApprovalPersistence) => {
-    setPersistence(value);
-    setParamsPattern(approval.params_pattern ?? {});
-  };
-
-  if (approveResult || approval.status === 'approved') {
-    return (
-      <ApprovalConfirmation
-        type="approved"
-        persistence={approveResult?.persistence ?? approval.persistence}
-        decidedAt={approveResult?.approved_at ?? approval.approved_at}
-        toolName={approval.tool_name}
-        agentName={approval.agent_display_name}
-        historical={approval.status === 'approved' && !approveResult}
-      />
-    );
-  }
-
-  if (denyResult || approval.status === 'denied') {
-    return (
-      <ApprovalConfirmation
-        type="denied"
-        persistence={denyResult?.persistence ?? approval.persistence}
-        decidedAt={denyResult?.denied_at ?? approval.denied_at}
-        toolName={approval.tool_name}
-        agentName={approval.agent_display_name}
-      />
-    );
-  }
-
-  if (errorCode && !INLINE_ERROR_CODES.has(errorCode)) {
-    return (
-      <div className="space-y-6">
-        <ApprovalErrorBanner
-          errorCode={errorCode}
-          message={errorMessage}
-          onRetry={onRetry}
-        />
-      </div>
-    );
-  }
-
-  const handleApprove = async () => {
-    await onApprove(
-      persistence === 'once'
-        ? { persistence }
-        : { persistence, params_pattern: paramsPattern },
-    );
-  };
-
-  const handleDeny = async () => {
-    await onDeny();
-  };
-
-  const handleDenyPermanently = async () => {
-    await onDeny(true);
-  };
-
-  const scopeBlocked = persistence !== 'once' && !scopeValid;
-
-  return (
-    <div className="max-w-2xl mx-auto px-6 pt-4 pb-28 space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-neutral-900">
-          Tool Approval Request
-        </h1>
-        <p className="text-sm text-neutral-500 mt-1">
-          Review what the agent wants to do, then choose how long to allow it.
-        </p>
-      </div>
-
-      {/* Tool call details */}
-      <ToolCallCard approval={approval} />
-
-      {errorCode && INLINE_ERROR_CODES.has(errorCode) && (
-        <ApprovalErrorBanner
-          errorCode={errorCode}
-          message={errorMessage}
-          onRetry={onRetry}
-        />
-      )}
-
-      <div className="space-y-3">
-        <PersistenceSelector
-          value={persistence}
-          onChange={handlePersistenceChange}
-          disabled={submitting}
-        />
-        <ApprovalScopeEditor
-          approval={approval}
-          paramsPattern={paramsPattern}
-          onParamsPatternChange={setParamsPattern}
-          persistence={persistence}
-          disabled={submitting}
-          onScopeValidationChange={setScopeValid}
-        />
-      </div>
-
-      {/* Action buttons — pinned to the viewport so the decision stays reachable
-          without scrolling past the review content. */}
-      <div className="fixed inset-x-0 bottom-0 z-20 mb-0 border-t border-neutral-200 bg-white/95 px-4 py-2 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-2xl gap-3">
-          <Button
-            onClick={handleApprove}
-            disabled={submitting || scopeBlocked}
-            size="sm"
-            className="flex-1"
-          >
-            {submitting ? 'Processing…' : 'Approve'}
-          </Button>
-          <Button
-            onClick={handleDeny}
-            disabled={submitting}
-            variant="secondary"
-            size="sm"
-            className="flex-1"
-          >
-            Deny
-          </Button>
-        </div>
-      </div>
-
-      {/* Deny permanently option */}
-      <div className="border-t border-neutral-200 pt-3">
-        <button
-          type="button"
-          onClick={handleDenyPermanently}
-          disabled={submitting}
-          className="text-sm text-error-primary hover:text-error-primary/80 underline disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Deny permanently — block this tool for this agent
-        </button>
-        <p className="text-xs text-neutral-500 mt-1">
-          This permanently blocks the agent from requesting this tool. You can
-          revoke this later from your approval settings.
-        </p>
-      </div>
-    </div>
-  );
+/** Key the entire draft, including disclosures, when an already cached route changes. */
+export function ApprovalReviewPage(props: ApprovalReviewPageProps) {
+  return <ApprovalReview key={props.approval.id} {...props} />;
 }
 
-export default ApprovalReviewPage;
+function ApprovalReview({ approval, actingPrincipal, submitting, errorCode, errorMessage, approveResult, denyResult, onApprove, onDeny, onRetry }: ApprovalReviewPageProps) {
+  const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
+  const [remember, setRemember] = useState(false);
+  const [paramsPattern, setParamsPattern] = useState(approval.params_pattern);
+  const [scopeValid, setScopeValid] = useState(false);
+  const [denyPermanentOpen, setDenyPermanentOpen] = useState(false);
+  const permanentDenyTrigger = useRef<HTMLButtonElement>(null);
+  const [now, setNow] = useState(Date.now);
+  const expiresAt = Date.parse(approval.expires_at);
+  useEffect(() => {
+    if (approval.status !== 'pending' || expiresAt <= now || !Number.isFinite(expiresAt)) return;
+    const timer = window.setTimeout(() => setNow(Date.now()), Math.min(expiresAt - now, 2_147_483_647));
+    return () => window.clearTimeout(timer);
+  }, [approval.status, expiresAt, now]);
+
+  const conflictNotice = errorCode === 'ALREADY_ACTIONED' || errorCode === 'EXPIRED'
+    ? <ApprovalErrorBanner errorCode={errorCode} message={errorMessage} outcome={false} />
+    : null;
+  if (approveResult || approval.status === 'approved') return <div className="space-y-4">
+    {conflictNotice}
+    <ApprovalConfirmation type="approved" persistence={approveResult?.persistence ?? approval.persistence} decidedAt={approveResult?.approved_at ?? approval.approved_at} toolName={approval.tool_name} agentName={approval.agent_display_name ?? approval.agent_id} historical={!approveResult} consumed={approval.consumed} />
+  </div>;
+  if (denyResult || approval.status === 'denied') return <div className="space-y-4">
+    {conflictNotice}
+    <ApprovalConfirmation type="denied" persistence={denyResult?.persistence ?? approval.persistence} decidedAt={denyResult?.denied_at ?? approval.denied_at} toolName={approval.tool_name} agentName={approval.agent_display_name ?? approval.agent_id} historical={!denyResult} />
+  </div>;
+  if (expiresAt <= now || errorCode === 'EXPIRED') return <ApprovalErrorBanner errorCode="EXPIRED" />;
+  if (errorCode === 'ALREADY_ACTIONED' || errorCode === 'FORBIDDEN' || errorCode === 'NOT_FOUND') return <ApprovalErrorBanner errorCode={errorCode} message={errorMessage} />;
+
+  function changePersistence(value: ApprovalPersistence) {
+    setPersistence(value);
+    setParamsPattern(approval.params_pattern);
+    setScopeValid(false);
+  }
+
+  return <div className="min-w-0 space-y-6">
+    <header className="space-y-2">
+      <h1 className="font-display text-2xl font-semibold">{approvalCopy.title}</h1>
+      <p className="text-sm text-muted-foreground">{approvalCopy.description}</p>
+    </header>
+    <ToolCallCard approval={approval} actingPrincipal={actingPrincipal} showScope={persistence === 'once'} />
+    {errorCode && <ApprovalErrorBanner errorCode={errorCode} message={errorMessage} onRetry={onRetry} outcome={false} />}
+    <div className="flex flex-wrap gap-3">
+      <Button variant="primary" disabled={submitting} isLoading={submitting} onClick={() => void onApprove({ persistence: 'once' })}>{accessCopy.approveOnce}</Button>
+      <Button variant="secondary" disabled={submitting} aria-expanded={remember} aria-controls={`remember-${approval.id}`} onClick={() => {
+        setRemember((previous) => !previous);
+        changePersistence('once');
+      }}>{accessCopy.approveAndRemember}</Button>
+      <Button variant="secondary" disabled={submitting} onClick={() => void onDeny()}>{accessCopy.deny}</Button>
+    </div>
+    {remember && <Suspense fallback={<p role="status">{commonCopy.loading}</p>}>
+      <RememberApprovalForm
+        approval={approval}
+        persistence={persistence}
+        paramsPattern={paramsPattern}
+        submitting={submitting}
+        scopeValid={scopeValid}
+        onPersistenceChange={changePersistence}
+        onParamsPatternChange={setParamsPattern}
+        onScopeValidationChange={setScopeValid}
+        onApprove={onApprove}
+        onCancel={() => { setRemember(false); changePersistence('once'); }}
+      />
+    </Suspense>}
+    <Button ref={permanentDenyTrigger} variant="ghost" disabled={submitting} aria-haspopup="dialog" aria-expanded={denyPermanentOpen} className="h-auto max-w-full whitespace-normal text-left" onClick={() => setDenyPermanentOpen(true)}>{approvalCopy.denyPermanently}</Button>
+    {denyPermanentOpen && <Suspense fallback={<p role="status">{commonCopy.loading}</p>}>
+      <PermanentDenialDialog
+        approval={approval}
+        submitting={submitting}
+        onCancel={() => setDenyPermanentOpen(false)}
+        onConfirm={() => { setDenyPermanentOpen(false); void onDeny(true); }}
+        onReturnFocus={() => permanentDenyTrigger.current?.focus()}
+      />
+    </Suspense>}
+  </div>;
+}
