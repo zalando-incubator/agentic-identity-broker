@@ -294,9 +294,10 @@ The Identity Broker runs two independent HTTP servers on separate ports:
 
 **CORS origin restrictions:** `server.enduser.cors.allowed_origins` and
 `server.admin.cors.allowed_origins` default to empty lists, which disable CORS
-headers. The literal wildcard `"*"` is rejected at startup, even when mixed with
-specific origins. Replace it with the origins that need access, such as
-`"http://localhost:3000"` for the local Vite development server.
+headers. Any origin containing `*`, including `"*"`, `"https://*"`, and
+`"https://*.example.com"`, is rejected at startup, even when mixed with specific
+origins. Use explicit origins such as `"http://localhost:3000"` for the local Vite
+development server.
 
 **CIMD confidential third-party services:** This outbound client mode adds no
 configuration parameter. The existing `server.enduser.public_url` must be a

@@ -218,7 +218,7 @@ func validateCORSConfig(cfg *ports.CORSConfig, prefix string) error {
 				nil,
 			)
 		}
-		if origin == "*" {
+		if strings.Contains(origin, "*") {
 			return formatValidationError(
 				fmt.Sprintf("%s.allowed_origins[%d]", prefix, i),
 				origin,

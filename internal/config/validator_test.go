@@ -719,6 +719,20 @@ func TestValidateCORSConfig(t *testing.T) {
 			errMsg:  "server.enduser.cors.allowed_origins[0]",
 		},
 		{
+			name:    "HTTPS wildcard origin fails",
+			cfg:     ports.CORSConfig{AllowedOrigins: []string{"https://*"}},
+			prefix:  "server.enduser.cors",
+			wantErr: true,
+			errMsg:  "server.enduser.cors.allowed_origins[0]",
+		},
+		{
+			name:    "subdomain wildcard mixed with specific origin fails for admin server",
+			cfg:     ports.CORSConfig{AllowedOrigins: []string{"https://app.example.com", "https://*.example.com"}},
+			prefix:  "server.admin.cors",
+			wantErr: true,
+			errMsg:  "server.admin.cors.allowed_origins[1]",
+		},
+		{
 			name:    "wildcard mixed with specific origin fails for admin server",
 			cfg:     ports.CORSConfig{AllowedOrigins: []string{"https://app.example.com", "*"}},
 			prefix:  "server.admin.cors",
