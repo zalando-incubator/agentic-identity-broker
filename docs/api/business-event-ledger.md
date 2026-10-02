@@ -83,6 +83,12 @@ The request trace comes from authoritative transport capture. A stored span iden
 
 The ledger retains known references after business-object deletion. It contains no access tokens, refresh tokens, client secrets, assertions, authorization codes, PKCE verifiers, private keys, or credential hashes. Reasons come from fixed recipes. User-agent values contain only an allowed family, not raw versions or comments.
 
+## Refusals and failures
+
+An exchange refused because the third-party session lacks required scopes records one `token-exchange-denied` event with outcome `denied` and `data.reason_code` equal to `authorization_failed`. It preserves the known principal, initiating caller, grant, agent, service, and session references. It does not also record `token-request-failed` for the same refusal.
+
+The token endpoint still returns `invalid_grant` and the existing reauthentication URI. A generic token failure remains distinct from an authentication or authorization refusal.
+
 ## Event contracts and evolution
 
 The published [schemas](https://github.com/zalando-incubator/agentic-identity-broker/tree/main/api/events/v1) define closed envelopes and type-specific data. The [synthetic examples](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/api/events/v1/examples.json) contain no credentials. The [catalogue contract](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/specs/048-business-event-ledger/contracts/events.md) defines all 28 initial types.

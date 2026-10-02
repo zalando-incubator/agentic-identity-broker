@@ -2,6 +2,7 @@ package tokenexchange
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -71,6 +72,84 @@ func TestExchangeLedgerInternalEvaluationErrorIsNotAPermissionDenial(t *testing.
 	require.Equal(t, model.BusinessEventTypePrefix+"token-request-failed", store.Events[0].Type)
 	require.Equal(t, "internal_failure", store.Events[0].Data["reason_code"])
 	require.Nil(t, store.Events[0].Actor.OnBehalfOf, "an evaluation error establishes no delegation")
+}
+
+func TestExchangeLedgerInsufficientSessionScopesAreAuthorizationDenial(t *testing.T) {
+	key, keySet := generateTestRSAKeySet(t)
+	agentID, serviceID, permissionSetID := id.NewAgentID(), id.NewServiceID(), id.NewPermissionSetID()
+	const principal = "ledger-scope-user"
+	const caller = "verified-scope-client"
+	const resource = "https://api.example.com/resource"
+	now := time.Now()
+	subjectToken := signServiceTestJWT(t, key, map[string]interface{}{
+		"iss": "https://auth.example.com", "aud": "agentic-identity-broker", "sub": principal,
+		"azp": agentID.String(), "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(),
+	})
+	assertion := signServiceTestJWT(t, key, map[string]interface{}{
+		"iss": "https://auth.example.com", "aud": "agentic-identity-broker", "sub": caller,
+		"exp": now.Add(time.Hour).Unix(), "iat": now.Unix(),
+	})
+	for _, scopes := range [][]string{nil, {"read"}, {"read", "write"}} {
+		t.Run("scopes="+fmt.Sprint(scopes), func(t *testing.T) {
+			store := &ledgerfixture.Store{}
+			recorder := store.Recorder(t)
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			agentRepo := &singleAgentRepo{agentID: agentID, agent: &storagedomain.Agent{
+				ID: agentID, PermissionSets: []storagedomain.AgentPermissionSetEntry{{PermissionSetID: permissionSetID, RequirementType: storagedomain.RequirementTypeOptional}},
+			}}
+			grant := &storagedomain.UserGrant{
+				ID: id.NewGrantID(), AgentID: agentID, Principal: id.Principal(principal),
+				GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{serviceID}}},
+			}
+			grantRepo := &MockGrantRepository{grant: grant}
+			provider := newTestProviderService(&MockServiceRepository{service: &model.ThirdpartyOAuth2ProviderEntity{
+				ID: serviceID, DisplayName: "Provider", ProtectedResources: []string{resource},
+			}})
+			expires := now.Add(time.Hour)
+			session := &storagedomain.UserSession{
+				ID: id.NewSessionID(), Principal: id.Principal(principal), ServiceID: serviceID,
+				EncryptedAccessToken: []byte("scope-access-token-canary"), AccessTokenExpiresAt: &expires,
+				TokenType: "Bearer", Scope: scopes,
+			}
+			svc := newServiceForStep9TestWithAuthz(t, keySet, agentRepo, "true")
+			svc.providerService = provider
+			svc.consentService = consent.NewService(agentRepo, provider, grantRepo, nil, nil, logger, recorder)
+			svc.permissionSetService = permissionset.NewPermissionSetService(&MockPermissionSetRepository{
+				psMap: map[id.PermissionSetID]*storagedomain.PermissionSet{
+					permissionSetID: {ID: permissionSetID, ServiceScopes: []storagedomain.ServiceScope{{ServiceID: serviceID, Scopes: []string{"read", "write"}}}},
+				},
+			}, grantRepo, logger)
+			svc.oauth2SessionService = oauth2session.NewOAuth2SessionService(provider, &MockSessionRepository{session: session}, nil, nil,
+				&MockEncryption{}, http.DefaultClient, nil, oauth2session.Config{CallbackBaseURL: "https://broker.example"}, logger, recorder)
+			svc.ledger = recorder
+			response, err := svc.Exchange(context.Background(), NewTokenExchangeRequest(TokenExchangeGrantType, subjectToken, AccessTokenType, assertion, JWTBearerType, resource, ""))
+			require.Len(t, store.Events, 1, "only one final exchange fact, without a generic failure companion")
+			event := store.Events[0]
+			if len(scopes) < 2 {
+				require.Nil(t, response)
+				var exchangeErr *TokenExchangeError
+				require.ErrorAs(t, err, &exchangeErr)
+				require.Equal(t, "invalid_grant", exchangeErr.Code())
+				require.Equal(t, "https://broker.example/api/third-party/"+serviceID.String()+"/oauth2/authorize", exchangeErr.ErrorURI())
+				require.Equal(t, model.BusinessEventTypePrefix+"token-exchange-denied", event.Type)
+				require.Equal(t, model.BusinessEventDenied, event.Outcome)
+				require.Equal(t, map[string]any{"reason_code": "authorization_failed"}, event.Data)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, "scope-access-token-canary", response.AccessToken)
+				require.Equal(t, model.BusinessEventTypePrefix+"token-exchanged", event.Type)
+			}
+			require.Equal(t, grant.Principal, *event.Subject)
+			require.Equal(t, caller, *event.Actor.ID)
+			require.Equal(t, grant.Principal, *event.Actor.OnBehalfOf)
+			require.Equal(t, agentID, event.AgentID)
+			require.Equal(t, grant.ID, event.GrantID)
+			require.Equal(t, serviceID, event.ServiceID)
+			require.Equal(t, session.ID, event.SessionID)
+			require.Equal(t, []id.PermissionSetID{permissionSetID}, event.PermissionSetIDs)
+			require.NotContains(t, fmt.Sprint(event.Wire()), "scope-access-token-canary")
+		})
+	}
 }
 
 type refreshExchangeProviderRepository struct{ *MockServiceRepository }

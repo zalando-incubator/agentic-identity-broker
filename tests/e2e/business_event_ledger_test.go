@@ -914,6 +914,46 @@ var _ = Describe("Business Event Ledger", Label("business-event-ledger"), func()
 					journey.assertActionDelta(*expected.Subject, delta)
 					Expect(journey.h.Close()).To(Succeed())
 				}
+				journey := newLedgerJourney(backend, "token-exchange-denied", nil)
+				permissionSet, err := journey.h.Storage.PermissionSets().Get(context.Background(), fixtures.PlaceholderPermissionSetID)
+				Expect(err).NotTo(HaveOccurred())
+				for i := range permissionSet.ServiceScopes {
+					if permissionSet.ServiceScopes[i].ServiceID == journey.data.Service.ID {
+						permissionSet.ServiceScopes[i].Scopes = []string{"read"}
+					}
+				}
+				Expect(journey.h.Storage.PermissionSets().Update(context.Background(), permissionSet)).To(Succeed())
+				grant := journey.seedGrant(false)
+				session := journey.establishSession()
+				session.Scope = []string{"unrelated"}
+				Expect(journey.h.Storage.UserSessions().Create(context.Background(), session)).To(Succeed())
+				session, err = journey.h.Storage.UserSessions().Get(context.Background(), session.ID)
+				Expect(err).NotTo(HaveOccurred())
+				subject := model.BusinessEventSubject{Principal: journey.data.Principal}
+				journey.markAction(subject)
+				response, err := journey.h.EndUser.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(journey.exchangeForm().Encode()))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response.StatusCode).To(Equal(http.StatusBadRequest))
+				body := decodeJSON[map[string]any](response)
+				Expect(body["error"]).To(Equal("invalid_grant"))
+				Expect(body["error_uri"]).To(HaveSuffix("/api/third-party/" + journey.data.Service.ID.String() + "/oauth2/authorize"))
+				caller := "approval-gateway-client"
+				principal := journey.data.Principal
+				expected := matchers.BusinessEventExpectation{
+					Type: "agentic-identity-broker.token-exchange-denied", Subject: &subject,
+					Actor:   &model.BusinessEventActor{Kind: "agent", ID: &caller, OnBehalfOf: &principal},
+					Outcome: model.BusinessEventDenied, Data: map[string]any{"reason_code": "authorization_failed"},
+					AgentID: &journey.data.Agent.ID, GrantID: &grant.ID, ServiceID: &journey.data.Service.ID, SessionID: &session.ID,
+					PermissionSetIDs: []id.PermissionSetID{fixtures.PlaceholderPermissionSetID},
+				}
+				events := journey.actionEvents(expected)
+				Expect(events).To(HaveLen(1))
+				Expect(events[0]).To(matchers.HaveBusinessEventEnvelope(expected))
+				journey.assertActionDelta(subject, map[string]int{expected.Type: 1})
+				retained, err := journey.h.Storage.UserSessions().Get(context.Background(), session.ID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(retained).To(Equal(session), "the scope refusal must not change the session")
+				Expect(journey.h.Close()).To(Succeed())
 			}
 		})
 
