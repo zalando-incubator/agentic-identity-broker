@@ -100,6 +100,10 @@ just build-all
   --oauth2_authorization_server.local.refresh_token_ttl=720h
 ```
 
+The example configures pre-authentication on both servers with `X-Remote-User`.
+For this isolated deployment, send the header from a trusted local client.
+In production, restrict access to an authenticated proxy that replaces this header.
+
 In another shell, use a registered local client and complete its authorization-code/PKCE consent flow with `offline_access`. Set `CLIENT_ID`, confidential `CLIENT_SECRET`, and `RT` from that real exchange. Public clients omit the secret field.
 
 Keep token results in local shell variables, not logs or shared files. Do not echo tokens or enable `set -x`:

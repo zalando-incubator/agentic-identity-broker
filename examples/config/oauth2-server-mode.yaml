@@ -25,6 +25,9 @@ server:
     port: 14000
     bind: "0.0.0.0"
     public_url: "https://broker.example.com:14000"
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
 
 # OAuth2 authorization server configuration
 oauth2_authorization_server:

@@ -407,8 +407,19 @@ Key settings:
 
 **Usage:**
 ```bash
-./agentic-identity-broker --config ./examples/config/oauth2-server-mode.yaml
+set +x
+export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"
+export IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(openssl rand -base64 32)"
+export IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL=http://127.0.0.1:8000
+just build-all
+./bin/agentic-identity-broker --config ./examples/config/oauth2-server-mode.yaml
 ```
+
+Both servers use `X-Remote-User` pre-authentication, as in the hybrid example.
+For this isolated development launch, send the header only from a trusted local client.
+In production, restrict access to an authenticated proxy that replaces this header.
+Keep both generated keys unchanged until the exercise ends.
+See the [refresh smoke procedure](../../specs/049-fix-refresh-consent/quickstart.md#3-manual-lost-response-and-consent-smoke) for authorization, retry, and revocation.
 
 ### `impersonation.yaml` — RFC 8693 User Impersonation
 
