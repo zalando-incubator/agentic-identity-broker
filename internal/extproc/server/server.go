@@ -188,7 +188,9 @@ func extractGRPCTraceContext(ctx context.Context) (context.Context, bool) {
 	if !ok || len(md) == 0 {
 		return ctx, false
 	}
-	extracted := otel.GetTextMapPropagator().Extract(ctx, mdCarrier(md))
+	// An inherited span must not count as a successful metadata extraction.
+	extractionCtx := trace.ContextWithSpanContext(ctx, trace.SpanContext{})
+	extracted := otel.GetTextMapPropagator().Extract(extractionCtx, mdCarrier(md))
 	if !trace.SpanContextFromContext(extracted).IsValid() {
 		return ctx, false
 	}

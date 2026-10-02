@@ -270,6 +270,7 @@ EXTPROC_TELEMETRY_EXPORTER_ENDPOINT=collector.monitoring.svc:4317 \
 **Key Features:**
 - Reuses the same telemetry configuration schema as the identity broker for operational parity
 - Adds W3C Trace Context (`tracecontext`) to default propagators to handle agentgateway's traceparent headers
+- Valid trace context in the ExtProc gRPC stream metadata takes precedence over proxied HTTP trace headers. Missing or invalid metadata trace context falls back to HTTP headers, even when the stream context already contains a span.
 - End-to-end trace visibility: each token exchange request creates a child span linked to the upstream trace
 - Graceful degradation when collector is unavailable (FR-008 — service continues operating normally)
 
