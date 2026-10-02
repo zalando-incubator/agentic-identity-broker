@@ -133,9 +133,6 @@ func NewTokenExchangeService(
 }
 
 // Exchange processes a complete token exchange request.
-// PHASE 5+: Full implementation deferred to Phase 5+.
-// For Phase 4, resource-based service discovery is implemented in HTTP handler.
-// This is the main orchestration method that will implement the full token exchange flow.
 //
 // Flow:
 // 1. Validate request structure (grant_type, required parameters)
@@ -407,6 +404,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 			}
 		}
 		if len(missingScopes) > 0 {
+			denialReason = "authorization_failed"
 			description := fmt.Sprintf(
 				"User session does not cover all required scopes for service %s. Missing: %s. Please re-authenticate with the required scopes.",
 				service.DisplayName,
