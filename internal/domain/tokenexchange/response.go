@@ -8,8 +8,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
-// ProviderRef identifies the third-party OAuth2 provider a token exchange resolved to.
-type ProviderRef struct {
+// ServiceRef identifies the third-party OAuth2 service a token exchange resolved to.
+type ServiceRef struct {
 	ID   id.ServiceID
 	Name string
 }
@@ -70,9 +70,9 @@ type TokenExchangeResponse struct {
 	// Keys are permission set UUID strings, values are arrays of service UUID strings.
 	GrantedPermissionSets map[string][]string `json:"granted_permission_sets,omitempty"`
 
-	Principal string      `json:"principal,omitempty"`
-	AgentID   string      `json:"agent_id,omitempty"`
-	Provider  ProviderRef `json:"-"`
+	Principal string     `json:"principal,omitempty"`
+	AgentID   string     `json:"agent_id,omitempty"`
+	Service   ServiceRef `json:"-"`
 }
 
 // NewTokenExchangeResponse creates a new token exchange response.

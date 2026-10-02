@@ -25,7 +25,7 @@ func (r *resolvingServiceRepository) Get(context.Context, id.ServiceID) (*model.
 	return r.service, r.err
 }
 
-func TestExchange_ClassifiesFailuresForResolvedProvider(t *testing.T) {
+func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 	privateKey, keySet := generateTestRSAKeySet(t)
 	for _, tc := range []struct {
 		name   string
@@ -38,9 +38,9 @@ func TestExchange_ClassifiesFailuresForResolvedProvider(t *testing.T) {
 		{name: "no session", code: "invalid_grant", reason: FailureReasonNoSession},
 		{name: "access token expired, no refresh token", code: "invalid_grant", reason: FailureReasonAccessTokenExpired},
 		{name: "stored refresh token expired", code: "invalid_grant", reason: FailureReasonRefreshTokenExpired},
-		{name: "provider invalid_grant", code: "server_error", reason: FailureReasonRefreshTokenExpired, status: 400, body: `{"error":"invalid_grant"}`},
-		{name: "provider rejects otherwise", code: "server_error", reason: FailureReasonProviderRejected, status: 502, body: "unavailable"},
-		{name: "provider unreachable", code: "server_error"},
+		{name: "service invalid_grant", code: "server_error", reason: FailureReasonRefreshTokenExpired, status: 400, body: `{"error":"invalid_grant"}`},
+		{name: "service rejects otherwise", code: "server_error", reason: FailureReason("service_rejected"), status: 502, body: "unavailable"},
+		{name: "service unreachable", code: "server_error"},
 		{name: "insufficient scope", code: "invalid_grant", reason: FailureReasonInsufficientScope},
 		{name: "unresolved resource", code: "invalid_target"},
 		{name: "success"},
@@ -58,11 +58,11 @@ func TestExchange_ClassifiesFailuresForResolvedProvider(t *testing.T) {
 				_, _ = fmt.Fprint(w, tc.body)
 			}))
 			defer upstream.Close()
-			if tc.name == "provider unreachable" {
+			if tc.name == "service unreachable" {
 				upstream.Close()
 			}
 			repo := &resolvingServiceRepository{MockServiceRepository{service: &model.ThirdpartyOAuth2ProviderEntity{
-				ID: svcID, DisplayName: "Example Provider", ClientID: "provider-client",
+				ID: svcID, DisplayName: "Example Service", ClientID: "service-client",
 				TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone, Secret: model.NewAbsentSecret(),
 				ProtectedResources: []string{"https://api.example.com/resource"},
 				Endpoints:          model.OAuth2Endpoints{TokenEndpoint: upstream.URL},
@@ -97,7 +97,7 @@ func TestExchange_ClassifiesFailuresForResolvedProvider(t *testing.T) {
 				sessionRepo.session = nil
 			case "access token expired, no refresh token":
 				sessionRepo.session.AccessTokenExpiresAt = &past
-			case "stored refresh token expired", "provider invalid_grant", "provider rejects otherwise", "provider unreachable":
+			case "stored refresh token expired", "service invalid_grant", "service rejects otherwise", "service unreachable":
 				sessionRepo.session.AccessTokenExpiresAt = &past
 				sessionRepo.session.EncryptedRefreshToken = []byte("refresh-token")
 				if tc.name == "stored refresh token expired" {
@@ -106,8 +106,8 @@ func TestExchange_ClassifiesFailuresForResolvedProvider(t *testing.T) {
 			case "insufficient scope":
 				sessionRepo.session.Scope = []string{}
 			}
-			providerService := newTestProviderService(repo)
-			sessionService := oauth2session.NewOAuth2SessionService(providerService, sessionRepo, sessionRepo, nil, nil, &MockEncryption{}, &http.Client{Timeout: time.Second}, nil, oauth2session.DefaultConfig(), slog.Default())
+			thirdpartyService := newTestProviderService(repo)
+			sessionService := oauth2session.NewOAuth2SessionService(thirdpartyService, sessionRepo, sessionRepo, nil, nil, &MockEncryption{}, &http.Client{Timeout: time.Second}, nil, oauth2session.DefaultConfig(), slog.Default())
 			jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
 			require.NoError(t, err)
 			celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
@@ -116,9 +116,9 @@ func TestExchange_ClassifiesFailuresForResolvedProvider(t *testing.T) {
 			})
 			require.NoError(t, err)
 			svc := &TokenExchangeService{
-				jwtValidator: jwtValidator, celEvaluator: celEvaluator, providerService: providerService,
+				jwtValidator: jwtValidator, celEvaluator: celEvaluator, providerService: thirdpartyService,
 				oauth2SessionService: sessionService, agentRepository: agentRepo,
-				consentService:       consent.NewService(agentRepo, providerService, grantRepo, nil, nil, slog.Default()),
+				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, slog.Default()),
 				permissionSetService: permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default()),
 			}
 			claims := map[string]interface{}{
@@ -128,10 +128,10 @@ func TestExchange_ClassifiesFailuresForResolvedProvider(t *testing.T) {
 			req := NewTokenExchangeRequest(TokenExchangeGrantType, signServiceTestJWT(t, privateKey, claims), AccessTokenType,
 				signServiceTestJWT(t, privateKey, claims), JWTBearerType, "https://api.example.com/resource", "")
 			response, err := svc.Exchange(context.Background(), req)
-			provider := ProviderRef{ID: svcID, Name: "Example Provider"}
+			serviceRef := ServiceRef{ID: svcID, Name: "Example Service"}
 			if tc.code == "" {
 				require.NoError(t, err)
-				assert.Equal(t, provider, response.Provider)
+				assert.Equal(t, serviceRef, response.Service)
 				return
 			}
 			require.Error(t, err)
@@ -140,9 +140,9 @@ func TestExchange_ClassifiesFailuresForResolvedProvider(t *testing.T) {
 			assert.Equal(t, tc.code, tokenErr.Code())
 			assert.Equal(t, tc.reason, tokenErr.FailureReason())
 			if tc.name == "unresolved resource" {
-				provider = ProviderRef{}
+				serviceRef = ServiceRef{}
 			}
-			assert.Equal(t, provider, tokenErr.Provider())
+			assert.Equal(t, serviceRef, tokenErr.Service())
 		})
 	}
 }

@@ -50,14 +50,14 @@ var (
 	ErrRefreshFailed = errors.New("failed to refresh access token with upstream provider")
 
 	// ErrRefreshTokenExpired indicates the stored refresh token can no longer be used: its recorded
-	// expiry has passed, or the provider answered the refresh with invalid_grant (RFC 6749 §5.2).
+	// expiry has passed, or the third-party service answered the refresh with invalid_grant (RFC 6749 §5.2).
 	ErrRefreshTokenExpired = errors.New("refresh token expired")
 
 	// ErrRefreshNotAvailable indicates the session has no refresh token or the refresh token has expired.
 	ErrRefreshNotAvailable = errors.New("no valid refresh token available for session")
 )
 
-// RefreshRejectedError reports that the provider's token endpoint answered a refresh request
+// RefreshRejectedError reports that the third-party service's token endpoint answered a refresh request
 // with a non-2xx status. The message omits the response body, which may echo credentials.
 type RefreshRejectedError struct {
 	StatusCode int
@@ -69,7 +69,7 @@ func (e *RefreshRejectedError) Error() string {
 	return fmt.Sprintf("upstream token endpoint returned error status %d", e.StatusCode)
 }
 
-// Unwrap exposes ErrRefreshTokenExpired when the provider answered invalid_grant, which
+// Unwrap exposes ErrRefreshTokenExpired when the third-party service answered invalid_grant, which
 // RFC 6749 §5.2 defines as an invalid, expired, or revoked refresh token.
 func (e *RefreshRejectedError) Unwrap() error {
 	if e.OAuthError == "invalid_grant" {

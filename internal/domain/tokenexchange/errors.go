@@ -38,10 +38,10 @@ type TokenExchangeError struct {
 	errorURI string
 
 	failureReason FailureReason
-	provider      ProviderRef
+	service       ServiceRef
 }
 
-// FailureReason classifies why an exchange failed after its resource resolved to a provider.
+// FailureReason classifies why an exchange failed after its resource resolved to a third-party service.
 // Values are stable telemetry identifiers.
 type FailureReason string
 
@@ -51,15 +51,15 @@ const (
 	FailureReasonAccessTokenExpired  FailureReason = "access_token_expired"
 	FailureReasonRefreshTokenExpired FailureReason = "refresh_token_expired"
 	FailureReasonInsufficientScope   FailureReason = "insufficient_scope"
-	FailureReasonProviderRejected    FailureReason = "provider_rejected"
+	FailureReasonServiceRejected     FailureReason = "service_rejected"
 )
 
 func (e *TokenExchangeError) FailureReason() FailureReason {
 	return e.failureReason
 }
 
-func (e *TokenExchangeError) Provider() ProviderRef {
-	return e.provider
+func (e *TokenExchangeError) Service() ServiceRef {
+	return e.service
 }
 
 // Error implements the error interface, returning a formatted error message.
@@ -365,8 +365,8 @@ func (e *TokenExchangeError) WithFailureReason(reason FailureReason) *TokenExcha
 	return &clone
 }
 
-func (e *TokenExchangeError) WithProvider(provider ProviderRef) *TokenExchangeError {
+func (e *TokenExchangeError) WithService(service ServiceRef) *TokenExchangeError {
 	clone := *e
-	clone.provider = provider
+	clone.service = service
 	return &clone
 }

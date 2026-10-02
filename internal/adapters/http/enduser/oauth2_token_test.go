@@ -2057,6 +2057,9 @@ func TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan(t *testi
 	require.True(t, ok, "token-exchange failures must be logged")
 	assert.Equal(t, sanitized, record.attrs["resource"], "error log resource must be sanitized")
 	assert.NotContains(t, fmt.Sprintf("%v", record.attrs["resource"]), "SUPERSECRET")
+	assert.NotContains(t, record.attrs, "service_id")
+	assert.NotContains(t, record.attrs, "service_name")
+	assert.NotContains(t, record.attrs, "failure_reason")
 
 	spans := spanRecorder.Ended()
 	var resourceAttr string
@@ -2077,16 +2080,16 @@ func TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan(t *testi
 	assert.NotContains(t, resourceAttr, "SUPERSECRET")
 }
 
-type resolvedProviderRepo struct {
+type resolvedServiceRepo struct {
 	oauth2TokenProviderRepo
-	provider *model.ThirdpartyOAuth2ProviderEntity
+	service *model.ThirdpartyOAuth2ProviderEntity
 }
 
-func (r *resolvedProviderRepo) FindByProtectedResource(context.Context, string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
-	return r.provider, nil
+func (r *resolvedServiceRepo) FindByProtectedResource(context.Context, string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	return r.service, nil
 }
 
-func TestOAuth2TokenHandler_TokenExchangeSpanRecordsFailureReasonAndProvider(t *testing.T) {
+func TestOAuth2TokenHandler_TokenExchangeSpanRecordsFailureReasonAndService(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
 	prevTP := otel.GetTracerProvider()
@@ -2098,12 +2101,14 @@ func TestOAuth2TokenHandler_TokenExchangeSpanRecordsFailureReasonAndProvider(t *
 
 	privateKey, keySet := generateOAuth2TokenExchangeKeySet(t)
 	svcID := id.NewServiceID()
-	providerRepo := &resolvedProviderRepo{provider: &model.ThirdpartyOAuth2ProviderEntity{
-		ID: svcID, DisplayName: "Example Provider",
+	serviceRepo := &resolvedServiceRepo{service: &model.ThirdpartyOAuth2ProviderEntity{
+		ID: svcID, DisplayName: "Example Service",
 		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone, Secret: model.NewAbsentSecret(),
 	}}
+	logCapture := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
 	handler := &OAuth2TokenHandler{
-		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, providerRepo, &stubAgentRepo{err: ports.ErrNotFound}),
+		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, serviceRepo, &stubAgentRepo{err: ports.ErrNotFound}),
+		Logger:        slog.New(telemetry.NewContextHandler(logCapture)),
 	}
 	now := time.Now()
 	subjectToken := signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
@@ -2125,6 +2130,13 @@ func TestOAuth2TokenHandler_TokenExchangeSpanRecordsFailureReasonAndProvider(t *
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
 	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	logRecord, ok := findTokenEndpointLogRecord(*logCapture.records, "Token exchange failed")
+	require.True(t, ok, "token-exchange failures must be logged")
+	assert.Equal(t, slog.LevelError, logRecord.level)
+	assert.Equal(t, "no_grant", logRecord.attrs["failure_reason"])
+	assert.NotContains(t, logRecord.attrs, "service_id")
+	assert.NotContains(t, logRecord.attrs, "service_name")
+	assert.Equal(t, "https://api.example.com/resource", logRecord.attrs["resource"])
 
 	attrs := map[string]string{}
 	sawSpan := false
@@ -2139,7 +2151,7 @@ func TestOAuth2TokenHandler_TokenExchangeSpanRecordsFailureReasonAndProvider(t *
 	}
 	require.True(t, sawSpan, "tokenexchange.exchange span must be recorded")
 	assert.Equal(t, "no_grant", attrs["token_exchange.failure_reason"])
-	assert.Equal(t, svcID.String(), attrs["token_exchange.provider.id"])
-	assert.Equal(t, "Example Provider", attrs["token_exchange.provider.name"])
+	assert.Equal(t, svcID.String(), attrs["token_exchange.service.id"])
+	assert.Equal(t, "Example Service", attrs["token_exchange.service.name"])
 	assert.Equal(t, "access_denied", attrs["token_exchange.error_code"])
 }

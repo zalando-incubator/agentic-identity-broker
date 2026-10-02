@@ -209,7 +209,7 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 			if reason := tokenErrForSpan.FailureReason(); reason != "" {
 				span.SetAttributes(attribute.String("token_exchange.failure_reason", string(reason)))
 			}
-			setProviderSpanAttributes(span, tokenErrForSpan.Provider())
+			setServiceSpanAttributes(span, tokenErrForSpan.Service())
 		}
 		if h.Logger != nil {
 			logAttrs := []any{
@@ -225,13 +225,16 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 				if details := tokenErrForLog.Details(); details != "" {
 					logAttrs = append(logAttrs, "details", details)
 				}
+				if reason := tokenErrForLog.FailureReason(); reason != "" {
+					logAttrs = append(logAttrs, "failure_reason", string(reason))
+				}
 			}
 			h.Logger.ErrorContext(ctx, "Token exchange failed", logAttrs...)
 		}
 		h.handleTokenExchangeError(w, err)
 		return
 	}
-	setProviderSpanAttributes(span, response.Provider)
+	setServiceSpanAttributes(span, response.Service)
 
 	body, err := json.Marshal(response) // #nosec G117 -- OAuth2 token response is serialized for its direct HTTP response, not logging.
 	if err != nil {
@@ -412,13 +415,13 @@ func tokenEndpointStatus(code string) int {
 	}
 }
 
-func setProviderSpanAttributes(span trace.Span, provider tokenexchange.ProviderRef) {
-	if provider.ID.IsZero() {
+func setServiceSpanAttributes(span trace.Span, service tokenexchange.ServiceRef) {
+	if service.ID.IsZero() {
 		return
 	}
 	span.SetAttributes(
-		attribute.String("token_exchange.provider.id", provider.ID.String()),
-		attribute.String("token_exchange.provider.name", provider.Name),
+		attribute.String("token_exchange.service.id", service.ID.String()),
+		attribute.String("token_exchange.service.name", service.Name),
 	)
 }
 

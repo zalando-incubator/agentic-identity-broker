@@ -27,15 +27,15 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 		refreshExpired bool
 		oauthError     string
 	}{
-		{name: "provider answers invalid_grant", status: 400, contentType: "application/json", body: `{"error":"invalid_grant"}`, hasRefresh: true, refreshExpired: true, oauthError: "invalid_grant"},
-		{name: "provider answers invalid_client", status: 401, contentType: "application/json", body: `{"error":"invalid_client"}`, hasRefresh: true, oauthError: "invalid_client"},
-		{name: "provider answers non-JSON 503", status: 503, contentType: "text/html", body: "<html>unavailable</html>", hasRefresh: true},
+		{name: "service answers invalid_grant", status: 400, contentType: "application/json", body: `{"error":"invalid_grant"}`, hasRefresh: true, refreshExpired: true, oauthError: "invalid_grant"},
+		{name: "service answers invalid_client", status: 401, contentType: "application/json", body: `{"error":"invalid_client"}`, hasRefresh: true, oauthError: "invalid_client"},
+		{name: "service answers non-JSON 503", status: 503, contentType: "text/html", body: "<html>unavailable</html>", hasRefresh: true},
 		{name: "stored refresh token expired", hasRefresh: true, storedExpired: true, refreshExpired: true},
 		{name: "no refresh token stored"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			service, _, sessions, _, _, providers := setupServiceWithConfig(t, nil)
+			service, _, sessions, _, _, services := setupServiceWithConfig(t, nil)
 			principal := id.Principal("user@example.com")
 			serviceID := id.NewServiceID()
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -49,9 +49,9 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 				_, _ = fmt.Fprint(w, tc.body)
 			}))
 			defer upstream.Close()
-			provider := createTestService(serviceID)
-			provider.Endpoints.TokenEndpoint = upstream.URL
-			require.NoError(t, providers.Create(ctx, provider))
+			thirdpartyService := createTestService(serviceID)
+			thirdpartyService.Endpoints.TokenEndpoint = upstream.URL
+			require.NoError(t, services.Create(ctx, thirdpartyService))
 
 			enc := newTestEncryption(t)
 			encContext := domainencryption.NewServiceBranchKeySubject(serviceID).EncryptionContext()

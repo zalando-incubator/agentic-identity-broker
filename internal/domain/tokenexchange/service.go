@@ -168,11 +168,11 @@ func NewTokenExchangeService(
 // - T077: Include service_id and re-auth hint in error_description
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
 func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (_ *TokenExchangeResponse, err error) {
-	var provider ProviderRef
+	var serviceRef ServiceRef
 	defer func() {
 		var tokenErr *TokenExchangeError
-		if !provider.ID.IsZero() && errors.As(err, &tokenErr) {
-			err = tokenErr.WithProvider(provider)
+		if !serviceRef.ID.IsZero() && errors.As(err, &tokenErr) {
+			err = tokenErr.WithService(serviceRef)
 		}
 	}()
 
@@ -243,7 +243,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		}
 		return nil, NewServerErrorWithCause("failed to lookup service by resource URI", err)
 	}
-	provider = ProviderRef{ID: service.ID, Name: service.DisplayName}
+	serviceRef = ServiceRef{ID: service.ID, Name: service.DisplayName}
 
 	// Step 9: Verify user has granted agent access to service (T059-T065)
 	// CRITICAL (T078): Grant verification MUST occur BEFORE session check
@@ -358,7 +358,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		serverErr := NewServerErrorWithCause("failed to get valid access token", err)
 		var rejected *oauth2session.RefreshRejectedError
 		if errors.As(err, &rejected) {
-			reason := FailureReasonProviderRejected
+			reason := FailureReasonServiceRejected
 			if errors.Is(err, oauth2session.ErrRefreshTokenExpired) {
 				reason = FailureReasonRefreshTokenExpired
 			}
@@ -422,7 +422,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	}
 	response.Principal = principal
 	response.AgentID = agent.ID.String()
-	response.Provider = provider
+	response.Service = serviceRef
 
 	return response, nil
 }
