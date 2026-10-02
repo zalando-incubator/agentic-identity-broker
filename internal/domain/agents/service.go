@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -18,6 +22,9 @@ type Service struct {
 	providerService   ServiceRequirementValidator
 	logger            *slog.Logger
 	multiAgentEnabled bool
+	ledger            *ledger.Service
+	dependents        ports.AgentDependentRepository
+	credentials       ports.ClientCredentialRepository
 }
 
 // ServiceRequirementValidator validates that service requirements reference existing services
@@ -32,7 +39,16 @@ func NewService(
 	providerService ServiceRequirementValidator,
 	logger *slog.Logger,
 	multiAgentEnabled bool,
+	recorder *ledger.Service,
+	dependents ports.AgentDependentRepository,
+	credentials ports.ClientCredentialRepository,
 ) *Service {
+	if recorder == nil {
+		panic("agent recorder is required")
+	}
+	if dependents == nil || credentials == nil {
+		panic("agent cascade repositories are required")
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -41,6 +57,9 @@ func NewService(
 		providerService:   providerService,
 		logger:            logger,
 		multiAgentEnabled: multiAgentEnabled,
+		ledger:            recorder,
+		dependents:        dependents,
+		credentials:       credentials,
 	}
 }
 
@@ -82,7 +101,12 @@ func (s *Service) Create(ctx context.Context, agent *storage.Agent) error {
 		}
 	}
 
-	if err := s.repo.Create(ctx, agent); err != nil {
+	if err := s.ledger.WithTransaction(ctx, ports.StorageTransactionHintsFromContext(ctx), func(txCtx context.Context) error {
+		if err := s.repo.Create(txCtx, agent); err != nil {
+			return err
+		}
+		return s.recordAgent(txCtx, "agent-registered", agent.ID)
+	}); err != nil {
 		return err
 	}
 
@@ -95,41 +119,43 @@ func (s *Service) Create(ctx context.Context, agent *storage.Agent) error {
 // clearClientID is true, client_id is set to nil regardless of the existing value.
 // When multiAgentEnabled is false, uniqueness is enforced for the effective client_id.
 func (s *Service) Update(ctx context.Context, agentID id.AgentID, agent *storage.Agent, clearClientID bool) error {
-	existing, err := s.repo.Get(ctx, agentID)
+	err := s.ledger.WithTransaction(ctx, ports.StorageTransactionHintsFromContext(ctx), func(txCtx context.Context) error {
+		existing, err := s.repo.Get(txCtx, agentID)
+		if err != nil {
+			return err
+		}
+		agent.ID = agentID
+		if agent.ClearCanonicalID {
+			agent.CanonicalID = nil
+		} else if agent.CanonicalID == nil {
+			agent.CanonicalID = existing.CanonicalID
+		}
+		agent.CreatedAt = existing.CreatedAt
+		if agent.ClientID == nil && !clearClientID {
+			agent.ClientID = existing.ClientID
+		}
+		if err := agent.Validate(); err != nil {
+			return storage.NewStorageError("Update", storage.ErrorKindValidation, err, err.Error())
+		}
+		if err := s.providerService.ValidateServiceRequirements(txCtx, agent.ServiceRequirements); err != nil {
+			return err
+		}
+		if !s.multiAgentEnabled && agent.ClientID != nil {
+			if err := s.checkClientIDUniqueness(txCtx, *agent.ClientID, &agentID); err != nil {
+				return err
+			}
+		}
+		if agentConfigurationEqual(existing, agent) {
+			return nil
+		}
+		if err := s.repo.Update(txCtx, agent); err != nil {
+			return err
+		}
+		return s.recordAgent(txCtx, "agent-updated", agent.ID)
+	})
 	if err != nil {
 		return err
 	}
-
-	agent.ID = agentID
-	if agent.ClearCanonicalID {
-		agent.CanonicalID = nil
-	} else if agent.CanonicalID == nil {
-		agent.CanonicalID = existing.CanonicalID
-	}
-	agent.CreatedAt = existing.CreatedAt
-
-	if agent.ClientID == nil && !clearClientID {
-		agent.ClientID = existing.ClientID
-	}
-
-	if err := agent.Validate(); err != nil {
-		return storage.NewStorageError("Update", storage.ErrorKindValidation, err, err.Error())
-	}
-
-	if err := s.providerService.ValidateServiceRequirements(ctx, agent.ServiceRequirements); err != nil {
-		return err
-	}
-
-	if !s.multiAgentEnabled && agent.ClientID != nil {
-		if err := s.checkClientIDUniqueness(ctx, *agent.ClientID, &agentID); err != nil {
-			return err
-		}
-	}
-
-	if err := s.repo.Update(ctx, agent); err != nil {
-		return err
-	}
-
 	s.logger.Info("agent updated", "agent_id", agent.ID, "client_id", agent.ClientID)
 	return nil
 }
@@ -161,7 +187,39 @@ func (s *Service) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, 
 
 // Delete removes an agent by ID.
 func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
-	if err := s.repo.Delete(ctx, agentID); err != nil {
+	discovered, err := s.loadDependents(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	subjects := discovered.subjects()
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	for subject := range subjects {
+		hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: subject})
+	}
+	err = s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		if _, err := s.repo.Get(txCtx, agentID); err != nil {
+			if ports.IsNotFoundErr(err) {
+				return nil
+			}
+			return err
+		}
+		captured, err := s.loadDependents(txCtx, agentID)
+		if err != nil {
+			return err
+		}
+		if !captured.coveredBy(subjects) {
+			return storage.NewStorageError("DeleteAgent", storage.ErrorKindConflict, nil, "cascade subject discovery changed")
+		}
+		captured.credential, err = s.credentials.GetByAgentID(txCtx, agentID)
+		if err != nil && !ports.IsNotFoundErr(err) {
+			return err
+		}
+		if err := s.repo.Delete(txCtx, agentID); err != nil {
+			return err
+		}
+		return s.recordCascade(txCtx, agentID, captured)
+	})
+	if err != nil {
 		return err
 	}
 	s.logger.Info("agent deleted", "agent_id", agentID)
@@ -189,4 +247,81 @@ func (s *Service) checkClientIDUniqueness(ctx context.Context, clientID id.Clien
 		)
 	}
 	return nil
+}
+
+func (s *Service) recordAgent(ctx context.Context, eventType string, agentID id.AgentID) error {
+	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, model.BusinessEvent{
+		OccurredAt: time.Now().UTC(), AgentID: agentID,
+		Actor: model.BusinessEventActor{Kind: "admin"}, Data: map[string]any{},
+	})
+	if err != nil {
+		return err
+	}
+	return s.ledger.Record(ctx, event)
+}
+
+func agentConfigurationEqual(left, right *storage.Agent) bool {
+	return optionalEqual(left.CanonicalID, right.CanonicalID) &&
+		optionalEqual(left.ClientID, right.ClientID) && optionalEqual(left.ExternalID, right.ExternalID) &&
+		left.DisplayName == right.DisplayName && left.Description == right.Description &&
+		optionalEqual(left.GovernanceURL, right.GovernanceURL) &&
+		optionalEqual(left.UserDocumentationURL, right.UserDocumentationURL) &&
+		optionalEqual(left.AgentInterfaceURL, right.AgentInterfaceURL) &&
+		sameSet(left.RedirectURIs, right.RedirectURIs) && sameSet(left.AllowedScopes, right.AllowedScopes) &&
+		sameSet(left.ClientURIs, right.ClientURIs) && sameSet(left.PermissionSets, right.PermissionSets) &&
+		serviceRequirementsEqual(left.ServiceRequirements, right.ServiceRequirements)
+}
+
+func optionalEqual[T comparable](left, right *T) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
+}
+
+func sameSet[T comparable](left, right []T) bool {
+	if slices.Equal(left, right) {
+		return true
+	}
+	if len(left) != len(right) {
+		return false
+	}
+	for _, entry := range left {
+		if !slices.Contains(right, entry) {
+			return false
+		}
+	}
+	for _, entry := range right {
+		if !slices.Contains(left, entry) {
+			return false
+		}
+	}
+	return true
+}
+
+func serviceRequirementsEqual(left, right []storage.ServiceRequirement) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for _, requirement := range left {
+		index := slices.IndexFunc(right, func(other storage.ServiceRequirement) bool { return other.ServiceID == requirement.ServiceID })
+		if index < 0 || right[index].RequirementType != requirement.RequirementType ||
+			right[index].RequireAllScopes != requirement.RequireAllScopes || !sameSet(requirement.RequiredScopes, right[index].RequiredScopes) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) recordDependent(ctx context.Context, eventType string, facts model.BusinessEvent) error {
+	facts.OccurredAt = time.Now().UTC()
+	facts.Actor = model.BusinessEventActor{Kind: "admin"}
+	if facts.Data == nil {
+		facts.Data = map[string]any{}
+	}
+	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, facts)
+	if err != nil {
+		return err
+	}
+	return s.ledger.Record(ctx, event)
 }

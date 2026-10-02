@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
@@ -58,6 +59,8 @@ type Service struct {
 	psService       PermissionSetQuerier
 	sessionRepo     ports.UserSessionRepository
 	logger          *slog.Logger
+	ledger          *ledger.Service
+	expirations     ports.UserGrantExpirationRepository
 }
 
 // NewService creates a new ConsentService.
@@ -68,7 +71,9 @@ func NewService(
 	sessionRepo ports.UserSessionRepository,
 	psService PermissionSetQuerier,
 	logger *slog.Logger,
+	recorder *ledger.Service,
 ) *Service {
+	expirations, _ := grantRepo.(ports.UserGrantExpirationRepository)
 	return &Service{
 		agentRepo:       agentRepo,
 		providerService: providerService,
@@ -76,6 +81,8 @@ func NewService(
 		sessionRepo:     sessionRepo,
 		psService:       psService,
 		logger:          logger,
+		ledger:          recorder,
+		expirations:     expirations,
 	}
 }
 
@@ -347,52 +354,45 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 		}
 	}
 
-	// Check for existing grant (upsert semantics)
-	existingGrant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, req.Principal, req.AgentID)
-	if err != nil && !errors.Is(err, ports.ErrNotFound) {
-		return nil, fmt.Errorf("failed to find existing grant: %w", err)
-	}
-
 	var grant *storage.UserGrant
-	if existingGrant != nil {
-		if grantMatchesRequest(existingGrant, req) {
-			return existingGrant.Copy(), nil
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: req.Principal})
+	err = s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		existing, err := s.grantRepo.FindByPrincipalAndAgent(txCtx, req.Principal, req.AgentID)
+		if err != nil && !ports.IsNotFoundErr(err) {
+			return fmt.Errorf("failed to find existing grant: %w", err)
 		}
-
-		// Update existing grant (FR-013)
-		existingGrant.ValidUntil = req.ValidUntil
-		existingGrant.GrantedPermissionSets = req.GrantedPermissionSets
-		existingGrant.UpdatedAt = time.Now()
-
-		if err := existingGrant.Validate(); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrGrantValidation, err)
+		if existing != nil && grantMatchesRequest(existing, req) {
+			grant = existing
+			return nil
 		}
-
-		if err := s.grantRepo.Update(ctx, existingGrant); err != nil {
-			return nil, fmt.Errorf("failed to update grant: %w", err)
+		now := time.Now().UTC()
+		eventName := "grant-created"
+		if existing != nil {
+			grant = existing
+			grant.ValidUntil, grant.GrantedPermissionSets, grant.UpdatedAt = req.ValidUntil, req.GrantedPermissionSets, now
+			if err := grant.Validate(); err != nil {
+				return fmt.Errorf("%w: %w", ErrGrantValidation, err)
+			}
+			if err := s.grantRepo.Update(txCtx, grant); err != nil {
+				return fmt.Errorf("failed to update grant: %w", err)
+			}
+			eventName = "grant-updated"
+		} else {
+			grant = &storage.UserGrant{ID: id.NewGrantID(), Principal: req.Principal, AgentID: req.AgentID,
+				ValidUntil: req.ValidUntil, GrantedPermissionSets: req.GrantedPermissionSets, CreatedAt: now, UpdatedAt: now}
+			if err := grant.ValidateForCreate(); err != nil {
+				return fmt.Errorf("%w: %w", ErrGrantValidation, err)
+			}
+			if err := s.grantRepo.Create(txCtx, grant); err != nil {
+				return fmt.Errorf("failed to create grant: %w", err)
+			}
 		}
-		grant = existingGrant
-	} else {
-		// Create new grant (FR-011)
-		grant = &storage.UserGrant{
-			ID:                    id.NewGrantID(),
-			Principal:             req.Principal,
-			AgentID:               req.AgentID,
-			ValidUntil:            req.ValidUntil,
-			GrantedPermissionSets: req.GrantedPermissionSets,
-			CreatedAt:             time.Now(),
-			UpdatedAt:             time.Now(),
-		}
-
-		if err := grant.ValidateForCreate(); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrGrantValidation, err)
-		}
-
-		if err := s.grantRepo.Create(ctx, grant); err != nil {
-			return nil, fmt.Errorf("failed to create grant: %w", err)
-		}
+		return s.recordGrant(txCtx, eventName, grant, now)
+	})
+	if err != nil {
+		return nil, err
 	}
-
 	return grant.Copy(), nil
 }
 
@@ -566,23 +566,39 @@ func validUntilMatches(left, right *time.Time) bool {
 }
 
 func permissionSetsMatch(left, right []storage.GrantedPermissionSetEntry) bool {
-	return slices.EqualFunc(left, right, func(l, r storage.GrantedPermissionSetEntry) bool {
-		return l.PermissionSetID == r.PermissionSetID &&
-			slices.Equal(l.IncludedServiceIDs, r.IncludedServiceIDs)
-	})
+	if len(left) != len(right) {
+		return false
+	}
+	for _, entry := range left {
+		match := slices.IndexFunc(right, func(candidate storage.GrantedPermissionSetEntry) bool {
+			return candidate.PermissionSetID == entry.PermissionSetID
+		})
+		if match < 0 || len(entry.IncludedServiceIDs) != len(right[match].IncludedServiceIDs) {
+			return false
+		}
+		for _, serviceID := range entry.IncludedServiceIDs {
+			if !slices.Contains(right[match].IncludedServiceIDs, serviceID) {
+				return false
+			}
+		}
+		for _, serviceID := range right[match].IncludedServiceIDs {
+			if !slices.Contains(entry.IncludedServiceIDs, serviceID) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // RevokeConsent deletes a user grant (FR-014).
 // Idempotent: returns nil if the grant doesn't exist (absence is not an error).
 // Used by the POST /grants path with empty tokens.
 func (s *Service) RevokeConsent(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	if err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID); err != nil {
-		if errors.Is(err, ports.ErrNotFound) {
-			return nil // idempotent: absence is not an error
-		}
-		return fmt.Errorf("failed to revoke consent: %w", err)
+	_, err := s.revokeGrant(ctx, principal, agentID)
+	if errors.Is(err, ErrGrantNotFound) {
+		return nil
 	}
-	return nil
+	return err
 }
 
 // RevokeConsentForPrincipal revokes the authenticated user's grant for the given agent (FR-014).
@@ -592,37 +608,128 @@ func (s *Service) RevokeConsent(ctx context.Context, principal id.Principal, age
 // - Is NOT idempotent: absence of grant returns ErrGrantNotFound (handler maps to 404)
 // - Emits a structured audit log on success with action, principal, agent_id, and grant_id
 func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	// Phase 1: look up the grant to capture the ID for the audit log.
-	grant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agentID)
+	grant, err := s.revokeGrant(ctx, principal, agentID)
 	if err != nil {
-		if errors.Is(err, ports.ErrNotFound) {
-			return fmt.Errorf("%w", ErrGrantNotFound)
-		}
-		return fmt.Errorf("failed to find grant: %w", err)
+		return err
 	}
-
-	// Phase 2: delete the grant.
-	if err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID); err != nil {
-		if errors.Is(err, ports.ErrNotFound) {
-			// Concurrent revocation raced us — treat as not found.
-			return fmt.Errorf("%w", ErrGrantNotFound)
-		}
-		return fmt.Errorf("failed to revoke consent: %w", err)
-	}
-
 	s.logger.Info("grant revoked",
 		"action", "grant_revoked",
 		"principal", principal,
 		"agent_id", agentID,
 		"grant_id", grant.ID)
-
 	return nil
+}
+
+func (s *Service) revokeGrant(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	var grant *storage.UserGrant
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	err := s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		var err error
+		grant, err = s.grantRepo.FindByPrincipalAndAgent(txCtx, principal, agentID)
+		if ports.IsNotFoundErr(err) || (err == nil && grant == nil) {
+			return ErrGrantNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("failed to find grant: %w", err)
+		}
+		if err := s.grantRepo.DeleteByPrincipalAndAgentID(txCtx, principal, agentID); err != nil {
+			if ports.IsNotFoundErr(err) {
+				return ErrGrantNotFound
+			}
+			return fmt.Errorf("failed to revoke consent: %w", err)
+		}
+		return s.recordGrant(txCtx, "grant-revoked", grant, time.Now().UTC())
+	})
+	if err != nil {
+		return nil, err
+	}
+	return grant, nil
+}
+
+func (s *Service) recordGrant(ctx context.Context, name string, grant *storage.UserGrant, occurredAt time.Time) error {
+	principal, actorID := grant.Principal, grant.Principal.String()
+	actor := model.BusinessEventActor{Kind: "user", ID: &actorID}
+	if name == "grant-expired" {
+		system := "broker-lifecycle"
+		actor = model.BusinessEventActor{Kind: "system", ID: &system}
+	}
+	permissionIDs := make([]id.PermissionSetID, len(grant.GrantedPermissionSets))
+	for i, entry := range grant.GrantedPermissionSets {
+		permissionIDs[i] = entry.PermissionSetID
+	}
+	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+name, model.BusinessEvent{
+		OccurredAt: occurredAt.UTC(), Subject: &principal, Actor: actor,
+		AgentID: grant.AgentID, GrantID: grant.ID, PermissionSetIDs: permissionIDs, Data: map[string]any{},
+	})
+	if err != nil {
+		return err
+	}
+	return s.ledger.Record(ctx, event)
+}
+
+func (s *Service) RecognizeGrantExpiration(ctx context.Context, grant *storage.UserGrant) error {
+	if grant == nil || grant.IsActive() {
+		return nil
+	}
+	if s.expirations == nil {
+		return errors.New("grant expiration repository is required")
+	}
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: grant.Principal})
+	return s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		current, err := s.grantRepo.FindByPrincipalAndAgent(txCtx, grant.Principal, grant.AgentID)
+		if ports.IsNotFoundErr(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if current == nil || current.IsActive() {
+			return nil
+		}
+		won, err := s.expirations.RecordExpiration(txCtx, current.ID, *current.ValidUntil)
+		if err != nil {
+			return err
+		}
+		if !won {
+			return nil
+		}
+		return s.recordGrant(txCtx, "grant-expired", current, *current.ValidUntil)
+	})
+}
+
+func (s *Service) recognizePrincipalExpirations(ctx context.Context, principal id.Principal) error {
+	if s.expirations == nil {
+		return errors.New("grant expiration repository is required")
+	}
+	for {
+		candidates, err := s.expirations.ListUnrecordedExpiredForPrincipal(ctx, principal, time.Now().UTC(), 200)
+		if err != nil {
+			return err
+		}
+		if len(candidates) == 0 {
+			return nil
+		}
+		for _, grant := range candidates {
+			if err := s.RecognizeGrantExpiration(ctx, grant); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // GetActiveGrants retrieves all active grants for a principal and agent.
 // Filters expired grants per FR-019.
 // Returns empty slice if no active grants exist (not an error per FR-012).
 func (s *Service) GetActiveGrants(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.UserGrant, error) {
+	grant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agentID)
+	if err != nil && !ports.IsNotFoundErr(err) {
+		return nil, err
+	}
+	if err := s.RecognizeGrantExpiration(ctx, grant); err != nil {
+		return nil, err
+	}
 	grants, err := s.grantRepo.ListByPrincipalAndAgent(ctx, principal, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list grants: %w", err)
@@ -671,6 +778,9 @@ func (s *Service) VerifyAgentAccess(ctx context.Context, principal id.Principal,
 
 	// Check grant is active (not expired)
 	if !grant.IsActive() {
+		if err := s.RecognizeGrantExpiration(ctx, grant); err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
 			ErrGrantExpired, grant.ValidUntil.Format(time.RFC3339), principal, agentID)
 	}
@@ -757,6 +867,13 @@ func (s *Service) GetUserGrants(ctx context.Context, principal id.Principal, age
 		return nil, ErrAgentNotFound
 	}
 
+	grant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agentID)
+	if err != nil && !ports.IsNotFoundErr(err) {
+		return nil, err
+	}
+	if err := s.RecognizeGrantExpiration(ctx, grant); err != nil {
+		return nil, err
+	}
 	// Fetch grants for this principal and agent
 	grants, err := s.grantRepo.ListByPrincipalAndAgent(ctx, principal, agentID)
 	if err != nil {
@@ -776,6 +893,9 @@ func (s *Service) GetUserGrants(ctx context.Context, principal id.Principal, age
 // Groups grants by agent_id and returns summary information for each agent.
 // Returns empty slice if no grants exist (not an error).
 func (s *Service) GetAgentDelegations(ctx context.Context, principal id.Principal) ([]AgentDelegation, error) {
+	if err := s.recognizePrincipalExpirations(ctx, principal); err != nil {
+		return nil, err
+	}
 	// Fetch all active grants for this principal
 	grants, err := s.grantRepo.ListByPrincipal(ctx, principal)
 	if err != nil {

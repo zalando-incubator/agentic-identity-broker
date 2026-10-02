@@ -39,9 +39,42 @@ type HealthChecker interface {
 
 // StorageTransactionManager supplies a context shared by participating repository operations.
 type StorageTransactionManager interface {
+	// BeginTX owns a new scope or joins its ambient owner; it never starts a second physical transaction.
 	BeginTX(ctx context.Context) (context.Context, error)
+	// Joined commit only completes that scope. The owner alone commits physically and releases effects.
 	Commit(ctx context.Context) error
+	// Joined rollback poisons the owner; a rollback-only owner cannot report a successful commit.
 	Rollback(ctx context.Context) error
+}
+
+type StorageTransactionIsolation uint8
+
+const (
+	StorageReadCommitted StorageTransactionIsolation = iota
+	StorageRepeatableRead
+	StorageSerializable
+)
+
+type StorageLifecycleGate uint8
+
+const (
+	StorageLifecycleShared StorageLifecycleGate = iota
+	StorageLifecycleExclusive
+)
+
+type StorageSubjectGate struct {
+	Principal id.Principal
+	Exclusive bool
+}
+
+type StorageTransactionHints struct {
+	Isolation StorageTransactionIsolation
+	Lifecycle StorageLifecycleGate
+	Subjects  []StorageSubjectGate
+}
+
+type StorageTransactionEffects interface {
+	AfterCommit(func()) error
 }
 
 // StorageProvider composes repository facets for application assembly and decorators.
@@ -49,13 +82,16 @@ type StorageTransactionManager interface {
 type StorageProvider interface {
 	StorageTransactionManager
 	HealthChecker
+	BusinessEventSchemaConfiguration
 	Close(ctx context.Context) error
 	Users() UserRepository
 	Agents() AgentRepository
 	Services() ThirdpartyOAuth2ProviderRepository
 	UserGrants() UserGrantRepository
+	UserGrantExpirations() UserGrantExpirationRepository
 	UserSessions() UserSessionRepository
 	ToolApprovals() ToolApprovalRepository
+	ToolApprovalExpirations() ToolApprovalExpirationRepository
 	ToolApprovalQueries() ToolApprovalQueryRepository
 	ToolApprovalMetrics() ToolApprovalMetricsRepository
 	ApprovalSyncState() ApprovalSyncStateRepository
@@ -71,21 +107,46 @@ type StorageProvider interface {
 	BusinessEventDelivery() BusinessEventDeliveryRepository
 }
 
+type BusinessEventValidator interface {
+	Validate(event *model.BusinessEvent) (map[string]any, error)
+	ValidateQuery(query model.BusinessEventQuery) error
+}
+
+type BusinessEventSchemaConfiguration interface {
+	ConfigureBusinessEventValidation(validator BusinessEventValidator)
+}
+
 type BusinessEventRepository interface {
+	// Append joins the ambient owner, assigns recorded time once, and acquires lifecycle before subject gates.
 	Append(ctx context.Context, event *model.BusinessEvent, queueDelivery bool) error
+	// Query requires one exact principal or explicit no-subject selection and uses strict tuple continuation.
 	Query(ctx context.Context, query model.BusinessEventQuery) ([]*model.BusinessEvent, error)
 	Get(ctx context.Context, key model.BusinessEventKey) (*model.BusinessEvent, error)
 }
 
 type BusinessEventLifecycleRepository interface {
+	// Erasure is exact-subject and commits event/reference deletion together; it never records a replacement fact.
 	EraseSubject(ctx context.Context, subject id.Principal) (int64, error)
 	ApplyRetention(ctx context.Context) error
 	SetRetentionPolicy(ctx context.Context, retention time.Duration) error
 }
 
 type BusinessEventDeliveryRepository interface {
+	// ListDue returns only payload-free reference keys; dispatch alone may load the retained envelope.
 	ListDue(ctx context.Context, limit int) ([]model.BusinessEventKey, error)
+	// DispatchOne holds deletion barriers through synchronous export and acknowledgement commit.
 	DispatchOne(ctx context.Context, key model.BusinessEventKey, emit func(context.Context, *model.BusinessEvent) error) (bool, error)
+}
+
+type UserGrantExpirationRepository interface {
+	ListUnrecordedExpired(ctx context.Context, at time.Time, limit int) ([]*storage.UserGrant, error)
+	ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.UserGrant, error)
+	RecordExpiration(ctx context.Context, grantID id.GrantID, effectiveExpiry time.Time) (bool, error)
+}
+
+type ToolApprovalExpirationRepository interface {
+	ListUnrecordedExpired(ctx context.Context, at time.Time, limit int) ([]*storage.ToolApproval, error)
+	RecordExpiration(ctx context.Context, approvalID id.ApprovalID, effectiveExpiry time.Time) (bool, error)
 }
 
 // User represents a user entity in the storage layer.
@@ -160,6 +221,12 @@ type AgentRepository interface {
 // AgentCanonicalIDRepository resolves type-scoped canonical agent IDs.
 type AgentCanonicalIDRepository interface {
 	GetByCanonicalID(ctx context.Context, canonicalID string) (*storage.Agent, error)
+}
+
+// AgentDependentRepository exposes retained business objects before agent deletion cascades.
+type AgentDependentRepository interface {
+	ListGrantsByAgent(ctx context.Context, agentID id.AgentID) ([]*storage.UserGrant, error)
+	ListApprovalsByAgent(ctx context.Context, agentID id.AgentID) ([]*storage.ToolApproval, error)
 }
 
 // UserGrantRepository defines storage operations for user grant entities.
@@ -324,6 +391,8 @@ type ToolApprovalRepository interface {
 	// Uses partial unique index for deduplication (principal, agent_id, tool_name, arguments_hash)
 	// where status=pending AND consumed=false.
 	// Returns the existing record if a duplicate is found (idempotent).
+	// An expired duplicate remains pending until its owning expiration marker is recorded;
+	// the domain records the expiry and calls Create again in the same transaction.
 	Create(ctx context.Context, approval *storage.ToolApproval) (*storage.ToolApproval, error)
 
 	// Get retrieves a tool approval by ID.

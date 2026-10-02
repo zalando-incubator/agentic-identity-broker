@@ -14,6 +14,8 @@ import (
 	"github.com/ory/fosite/handler/pkce"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/oidcscope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -37,6 +39,7 @@ type Provider struct {
 
 	config *fosite.Config
 	logger *slog.Logger
+	ledger *ledger.Service
 }
 
 // NewProvider constructs the OAuth2 server provider with fosite handlers.
@@ -52,8 +55,12 @@ func NewProvider(
 	refreshTokenTTL time.Duration,
 	tokenClaimsExpression string,
 	logger *slog.Logger,
-	transactions ...ports.StorageTransactionManager,
+	recorder *ledger.Service,
+	transactions ports.StorageTransactionManager,
 ) (*Provider, error) {
+	if recorder == nil || transactions == nil {
+		return nil, fmt.Errorf("token recorder and storage transactions are required")
+	}
 	// Compile token claims CEL expression at startup (FR-013b: fail if invalid)
 	customClaimsEval, err := NewTokenClaimsEvaluator(tokenClaimsExpression)
 	if err != nil {
@@ -72,7 +79,7 @@ func NewProvider(
 	refreshStrategy := &RandomRefreshTokenStrategy{}
 
 	// Storage adapters
-	storage := NewFositeStorage(codeRepo, refreshRepo, pkceRepo, credRepo, clientResolver, logger, transactions...)
+	storage := NewFositeStorage(codeRepo, refreshRepo, pkceRepo, credRepo, clientResolver, logger, transactions)
 
 	config := &fosite.Config{
 		AuthorizeCodeLifespan:          60 * time.Second,
@@ -122,6 +129,7 @@ func NewProvider(
 		refreshStrategy: refreshStrategy,
 		config:          config,
 		logger:          logger,
+		ledger:          recorder,
 	}, nil
 }
 
@@ -139,7 +147,8 @@ func (p *Provider) IssueImpersonationToken(ctx context.Context, input ports.Impe
 // HandleClientCredentials processes a client_credentials grant type request.
 // Scope validation and token generation are fully delegated to fosite's ccHandler.
 func (p *Provider) HandleClientCredentials(ctx context.Context, clientID string, secret string, requestedScope string) (resp *ports.TokenResponse, err error) {
-	defer func() { err = translateFositeError(err) }()
+	facts := model.BusinessEvent{Actor: model.BusinessEventActor{Kind: "agent"}}
+	defer p.finishTokenRequest(ctx, &facts, &err)
 
 	fositeClient, err := p.fositeStorage.GetClient(ctx, clientID)
 	if err != nil {
@@ -153,11 +162,14 @@ func (p *Provider) HandleClientCredentials(ctx context.Context, clientID string,
 	if !ok {
 		return nil, fosite.ErrInvalidClient.WithHintf("client_credentials grant requires a confidential client")
 	}
+	facts.AgentID = cc.agent.ID
 
 	authClient, err := p.clientAuth.Authenticate(ctx, cc.agent.ID, secret)
 	if err != nil {
 		return nil, err
 	}
+	actorID := authClient.Agent.ID.String()
+	facts.Actor.ID = &actorID
 
 	client := &confidentialClient{clientID: clientID, agent: authClient.Agent, credential: authClient.Credential}
 	scopes := fosite.Arguments(oauth2.SplitScope(requestedScope))
@@ -183,17 +195,9 @@ func (p *Provider) HandleClientCredentials(ctx context.Context, clientID string,
 		req.GrantScope(scope)
 	}
 
-	fositeResp := fosite.NewAccessResponse()
-	if err := p.ccHandler.PopulateTokenEndpointResponse(ctx, req, fositeResp); err != nil {
-		return nil, err
-	}
-
-	return &ports.TokenResponse{
-		AccessToken: fositeResp.GetAccessToken(),
-		TokenType:   "Bearer",
-		ExpiresIn:   int64(p.config.AccessTokenLifespan.Seconds()),
-		Scope:       strings.Join(req.GetGrantedScopes(), " "),
-	}, nil
+	return p.issueToken(ctx, req, facts, func(txCtx context.Context, response fosite.AccessResponder) error {
+		return p.ccHandler.PopulateTokenEndpointResponse(txCtx, req, response)
+	})
 }
 
 // HandleAuthorize processes an authorization endpoint request using the agent's UUID
@@ -299,7 +303,8 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 	redirectURI string,
 	codeVerifier string,
 ) (tokenResp *ports.TokenResponse, err error) {
-	defer func() { err = translateFositeError(err) }()
+	facts := model.BusinessEvent{Actor: model.BusinessEventActor{Kind: "agent"}}
+	defer p.finishTokenRequest(ctx, &facts, &err)
 
 	fositeClient, err := p.fositeStorage.GetClient(ctx, clientID)
 	if err != nil {
@@ -320,16 +325,20 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 
 	switch bc := fositeClient.(type) {
 	case *confidentialClient:
+		facts.AgentID = bc.agent.ID
 		authedClient, err := p.clientAuth.Authenticate(ctx, bc.agent.ID, secret)
 		if err != nil {
 			return nil, err
 		}
+		actorID := authedClient.Agent.ID.String()
+		facts.Actor.ID = &actorID
 		if authedClient.Credential.AgentID != authCode.AgentID {
 			return nil, fosite.ErrInvalidGrant.WithHintf("authorization code was issued to a different client credential")
 		}
 		// Rebuild client with authenticated credential
 		fositeClient = &confidentialClient{clientID: clientID, agent: authedClient.Agent, credential: authedClient.Credential}
 	case *publicClient:
+		facts.AgentID = bc.agent.ID
 		if bc.agent.ID != authCode.AgentID {
 			return nil, fosite.ErrInvalidGrant.WithHintf("authorization code was issued to a different client")
 		}
@@ -364,31 +373,38 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 		}
 		return nil, err
 	}
-	if err := p.pkceHandler.HandleTokenEndpointRequest(ctx, req); err != nil {
-		return nil, err
-	}
-
-	fositeResp := fosite.NewAccessResponse()
-	if err := p.authCodeHandler.PopulateTokenEndpointResponse(ctx, req, fositeResp); err != nil {
-		if errors.Is(err, fosite.ErrInvalidGrant) {
-			return nil, fosite.ErrInvalidGrant.WithWrap(err)
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: authCode.Principal})
+	var validationErr error
+	var response *ports.TokenResponse
+	err = p.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		validationErr = p.pkceHandler.HandleTokenEndpointRequest(txCtx, req)
+		if validationErr != nil {
+			// Fosite consumes the one-shot challenge even when validation fails.
+			return nil
 		}
+		facts.Subject = &authCode.Principal
+		actorID := authCode.AgentID.String()
+		facts.Actor.ID = &actorID
+		var issueErr error
+		response, issueErr = p.issueToken(txCtx, req, facts, func(populateCtx context.Context, fositeResp fosite.AccessResponder) error {
+			if err := p.authCodeHandler.PopulateTokenEndpointResponse(populateCtx, req, fositeResp); err != nil {
+				if errors.Is(err, fosite.ErrInvalidGrant) {
+					return fosite.ErrInvalidGrant.WithWrap(err)
+				}
+				return err
+			}
+			return p.pkceHandler.PopulateTokenEndpointResponse(populateCtx, req, fositeResp)
+		})
+		return issueErr
+	})
+	if err != nil {
 		return nil, err
 	}
-	if err := p.pkceHandler.PopulateTokenEndpointResponse(ctx, req, fositeResp); err != nil {
-		return nil, err
+	if validationErr != nil {
+		return nil, validationErr
 	}
-
-	resp := &ports.TokenResponse{
-		AccessToken: fositeResp.GetAccessToken(),
-		TokenType:   "Bearer",
-		ExpiresIn:   int64(p.config.AccessTokenLifespan.Seconds()),
-		Scope:       strings.Join(req.GetGrantedScopes(), " "),
-	}
-	if refreshToken, ok := fositeResp.GetExtra("refresh_token").(string); ok {
-		resp.RefreshToken = refreshToken
-	}
-	return resp, nil
+	return response, nil
 }
 
 // HandleRefreshToken processes a refresh_token grant for locally-minted tokens.
@@ -399,7 +415,8 @@ func (p *Provider) HandleRefreshToken(
 	refreshToken string,
 	scope string,
 ) (tokenResp *ports.TokenResponse, err error) {
-	defer func() { err = translateFositeError(err) }()
+	facts := model.BusinessEvent{Actor: model.BusinessEventActor{Kind: "agent"}}
+	defer p.finishTokenRequest(ctx, &facts, &err)
 
 	fositeClient, err := p.fositeStorage.GetClient(ctx, clientID)
 	if err != nil {
@@ -411,12 +428,16 @@ func (p *Provider) HandleRefreshToken(
 
 	switch bc := fositeClient.(type) {
 	case *confidentialClient:
+		facts.AgentID = bc.agent.ID
 		authedClient, err := p.clientAuth.Authenticate(ctx, bc.agent.ID, secret)
 		if err != nil {
 			return nil, err
 		}
+		actorID := authedClient.Agent.ID.String()
+		facts.Actor.ID = &actorID
 		fositeClient = &confidentialClient{clientID: clientID, agent: authedClient.Agent, credential: authedClient.Credential}
 	case *publicClient:
+		facts.AgentID = bc.agent.ID
 		// Public clients authenticate by client_id only.
 	default:
 		return nil, fosite.ErrServerError.WithDebugf("unexpected client type %T", fositeClient)
@@ -440,21 +461,73 @@ func (p *Provider) HandleRefreshToken(
 		return nil, err
 	}
 
-	fositeResp := fosite.NewAccessResponse()
-	if err := p.refreshHandler.PopulateTokenEndpointResponse(ctx, req, fositeResp); err != nil {
+	subject := id.Principal(req.GetSession().GetSubject())
+	if !subject.IsZero() {
+		facts.Subject = &subject
+	}
+	actorID := facts.AgentID.String()
+	facts.Actor.ID = &actorID
+	return p.issueToken(ctx, req, facts, func(txCtx context.Context, response fosite.AccessResponder) error {
+		return p.refreshHandler.PopulateTokenEndpointResponse(txCtx, req, response)
+	})
+}
+
+func (p *Provider) issueToken(ctx context.Context, req fosite.AccessRequester, facts model.BusinessEvent, populate func(context.Context, fosite.AccessResponder) error) (*ports.TokenResponse, error) {
+	response := fosite.NewAccessResponse()
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	if facts.Subject != nil {
+		hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: *facts.Subject})
+	}
+	err := p.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		if err := populate(txCtx, response); err != nil {
+			return err
+		}
+		return p.recordTokenOutcome(txCtx, "token-issued", facts)
+	})
+	if err != nil {
 		return nil, err
 	}
+	result := &ports.TokenResponse{
+		AccessToken: response.GetAccessToken(), TokenType: "Bearer",
+		ExpiresIn: int64(p.config.AccessTokenLifespan.Seconds()),
+		Scope:     strings.Join(req.GetGrantedScopes(), " "),
+	}
+	if refreshToken, ok := response.GetExtra("refresh_token").(string); ok {
+		result.RefreshToken = refreshToken
+	}
+	return result, nil
+}
 
-	resp := &ports.TokenResponse{
-		AccessToken: fositeResp.GetAccessToken(),
-		TokenType:   "Bearer",
-		ExpiresIn:   int64(p.config.AccessTokenLifespan.Seconds()),
-		Scope:       strings.Join(req.GetGrantedScopes(), " "),
+func (p *Provider) recordTokenOutcome(ctx context.Context, eventType string, facts model.BusinessEvent) error {
+	facts.OccurredAt = time.Now().UTC()
+	if facts.Data == nil {
+		facts.Data = map[string]any{}
 	}
-	if newRefreshToken, ok := fositeResp.GetExtra("refresh_token").(string); ok {
-		resp.RefreshToken = newRefreshToken
+	event, err := p.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, facts)
+	if err != nil {
+		return err
 	}
-	return resp, nil
+	return p.ledger.Record(ctx, event)
+}
+
+func (p *Provider) finishTokenRequest(ctx context.Context, facts *model.BusinessEvent, requestErr *error) {
+	*requestErr = translateFositeError(*requestErr)
+	if *requestErr == nil {
+		return
+	}
+	reason := "internal_failure"
+	switch {
+	case errors.Is(*requestErr, ErrInvalidClient):
+		reason = "authentication_failed"
+	case errors.Is(*requestErr, ErrInvalidGrant), errors.Is(*requestErr, ErrInvalidScope):
+		reason = "authorization_failed"
+	case errors.Is(*requestErr, ErrInvalidRequest):
+		reason = "invalid_request"
+	}
+	facts.Data = map[string]any{"reason_code": reason}
+	if err := p.recordTokenOutcome(ctx, "token-request-failed", *facts); err != nil {
+		*requestErr = translateFositeError(fosite.ErrServerError.WithDebug("business event recording failed"))
+	}
 }
 
 func containsRedirectURI(list []string, item string) bool {

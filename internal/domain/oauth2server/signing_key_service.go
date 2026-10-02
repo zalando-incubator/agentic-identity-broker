@@ -18,6 +18,8 @@ import (
 
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -34,6 +36,8 @@ const jwksGracePeriod = 2 * jwksCacheMaxAge
 
 const bootstrapRecoveryProbeTimeout = 5 * time.Second
 
+type signingBootstrapActorKey struct{}
+
 // SigningKeyService manages signing key lifecycle including generation,
 // encryption, storage, and JWKS building.
 type SigningKeyService struct {
@@ -42,6 +46,7 @@ type SigningKeyService struct {
 	encryption           ports.EncryptionPort
 	branchKeyManager     ports.BranchKeyManager
 	logger               *slog.Logger
+	ledger               *ledger.Service
 }
 
 // NewSigningKeyService creates a new SigningKeyService.
@@ -51,13 +56,18 @@ func NewSigningKeyService(
 	encryption ports.EncryptionPort,
 	branchKeyManager ports.BranchKeyManager,
 	logger *slog.Logger,
+	recorder *ledger.Service,
 ) *SigningKeyService {
+	if recorder == nil {
+		panic("signing selection recorder is required")
+	}
 	return &SigningKeyService{
 		repo:                 repo,
 		bootstrapCoordinator: bootstrapCoordinator,
 		encryption:           encryption,
 		branchKeyManager:     branchKeyManager,
 		logger:               logger,
+		ledger:               recorder,
 	}
 }
 
@@ -123,7 +133,12 @@ func (s *SigningKeyService) generateAndStore(ctx context.Context, algorithm stri
 	}
 
 	if makeCurrent {
-		if err := s.repo.CreateAndSetCurrent(ctx, key); err != nil {
+		if err := s.ledger.WithTransaction(ctx, ports.StorageTransactionHintsFromContext(ctx), func(txCtx context.Context) error {
+			if err := s.repo.CreateAndSetCurrent(txCtx, key); err != nil {
+				return err
+			}
+			return s.recordPromotion(txCtx, key)
+		}); err != nil {
 			s.warnOrphanedBranchKey("orphaned branch key after storage failure; manual cleanup required", kid, branchKeyID)
 			return nil, fmt.Errorf("failed to store and promote signing key: %w", err)
 		}
@@ -202,11 +217,29 @@ func (s *SigningKeyService) ListKeys(ctx context.Context) ([]*storage.SigningKey
 	return s.repo.ListActive(ctx)
 }
 
-// PromoteKey promotes a signing key and returns the updated key metadata.
-// Admin-driven promotion takes effect immediately because the target key is already
-// present in JWKS and the operator explicitly requested activation now.
+// PromoteKey immediately activates an existing key; repeated selection emits no new fact.
 func (s *SigningKeyService) PromoteKey(ctx context.Context, kid id.KeyID) (*storage.SigningKey, error) {
-	return s.repo.SetCurrent(ctx, kid, time.Now().UTC())
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Isolation = ports.StorageSerializable
+	var selected *storage.SigningKey
+	err := s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		previous, err := s.repo.GetByKID(txCtx, kid)
+		if err != nil {
+			return err
+		}
+		selected, err = s.repo.SetCurrent(txCtx, kid, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if previous.IsCurrent {
+			return nil
+		}
+		return s.recordPromotion(txCtx, selected)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return selected, nil
 }
 
 // GetCurrent returns the active signing key used for token signing.
@@ -219,12 +252,7 @@ func (s *SigningKeyService) CountActive(ctx context.Context) (int, error) {
 	return s.repo.CountActive(ctx)
 }
 
-// EnsureInitialKey creates a single immediately-active signing key when none exist.
-// The repository-backed bootstrap lock serializes this check-and-create flow across
-// replicas so concurrent startup cannot generate multiple initial keys. The bootstrap
-// callback may call repository methods that open their own transactions; correctness
-// depends on every bootstrap caller acquiring the same lock before entering the
-// callback, not on reusing the outer lock transaction for the inner write path.
+// EnsureInitialKey creates one immediately usable key under the repository bootstrap owner.
 func (s *SigningKeyService) EnsureInitialKey(ctx context.Context, algorithm string) (*storage.SigningKey, bool, error) {
 	var created *storage.SigningKey
 
@@ -240,7 +268,8 @@ func (s *SigningKeyService) EnsureInitialKey(ctx context.Context, algorithm stri
 		// Bootstrap activates effectively immediately because no prior JWKS caches exist to
 		// invalidate. Backdate by one second so a just-created key is readable even when the
 		// broker clock is slightly ahead of PostgreSQL during concurrent startup.
-		created, err = s.generateAndStore(lockCtx, algorithm, true, time.Now().UTC().Add(-time.Second))
+		bootstrapCtx := context.WithValue(lockCtx, signingBootstrapActorKey{}, true)
+		created, err = s.generateAndStore(bootstrapCtx, algorithm, true, time.Now().UTC().Add(-time.Second))
 		if err != nil {
 			return fmt.Errorf("failed to generate initial signing key: %w", err)
 		}
@@ -427,4 +456,20 @@ func setJWKMetadata(jwkKey jwk.Key, kid id.KeyID, algorithm jwa.SignatureAlgorit
 		return fmt.Errorf("failed to set use: %w", err)
 	}
 	return nil
+}
+
+func (s *SigningKeyService) recordPromotion(ctx context.Context, key *storage.SigningKey) error {
+	actor := model.BusinessEventActor{Kind: "admin"}
+	if bootstrap, _ := ctx.Value(signingBootstrapActorKey{}).(bool); bootstrap {
+		systemID := "broker-lifecycle"
+		actor = model.BusinessEventActor{Kind: "system", ID: &systemID}
+	}
+	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+"signing-key-promoted", model.BusinessEvent{
+		OccurredAt: time.Now().UTC(), Actor: actor,
+		Data: map[string]any{"signing_key_id": key.ID.String(), "activates_at": key.ActivatesAt.UTC().Format(time.RFC3339Nano)},
+	})
+	if err != nil {
+		return err
+	}
+	return s.ledger.Record(ctx, event)
 }

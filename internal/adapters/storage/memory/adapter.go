@@ -16,15 +16,17 @@ import (
 // Adapter implements storage repository and lifecycle helpers
 // using in-memory storage with sync.RWMutex for thread-safety.
 type Adapter struct {
-	mu    sync.RWMutex
-	users map[id.UserID]*ports.User
+	mu           sync.RWMutex
+	transactions *TransactionManager
+	users        map[id.UserID]*ports.User
 }
 
 // NewAdapter creates a new in-memory storage adapter.
 // Returns immediately (no I/O or initialization required).
-func NewAdapter() *Adapter {
+func NewAdapter(transactions *TransactionManager) *Adapter {
 	return &Adapter{
-		users: make(map[id.UserID]*ports.User),
+		transactions: transactions,
+		users:        make(map[id.UserID]*ports.User),
 	}
 }
 
@@ -55,6 +57,11 @@ func (a *Adapter) Initialize(ctx context.Context) error {
 // For in-memory storage: clears data and is idempotent.
 // Satisfies storage lifecycle expectations.
 func (a *Adapter) Close(ctx context.Context) error {
+	guard, gateErr := a.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	// Check context for cancellation
 	select {
 	case <-ctx.Done():
@@ -66,7 +73,10 @@ func (a *Adapter) Close(ctx context.Context) error {
 	defer a.mu.Unlock()
 
 	// Clear all data
-	a.users = make(map[id.UserID]*ports.User)
+	for userID := range a.users {
+		journalEntry(ctx, a.users, userID)
+		delete(a.users, userID)
+	}
 
 	return nil
 }
@@ -102,6 +112,11 @@ func (a *Adapter) HealthCheck(ctx context.Context) error {
 // Satisfies ports.UserRepository interface.
 // Returns error if user ID already exists (conflict).
 func (a *Adapter) CreateUser(ctx context.Context, user *ports.User) error {
+	guard, gateErr := a.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	// Check context for cancellation
 	select {
 	case <-ctx.Done():
@@ -157,6 +172,7 @@ func (a *Adapter) CreateUser(ctx context.Context, user *ports.User) error {
 
 	// Copy user to prevent external mutation
 	userCopy := *user
+	journalEntry(ctx, a.users, user.ID)
 	a.users[user.ID] = &userCopy
 
 	return nil
@@ -166,6 +182,11 @@ func (a *Adapter) CreateUser(ctx context.Context, user *ports.User) error {
 // Satisfies ports.UserRepository interface.
 // Returns StorageError with Kind=NotFound if user not found.
 func (a *Adapter) GetUser(ctx context.Context, userID id.UserID) (*ports.User, error) {
+	guard, gateErr := a.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	// Check context for cancellation
 	select {
 	case <-ctx.Done():
@@ -209,6 +230,11 @@ func (a *Adapter) GetUser(ctx context.Context, userID id.UserID) (*ports.User, e
 // Satisfies ports.UserRepository interface.
 // Returns error if user ID not found.
 func (a *Adapter) UpdateUser(ctx context.Context, user *ports.User) error {
+	guard, gateErr := a.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	// Check context for cancellation
 	select {
 	case <-ctx.Done():
@@ -264,6 +290,7 @@ func (a *Adapter) UpdateUser(ctx context.Context, user *ports.User) error {
 
 	// Copy user to prevent external mutation
 	userCopy := *user
+	journalEntry(ctx, a.users, user.ID)
 	a.users[user.ID] = &userCopy
 
 	return nil
@@ -273,6 +300,11 @@ func (a *Adapter) UpdateUser(ctx context.Context, user *ports.User) error {
 // Satisfies ports.UserRepository interface.
 // Idempotent: safe to delete non-existent users.
 func (a *Adapter) DeleteUser(ctx context.Context, userID id.UserID) error {
+	guard, gateErr := a.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	// Check context for cancellation
 	select {
 	case <-ctx.Done():
@@ -298,6 +330,7 @@ func (a *Adapter) DeleteUser(ctx context.Context, userID id.UserID) error {
 	defer a.mu.Unlock()
 
 	// Remove if exists (idempotent - no error if not found)
+	journalEntry(ctx, a.users, userID)
 	delete(a.users, userID)
 
 	return nil
@@ -307,6 +340,11 @@ func (a *Adapter) DeleteUser(ctx context.Context, userID id.UserID) error {
 // Satisfies ports.UserRepository interface.
 // Returns empty slice if no users match (not an error).
 func (a *Adapter) ListUsers(ctx context.Context, filter *ports.UserFilter) ([]*ports.User, error) {
+	guard, gateErr := a.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	// Check context for cancellation
 	select {
 	case <-ctx.Done():

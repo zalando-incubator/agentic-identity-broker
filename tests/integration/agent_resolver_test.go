@@ -10,6 +10,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/cascadefixture"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +28,7 @@ func (n *noopServiceReqValidator) ValidateServiceRequirements(_ context.Context,
 // resolver fails loudly when two agents share the same client_id (a state reachable
 // when multi_agent_client was previously enabled).
 func TestResolveAgentIDByClientID_AmbiguousClientID(t *testing.T) {
-	repo := memrepo.NewAgentRepository()
+	repo := memrepo.NewAgentRepository(memrepo.NewTransactionManager())
 	ctx := context.Background()
 
 	shared := id.ClientID("shared-client-id")
@@ -41,7 +43,7 @@ func TestResolveAgentIDByClientID_AmbiguousClientID(t *testing.T) {
 	require.NoError(t, repo.Create(ctx, agent1))
 	require.NoError(t, repo.Create(ctx, agent2))
 
-	svc := agents.NewService(repo, &noopServiceReqValidator{}, slog.Default(), false)
+	svc := agents.NewService(repo, &noopServiceReqValidator{}, slog.Default(), false, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 
 	_, err := svc.ResolveUniqueByClientID(ctx, shared)
 	require.Error(t, err)
@@ -51,7 +53,7 @@ func TestResolveAgentIDByClientID_AmbiguousClientID(t *testing.T) {
 // TestResolveAgentIDByClientID_UnambiguousClientID verifies the happy path:
 // a unique client_id resolves to the registered agent's UUID.
 func TestResolveAgentIDByClientID_UnambiguousClientID(t *testing.T) {
-	repo := memrepo.NewAgentRepository()
+	repo := memrepo.NewAgentRepository(memrepo.NewTransactionManager())
 	ctx := context.Background()
 	permissionSets := []storage.AgentPermissionSetEntry{{
 		PermissionSetID: id.NewPermissionSetID(),
@@ -63,7 +65,7 @@ func TestResolveAgentIDByClientID_UnambiguousClientID(t *testing.T) {
 	agent.PermissionSets = permissionSets
 	require.NoError(t, repo.Create(ctx, agent))
 
-	svc := agents.NewService(repo, &noopServiceReqValidator{}, slog.Default(), false)
+	svc := agents.NewService(repo, &noopServiceReqValidator{}, slog.Default(), false, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 
 	resolved, err := svc.ResolveUniqueByClientID(ctx, "unique-client")
 	require.NoError(t, err)

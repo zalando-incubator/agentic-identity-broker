@@ -24,6 +24,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type capturedTokenExchangeRequest struct {
@@ -456,7 +457,7 @@ func newSecurityTestOAuth2SessionService(
 
 	encryption := newTestEncryption(t)
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(
-		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
+		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager()),
 		encryption,
 		newNoopBranchKeyManager(),
 		nil,
@@ -469,17 +470,7 @@ func newSecurityTestOAuth2SessionService(
 	config.MaxRetries = maxRetries
 	config.RetryBaseDelay = time.Millisecond
 
-	return oauth2session.NewOAuth2SessionService(
-		providerService,
-		memory.NewInMemoryUserSessionRepository(),
-		memory.NewUserGrantRepository(),
-		memory.NewAgentRepository(),
-		encryption,
-		&http.Client{},
-		domjwe.New(key),
-		config,
-		logger,
-	), providerService
+	return oauth2session.NewOAuth2SessionService(providerService, memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager()), memory.NewUserGrantRepository(memory.NewTransactionManager()), memory.NewAgentRepository(memory.NewTransactionManager()), encryption, &http.Client{}, domjwe.New(key), config, logger, ledgerfixture.NewRecorder()), providerService
 }
 
 func assertSecurityEventsMarkPublicClient(t *testing.T, logs string, wantedEvents ...string) {

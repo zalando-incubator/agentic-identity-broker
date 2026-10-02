@@ -29,13 +29,14 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 func TestListSessions_Success(t *testing.T) {
 	// Setup
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 	ctx := context.Background()
 
 	principal := "user@example.com"
@@ -121,9 +122,9 @@ func TestListSessions_Success(t *testing.T) {
 
 func TestListSessions_MissingPrincipal(t *testing.T) {
 	// Setup
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	grantRepo := memory.NewUserGrantRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 
 	service := createOAuth2SessionService(
 		t,
@@ -154,9 +155,9 @@ func TestListSessions_MissingPrincipal(t *testing.T) {
 
 func TestListSessions_EmptySessions(t *testing.T) {
 	// Setup
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	grantRepo := memory.NewUserGrantRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 
 	service := createOAuth2SessionService(
 		t,
@@ -198,9 +199,9 @@ func TestListSessions_EmptySessions(t *testing.T) {
 func TestAuthorizeEndpoint_Success(t *testing.T) {
 	// Setup
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	// Create third-party service
 	serviceUUID := id.NewServiceID()
@@ -286,9 +287,9 @@ func TestAuthorizeEndpoint_Success(t *testing.T) {
 }
 
 func TestAuthorizeEndpoint_MissingPrincipal(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	service := createOAuth2SessionService(
 		t,
@@ -322,9 +323,9 @@ func TestAuthorizeEndpoint_MissingPrincipal(t *testing.T) {
 }
 
 func TestAuthorizeEndpoint_ServiceNotFound(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 	jweKey := createTestJWEKey(t)
 
 	config := oauth2session.DefaultConfig()
@@ -364,9 +365,9 @@ func TestAuthorizeEndpoint_ServiceNotFound(t *testing.T) {
 
 func TestAuthorizeEndpoint_InvalidRedirectURI(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	// Create service
 	serviceUUID := id.NewServiceID()
@@ -446,9 +447,9 @@ func TestAuthorizeEndpoint_InvalidRedirectURI(t *testing.T) {
 
 func TestAuthorizeEndpoint_VerifyAuthorizationURL(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	// Create service
 	serviceUUID := id.NewServiceID()
@@ -545,9 +546,9 @@ func TestAuthorizeEndpoint_PKCEPresent(t *testing.T) {
 
 func TestCallbackEndpoint_Success(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	// Create service
 	serviceUUID := id.NewServiceID()
@@ -613,9 +614,9 @@ func TestCallbackEndpoint_Success(t *testing.T) {
 }
 
 func TestCallbackEndpoint_MissingPrincipal(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	service := createOAuth2SessionService(t,
 		serviceRepo,
@@ -647,9 +648,9 @@ func TestCallbackEndpoint_MissingPrincipal(t *testing.T) {
 }
 
 func TestCallbackEndpoint_InvalidStateToken(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 	jweKey := createTestJWEKey(t)
 
 	service := createOAuth2SessionService(t,
@@ -715,9 +716,9 @@ func TestCallbackEndpoint_OAuth2Error(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sessionRepo := memory.NewInMemoryUserSessionRepository()
-			serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-			grantRepo := memory.NewUserGrantRepository()
+			sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+			serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+			grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 			jweKey := createTestJWEKey(t)
 
 			service := createOAuth2SessionService(t,
@@ -759,9 +760,9 @@ func TestCallbackEndpoint_OAuth2Error(t *testing.T) {
 }
 
 func TestCallbackEndpoint_MissingCode(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 	jweKey := createTestJWEKey(t)
 
 	service := createOAuth2SessionService(t,
@@ -795,9 +796,9 @@ func TestCallbackEndpoint_MissingCode(t *testing.T) {
 }
 
 func TestCallbackEndpoint_MissingState(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	service := createOAuth2SessionService(t,
 		serviceRepo,
@@ -856,9 +857,9 @@ func TestCallbackEndpoint_TokenExchangeWithMockThirdParty(t *testing.T) {
 
 func TestDeleteSession_SuccessfullyTerminatesSessionWithStatusOK(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	// Create service
 	serviceUUID := id.NewServiceID()
@@ -926,9 +927,9 @@ func TestDeleteSession_SuccessfullyTerminatesSessionWithStatusOK(t *testing.T) {
 }
 
 func TestDeleteSession_ReturnsNotFoundWhenSessionDoesntExist(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 	jweKey := createTestJWEKey(t)
 
 	service := createOAuth2SessionService(t,
@@ -960,9 +961,9 @@ func TestDeleteSession_ReturnsNotFoundWhenSessionDoesntExist(t *testing.T) {
 }
 
 func TestDeleteSession_ReturnsUnauthorizedWhenXRemoteUserMissing(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	service := createOAuth2SessionService(t,
 		serviceRepo,
@@ -993,9 +994,9 @@ func TestDeleteSession_ReturnsUnauthorizedWhenXRemoteUserMissing(t *testing.T) {
 
 func TestDeleteSession_ReturnsForbiddenWhenPrincipalDoesntMatch(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	// Create service
 	serviceUUID := id.NewServiceID()
@@ -1065,9 +1066,9 @@ func TestDeleteSession_ReturnsForbiddenWhenPrincipalDoesntMatch(t *testing.T) {
 
 func TestDeleteSession_VerifiesSessionDeletedFromDatabase(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	// Create service
 	serviceUUID := id.NewServiceID()
@@ -1134,9 +1135,9 @@ func TestDeleteSession_VerifiesSessionDeletedFromDatabase(t *testing.T) {
 
 func TestDeleteSession_VerifiesTokensDeleted(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	// Create service
 	serviceUUID := id.NewServiceID()
@@ -1204,9 +1205,9 @@ func TestDeleteSession_VerifiesTokensDeleted(t *testing.T) {
 
 func TestRefreshSession_ReturnsRefreshedSummary(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 	principal := "user@example.com"
 	serviceUUID := id.NewServiceID()
 
@@ -1283,9 +1284,9 @@ func TestRefreshSession_ReturnsRefreshedSummary(t *testing.T) {
 }
 
 func TestRefreshSession_ReturnsNotFoundWhenSessionDoesntExist(t *testing.T) {
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 	service := createOAuth2SessionService(t,
 		serviceRepo,
 		sessionRepo,
@@ -1310,9 +1311,9 @@ func TestRefreshSession_ReturnsNotFoundWhenSessionDoesntExist(t *testing.T) {
 
 func TestRefreshSession_ReturnsConflictWhenRefreshTokenUnavailable(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 	principal := "user@example.com"
 	serviceUUID := id.NewServiceID()
 	expiry := time.Now().Add(time.Hour)
@@ -1353,9 +1354,9 @@ func TestRefreshSession_ReturnsConflictWhenRefreshTokenUnavailable(t *testing.T)
 
 func TestRefreshSession_ReturnsNotFoundForCrossPrincipalRequest(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 	serviceUUID := id.NewServiceID()
 
 	session := &storage.UserSession{
@@ -1393,9 +1394,9 @@ func TestRefreshSession_ReturnsNotFoundForCrossPrincipalRequest(t *testing.T) {
 
 func TestRefreshSession_ReturnsBadGatewayWhenProviderRefreshFails(t *testing.T) {
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	grantRepo := memory.NewUserGrantRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 	principal := "user@example.com"
 	serviceUUID := id.NewServiceID()
 
@@ -1556,12 +1557,12 @@ func setupTestRouter(handler *oauth2_sessions.Handler) *chi.Mux {
 
 func newSessionTestRouter(t *testing.T) (*chi.Mux, ports.UserSessionRepository) {
 	t.Helper()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
 	service := createOAuth2SessionService(
 		t,
-		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
+		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager()),
 		sessionRepo,
-		memory.NewUserGrantRepository(),
+		memory.NewUserGrantRepository(memory.NewTransactionManager()),
 		nil,
 		nil,
 		oauth2session.DefaultConfig(),
@@ -1580,9 +1581,9 @@ type sessionDetailIsolationFixture struct {
 func newSessionDetailIsolationFixture(t *testing.T) sessionDetailIsolationFixture {
 	t.Helper()
 	ctx := context.Background()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	grantRepo := memory.NewUserGrantRepository()
-	agentRepo := memory.NewAgentRepository()
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
+	agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
 	serviceID := id.NewServiceID()
 	principalA := id.Principal("principal-a@example.com")
 	principalB := id.Principal("principal-b@example.com")
@@ -1623,7 +1624,7 @@ func newSessionDetailIsolationFixture(t *testing.T) sessionDetailIsolationFixtur
 	}
 	service := createOAuth2SessionServiceWithAgentRepository(
 		t,
-		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
+		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager()),
 		sessionRepo,
 		grantRepo,
 		agentRepo,
@@ -1703,7 +1704,7 @@ func createOAuth2SessionService(
 	config oauth2session.Config,
 ) *oauth2session.OAuth2SessionService {
 	t.Helper()
-	agentRepo := memory.NewAgentRepository()
+	agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
 	return createOAuth2SessionServiceWithAgentRepository(t, serviceRepo, sessionRepo, grantRepo, agentRepo, encryption, jweKey, config)
 }
 
@@ -1731,17 +1732,7 @@ func createOAuth2SessionServiceWithAgentRepository(
 		slog.Default(),
 	)
 
-	return oauth2session.NewOAuth2SessionService(
-		providerService,
-		sessionRepo,
-		grantRepo,
-		agentRepo,
-		encryption,
-		&http.Client{},
-		domjwe.New(jweKey),
-		config,
-		slog.Default(),
-	)
+	return oauth2session.NewOAuth2SessionService(providerService, sessionRepo, grantRepo, agentRepo, encryption, &http.Client{}, domjwe.New(jweKey), config, slog.Default(), ledgerfixture.NewRecorder())
 }
 
 func createTestJWEKey(t *testing.T) jwk.Key {

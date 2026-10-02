@@ -1,6 +1,6 @@
 # Storage and Operational Contracts
 
-These are planned internal/operational interfaces, not new HTTP endpoints. The domain service validates registry, authorization context, and lifecycle semantics; handlers never append directly to repositories.
+The broker implements these internal/operational interfaces without new HTTP endpoints. The domain service validates registry, authorization context, and lifecycle semantics. Handlers never append directly to repositories. The [validation evidence](../quickstart.md) records results and the open deployment-profile performance gate.
 
 ## Stakeholder review
 
@@ -30,6 +30,9 @@ All repository interfaces live in `internal/ports/storage.go`; shared event/quer
 | BusinessEventDeliveryRepository | ListDue reference identifiers; DispatchOne under barriers using a synchronous callback; no payload returned outside the barrier for later sending |
 | BusinessEventRecorder | Domain service contract for recording registered facts and independent outcomes; recipes determine identity, outcome and allowed data, not the HTTP handler |
 | UserGrantExpirationRepository, ToolApprovalExpirationRepository | Separate ISP interfaces implemented by the existing grant and approval adapters, because `UserGrantRepository` already exceeds the method budget. List expired objects whose `expiration_recorded_for` differs from their effective expiry, and conditionally set that marker in the ambient transaction, reporting whether this call recognized the expiry |
+
+Grant delegation reads use `ListUnrecordedExpiredForPrincipal` on the grant expiration facet. Apply its exact-principal predicate before the bounded limit; another principal's expired rows must not hide candidates or cause unrelated recognition. This keeps the grant expiration facet at three methods and does not change public grant filtering or add an expiration scheduler.
+
 
 Use existing `StorageError` categories for validation/conflict/not-found/connection/timeout. Do not wrap raw event values in error messages. Keep each repository under seven methods. Repository implementations cannot import each other or the telemetry adapter; the app worker passes a synchronous callback to delivery storage, and the callback invokes the already-wired telemetry adapter. This is a transaction-scoped operation callback, not a custom telemetry port.
 

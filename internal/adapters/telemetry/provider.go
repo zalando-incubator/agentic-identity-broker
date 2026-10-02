@@ -226,20 +226,7 @@ func buildGRPCProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 	// failure is logged as a warning and lp is nil.
 	var lp *sdklog.LoggerProvider
 	if cfg.Logs.Enabled {
-		logOpts := []otlploggrpc.Option{
-			otlploggrpc.WithEndpoint(cfg.Exporter.Endpoint),
-			otlploggrpc.WithTimeout(cfg.Exporter.Timeout),
-			otlploggrpc.WithHeaders(cfg.Exporter.Headers),
-		}
-		if insecure {
-			logOpts = append(logOpts, otlploggrpc.WithInsecure())
-		} else {
-			logOpts = append(logOpts, otlploggrpc.WithTLSCredentials(tlsCreds))
-		}
-		if cfg.Exporter.Compression == ports.OTLPCompressionGzip {
-			logOpts = append(logOpts, otlploggrpc.WithCompressor("gzip"))
-		}
-		logExp, logErr := otlploggrpc.New(ctx, logOpts...)
+		logExp, logErr := buildLogExporter(ctx, cfg, tlsCreds)
 		if logErr != nil {
 			logger.Warn("telemetry: log gRPC exporter failed to initialize, OTLP log pipeline disabled", "error", logErr)
 		} else {
@@ -300,15 +287,7 @@ func buildHTTPProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 	// failure is logged as a warning and lp is nil.
 	var lp *sdklog.LoggerProvider
 	if cfg.Logs.Enabled {
-		logOpts := []otlploghttp.Option{
-			otlploghttp.WithEndpointURL(cfg.Exporter.Endpoint),
-			otlploghttp.WithTimeout(cfg.Exporter.Timeout),
-			otlploghttp.WithHeaders(cfg.Exporter.Headers),
-		}
-		if cfg.Exporter.Compression == ports.OTLPCompressionGzip {
-			logOpts = append(logOpts, otlploghttp.WithCompression(otlploghttp.GzipCompression))
-		}
-		logExp, logErr := otlploghttp.New(ctx, logOpts...)
+		logExp, logErr := buildLogExporter(ctx, cfg, nil)
 		if logErr != nil {
 			logger.Warn("telemetry: log HTTP exporter failed to initialize, OTLP log pipeline disabled", "error", logErr)
 		} else {
@@ -317,6 +296,45 @@ func buildHTTPProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 	}
 
 	return tp, mp, lp, nil
+}
+
+func buildLogExporter(ctx context.Context, cfg ports.TelemetryConfig, tlsCreds credentials.TransportCredentials) (sdklog.Exporter, error) {
+	switch cfg.Exporter.Protocol {
+	case ports.OTLPProtocolGRPC:
+		options := []otlploggrpc.Option{
+			otlploggrpc.WithEndpoint(cfg.Exporter.Endpoint),
+			otlploggrpc.WithTimeout(cfg.Exporter.Timeout),
+			otlploggrpc.WithHeaders(cfg.Exporter.Headers),
+		}
+		if cfg.Exporter.Insecure {
+			options = append(options, otlploggrpc.WithInsecure())
+		} else {
+			if tlsCreds == nil {
+				tlsCreds = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12}) //nolint:gosec // TLS 1.2 minimum matches the existing exporters.
+			}
+			options = append(options, otlploggrpc.WithTLSCredentials(tlsCreds))
+		}
+		if cfg.Exporter.Compression == ports.OTLPCompressionGzip {
+			options = append(options, otlploggrpc.WithCompressor("gzip"))
+		}
+		return otlploggrpc.New(ctx, options...)
+	case ports.OTLPProtocolHTTP, ports.OTLPProtocolHTTPS:
+		endpoint := cfg.Exporter.Endpoint
+		if cfg.Exporter.Protocol == ports.OTLPProtocolHTTPS && !strings.Contains(endpoint, "://") {
+			endpoint = "https://" + endpoint
+		}
+		options := []otlploghttp.Option{
+			otlploghttp.WithEndpointURL(endpoint),
+			otlploghttp.WithTimeout(cfg.Exporter.Timeout),
+			otlploghttp.WithHeaders(cfg.Exporter.Headers),
+		}
+		if cfg.Exporter.Compression == ports.OTLPCompressionGzip {
+			options = append(options, otlploghttp.WithCompression(otlploghttp.GzipCompression))
+		}
+		return otlploghttp.New(ctx, options...)
+	default:
+		return nil, fmt.Errorf("unsupported telemetry exporter protocol")
+	}
 }
 
 // buildTracerProvider constructs a TracerProvider with sampling and batching.

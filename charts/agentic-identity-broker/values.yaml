@@ -325,7 +325,7 @@ migration:
     sql: ""
     businessEvents:
       # -- Existing operational role for SELECT on ledger parent tables. Empty grants nothing.
-      # Role grants belong to the accepted ledger deployment contract, not the current grants template.
+      # The default grants script applies these roles. Custom grants.sql replaces that script.
       readerRole: ""
       # -- Existing operational role for EXECUTE on public.business_event_erase_subject(text). Empty grants nothing.
       # The chart does not create roles or grant this capability to the broker user.

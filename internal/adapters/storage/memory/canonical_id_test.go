@@ -16,7 +16,7 @@ func TestCanonicalIndexesInMemoryRepositories(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("agents replace remove and release canonical IDs", func(t *testing.T) {
-		repo := NewAgentRepository()
+		repo := NewAgentRepository(NewTransactionManager())
 		canonicalID := "research-agent"
 		agent := &storage.Agent{ID: id.NewAgentID(), CanonicalID: &canonicalID, DisplayName: "Research", Description: "Research agent", PermissionSets: testPermissionSets()}
 		require.NoError(t, repo.Create(ctx, agent))
@@ -39,7 +39,7 @@ func TestCanonicalIndexesInMemoryRepositories(t *testing.T) {
 	})
 
 	t.Run("permission sets isolate canonical IDs and batch lookup", func(t *testing.T) {
-		repo := NewPermissionSetRepository()
+		repo := NewPermissionSetRepository(NewTransactionManager())
 		canonicalID := "read-repository"
 		permissionSet := &storage.PermissionSet{ID: id.NewPermissionSetID(), CanonicalID: &canonicalID, Name: "Read", Description: "Read repository", ServiceScopes: []storage.ServiceScope{{ServiceID: id.NewServiceID(), RequirementType: storage.RequirementTypeOptional}}}
 		require.NoError(t, repo.Create(ctx, permissionSet))
@@ -52,7 +52,7 @@ func TestCanonicalIndexesInMemoryRepositories(t *testing.T) {
 	})
 
 	t.Run("services release canonical IDs after deletion", func(t *testing.T) {
-		repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+		repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 		canonicalID := "github-service"
 		service := &model.ThirdpartyOAuth2ProviderEntity{ID: id.NewServiceID(), CanonicalID: &canonicalID, DisplayName: "GitHub", ClientID: "github-client", Secret: model.NewEncryptedSecret([]byte("ciphertext")), IssuerURI: "https://github.com"}
 		require.NoError(t, repo.Create(ctx, service))

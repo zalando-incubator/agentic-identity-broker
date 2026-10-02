@@ -1,6 +1,6 @@
 # Agentic Identity Broker - Business Event Ledger Configuration
-# Accepted design: the ledger runtime is not implemented yet.
-# These commands require a broker build with ledger support.
+# Recording, retention, erasure, and recoverable telemetry are implemented.
+# Performance release acceptance still requires an operator-approved deployment profile.
 #
 # Local example only: in-memory storage is not durable across restarts.
 # The loopback listeners trust the configured local pre-authentication header.
@@ -8,6 +8,7 @@
 #
 # Default ledger configuration:
 #   export IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(openssl rand -base64 32)"
+#   export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"
 #   ./bin/agentic-identity-broker --config ./examples/config/business-event-ledger.yaml
 #
 # Shorter retention with disabled additional telemetry copies:

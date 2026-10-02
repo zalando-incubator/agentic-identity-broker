@@ -69,6 +69,13 @@ func run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create storage adapter: %w", err)
 	}
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), cfg.Server.Shutdown.Timeout)
+		defer closeCancel()
+		if err := storage.Close(closeCtx); err != nil {
+			logger.Error("Storage shutdown error", "error", err)
+		}
+	}()
 
 	// Build application with all dependencies using builder pattern
 	// Constitution Principle VI: Domain depends on ports, not adapters
@@ -438,6 +445,10 @@ func init() {
 	rootCmd.PersistentFlags().Int("server.admin.port", 0, "admin server port (default: 14000)")
 	rootCmd.PersistentFlags().String("server.admin.bind", "", "admin server bind address (default: ::)")
 	rootCmd.PersistentFlags().Duration("server.shutdown.timeout", 0, "graceful shutdown timeout (default: 30s)")
+
+	// Ledger retention and optional telemetry copies (recording itself is mandatory).
+	rootCmd.PersistentFlags().Duration("business_events.retention", 0, "business-event retention (default: 2160h)")
+	rootCmd.PersistentFlags().Bool("business_events.telemetry_copy_enabled", true, "copy business events to telemetry logs when telemetry and logs are enabled (default: true)")
 
 	// Request security-context configuration flags
 	rootCmd.PersistentFlags().Bool("request_context.trusted_proxy.enabled", false, "trust configured forwarded header for client IP derivation")

@@ -1,6 +1,6 @@
 # Business Event Ledger — Data Model
 
-**Design status**: Reviewed implementation design under accepted ADR 037 and the stakeholder-approved event/storage contracts. This is not an implemented database schema.
+**Implementation status**: The broker implements this model under accepted ADR 037 and the stakeholder-approved event/storage contracts. The [validation evidence](quickstart.md) records actual results. Performance release acceptance still requires an operator-approved deployment profile and passing measurements.
 
 ## Domain boundary
 

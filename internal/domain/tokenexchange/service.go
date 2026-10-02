@@ -12,6 +12,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtclaims"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
@@ -62,6 +64,7 @@ type TokenExchangeService struct {
 
 	// config provides token exchange configuration
 	config *ports.TokenExchangeConfig
+	ledger *ledger.Service
 }
 
 // NewTokenExchangeService creates a new token exchange service.
@@ -86,6 +89,7 @@ func NewTokenExchangeService(
 	permissionSetService *permissionset.Service,
 	agentRepository ports.AgentRepository,
 	config *ports.TokenExchangeConfig,
+	recorder *ledger.Service,
 ) (*TokenExchangeService, error) {
 	if jwtValidator == nil {
 		return nil, fmt.Errorf("jwtValidator cannot be nil")
@@ -111,6 +115,9 @@ func NewTokenExchangeService(
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
+	if recorder == nil {
+		return nil, fmt.Errorf("token recorder cannot be nil")
+	}
 
 	return &TokenExchangeService{
 		jwtValidator:         jwtValidator,
@@ -121,6 +128,7 @@ func NewTokenExchangeService(
 		permissionSetService: permissionSetService,
 		agentRepository:      agentRepository,
 		config:               config,
+		ledger:               recorder,
 	}, nil
 }
 
@@ -167,22 +175,38 @@ func NewTokenExchangeService(
 // - T076: Return invalid_grant when both access_token and refresh_token expired
 // - T077: Include service_id and re-auth hint in error_description
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
-func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (*TokenExchangeResponse, error) {
+func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (response *TokenExchangeResponse, err error) {
+	facts := model.BusinessEvent{Actor: model.BusinessEventActor{Kind: "agent"}}
+	denialReason := ""
+	failureReason := "internal_failure"
+	defer func() { s.completeExchange(ctx, facts, denialReason, failureReason, &response, &err) }()
 	// Step 1: Validate request structure
 	if err := req.Validate(); err != nil {
+		failureReason = "invalid_request"
 		return nil, err
 	}
 
 	// Step 2: Validate subject_token JWT
 	subjectTokenJWT, err := s.jwtValidator.ValidateSubjectToken(ctx, req.SubjectToken)
 	if err != nil {
+		if isExchangeRefusal(err) {
+			denialReason = "authentication_failed"
+		}
 		return nil, err
 	}
 
 	// Step 3: Validate client_assertion JWT
 	clientAssertionJWT, err := s.jwtValidator.ValidateClientAssertion(ctx, req.ClientAssertion)
 	if err != nil {
+		if isExchangeRefusal(err) {
+			denialReason = "authentication_failed"
+		}
 		return nil, err
+	}
+	callingPeer, _ := clientAssertionJWT.Subject()
+	if callingPeer != "" {
+		facts.Actor.ID = &callingPeer
+		facts.GatewayClientID = id.ClientID(callingPeer)
 	}
 
 	// Step 4: Extract principal from subject_token via CEL
@@ -191,19 +215,24 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	if err != nil {
 		return nil, err
 	}
+	subject := id.Principal(principal)
+	facts.Subject = &subject
 
 	// ADR 033 §3: finalize the request security context at the post-validation
 	// token-exchange seam. The subject-token principal (Actor) and the validated
 	// client_assertion subject (CallingPeer) are both known here. Finalizing before
 	// the authorization decision guarantees a denied exchange still carries
 	// actor/calling_peer on the security-sensitive failure audit path.
-	callingPeer, _ := clientAssertionJWT.Subject()
 	_, _ = security.FinalizeCaptureHolder(ctx, principal, callingPeer)
 
 	// Step 5: Extract agent_id from subject_token via CEL
 	agentID, err := s.celEvaluator.ExtractAgentID(subjectTokenClaims)
 	if err != nil {
 		return nil, err
+	}
+	parsedAgentID, parseErr := id.ParseAgentID(agentID)
+	if parseErr == nil {
+		facts.AgentID = parsedAgentID
 	}
 
 	// Step 6: Authorize privileged client via CEL expression evaluation
@@ -235,6 +264,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		}
 		return nil, NewServerErrorWithCause("failed to lookup service by resource URI", err)
 	}
+	facts.ServiceID = service.ID
 
 	// Step 9: Verify user has granted agent access to service (T059-T065)
 	// CRITICAL (T078): Grant verification MUST occur BEFORE session check
@@ -244,7 +274,6 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// T059: Agent ID extracted from subject_token (already done in Step 5)
 	// T060 (Feature 021): agentID is the broker-internal agent UUID (resolved by CEL).
 	// Parse it as UUID and look up by primary key — no GetByClientID needed.
-	parsedAgentID, parseErr := id.ParseAgentID(agentID)
 	if parseErr != nil {
 		return nil, NewInvalidRequestError(
 			fmt.Sprintf("agent_id %q extracted from subject_token is not a valid agent UUID", agentID),
@@ -253,6 +282,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	agent, err := s.agentRepository.Get(ctx, parsedAgentID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
+			denialReason = "authorization_failed"
 			return nil, NewAccessDeniedErrorWithDetails(
 				"user has not granted permission for this agent to access the requested service",
 				fmt.Sprintf("agent with id %q not found", agentID),
@@ -271,6 +301,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	if err != nil {
 		// Map ConsentService errors to TokenExchange errors
 		if errors.Is(err, consent.ErrAgentAccessDenied) {
+			denialReason = "authorization_failed"
 			// T063: User has not granted agent access
 			return nil, NewAccessDeniedErrorWithDetails(
 				"user has not granted permission for this agent to access the requested service",
@@ -278,6 +309,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 			)
 		}
 		if errors.Is(err, consent.ErrGrantExpired) {
+			denialReason = "authorization_failed"
 			// T065: User grant has expired
 			return nil, NewAccessDeniedErrorWithDetails(
 				"user grant has expired",
@@ -287,25 +319,39 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		// System/repository error
 		return nil, NewServerErrorWithCause("failed to verify user grant", err)
 	}
+	facts.GrantID = grant.ID
+	facts.Actor.OnBehalfOf = facts.Subject
+	facts.PermissionSetIDs = make([]id.PermissionSetID, len(grant.GrantedPermissionSets))
+	for i, permissionSet := range grant.GrantedPermissionSets {
+		facts.PermissionSetIDs[i] = permissionSet.PermissionSetID
+	}
 
 	// Step 9a: Authorize the requested service against the grant (FR-010, SR-007).
 	// Fail closed for every agent: the grant must cover the requested service before any
 	// session lookup or credential decryption. Agents that declare neither PermissionSets
 	// nor ServiceRequirements are not exempt.
 	if len(grant.GrantedPermissionSets) == 0 {
+		denialReason = "authorization_failed"
 		return nil, NewInvalidGrantError("grant has no permission set entries; re-consent required")
 	}
 	effectiveScopes, err := s.resolveEffectiveScopes(ctx, grant, agent)
 	if err != nil {
+		if isExchangeRefusal(err) {
+			denialReason = "authorization_failed"
+		}
 		return nil, err
 	}
 	serviceScopes, covered := effectiveScopes[service.ID]
 	if !covered {
+		denialReason = "authorization_failed"
 		return nil, NewInvalidGrantError(fmt.Sprintf(
 			"service %s is not authorized by any permission set in the grant; re-consent required",
 			service.ID,
 		))
 	}
+	// The grant covers this service: refresh may now record the verified initiating
+	// client acting for the represented principal, rather than the session owner.
+	ctx = ledger.WithWorkflowActor(ctx, facts.Actor)
 
 	// Step 10: Get valid access token with session metadata (with transparent refresh if needed)
 	// This single call handles:
@@ -318,6 +364,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// Per T076: invalid_grant if both tokens are expired
 	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(ctx, id.Principal(principal), service.ID)
 	if err != nil {
+		failureReason = "upstream_failed"
 		// Map oauth2session errors to RFC 8693 token exchange errors
 		if errors.Is(err, oauth2session.ErrSessionNotFound) {
 			// T075: No session exists for this principal+service combination
@@ -344,6 +391,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		// Other errors (refresh failed, decryption failed, etc)
 		return nil, NewServerErrorWithCause("failed to get valid access token", err)
 	}
+	facts.SessionID = sessionObj.ID
 
 	// Step 11: Validate the session's scopes cover the effective scopes for the requested
 	// service (FR-012, FR-013). Requires the session, so it runs after retrieval.
@@ -377,7 +425,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		expiresIn = int64(sessionObj.AccessTokenExpiresAt.Sub(now).Seconds())
 	}
 
-	response := NewTokenExchangeResponseFull(
+	response = NewTokenExchangeResponseFull(
 		accessToken,
 		sessionObj.TokenType,
 		AccessTokenType, // issued_token_type per RFC 8693
@@ -402,6 +450,41 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	response.AgentID = agent.ID.String()
 
 	return response, nil
+}
+
+func isExchangeRefusal(err error) bool {
+	var tokenErr *TokenExchangeError
+	return errors.As(err, &tokenErr) && tokenErr.Code() != "server_error"
+}
+
+func (s *TokenExchangeService) completeExchange(ctx context.Context, facts model.BusinessEvent, denialReason, failureReason string, response **TokenExchangeResponse, requestErr *error) {
+	eventType := "token-exchanged"
+	facts.OccurredAt = time.Now().UTC()
+	facts.Data = map[string]any{}
+	if *requestErr != nil {
+		eventType = "token-request-failed"
+		var tokenErr *TokenExchangeError
+		if errors.As(*requestErr, &tokenErr) {
+			switch tokenErr.Code() {
+			case "access_denied", "invalid_scope":
+				denialReason = "authorization_failed"
+			case "invalid_request", "invalid_target":
+				failureReason = "invalid_request"
+			}
+		}
+		if denialReason != "" {
+			eventType, failureReason = "token-exchange-denied", denialReason
+		}
+		facts.Data["reason_code"] = failureReason
+	}
+	event, recordErr := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, facts)
+	if recordErr == nil {
+		recordErr = s.ledger.Record(ctx, event)
+	}
+	if recordErr != nil {
+		*response = nil
+		*requestErr = NewServerError("failed to record token exchange outcome")
+	}
 }
 
 // resolveEffectiveScopes resolves permission sets from the grant and computes

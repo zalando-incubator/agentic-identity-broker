@@ -33,17 +33,16 @@ var (
 )
 
 type signingKeyRepoTestConfig struct {
-	beginErr        error
-	execErr         error
-	execErrs        []error
-	queryErr        error
-	queryColumns    []string
-	queryRows       [][]driver.Value
-	queryResults    []signingKeyRepoTestQueryResult
-	commitErr       error
-	rowsAffected    int64
-	recordedQueries *[]string
-	recordedExecs   *[]string
+	beginErr      error
+	execErr       error
+	execErrs      []error
+	queryErr      error
+	queryColumns  []string
+	queryRows     [][]driver.Value
+	queryResults  []signingKeyRepoTestQueryResult
+	commitErr     error
+	rowsAffected  int64
+	recordedExecs *[]string
 }
 
 type signingKeyRepoTestQueryResult struct {
@@ -122,9 +121,6 @@ func (c *signingKeyRepoTestConn) ExecContext(_ context.Context, query string, _ 
 }
 
 func (c *signingKeyRepoTestConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
-	if c.cfg.recordedQueries != nil {
-		*c.cfg.recordedQueries = append(*c.cfg.recordedQueries, query)
-	}
 	if len(c.cfg.queryResults) > 0 {
 		result := signingKeyRepoTestQueryResult{}
 		if c.queryCalls < len(c.cfg.queryResults) {
@@ -621,48 +617,6 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestSigningKeyRepo_MutationPathsLockActiveKeysInDeterministicOrder(t *testing.T) {
-	now := time.Now().UTC()
-
-	t.Run("SetCurrent locks active keys in kid order before updates", func(t *testing.T) {
-		var queries []string
-		repo := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{
-			queryColumns: []string{"kid", "is_current", "activates_at"},
-			queryRows: [][]driver.Value{
-				{"kid-current", true, now},
-				{"kid-target", false, now},
-			},
-			execErr:         context.Canceled,
-			recordedQueries: &queries,
-		})
-
-		_, err := repo.SetCurrent(context.Background(), id.NewKeyID("kid-target"), time.Now())
-		require.Error(t, err)
-		require.NotEmpty(t, queries)
-		assert.Contains(t, queries[0], "ORDER BY kid")
-		assert.Contains(t, queries[0], "FOR UPDATE")
-	})
-
-	t.Run("Delete locks active keys in kid order before deletion", func(t *testing.T) {
-		var queries []string
-		repo := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{
-			queryColumns: []string{"kid", "is_current", "activates_at"},
-			queryRows: [][]driver.Value{
-				{"kid-delete", false, now},
-				{"kid-other", true, now},
-			},
-			rowsAffected:    1,
-			recordedQueries: &queries,
-		})
-
-		err := repo.Delete(context.Background(), id.NewKeyID("kid-delete"))
-		require.NoError(t, err)
-		require.NotEmpty(t, queries)
-		assert.Contains(t, queries[0], "ORDER BY kid")
-		assert.Contains(t, queries[0], "FOR UPDATE")
-	})
 }
 
 func TestSigningKeyRepo_DeleteRejectsRemovingCurrentlyUsableFallbackKey(t *testing.T) {

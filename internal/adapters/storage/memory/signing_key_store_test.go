@@ -28,7 +28,7 @@ func testSigningKey(kid string, isCurrent bool) *storage.SigningKey {
 
 func TestSigningKeyStore_WithBootstrapLock(t *testing.T) {
 	t.Run("returns context error when already canceled", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -43,7 +43,7 @@ func TestSigningKeyStore_WithBootstrapLock(t *testing.T) {
 	})
 
 	t.Run("returns context error while waiting for held lock", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		lockHeld := make(chan struct{})
 		releaseLock := make(chan struct{})
 		firstDone := make(chan error, 1)
@@ -79,7 +79,7 @@ func TestSigningKeyStore_WithBootstrapLock(t *testing.T) {
 	})
 
 	t.Run("blocks non-bootstrap writes until the bootstrap flow completes", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		counted := make(chan struct{})
 		allowCreate := make(chan struct{})
 		bootstrapDone := make(chan error, 1)
@@ -120,7 +120,7 @@ func TestSigningKeyStore_WithBootstrapLock(t *testing.T) {
 
 func TestSigningKeyStore_SetCurrent(t *testing.T) {
 	t.Run("uses the provided activation time", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx := context.Background()
 		current := testSigningKey("current-kid", true)
 		other := testSigningKey("other-kid", false)
@@ -140,7 +140,7 @@ func TestSigningKeyStore_SetCurrent(t *testing.T) {
 
 func TestSigningKeyStore_Delete(t *testing.T) {
 	t.Run("rejects deleting the last active key", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx := context.Background()
 		key := testSigningKey("current-kid", true)
 		require.NoError(t, store.Create(ctx, key))
@@ -151,7 +151,7 @@ func TestSigningKeyStore_Delete(t *testing.T) {
 	})
 
 	t.Run("rejects deleting the current key when another key exists", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx := context.Background()
 		current := testSigningKey("current-kid", true)
 		other := testSigningKey("other-kid", false)
@@ -164,7 +164,7 @@ func TestSigningKeyStore_Delete(t *testing.T) {
 	})
 
 	t.Run("rejects deleting the currently usable fallback key during grace period", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx := context.Background()
 		fallback := testSigningKey("fallback-kid", false)
 		fallback.ActivatesAt = time.Now().UTC().Add(-time.Minute)
@@ -179,7 +179,7 @@ func TestSigningKeyStore_Delete(t *testing.T) {
 	})
 
 	t.Run("deletes a non-current key when another active key remains", func(t *testing.T) {
-		store := NewSigningKeyStore()
+		store := NewSigningKeyStore(NewTransactionManager())
 		ctx := context.Background()
 		current := testSigningKey("current-kid", true)
 		other := testSigningKey("other-kid", false)

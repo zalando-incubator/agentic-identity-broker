@@ -15,6 +15,7 @@ import (
 
 	"github.com/lestrrat-go/jwx/v4/jwk"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
@@ -24,6 +25,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,18 +50,11 @@ func newTestSessionTokenSvc() *sessiontoken.Service {
 func TestOAuth2AuthorizeHandler_ServeHTTP_MissingPrincipal(t *testing.T) {
 	// Setup
 	agentRepo := newMockAgentRepo()
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, ledgerfixture.NewRecorder()), &noopSessionRepository{}, oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, newTestSessionTokenSvc(), ledgerfixture.NewRecorder())
 
 	handler := &OAuth2AuthorizeHandler{
 		Service: svc,
@@ -84,18 +79,11 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_MissingPrincipal(t *testing.T) {
 // TestOAuth2AuthorizeHandler_ServeHTTP_MissingParameters tests handler when required OAuth2 parameters missing
 func TestOAuth2AuthorizeHandler_ServeHTTP_MissingParameters(t *testing.T) {
 	agentRepo := newMockAgentRepo()
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, ledgerfixture.NewRecorder()), &noopSessionRepository{}, oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, newTestSessionTokenSvc(), ledgerfixture.NewRecorder())
 
 	handler := &OAuth2AuthorizeHandler{
 		Service: svc,
@@ -161,18 +149,11 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_MissingParameters(t *testing.T) {
 func TestOAuth2AuthorizeHandler_ServeHTTP_MalformedClientID(t *testing.T) {
 	mockAgentRepo := newMockAgentRepo()
 	handler := &OAuth2AuthorizeHandler{
-		Service: oauth2.NewAuthorizationService(
-			newMockGrantRepo(),
-			&noopSessionRepository{},
-			oauth2.NewAgentClientResolver(mockAgentRepo, nil),
-			&oauth2.OAuth2Config{
-				ModeStrategy:              oauth2.NewProxyModeStrategy(),
-				UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-				PublicURL:                 "https://broker.example.com",
-			},
-			nil,
-			newTestSessionTokenSvc(),
-		),
+		Service: oauth2.NewAuthorizationService(consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, ledgerfixture.NewRecorder()), &noopSessionRepository{}, oauth2.NewAgentClientResolver(mockAgentRepo, nil), &oauth2.OAuth2Config{
+			ModeStrategy:              oauth2.NewProxyModeStrategy(),
+			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+			PublicURL:                 "https://broker.example.com",
+		}, nil, newTestSessionTokenSvc(), ledgerfixture.NewRecorder()),
 	}
 
 	req := httptest.NewRequest(
@@ -196,18 +177,11 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_MalformedClientID(t *testing.T) {
 // RFC 6749 §4.1.2.1: MUST NOT redirect when the client cannot be verified.
 func TestOAuth2AuthorizeHandler_ServeHTTP_UnknownAgent(t *testing.T) {
 	agentRepo := newMockAgentRepo()
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, ledgerfixture.NewRecorder()), &noopSessionRepository{}, oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, newTestSessionTokenSvc(), ledgerfixture.NewRecorder())
 
 	handler := &OAuth2AuthorizeHandler{
 		Service: svc,
@@ -247,18 +221,11 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_NoGrantRedirectsToConsent(t *testing.T
 	}
 	_ = agentRepo.Create(context.Background(), agent)
 
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		sessiontoken.NewService(newTestJWETokenService()),
-	)
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, ledgerfixture.NewRecorder()), &noopSessionRepository{}, oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, sessiontoken.NewService(newTestJWETokenService()), ledgerfixture.NewRecorder())
 
 	handler := &OAuth2AuthorizeHandler{
 		Service: svc,
@@ -305,18 +272,11 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_ActiveGrantRedirectsToUpstream(t *test
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(
-		grantRepo,
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, ledgerfixture.NewRecorder()), &noopSessionRepository{}, oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, newTestSessionTokenSvc(), ledgerfixture.NewRecorder())
 
 	handler := &OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -369,18 +329,11 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_PreservesOAuth2Parameters(t *testing.T
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(
-		grantRepo,
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, ledgerfixture.NewRecorder()), &noopSessionRepository{}, oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, newTestSessionTokenSvc(), ledgerfixture.NewRecorder())
 
 	handler := &OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -418,18 +371,11 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_PreservesOAuth2Parameters(t *testing.T
 // TestOAuth2AuthorizeHandler_ServeHTTP_JSONResponseFormat tests error responses use proper JSON format
 func TestOAuth2AuthorizeHandler_ServeHTTP_JSONResponseFormat(t *testing.T) {
 	agentRepo := newMockAgentRepo()
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, ledgerfixture.NewRecorder()), &noopSessionRepository{}, oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, newTestSessionTokenSvc(), ledgerfixture.NewRecorder())
 
 	handler := &OAuth2AuthorizeHandler{
 		Service: svc,
@@ -619,6 +565,7 @@ func (m *mockAgentRepository) ExistsOtherWithClientID(_ context.Context, _ id.Cl
 
 type mockGrantRepository struct {
 	grants map[id.GrantID]*storage.UserGrant
+	ledgerfixture.GrantExpiryMarkers
 }
 
 func newMockGrantRepo() *mockGrantRepository {
@@ -785,18 +732,11 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_StorageErrorReturns500(t *testing.T) {
 		getErr:              storageErr,
 	}
 
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(agentRepo, nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, newMockGrantRepo(), nil, nil, nil, ledgerfixture.NewRecorder()), &noopSessionRepository{}, oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, newTestSessionTokenSvc(), ledgerfixture.NewRecorder())
 	handler := &OAuth2AuthorizeHandler{Service: svc}
 
 	agentID := id.NewAgentID()

@@ -18,6 +18,8 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval/toolpattern"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -110,6 +112,8 @@ type Service struct {
 	publicURL    string
 	logger       *slog.Logger
 	pendingGauge metric.Int64UpDownCounter
+	ledger       *ledger.Service
+	expirations  ports.ToolApprovalExpirationRepository
 }
 
 // NewService creates a new approval service with the given dependencies.
@@ -124,7 +128,12 @@ func NewService(
 	pendingTTL time.Duration,
 	publicURL string,
 	logger *slog.Logger,
+	recorder *ledger.Service,
 ) *Service {
+	if recorder == nil {
+		panic("approval recorder is required")
+	}
+	expirations, _ := approvals.(ports.ToolApprovalExpirationRepository)
 	meter := otel.Meter("approval")
 	pendingGauge, _ := meter.Int64UpDownCounter("approvals_pending_total",
 		metric.WithDescription("Number of pending tool approvals"),
@@ -142,21 +151,20 @@ func NewService(
 		publicURL:    publicURL,
 		logger:       logger,
 		pendingGauge: pendingGauge,
+		ledger:       recorder,
+		expirations:  expirations,
 	}
 }
 
 func (s *Service) syncApprovalMutation(ctx context.Context) error {
-	if atomicSync, ok := s.approvals.(ports.ApprovalMutationSyncRepository); ok && atomicSync.ApprovalMutationsSyncAtomically() {
-		if s.broadcaster != nil {
-			s.broadcaster.Broadcast()
+	atomicSync, ok := s.approvals.(ports.ApprovalMutationSyncRepository)
+	if !ok || !atomicSync.ApprovalMutationsSyncAtomically() {
+		if _, err := s.syncState.IncrementVersion(ctx); err != nil {
+			return fmt.Errorf("increment sync version: %w", err)
 		}
-		return nil
-	}
-	if _, err := s.syncState.IncrementVersion(ctx); err != nil {
-		return fmt.Errorf("increment sync version: %w", err)
 	}
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast()
+		return afterApprovalCommit(ctx, s.broadcaster.Broadcast)
 	}
 	return nil
 }
@@ -209,6 +217,9 @@ func (s *Service) GetApproval(ctx context.Context, approvalID id.ApprovalID, act
 	defer span.End()
 
 	if approval.IsExpired(time.Now()) && approval.Status == storage.ApprovalStatusPending {
+		if err := s.recognizeApprovalExpiration(ctx, approval); err != nil {
+			return nil, err
+		}
 		s.logger.Info("approval expired (lazy detection)",
 			"approval_id", approvalID,
 			"principal", actingPrincipal,
@@ -233,6 +244,18 @@ func (s *Service) GetApproval(ctx context.Context, approvalID id.ApprovalID, act
 // Enforces principal ownership, pattern authority, expiry check, and state machine invariants.
 // Increments sync version and broadcasts change to long-poll subscribers.
 func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal, req ApproveRequest) (*storage.ToolApproval, error) {
+	result, err := approvalTransaction(ctx, s.ledger, actingPrincipal, func(txCtx context.Context) (*storage.ToolApproval, error) {
+		return s.approveApproval(txCtx, approvalID, actingPrincipal, req)
+	})
+	if errors.Is(err, ErrApprovalGone) {
+		if recognitionErr := s.recognizeApprovalByID(ctx, approvalID, actingPrincipal); recognitionErr != nil {
+			return nil, recognitionErr
+		}
+	}
+	return result, err
+}
+
+func (s *Service) approveApproval(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal, req ApproveRequest) (*storage.ToolApproval, error) {
 	approval, err := s.approvals.Get(ctx, approvalID)
 	if err != nil {
 		var storageErr *storage.StorageError
@@ -277,11 +300,18 @@ func (s *Service) ApproveApproval(ctx context.Context, approvalID id.ApprovalID,
 	if err != nil {
 		return nil, s.resolveApprovalMutationError(ctx, approvalID, err)
 	}
-	s.pendingGauge.Add(ctx, -1, metric.WithAttributes(attribute.String("agent_id", result.AgentID.String())))
+	if err := s.recordApproval(ctx, "approval-approved", result, now); err != nil {
+		return nil, err
+	}
 	if err := s.syncApprovalMutation(ctx); err != nil {
 		return nil, err
 	}
-	s.logger.Info("approval approved", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", result.AgentID, "tool_name", result.ToolName, "persistence", decision.Persistence, "action", "approved", "timestamp", now)
+	if err := afterApprovalCommit(ctx, func() {
+		s.pendingGauge.Add(ctx, -1, metric.WithAttributes(attribute.String("agent_id", result.AgentID.String())))
+		s.logger.Info("approval approved", "approval_id", approvalID, "principal", actingPrincipal, "agent_id", result.AgentID, "tool_name", result.ToolName, "persistence", decision.Persistence, "action", "approved", "timestamp", now)
+	}); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -347,6 +377,18 @@ func (s *Service) PreviewApprovalScope(ctx context.Context, approvalID id.Approv
 // Enforces principal ownership, expiry check, and state machine invariants.
 // Increments sync version and broadcasts change to long-poll subscribers.
 func (s *Service) DenyApproval(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal, persistence *storage.ApprovalPersistence) (*storage.ToolApproval, error) {
+	result, err := approvalTransaction(ctx, s.ledger, actingPrincipal, func(txCtx context.Context) (*storage.ToolApproval, error) {
+		return s.denyApproval(txCtx, approvalID, actingPrincipal, persistence)
+	})
+	if errors.Is(err, ErrApprovalGone) {
+		if recognitionErr := s.recognizeApprovalByID(ctx, approvalID, actingPrincipal); recognitionErr != nil {
+			return nil, recognitionErr
+		}
+	}
+	return result, err
+}
+
+func (s *Service) denyApproval(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal, persistence *storage.ApprovalPersistence) (*storage.ToolApproval, error) {
 
 	approval, err := s.approvals.Get(ctx, approvalID)
 	if err != nil {
@@ -384,11 +426,9 @@ func (s *Service) DenyApproval(ctx context.Context, approvalID id.ApprovalID, ac
 	if err != nil {
 		return nil, s.resolveApprovalMutationError(ctx, approvalID, err)
 	}
-
-	// Track pending approval resolution
-	s.pendingGauge.Add(ctx, -1, metric.WithAttributes(
-		attribute.String("agent_id", result.AgentID.String()),
-	))
+	if err := s.recordApproval(ctx, "approval-denied", result, now); err != nil {
+		return nil, err
+	}
 
 	if err := s.syncApprovalMutation(ctx); err != nil {
 		return nil, err
@@ -396,15 +436,20 @@ func (s *Service) DenyApproval(ctx context.Context, approvalID id.ApprovalID, ac
 
 	span.SetAttributes(attribute.String("approval.tool_name", result.ToolName))
 
-	s.logger.Info("approval denied",
-		"approval_id", approvalID,
-		"principal", actingPrincipal,
-		"agent_id", result.AgentID,
-		"tool_name", result.ToolName,
-		"persistence", persistence,
-		"action", "denied",
-		"timestamp", now,
-	)
+	if err := afterApprovalCommit(ctx, func() {
+		s.pendingGauge.Add(ctx, -1, metric.WithAttributes(attribute.String("agent_id", result.AgentID.String())))
+		s.logger.Info("approval denied",
+			"approval_id", approvalID,
+			"principal", actingPrincipal,
+			"agent_id", result.AgentID,
+			"tool_name", result.ToolName,
+			"persistence", persistence,
+			"action", "denied",
+			"timestamp", now,
+		)
+	}); err != nil {
+		return nil, err
+	}
 
 	return result, nil
 }
@@ -413,6 +458,18 @@ func (s *Service) DenyApproval(ctx context.Context, approvalID id.ApprovalID, ac
 // Enforces rate limiting per (principal, agent) pair.
 // Computes arguments hash for deduplication, constructs approval_url, sets TTL.
 func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalRequest) (*CreateApprovalResult, error) {
+	if err := s.recognizeApprovalExpirations(ctx); err != nil {
+		return nil, err
+	}
+	// Waiting creators must not occupy database transaction connections.
+	s.creationMu.Lock()
+	defer s.creationMu.Unlock()
+	return approvalTransaction(ctx, s.ledger, req.Principal, func(txCtx context.Context) (*CreateApprovalResult, error) {
+		return s.createPendingApproval(txCtx, req)
+	})
+}
+
+func (s *Service) createPendingApproval(ctx context.Context, req CreateApprovalRequest) (*CreateApprovalResult, error) {
 	ctx, span := startLifecycleSpan(ctx, "approval.created", req.OpenTelemetryTraceparent,
 		trace.WithAttributes(
 			attribute.String("approval.principal", string(req.Principal)),
@@ -421,10 +478,6 @@ func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalR
 		),
 	)
 	defer span.End()
-
-	// ponytail: global lock preserves idempotency under concurrent retries; shard by principal/agent only if creation throughput requires it.
-	s.creationMu.Lock()
-	defer s.creationMu.Unlock()
 
 	// Compute arguments hash for idempotency deduplication.
 	argsHash := storage.ComputeArgumentsHash(req.Arguments)
@@ -504,36 +557,53 @@ func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalR
 	if err != nil {
 		return nil, fmt.Errorf("create pending approval: %w", err)
 	}
+	if result.ID != approvalID && result.Status == storage.ApprovalStatusPending && result.IsExpired(time.Now()) {
+		if err := s.recognizeApprovalExpiration(ctx, result); err != nil {
+			return nil, err
+		}
+		result, err = s.approvals.Create(ctx, newApproval)
+		if err != nil {
+			return nil, fmt.Errorf("create pending approval after expiry recognition: %w", err)
+		}
+	}
 
 	// Detect whether this is a new creation or idempotent hit
 	isNew := result.ID == approvalID
 
 	if isNew {
-		// Track pending approval creation
-		s.pendingGauge.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("agent_id", req.AgentID.String()),
-		))
+		if err := s.recordApproval(ctx, "approval-requested", result, now); err != nil {
+			return nil, err
+		}
 
 		if err := s.syncApprovalMutation(ctx); err != nil {
 			return nil, err
 		}
 
-		s.logger.Info("approval created",
-			"approval_id", result.ID,
-			"principal", req.Principal,
-			"agent_id", req.AgentID,
-			"tool_name", req.ToolName,
-			"action", "created",
-			"expires_at", expiresAt,
-			"timestamp", now,
-		)
+		if err := afterApprovalCommit(ctx, func() {
+			s.pendingGauge.Add(ctx, 1, metric.WithAttributes(attribute.String("agent_id", req.AgentID.String())))
+			s.logger.Info("approval created",
+				"approval_id", result.ID,
+				"principal", req.Principal,
+				"agent_id", req.AgentID,
+				"tool_name", req.ToolName,
+				"action", "created",
+				"expires_at", expiresAt,
+				"timestamp", now,
+			)
+		}); err != nil {
+			return nil, err
+		}
 	} else {
-		s.logger.Info("approval returned (idempotent)",
-			"approval_id", result.ID,
-			"principal", req.Principal,
-			"agent_id", req.AgentID,
-			"tool_name", req.ToolName,
-		)
+		if err := afterApprovalCommit(ctx, func() {
+			s.logger.Info("approval returned (idempotent)",
+				"approval_id", result.ID,
+				"principal", req.Principal,
+				"agent_id", req.AgentID,
+				"tool_name", req.ToolName,
+			)
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	span.SetAttributes(
@@ -582,6 +652,9 @@ type SyncState struct {
 func (s *Service) GetSyncState(ctx context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) (*SyncState, error) {
 	ctx, span := otel.Tracer("approval").Start(ctx, "approval.sync")
 	defer span.End()
+	if err := s.recognizeApprovalExpirations(ctx); err != nil {
+		return nil, err
+	}
 
 	version, err := s.syncState.GetVersion(ctx)
 	if err != nil {
@@ -643,6 +716,12 @@ func (s *Service) GetBroadcaster() *ApprovalSyncBroadcaster {
 // Returns ErrApprovalNotFound if not found, ErrApprovalForbidden for wrong principal,
 // ErrApprovalNotConsumable if not a once-persistence approved approval.
 func (s *Service) ConsumeApproval(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal) (*storage.ToolApproval, error) {
+	return approvalTransaction(ctx, s.ledger, actingPrincipal, func(txCtx context.Context) (*storage.ToolApproval, error) {
+		return s.consumeApproval(txCtx, approvalID, actingPrincipal)
+	})
+}
+
+func (s *Service) consumeApproval(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal) (*storage.ToolApproval, error) {
 
 	// Fetch the approval to validate ownership and state
 	existing, err := s.approvals.Get(ctx, approvalID)
@@ -699,18 +778,25 @@ func (s *Service) ConsumeApproval(ctx context.Context, approvalID id.ApprovalID,
 		}
 		return nil, fmt.Errorf("consume approval: %w", err)
 	}
+	if err := s.recordApproval(ctx, "approval-consumed", result, now); err != nil {
+		return nil, err
+	}
 
 	if err := s.syncApprovalMutation(ctx); err != nil {
 		return nil, err
 	}
 
-	s.logger.Info("approval consumed",
-		"approval_id", approvalID,
-		"principal", actingPrincipal,
-		"agent_id", result.AgentID,
-		"tool_name", result.ToolName,
-		"timestamp", now.Format(time.RFC3339),
-	)
+	if err := afterApprovalCommit(ctx, func() {
+		s.logger.Info("approval consumed",
+			"approval_id", approvalID,
+			"principal", actingPrincipal,
+			"agent_id", result.AgentID,
+			"tool_name", result.ToolName,
+			"timestamp", now.Format(time.RFC3339),
+		)
+	}); err != nil {
+		return nil, err
+	}
 
 	span.SetAttributes(
 		attribute.String("approval.agent_id", result.AgentID.String()),
@@ -826,6 +912,9 @@ func (s *Service) ListPendingApprovals(ctx context.Context, principal id.Princip
 		),
 	)
 	defer span.End()
+	if err := s.recognizeApprovalExpirations(ctx); err != nil {
+		return nil, err
+	}
 
 	all, err := s.queries.ListAllActive(ctx, &principal, nil)
 	if err != nil {
@@ -854,6 +943,9 @@ func (s *Service) ListPermanentApprovals(ctx context.Context, principal id.Princ
 		),
 	)
 	defer span.End()
+	if err := s.recognizeApprovalExpirations(ctx); err != nil {
+		return nil, err
+	}
 
 	approvals, err := s.queries.ListPermanentByPrincipal(ctx, principal)
 	if err != nil {
@@ -870,6 +962,12 @@ var ErrApprovalNotRevocable = errors.New("only permanent approvals can be revoke
 // RevokePermanentApproval transitions a permanent approval to denied status.
 // Returns ErrApprovalNotFound, ErrApprovalForbidden, or ErrApprovalNotRevocable.
 func (s *Service) RevokePermanentApproval(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal) (*storage.ToolApproval, error) {
+	return approvalTransaction(ctx, s.ledger, actingPrincipal, func(txCtx context.Context) (*storage.ToolApproval, error) {
+		return s.revokePermanentApproval(txCtx, approvalID, actingPrincipal)
+	})
+}
+
+func (s *Service) revokePermanentApproval(ctx context.Context, approvalID id.ApprovalID, actingPrincipal id.Principal) (*storage.ToolApproval, error) {
 	ctx, span := otel.Tracer("approval").Start(ctx, "approval.revoke",
 		trace.WithAttributes(
 			attribute.String("approval.id", approvalID.String()),
@@ -907,18 +1005,25 @@ func (s *Service) RevokePermanentApproval(ctx context.Context, approvalID id.App
 		}
 		return nil, fmt.Errorf("revoke approval: %w", err)
 	}
+	if err := s.recordApproval(ctx, "approval-revoked", result, now); err != nil {
+		return nil, err
+	}
 
 	if err := s.syncApprovalMutation(ctx); err != nil {
 		return nil, err
 	}
 
-	s.logger.Info("permanent approval revoked",
-		"approval_id", approvalID,
-		"principal", actingPrincipal,
-		"agent_id", result.AgentID,
-		"tool_name", result.ToolName,
-		"timestamp", now.Format(time.RFC3339),
-	)
+	if err := afterApprovalCommit(ctx, func() {
+		s.logger.Info("permanent approval revoked",
+			"approval_id", approvalID,
+			"principal", actingPrincipal,
+			"agent_id", result.AgentID,
+			"tool_name", result.ToolName,
+			"timestamp", now.Format(time.RFC3339),
+		)
+	}); err != nil {
+		return nil, err
+	}
 
 	span.SetAttributes(
 		attribute.String("approval.agent_id", result.AgentID.String()),
@@ -926,4 +1031,121 @@ func (s *Service) RevokePermanentApproval(ctx context.Context, approvalID id.App
 	)
 
 	return result, nil
+}
+
+func (s *Service) recordApproval(ctx context.Context, eventType string, approval *storage.ToolApproval, occurredAt time.Time) error {
+	actorID := approval.Principal.String()
+	facts := model.BusinessEvent{
+		OccurredAt: occurredAt.UTC(), Subject: &approval.Principal,
+		Actor:   model.BusinessEventActor{Kind: "user", ID: &actorID},
+		AgentID: approval.AgentID, ApprovalID: approval.ID, Data: map[string]any{},
+	}
+	if approval.GatewayClientID != "" {
+		facts.GatewayClientID = id.ClientID(approval.GatewayClientID)
+	}
+	if eventType == "approval-requested" {
+		facts.Actor = model.BusinessEventActor{Kind: "gateway"}
+		if approval.GatewayClientID != "" {
+			facts.Actor.ID = &approval.GatewayClientID
+			facts.Actor.OnBehalfOf = facts.Subject
+		}
+	}
+	if eventType == "approval-expired" {
+		systemID := "broker-lifecycle"
+		facts.Actor = model.BusinessEventActor{Kind: "system", ID: &systemID}
+	}
+	if eventType == "approval-denied" {
+		facts.Data["reason_code"] = "user_denied"
+	}
+	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, facts)
+	if err != nil {
+		return err
+	}
+	return s.ledger.Record(ctx, event)
+}
+
+func afterApprovalCommit(ctx context.Context, signal func()) error {
+	effects, ok := ports.StorageTransactionEffectsFromContext(ctx)
+	if !ok {
+		return errors.New("approval mutation requires transaction effects")
+	}
+	return effects.AfterCommit(signal)
+}
+
+func approvalTransaction[T any](ctx context.Context, recorder *ledger.Service, principal id.Principal, work func(context.Context) (T, error)) (T, error) {
+	var result T
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	err := recorder.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		var err error
+		result, err = work(txCtx)
+		return err
+	})
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	return result, nil
+}
+
+func (s *Service) recognizeApprovalExpiration(ctx context.Context, approval *storage.ToolApproval) error {
+	if approval == nil || approval.Status != storage.ApprovalStatusPending || !approval.IsExpired(time.Now()) {
+		return nil
+	}
+	if s.expirations == nil {
+		return errors.New("approval expiration repository is required")
+	}
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: approval.Principal})
+	return s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		current, err := s.approvals.Get(txCtx, approval.ID)
+		if ports.IsNotFoundErr(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if current == nil || current.Status != storage.ApprovalStatusPending || !current.IsExpired(time.Now()) {
+			return nil
+		}
+		won, err := s.expirations.RecordExpiration(txCtx, current.ID, current.ExpiresAt)
+		if err != nil || !won {
+			return err
+		}
+		return s.recordApproval(txCtx, "approval-expired", current, current.ExpiresAt)
+	})
+}
+
+func (s *Service) recognizeApprovalByID(ctx context.Context, approvalID id.ApprovalID, principal id.Principal) error {
+	approval, err := s.approvals.Get(ctx, approvalID)
+	if ports.IsNotFoundErr(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if approval.Principal != principal {
+		return nil
+	}
+	return s.recognizeApprovalExpiration(ctx, approval)
+}
+
+func (s *Service) recognizeApprovalExpirations(ctx context.Context) error {
+	if s.expirations == nil {
+		return errors.New("approval expiration repository is required")
+	}
+	for {
+		candidates, err := s.expirations.ListUnrecordedExpired(ctx, time.Now().UTC(), 200)
+		if err != nil {
+			return err
+		}
+		if len(candidates) == 0 {
+			return nil
+		}
+		for _, approval := range candidates {
+			if err := s.recognizeApprovalExpiration(ctx, approval); err != nil {
+				return err
+			}
+		}
+	}
 }

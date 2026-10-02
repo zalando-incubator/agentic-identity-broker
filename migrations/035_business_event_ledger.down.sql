@@ -1,0 +1,10 @@
+DROP FUNCTION public.business_event_erase_subject(text);
+DROP FUNCTION public.business_event_maintain_partitions();
+DROP FUNCTION public.business_event_provision_partitions();
+DROP FUNCTION public.business_event_create_partition_pair(timestamptz);
+DROP TABLE public.business_event_delivery_pending;
+DROP TABLE public.business_events;
+DROP FUNCTION public.business_event_reject_update();
+DROP TABLE public.business_event_policy;
+ALTER TABLE public.user_grants DROP COLUMN expiration_recorded_for;
+ALTER TABLE public.tool_approvals DROP COLUMN expiration_recorded_for;

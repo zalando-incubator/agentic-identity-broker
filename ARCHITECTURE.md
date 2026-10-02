@@ -838,12 +838,13 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **See Also**: ADR 032 (accepted) — mandatory user delegation for impersonation; spec `037-oauth2-user-impersonation` (FR-013–019, CR-001–010).
 
-#### 3.1.z. Business Event Ledger (Feature 048 — Accepted Design)
+#### 3.1.z. Business Event Ledger (Feature 048)
 
-**Status**: [ADR 037](adrs/037-business-event-ledger.md) is accepted and binding. The ledger behavior described here is not yet implemented or deployed.
-The prerequisite refactor does not provide atomic memory transactions, ledger persistence, or telemetry delivery.
+**Status**: [ADR 037](adrs/037-business-event-ledger.md) is accepted and binding. Atomic recording, lifecycle barriers, retention, erasure, and recoverable telemetry are implemented.
+The [validation evidence](specs/048-business-event-ledger/quickstart.md) records actual gates. Performance release acceptance remains blocked without an approved deployment profile.
+The [performance report](specs/048-business-event-ledger/performance-results.md) records measured reference evidence separately from deployment-load acceptance.
 
-**Ownership**: The design assigns ledger validation, recording, investigation, and lifecycle invariants to an independent `internal/domain/ledger/` bounded context.
+**Ownership**: `internal/domain/ledger/` owns validation, recording, investigation, and lifecycle invariants as an independent bounded context.
 Existing business services determine whether each catalogued fact occurred.
 Shared immutable values belong in `internal/domain/model/`, and repository contracts belong in `internal/ports/storage.go`.
 The builder owns dependency composition and worker shutdown.
@@ -1651,9 +1652,9 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **ApprovalExpired**: Domain event emitted lazily when an expired approval is first accessed. Carries approval_id and expiry timestamp. Emitted as OTel span linked to originating trace if present.
 
-### Business Event Ledger (Accepted Design)
+### Business Event Ledger
 
-These definitions describe the accepted design in ADR 037, not deployed ledger behavior.
+These definitions describe the implementation governed by accepted ADR 037. Deployment and performance acceptance require the recorded validation gates.
 
 **Business Event**: An immutable, credential-free historical broker fact. It belongs to a registered Event Type and survives deletion of referenced business objects.
 

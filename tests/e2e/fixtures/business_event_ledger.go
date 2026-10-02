@@ -5,6 +5,8 @@ import (
 	"testing/fstest"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
 const LedgerFixtureEventType = "agentic-identity-broker.fixture-recorded"
@@ -21,6 +23,26 @@ func LedgerAdminID() string { return "ledger-admin@example.com" }
 
 func LedgerGatewayClientID() id.ClientID {
 	return id.NewClientID("ledger-trusted-gateway")
+}
+
+type LedgerWorkflowData struct {
+	Principal id.Principal
+	Agent     *storagedomain.Agent
+	Service   *model.ThirdpartyOAuth2ProviderEntity
+	Grant     *storagedomain.UserGrant
+	Canaries  CredentialCanaries
+}
+
+func LedgerWorkflowFixtures(principal id.Principal) LedgerWorkflowData {
+	agent := ValidAgent()
+	service := GitHubService()
+	return LedgerWorkflowData{
+		Principal: principal,
+		Agent:     agent,
+		Service:   service,
+		Grant:     ActiveGrant(principal.String(), agent.ID.String(), service.ID.String(), []string{"repo", "user"}),
+		Canaries:  LedgerCredentialCanaries(),
+	}
 }
 
 // CredentialCanaries keeps all seven classes explicit. Workflows may replace
@@ -90,12 +112,15 @@ func LedgerFixtureSchemas() fs.FS {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:agentic-identity-broker:events:v1:fixture-recorded",
   "title": "fixture-recorded",
+  "description": "The fixture action completed.",
   "allOf": [
     {"$ref": "urn:agentic-identity-broker:events:v1:envelope"},
     {
       "properties": {
         "type": {"const": "agentic-identity-broker.fixture-recorded"},
         "outcome": {"const": "success"},
+        "reason_user": {"const": "The fixture action completed."},
+        "reason_admin": {"const": "The reviewed fixture action completed."},
         "data": {
           "type": "object",
           "additionalProperties": false,

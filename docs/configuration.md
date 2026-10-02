@@ -115,8 +115,8 @@ Explicit CLI flags > Environment variables (including .env files) > YAML file > 
 
 ## Business Event Ledger
 
-**Status:** This section describes the accepted design. The ledger runtime is not implemented yet.
-The [configuration contract](../specs/048-business-event-ledger/contracts/configuration.md) defines this broker-only configuration.
+**Status:** Recording, retention, erasure, scheduling, and recoverable telemetry are implemented. Performance release acceptance remains open in the [validation gates](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/specs/048-business-event-ledger/quickstart.md).
+The [configuration contract](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/specs/048-business-event-ledger/contracts/configuration.md) defines this broker-only configuration.
 It adds no ExtProc configuration.
 
 ### Defaults and overrides
@@ -125,6 +125,15 @@ It adds no ExtProc configuration.
 |---|---|---|---|---|---|
 | `business_events.retention` | duration | `2160h` (90 days) | `IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION` | `--business_events.retention` | `broker.businessEvents.retention` |
 | `business_events.telemetry_copy_enabled` | bool | `true` | `IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED` | `--business_events.telemetry_copy_enabled` | `broker.businessEvents.telemetryCopyEnabled` |
+
+The chart also accepts two optional values for existing operational roles:
+
+| Helm value | Default | Access |
+|---|---|---|
+| `migration.grants.businessEvents.readerRole` | `""` | `SELECT` on ledger parent tables |
+| `migration.grants.businessEvents.erasureRole` | `""` | `EXECUTE` on `public.business_event_erase_subject(text)` |
+
+Empty values grant nothing. The chart does not create roles or authorize runtime erasure. A custom `migration.grants.sql` replaces the default script, including these grants. The [operations guide](operations/business-event-ledger.md) describes role setup and non-Helm grants.
 
 The default ledger configuration is:
 
@@ -144,7 +153,7 @@ business_events:
 
 An explicitly supplied CLI flag overrides the environment, which overrides the YAML file, which overrides the default.
 An explicit `false` remains `false`, including in Helm values.
-The [example index](../examples/config/README.md#business-event-ledgeryaml) provides startup commands for both configurations.
+The [example index](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/README.md#business-event-ledgeryaml) provides startup commands for both configurations.
 
 ### Retention and mandatory recording
 

@@ -15,6 +15,7 @@ import (
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 // T075: Security tests for state token expiration rejection
@@ -246,10 +247,10 @@ func TestStateTokenSecurityTampered_WrongKeyDecryption(t *testing.T) {
 	err = key1.Set(jwk.AlgorithmKey, "A256GCM")
 	require.NoError(t, err)
 
-	serviceRepo1 := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	sessionRepo1 := memory.NewInMemoryUserSessionRepository()
-	grantRepo1 := memory.NewUserGrantRepository()
-	agentRepo1 := memory.NewAgentRepository()
+	serviceRepo1 := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	sessionRepo1 := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	grantRepo1 := memory.NewUserGrantRepository(memory.NewTransactionManager())
+	agentRepo1 := memory.NewAgentRepository(memory.NewTransactionManager())
 
 	config := oauth2session.DefaultConfig()
 	config.CallbackBaseURL = "https://broker.example.com"
@@ -264,17 +265,7 @@ func TestStateTokenSecurityTampered_WrongKeyDecryption(t *testing.T) {
 		slog.Default(),
 	)
 
-	service1 := oauth2session.NewOAuth2SessionService(
-		providerService1,
-		sessionRepo1,
-		grantRepo1,
-		agentRepo1,
-		nil,
-		&http.Client{},
-		domjwe.New(key1),
-		config,
-		slog.Default(),
-	)
+	service1 := oauth2session.NewOAuth2SessionService(providerService1, sessionRepo1, grantRepo1, agentRepo1, nil, &http.Client{}, domjwe.New(key1), config, slog.Default(), ledgerfixture.NewRecorder())
 
 	// Create service with key2 (different key, exactly 32 bytes)
 	key2, err := jwk.Import[jwk.Key]([]byte("0123456789012345678901234567890Y"))
@@ -284,10 +275,10 @@ func TestStateTokenSecurityTampered_WrongKeyDecryption(t *testing.T) {
 	err = key2.Set(jwk.AlgorithmKey, "A256GCM")
 	require.NoError(t, err)
 
-	serviceRepo2 := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	sessionRepo2 := memory.NewInMemoryUserSessionRepository()
-	grantRepo2 := memory.NewUserGrantRepository()
-	agentRepo2 := memory.NewAgentRepository()
+	serviceRepo2 := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	sessionRepo2 := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	grantRepo2 := memory.NewUserGrantRepository(memory.NewTransactionManager())
+	agentRepo2 := memory.NewAgentRepository(memory.NewTransactionManager())
 
 	// Create ThirdpartyOAuth2ProviderService for handling encryption/decryption of client secrets
 	providerService2 := thirdparty.NewThirdpartyOAuth2ProviderService(
@@ -299,17 +290,7 @@ func TestStateTokenSecurityTampered_WrongKeyDecryption(t *testing.T) {
 		slog.Default(),
 	)
 
-	service2 := oauth2session.NewOAuth2SessionService(
-		providerService2,
-		sessionRepo2,
-		grantRepo2,
-		agentRepo2,
-		nil,
-		&http.Client{},
-		domjwe.New(key2),
-		config,
-		slog.Default(),
-	)
+	service2 := oauth2session.NewOAuth2SessionService(providerService2, sessionRepo2, grantRepo2, agentRepo2, nil, &http.Client{}, domjwe.New(key2), config, slog.Default(), ledgerfixture.NewRecorder())
 
 	// Create token with service1's key
 	testServiceID := id.NewServiceID()

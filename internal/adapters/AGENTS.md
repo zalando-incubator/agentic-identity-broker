@@ -52,6 +52,10 @@ end-user `:8000` server and the admin `:14000` server.
 
 Both adapters implement the required storage contracts. The migrations are in `migrations/`. They use go-migrate names.
 
+Ledger storage uses `business_event*.go` in both backends. Memory uses shared lifecycle/visibility gates and journaled transactions. PostgreSQL uses ambient sqlx transactions and migration-owned partition functions from migration 035. Dispatch holds deletion barriers through synchronous export and acknowledgement.
+
+`telemetry/business_event*.go` owns the non-global synchronous ledger provider. It reuses the configured destination and leaves the ordinary slog batch provider unchanged. Read `docs/operations/business-event-ledger.md` for roles, scheduling, erasure, and policy rollout.
+
 ## Rules
 
 - **Cross-adapter ban**: Do not import `storage/postgres/` from `encryption/aws/`, or import between other adapters.

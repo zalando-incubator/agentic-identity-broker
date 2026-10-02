@@ -124,6 +124,11 @@ func (l *Loader) setDefaults() {
 	l.v.SetDefault("storage.timeouts.read", "5s")
 	l.v.SetDefault("storage.timeouts.write", "10s")
 
+	// Business-event ledger defaults
+	businessEventsDefaults := ports.DefaultBusinessEventsConfig()
+	l.v.SetDefault("business_events.retention", businessEventsDefaults.Retention)
+	l.v.SetDefault("business_events.telemetry_copy_enabled", businessEventsDefaults.TelemetryCopyEnabled)
+
 	requestContextDefaults := ports.DefaultRequestContextConfig()
 	l.v.SetDefault("request_context.trusted_proxy.enabled", requestContextDefaults.TrustedProxy.Enabled)
 	l.v.SetDefault("request_context.trusted_proxy.forwarded_header", requestContextDefaults.TrustedProxy.ForwardedHeader)
@@ -148,6 +153,8 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv("server.admin.cors.max_age", "IDENTITY_BROKER_SERVER_ADMIN_CORS_MAX_AGE")
 	_ = l.v.BindEnv("storage.backend", "IDENTITY_BROKER_STORAGE_BACKEND")
 	_ = l.v.BindEnv("storage.postgres.connection_url", "IDENTITY_BROKER_STORAGE_POSTGRES_URL")
+	_ = l.v.BindEnv("business_events.retention", "IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION")
+	_ = l.v.BindEnv("business_events.telemetry_copy_enabled", "IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED")
 	_ = l.v.BindEnv("request_context.trusted_proxy.enabled", "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_ENABLED")
 	_ = l.v.BindEnv("request_context.trusted_proxy.forwarded_header", "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_FORWARDED_HEADER")
 	_ = l.v.BindEnv("request_context.trace.response_enabled", "IDENTITY_BROKER_REQUEST_CONTEXT_TRACE_RESPONSE_ENABLED")
@@ -275,6 +282,7 @@ func (l *Loader) setDefaults() {
 			"server.admin.port", "server.admin.bind", "server.admin.public_url",
 			"server.shutdown.timeout",
 			"storage.backend", "storage.timeouts.read", "storage.timeouts.write",
+			"business_events.retention", "business_events.telemetry_copy_enabled",
 			"request_context.trusted_proxy.enabled",
 			"request_context.trusted_proxy.forwarded_header",
 			"request_context.trace.response_enabled",
@@ -708,6 +716,18 @@ func (l *Loader) bindFlags() error {
 		enabled, _ := l.cmd.Flags().GetBool("request_context.trace.response_enabled")
 		l.v.Set("request_context.trace.response_enabled", enabled)
 		cliKeys = append(cliKeys, "request_context.trace.response_enabled")
+	}
+
+	// Bind only explicitly supplied ledger flags so YAML and environment values remain effective.
+	if l.cmd.Flags().Changed("business_events.retention") {
+		retention, _ := l.cmd.Flags().GetDuration("business_events.retention")
+		l.v.Set("business_events.retention", retention)
+		cliKeys = append(cliKeys, "business_events.retention")
+	}
+	if l.cmd.Flags().Changed("business_events.telemetry_copy_enabled") {
+		copyEnabled, _ := l.cmd.Flags().GetBool("business_events.telemetry_copy_enabled")
+		l.v.Set("business_events.telemetry_copy_enabled", copyEnabled)
+		cliKeys = append(cliKeys, "business_events.telemetry_copy_enabled")
 	}
 
 	// Record CLI source if any flags were set

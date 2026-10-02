@@ -47,8 +47,8 @@ The most minimal valid configuration. Demonstrates:
 
 ### `business-event-ledger.yaml`
 
-**Status:** This example describes the accepted design. The ledger runtime is not implemented yet.
-The commands require a broker build with ledger support.
+**Status:** The broker implements recording, retention, erasure, and recoverable telemetry.
+Performance release acceptance remains blocked without an operator-approved deployment profile and passing measurements. See the [validation evidence](../../specs/048-business-event-ledger/quickstart.md).
 
 This single-document YAML file provides a local configuration with the ledger defaults:
 

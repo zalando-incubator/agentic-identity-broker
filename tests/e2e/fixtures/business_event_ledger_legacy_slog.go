@@ -282,6 +282,14 @@ var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 				{Event: "", Level: "ERROR", Message: "Token exchange failed", FieldKeys: []string{"actor", "cause", "error", "error_type", "level", "msg", "resource", "time", "trace_id"}, Count: 1},
 			},
 		},
+		{
+			Variant:  "verified-client-no-grant",
+			Scenario: "RFC 8693 Token Exchange E2E Tests US3: User Grant Verification [US3-S2] should return 403 access_denied without user grant",
+			Source:   "tests/e2e/token_exchange_test.go:522",
+			Records: []LegacySlogRecord{
+				{Event: "", Level: "ERROR", Message: "Token exchange failed", FieldKeys: []string{"actor", "calling_peer", "details", "error", "error_type", "level", "msg", "resource", "time", "trace_id"}, Count: 1},
+			},
+		},
 	},
 	"token-exchanged": {
 		{

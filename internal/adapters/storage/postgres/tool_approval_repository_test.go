@@ -142,12 +142,21 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 
 		_, err := createPatternedApproval(ctx, repo, first)
 		require.NoError(t, err)
+		unrecognized, err := createPatternedApproval(ctx, repo, second)
+		require.NoError(t, err)
+		require.Equal(t, first.ID, unrecognized.ID, "retirement must wait for expiry recognition")
+		old, err := repo.Get(ctx, first.ID)
+		require.NoError(t, err)
+		require.False(t, old.Consumed)
+		won, err := repo.RecordExpiration(ctx, first.ID, first.ExpiresAt)
+		require.NoError(t, err)
+		require.True(t, won)
 		created, err := createPatternedApproval(ctx, repo, second)
 		require.NoError(t, err)
 		assert.Equal(t, second.ID, created.ID)
 		assert.Equal(t, second.ApprovalURL, created.ApprovalURL)
 
-		old, err := repo.Get(ctx, first.ID)
+		old, err = repo.Get(ctx, first.ID)
 		require.NoError(t, err)
 		assert.True(t, old.Consumed)
 	})
@@ -440,4 +449,28 @@ func createPatternedApproval(ctx context.Context, repo *ToolApprovalRepository, 
 		return nil, err
 	}
 	return repo.Create(ctx, approval)
+}
+
+func TestPostgresApprovalExpirationRecognitionJoinsOwner(t *testing.T) {
+	adapter, cleanup := setupApprovalTestDB(t)
+	defer cleanup()
+	agentID := id.NewAgentID()
+	seedAgent(t, adapter, agentID)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	expiry := now.Add(-time.Hour)
+	approval := &storage.ToolApproval{ID: id.NewApprovalID(), Principal: "expiration-user", AgentID: agentID, ToolName: "read_file", ArgumentsHash: "expiration", Status: storage.ApprovalStatusPending, ApprovalURL: "https://broker.example/approval", CreatedAt: now.Add(-2 * time.Hour), ExpiresAt: expiry}
+	repo := NewToolApprovalRepository(adapter)
+	_, err := createPatternedApproval(context.Background(), repo, approval)
+	require.NoError(t, err)
+	owner, err := adapter.BeginTX(context.Background())
+	require.NoError(t, err)
+	defer func() { _ = adapter.Rollback(owner) }()
+	won, err := repo.RecordExpiration(owner, approval.ID, expiry)
+	require.NoError(t, err)
+	require.NoError(t, adapter.Rollback(owner))
+	require.True(t, won)
+	candidates, err := repo.ListUnrecordedExpired(context.Background(), time.Now().UTC(), 100)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, approval.ID, candidates[0].ID)
 }

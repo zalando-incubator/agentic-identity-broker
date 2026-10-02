@@ -96,13 +96,12 @@ func (r *PostgresUserSessionRepository) Create(ctx context.Context, session *sto
 			updated_at = NOW()
 	`
 
-	_, err := r.adapter.db.ExecContext(ctx, query,
+	_, err := r.adapter.storageExecutor(ctx).ExecContext(ctx, query,
 		session.ID, session.Principal, session.ServiceID,
 		session.EncryptedAccessToken, session.EncryptedRefreshToken,
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
 		pq.Array(session.Scope), session.EncryptionContext,
-		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
-	)
+		session.InitiatedAt, session.CreatedAt, session.UpdatedAt)
 
 	if err != nil {
 		return r.wrapError(err, "Create")
@@ -119,7 +118,7 @@ func (r *PostgresUserSessionRepository) Get(ctx context.Context, sessionID id.Se
 	var rec userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE id = $1`
 
-	err := r.adapter.db.GetContext(ctx, &rec, query, sessionID)
+	err := r.adapter.storageExecutor(ctx).GetContext(ctx, &rec, query, sessionID)
 	if err == sql.ErrNoRows {
 		return nil, storage.NewStorageError("Get", storage.ErrorKindNotFound, err, "session not found")
 	}
@@ -137,8 +136,15 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 
 	var rec userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2`
+	if _, ambient := storageTransaction(ctx); ambient {
+		if _, err := r.adapter.storageExecutor(ctx).ExecContext(ctx,
+			`SELECT pg_advisory_xact_lock($1, hashtext($2 || '/' || $3))`, int32(1095320150), principal.String(), serviceID.String()); err != nil {
+			return nil, businessEventStorageError("FindUserSession", err)
+		}
+		query += " FOR UPDATE"
+	}
 
-	err := r.adapter.db.GetContext(ctx, &rec, query, principal, serviceID)
+	err := r.adapter.storageExecutor(ctx).GetContext(ctx, &rec, query, principal, serviceID)
 	if err == sql.ErrNoRows {
 		return nil, nil // Not found is not an error
 	}
@@ -158,7 +164,7 @@ func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 	var records []*userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 ORDER BY created_at DESC`
 
-	err := r.adapter.db.SelectContext(ctx, &records, query, principal)
+	err := r.adapter.storageExecutor(ctx).SelectContext(ctx, &records, query, principal)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, r.wrapError(err, "ListByPrincipal")
 	}
@@ -179,7 +185,7 @@ func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 	var records []*userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW()) ORDER BY created_at DESC`
 
-	err := r.adapter.db.SelectContext(ctx, &records, query, principal)
+	err := r.adapter.storageExecutor(ctx).SelectContext(ctx, &records, query, principal)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, r.wrapError(err, "ListActiveByPrincipal")
 	}
@@ -197,7 +203,7 @@ func (r *PostgresUserSessionRepository) Delete(ctx context.Context, sessionID id
 	}
 
 	query := `DELETE FROM user_sessions WHERE id = $1`
-	_, err := r.adapter.db.ExecContext(ctx, query, sessionID)
+	_, err := r.adapter.storageExecutor(ctx).ExecContext(ctx, query, sessionID)
 	if err != nil {
 		return r.wrapError(err, "Delete")
 	}
@@ -211,7 +217,7 @@ func (r *PostgresUserSessionRepository) DeleteByPrincipalAndService(ctx context.
 	}
 
 	query := `DELETE FROM user_sessions WHERE principal = $1 AND service_id = $2`
-	_, err := r.adapter.db.ExecContext(ctx, query, principal, serviceID)
+	_, err := r.adapter.storageExecutor(ctx).ExecContext(ctx, query, principal, serviceID)
 	if err != nil {
 		return r.wrapError(err, "DeleteByPrincipalAndService")
 	}
@@ -227,7 +233,7 @@ func (r *PostgresUserSessionRepository) CountByService(ctx context.Context, serv
 	var count int
 	query := `SELECT COUNT(*) FROM user_sessions WHERE service_id = $1`
 
-	err := r.adapter.db.GetContext(ctx, &count, query, serviceID)
+	err := r.adapter.storageExecutor(ctx).GetContext(ctx, &count, query, serviceID)
 	if err != nil {
 		return 0, r.wrapError(err, "CountByService")
 	}

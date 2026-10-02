@@ -13,6 +13,7 @@ import (
 	domconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -75,7 +76,7 @@ func Validate(cfg *ports.Config) error {
 		return err
 	}
 
-	return nil
+	return validateBusinessEventsConfig(&cfg.BusinessEvents)
 }
 
 // validateServerConfig validates the server configuration for all instances.
@@ -287,6 +288,17 @@ func validateStorageTimeouts(st *ports.StorageTimeouts) error {
 	if st.Write <= 0 {
 		return formatValidationError("storage.timeouts.write", st.Write.String(), "positive duration", nil)
 	}
+	return nil
+}
+
+// validateBusinessEventsConfig rounds positive retention up to PostgreSQL's
+// microsecond precision without overflowing time.Duration.
+func validateBusinessEventsConfig(cfg *ports.BusinessEventsConfig) error {
+	normalized, err := ledger.NormalizeRetention(cfg.Retention)
+	if err != nil {
+		return formatValidationError("business_events.retention", cfg.Retention.String(), "positive Go duration representable at microsecond precision", nil)
+	}
+	cfg.Retention = normalized
 	return nil
 }
 

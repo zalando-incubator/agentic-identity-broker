@@ -17,6 +17,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 // TestCreateStateToken_Success tests successful state token creation.
@@ -311,10 +312,10 @@ func setupTestService(t *testing.T) (*oauth2session.OAuth2SessionService, id.Ser
 	require.NoError(t, err)
 
 	// Create in-memory repositories
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	grantRepo := memory.NewUserGrantRepository()
-	agentRepo := memory.NewAgentRepository()
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
+	agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
 
 	// Create service with default config
 	config := oauth2session.DefaultConfig()
@@ -340,6 +341,7 @@ func setupTestService(t *testing.T) (*oauth2session.OAuth2SessionService, id.Ser
 		domjwe.New(key),
 		config,
 		slog.Default(),
+		ledgerfixture.NewRecorder(),
 	)
 
 	// Set up test data: add a third-party service

@@ -338,3 +338,21 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_DeleteProviderReferencedByAg
 	_, err = repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
 }
+
+func TestPostgresThirdpartyOAuth2ProviderRepository_AbsentDeleteDoesNotPoisonOwner(t *testing.T) {
+	adapter, cleanup := setupMigratedAdapter(t)
+	defer cleanup()
+	ctx := context.Background()
+	owner, err := adapter.BeginTX(ctx)
+	require.NoError(t, err)
+	defer func() { _ = adapter.Rollback(owner) }()
+	repo := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	provider := newTestEntity()
+	provider.ID = id.NewServiceID()
+	require.NoError(t, repo.Create(owner, provider))
+	require.NoError(t, repo.Delete(owner, id.NewServiceID()))
+	require.NoError(t, adapter.Commit(owner), "an idempotent no-op must not roll back another mutation")
+	stored, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	require.Equal(t, provider.DisplayName, stored.DisplayName)
+}

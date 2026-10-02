@@ -28,6 +28,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type noopBranchKeyManager struct{}
@@ -1370,10 +1371,10 @@ func setupServiceWithConfig(
 	require.NoError(t, err)
 
 	// Create repositories
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	grantRepo := memory.NewUserGrantRepository()
-	agentRepo := memory.NewAgentRepository()
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
+	agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
 
 	// Create service
 	config := oauth2session.DefaultConfig()
@@ -1395,17 +1396,7 @@ func setupServiceWithConfig(
 		slog.Default(),
 	)
 
-	svc := oauth2session.NewOAuth2SessionService(
-		providerService,
-		sessionRepo,
-		grantRepo,
-		agentRepo,
-		encryption,
-		&http.Client{},
-		domjwe.New(key),
-		config,
-		slog.Default(),
-	)
+	svc := oauth2session.NewOAuth2SessionService(providerService, sessionRepo, grantRepo, agentRepo, encryption, &http.Client{}, domjwe.New(key), config, slog.Default(), ledgerfixture.NewRecorder())
 
 	return svc, serviceRepo, sessionRepo, grantRepo, agentRepo, providerService
 }
@@ -1904,10 +1895,10 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create repositories
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	grantRepo := memory.NewUserGrantRepository()
-	agentRepo := memory.NewAgentRepository()
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
+	agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
 	encryption := newTestEncryption(t)
 
 	// Create ThirdpartyOAuth2ProviderService to handle encryption context binding (simulates domain layer)
@@ -1928,6 +1919,7 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 		domjwe.New(key),
 		config,
 		logger, // Capture logs
+		ledgerfixture.NewRecorder(),
 	)
 
 	ctx := context.Background()

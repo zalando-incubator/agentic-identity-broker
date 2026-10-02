@@ -22,24 +22,82 @@ data:
 
     -- Grant CONNECT on the current database
     SELECT format(
-      'GRANT CONNECT ON DATABASE %I TO %I',
+      'GRANT CONNECT ON DATABASE %I TO "%s"',
       current_database(),
-      :'broker_user'
+      replace(:'broker_user', '"', '""')
     ) \gexec
 
     -- Grant USAGE on the public schema
-    SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'broker_user') \gexec
+    SELECT format('GRANT USAGE ON SCHEMA public TO "%s"', replace(:'broker_user', '"', '""')) \gexec
 
     -- Grant DML permissions on all current tables
     SELECT format(
-      'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I',
-      :'broker_user'
+      'GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "%s"',
+      replace(:'broker_user', '"', '""')
     ) \gexec
 
     -- Grant permissions on sequences (required for SERIAL / IDENTITY columns)
     SELECT format(
-      'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %I',
-      :'broker_user'
+      'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "%s"',
+      replace(:'broker_user', '"', '""')
+    ) \gexec
+
+    -- Apply ledger restrictions after the broad business-table grants.
+    -- Preserve all existing business-table permissions.
+    -- Partition DDL belongs to the migration owner, not the broker role.
+    REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+    SELECT format('REVOKE CREATE ON SCHEMA public FROM "%s"', replace(:'broker_user', '"', '""')) \gexec
+    REVOKE ALL ON TABLE public.business_events FROM PUBLIC;
+    REVOKE ALL ON TABLE public.business_event_delivery_pending FROM PUBLIC;
+    REVOKE ALL ON TABLE public.business_event_policy FROM PUBLIC;
+    SELECT format('REVOKE ALL ON TABLE public.business_events FROM "%s"', replace(:'broker_user', '"', '""')) \gexec
+    SELECT format('REVOKE ALL ON TABLE public.business_event_delivery_pending FROM "%s"', replace(:'broker_user', '"', '""')) \gexec
+    SELECT format('REVOKE ALL ON TABLE public.business_event_policy FROM "%s"', replace(:'broker_user', '"', '""')) \gexec
+    SELECT format('GRANT SELECT, INSERT ON TABLE public.business_events TO "%s"', replace(:'broker_user', '"', '""')) \gexec
+    SELECT format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.business_event_delivery_pending TO "%s"', replace(:'broker_user', '"', '""')) \gexec
+    SELECT format('GRANT SELECT, UPDATE ON TABLE public.business_event_policy TO "%s"', replace(:'broker_user', '"', '""')) \gexec
+
+    -- Parent access does not authorize direct access to partitions. Remove
+    -- direct privileges on existing children left by broad/custom grants.
+    SELECT format('REVOKE ALL ON TABLE %I.%I FROM PUBLIC, "%s"', n.nspname, c.relname, replace(:'broker_user', '"', '""'))
+      FROM pg_catalog.pg_inherits AS i
+      JOIN pg_catalog.pg_class AS c ON c.oid = i.inhrelid
+      JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+     WHERE i.inhparent IN ('public.business_events'::regclass,
+                           'public.business_event_delivery_pending'::regclass) \gexec
+
+    -- Trigger execution is internal; the runtime must not execute any ledger
+    -- function directly. Do not change default table grants for other tables:
+    -- partition provisioning removes inherited child grants at creation.
+    ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+    SELECT format('ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM "%s"', replace(:'broker_user', '"', '""')) \gexec
+    SELECT format('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM "%s"', replace(:'broker_user', '"', '""')) \gexec
+    REVOKE ALL ON FUNCTION public.business_event_reject_update() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.business_event_create_partition_pair(timestamptz) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.business_event_provision_partitions() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.business_event_maintain_partitions() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION public.business_event_erase_subject(text) FROM PUBLIC;
+
+    {{- with .Values.migration.grants.businessEvents.readerRole }}
+    -- Quote role identifiers, including a literal role named public.
+    SELECT format(
+      'GRANT SELECT ON TABLE public.business_events, public.business_event_delivery_pending TO "%s"',
+      replace(E'{{ . | replace "\\" "\\\\" | replace "'" "''" }}', '"', '""')
+    ) \gexec
+    {{- end }}
+    {{- with .Values.migration.grants.businessEvents.erasureRole }}
+    SELECT format(
+      'GRANT EXECUTE ON FUNCTION public.business_event_erase_subject(text) TO "%s"',
+      replace(E'{{ . | replace "\\" "\\\\" | replace "'" "''" }}', '"', '""')
+    ) \gexec
+    {{- end }}
+
+    -- Keep runtime execution denied even if an operational role was configured
+    -- with the same name as the broker role.
+    SELECT format(
+      'REVOKE ALL ON FUNCTION public.business_event_reject_update(), public.business_event_create_partition_pair(timestamptz), public.business_event_provision_partitions(), public.business_event_maintain_partitions(), public.business_event_erase_subject(text) FROM "%s"',
+      replace(:'broker_user', '"', '""')
     ) \gexec
     {{- end }}
 {{- end }}

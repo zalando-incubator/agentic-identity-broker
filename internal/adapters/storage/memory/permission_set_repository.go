@@ -13,6 +13,7 @@ import (
 // Thread-safe implementation using sync.RWMutex.
 type PermissionSetRepository struct {
 	mu             sync.RWMutex
+	transactions   *TransactionManager
 	permissionSets map[id.PermissionSetID]*storage.PermissionSet
 	canonicalIndex map[string]id.PermissionSetID
 	nameIndex      map[string]id.PermissionSetID // Name -> ID for uniqueness check
@@ -20,8 +21,9 @@ type PermissionSetRepository struct {
 }
 
 // NewPermissionSetRepository creates a new in-memory permission set repository.
-func NewPermissionSetRepository() *PermissionSetRepository {
+func NewPermissionSetRepository(transactions *TransactionManager) *PermissionSetRepository {
 	return &PermissionSetRepository{
+		transactions:   transactions,
 		permissionSets: make(map[id.PermissionSetID]*storage.PermissionSet),
 		canonicalIndex: make(map[string]id.PermissionSetID),
 		nameIndex:      make(map[string]id.PermissionSetID),
@@ -38,6 +40,11 @@ func (r *PermissionSetRepository) WithAgentRepository(agentRepo ports.AgentRepos
 
 // Create stores a new permission set.
 func (r *PermissionSetRepository) Create(ctx context.Context, ps *storage.PermissionSet) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -73,9 +80,12 @@ func (r *PermissionSetRepository) Create(ctx context.Context, ps *storage.Permis
 	}
 
 	// Store the permission set
+	journalEntry(ctx, r.permissionSets, ps.ID)
 	r.permissionSets[ps.ID] = ps.Copy()
+	journalEntry(ctx, r.nameIndex, ps.Name)
 	r.nameIndex[ps.Name] = ps.ID
 	if ps.CanonicalID != nil {
+		journalEntry(ctx, r.canonicalIndex, *ps.CanonicalID)
 		r.canonicalIndex[*ps.CanonicalID] = ps.ID
 	}
 
@@ -84,6 +94,11 @@ func (r *PermissionSetRepository) Create(ctx context.Context, ps *storage.Permis
 
 // Get retrieves a permission set by ID.
 func (r *PermissionSetRepository) Get(ctx context.Context, id id.PermissionSetID) (*storage.PermissionSet, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -100,7 +115,12 @@ func (r *PermissionSetRepository) Get(ctx context.Context, id id.PermissionSetID
 	return ps.Copy(), nil
 }
 
-func (r *PermissionSetRepository) GetByCanonicalID(_ context.Context, canonicalID string) (*storage.PermissionSet, error) {
+func (r *PermissionSetRepository) GetByCanonicalID(ctx context.Context, canonicalID string) (*storage.PermissionSet, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	psID, exists := r.canonicalIndex[canonicalID]
@@ -110,7 +130,12 @@ func (r *PermissionSetRepository) GetByCanonicalID(_ context.Context, canonicalI
 	return r.permissionSets[psID].Copy(), nil
 }
 
-func (r *PermissionSetRepository) GetCanonicalIDs(_ context.Context, ids []id.PermissionSetID) (map[id.PermissionSetID]string, error) {
+func (r *PermissionSetRepository) GetCanonicalIDs(ctx context.Context, ids []id.PermissionSetID) (map[id.PermissionSetID]string, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -125,6 +150,11 @@ func (r *PermissionSetRepository) GetCanonicalIDs(_ context.Context, ids []id.Pe
 
 // GetByIDs retrieves multiple permission sets by IDs.
 func (r *PermissionSetRepository) GetByIDs(ctx context.Context, ids []id.PermissionSetID) ([]*storage.PermissionSet, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -140,6 +170,11 @@ func (r *PermissionSetRepository) GetByIDs(ctx context.Context, ids []id.Permiss
 
 // Update replaces a permission set's fields.
 func (r *PermissionSetRepository) Update(ctx context.Context, ps *storage.PermissionSet) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -170,17 +205,22 @@ func (r *PermissionSetRepository) Update(ctx context.Context, ps *storage.Permis
 			)
 		}
 		// Update name index
+		journalEntry(ctx, r.nameIndex, existing.Name)
 		delete(r.nameIndex, existing.Name)
+		journalEntry(ctx, r.nameIndex, ps.Name)
 		r.nameIndex[ps.Name] = ps.ID
 	}
 	if existing.CanonicalID != nil {
+		journalEntry(ctx, r.canonicalIndex, *existing.CanonicalID)
 		delete(r.canonicalIndex, *existing.CanonicalID)
 	}
 	if ps.CanonicalID != nil {
+		journalEntry(ctx, r.canonicalIndex, *ps.CanonicalID)
 		r.canonicalIndex[*ps.CanonicalID] = ps.ID
 	}
 
 	// Store the updated permission set
+	journalEntry(ctx, r.permissionSets, ps.ID)
 	r.permissionSets[ps.ID] = ps.Copy()
 
 	return nil
@@ -188,6 +228,11 @@ func (r *PermissionSetRepository) Update(ctx context.Context, ps *storage.Permis
 
 // Delete removes a permission set by ID.
 func (r *PermissionSetRepository) Delete(ctx context.Context, id id.PermissionSetID) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -197,9 +242,12 @@ func (r *PermissionSetRepository) Delete(ctx context.Context, id id.PermissionSe
 		return nil
 	}
 
+	journalEntry(ctx, r.permissionSets, id)
 	delete(r.permissionSets, id)
+	journalEntry(ctx, r.nameIndex, ps.Name)
 	delete(r.nameIndex, ps.Name)
 	if ps.CanonicalID != nil {
+		journalEntry(ctx, r.canonicalIndex, *ps.CanonicalID)
 		delete(r.canonicalIndex, *ps.CanonicalID)
 	}
 
@@ -208,6 +256,11 @@ func (r *PermissionSetRepository) Delete(ctx context.Context, id id.PermissionSe
 
 // List returns all permission sets, optionally filtered by service ID.
 func (r *PermissionSetRepository) List(ctx context.Context, serviceID id.ServiceID) ([]*storage.PermissionSet, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -236,6 +289,11 @@ func (r *PermissionSetRepository) List(ctx context.Context, serviceID id.Service
 
 // CountAgentsReferencingPermissionSet counts agents whose permission_sets list contains the given ID.
 func (r *PermissionSetRepository) CountAgentsReferencingPermissionSet(ctx context.Context, psID id.PermissionSetID) (int, error) {
+	ctx, guard, gateErr := r.transactions.enter(ctx, false)
+	if gateErr != nil {
+		return 0, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	agentRepo := r.agentRepo
 	r.mu.RUnlock()
@@ -261,6 +319,11 @@ func (r *PermissionSetRepository) CountAgentsReferencingPermissionSet(ctx contex
 
 // CountPermissionSetsForService counts permission sets containing a scope for the given service.
 func (r *PermissionSetRepository) CountPermissionSetsForService(ctx context.Context, serviceID id.ServiceID) (int, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return 0, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

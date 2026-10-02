@@ -44,7 +44,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Create(ctx context.Context,
 	}
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
-	tx, err := r.adapter.db.BeginTx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return providerStorageError("CreateThirdpartyOAuth2Provider", err, "failed to begin transaction")
 	}
@@ -79,7 +79,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Get(ctx context.Context, se
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-	record, err := scanProvider(r.adapter.db.QueryRowContext(queryCtx, `SELECT `+providerColumns+` FROM thirdparty_oauth2_services s WHERE s.id = $1`, serviceID))
+	record, err := scanProvider(r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, `SELECT `+providerColumns+` FROM thirdparty_oauth2_services s WHERE s.id = $1`, serviceID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, storage.NewStorageError("GetThirdpartyOAuth2Provider", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
 	}
@@ -96,7 +96,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) GetByCanonicalID(ctx contex
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 	var serviceID id.ServiceID
-	if err := r.adapter.db.QueryRowContext(queryCtx, `SELECT id FROM thirdparty_oauth2_services WHERE canonical_id = $1`, canonicalID).Scan(&serviceID); err != nil {
+	if err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, `SELECT id FROM thirdparty_oauth2_services WHERE canonical_id = $1`, canonicalID).Scan(&serviceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, storage.NewStorageError("GetThirdpartyOAuth2ProviderByCanonicalID", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
 		}
@@ -115,7 +115,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) GetCanonicalIDs(ctx context
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, `SELECT id, canonical_id FROM thirdparty_oauth2_services WHERE id = ANY($1::uuid[]) AND canonical_id IS NOT NULL`, pq.Array(ids))
+	rows, err := r.adapter.storageExecutor(ctxTimeout).QueryContext(ctxTimeout, `SELECT id, canonical_id FROM thirdparty_oauth2_services WHERE id = ANY($1::uuid[]) AND canonical_id IS NOT NULL`, pq.Array(ids))
 	if err != nil {
 		return nil, providerStorageError("GetCanonicalIDsThirdpartyOAuth2Provider", err, "failed to get canonical IDs")
 	}
@@ -149,7 +149,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	}
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
-	tx, err := r.adapter.db.BeginTx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to begin transaction")
 	}
@@ -215,7 +215,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Delete(ctx context.Context,
 	}
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
-	tx, err := r.adapter.db.BeginTx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return providerStorageError("DeleteThirdpartyOAuth2Provider", err, "failed to begin transaction")
 	}
@@ -223,6 +223,9 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Delete(ctx context.Context,
 
 	var lockedServiceID id.ServiceID
 	if err := tx.QueryRowContext(execCtx, `SELECT id FROM thirdparty_oauth2_services WHERE id = $1 FOR UPDATE`, serviceID).Scan(&lockedServiceID); errors.Is(err, sql.ErrNoRows) {
+		if err := tx.Commit(); err != nil {
+			return providerStorageError("DeleteThirdpartyOAuth2Provider", err, "failed to commit transaction")
+		}
 		return nil
 	} else if err != nil {
 		return providerStorageError("DeleteThirdpartyOAuth2Provider", err, "failed to lock provider")
@@ -266,7 +269,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) List(ctx context.Context) (
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-	rows, err := r.adapter.db.QueryContext(queryCtx, `SELECT `+providerColumns+` FROM thirdparty_oauth2_services s ORDER BY s.created_at DESC`)
+	rows, err := r.adapter.storageExecutor(queryCtx).QueryContext(queryCtx, `SELECT `+providerColumns+` FROM thirdparty_oauth2_services s ORDER BY s.created_at DESC`)
 	if err != nil {
 		return nil, providerStorageError("ListThirdpartyOAuth2Providers", err, "failed to list providers")
 	}
@@ -298,7 +301,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) FindByProtectedResource(ctx
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-	record, err := scanProvider(r.adapter.db.QueryRowContext(queryCtx, `SELECT `+providerColumns+` FROM thirdparty_oauth2_services s JOIN service_protected_resources pr ON pr.service_id=s.id WHERE pr.resource_uri=$1`, resourceURI))
+	record, err := scanProvider(r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, `SELECT `+providerColumns+` FROM thirdparty_oauth2_services s JOIN service_protected_resources pr ON pr.service_id=s.id WHERE pr.resource_uri=$1`, resourceURI))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, tokenexchange.NewInvalidTargetError("no service configured for the requested resource")
 	}
@@ -318,7 +321,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) ListProtectedResources(ctx 
 		resources []string
 		version   int64
 	)
-	err := r.adapter.db.QueryRowContext(queryCtx, `SELECT
+	err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, `SELECT
 	COALESCE((SELECT array_agg(pr.resource_uri ORDER BY pr.resource_uri)
 	          FROM service_protected_resources pr WHERE pr.service_id = s.id), ARRAY[]::text[]),
 	s.version
@@ -333,7 +336,7 @@ FROM thirdparty_oauth2_services s WHERE s.id=$1`, serviceID).Scan(pq.Array(&reso
 }
 
 func (r *PostgresThirdpartyOAuth2ProviderRepository) AddProtectedResource(ctx context.Context, serviceID id.ServiceID, resourceURI string) (ports.ProtectedResourceMutationResult, error) {
-	return r.mutateProtectedResources(ctx, "AddProtectedResource", serviceID, func(ctx context.Context, tx *sql.Tx) (bool, error) {
+	return r.mutateProtectedResources(ctx, "AddProtectedResource", serviceID, func(ctx context.Context, tx sqlTransactionExecutor) (bool, error) {
 		var inserted string
 		err := tx.QueryRowContext(ctx, `INSERT INTO service_protected_resources (resource_uri, service_id) VALUES ($1,$2) ON CONFLICT (resource_uri) DO NOTHING RETURNING resource_uri`, resourceURI, serviceID).Scan(&inserted)
 		if err == nil {
@@ -354,7 +357,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) AddProtectedResource(ctx co
 }
 
 func (r *PostgresThirdpartyOAuth2ProviderRepository) RemoveProtectedResource(ctx context.Context, serviceID id.ServiceID, resourceURI string) (ports.ProtectedResourceMutationResult, error) {
-	return r.mutateProtectedResources(ctx, "RemoveProtectedResource", serviceID, func(ctx context.Context, tx *sql.Tx) (bool, error) {
+	return r.mutateProtectedResources(ctx, "RemoveProtectedResource", serviceID, func(ctx context.Context, tx sqlTransactionExecutor) (bool, error) {
 		result, err := tx.ExecContext(ctx, `DELETE FROM service_protected_resources WHERE service_id=$1 AND resource_uri=$2`, serviceID, resourceURI)
 		if err != nil {
 			return false, err
@@ -371,7 +374,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) RemoveProtectedResource(ctx
 }
 
 func (r *PostgresThirdpartyOAuth2ProviderRepository) RenameProtectedResource(ctx context.Context, serviceID id.ServiceID, fromURI, toURI string) (ports.ProtectedResourceMutationResult, error) {
-	return r.mutateProtectedResources(ctx, "RenameProtectedResource", serviceID, func(ctx context.Context, tx *sql.Tx) (bool, error) {
+	return r.mutateProtectedResources(ctx, "RenameProtectedResource", serviceID, func(ctx context.Context, tx sqlTransactionExecutor) (bool, error) {
 		if fromURI == toURI {
 			var exists bool
 			err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM service_protected_resources WHERE service_id=$1 AND resource_uri=$2)`, serviceID, fromURI).Scan(&exists)
@@ -398,7 +401,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) RenameProtectedResource(ctx
 	}, toURI)
 }
 
-func (r *PostgresThirdpartyOAuth2ProviderRepository) mutateProtectedResources(ctx context.Context, operation string, serviceID id.ServiceID, mutate func(context.Context, *sql.Tx) (bool, error), resource string) (ports.ProtectedResourceMutationResult, error) {
+func (r *PostgresThirdpartyOAuth2ProviderRepository) mutateProtectedResources(ctx context.Context, operation string, serviceID id.ServiceID, mutate func(context.Context, sqlTransactionExecutor) (bool, error), resource string) (ports.ProtectedResourceMutationResult, error) {
 	if err := r.requireDB(operation); err != nil {
 		return ports.ProtectedResourceMutationResult{}, err
 	}
@@ -407,7 +410,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) mutateProtectedResources(ct
 	}
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
-	tx, err := r.adapter.db.BeginTx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return ports.ProtectedResourceMutationResult{}, providerStorageError(operation, err, "failed to begin transaction")
 	}
@@ -467,7 +470,7 @@ func protectedResources(ctx context.Context, db providerResourceQuerier, service
 	}
 	return resources, rows.Err()
 }
-func insertProtectedResources(ctx context.Context, tx *sql.Tx, serviceID id.ServiceID, resources []string) error {
+func insertProtectedResources(ctx context.Context, tx sqlTransactionExecutor, serviceID id.ServiceID, resources []string) error {
 	for _, resource := range resources {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO service_protected_resources (resource_uri, service_id) VALUES ($1,$2)`, resource, serviceID); err != nil {
 			return providerStorageError("insertProtectedResources", err, "protected resource is already owned")

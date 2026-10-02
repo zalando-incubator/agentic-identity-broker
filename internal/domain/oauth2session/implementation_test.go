@@ -18,6 +18,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 // setupImplementedService creates a service with full encryption support for testing the implementation.
@@ -33,10 +34,10 @@ func setupImplementedService(t *testing.T) (*oauth2session.OAuth2SessionService,
 	require.NoError(t, err)
 
 	// Create repositories
-	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
-	grantRepo := memory.NewUserGrantRepository()
-	agentRepo := memory.NewAgentRepository()
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
+	sessionRepo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
+	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
+	agentRepo := memory.NewAgentRepository(memory.NewTransactionManager())
 	encryption := newTestEncryption(t)
 
 	// Create service
@@ -53,17 +54,7 @@ func setupImplementedService(t *testing.T) (*oauth2session.OAuth2SessionService,
 		slog.Default(),
 	)
 
-	svc := oauth2session.NewOAuth2SessionService(
-		providerService,
-		sessionRepo,
-		grantRepo,
-		agentRepo,
-		encryption,
-		&http.Client{},
-		domjwe.New(key),
-		config,
-		slog.Default(),
-	)
+	svc := oauth2session.NewOAuth2SessionService(providerService, sessionRepo, grantRepo, agentRepo, encryption, &http.Client{}, domjwe.New(key), config, slog.Default(), ledgerfixture.NewRecorder())
 
 	return svc, providerService
 }
