@@ -207,6 +207,10 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 		assert.Equal(t, storage.ApprovalStatusDenied, result.Status)
 		assert.NotNil(t, result.Persistence)
 		assert.Equal(t, storage.ApprovalPersistencePermanent, *result.Persistence)
+		stored, err := repo.Get(ctx, approval.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "delete_file", stored.ToolPattern)
+		assert.Empty(t, stored.ParamsPattern, "permanent denial must cover every argument value")
 
 		result, err = repo.RevokePermanent(ctx, approval.ID, deniedAt.Add(time.Second))
 		require.NoError(t, err)

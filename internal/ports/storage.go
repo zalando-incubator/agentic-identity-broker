@@ -296,7 +296,7 @@ type ToolApprovalRepository interface {
 	// Approve transitions a pending approval to approved status with the user decision.
 	Approve(ctx context.Context, id id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error)
 
-	// Deny transitions a pending approval to denied status.
+	// Deny transitions a pending approval to denied status, clearing parameter constraints for permanent denials.
 	Deny(ctx context.Context, id id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (*storage.ToolApproval, error)
 
 	// RevokePermanent atomically clears a permanent approval or denial.
