@@ -1771,6 +1771,135 @@ just test-e2e-performance 'performance && business-event-ledger' integration
 
 The benchmark harness/report is an implementation deliverable, not generated measurement evidence in this plan.
 
+### Deployment-profile input
+
+Set `AIB_LEDGER_PERFORMANCE_PROFILE` to the operations-owner-approved JSON file before the performance recipe. US4-AS4 validates the profile and environment before building binaries or creating benchmark databases. It runs deployment measurements before starting the reference container, then runs the unchanged fixed reference within the same acceptance scenario. Missing approval or unsupported conditions fail; they never fall back to the reference.
+
+Every field below is required. Unknown fields, omitted booleans, and null values are rejected.
+
+| JSON fields | Execution contract |
+|---|---|
+| `approval.owner`, `date`, `reference`, `location` | Real operations-owner approval, ISO date (`YYYY-MM-DD`), review reference, and retained profile location; test-fixture metadata is not release approval |
+| `actions`, `throughput_per_second`, `concurrency` | At least 100000 actions, divisible by 100; positive aggregate offered rate and worker count; each version must achieve at least 95% of the approved rate |
+| `principals`, `agents`, `services`, `principal_id_bytes` | Actual business-fixture cardinalities and principal identifier size; at least two services, with enough principals to exercise all agents/services; identifiers must fit the existing 255-byte storage limit |
+| `permission_set_service_counts` | Positive service counts for each permission set; the generated sets must collectively cover the configured services |
+| `mix.exchanges`, `approvals`, `grants`, `refreshes`, `admin` | Nonnegative percentage weights totaling 100; actual workflow scheduling follows these weights |
+| `history`, `history_event_bytes.min`, `max` | Safe synthetic event count across 90 days and required observed historical-envelope sizes; baseline business fixtures match but have no ledger table |
+| `event_bytes` | Required `min`/`max` byte bounds for exactly the selected measured types: `token-exchanged`, `approval-approved`, `grant-updated`, `session-refreshed`, `agent-updated`; actual persisted envelopes must fit |
+| `hardware.os`, `arch`, `cpus`, `gomaxprocs`, `memory_bytes`, `attestation` | The runner verifies actual Go host/CPU settings and requires matching operator attestation of physical memory |
+| `postgres.host`, `port`, `sslmode`, `settings` | Dedicated benchmark PostgreSQL placement and connection security; connected server settings must match, including `server_version`, `max_connections`, `shared_buffers`, and `synchronous_commit` |
+| `network.client_broker`, `database_host`, `upstream_host` | This runner supports loopback HTTP client/broker and mock upstream; the database host must match the supplied external PostgreSQL host; unsupported placements fail explicitly |
+| `pool.open`, `idle` | Must match the existing production adapter's 25 open/5 idle connection pool; no test-only production pool override |
+| `telemetry.enabled`, `traces`, `metrics`, `logs`, `ledger_copy` | Traces and allocation metrics must be enabled to measure recording; the supplied log/copy settings control actual broker configuration independently |
+| `telemetry.receiver`, `receiver_tls`, `receiver_host`, `receiver_port` | `local-ack` requires `127.0.0.1` and port 0; `external-grpc` forwards real exports synchronously to the approved host/port through the capture proxy; `receiver_tls` must be false because this runner cannot measure the broker's own TLS costs |
+
+Also provide these environment inputs:
+
+- `AIB_LEDGER_PERFORMANCE_HOST_ATTESTATION` and `AIB_LEDGER_PERFORMANCE_HOST_MEMORY_BYTES`, matching the approved host record.
+- `AIB_LEDGER_PERFORMANCE_POSTGRES_ADMIN_URL`, pointing to a **dedicated benchmark server**, with explicit approved host, port, and `sslmode`. It needs database/role creation privileges. The harness creates and removes only its randomly named benchmark databases and roles; never supply production credentials.
+- For `external-grpc`, `AIB_LEDGER_PERFORMANCE_OTLP_ENDPOINT` must match the approved receiver. TLS profiles are rejected explicitly rather than measured through a substituted plaintext broker connection.
+- Optionally, `AIB_LEDGER_PERFORMANCE_RESULTS_DIR` selects the directory for complete raw distributions and profile records.
+
+Both workloads retain two-minute warmups, three alternating baseline/feature repetitions, per-action facts and credential checks, and both 5 ms limits. Threshold violations are retained across repetitions and reject final acceptance. Approval metadata and helper smoke tests do not substitute for actual deployment measurements.
+
+Reports distinguish the configured copy switch from effective copying, which also requires global and log telemetry and exists only in the feature binary. For example, `logs=false` with `ledger_copy=true` means effective copying is false, not a copying-enabled measurement.
+
+The recipe allows four hours for the complete dual-profile scenario by default. For a slower approved offered rate or larger dataset, pass a sufficient suite timeout as its third argument, for example `just test-e2e-performance 'performance && business-event-ledger' integration 8h`.
+
 ## 7. Final implementation gate
 
 Run `just verify`, which includes `test-e2e-ledger-postgres`, confirm the matching CI lane ran the tagged scenarios, and add the separately controlled performance run. Retain scenario mapping, red/green evidence, actual OTLP capture, concurrent erasure/crash results, migration privilege checks, rendered deployment output and the measured profile/report. No feature is complete solely because schemas validate or unit tests pass.
+
+## Convergence verification (2026-10-02)
+
+### Insufficient session scopes (T110)
+
+The new unit regression compiled and failed before the fix for empty and partially covered session scopes: it observed `token-request-failed` instead of `token-exchange-denied`. Its fully covered control passed.
+
+US1-AS4 now includes a real HTTP exchange with an authorized grant and an established session that lacks the required scope. The initial fixture had no required scope for that service and returned 200; after adding the required scope, the regression failed because no denial event existed. The fix classifies the refusal at the existing scope check without changing its HTTP error or reauthentication URI.
+
+```bash
+go test -count=1 ./internal/domain/tokenexchange
+ginkgo -v --procs=1 --fail-on-empty \
+  --focus='records final refusals and failures independently of mutations' ./tests/e2e/
+```
+
+Both commands passed after the fix. The HTTP scenario returned 400 with `invalid_grant` and the reauthentication URI, retained exactly one authorization-denial fact without a generic failure companion, preserved established caller/delegation/resource references, and left the session unchanged. These results cover the memory backend; tagged-backend and final-gate results are recorded separately after execution.
+
+The missing operator-approved deployment profile and recorded reference-performance failure remain release blockers. This regression pass does not complete performance acceptance.
+
+
+### Deployment harness and operational smoke (T111)
+
+The implementation accepts the explicit deployment-profile input above and keeps one US4-AS4 acceptance scenario for both workloads. Missing approval fails before expensive work. Unsupported pool, placement, measurement, or TLS conditions are rejected rather than silently replaced. Reports distinguish the configured copy switch from effective copying. Runtime-role PostgreSQL settings are checked before starting the child binary, not only through the admin connection.
+
+```bash
+env PATH="/opt/homebrew/opt/helm@3/bin:$PATH" just check
+go test -tags=integration -count=1 \
+  -run '^TestLedgerDeploymentProfileHelpers$' ./tests/e2e/
+```
+
+Both commands passed. Static checks reported zero linter issues. The helper tests cover workload-floor/mix boundaries, missing or unknown conditions, actual scheduling and live-service grant invariants, host mismatch, explicit false, and unavailable database/receiver placement. Forwarding/default-copy assertions were removed rather than treated as coverage.
+
+A temporary overlay launched the actual production CLI with a fictional, non-reference smoke fixture. It used 8 principals, 2 agents, 4 services, three permission sets covering 2/1/1 services, 64-byte principal identifiers, and a 35/25/15/20/5 action mix. A separate fresh template validated 150 historical events. The first smoke incorrectly seeded history into its already-used preflight database and observed 276 rows instead of 150; isolating the history template corrected that fixture error without weakening the count invariant.
+
+The corrected smoke completed 100 live actions and verified the exact event type counts, identities, permission references, and credential exclusion. Persisted live envelopes measured 697–1168 bytes. An actual external gRPC receiver received all 100 recording spans through the capture proxy. Changing the benchmark runtime role's `synchronous_commit` caused startup rejection even though the admin connection still matched; resetting it allowed the broker to start.
+
+The same smoke executed the documented successful-exchange investigation query, exact-subject erasure, repeated erasure returning zero, and partition maintenance through its authorized owner connection. The receiving-agent set was exact, erased-subject rows were absent, and the other principal's count was unchanged.
+
+This is execution-path and operational evidence, not an operator-approved workload or performance pass. Full paired release measurement remains T113. Temporary smoke and profiling sources are removed after verification; raw diagnostic profiles remain as evidence.
+
+
+### Tagged refusal regression and functional gate
+
+The first convergence `just verify` run passed static/security checks, package/race tests, both integration layers, 246 web tests, 622 backend scenarios, 112 ExtProc scenarios, and 61 browser scenarios. Its final tagged ledger lane passed 19 scenarios and failed US1-AS4's new full-session equality assertion.
+
+The fixture compared its final session with the object from before the scope-setting upsert. PostgreSQL assigns `updated_at = NOW()` on that upsert. The test now rereads the persisted fixture before the exchange and retains the complete no-mutation equality assertion afterward.
+
+```bash
+ginkgo --tags=integration --procs=1 --fail-on-empty \
+  --focus='records final refusals and failures independently of mutations' ./tests/e2e/
+env PATH="/opt/homebrew/opt/helm@3/bin:$PATH" just helm-lint helm-template
+```
+
+The corrected US1-AS4 selection passed on both backends. Helm lint and rendering passed. The complete functional gate is rerun separately after that fixture correction. This does not relax any event, HTTP, or session-state expectation.
+
+The source inventory retains 21 unique scenario-reference comments and one US4-AS4 `It`. The `Skip` methods in its strict infrastructure handle call `Fail`, not a skipped acceptance result. Ten local relative documentation links resolve, and the published catalogue contains 28 examples.
+
+The final scoped structural quality delta remains non-clean with 11 cumulative major findings against Git HEAD. Profile-specific fixture/verification branches and preflight variants account for findings; no suppression or unrelated abstraction was added.
+
+
+### Post-reversion ledger verification
+
+The final all-repository run stopped in the standalone ExtProc agentgateway journey. MCP Initialize returned HTTP EOF at `tests/e2e/extproc/agentgateway_metadata_e2e_test.go:269`. The cause is not established. No ExtProc code or retry policy changed.
+
+An overlapping pair of Ginkgo commands encountered three ledger subprocess launch errors. The crash harness starts the executable from `os.Executable()`. [INFERENCE] Shared package-executable creation or cleanup caused the interference. A later serial shell command returned a backend timeout without usable output.
+
+The recovered check used a dedicated executable with a stable path. The standalone binary uses one worker by default.
+
+```bash
+go test -c -tags=integration \
+  -o /tmp/aib-ledger-retained-20261002.test ./tests/e2e/
+# From tests/e2e:
+/tmp/aib-ledger-retained-20261002.test \
+  -test.run='TestE2E|TestLedgerDeploymentProfileHelpers' \
+  -test.timeout=0 -ginkgo.fail-on-empty=true \
+  -ginkgo.label-filter='business-event-ledger && !performance'
+```
+
+The dedicated executable passed all 20 ledger scenarios on the retained code. Shared scenarios covered both backends. Crash, restart, erasure, retention, recovery, credential, and legacy-log checks passed.
+
+The isolated US4-AS4 command failed before building workload binaries. It reported `AIB_LEDGER_PERFORMANCE_PROFILE is required: no operator-approved deployment profile is available`. This is an exercised release gate, not a performance pass.
+
+Further profiling separates workflow families. In the retained profiled diagnostic, recording p99 was 31.526250 ms for exchanges and 15.525875–21.113625 ms for other families. These distributions do not identify a safe optimization by themselves. The pinned validator review found no reusable state or direct-struct shortcut. Validation remains mandatory before storage and after the database assigns recording time.
+
+
+### Accepted-design decision
+
+The user chose to preserve the pool and the accepted storage design.
+The continued diagnostics found cold-backend insert costs, not an accepted application optimization.
+The [performance report](performance-results.md) contains the SQL, pool, prepare, and cold/warm observations.
+All diagnostic transactions preserved recording and deletion safety. The cold/warm probe rolled back every insert.
+Temporary diagnostic sources were removed. Sanitized raw evidence remains under ignored `test-results/`.
+
+Release acceptance remains blocked by the performance limits, the missing approved deployment profile, and the observed final full-suite ExtProc EOF failure.

@@ -168,3 +168,108 @@ All 100,000 measured facts, 20,000 approval preparations, and 56,328 warmup fact
 The transaction-p99 difference is **9.371083 ms**. Recording p99 is **22.370709 ms**. Both still exceed 5 ms. Repetitions two and three did not run because the first-pair recording assertion failed. This is not a performance pass.
 
 The user chose **Stop tuning and report the blocked gate** on 2026-10-02. Further tuning stopped. The unapproved deployment profile and measured reference failure remain explicit release blockers. Tasks T094, T095, T096, T107, and T109 remain unchecked. No acceptance limit or durability/security contract was weakened.
+
+## Convergence diagnosis and bounded pair-gate trial
+
+The fresh post-correction diagnostic ran the unchanged fixed reference against a profiled production feature binary: concurrency 32, one million historical events, a two-minute warmup, and 100000 measured actions. It verified all 100000 facts, 20000 approval preparations, 70876 warmup facts, and credential exclusion. Observed envelope sizes were 659–1020 bytes.
+
+| Diagnostic distribution | p50 | p95 | p99 |
+|---|---:|---:|---:|
+| Transaction latency | 10.167750 ms | 30.637875 ms | 55.180417 ms |
+| Recording duration | 3.400333 ms | 11.539625 ms | 26.443416 ms |
+
+These are profiled feature-only distributions, not paired acceptance. Profiling perturbs execution. Raw arrays are retained in `test-results/ledger-profile-next/diagnostic-samples.json`, with the exact executable in `test-results/ledger-profile-next/feature-broker`. The measured process profiles are in `test-results/ledger-profile-next/broker-3966257169/`.
+
+```bash
+go tool pprof -top test-results/ledger-profile-next/feature-broker \
+  test-results/ledger-profile-next/broker-3966257169/mutex.pprof
+go tool pprof -top test-results/ledger-profile-next/feature-broker \
+  test-results/ledger-profile-next/broker-3966257169/block.pprof
+```
+
+The mutex profile attributes nearly all reported delay to approval creation. The blocking profile reports 9119.50 aggregate seconds beneath `CreatePendingApproval`; aggregate goroutine wait time is not request latency. CPU and allocation profiles still show substantial existing cryptographic work. No cryptographic or schema-validation safety check was removed.
+
+The bounded trial replaces the process-wide creation mutex with 64 fixed gates selected by the existing rate-limit identity, `(principal, agent)`. One pair remains serialized through owner commit; waiting for its gate still precedes transaction checkout. Hash collisions only serialize unrelated pairs, and no per-identity map grows with workload cardinality. Compiler escape analysis confirms that FNV hashing is inlined and the principal byte view uses a zero-copy conversion without escaping.
+
+An HTTP regression held one committed creation before response completion and attempted creation for another principal with the same agent. It failed before the trial because the unrelated request remained blocked. It passed afterward, retaining one exact approval fact for each principal. The complete approval package passed under the race detector, including the existing committed-winner and rate-limit tests.
+
+This establishes concurrency and safety behavior, not a performance improvement. The unchanged unprofiled paired measurement determines whether the trial meets either 5 ms limit. The missing operations-owner-approved deployment profile remains a separate release blocker.
+
+
+## Pair-gate trial: all three measured pairs, rejected
+
+The isolated unprofiled run completed all six version runs at baseline `d500f36378dd914f8a516604a08525f737e8ddff` and feature `fe698de161cfbac244e40eb9ecf8feb37b7eb5ff+working-tree`. It used the fixed reference conditions above, PostgreSQL 17.11, 14 host CPUs/GOMAXPROCS, the 25/5 connection pool, enabled local OTLP traces/logs/metrics and feature copying, one million feature-history rows, 120-second warmups, and 100000 measured actions per version. Pair order was baseline/feature, feature/baseline, baseline/feature. No other assistant check or workload ran concurrently.
+
+| Pair | Version | p50 (ms) | p95 (ms) | p99 (ms) | Recording p99 (ms) | Actions/s |
+|---|---|---:|---:|---:|---:|---:|
+| 1 | Baseline | 4.943375 | 14.420000 | 22.448875 | Not applicable | 1021.169 |
+| 1 | Feature | 27.255042 | 137.085125 | 280.754292 | 44.828375 | 497.303 |
+| 2 | Feature | 27.390667 | 130.127167 | 263.170959 | 37.622833 | 506.105 |
+| 2 | Baseline | 5.420625 | 18.653125 | 33.913875 | Not applicable | 834.056 |
+| 3 | Baseline | 8.844042 | 57.379166 | 145.013625 | Not applicable | 375.344 |
+| 3 | Feature | 16.771375 | 84.328125 | 175.931375 | 23.396042 | 759.881 |
+
+| Pair | Added transaction p99 (ms) | Baseline allocation bytes / objects | Feature allocation bytes / objects | Baseline / feature warmup actions |
+|---|---:|---|---|---|
+| 1 | 258.305417 | 59865936000 / 1162994285 | 63318144608 / 1219964427 | 124361 / 74972 |
+| 2 | 229.257084 | 55912395424 / 1085623658 | 62854871728 / 1210407546 | 91531 / 68789 |
+| 3 | 30.917750 | 51514308928 / 997499615 | 65093686328 / 1257703413 | 73855 / 71744 |
+
+Every version reported zero HTTP errors and zero PostgreSQL rollbacks. Every feature run verified exactly 100000 measured facts, 20000 approval preparations, its entire warmup, and credential exclusion. Observed feature envelopes were 658–1020 bytes. Full raw latency/recording arrays and conditions are retained in the six `reference-repetition-{1,2,3}-{baseline,feature}.json` files under `test-results/ledger-reference-pair-gates-20261002/`.
+
+Both 5 ms limits failed in every pair. Baseline p99 also varied substantially across repetitions; these results do not establish the cause of that variation. The trial does not demonstrate a performance improvement and was **reverted**, together with its trial-only independent-pair progress expectation and architecture note. The original process-wide creation gate before transaction checkout remains. The existing committed-winner, rate-limit, atomicity, and acceptance expectations are unchanged.
+
+No new optimization or reference pass is retained. The prior retained-code result remains 9.371083 ms added transaction p99 and 22.370709 ms recording p99, already above target. The missing approved deployment profile also prevents deployment-load acceptance. T095/T096 and convergence T112/T113 remain open; this failed trial is not evidence that those gates passed.
+
+
+## Continued SQL and cold-backend diagnosis
+
+The user chose to preserve the 25-open/5-idle pool and the accepted storage design.
+No connection-retention change or partition-local append path was implemented.
+
+A disposable pgx tracer ran 20000 fixed-reference actions with concurrency 32 and one million historical events.
+It retained the two-minute warmup and every recording, validation, and deletion barrier.
+The diagnostic verified 20000 measured facts, 4000 approval preparations, 76714 warmup facts, and credential exclusion.
+Transaction p99 was 36.048459 ms. Recording p99 was 20.935792 ms.
+These are diagnostic feature-only measurements, not paired acceptance.
+
+| SQL class | Calls | p99 (ms) |
+|---|---:|---:|
+| Physical BEGIN wire query | 20000 | 2.139083 |
+| Lifecycle gate | 20000 | 1.800458 |
+| Subject gate | 18000 | 1.557458 |
+| Recording clock | 20000 | 1.861208 |
+| Queued event insert | 20000 | 16.435000 |
+| Physical COMMIT | 20000 | 2.904875 |
+| Physical begin, including checkout | 20000 | 5.506291 |
+
+The pool closed 427 idle connections during the measured interval.
+WaitCount increased by 161 and WaitDuration by 412103336 ns.
+These are aggregate pool counters, not latency for one request.
+The statement-cache capacity remained 512.
+
+The queued insert had 416 prepare misses.
+Without an observed prepare miss, its p99 was 2.161625 ms across 19584 calls.
+With a prepare miss, its p99 was 94.904166 ms across 416 calls.
+The slowest insert took 110.626333 ms. Its prepare callback took 0.541209 ms.
+This supports a cold-backend/cache-churn hypothesis. It does not establish an accepted optimization.
+
+A separate rollback-only probe measured 40 cold/warm parent inserts with 389 event partitions.
+Planning remained between 0.007 and 0.056 ms.
+Cold queued execution took 5.435–8.766 ms. Warm queued execution took 0.125–0.236 ms.
+Cold unqueued execution took 3.102–5.663 ms. Warm unqueued execution took 0.113–0.217 ms.
+The probe used runtime privileges and left no committed events.
+It points to backend execution/initialization cost, not SQL planning. The exact internal cause remains unproven.
+
+Sanitized evidence is retained in these ignored files:
+
+- `test-results/ledger-sql-trace-20261002.json`
+- `test-results/ledger-sql-diagnostic-20261002.json`
+- `test-results/ledger-cold-plan-20261002.json`
+
+The exact instrumented binary remains with the original diagnostic folder:
+`/private/var/folders/8t/c0ct0rc51k1__jw0mf2zwd0r0000gn/T/aib-ledger-sql-diagnostic.kmYWG0I3/`.
+No SQL text, arguments, database credentials, or event bodies appear in the sanitized traces.
+
+The user chose to retain the accepted design rather than start an ADR proposal.
+No new performance optimization is retained. Both performance limits and deployment-profile acceptance remain open.

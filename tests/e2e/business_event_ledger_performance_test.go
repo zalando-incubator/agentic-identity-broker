@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,21 +49,30 @@ func (ledgerPerformanceT) Skip(args ...any)                 { Fail(fmt.Sprint(ar
 func (ledgerPerformanceT) Skipf(format string, args ...any) { Fail(fmt.Sprintf(format, args...)) }
 
 type ledgerPerformanceData struct {
-	principals    []string
-	agents        []id.AgentID
-	services      []id.ServiceID
-	subjectTokens []string
-	assertion     string
-	upstream      *helpers.MockUpstreamOAuth2Server
+	principals            []string
+	agents                []id.AgentID
+	services              []id.ServiceID
+	subjectTokens         []string
+	assertion             string
+	upstream              *helpers.MockUpstreamOAuth2Server
+	profile               *bootstrap.LedgerPerformanceProfile
+	permissionSets        []id.PermissionSetID
+	permissionSetServices [][]id.ServiceID
+	agentPermissions      []domainstorage.AgentPermissionSetEntry
 }
 
-func newLedgerPerformanceData(upstream *helpers.MockUpstreamOAuth2Server) *ledgerPerformanceData {
+func newLedgerPerformanceDataForProfile(upstream *helpers.MockUpstreamOAuth2Server, profile *bootstrap.LedgerPerformanceProfile) *ledgerPerformanceData {
+	principals, agents, services := bootstrap.LedgerPerformancePrincipals, bootstrap.LedgerPerformanceAgents, bootstrap.LedgerPerformanceServices
+	if profile != nil {
+		principals, agents, services = profile.Principals, profile.Agents, profile.Services
+	}
 	data := &ledgerPerformanceData{
-		principals:    make([]string, bootstrap.LedgerPerformancePrincipals),
-		agents:        make([]id.AgentID, bootstrap.LedgerPerformanceAgents),
-		services:      make([]id.ServiceID, bootstrap.LedgerPerformanceServices),
-		subjectTokens: make([]string, bootstrap.LedgerPerformancePrincipals),
+		principals:    make([]string, principals),
+		agents:        make([]id.AgentID, agents),
+		services:      make([]id.ServiceID, services),
+		subjectTokens: make([]string, principals),
 		upstream:      upstream,
+		profile:       profile,
 	}
 	data.services[0], data.services[1] = fixtures.PlaceholderServiceID, fixtures.SecondaryPlaceholderServiceID
 	for i := 2; i < len(data.services); i++ {
@@ -72,7 +82,33 @@ func newLedgerPerformanceData(upstream *helpers.MockUpstreamOAuth2Server) *ledge
 		data.agents[i] = id.NewAgentID()
 	}
 	for i := range data.principals {
-		data.principals[i] = fmt.Sprintf("ledger-perf-%05d@example.test", i)
+		principal := fmt.Sprintf("ledger-perf-%05d@example.test", i)
+		if profile != nil {
+			local, domain, _ := strings.Cut(principal, "@")
+			principal = local + strings.Repeat("x", profile.PrincipalIDBytes-len(principal)) + "@" + domain
+		}
+		data.principals[i] = principal
+	}
+	if profile != nil {
+		data.permissionSets = make([]id.PermissionSetID, len(profile.PermissionSetServiceCounts))
+		data.permissionSetServices = make([][]id.ServiceID, len(profile.PermissionSetServiceCounts))
+		data.agentPermissions = make([]domainstorage.AgentPermissionSetEntry, len(profile.PermissionSetServiceCounts))
+		start := 0
+		for i, count := range profile.PermissionSetServiceCounts {
+			permissionID := id.NewPermissionSetID()
+			data.permissionSets[i] = permissionID
+			scoped := make([]id.ServiceID, count)
+			for offset := range scoped {
+				scoped[offset] = data.services[(start+offset)%len(data.services)]
+			}
+			data.permissionSetServices[i] = scoped
+			requirement := domainstorage.RequirementTypeOptional
+			if i == 0 {
+				requirement = domainstorage.RequirementTypeMandatory
+			}
+			data.agentPermissions[i] = domainstorage.AgentPermissionSetEntry{PermissionSetID: permissionID, RequirementType: requirement}
+			start += count
+		}
 	}
 	return data
 }
@@ -105,7 +141,52 @@ func (d *ledgerPerformanceData) prepareTokens() error {
 }
 
 func (d *ledgerPerformanceData) serviceIndex(principal int) int {
+	if d.profile != nil {
+		return principal * len(d.services) / len(d.principals)
+	}
 	return (principal / len(d.agents)) % len(d.services)
+}
+
+func (d *ledgerPerformanceData) eventType(index int) string {
+	if d.profile == nil {
+		return ledgerPerformanceEventType(index)
+	}
+	slot := (index/100 + index%100) % 100
+	mix := &d.profile.Mix
+	switch {
+	case slot < mix.Exchanges:
+		return "token-exchanged"
+	case slot < mix.Exchanges+mix.Approvals:
+		return "approval-approved"
+	case slot < mix.Exchanges+mix.Approvals+mix.Grants:
+		return "grant-updated"
+	case slot < mix.Exchanges+mix.Approvals+mix.Grants+mix.Refreshes:
+		return "session-refreshed"
+	default:
+		return "agent-updated"
+	}
+}
+
+func (d *ledgerPerformanceData) agentPermissionSets() []domainstorage.AgentPermissionSetEntry {
+	if d.profile == nil {
+		return fixtures.DefaultPermissionSets()
+	}
+	return d.agentPermissions
+}
+
+func (d *ledgerPerformanceData) grantedPermissionSets(principal int) []domainstorage.GrantedPermissionSetEntry {
+	service := d.services[d.serviceIndex(principal)]
+	entries := make([]domainstorage.GrantedPermissionSetEntry, len(d.permissionSets))
+	for i, permissionID := range d.permissionSets {
+		included := []id.ServiceID{d.permissionSetServices[i][0]}
+		for _, available := range d.permissionSetServices[i] {
+			if available == service && included[0] != service {
+				included = append(included, service)
+			}
+		}
+		entries[i] = domainstorage.GrantedPermissionSetEntry{PermissionSetID: permissionID, IncludedServiceIDs: included}
+	}
+	return entries
 }
 
 // All business-state fixture rows are inserted through the actual storage
@@ -135,12 +216,24 @@ func seedLedgerPerformanceBusinessState(ctx context.Context, databaseURL string,
 			return fmt.Errorf("seed service %d: %w", i, err)
 		}
 	}
-	scopes := make([]domainstorage.ServiceScope, len(d.services))
-	for i, serviceID := range d.services {
-		scopes[i] = domainstorage.ServiceScope{ServiceID: serviceID, Scopes: []string{"read"}, RequirementType: domainstorage.RequirementTypeOptional}
-	}
-	if err := store.PermissionSets().Create(ctx, &domainstorage.PermissionSet{ID: fixtures.PlaceholderPermissionSetID, Name: "Ledger performance", ServiceScopes: scopes}); err != nil {
-		return err
+	if d.profile == nil {
+		scopes := make([]domainstorage.ServiceScope, len(d.services))
+		for i, serviceID := range d.services {
+			scopes[i] = domainstorage.ServiceScope{ServiceID: serviceID, Scopes: []string{"read"}, RequirementType: domainstorage.RequirementTypeOptional}
+		}
+		if err := store.PermissionSets().Create(ctx, &domainstorage.PermissionSet{ID: fixtures.PlaceholderPermissionSetID, Name: "Ledger performance", ServiceScopes: scopes}); err != nil {
+			return err
+		}
+	} else {
+		for i, permissionID := range d.permissionSets {
+			scopes := make([]domainstorage.ServiceScope, len(d.permissionSetServices[i]))
+			for j, serviceID := range d.permissionSetServices[i] {
+				scopes[j] = domainstorage.ServiceScope{ServiceID: serviceID, Scopes: []string{"read"}, RequirementType: domainstorage.RequirementTypeOptional}
+			}
+			if err := store.PermissionSets().Create(ctx, &domainstorage.PermissionSet{ID: permissionID, Name: fmt.Sprintf("Ledger performance %d", i), ServiceScopes: scopes}); err != nil {
+				return fmt.Errorf("seed permission set %d: %w", i, err)
+			}
+		}
 	}
 	for i, agentID := range d.agents {
 		agent := fixtures.ValidAgent()
@@ -148,6 +241,9 @@ func seedLedgerPerformanceBusinessState(ctx context.Context, databaseURL string,
 		clientID := id.ClientID(fmt.Sprintf("perf-agent-%02d", i))
 		agent.ClientID = &clientID
 		agent.AllowedScopes = []string{"read"}
+		if d.profile != nil {
+			agent.PermissionSets = d.agentPermissionSets()
+		}
 		if err := store.Agents().Create(ctx, agent); err != nil {
 			return fmt.Errorf("seed agent %d: %w", i, err)
 		}
@@ -155,14 +251,23 @@ func seedLedgerPerformanceBusinessState(ctx context.Context, databaseURL string,
 	for i, principal := range d.principals {
 		serviceID := d.services[d.serviceIndex(i)]
 		grant := fixtures.ActiveGrant(principal, d.agents[i%len(d.agents)].String(), serviceID.String(), []string{"read"})
+		if d.profile != nil {
+			grant.GrantedPermissionSets = d.grantedPermissionSets(i)
+		}
 		until := time.Now().Add(12 * time.Hour)
 		grant.ValidUntil = &until
 		if err := store.UserGrants().Create(ctx, grant); err != nil {
 			return fmt.Errorf("seed grant %d: %w", i, err)
 		}
 		sessionServices := []id.ServiceID{serviceID}
-		if serviceID != fixtures.PlaceholderServiceID {
+		if d.profile == nil && serviceID != fixtures.PlaceholderServiceID {
 			sessionServices = append(sessionServices, fixtures.PlaceholderServiceID)
+		} else if d.profile != nil {
+			for _, scoped := range d.permissionSetServices {
+				if !slices.Contains(sessionServices, scoped[0]) {
+					sessionServices = append(sessionServices, scoped[0])
+				}
+			}
 		}
 		for _, sessionService := range sessionServices {
 			session := fixtures.SessionForService(principal, sessionService.String())
@@ -281,7 +386,7 @@ func (r *ledgerPerformanceRunner) action(ctx context.Context, phase string, inde
 	principal := r.data.principals[principalIndex]
 	agent := r.data.agents[principalIndex%len(r.data.agents)]
 	service := r.data.services[r.data.serviceIndex(principalIndex)]
-	typeName := ledgerPerformanceEventType(index)
+	typeName := r.data.eventType(index)
 	var method, path, contentType string
 	var body []byte
 	var headers map[string]string
@@ -314,13 +419,26 @@ func (r *ledgerPerformanceRunner) action(ctx context.Context, phase string, inde
 		body = []byte(`{"persistence":"once"}`)
 	case "grant-updated":
 		method, path, contentType, status = http.MethodPost, "/api/consent/agents/"+agent.String()+"/grants", "application/json", http.StatusCreated
-		included := []string{service.String()}
-		if service != fixtures.PlaceholderServiceID {
-			included = append(included, fixtures.PlaceholderServiceID.String())
+		var granted map[string][]string
+		if r.data.profile == nil {
+			included := []string{service.String()}
+			if service != fixtures.PlaceholderServiceID {
+				included = append(included, fixtures.PlaceholderServiceID.String())
+			}
+			granted = map[string][]string{fixtures.PlaceholderPermissionSetID.String(): included}
+		} else {
+			granted = make(map[string][]string, len(r.data.permissionSets))
+			for _, entry := range r.data.grantedPermissionSets(principalIndex) {
+				services := make([]string, len(entry.IncludedServiceIDs))
+				for i, serviceID := range entry.IncludedServiceIDs {
+					services[i] = serviceID.String()
+				}
+				granted[entry.PermissionSetID.String()] = services
+			}
 		}
 		var marshalErr error
 		body, marshalErr = json.Marshal(map[string]any{
-			"granted_permission_sets": map[string][]string{fixtures.PlaceholderPermissionSetID.String(): included},
+			"granted_permission_sets": granted,
 			"valid_until":             time.Now().Add(12 * time.Hour).UTC().Format(time.RFC3339Nano),
 		})
 		if marshalErr != nil {
@@ -331,10 +449,11 @@ func (r *ledgerPerformanceRunner) action(ctx context.Context, phase string, inde
 	case "agent-updated":
 		method, path, contentType, status = http.MethodPut, "/api/agents/"+agent.String(), "application/json", http.StatusOK
 		var marshalErr error
+		permissionSets := r.data.agentPermissionSets()
 		body, marshalErr = json.Marshal(map[string]any{
 			"display_name":    "Ledger Performance Agent",
 			"description":     fmt.Sprintf("Performance mutation %s/%d", phase, index),
-			"permission_sets": fixtures.DefaultPermissionSets(),
+			"permission_sets": permissionSets,
 			"allowed_scopes":  []string{"read"},
 			"redirect_uris":   []string{"https://client.example.com/cb"},
 			"client_id":       fmt.Sprintf("perf-agent-%02d", principalIndex%len(r.data.agents)),
@@ -358,17 +477,41 @@ func (r *ledgerPerformanceRunner) action(ctx context.Context, phase string, inde
 	return time.Since(start), nil
 }
 
+func (r *ledgerPerformanceRunner) runSettings() (concurrency, actions int, interval time.Duration) {
+	if r.data.profile == nil {
+		return bootstrap.LedgerPerformanceConcurrency, bootstrap.LedgerPerformanceMeasuredActions, 0
+	}
+	p := r.data.profile
+	return p.Concurrency, p.Actions, time.Second / time.Duration(p.ThroughputPerSecond)
+}
+
 func (r *ledgerPerformanceRunner) warm(ctx context.Context, phase string) (int, time.Time, time.Time, error) {
+	concurrency, _, interval := r.runSettings()
+	var ticker *time.Ticker
+	if interval > 0 {
+		ticker = time.NewTicker(interval)
+		defer ticker.Stop()
+	}
 	started := time.Now()
 	end := started.Add(bootstrap.LedgerPerformanceWarmup)
 	var next atomic.Uint64
 	var workers sync.WaitGroup
-	errors := make(chan error, bootstrap.LedgerPerformanceConcurrency)
-	for range bootstrap.LedgerPerformanceConcurrency {
+	errors := make(chan error, concurrency)
+	for range concurrency {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
 			for time.Now().Before(end) && ctx.Err() == nil {
+				if ticker != nil {
+					select {
+					case <-ticker.C:
+					case <-ctx.Done():
+						return
+					}
+					if !time.Now().Before(end) {
+						return
+					}
+				}
 				index := int(next.Add(1) - 1)
 				// Rotating category by principal interleaves the exact reference
 				// mix even when a two-minute warmup ends mid-cycle.
@@ -395,12 +538,18 @@ func (r *ledgerPerformanceRunner) warm(ctx context.Context, phase string) (int, 
 }
 
 func (r *ledgerPerformanceRunner) measure(ctx context.Context, phase string) ([]time.Duration, time.Time, time.Time, int, error) {
+	concurrency, actions, interval := r.runSettings()
+	var ticker *time.Ticker
+	if interval > 0 {
+		ticker = time.NewTicker(interval)
+		defer ticker.Stop()
+	}
 	var next atomic.Uint64
 	var workers sync.WaitGroup
-	durations := make([]time.Duration, bootstrap.LedgerPerformanceMeasuredActions)
-	errors := make(chan error, bootstrap.LedgerPerformanceConcurrency)
+	durations := make([]time.Duration, actions)
+	errors := make(chan error, concurrency)
 	start := time.Now()
-	for range bootstrap.LedgerPerformanceConcurrency {
+	for range concurrency {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
@@ -408,6 +557,13 @@ func (r *ledgerPerformanceRunner) measure(ctx context.Context, phase string) ([]
 				index := int(next.Add(1) - 1)
 				if index >= len(durations) || ctx.Err() != nil {
 					return
+				}
+				if ticker != nil {
+					select {
+					case <-ticker.C:
+					case <-ctx.Done():
+						return
+					}
 				}
 				duration, err := r.action(ctx, phase, index)
 				if err != nil {
@@ -445,6 +601,9 @@ func (r *ledgerPerformanceRunner) measure(ctx context.Context, phase string) ([]
 
 // Synthetic history must not substitute for recording a completed business action.
 func preflightLedgerPerformance(ctx context.Context, r *ledgerPerformanceRunner, db *sqlx.DB, phase string) (*model.BusinessEvent, error) {
+	if r.data.profile != nil {
+		return preflightDeploymentLedgerPerformance(ctx, r, db, phase)
+	}
 	const index = 9 * bootstrap.LedgerPerformancePrincipals
 	if _, err := r.action(ctx, phase, index); err != nil {
 		return nil, err
@@ -485,25 +644,69 @@ func preflightLedgerPerformance(ctx context.Context, r *ledgerPerformanceRunner,
 	return &event, nil
 }
 
+func preflightDeploymentLedgerPerformance(ctx context.Context, r *ledgerPerformanceRunner, db *sqlx.DB, phase string) (*model.BusinessEvent, error) {
+	const prototypeIndex = 0
+	prototypePhase := "prototype-" + phase
+	prototypeStart := time.Now()
+	if _, err := r.action(ctx, prototypePhase, prototypeIndex); err != nil {
+		return nil, err
+	}
+	var table bool
+	if err := db.GetContext(ctx, &table, "SELECT to_regclass('public.business_events') IS NOT NULL"); err != nil {
+		return nil, err
+	}
+	if !table {
+		return nil, errors.New("completed profile action but public.business_events is absent")
+	}
+	if _, _, err := verifyLedgerPerformanceEvents(ctx, db, r.data, prototypePhase, 1, prototypeStart, time.Now()); err != nil {
+		return nil, fmt.Errorf("approved history prototype: %w", err)
+	}
+	started := time.Now()
+	for index := range 100 {
+		if _, err := r.action(ctx, phase, index); err != nil {
+			return nil, err
+		}
+	}
+	if _, _, err := verifyLedgerPerformanceEvents(ctx, db, r.data, phase, 100, started, time.Now()); err != nil {
+		return nil, fmt.Errorf("approved workload preflight: %w", err)
+	}
+	var envelopes [][]byte
+	if err := db.SelectContext(ctx, &envelopes, `SELECT envelope FROM public.business_events WHERE envelope->>'trace_id'=$1`, ledgerPerformanceTraceID(prototypePhase, prototypeIndex)); err != nil {
+		return nil, err
+	}
+	if len(envelopes) != 1 {
+		return nil, fmt.Errorf("profile prototype retained %d events, expected exactly one", len(envelopes))
+	}
+	var event model.BusinessEvent
+	if err := json.Unmarshal(envelopes[0], &event); err != nil {
+		return nil, err
+	}
+	if event.Type != ledgerPerformanceTypePrefix+r.data.eventType(prototypeIndex) {
+		return nil, errors.New("profile prototype retained wrong event type")
+	}
+	return &event, nil
+}
+
 // History is synthetic safe data cloned from a real, previously validated
 // production event. It is inserted by the migration owner, never by the broker,
 // across 90 days of six-hour partitions. It cannot substitute for the live
 // per-action completeness check in verifyLedgerPerformanceEvents.
-func seedLedgerPerformanceHistory(ctx context.Context, db *sqlx.DB, databaseURL string, example *model.BusinessEvent) error {
+
+func seedLedgerPerformanceHistoryCount(ctx context.Context, db *sqlx.DB, databaseURL string, example *model.BusinessEvent, count int, profile *bootstrap.LedgerPerformanceProfile) (int, int, error) {
 	// Leave ten minutes inside the 90-day retention boundary during fixture
 	// creation; the distributed history still spans every retained age bucket.
 	const headroom = 10 * time.Minute
 	base := time.Now().UTC().Add(-90*24*time.Hour + headroom).Truncate(time.Microsecond)
-	period := (90*24*time.Hour - headroom) / bootstrap.LedgerPerformanceHistory
-	last := base.Add(time.Duration(bootstrap.LedgerPerformanceHistory-1) * period).Truncate(6 * time.Hour)
+	period := (90*24*time.Hour - headroom) / time.Duration(count)
+	last := base.Add(time.Duration(count-1) * period).Truncate(6 * time.Hour)
 	for partition := base.Truncate(6 * time.Hour); !partition.After(last); partition = partition.Add(6 * time.Hour) {
 		if _, err := db.ExecContext(ctx, "SELECT public.business_event_create_partition_pair($1)", partition); err != nil {
-			return fmt.Errorf("create historical partition pair: %w", err)
+			return 0, 0, fmt.Errorf("create historical partition pair: %w", err)
 		}
 	}
 	conn, err := pgx.Connect(ctx, databaseURL)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
 	var subject any
@@ -513,7 +716,7 @@ func seedLedgerPerformanceHistory(ctx context.Context, db *sqlx.DB, databaseURL 
 	values := make([]any, 7)
 	index := 0
 	source := pgx.CopyFromFunc(func() ([]any, error) {
-		if index == bootstrap.LedgerPerformanceHistory {
+		if index == count {
 			return nil, nil
 		}
 		at := base.Add(time.Duration(index) * period).Truncate(time.Microsecond)
@@ -531,19 +734,29 @@ func seedLedgerPerformanceHistory(ctx context.Context, db *sqlx.DB, databaseURL 
 	})
 	inserted, err := conn.CopyFrom(ctx, pgx.Identifier{"public", "business_events"}, []string{"recorded_at", "id", "occurred_at", "type", "outcome", "subject", "envelope"}, source)
 	if err != nil {
-		return fmt.Errorf("insert safe historical events: %w", err)
+		return 0, 0, fmt.Errorf("insert safe historical events: %w", err)
 	}
-	if inserted != bootstrap.LedgerPerformanceHistory {
-		return fmt.Errorf("inserted %d historical events, want %d", inserted, bootstrap.LedgerPerformanceHistory)
+	if inserted != int64(count) {
+		return 0, 0, fmt.Errorf("inserted %d historical events, want %d", inserted, count)
 	}
-	var count int
-	if err := db.GetContext(ctx, &count, "SELECT count(*) FROM public.business_events"); err != nil {
-		return err
+	var observed int
+	if err := db.GetContext(ctx, &observed, "SELECT count(*) FROM public.business_events"); err != nil {
+		return 0, 0, err
 	}
-	if count != bootstrap.LedgerPerformanceHistory {
-		return fmt.Errorf("historical history count %d, want %d", count, bootstrap.LedgerPerformanceHistory)
+	if observed != count {
+		return 0, 0, fmt.Errorf("historical history count %d, want %d", observed, count)
 	}
-	return nil
+	if profile == nil {
+		return 0, 0, nil
+	}
+	var minBytes, maxBytes int
+	if err := db.QueryRowxContext(ctx, "SELECT min(octet_length(envelope::text)), max(octet_length(envelope::text)) FROM public.business_events").Scan(&minBytes, &maxBytes); err != nil {
+		return 0, 0, err
+	}
+	if minBytes < profile.HistoryEventBytes.Min || maxBytes > profile.HistoryEventBytes.Max {
+		return 0, 0, fmt.Errorf("stored history event bytes %d-%d outside approved %d-%d", minBytes, maxBytes, profile.HistoryEventBytes.Min, profile.HistoryEventBytes.Max)
+	}
+	return minBytes, maxBytes, nil
 }
 
 func verifyLedgerPerformanceEvents(ctx context.Context, db *sqlx.DB, d *ledgerPerformanceData, phase string, actions int, start, end time.Time) (int, int, error) {
@@ -561,7 +774,7 @@ func verifyLedgerPerformanceEvents(ctx context.Context, db *sqlx.DB, d *ledgerPe
 	preparationCount := 0
 	for index := range seen {
 		indexForTrace[ledgerPerformanceTraceID(phase, index)] = expectedAction{index: index}
-		if ledgerPerformanceEventType(index) == "approval-approved" {
+		if d.eventType(index) == "approval-approved" {
 			indexForTrace[ledgerPerformanceTraceID("prepare-"+phase, index)] = expectedAction{index: index, preparation: true}
 			preparationCount++
 		}
@@ -587,7 +800,7 @@ func verifyLedgerPerformanceEvents(ctx context.Context, db *sqlx.DB, d *ledgerPe
 		if expected.preparation && seenPreparations[index] || !expected.preparation && seen[index] {
 			return 0, 0, fmt.Errorf("duplicate retained event for completed catalogue action %d", index)
 		}
-		wantType := ledgerPerformanceEventType(index)
+		wantType := d.eventType(index)
 		if expected.preparation {
 			wantType = "approval-requested"
 		}
@@ -623,6 +836,23 @@ func verifyLedgerPerformanceEvents(ctx context.Context, db *sqlx.DB, d *ledgerPe
 				return 0, 0, fmt.Errorf("exchange %d lost established delegation", index)
 			}
 		}
+		if d.profile != nil {
+			switch wantType {
+			case "token-exchanged":
+				if event.ServiceID != d.services[d.serviceIndex(principal)] {
+					return 0, 0, fmt.Errorf("exchange %d retained wrong configured service", index)
+				}
+			case "grant-updated":
+				if len(event.PermissionSetIDs) != len(d.permissionSets) {
+					return 0, 0, fmt.Errorf("grant %d retained %d/%d configured permission sets", index, len(event.PermissionSetIDs), len(d.permissionSets))
+				}
+				for _, permissionID := range d.permissionSets {
+					if !slices.Contains(event.PermissionSetIDs, permissionID) {
+						return 0, 0, fmt.Errorf("grant %d lost configured permission set %s", index, permissionID)
+					}
+				}
+			}
+		}
 		for _, secret := range fixedCanaries {
 			if bytes.Contains(raw, []byte(secret)) {
 				return 0, 0, fmt.Errorf("action %d retained credential canary", index)
@@ -634,6 +864,12 @@ func verifyLedgerPerformanceEvents(ctx context.Context, db *sqlx.DB, d *ledgerPe
 		if expected.preparation {
 			seenPreparations[index], prepared = true, prepared+1
 		} else {
+			if d.profile != nil {
+				bounds := d.profile.EventBytes[wantType]
+				if len(raw) < bounds.Min || len(raw) > bounds.Max {
+					return 0, 0, fmt.Errorf("%s action %d produced %d event bytes outside approved %d-%d", wantType, index, len(raw), bounds.Min, bounds.Max)
+				}
+			}
 			if len(raw) < minSize {
 				minSize = len(raw)
 			}
@@ -652,8 +888,8 @@ func verifyLedgerPerformanceEvents(ctx context.Context, db *sqlx.DB, d *ledgerPe
 	return minSize, maxSize, nil
 }
 
-func awaitLedgerPerformanceMetrics(collector *bootstrap.LedgerPerformanceCollector, start, end time.Time, phase string) (bootstrap.LedgerPerformanceAllocation, []time.Duration, error) {
-	traceIDs := make([]string, bootstrap.LedgerPerformanceMeasuredActions)
+func awaitLedgerPerformanceMetricsCount(collector *bootstrap.LedgerPerformanceCollector, start, end time.Time, phase string, actions int) (bootstrap.LedgerPerformanceAllocation, []time.Duration, error) {
+	traceIDs := make([]string, actions)
 	for index := range traceIDs {
 		traceIDs[index] = ledgerPerformanceTraceID(phase, index)
 	}
@@ -676,48 +912,55 @@ func awaitLedgerPerformanceMetrics(collector *bootstrap.LedgerPerformanceCollect
 // Raw nanosecond samples are persisted outside the checkout for T095's
 // measured report; no credential-bearing request or event body is written.
 type ledgerPerformanceReport struct {
-	Profile                       string          `json:"profile"`
-	Version                       string          `json:"version"`
-	Revision                      string          `json:"baseline_revision"`
-	FeatureSource                 string          `json:"feature_revision"`
-	Repetition                    int             `json:"repetition"`
-	PostgresVersion               string          `json:"postgres_version"`
-	Hardware                      string          `json:"hardware"`
-	Principals                    int             `json:"principals"`
-	Agents                        int             `json:"agents"`
-	Services                      int             `json:"services"`
-	Concurrency                   int             `json:"concurrency"`
-	MeasuredActions               int             `json:"measured_actions"`
-	PreparationActions            int             `json:"untimed_approval_preparations"`
-	VerifiedMeasuredEvents        int             `json:"verified_measured_events,omitempty"`
-	VerifiedApprovalPreparations  int             `json:"verified_approval_preparations,omitempty"`
-	VerifiedWarmupEvents          int             `json:"verified_warmup_events,omitempty"`
-	RetainedEventCanariesAbsent   bool            `json:"retained_event_canaries_absent,omitempty"`
-	WarmupActions                 int             `json:"warmup_actions"`
-	RetainedHistory               int             `json:"retained_history"`
-	WarmupSeconds                 int             `json:"warmup_seconds"`
-	Mix                           string          `json:"mix"`
-	Pool                          string          `json:"database_pool"`
-	Telemetry                     string          `json:"telemetry"`
-	Started                       time.Time       `json:"started"`
-	Ended                         time.Time       `json:"ended"`
-	TransactionLatencyNanoseconds []time.Duration `json:"transaction_latency_nanoseconds"`
-	RecordingSpanNanoseconds      []time.Duration `json:"recording_span_nanoseconds,omitempty"`
-	TransactionP50Nanoseconds     time.Duration   `json:"transaction_p50_nanoseconds"`
-	TransactionP95Nanoseconds     time.Duration   `json:"transaction_p95_nanoseconds"`
-	TransactionP99Nanoseconds     time.Duration   `json:"transaction_p99_nanoseconds"`
-	RecordingP99Nanoseconds       time.Duration   `json:"recording_p99_nanoseconds,omitempty"`
-	EventBytesMin                 int             `json:"event_bytes_min"`
-	EventBytesMax                 int             `json:"event_bytes_max"`
-	ThroughputPerSecond           float64         `json:"throughput_per_second"`
-	AllocationBytes               uint64          `json:"allocation_bytes"`
-	AllocationObjects             uint64          `json:"allocation_objects"`
-	HTTPErrors                    int             `json:"http_errors"`
-	PostgresRollbacks             int             `json:"postgres_rollbacks"`
+	Profile                       string                              `json:"profile"`
+	ApprovedProfile               *bootstrap.LedgerPerformanceProfile `json:"approved_deployment_profile,omitempty"`
+	Version                       string                              `json:"version"`
+	Revision                      string                              `json:"baseline_revision"`
+	FeatureSource                 string                              `json:"feature_revision"`
+	Repetition                    int                                 `json:"repetition"`
+	PostgresVersion               string                              `json:"postgres_version"`
+	Hardware                      string                              `json:"hardware"`
+	Principals                    int                                 `json:"principals"`
+	Agents                        int                                 `json:"agents"`
+	Services                      int                                 `json:"services"`
+	Concurrency                   int                                 `json:"concurrency"`
+	MeasuredActions               int                                 `json:"measured_actions"`
+	PreparationActions            int                                 `json:"untimed_approval_preparations"`
+	VerifiedMeasuredEvents        int                                 `json:"verified_measured_events,omitempty"`
+	VerifiedApprovalPreparations  int                                 `json:"verified_approval_preparations,omitempty"`
+	VerifiedWarmupEvents          int                                 `json:"verified_warmup_events,omitempty"`
+	RetainedEventCanariesAbsent   bool                                `json:"retained_event_canaries_absent,omitempty"`
+	WarmupActions                 int                                 `json:"warmup_actions"`
+	RetainedHistory               int                                 `json:"retained_history"`
+	HistoricalEventBytesMin       int                                 `json:"historical_event_bytes_min,omitempty"`
+	HistoricalEventBytesMax       int                                 `json:"historical_event_bytes_max,omitempty"`
+	WarmupSeconds                 int                                 `json:"warmup_seconds"`
+	Mix                           string                              `json:"mix"`
+	Pool                          string                              `json:"database_pool"`
+	Telemetry                     string                              `json:"telemetry"`
+	Started                       time.Time                           `json:"started"`
+	Ended                         time.Time                           `json:"ended"`
+	TransactionLatencyNanoseconds []time.Duration                     `json:"transaction_latency_nanoseconds"`
+	RecordingSpanNanoseconds      []time.Duration                     `json:"recording_span_nanoseconds,omitempty"`
+	TransactionP50Nanoseconds     time.Duration                       `json:"transaction_p50_nanoseconds"`
+	TransactionP95Nanoseconds     time.Duration                       `json:"transaction_p95_nanoseconds"`
+	TransactionP99Nanoseconds     time.Duration                       `json:"transaction_p99_nanoseconds"`
+	RecordingP99Nanoseconds       time.Duration                       `json:"recording_p99_nanoseconds,omitempty"`
+	EventBytesMin                 int                                 `json:"event_bytes_min"`
+	EventBytesMax                 int                                 `json:"event_bytes_max"`
+	ThroughputPerSecond           float64                             `json:"throughput_per_second"`
+	AllocationBytes               uint64                              `json:"allocation_bytes"`
+	AllocationObjects             uint64                              `json:"allocation_objects"`
+	HTTPErrors                    int                                 `json:"http_errors"`
+	PostgresRollbacks             int                                 `json:"postgres_rollbacks"`
 }
 
 func retainLedgerPerformanceReport(directory string, report ledgerPerformanceReport) (string, error) {
-	path := filepath.Join(directory, fmt.Sprintf("reference-repetition-%d-%s.json", report.Repetition, report.Version))
+	prefix := "reference"
+	if report.ApprovedProfile != nil {
+		prefix = "deployment"
+	}
+	path := filepath.Join(directory, fmt.Sprintf("%s-repetition-%d-%s.json", prefix, report.Repetition, report.Version))
 	output, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return "", err
@@ -731,207 +974,269 @@ func retainLedgerPerformanceReport(directory string, report ledgerPerformanceRep
 	return path, nil
 }
 
-var _ = Describe("Business event ledger performance", Label("business-event-ledger", "performance"), func() {
-	Context("under the fixed reference workload with PostgreSQL and a pinned pre-feature binary", func() {
-		// US4-AS4 from specs/048-business-event-ledger/spec.md.
-		It("retains every completed action and limits paired recording overhead", Serial, func(ctx SpecContext) {
-			fmt.Fprintf(GinkgoWriter, "reference profile revision=%s principals=%d agents=%d services=%d history=%d concurrency=%d warmup=%s measured_actions=%d repetitions=%d mix=50%%exchange,20%%approval-transition,10%%grant-update,10%%session-refresh,10%%admin-mutation\n", bootstrap.LedgerPerformanceBaselineRevision, bootstrap.LedgerPerformancePrincipals, bootstrap.LedgerPerformanceAgents, bootstrap.LedgerPerformanceServices, bootstrap.LedgerPerformanceHistory, bootstrap.LedgerPerformanceConcurrency, bootstrap.LedgerPerformanceWarmup, bootstrap.LedgerPerformanceMeasuredActions, bootstrap.LedgerPerformanceRepetitions)
-			root, err := integrationbootstrap.FindProjectRoot()
-			Expect(err).NotTo(HaveOccurred())
-			temp := GinkgoT().TempDir()
-			binaries, err := bootstrap.BuildLedgerPerformanceBinaries(ctx, root, temp)
-			Expect(err).NotTo(HaveOccurred())
-			DeferCleanup(func() { Expect(binaries.Close()).To(Succeed()) })
-			fmt.Fprintf(GinkgoWriter, "reference binaries: baseline=%s feature=%s\n", bootstrap.LedgerPerformanceBaselineRevision, binaries.FeatureSource)
-			pg := integrationbootstrap.RequireSharedPostgres(ledgerPerformanceT{GinkgoT()})
-			canaries := fixtures.LedgerCredentialCanaries()
-			upstream := helpers.NewMockUpstreamOAuth2Server().WithSuccessfulTokenResponse().WithAccessToken(canaries.AccessToken).WithRefreshToken(canaries.RefreshToken)
-			DeferCleanup(upstream.Close)
-			data := newLedgerPerformanceData(upstream)
-			Expect(data.prepareTokens()).To(Succeed())
-			featureTemplate := fmt.Sprintf("ledger_perf_feature_%s", bootstrap.LedgerPerformanceBaselineRevision[:8])
-			baselineTemplate := fmt.Sprintf("ledger_perf_baseline_%s", bootstrap.LedgerPerformanceBaselineRevision[:8])
-			seed := func(migrationRoot string) func(string) {
-				return func(name string) {
-					url := pg.ConnectionString(name)
-					Expect(migrateLedgerPerformanceDatabase(ctx, url, migrationRoot)).To(Succeed())
-					Expect(seedLedgerPerformanceBusinessState(ctx, url, data)).To(Succeed())
-				}
+func runLedgerPerformanceScenario(ctx SpecContext, profile *bootstrap.LedgerPerformanceProfile) []string {
+	profileName := "reference"
+	var pg bootstrap.LedgerPerformancePostgres
+	if profile == nil {
+		fmt.Fprintf(GinkgoWriter, "reference profile revision=%s principals=%d agents=%d services=%d history=%d concurrency=%d warmup=%s measured_actions=%d repetitions=%d mix=50%%exchange,20%%approval-transition,10%%grant-update,10%%session-refresh,10%%admin-mutation\n", bootstrap.LedgerPerformanceBaselineRevision, bootstrap.LedgerPerformancePrincipals, bootstrap.LedgerPerformanceAgents, bootstrap.LedgerPerformanceServices, bootstrap.LedgerPerformanceHistory, bootstrap.LedgerPerformanceConcurrency, bootstrap.LedgerPerformanceWarmup, bootstrap.LedgerPerformanceMeasuredActions, bootstrap.LedgerPerformanceRepetitions)
+	} else {
+		profileName = "deployment"
+		Expect(bootstrap.CheckLedgerPerformanceHost(profile)).To(Succeed())
+		external, err := bootstrap.NewExternalLedgerPerformancePostgres(ctx, profile)
+		Expect(err).NotTo(HaveOccurred())
+		pg = external
+		DeferCleanup(func() { Expect(external.Close()).To(Succeed()) })
+		fmt.Fprintf(GinkgoWriter, "approved deployment owner=%s date=%s reference=%s location=%s actions=%d throughput=%d/s concurrency=%d principals=%d agents=%d services=%d permission_set_sizes=%v history=%d\n", profile.Approval.Owner, profile.Approval.Date, profile.Approval.Reference, profile.Approval.Location, profile.Actions, profile.ThroughputPerSecond, profile.Concurrency, profile.Principals, profile.Agents, profile.Services, profile.PermissionSetServiceCounts, profile.History)
+	}
+	collector, err := bootstrap.NewLedgerPerformanceCollectorForProfile(ctx, profile)
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(collector.Close)
+	actions, history, concurrency := bootstrap.LedgerPerformanceMeasuredActions, bootstrap.LedgerPerformanceHistory, bootstrap.LedgerPerformanceConcurrency
+	preparations := actions / 5
+	if profile != nil {
+		actions, history, concurrency = profile.Actions, profile.History, profile.Concurrency
+		preparations = (actions / 100) * profile.Mix.Approvals
+	}
+	root, err := integrationbootstrap.FindProjectRoot()
+	Expect(err).NotTo(HaveOccurred())
+	temp := GinkgoT().TempDir()
+	binaries, err := bootstrap.BuildLedgerPerformanceBinaries(ctx, root, temp)
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { Expect(binaries.Close()).To(Succeed()) })
+	fmt.Fprintf(GinkgoWriter, "%s binaries: baseline=%s feature=%s\n", profileName, bootstrap.LedgerPerformanceBaselineRevision, binaries.FeatureSource)
+	if profile == nil {
+		pg = integrationbootstrap.RequireSharedPostgres(ledgerPerformanceT{GinkgoT()})
+	}
+	canaries := fixtures.LedgerCredentialCanaries()
+	upstream := helpers.NewMockUpstreamOAuth2Server().WithSuccessfulTokenResponse().WithAccessToken(canaries.AccessToken).WithRefreshToken(canaries.RefreshToken)
+	DeferCleanup(upstream.Close)
+	data := newLedgerPerformanceDataForProfile(upstream, profile)
+	Expect(data.prepareTokens()).To(Succeed())
+	featureTemplate := fmt.Sprintf("ledger_perf_feature_%s", bootstrap.LedgerPerformanceBaselineRevision[:8])
+	baselineTemplate := fmt.Sprintf("ledger_perf_baseline_%s", bootstrap.LedgerPerformanceBaselineRevision[:8])
+	seed := func(migrationRoot string) func(string) {
+		return func(name string) {
+			url := pg.ConnectionString(name)
+			Expect(migrateLedgerPerformanceDatabase(ctx, url, migrationRoot)).To(Succeed())
+			Expect(seedLedgerPerformanceBusinessState(ctx, url, data)).To(Succeed())
+		}
+	}
+	featureURL, featureRuntimeURL, featureDrop, err := bootstrap.OpenLedgerPerformanceDatabase(ctx, ledgerPerformanceT{GinkgoT()}, pg, featureTemplate, seed(root))
+	Expect(err).NotTo(HaveOccurred())
+	featureDB, err := sqlx.ConnectContext(ctx, "pgx", featureURL)
+	Expect(err).NotTo(HaveOccurred())
+	var closePreflight sync.Once
+	cleanupPreflight := func() { closePreflight.Do(func() { _ = featureDB.Close(); featureDrop() }) }
+	DeferCleanup(cleanupPreflight)
+	preflightDir := filepath.Join(temp, "preflight")
+	Expect(os.Mkdir(preflightDir, 0700)).To(Succeed())
+	feature, err := bootstrap.StartLedgerPerformanceBrokerWithProfile(ctx, binaries.Feature, preflightDir, featureRuntimeURL, upstream.URL(), collector.Endpoint(), profile)
+	Expect(err).NotTo(HaveOccurred())
+	var stopPreflight sync.Once
+	closeFeature := func() { stopPreflight.Do(func() { Expect(feature.Close()).To(Succeed()) }) }
+	DeferCleanup(closeFeature)
+	prototype, err := preflightLedgerPerformance(ctx, newLedgerPerformanceRunner(feature, data), featureDB, "preflight")
+	Expect(err).NotTo(HaveOccurred())
+	closeFeature()
+	cleanupPreflight()
+	var historicalBytesMin, historicalBytesMax int
+	historyTemplate := featureTemplate + "_history"
+	seedHistory := func(name string) {
+		seed(root)(name)
+		url := pg.ConnectionString(name)
+		owner, openErr := sqlx.ConnectContext(ctx, "pgx", url)
+		Expect(openErr).NotTo(HaveOccurred())
+		defer owner.Close()
+		var historyErr error
+		historicalBytesMin, historicalBytesMax, historyErr = seedLedgerPerformanceHistoryCount(ctx, owner, url, prototype, history, profile)
+		Expect(historyErr).NotTo(HaveOccurred())
+	}
+	// Seeded history is cloned once per feature run before its two-minute warmup.
+	baselineURL, _, baselineDrop, err := bootstrap.OpenLedgerPerformanceDatabase(ctx, ledgerPerformanceT{GinkgoT()}, pg, baselineTemplate, seed(binaries.BaselineCheckout()))
+	Expect(err).NotTo(HaveOccurred())
+	var closeBaseline sync.Once
+	cleanupBaseline := func() { closeBaseline.Do(baselineDrop) }
+	DeferCleanup(cleanupBaseline)
+	baselineDB, err := sqlx.ConnectContext(ctx, "pgx", baselineURL)
+	Expect(err).NotTo(HaveOccurred())
+	var baselineHasEvents bool
+	Expect(baselineDB.GetContext(ctx, &baselineHasEvents, "SELECT to_regclass('public.business_events') IS NOT NULL")).To(Succeed())
+	Expect(baselineHasEvents).To(BeFalse(), "baseline must not have the ledger table")
+	Expect(baselineDB.Close()).To(Succeed())
+	cleanupBaseline()
+	resultsDirectory := os.Getenv("AIB_LEDGER_PERFORMANCE_RESULTS_DIR")
+	if resultsDirectory == "" {
+		resultsDirectory, err = os.MkdirTemp("", "aib-ledger-performance-")
+	} else {
+		err = os.MkdirAll(resultsDirectory, 0700)
+	}
+	Expect(err).NotTo(HaveOccurred())
+	fmt.Fprintf(GinkgoWriter, "%s raw latency/recording samples: %s (nanoseconds)\n", profileName, resultsDirectory)
+	var violations []string
+	for repetition := range bootstrap.LedgerPerformanceRepetitions {
+		var pair [2]bootstrap.LedgerPerformanceStats
+		order := []bool{false, true}
+		if repetition%2 == 1 {
+			order[0], order[1] = true, false
+		}
+		for _, enabled := range order {
+			version, template, binary, provision := "baseline", baselineTemplate, binaries.Baseline, seed(binaries.BaselineCheckout())
+			if enabled {
+				version, template, binary, provision = "feature", historyTemplate, binaries.Feature, seedHistory
 			}
-			featureURL, featureRuntimeURL, featureDrop, err := bootstrap.OpenLedgerPerformanceDatabase(ctx, ledgerPerformanceT{GinkgoT()}, pg, featureTemplate, seed(root))
-			Expect(err).NotTo(HaveOccurred())
-			featureDB, err := sqlx.ConnectContext(ctx, "pgx", featureURL)
-			Expect(err).NotTo(HaveOccurred())
-			var closePreflight sync.Once
-			cleanupPreflight := func() { closePreflight.Do(func() { _ = featureDB.Close(); featureDrop() }) }
-			DeferCleanup(cleanupPreflight)
-			collector, err := bootstrap.NewLedgerPerformanceCollector()
-			Expect(err).NotTo(HaveOccurred())
-			DeferCleanup(collector.Close)
-			preflightDir := filepath.Join(temp, "preflight")
-			Expect(os.Mkdir(preflightDir, 0700)).To(Succeed())
-			feature, err := bootstrap.StartLedgerPerformanceBroker(ctx, binaries.Feature, preflightDir, featureRuntimeURL, upstream.URL(), collector.Endpoint())
-			Expect(err).NotTo(HaveOccurred())
-			var stopPreflight sync.Once
-			closeFeature := func() { stopPreflight.Do(func() { Expect(feature.Close()).To(Succeed()) }) }
-			DeferCleanup(closeFeature)
-			prototype, err := preflightLedgerPerformance(ctx, newLedgerPerformanceRunner(feature, data), featureDB, "preflight")
-			Expect(err).NotTo(HaveOccurred())
-			closeFeature()
-			cleanupPreflight()
-			historyTemplate := featureTemplate + "_history"
-			seedHistory := func(name string) {
-				seed(root)(name)
-				url := pg.ConnectionString(name)
-				owner, openErr := sqlx.ConnectContext(ctx, "pgx", url)
+			ownerURL, runtimeURL, drop, openErr := bootstrap.OpenLedgerPerformanceDatabase(ctx, ledgerPerformanceT{GinkgoT()}, pg, template, provision)
+			Expect(openErr).NotTo(HaveOccurred())
+			func() {
+				defer drop()
+				db, openErr := sqlx.ConnectContext(ctx, "pgx", ownerURL)
 				Expect(openErr).NotTo(HaveOccurred())
-				defer owner.Close()
-				Expect(seedLedgerPerformanceHistory(ctx, owner, url, prototype)).To(Succeed())
-			}
-			// The feature template's million real-table rows are prepared once;
-			// each run clones that history before its identical two-minute warmup.
-			baselineURL, _, baselineDrop, err := bootstrap.OpenLedgerPerformanceDatabase(ctx, ledgerPerformanceT{GinkgoT()}, pg, baselineTemplate, seed(binaries.BaselineCheckout()))
-			Expect(err).NotTo(HaveOccurred())
-			var closeBaseline sync.Once
-			cleanupBaseline := func() { closeBaseline.Do(baselineDrop) }
-			DeferCleanup(cleanupBaseline)
-			baselineDB, err := sqlx.ConnectContext(ctx, "pgx", baselineURL)
-			Expect(err).NotTo(HaveOccurred())
-			var baselineHasEvents bool
-			Expect(baselineDB.GetContext(ctx, &baselineHasEvents, "SELECT to_regclass('public.business_events') IS NOT NULL")).To(Succeed())
-			Expect(baselineHasEvents).To(BeFalse(), "baseline must not have the ledger table")
-			Expect(baselineDB.Close()).To(Succeed())
-			cleanupBaseline()
-			resultsDirectory := os.Getenv("AIB_LEDGER_PERFORMANCE_RESULTS_DIR")
-			if resultsDirectory == "" {
-				resultsDirectory, err = os.MkdirTemp("", "aib-ledger-performance-")
-			} else {
-				err = os.MkdirAll(resultsDirectory, 0700)
-			}
-			Expect(err).NotTo(HaveOccurred())
-			fmt.Fprintf(GinkgoWriter, "reference raw latency/recording samples: %s (nanoseconds)\n", resultsDirectory)
-			for repetition := 0; repetition < bootstrap.LedgerPerformanceRepetitions; repetition++ {
-				var pair [2]bootstrap.LedgerPerformanceStats
-				order := []bool{false, true}
-				if repetition%2 == 1 {
-					order[0], order[1] = true, false
+				defer db.Close()
+				var postgresVersion string
+				Expect(db.GetContext(ctx, &postgresVersion, "SHOW server_version")).To(Succeed())
+				if profile != nil {
+					Expect(bootstrap.CheckLedgerPerformancePostgres(ctx, db, profile)).To(Succeed())
 				}
-				for _, enabled := range order {
-					version, template, binary, provision := "baseline", baselineTemplate, binaries.Baseline, seed(binaries.BaselineCheckout())
-					if enabled {
-						version, template, binary, provision = "feature", historyTemplate, binaries.Feature, seedHistory
-					}
-					ownerURL, runtimeURL, drop, openErr := bootstrap.OpenLedgerPerformanceDatabase(ctx, ledgerPerformanceT{GinkgoT()}, pg, template, provision)
-					Expect(openErr).NotTo(HaveOccurred())
-					func() {
-						defer drop()
-						db, openErr := sqlx.ConnectContext(ctx, "pgx", ownerURL)
-						Expect(openErr).NotTo(HaveOccurred())
-						defer db.Close()
-						var postgresVersion string
-						Expect(db.GetContext(ctx, &postgresVersion, "SHOW server_version")).To(Succeed())
-						var initialHistory int
-						if enabled {
-							Expect(db.GetContext(ctx, &initialHistory, "SELECT count(*) FROM public.business_events")).To(Succeed())
-							Expect(initialHistory).To(Equal(bootstrap.LedgerPerformanceHistory), "feature clone must retain the full 90-day historical dataset")
+				var initialHistory int
+				if enabled {
+					Expect(db.GetContext(ctx, &initialHistory, "SELECT count(*) FROM public.business_events")).To(Succeed())
+					Expect(initialHistory).To(Equal(history), "feature clone must retain the full 90-day historical dataset")
+				}
+				if profile == nil {
+					fmt.Fprintf(GinkgoWriter, "reference repetition=%d version=%s postgres=%s Go=%s/%s cpu=%d gomaxprocs=%d db_pool_open=25 db_pool_idle=5 network=local-HTTP-and-container-port telemetry=grpc-traces-logs-metrics-on ledger_copy=on initial_history=%d\n", repetition+1, version, postgresVersion, runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0), initialHistory)
+				} else {
+					fmt.Fprintf(GinkgoWriter, "deployment repetition=%d version=%s postgres=%s Go=%s/%s cpus=%d gomaxprocs=%d database_host=%s receiver=%s logs=%t copy_switch=%t effective_copy=%t initial_history=%d\n", repetition+1, version, postgresVersion, runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0), profile.Postgres.Host, profile.Telemetry.Receiver, profile.Telemetry.Logs, profile.Telemetry.LedgerCopy, enabled && profile.Telemetry.Enabled && profile.Telemetry.Logs && profile.Telemetry.LedgerCopy, initialHistory)
+				}
+				otlp, openErr := bootstrap.NewLedgerPerformanceCollectorForProfile(ctx, profile)
+				Expect(openErr).NotTo(HaveOccurred())
+				defer otlp.Close()
+				folder := filepath.Join(temp, fmt.Sprintf("%s-%d", version, repetition))
+				Expect(os.Mkdir(folder, 0700)).To(Succeed())
+				server, openErr := bootstrap.StartLedgerPerformanceBrokerWithProfile(ctx, binary, folder, runtimeURL, upstream.URL(), otlp.Endpoint(), profile)
+				Expect(openErr).NotTo(HaveOccurred())
+				defer func() { Expect(server.Close()).To(Succeed()) }()
+				runner := newLedgerPerformanceRunner(server, data)
+				phase := fmt.Sprintf("%s-%d", version, repetition)
+				warmCount, warmStart, warmEnd, warmErr := runner.warm(ctx, "warm-"+phase)
+				Expect(warmErr).NotTo(HaveOccurred())
+				fmt.Fprintf(GinkgoWriter, "%s repetition=%d version=%s completed_warmup_actions=%d\n", profileName, repetition+1, version, warmCount)
+				var rollbacksBefore int64
+				Expect(db.GetContext(ctx, &rollbacksBefore, "SELECT xact_rollback FROM pg_stat_database WHERE datname=current_database()")).To(Succeed())
+				durations, started, ended, failures, runErr := runner.measure(ctx, "measure-"+phase)
+				Expect(runErr).NotTo(HaveOccurred())
+				var allocation bootstrap.LedgerPerformanceAllocation
+				var recordings []time.Duration
+				var minSize, maxSize int
+				var verifiedMeasured, verifiedPreparations, verifiedWarmup int
+				var recordingP99 time.Duration
+				if enabled {
+					var verifyErr error
+					minSize, maxSize, verifyErr = verifyLedgerPerformanceEvents(ctx, db, data, "measure-"+phase, actions, started, ended)
+					var retained int
+					Expect(db.GetContext(ctx, &retained, "SELECT count(*) FROM public.business_events")).To(Succeed())
+					Expect(retained).To(BeNumerically(">=", history+actions), "retained history and every measured action")
+					Expect(verifyErr).NotTo(HaveOccurred())
+					verifiedMeasured = len(durations)
+					verifiedPreparations = preparations
+					_, _, verifyErr = verifyLedgerPerformanceEvents(ctx, db, data, "warm-"+phase, warmCount, warmStart, warmEnd)
+					Expect(verifyErr).NotTo(HaveOccurred(), "every completed warmup and preparation action must also retain its event")
+					verifiedWarmup = warmCount
+					allocation, recordings, verifyErr = awaitLedgerPerformanceMetricsCount(otlp, started, ended, "measure-"+phase, actions)
+					Expect(verifyErr).NotTo(HaveOccurred())
+					span := bootstrap.SummarizeLedgerPerformance(recordings, ended.Sub(started), bootstrap.LedgerPerformanceAllocation{}, 0, 0)
+					recordingP99 = span.P99
+					fmt.Fprintf(GinkgoWriter, "%s repetition=%d version=%s event_bytes_min=%d event_bytes_max=%d history=%d recording_p99=%s\n", profileName, repetition+1, version, minSize, maxSize, history, span.P99)
+				} else {
+					var verifyErr error
+					allocation, verifyErr = func() (bootstrap.LedgerPerformanceAllocation, error) {
+						deadline := time.Now().Add(15 * time.Second)
+						ticker := time.NewTicker(100 * time.Millisecond)
+						defer ticker.Stop()
+						for time.Now().Before(deadline) {
+							if value, err := otlp.Allocations(started, ended); err == nil {
+								return value, nil
+							}
+							<-ticker.C
 						}
-						fmt.Fprintf(GinkgoWriter, "reference repetition=%d version=%s postgres=%s Go=%s/%s cpu=%d gomaxprocs=%d db_pool_open=25 db_pool_idle=5 network=local-HTTP-and-container-port telemetry=grpc-traces-logs-metrics-on ledger_copy=on initial_history=%d\n", repetition+1, version, postgresVersion, runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0), initialHistory)
-						otlp, openErr := bootstrap.NewLedgerPerformanceCollector()
-						Expect(openErr).NotTo(HaveOccurred())
-						defer otlp.Close()
-						folder := filepath.Join(temp, fmt.Sprintf("%s-%d", version, repetition))
-						Expect(os.Mkdir(folder, 0700)).To(Succeed())
-						server, openErr := bootstrap.StartLedgerPerformanceBroker(ctx, binary, folder, runtimeURL, upstream.URL(), otlp.Endpoint())
-						Expect(openErr).NotTo(HaveOccurred())
-						defer func() { Expect(server.Close()).To(Succeed()) }()
-						runner := newLedgerPerformanceRunner(server, data)
-						phase := fmt.Sprintf("%s-%d", version, repetition)
-						warmCount, warmStart, warmEnd, warmErr := runner.warm(ctx, "warm-"+phase)
-						Expect(warmErr).NotTo(HaveOccurred())
-						fmt.Fprintf(GinkgoWriter, "reference repetition=%d version=%s completed_warmup_actions=%d\n", repetition+1, version, warmCount)
-						var rollbacksBefore int64
-						Expect(db.GetContext(ctx, &rollbacksBefore, "SELECT xact_rollback FROM pg_stat_database WHERE datname=current_database()")).To(Succeed())
-						durations, started, ended, failures, runErr := runner.measure(ctx, "measure-"+phase)
-						Expect(runErr).NotTo(HaveOccurred())
-						var allocation bootstrap.LedgerPerformanceAllocation
-						var recordings []time.Duration
-						var minSize, maxSize int
-						var verifiedMeasured, verifiedPreparations, verifiedWarmup int
-						var recordingP99 time.Duration
-						if enabled {
-							var verifyErr error
-							minSize, maxSize, verifyErr = verifyLedgerPerformanceEvents(ctx, db, data, "measure-"+phase, bootstrap.LedgerPerformanceMeasuredActions, started, ended)
-							var retained int
-							Expect(db.GetContext(ctx, &retained, "SELECT count(*) FROM public.business_events")).To(Succeed())
-							Expect(retained).To(BeNumerically(">=", bootstrap.LedgerPerformanceHistory+bootstrap.LedgerPerformanceMeasuredActions), "retained history and every measured action")
-							Expect(verifyErr).NotTo(HaveOccurred())
-							verifiedMeasured = len(durations)
-							verifiedPreparations = bootstrap.LedgerPerformanceMeasuredActions / 5
-							_, _, verifyErr = verifyLedgerPerformanceEvents(ctx, db, data, "warm-"+phase, warmCount, warmStart, warmEnd)
-							Expect(verifyErr).NotTo(HaveOccurred(), "every completed warmup and preparation action must also retain its event")
-							verifiedWarmup = warmCount
-							allocation, recordings, verifyErr = awaitLedgerPerformanceMetrics(otlp, started, ended, "measure-"+phase)
-							Expect(verifyErr).NotTo(HaveOccurred())
-							span := bootstrap.SummarizeLedgerPerformance(recordings, ended.Sub(started), bootstrap.LedgerPerformanceAllocation{}, 0, 0)
-							recordingP99 = span.P99
-							fmt.Fprintf(GinkgoWriter, "reference repetition=%d version=%s event_bytes_min=%d event_bytes_max=%d history=%d recording_p99=%s\n", repetition+1, version, minSize, maxSize, bootstrap.LedgerPerformanceHistory, span.P99)
-						} else {
-							var verifyErr error
-							allocation, verifyErr = func() (bootstrap.LedgerPerformanceAllocation, error) {
-								deadline := time.Now().Add(15 * time.Second)
-								ticker := time.NewTicker(100 * time.Millisecond)
-								defer ticker.Stop()
-								for time.Now().Before(deadline) {
-									if value, err := otlp.Allocations(started, ended); err == nil {
-										return value, nil
-									}
-									<-ticker.C
-								}
-								return bootstrap.LedgerPerformanceAllocation{}, errors.New("baseline allocation samples unavailable")
-							}()
-							Expect(verifyErr).NotTo(HaveOccurred())
-						}
-						var rollbacksAfter int64
-						Expect(db.GetContext(ctx, &rollbacksAfter, "SELECT xact_rollback FROM pg_stat_database WHERE datname=current_database()")).To(Succeed())
-						index := 0
-						if enabled {
-							index = 1
-						}
-						pair[index] = bootstrap.SummarizeLedgerPerformance(durations, ended.Sub(started), allocation, failures, int(rollbacksAfter-rollbacksBefore))
-						fmt.Fprintf(GinkgoWriter, "reference repetition=%d version=%s p50=%s p95=%s p99=%s throughput=%.1f/s alloc_bytes=%d alloc_objects=%d http_errors=%d pg_rollbacks=%d\n", repetition+1, version, pair[index].P50, pair[index].P95, pair[index].P99, pair[index].Throughput, allocation.Bytes, allocation.Objects, failures, pair[index].Rollbacks)
-						report := ledgerPerformanceReport{
-							Profile: "fixed-reference", Version: version, Revision: bootstrap.LedgerPerformanceBaselineRevision, FeatureSource: binaries.FeatureSource,
-							Repetition: repetition + 1, PostgresVersion: postgresVersion,
-							Hardware:   fmt.Sprintf("%s/%s cpus=%d gomaxprocs=%d client/broker=loopback postgres=mapped-container-port", runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0)),
-							Principals: bootstrap.LedgerPerformancePrincipals, Agents: bootstrap.LedgerPerformanceAgents, Services: bootstrap.LedgerPerformanceServices,
-							Concurrency: bootstrap.LedgerPerformanceConcurrency, MeasuredActions: bootstrap.LedgerPerformanceMeasuredActions,
-							VerifiedMeasuredEvents: verifiedMeasured, VerifiedApprovalPreparations: verifiedPreparations,
-							VerifiedWarmupEvents: verifiedWarmup, RetainedEventCanariesAbsent: enabled,
-							RetainedHistory: initialHistory, WarmupSeconds: int(bootstrap.LedgerPerformanceWarmup.Seconds()),
-							WarmupActions: warmCount, PreparationActions: bootstrap.LedgerPerformanceMeasuredActions / 5,
-							Mix:  "50% exchanges, 20% approval transitions, 10% grant updates, 10% session refreshes, 10% admin mutations",
-							Pool: "production adapter: 25 open, 5 idle", Telemetry: "OTLP gRPC traces/logs/metrics enabled; local acknowledging receiver; copy enabled",
-							Started: started, Ended: ended, TransactionLatencyNanoseconds: durations,
-							RecordingSpanNanoseconds: recordings, RecordingP99Nanoseconds: recordingP99,
-							TransactionP50Nanoseconds: pair[index].P50, TransactionP95Nanoseconds: pair[index].P95, TransactionP99Nanoseconds: pair[index].P99,
-							EventBytesMin: minSize, EventBytesMax: maxSize, ThroughputPerSecond: pair[index].Throughput,
-							AllocationBytes: allocation.Bytes, AllocationObjects: allocation.Objects, HTTPErrors: failures, PostgresRollbacks: pair[index].Rollbacks,
-						}
-						path, reportErr := retainLedgerPerformanceReport(resultsDirectory, report)
-						Expect(reportErr).NotTo(HaveOccurred())
-						fmt.Fprintf(GinkgoWriter, "reference measured distribution saved: %s\n", path)
-						if enabled {
-							Expect(recordingP99).To(BeNumerically("<=", 5*time.Millisecond), "recording span p99")
-						}
+						return bootstrap.LedgerPerformanceAllocation{}, errors.New("baseline allocation samples unavailable")
 					}()
+					Expect(verifyErr).NotTo(HaveOccurred())
 				}
-				overhead := pair[1].P99 - pair[0].P99 // Difference of distribution percentiles; not a paired per-request percentile.
-				fmt.Fprintf(GinkgoWriter, "reference repetition=%d transaction_p99_added=%s\n", repetition+1, overhead)
-				Expect(overhead).To(BeNumerically("<=", 5*time.Millisecond))
-			}
-			// An unavailable approved current-load profile is an explicit release
-			// blocker. This reference run cannot satisfy T095 in its place.
-			fmt.Fprintln(GinkgoWriter, "reference profile only; T095 release acceptance separately requires the approved deployment profile and its measured run")
+				var rollbacksAfter int64
+				Expect(db.GetContext(ctx, &rollbacksAfter, "SELECT xact_rollback FROM pg_stat_database WHERE datname=current_database()")).To(Succeed())
+				index := 0
+				if enabled {
+					index = 1
+				}
+				pair[index] = bootstrap.SummarizeLedgerPerformance(durations, ended.Sub(started), allocation, failures, int(rollbacksAfter-rollbacksBefore))
+				fmt.Fprintf(GinkgoWriter, "%s repetition=%d version=%s p50=%s p95=%s p99=%s throughput=%.1f/s alloc_bytes=%d alloc_objects=%d http_errors=%d pg_rollbacks=%d\n", profileName, repetition+1, version, pair[index].P50, pair[index].P95, pair[index].P99, pair[index].Throughput, allocation.Bytes, allocation.Objects, failures, pair[index].Rollbacks)
+				if profile != nil && pair[index].Throughput < float64(profile.ThroughputPerSecond)*0.95 {
+					violations = append(violations, fmt.Sprintf("%s repetition %d %s throughput %.1f/s did not reach approved %d/s", profileName, repetition+1, version, pair[index].Throughput, profile.ThroughputPerSecond))
+				}
+				report := ledgerPerformanceReport{
+					Profile: "fixed-reference", Version: version, Revision: bootstrap.LedgerPerformanceBaselineRevision, FeatureSource: binaries.FeatureSource,
+					Repetition: repetition + 1, PostgresVersion: postgresVersion,
+					Hardware:   fmt.Sprintf("%s/%s cpus=%d gomaxprocs=%d client/broker=loopback postgres=mapped-container-port", runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0)),
+					Principals: len(data.principals), Agents: len(data.agents), Services: len(data.services),
+					Concurrency: concurrency, MeasuredActions: actions,
+					VerifiedMeasuredEvents: verifiedMeasured, VerifiedApprovalPreparations: verifiedPreparations,
+					VerifiedWarmupEvents: verifiedWarmup, RetainedEventCanariesAbsent: enabled,
+					RetainedHistory: initialHistory, WarmupSeconds: int(bootstrap.LedgerPerformanceWarmup.Seconds()),
+					WarmupActions: warmCount, PreparationActions: preparations,
+					Mix:  "50% exchanges, 20% approval transitions, 10% grant updates, 10% session refreshes, 10% admin mutations",
+					Pool: "production adapter: 25 open, 5 idle", Telemetry: "OTLP gRPC traces/logs/metrics enabled; local acknowledging receiver; copy enabled",
+					Started: started, Ended: ended, TransactionLatencyNanoseconds: durations,
+					RecordingSpanNanoseconds: recordings, RecordingP99Nanoseconds: recordingP99,
+					TransactionP50Nanoseconds: pair[index].P50, TransactionP95Nanoseconds: pair[index].P95, TransactionP99Nanoseconds: pair[index].P99,
+					EventBytesMin: minSize, EventBytesMax: maxSize, ThroughputPerSecond: pair[index].Throughput,
+					AllocationBytes: allocation.Bytes, AllocationObjects: allocation.Objects, HTTPErrors: failures, PostgresRollbacks: pair[index].Rollbacks,
+				}
+				if profile != nil {
+					report.Profile, report.ApprovedProfile = "operator-approved-deployment", profile
+					report.Hardware = fmt.Sprintf("%s/%s cpus=%d gomaxprocs=%d attested_memory_bytes=%d client/broker=loopback postgres=%s", runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0), profile.Hardware.MemoryBytes, profile.Postgres.Host)
+					report.Mix = fmt.Sprintf("%d%% exchanges, %d%% approval transitions, %d%% grant updates, %d%% session refreshes, %d%% admin mutations", profile.Mix.Exchanges, profile.Mix.Approvals, profile.Mix.Grants, profile.Mix.Refreshes, profile.Mix.Admin)
+					report.Telemetry = fmt.Sprintf("OTLP gRPC traces/metrics enabled; logs=%t receiver=%s transport=plaintext-via-capture-proxy copy_switch=%t effective_copy=%t", profile.Telemetry.Logs, profile.Telemetry.Receiver, profile.Telemetry.LedgerCopy, enabled && profile.Telemetry.Enabled && profile.Telemetry.Logs && profile.Telemetry.LedgerCopy)
+					if enabled {
+						report.HistoricalEventBytesMin, report.HistoricalEventBytesMax = historicalBytesMin, historicalBytesMax
+					}
+				}
+				path, reportErr := retainLedgerPerformanceReport(resultsDirectory, report)
+				Expect(reportErr).NotTo(HaveOccurred())
+				fmt.Fprintf(GinkgoWriter, "%s measured distribution saved: %s\n", profileName, path)
+				if enabled && recordingP99 > 5*time.Millisecond {
+					violations = append(violations, fmt.Sprintf("%s repetition %d recording p99 %s exceeds 5ms", profileName, repetition+1, recordingP99))
+				}
+			}()
+		}
+		overhead := pair[1].P99 - pair[0].P99 // Difference of distribution percentiles; not a paired per-request percentile.
+		fmt.Fprintf(GinkgoWriter, "%s repetition=%d transaction_p99_added=%s\n", profileName, repetition+1, overhead)
+		if overhead > 5*time.Millisecond {
+			violations = append(violations, fmt.Sprintf("%s repetition %d added transaction p99 %s exceeds 5ms", profileName, repetition+1, overhead))
+		}
+	}
+	if profile == nil {
+		fmt.Fprintln(GinkgoWriter, "reference measurement alone cannot satisfy T095 without the approved deployment measurement")
+	}
+	// Explicitly release the first workload before the second begins. DeferCleanup
+	// remains a failure-path safety net for the Ginkgo spec.
+	collector.Close()
+	upstream.Close()
+	Expect(binaries.Close()).To(Succeed())
+	if profile != nil {
+		Expect(pg.(*bootstrap.ExternalLedgerPerformancePostgres).Close()).To(Succeed())
+	}
+	return violations
+}
+
+var _ = Describe("Business event ledger performance", Label("business-event-ledger", "performance"), func() {
+	Context("under the fixed reference and the operator-approved deployment workload", func() {
+		// US4-AS4 from specs/048-business-event-ledger/spec.md.
+		It("retains every action and limits overhead under both workloads", Serial, func(ctx SpecContext) {
+			profile, err := bootstrap.LoadLedgerPerformanceProfile(os.Getenv("AIB_LEDGER_PERFORMANCE_PROFILE"))
+			Expect(err).NotTo(HaveOccurred(), "reference measurements alone cannot release")
+			// Run deployment before starting the reference's local PostgreSQL container.
+			deploymentViolations := runLedgerPerformanceScenario(ctx, profile)
+			referenceViolations := runLedgerPerformanceScenario(ctx, nil)
+			Expect(append(referenceViolations, deploymentViolations...)).To(BeEmpty(), "both p99 measures and approved throughput must pass in every repetition")
 		})
 	})
 })

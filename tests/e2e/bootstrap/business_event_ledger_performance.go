@@ -5,6 +5,9 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +35,7 @@ import (
 	collecttraces "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	metricsv1 "go.opentelemetry.io/proto/otlp/metrics/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const LedgerPerformanceBaselineRevision = "d500f36378dd914f8a516604a08525f737e8ddff"
@@ -47,6 +52,252 @@ const (
 	LedgerPerformanceWarmup          = 2 * time.Minute
 	LedgerPerformanceRepetitions     = 3
 )
+
+type LedgerPerformanceByteBounds struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+}
+
+// LedgerPerformanceProfile is an operator-approved workload, not a replacement
+// for the fixed reference. Missing fields and unknown JSON fields are errors.
+type LedgerPerformanceProfile struct {
+	Approval struct {
+		Owner     string `json:"owner"`
+		Date      string `json:"date"`
+		Reference string `json:"reference"`
+		Location  string `json:"location"`
+	} `json:"approval"`
+	Actions                    int   `json:"actions"`
+	ThroughputPerSecond        int   `json:"throughput_per_second"`
+	Concurrency                int   `json:"concurrency"`
+	Principals                 int   `json:"principals"`
+	Agents                     int   `json:"agents"`
+	Services                   int   `json:"services"`
+	History                    int   `json:"history"`
+	PrincipalIDBytes           int   `json:"principal_id_bytes"`
+	PermissionSetServiceCounts []int `json:"permission_set_service_counts"`
+	Mix                        struct {
+		Exchanges int `json:"exchanges"`
+		Approvals int `json:"approvals"`
+		Grants    int `json:"grants"`
+		Refreshes int `json:"refreshes"`
+		Admin     int `json:"admin"`
+	} `json:"mix"`
+	EventBytes        map[string]LedgerPerformanceByteBounds `json:"event_bytes"`
+	HistoryEventBytes LedgerPerformanceByteBounds            `json:"history_event_bytes"`
+	Hardware          struct {
+		OS          string `json:"os"`
+		Arch        string `json:"arch"`
+		CPUs        int    `json:"cpus"`
+		GOMAXPROCS  int    `json:"gomaxprocs"`
+		MemoryBytes uint64 `json:"memory_bytes"`
+		Attestation string `json:"attestation"`
+	} `json:"hardware"`
+	Postgres struct {
+		Host     string            `json:"host"`
+		Port     int               `json:"port"`
+		SSLMode  string            `json:"sslmode"`
+		Settings map[string]string `json:"settings"`
+	} `json:"postgres"`
+	Network struct {
+		ClientBroker string `json:"client_broker"`
+		DatabaseHost string `json:"database_host"`
+		UpstreamHost string `json:"upstream_host"`
+	} `json:"network"`
+	Pool struct {
+		Open int `json:"open"`
+		Idle int `json:"idle"`
+	} `json:"pool"`
+	Telemetry struct {
+		Enabled      bool   `json:"enabled"`
+		Traces       bool   `json:"traces"`
+		Metrics      bool   `json:"metrics"`
+		Logs         bool   `json:"logs"`
+		LedgerCopy   bool   `json:"ledger_copy"`
+		Receiver     string `json:"receiver"`
+		ReceiverTLS  bool   `json:"receiver_tls"`
+		ReceiverHost string `json:"receiver_host"`
+		ReceiverPort int    `json:"receiver_port"`
+	} `json:"telemetry"`
+}
+
+// LoadLedgerPerformanceProfile requires approval and rejects partial profiles
+// before any expensive broker build or benchmark database is created.
+func LoadLedgerPerformanceProfile(path string) (*LedgerPerformanceProfile, error) {
+	if path == "" {
+		return nil, errors.New("AIB_LEDGER_PERFORMANCE_PROFILE is required: no operator-approved deployment profile is available")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("open operator-approved profile: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("decode operator-approved profile: %w", err)
+	}
+	for _, path := range []string{
+		"approval.owner", "approval.date", "approval.reference", "approval.location",
+		"actions", "throughput_per_second", "concurrency", "principals", "agents", "services", "history", "principal_id_bytes", "permission_set_service_counts",
+		"mix.exchanges", "mix.approvals", "mix.grants", "mix.refreshes", "mix.admin", "event_bytes", "history_event_bytes.min", "history_event_bytes.max",
+		"hardware.os", "hardware.arch", "hardware.cpus", "hardware.gomaxprocs", "hardware.memory_bytes", "hardware.attestation",
+		"postgres.host", "postgres.port", "postgres.sslmode", "postgres.settings", "network.client_broker", "network.database_host", "network.upstream_host", "pool.open", "pool.idle",
+		"telemetry.enabled", "telemetry.traces", "telemetry.metrics", "telemetry.logs", "telemetry.ledger_copy", "telemetry.receiver", "telemetry.receiver_tls", "telemetry.receiver_host", "telemetry.receiver_port",
+	} {
+		parts := strings.Split(path, ".")
+		current := fields
+		for i, part := range parts {
+			value, present := current[part]
+			if !present || string(value) == "null" {
+				return nil, fmt.Errorf("operator-approved profile requires %s", path)
+			}
+			if i < len(parts)-1 {
+				var nested map[string]json.RawMessage
+				if err := json.Unmarshal(value, &nested); err != nil {
+					return nil, fmt.Errorf("operator-approved profile requires object %s: %w", part, err)
+				}
+				current = nested
+			}
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var profile LedgerPerformanceProfile
+	if err := decoder.Decode(&profile); err != nil {
+		return nil, fmt.Errorf("decode operator-approved profile: %w", err)
+	}
+	if profile.Approval.Owner == "" || profile.Approval.Reference == "" || profile.Approval.Location == "" || profile.Approval.Date == "" {
+		return nil, errors.New("operator-approved profile requires approval owner, date, reference, and location")
+	}
+	if _, err := time.Parse("2006-01-02", profile.Approval.Date); err != nil {
+		return nil, fmt.Errorf("invalid profile approval date: %w", err)
+	}
+	if profile.Actions < LedgerPerformanceMeasuredActions || profile.Actions%100 != 0 || profile.Concurrency <= 0 || profile.Principals <= 0 || profile.Agents <= 0 || profile.Services < 2 || profile.History <= 0 || profile.ThroughputPerSecond <= 0 || profile.ThroughputPerSecond > 1000000000 {
+		return nil, errors.New("profile requires >=100000 measured actions divisible by 100, positive throughput/concurrency/dataset/history, and >=2 services")
+	}
+	if profile.History > int(^uint(0)>>1)-profile.Actions {
+		return nil, errors.New("approved history plus measured actions exceeds supported count")
+	}
+	if profile.Principals < profile.Agents || profile.Principals < profile.Services {
+		return nil, errors.New("approved principal cardinality must cover every declared agent and service")
+	}
+	longest := len(fmt.Sprintf("ledger-perf-%05d@example.test", profile.Principals-1))
+	if profile.PrincipalIDBytes < longest || profile.PrincipalIDBytes > 255 {
+		return nil, errors.New("profile principal_id_bytes cannot represent its principal cardinality (max 255)")
+	}
+	if len(profile.PermissionSetServiceCounts) == 0 {
+		return nil, errors.New("profile permission_set_service_counts is required")
+	}
+	covered := make([]bool, profile.Services)
+	start := 0
+	for _, count := range profile.PermissionSetServiceCounts {
+		if count <= 0 || count > profile.Services {
+			return nil, errors.New("each permission-set service count must be between 1 and the service cardinality")
+		}
+		for i := range count {
+			covered[(start+i)%profile.Services] = true
+		}
+		start += count
+	}
+	for _, present := range covered {
+		if !present {
+			return nil, errors.New("permission sets must collectively cover every configured service")
+		}
+	}
+	weights := []int{profile.Mix.Exchanges, profile.Mix.Approvals, profile.Mix.Grants, profile.Mix.Refreshes, profile.Mix.Admin}
+	types := []string{"token-exchanged", "approval-approved", "grant-updated", "session-refreshed", "agent-updated"}
+	total, measuredTypes := 0, 0
+	for i, weight := range weights {
+		if weight < 0 {
+			return nil, errors.New("profile mix weights cannot be negative")
+		}
+		total += weight
+		if weight == 0 {
+			continue
+		}
+		measuredTypes++
+		bounds, ok := profile.EventBytes[types[i]]
+		if !ok || bounds.Min <= 0 || bounds.Max < bounds.Min {
+			return nil, fmt.Errorf("profile event_bytes requires positive min/max bounds for %s", types[i])
+		}
+	}
+	if total != 100 || len(profile.EventBytes) != measuredTypes {
+		return nil, errors.New("profile mix must total 100 and event_bytes must cover exactly its selected workflow types")
+	}
+	if profile.HistoryEventBytes.Min <= 0 || profile.HistoryEventBytes.Max < profile.HistoryEventBytes.Min {
+		return nil, errors.New("profile history_event_bytes requires positive min/max bounds")
+	}
+	if profile.Hardware.OS == "" || profile.Hardware.Arch == "" || profile.Hardware.CPUs <= 0 ||
+		profile.Hardware.GOMAXPROCS <= 0 || profile.Hardware.MemoryBytes == 0 || profile.Hardware.Attestation == "" ||
+		profile.Postgres.Host == "" || profile.Network.ClientBroker != "loopback" ||
+		profile.Network.DatabaseHost != profile.Postgres.Host || profile.Network.UpstreamHost != "loopback" {
+		return nil, errors.New("profile requires attested OS/arch/cpus/gomaxprocs/memory, matching PostgreSQL host, loopback client/broker and mock upstream; unsupported placement needs an external test runner")
+	}
+	for _, setting := range []string{"server_version", "max_connections", "shared_buffers", "synchronous_commit"} {
+		if profile.Postgres.Settings[setting] == "" {
+			return nil, fmt.Errorf("profile requires PostgreSQL setting %s", setting)
+		}
+	}
+	if profile.Postgres.Port < 1 || profile.Postgres.Port > 65535 || profile.Postgres.SSLMode == "" {
+		return nil, errors.New("profile PostgreSQL port and sslmode are required")
+	}
+	for name, expected := range profile.Postgres.Settings {
+		if name == "" || expected == "" {
+			return nil, errors.New("profile PostgreSQL settings cannot have empty names or values")
+		}
+	}
+	if profile.Pool.Open != 25 || profile.Pool.Idle != 5 {
+		return nil, errors.New("production PostgreSQL pool is fixed at 25 open/5 idle; requested deployment pool unavailable")
+	}
+	if !profile.Telemetry.Enabled || !profile.Telemetry.Traces || !profile.Telemetry.Metrics {
+		return nil, errors.New("acceptance requires enabled telemetry, 100% traces, and allocation metrics; requested deployment telemetry is unmeasurable")
+	}
+	if profile.Telemetry.Receiver != "local-ack" && profile.Telemetry.Receiver != "external-grpc" {
+		return nil, errors.New("profile telemetry receiver must be local-ack or external-grpc")
+	}
+	if profile.Telemetry.ReceiverTLS {
+		return nil, errors.New("TLS telemetry is unsupported: the capture proxy cannot measure the broker's own TLS costs")
+	}
+	if profile.Telemetry.ReceiverHost == "" || (profile.Telemetry.Receiver == "local-ack" && profile.Telemetry.ReceiverHost != "127.0.0.1") {
+		return nil, errors.New("local acknowledging receiver requires host 127.0.0.1; external receiver requires an approved receiver host")
+	}
+	if (profile.Telemetry.Receiver == "local-ack" && profile.Telemetry.ReceiverPort != 0) ||
+		(profile.Telemetry.Receiver == "external-grpc" && (profile.Telemetry.ReceiverPort < 1 || profile.Telemetry.ReceiverPort > 65535)) {
+		return nil, errors.New("profile receiver_port must be 0 for a local ephemeral receiver or a valid approved external port")
+	}
+	return &profile, nil
+}
+
+// CheckLedgerPerformanceHost never treats a declared host as a measured host.
+// Physical memory needs an explicit operator attestation because Go cannot
+// portably discover the physical allocation of the deployment host.
+func CheckLedgerPerformanceHost(profile *LedgerPerformanceProfile) error {
+	if runtime.GOOS != profile.Hardware.OS || runtime.GOARCH != profile.Hardware.Arch || runtime.NumCPU() != profile.Hardware.CPUs || runtime.GOMAXPROCS(0) != profile.Hardware.GOMAXPROCS {
+		return fmt.Errorf("deployment hardware mismatch: running %s/%s cpus=%d gomaxprocs=%d", runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0))
+	}
+	if os.Getenv("AIB_LEDGER_PERFORMANCE_HOST_ATTESTATION") == "" || os.Getenv("AIB_LEDGER_PERFORMANCE_HOST_ATTESTATION") != profile.Hardware.Attestation {
+		return errors.New("AIB_LEDGER_PERFORMANCE_HOST_ATTESTATION must attest the approved deployment hardware and memory")
+	}
+	memory, err := strconv.ParseUint(os.Getenv("AIB_LEDGER_PERFORMANCE_HOST_MEMORY_BYTES"), 10, 64)
+	if err != nil || memory != profile.Hardware.MemoryBytes {
+		return errors.New("AIB_LEDGER_PERFORMANCE_HOST_MEMORY_BYTES must match the operator-attested physical deployment memory")
+	}
+	return nil
+}
+
+// CheckLedgerPerformancePostgres compares the connected server, not a label in
+// the report, with the database conditions from the approved profile.
+func CheckLedgerPerformancePostgres(ctx context.Context, db *sqlx.DB, profile *LedgerPerformanceProfile) error {
+	for key, expected := range profile.Postgres.Settings {
+		var observed string
+		if err := db.GetContext(ctx, &observed, "SELECT current_setting($1)", key); err != nil {
+			return fmt.Errorf("inspect PostgreSQL setting %s: %w", key, err)
+		}
+		if observed != expected {
+			return fmt.Errorf("PostgreSQL %s=%q; approved profile requires %q", key, observed, expected)
+		}
+	}
+	return nil
+}
 
 // LedgerPerformanceBinaries builds two actual broker executables, not two modes
 // of the feature binary. The feature checkout is the caller's existing worktree.
@@ -130,7 +381,22 @@ func freeLedgerPerformancePort() (int, error) {
 	return listener.Addr().(*net.TCPAddr).Port, nil
 }
 
-func StartLedgerPerformanceBroker(ctx context.Context, binary, temp, databaseURL, upstreamURL, collector string) (*LedgerPerformanceBroker, error) {
+func StartLedgerPerformanceBrokerWithProfile(ctx context.Context, binary, temp, databaseURL, upstreamURL, collector string, profile *LedgerPerformanceProfile) (*LedgerPerformanceBroker, error) {
+	logsEnabled, ledgerCopy := true, true
+	if profile != nil {
+		logsEnabled, ledgerCopy = profile.Telemetry.Logs, profile.Telemetry.LedgerCopy
+	}
+	if profile != nil {
+		db, err := sqlx.ConnectContext(ctx, "pgx", databaseURL)
+		if err != nil {
+			return nil, errors.New("approved benchmark runtime database is unavailable")
+		}
+		checkErr := CheckLedgerPerformancePostgres(ctx, db, profile)
+		_ = db.Close()
+		if checkErr != nil {
+			return nil, checkErr
+		}
+	}
 	enduserPort, err := freeLedgerPerformancePort()
 	if err != nil {
 		return nil, err
@@ -214,7 +480,7 @@ telemetry:
     enabled: true
     export_interval: 1s
   logs:
-    enabled: true
+    enabled: %t
   exporter:
     protocol: grpc
     endpoint: %q
@@ -222,8 +488,8 @@ telemetry:
     timeout: 5s
 business_events:
   retention: 2160h
-  telemetry_copy_enabled: true
-`, enduserPort, enduserURL, adminPort, adminURL, upstreamURL, upstreamURL+"/oauth/authorize", upstreamURL+"/oauth/token", collector)
+  telemetry_copy_enabled: %t
+`, enduserPort, enduserURL, adminPort, adminURL, upstreamURL, upstreamURL+"/oauth/authorize", upstreamURL+"/oauth/token", logsEnabled, collector, ledgerCopy)
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
 		return nil, err
 	}
@@ -234,6 +500,9 @@ business_events:
 	// workload. Both executables receive the same private configuration file.
 	environment := make([]string, 0, len(os.Environ())+4)
 	for _, entry := range os.Environ() {
+		if profile != nil && strings.HasPrefix(entry, "GOMAXPROCS=") {
+			continue
+		}
 		if !strings.HasPrefix(entry, "IDENTITY_BROKER_") && !strings.HasPrefix(entry, "APPROVAL_") {
 			environment = append(environment, entry)
 		}
@@ -244,6 +513,9 @@ business_events:
 		"IDENTITY_BROKER_JWE_SIGNING_KEY=dGVzdC0zMi1ieXRlLWtleS1tdXN0LWJlLWV4YWN0LXg=",
 		"IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="+fixtures.TestKEKMaterialDeterministic(),
 	)
+	if profile != nil {
+		cmd.Env = append(cmd.Env, "GOMAXPROCS="+strconv.Itoa(profile.Hardware.GOMAXPROCS))
+	}
 	broker := &LedgerPerformanceBroker{command: cmd, EndUserURL: enduserURL, AdminURL: adminURL, done: make(chan error, 1)}
 	cmd.Stdout, cmd.Stderr = &broker.output, &broker.output
 	if err := cmd.Start(); err != nil {
@@ -307,6 +579,7 @@ func (b *LedgerPerformanceBroker) Close() error {
 type LedgerPerformanceCollector struct {
 	server   *grpc.Server
 	listener net.Listener
+	forward  *grpc.ClientConn
 	mu       sync.Mutex
 	traces   map[string][]time.Duration
 	alloc    []LedgerPerformanceAllocation
@@ -324,6 +597,7 @@ type ledgerPerformanceMetrics struct {
 
 type ledgerPerformanceLogs struct {
 	collectlogs.UnimplementedLogsServiceServer
+	collector *LedgerPerformanceCollector
 }
 
 type LedgerPerformanceAllocation struct {
@@ -331,24 +605,71 @@ type LedgerPerformanceAllocation struct {
 	At             time.Time
 }
 
-func NewLedgerPerformanceCollector() (*LedgerPerformanceCollector, error) {
+// The capture proxy preserves the external OTLP receiver's real response and
+// backpressure while retaining spans/allocations needed for acceptance.
+func NewLedgerPerformanceCollectorForProfile(ctx context.Context, profile *LedgerPerformanceProfile) (*LedgerPerformanceCollector, error) {
+	if profile != nil && profile.Telemetry.ReceiverTLS {
+		return nil, errors.New("TLS telemetry is unsupported: the capture proxy cannot measure the broker's own TLS costs")
+	}
+	if profile == nil || profile.Telemetry.Receiver == "local-ack" {
+		return newLedgerPerformanceCollector(nil)
+	}
+	endpoint := os.Getenv("AIB_LEDGER_PERFORMANCE_OTLP_ENDPOINT")
+	if endpoint == "" {
+		return nil, errors.New("AIB_LEDGER_PERFORMANCE_OTLP_ENDPOINT is required for the approved external receiver")
+	}
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil || host != profile.Telemetry.ReceiverHost || port != strconv.Itoa(profile.Telemetry.ReceiverPort) {
+		return nil, errors.New("AIB_LEDGER_PERFORMANCE_OTLP_ENDPOINT must use the approved receiver host:port")
+	}
+	connect, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	upstream, err := grpc.DialContext(connect, endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	if err != nil {
+		return nil, fmt.Errorf("approved OTLP receiver unavailable: %w", err)
+	}
+	collector, err := newLedgerPerformanceCollector(upstream)
+	if err != nil {
+		_ = upstream.Close()
+		return nil, err
+	}
+	return collector, nil
+}
+
+func newLedgerPerformanceCollector(forward *grpc.ClientConn) (*LedgerPerformanceCollector, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
-	collector := &LedgerPerformanceCollector{server: grpc.NewServer(), listener: listener, traces: make(map[string][]time.Duration)}
+	collector := &LedgerPerformanceCollector{server: grpc.NewServer(), listener: listener, traces: make(map[string][]time.Duration), forward: forward}
 	collecttraces.RegisterTraceServiceServer(collector.server, &ledgerPerformanceTraces{collector: collector})
 	collectmetrics.RegisterMetricsServiceServer(collector.server, &ledgerPerformanceMetrics{collector: collector})
-	collectlogs.RegisterLogsServiceServer(collector.server, &ledgerPerformanceLogs{})
+	collectlogs.RegisterLogsServiceServer(collector.server, &ledgerPerformanceLogs{collector: collector})
 	go func() { _ = collector.server.Serve(listener) }()
 	return collector, nil
 }
 
 func (c *LedgerPerformanceCollector) Endpoint() string { return c.listener.Addr().String() }
-func (c *LedgerPerformanceCollector) Close()           { c.server.Stop() }
+func (c *LedgerPerformanceCollector) Close() {
+	c.server.Stop()
+	if c.forward != nil {
+		_ = c.forward.Close()
+	}
+}
 
-func (service *ledgerPerformanceTraces) Export(_ context.Context, req *collecttraces.ExportTraceServiceRequest) (*collecttraces.ExportTraceServiceResponse, error) {
+func (service *ledgerPerformanceTraces) Export(ctx context.Context, req *collecttraces.ExportTraceServiceRequest) (*collecttraces.ExportTraceServiceResponse, error) {
 	c := service.collector
+	response := &collecttraces.ExportTraceServiceResponse{}
+	if c.forward != nil {
+		var err error
+		response, err = collecttraces.NewTraceServiceClient(c.forward).Export(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		if response.GetPartialSuccess().GetRejectedSpans() != 0 {
+			return nil, errors.New("approved OTLP receiver rejected recording spans")
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, resource := range req.ResourceSpans {
@@ -361,13 +682,24 @@ func (service *ledgerPerformanceTraces) Export(_ context.Context, req *collecttr
 			}
 		}
 	}
-	return &collecttraces.ExportTraceServiceResponse{}, nil
+	return response, nil
 }
 
 // Cumulative Go allocation bytes/objects are sampled at the receiver. Deltas
 // require samples on both sides of the measured workload.
-func (service *ledgerPerformanceMetrics) Export(_ context.Context, req *collectmetrics.ExportMetricsServiceRequest) (*collectmetrics.ExportMetricsServiceResponse, error) {
+func (service *ledgerPerformanceMetrics) Export(ctx context.Context, req *collectmetrics.ExportMetricsServiceRequest) (*collectmetrics.ExportMetricsServiceResponse, error) {
 	c := service.collector
+	response := &collectmetrics.ExportMetricsServiceResponse{}
+	if c.forward != nil {
+		var err error
+		response, err = collectmetrics.NewMetricsServiceClient(c.forward).Export(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		if response.GetPartialSuccess().GetRejectedDataPoints() != 0 {
+			return nil, errors.New("approved OTLP receiver rejected allocation metrics")
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, resource := range req.ResourceMetrics {
@@ -395,11 +727,21 @@ func (service *ledgerPerformanceMetrics) Export(_ context.Context, req *collectm
 			c.alloc = append(c.alloc, sample)
 		}
 	}
-	return &collectmetrics.ExportMetricsServiceResponse{}, nil
+	return response, nil
 }
 
-func (ledgerPerformanceLogs) Export(context.Context, *collectlogs.ExportLogsServiceRequest) (*collectlogs.ExportLogsServiceResponse, error) {
-	return &collectlogs.ExportLogsServiceResponse{}, nil
+func (service *ledgerPerformanceLogs) Export(ctx context.Context, req *collectlogs.ExportLogsServiceRequest) (*collectlogs.ExportLogsServiceResponse, error) {
+	if service.collector.forward == nil {
+		return &collectlogs.ExportLogsServiceResponse{}, nil
+	}
+	response, err := collectlogs.NewLogsServiceClient(service.collector.forward).Export(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if response.GetPartialSuccess().GetRejectedLogRecords() != 0 {
+		return nil, errors.New("approved OTLP receiver rejected ledger logs")
+	}
+	return response, nil
 }
 
 func (c *LedgerPerformanceCollector) RecordingTimes(traceIDs []string) ([]time.Duration, error) {
@@ -468,11 +810,134 @@ func DrainLedgerPerformanceResponse(response *http.Response) error {
 	return errors.Join(err, response.Body.Close())
 }
 
+// LedgerPerformancePostgres is the existing template-clone contract, shared by
+// the reference container and an operator-provided PostgreSQL server.
+type LedgerPerformancePostgres interface {
+	SetupDatabaseFromTemplate(integrationbootstrap.PostgresTestHandle, string, func(string)) (string, string, func())
+	ConnectionString(string) string
+	ExecuteSQL(integrationbootstrap.PostgresTestHandle, string, string)
+}
+
+type ExternalLedgerPerformancePostgres struct {
+	adminURL  string
+	identity  string
+	templates map[string]string
+	mu        sync.Mutex
+	sequence  int
+}
+
+// NewExternalLedgerPerformancePostgres refuses the local test container for a
+// deployment run. The operator provides a dedicated PostgreSQL admin URL with
+// CREATE DATABASE and CREATE ROLE privileges; only benchmark-owned DBs/roles
+// are created or deleted.
+func NewExternalLedgerPerformancePostgres(ctx context.Context, profile *LedgerPerformanceProfile) (*ExternalLedgerPerformancePostgres, error) {
+	raw := os.Getenv("AIB_LEDGER_PERFORMANCE_POSTGRES_ADMIN_URL")
+	if raw == "" {
+		return nil, errors.New("AIB_LEDGER_PERFORMANCE_POSTGRES_ADMIN_URL is required for the approved deployment database")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" || parsed.User == nil || parsed.Path != "/postgres" || parsed.Hostname() != profile.Postgres.Host || parsed.Port() != strconv.Itoa(profile.Postgres.Port) || parsed.Query().Get("sslmode") != profile.Postgres.SSLMode {
+		return nil, errors.New("deployment PostgreSQL admin URL must use postgres://USER:PASSWORD@approved-host:port/postgres?sslmode=approved-mode")
+	}
+	connection, err := sqlx.ConnectContext(ctx, "pgx", raw)
+	if err != nil {
+		return nil, fmt.Errorf("approved deployment PostgreSQL is unavailable: %w", err)
+	}
+	defer connection.Close()
+	if err := CheckLedgerPerformancePostgres(ctx, connection, profile); err != nil {
+		return nil, err
+	}
+	identity := make([]byte, 8)
+	if _, err := rand.Read(identity); err != nil {
+		return nil, err
+	}
+	return &ExternalLedgerPerformancePostgres{adminURL: raw, identity: hex.EncodeToString(identity), templates: make(map[string]string)}, nil
+}
+
+func (pg *ExternalLedgerPerformancePostgres) ConnectionString(name string) string {
+	parsed, _ := url.Parse(pg.adminURL) // Checked during construction.
+	parsed.Path = "/" + name
+	return parsed.String()
+}
+
+func (pg *ExternalLedgerPerformancePostgres) exec(ctx context.Context, query string) error {
+	conn, err := pgx.Connect(ctx, pg.adminURL)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	_, err = conn.Exec(ctx, query)
+	return err
+}
+
+func (pg *ExternalLedgerPerformancePostgres) create(name, template string) error {
+	return pg.exec(context.Background(), "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()+" TEMPLATE "+pgx.Identifier{template}.Sanitize())
+}
+
+func (pg *ExternalLedgerPerformancePostgres) drop(name string) error {
+	// Only the unpredictable benchmark prefix may be dropped.
+	if !strings.HasPrefix(name, "ledgerp_"+pg.identity+"_") {
+		return errors.New("refusing to drop a database not owned by this performance run")
+	}
+	return pg.exec(context.Background(), "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
+}
+
+func (pg *ExternalLedgerPerformancePostgres) SetupDatabaseFromTemplate(t integrationbootstrap.PostgresTestHandle, key string, provision func(string)) (string, string, func()) {
+	t.Helper()
+	pg.mu.Lock()
+	defer pg.mu.Unlock()
+	template, ok := pg.templates[key]
+	if !ok {
+		pg.sequence++
+		template = fmt.Sprintf("ledgerp_%s_%d_template", pg.identity, pg.sequence)
+		if err := pg.create(template, "template0"); err != nil {
+			t.Fatalf("create approved PostgreSQL template: %v", err)
+		}
+		pg.templates[key] = template // Close cleans it if provisioning fails.
+		provision(template)
+	}
+	pg.sequence++
+	name := fmt.Sprintf("ledgerp_%s_%d", pg.identity, pg.sequence)
+	if err := pg.create(name, template); err != nil {
+		t.Fatalf("clone approved PostgreSQL template: %v", err)
+	}
+	return name, pg.ConnectionString(name), func() {
+		if err := pg.drop(name); err != nil {
+			t.Fatalf("drop benchmark-owned database: %v", err)
+		}
+	}
+}
+
+func (pg *ExternalLedgerPerformancePostgres) ExecuteSQL(t integrationbootstrap.PostgresTestHandle, database, query string) {
+	t.Helper()
+	conn, err := pgx.Connect(context.Background(), pg.ConnectionString(database))
+	if err != nil {
+		t.Fatalf("connect to approved PostgreSQL database: %v", err)
+	}
+	defer conn.Close(context.Background())
+	if _, err := conn.Exec(context.Background(), query); err != nil {
+		t.Fatalf("execute approved PostgreSQL database setup: %v", err)
+	}
+}
+
+func (pg *ExternalLedgerPerformancePostgres) Close() error {
+	pg.mu.Lock()
+	defer pg.mu.Unlock()
+	var failures []error
+	for _, name := range pg.templates {
+		if err := pg.drop(name); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	pg.templates = nil
+	return errors.Join(failures...)
+}
+
 // OpenLedgerPerformanceDatabase clones an actual migrated PostgreSQL database.
 // The binary receives only a separate DML role; test setup and historical
 // seeding retain the migration-owner connection. The baseline schema has no
 // business_events table and no ledger privileges to synthesize one.
-func OpenLedgerPerformanceDatabase(ctx context.Context, t integrationbootstrap.PostgresTestHandle, pg *integrationbootstrap.SharedPostgres, template string, provision func(string)) (ownerURL, runtimeURL string, cleanup func(), err error) {
+func OpenLedgerPerformanceDatabase(ctx context.Context, t integrationbootstrap.PostgresTestHandle, pg LedgerPerformancePostgres, template string, provision func(string)) (ownerURL, runtimeURL string, cleanup func(), err error) {
 	dbName, ownerURL, drop := pg.SetupDatabaseFromTemplate(t, template, provision)
 	owner, err := sqlx.ConnectContext(ctx, "pgx", ownerURL)
 	if err != nil {
@@ -481,6 +946,13 @@ func OpenLedgerPerformanceDatabase(ctx context.Context, t integrationbootstrap.P
 	}
 	role := dbName + "_runtime"
 	quoted := pgx.Identifier{role}.Sanitize()
+	secret := make([]byte, 24)
+	if _, err = rand.Read(secret); err != nil {
+		_ = owner.Close()
+		drop()
+		return "", "", nil, fmt.Errorf("generate benchmark runtime credential: %w", err)
+	}
+	password := hex.EncodeToString(secret)
 	roleCreated := false
 	defer func() {
 		if err != nil {
@@ -491,7 +963,7 @@ func OpenLedgerPerformanceDatabase(ctx context.Context, t integrationbootstrap.P
 			}
 		}
 	}()
-	if _, err = owner.ExecContext(ctx, "CREATE ROLE "+quoted+" LOGIN PASSWORD 'ledger-performance-test-only'"); err != nil {
+	if _, err = owner.ExecContext(ctx, "CREATE ROLE "+quoted+" LOGIN PASSWORD '"+password+"'"); err != nil {
 		return "", "", nil, errors.New("benchmark cannot create isolated runtime database role")
 	}
 	roleCreated = true
@@ -532,7 +1004,7 @@ func OpenLedgerPerformanceDatabase(ctx context.Context, t integrationbootstrap.P
 	if err != nil {
 		return "", "", nil, errors.New("benchmark cannot parse owner connection URL")
 	}
-	parsed.User = url.UserPassword(role, "ledger-performance-test-only")
+	parsed.User = url.UserPassword(role, password)
 	runtimeURL = parsed.String()
 	cleanup = func() {
 		_ = owner.Close()
