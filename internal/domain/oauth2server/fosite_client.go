@@ -68,6 +68,17 @@ type agentHolder interface {
 func (c *confidentialClient) getAgent() *storage.Agent { return c.agent }
 func (c *publicClient) getAgent() *storage.Agent       { return c.agent }
 
+// Fosite validates the original grant before narrowing. Current permissions
+// apply to the candidate response in the provider, not to every ceiling scope.
+type refreshProtocolClient struct {
+	fosite.Client
+	agent        *storage.Agent
+	scopeCeiling fosite.Arguments
+}
+
+func (c *refreshProtocolClient) GetScopes() fosite.Arguments { return c.scopeCeiling }
+func (c *refreshProtocolClient) getAgent() *storage.Agent    { return c.agent }
+
 func publicClientGrantTypes(cimd []string) fosite.Arguments {
 	if len(cimd) == 0 {
 		return fosite.Arguments{"authorization_code"}

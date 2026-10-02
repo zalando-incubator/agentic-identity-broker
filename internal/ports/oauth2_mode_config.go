@@ -63,15 +63,17 @@ func (c *ProxyOAuth2Config) JWKSMaxRefresh() time.Duration {
 // LocalOAuth2Config is the resolved configuration for local mode.
 // The broker mints its own JWT access tokens — no upstream server required.
 type LocalOAuth2Config struct {
-	IssuerURI              string
-	TokenTTL               time.Duration
-	RefreshTokenTTL        time.Duration
-	TokenClaimsExpression  string
-	SigningKeys            LocalSigningKeysConfig
-	SupportedResponseTypes []string
-	SupportedGrantTypes    []string
-	SupportedScopes        []string
-	CIMD                   CIMDConfig
+	IssuerURI                 string
+	TokenTTL                  time.Duration
+	RefreshTokenTTL           time.Duration
+	RefreshTokenReuseInterval time.Duration
+	AbsoluteSessionLifetime   time.Duration
+	TokenClaimsExpression     string
+	SigningKeys               LocalSigningKeysConfig
+	SupportedResponseTypes    []string
+	SupportedGrantTypes       []string
+	SupportedScopes           []string
+	CIMD                      CIMDConfig
 }
 
 func (*LocalOAuth2Config) oauth2ModeConfig()           {}

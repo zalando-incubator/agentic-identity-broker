@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -44,7 +46,7 @@ func NewAgentRepository(adapter *Adapter) *AgentRepository {
 
 // fetchClientURIs retrieves all client URIs for an agent from the agent_client_uris table.
 func (r *AgentRepository) fetchClientURIs(ctx context.Context, agentID id.AgentID) ([]string, error) {
-	rows, err := r.adapter.db.QueryContext(
+	rows, err := r.adapter.storageExecutor(ctx).QueryxContext(
 		ctx,
 		`SELECT client_uri FROM agent_client_uris WHERE agent_id = $1 ORDER BY client_uri`,
 		agentID,
@@ -73,7 +75,7 @@ func (r *AgentRepository) fetchClientURIs(ctx context.Context, agentID id.AgentI
 
 // insertClientURIs inserts client URIs into agent_client_uris within an existing transaction.
 // Returns StorageError with Kind=Conflict if a client_uri uniqueness violation occurs.
-func insertClientURIs(ctx context.Context, tx *sql.Tx, agentID id.AgentID, uris []string) error {
+func insertClientURIs(ctx context.Context, tx *sqlx.Tx, agentID id.AgentID, uris []string) error {
 	for _, uri := range uris {
 		_, err := tx.ExecContext(
 			ctx,
@@ -132,6 +134,9 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 	if agent.ID.IsZero() {
 		agent.ID = id.NewAgentID()
 	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agent.ID {
+		return refreshValidation("CreateAgent", errors.New("agent belongs to another authorization scope"))
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
@@ -163,11 +168,15 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 		}
 	}
 
-	tx, err := r.adapter.db.BeginTx(execCtx, nil)
+	tx, owned, err := r.adapter.participantTx(execCtx)
 	if err != nil {
 		return storage.NewStorageError("CreateAgent", storage.ErrorKindConnection, err, "failed to begin transaction")
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if owned {
+			_ = tx.Rollback()
+		}
+	}()
 
 	if len(agent.PermissionSets) > 0 {
 		psIDs := make([]id.PermissionSetID, len(agent.PermissionSets))
@@ -223,8 +232,11 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 		return err
 	}
 
-	if err := tx.Commit(); err != nil {
-		return storage.NewStorageError("CreateAgent", storage.ErrorKindConnection, err, "failed to commit transaction")
+	if owned {
+		owned = false
+		if err := commitAuthorizationTx(tx); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -256,6 +268,9 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 			"agent ID cannot be empty",
 		)
 	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agentID {
+		return nil, refreshValidation("GetAgent", errors.New("agent belongs to another authorization scope"))
+	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
@@ -263,7 +278,7 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 	var serviceReqsJSON, permissionSetsJSON []byte
 
 	agent := &storage.Agent{}
-	err := r.adapter.db.QueryRowContext(
+	err := r.adapter.storageExecutor(queryCtx).QueryRowxContext(
 		queryCtx,
 		`SELECT id, canonical_id, client_id, external_id, display_name, description,
 		        governance_url, user_documentation_url, agent_interface_url,
@@ -323,7 +338,7 @@ func (r *AgentRepository) GetByCanonicalID(ctx context.Context, canonicalID stri
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 	var agentID id.AgentID
-	if err := r.adapter.db.QueryRowContext(queryCtx, `SELECT id FROM agents WHERE canonical_id = $1`, canonicalID).Scan(&agentID); err != nil {
+	if err := r.adapter.storageExecutor(queryCtx).QueryRowxContext(queryCtx, `SELECT id FROM agents WHERE canonical_id = $1`, canonicalID).Scan(&agentID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, storage.NewStorageError("GetAgentByCanonicalID", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
 		}
@@ -362,6 +377,9 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 			"agent validation failed",
 		)
 	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agent.ID {
+		return refreshValidation("UpdateAgent", errors.New("agent belongs to another authorization scope"))
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
@@ -393,11 +411,15 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 		}
 	}
 
-	tx, err := r.adapter.db.BeginTx(execCtx, nil)
+	tx, owned, err := r.adapter.participantTx(execCtx)
 	if err != nil {
 		return storage.NewStorageError("UpdateAgent", storage.ErrorKindConnection, err, "failed to begin transaction")
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if owned {
+			_ = tx.Rollback()
+		}
+	}()
 
 	result, err := tx.ExecContext(
 		execCtx,
@@ -461,15 +483,17 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 		}
 	}
 
-	if err = tx.Commit(); err != nil {
-		return storage.NewStorageError("UpdateAgent", storage.ErrorKindConnection, err, "failed to commit transaction")
+	if owned {
+		owned = false
+		if err := commitAuthorizationTx(tx); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// Delete deletes an agent entity by ID from PostgreSQL.
-// Idempotent: returns nil if agent doesn't exist.
-// Associated grants and client URIs are CASCADE deleted per FR-021.
+// Delete removes an agent and its local authorization state in one agent scope.
+// Direct repository callers enter the same coordinated revocation as the domain service.
 func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error {
 	if r.adapter.db == nil {
 		return storage.NewStorageError(
@@ -488,18 +512,51 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error 
 			"agent ID cannot be empty",
 		)
 	}
+	if _, scoped := scopedAuthorization(ctx); !scoped {
+		var entered bool
+		err := NewAuthorizationSessionCoordinator(r.adapter).Run(ctx, agentID, func(owner context.Context, at time.Time) error {
+			entered = true
+			if err := NewRefreshSessionRepo(r.adapter).RevokeByAgent(owner, agentID, at, storage.RefreshReasonAgentDeleted); err != nil {
+				return err
+			}
+			return r.Delete(owner, agentID)
+		})
+		if !entered && ports.IsNotFoundErr(err) {
+			return nil
+		}
+		return err
+	}
+	if err := requireAuthorizationAgent(ctx, agentID); err != nil {
+		return err
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
-
-	_, err := r.adapter.db.ExecContext(execCtx, `DELETE FROM agents WHERE id = $1`, agentID)
-	if err != nil {
+	exec := r.adapter.storageExecutor(execCtx)
+	var missingReceipt bool
+	if err := exec.QueryRowxContext(execCtx, `SELECT EXISTS (
+		SELECT 1 FROM refresh_sessions s WHERE s.agent_id = $1
+		AND (s.terminal_reason IS NULL OR NOT EXISTS (
+			SELECT 1 FROM refresh_revocation_receipts receipt
+			WHERE receipt.session_id = s.id AND receipt.reason = s.terminal_reason
+				AND receipt.agent_id = s.agent_id AND receipt.principal = s.principal
+				AND receipt.client_id = s.client_id)))`, agentID).Scan(&missingReceipt); err != nil {
+		return storage.NewStorageError("DeleteAgent", storage.ErrorKindConnection, err, "failed to verify refresh revocation receipts")
+	}
+	if missingReceipt {
+		return storage.NewStorageError("DeleteAgent", storage.ErrorKindValidation, nil, "refresh sessions need durable revocation receipts before agent deletion")
+	}
+	// PKCE rows have no FK to authorization codes, so remove their agent-owned hashes before the code cascade.
+	if _, err := exec.ExecContext(execCtx, `DELETE FROM pkce_sessions WHERE signature IN (
+		SELECT code_hash FROM authorization_codes WHERE agent_id = $1)`, agentID); err != nil {
+		return storage.NewStorageError("DeleteAgent", storage.ErrorKindConnection, err, "failed to delete agent PKCE sessions")
+	}
+	if _, err := exec.ExecContext(execCtx, `DELETE FROM agents WHERE id = $1`, agentID); err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return storage.NewStorageError("DeleteAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
 		return storage.NewStorageError("DeleteAgent", storage.ErrorKindConnection, err, "failed to delete agent")
 	}
-
 	return nil
 }
 
@@ -518,13 +575,16 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 
-	rows, err := r.adapter.db.QueryContext(
+	where, args := "", []any(nil)
+	if scope, ok := scopedAuthorization(ctx); ok {
+		where, args = " WHERE id = $1", []any{scope.agentID}
+	}
+	rows, err := r.adapter.storageExecutor(queryCtx).QueryxContext(
 		queryCtx,
 		`SELECT id, canonical_id, client_id, external_id, display_name, description,
 		        governance_url, user_documentation_url, agent_interface_url,
 		        service_requirements, permission_sets, redirect_uris, allowed_scopes, created_at, updated_at
-	 FROM agents ORDER BY created_at DESC`,
-	)
+	 FROM agents`+where+` ORDER BY created_at DESC`, args...)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return nil, storage.NewStorageError("ListAgents", storage.ErrorKindTimeout, err, "operation exceeded timeout")
@@ -562,6 +622,9 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 	if err := rows.Err(); err != nil {
 		return nil, storage.NewStorageError("ListAgents", storage.ErrorKindConnection, err, "error iterating agent rows")
 	}
+	if err := rows.Close(); err != nil {
+		return nil, storage.NewStorageError("ListAgents", storage.ErrorKindConnection, err, "failed to close agent rows")
+	}
 
 	if len(agents) == 0 {
 		return []*storage.Agent{}, nil
@@ -594,7 +657,7 @@ func (r *AgentRepository) batchFetchClientURIs(ctx context.Context, agentIDs []i
 		uuids[i] = agentID.String()
 	}
 
-	rows, err := r.adapter.db.QueryContext(
+	rows, err := r.adapter.storageExecutor(ctx).QueryxContext(
 		ctx,
 		`SELECT agent_id, client_uri FROM agent_client_uris WHERE agent_id = ANY($1::uuid[]) ORDER BY client_uri`,
 		pq.Array(uuids),
@@ -645,7 +708,7 @@ func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientI
 
 	var serviceReqsJSON, permissionSetsJSON []byte
 	agent := &storage.Agent{}
-	err := r.adapter.db.QueryRowContext(
+	err := r.adapter.storageExecutor(queryCtx).QueryRowxContext(
 		queryCtx,
 		`SELECT id, client_id, external_id, display_name, description,
 		        governance_url, user_documentation_url, agent_interface_url,
@@ -669,6 +732,9 @@ func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientI
 			return nil, storage.NewStorageError("GetAgentByClientID", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
 		return nil, storage.NewStorageError("GetAgentByClientID", storage.ErrorKindConnection, err, "failed to get agent by client_id")
+	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agent.ID {
+		return nil, refreshValidation("GetAgentByClientID", errors.New("agent belongs to another authorization scope"))
 	}
 
 	if len(serviceReqsJSON) > 0 {
@@ -715,12 +781,12 @@ func (r *AgentRepository) ExistsOtherWithClientID(ctx context.Context, clientID 
 	var exists bool
 	var err error
 	if excludeAgentID == nil {
-		err = r.adapter.db.QueryRowContext(queryCtx,
+		err = r.adapter.storageExecutor(queryCtx).QueryRowxContext(queryCtx,
 			`SELECT EXISTS(SELECT 1 FROM agents WHERE client_id = $1)`,
 			clientID,
 		).Scan(&exists)
 	} else {
-		err = r.adapter.db.QueryRowContext(queryCtx,
+		err = r.adapter.storageExecutor(queryCtx).QueryRowxContext(queryCtx,
 			`SELECT EXISTS(SELECT 1 FROM agents WHERE client_id = $1 AND id <> $2)`,
 			clientID, *excludeAgentID,
 		).Scan(&exists)
@@ -735,7 +801,7 @@ func (r *AgentRepository) ExistsOtherWithClientID(ctx context.Context, clientID 
 }
 
 func (r *AgentRepository) findAgentByCIMDClientURIPattern(ctx context.Context, candidate string) (id.AgentID, error) {
-	rows, err := r.adapter.db.QueryContext(ctx, `SELECT agent_id, client_uri FROM agent_client_uris WHERE client_uri LIKE '%*%'`)
+	rows, err := r.adapter.storageExecutor(ctx).QueryxContext(ctx, `SELECT agent_id, client_uri FROM agent_client_uris WHERE client_uri LIKE '%*%'`)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return id.AgentID{}, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindTimeout, err, "operation exceeded timeout")
@@ -792,7 +858,7 @@ func (r *AgentRepository) GetByClientURI(ctx context.Context, uri string) (*stor
 
 	var serviceReqsJSON, permissionSetsJSON []byte
 	agent := &storage.Agent{}
-	err := r.adapter.db.QueryRowContext(
+	err := r.adapter.storageExecutor(queryCtx).QueryRowxContext(
 		queryCtx,
 		`SELECT a.id, a.client_id, a.external_id, a.display_name, a.description,
 		        a.governance_url, a.user_documentation_url, a.agent_interface_url,
@@ -822,6 +888,9 @@ func (r *AgentRepository) GetByClientURI(ctx context.Context, uri string) (*stor
 			return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
 		return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindConnection, err, "failed to get agent by client URI")
+	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agent.ID {
+		return nil, refreshValidation("GetAgentByClientURI", errors.New("agent belongs to another authorization scope"))
 	}
 
 	if len(serviceReqsJSON) > 0 {

@@ -3,6 +3,7 @@ package oauth2
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,7 +16,7 @@ func TestGenerateMetadata_ProxyMode(t *testing.T) {
 		SupportedResponseTypes: []string{"code"},
 		SupportedGrantTypes:    []string{"authorization_code", "refresh_token"},
 		SupportedScopes:        nil,
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	metadata, err := svc.GenerateMetadata(context.Background())
 	require.NoError(t, err)
@@ -37,7 +38,7 @@ func TestGenerateMetadata_LocalMode(t *testing.T) {
 		SupportedResponseTypes: []string{"code"},
 		SupportedGrantTypes:    []string{"authorization_code", "client_credentials", "refresh_token"},
 		SupportedScopes:        []string{"offline_access"},
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	metadata, err := svc.GenerateMetadata(context.Background())
 	require.NoError(t, err)
@@ -59,7 +60,7 @@ func TestGenerateMetadata_HybridMode(t *testing.T) {
 		SupportedResponseTypes: []string{"code"},
 		SupportedGrantTypes:    []string{"authorization_code", "client_credentials", "refresh_token"},
 		SupportedScopes:        []string{"offline_access"},
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	metadata, err := svc.GenerateMetadata(context.Background())
 	require.NoError(t, err)
@@ -79,7 +80,7 @@ func TestGenerateMetadata_LocalModeWithCIMD(t *testing.T) {
 		SupportedGrantTypes:    []string{"authorization_code", "client_credentials", "refresh_token"},
 		SupportedScopes:        []string{"offline_access"},
 		CIMDEnabled:            true,
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	metadata, err := svc.GenerateMetadata(context.Background())
 	require.NoError(t, err)

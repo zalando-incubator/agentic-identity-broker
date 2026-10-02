@@ -136,7 +136,7 @@ func (r *SigningKeyRepo) GetByKIDInDomain(ctx context.Context, domain storage.Ke
 	defer cancel()
 
 	var key storage.SigningKey
-	err := r.adapter.db.GetContext(queryCtx, &key,
+	err := sqlx.GetContext(queryCtx, r.adapter.storageExecutor(queryCtx), &key,
 		`SELECT id, kid, key_domain, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at
 		 FROM signing_keys WHERE kid = $1 AND key_domain = $2 AND removed_at IS NULL`, kid, domain)
 	if err != nil {
@@ -165,10 +165,10 @@ func (r *SigningKeyRepo) GetCurrentInDomain(ctx context.Context, domain storage.
 	defer cancel()
 
 	var key storage.SigningKey
-	err := r.adapter.db.GetContext(queryCtx, &key,
+	err := sqlx.GetContext(queryCtx, r.adapter.storageExecutor(queryCtx), &key,
 		`SELECT id, kid, key_domain, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at
 		 FROM signing_keys
-		 WHERE key_domain = $1 AND removed_at IS NULL AND activates_at <= NOW()
+		 WHERE key_domain = $1 AND removed_at IS NULL AND activates_at <= clock_timestamp()
 		 ORDER BY
 		   CASE WHEN is_current THEN 0 ELSE 1 END,
 		   activates_at DESC
@@ -194,7 +194,7 @@ func (r *SigningKeyRepo) ListActiveInDomain(ctx context.Context, domain storage.
 	defer cancel()
 
 	var keys []*storage.SigningKey
-	err := r.adapter.db.SelectContext(queryCtx, &keys,
+	err := sqlx.SelectContext(queryCtx, r.adapter.storageExecutor(queryCtx), &keys,
 		`SELECT id, kid, key_domain, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at
 		 FROM signing_keys WHERE key_domain = $1 AND removed_at IS NULL ORDER BY created_at DESC`, domain)
 	if err != nil {
@@ -212,7 +212,7 @@ func (r *SigningKeyRepo) KeySetVersion(ctx context.Context) (int64, error) {
 	defer cancel()
 
 	var version int64
-	if err := r.adapter.db.GetContext(queryCtx, &version, `SELECT version FROM signing_key_set_state WHERE id = 1`); err != nil {
+	if err := sqlx.GetContext(queryCtx, r.adapter.storageExecutor(queryCtx), &version, `SELECT version FROM signing_key_set_state WHERE id = 1`); err != nil {
 		return 0, classifySigningKeyRepoError("SigningKeyRepo.KeySetVersion", err, "failed to read signing key set version")
 	}
 	return version, nil
@@ -408,7 +408,7 @@ func (r *SigningKeyRepo) CountActiveInDomain(ctx context.Context, domain storage
 	defer cancel()
 
 	var count int
-	err := r.adapter.db.GetContext(queryCtx, &count,
+	err := sqlx.GetContext(queryCtx, r.adapter.storageExecutor(queryCtx), &count,
 		`SELECT COUNT(*) FROM signing_keys WHERE key_domain = $1 AND removed_at IS NULL`, domain)
 	if err != nil {
 		if isContextTimeoutOrCanceled(err) {

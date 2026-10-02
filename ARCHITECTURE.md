@@ -487,6 +487,8 @@ internal/adapters/storage/postgres/
 - **Examples Included**: Realistic examples for all endpoints covering success and error cases
 - **User-Confirmed**: API specifications confirmed with users/stakeholders before implementation (Constitution Principle IV & X)
 
+**Released-contract compatibility**: Keep existing endpoint paths and wire shapes. Changes to released API behavior require a major release or an explicitly approved versioned contract before deployment. Feature 049's owner approved its refresh/lifecycle contract and major-release handling on 2026-10-01; the changelog records its consent enforcement, default bounded retry, and upgrade reauthorization requirements.
+
 **Dual-Port Architecture**:
 
 ```
@@ -645,6 +647,38 @@ A last-resort net in `LoggingMiddleware` finalizes any still-open holder after t
 - **SR-005 / FR-012**: credentials, cookies, authorization codes, and query strings are not copied into the security context or its logs.
 - **SR-006 / FR-010**: forwarding headers are ignored unless trusted proxy mode is explicitly enabled; when enabled, the broker treats the right-most configured forwarded-header entry as authoritative.
 - **SC-008**: the design budget is under 1 ms median per-request overhead with no additional heap allocations beyond one context value and one response header on the hot path.
+
+#### 3.1.4.3. Consent-Bound Local Refresh Sessions (Feature 049)
+
+**Approved implementation contract**: [Feature 049](specs/049-fix-refresh-consent/spec.md), its [data model](specs/049-fix-refresh-consent/data-model.md), and accepted [ADR 038](adrs/038-consent-bound-refresh-sessions.md) govern this cutover. Approval does not assert runtime completion; execution evidence belongs in the feature plan.
+
+The local issuer owns this policy in `local` mode and the local minting path of `hybrid` mode. Proxy refresh, hybrid upstream refresh, vaulted third-party sessions, and client-credentials grants without user refresh sessions remain unchanged.
+
+**Aggregate and lineage**: `RefreshSession` uses the original authorization-code request UUID as its `RefreshSessionID`. First issuance atomically records the active original grant ID, first-token SHA-256 signature and shared issuance time, principal, agent, client, immutable granted scope ceiling, and deterministic encryption branch ID. `RefreshToken` records contain only their hashed signature, root ID, finite issuance/expiry, and first consumption time. Rotations retain the root, original profile, origin evidence, and scope ceiling. Narrowed refresh scope limits only the returned access token. Exactly one child is unused; every consumed signature remains replay evidence throughout the live family.
+
+**Transaction and time**: The builder supplies one `AuthorizationSessionCoordinator` and `AuthorizationClock` to issuance, refresh, grant updates/deletion, agent deletion, credential operations, and maintenance. PostgreSQL locks the agent row before child rows and obtains `clock_timestamp()` through the ambient executor. Memory stages only touched authorization/session rows and publishes after validation. Fosite retains fresh protocol handling but borrows the owner transaction; an inner commit/rollback cannot end it. Signing preparation, branch provisioning where possible, and external CIMD resolution stay outside the database lock. All participating authorization reads and writes use the callback context. Fresh consumption samples the shared clock immediately before marking the predecessor used; successor issuance, activity, and retry-window timestamps use that same instant. The access JWT keeps its actual signed expiry even if generation delays consumption. A second shared-time authorization check precedes successful commit. No token or replacement secret is returned before an acknowledged commit.
+
+**Refresh decision**: Authenticate and bind the client, then check revocation, active original-grant consent, session lifetimes, current refresh-grant capability, token classification, and candidate response scopes, in that order. Authorization denials and confirmed pre-commit failures preserve state, except bound-client prohibited refresh reuse commits revocation. Authorization-code replay separately revokes its original root even when another client authenticates as itself. An indeterminate commit returns token-free `server_error`, not a rollback claim; later requests resolve durable state under the same guard and ordinary retry rules.
+
+Native record reads do not grant refresh authority. The explicit `CheckCurrentLineage` facet validates anchored ancestry after the earlier authorization checks. Maintenance can therefore terminate unsupported old-writer families without issuing tokens. Overdue work clears readiness before waiting on the agent gate, and each live maintenance operation has a one-second timeout.
+
+PostgreSQL migration 037 verifies existing ancestry once and maintains an irreversible per-root validity proof through deferred row triggers. Fresh and retry decisions use indexed origin/current evidence and the locked current mirror, without traversing token history. Unsupported historical edits, missing links, detached inserts, and old-only consumption invalidate the proof. Memory validates every native/private-mirror link before use and publication.
+
+Old writers lock legacy rows before poisoning a root's proof. Terminal writes therefore fence the matching mirrors before the root write lock. The agent gate still serializes native authorization changes.
+
+**Bounded retry**: The immediately previous consumed token can return its original access/refresh pair before its fixed 30-second default window closes, while the successor remains current and unused. Requested scopes must match canonically; at most three committed stored-result authorizations are allowed. Retries advance only `RetryCount`, not activity, consumption, or lifetime clocks. The exact original response scope must still be permitted. Zero reuse stores no result and retains strict single-use replay revocation. An expired cached access token alone denies recovery without revoking a valid successor.
+
+`RefreshRetryPayload` has purpose `refresh_retry` and version 1. Existing `EncryptionPort` adapters authenticate it with exactly `refresh_session_id` AAD and branch ID `refresh_<UUID>_branch_key`. The payload binds immutable root/owner/origin evidence, both token signatures, original requested/response scopes, a redacted context fingerprint, exact token strings, and original access/retry expiry. No token plaintext is persisted or logged. Its original expiry stays fixed; effective `RetryExpiresAt` can only shorten for that predecessor. Denial begins at equality, regardless of cleanup. With reachable storage, maintenance erases overdue ciphertext within one second; unavailable cleanup or a missed bound blocks readiness until erasure succeeds. Startup reconciles shorter deadlines and clears overdue results, or all results at zero reuse, before admission.
+
+**Lifecycle and retention**: Both grant-delete paths revoke all roots for the principal/agent, including idempotent deletion of an absent grant. Renewal after grant expiry revokes earlier roots; active-grant edits keep them. Agent deletion and explicit credential revocation end agent-wide roots. Credential replacement or first credential creation retains sessions but immediately requires current credentials. Revocation writes an immutable, non-credential `RefreshRevocationReceipt` in the same transaction before agent/root cascades. Receipt failure rolls back the lifecycle action. Receipts have no deleting agent/root foreign key and survive cascade removal. Success audits follow commit.
+
+Committed revocation and lifetime expiry emit per-session structured events with principal, agent, bound client, session ID, and reason. Durable receipts retain only trusted client IP and truncated user agent, with an explicit request or maintenance origin. Lifecycle reads use credential-free identity projections, not retry ciphertext. Confirmed rollback emits no successful transition. Known-token client mismatches retain owner identity only for rejection auditing, never for transaction admission.
+
+Absolute lifetime uses the original `StartedAt`; its default zero is unlimited. Inactivity defaults to 720h and is bounded by the stored deadline, `LastFreshAt` plus current policy, and current token expiry. Only fresh rotation advances activity and applies a larger inactivity duration to its successor. Requests deny at deadlines without terminalizing; startup/maintenance atomically persist terminal expiry, erase ciphertext, and invalidate legacy mirrors. Terminal state never reverses. Retain active lineage, and terminal history through the maximum recorded token expiry `RetainUntil`; independent receipts survive history purge.
+
+**Rolling deployment and restore**: Keep the additive legacy SQL mirror, not obsolete source models or repository aliases. Only fully evidenced anchored families written by new issuers continue; every pre-feature unanchored token and unsupported old-writer descendant requires reauthorization. Lock and reread an anchored current mirror through consumption so old-first and new-first writers cannot branch. Revocation/expiry invalidates current and descendant mirrors atomically. Before binary-only rollback, stop token traffic and old writers and successfully reconcile outgoing-policy expiry; preserve the schema.
+
+After a database or refresh-state restore, stop all brokers and token writers and run `agentic-identity-broker --config <file> refresh-sessions invalidate-restored`. In bounded agent-scoped transactions it invalidates every restored local root and unused legacy row, including unanchored rows, while preserving terminal reasons, grants, agents, credentials, signing keys, and third-party sessions. Admission requires acknowledged success and an empty final authority scan. Failure or indeterminate completion keeps traffic stopped until an acknowledged idempotent rerun succeeds. Encrypted backup copies may remain; snapshot-local history cannot prove continuing authorization.
 
 #### 3.1.5. Encryption Vault for OAuth Tokens (Feature 012)
 
@@ -1420,7 +1454,7 @@ Define any project-specific terms or acronyms.)
 
 **UserSession**: Domain aggregate representing the complete lifecycle of a user's session with a third-party OAuth2 provider. Contains encrypted access/refresh tokens, expiration metadata, and manages token encryption/decryption through the EncryptionPort. Enforces one session per (principal, service_id) with automatic token refresh and secure deletion.
 
-**EncryptionContext**: Domain value object containing metadata that cryptographically binds encrypted material to its usage context. Implemented as an immutable single-subject `map[string]string`: `service_id` for user-session tokens and other service-scoped secrets, `kid` for broker signing-key private material. Preserves ADR 008's minimal-context rule while keeping non-service assets semantically correct.
+**EncryptionContext**: Domain value object containing metadata that cryptographically binds encrypted material to its usage context. Its immutable single-subject `map[string]string` contains exactly `service_id` for service-scoped secrets, `kid` for signing/client-authentication key material, or `refresh_session_id` for refresh retry results under accepted ADR 038. Existing namespaces and ADR 008's exactly-one-subject rule remain unchanged.
 
 **BranchKeySubject**: Domain value object representing the single encryption subject used for branch-key routing. `service` subjects preserve existing service-backed branch-key identities; `signing_key` subjects give broker signing keys their own namespace.
 
@@ -1529,6 +1563,22 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **CredentialService**: Domain service in `internal/domain/oauth2server/credential_service.go` that owns broker credential creation, rotation, and revocation. It checks agent existence and selects creation or replacement through repository ports. The builder injects it into the admin handler through `ClientCredentialManager`. The handler retains HTTP response formatting and existing success logs.
 
 **StorageTransactionManager**: Shared context-based transaction contract in `internal/ports/storage.go`. Participating PostgreSQL repositories select the ambient transaction through `storageExecutor`. The in-memory factory currently returns a no-op transaction manager. The shared name does not imply memory rollback or nested transaction ownership.
+
+**AuthorizationSessionCoordinator**: Agent-scoped owner of one authorization/session unit of work. PostgreSQL uses an agent-row lock and ambient transaction; memory stages touched rows. Fosite and participating lifecycle repositories borrow this scope rather than committing independently.
+
+**AuthorizationClock**: Backend-owned shared decision time, acquired after the agent gate and rechecked before successful commit. PostgreSQL uses `clock_timestamp()` through the ambient executor; memory shares its coordinator clock.
+
+**RefreshSession**: Aggregate root for locally issued user refresh authority. Its original code UUID, grant identity, first token/time, owner, scope ceiling, and branch namespace are immutable. It owns current/predecessor pointers, activity/lifetime clocks, bounded encrypted retry state, retention, and irreversible terminal status.
+
+**RefreshToken**: Hashed opaque-token signature with root ID, immutable finite issuance/expiry, and first-use time. Consumed signatures remain live-family replay evidence even after individual token expiry.
+
+**RefreshSessionPolicy**: Local/hybrid-local reuse, absolute, and inactivity durations; defaults are 30s, unlimited zero, and 720h. Every deadline decision uses explicit shared time.
+
+**RefreshRetryPayload**: Authenticated encrypted original token result with exact `refresh_retry` purpose/version 1 and root, origin, owner, lineage, scope, context, and expiry bindings. It permits identical-result recovery, never another successor.
+
+**RefreshRevocationReceipt**: Immutable, independently retained non-credential ownership/reason/time projection keyed by `(session_id, reason)`, written transactionally before authorization cascades.
+
+**Restore Invalidation**: Offline, idempotent invalidation of every restored local root and unused legacy token before broker admission. It does not infer post-snapshot authorization or change third-party sessions.
 
 **SigningKey**: An asymmetric key pair scoped to a `key_domain`. `token_signing` keys support ES256 or RS256 and sign locally-issued JWT access tokens; `cimd_client_authentication` keys support ES256 only and sign outbound client assertions. Each domain has separate current-key and activation-grace state, while `kid` remains globally unique. Private material is PEM-encoded and encrypted via `EncryptionPort`; the corresponding public JWK is stored alongside it for publication without decryption. Migration 033 leaves existing public JWKs nullable; the first JWKS rebuild for an older token-signing key derives and backfills its public JWK once. Newly added current keys may wait behind an `activates_at` grace period so JWKS caches can learn them before they begin signing; if local or hybrid mode starts with no active token-signing key, `Builder` calls `SigningKeyService.EnsureInitialKey` to auto-generate one immediately. Keys remain in their public key set until explicitly soft-deleted via `removed_at`. Located in `internal/domain/storage/signing_key.go`.
 

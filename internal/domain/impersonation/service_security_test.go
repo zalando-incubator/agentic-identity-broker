@@ -54,7 +54,7 @@ func TestImpersonate_VerificationCacheRequiresSameJWKSProvider(t *testing.T) {
 					return second, nil
 				}
 				return first, nil
-			}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+			}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com", testAuthorizationClock{now: time.Now()})
 			require.NoError(t, err)
 
 			for attempt := 1; attempt <= tc.attempts; attempt++ {

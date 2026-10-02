@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -271,8 +272,14 @@ const (
 	UserDelegationExpired UserDelegationStatus = "expired"
 )
 
+type UserDelegationDecision struct {
+	Status     UserDelegationStatus
+	GrantID    id.GrantID
+	ValidUntil *time.Time
+}
+
 // UserDelegationVerifier reports whether a principal has an active delegation to an agent.
 // A non-nil error means the status could not be determined and callers must fail closed.
 type UserDelegationVerifier interface {
-	VerifyUserDelegation(ctx context.Context, principal id.Principal, agentID id.AgentID) (UserDelegationStatus, error)
+	VerifyUserDelegation(ctx context.Context, principal id.Principal, agentID id.AgentID, decisionTime time.Time) (UserDelegationDecision, error)
 }

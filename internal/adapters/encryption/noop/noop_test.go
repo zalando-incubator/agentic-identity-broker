@@ -36,3 +36,14 @@ func TestBranchKeyManagerCreate(t *testing.T) {
 		})
 	}
 }
+
+func TestRefreshSessionBranchKeyRegistration(t *testing.T) {
+	manager := &BranchKeyManager{}
+	sessionID := id.NewRefreshSessionID()
+	keyID, err := manager.Create(context.Background(), domainencryption.NewRefreshSessionBranchKeySubject(sessionID))
+	require.NoError(t, err)
+	require.Equal(t, "refresh_"+sessionID.String()+"_branch_key", keyID)
+	keyID, err = manager.Create(context.Background(), domainencryption.NewRefreshSessionBranchKeySubject(id.RefreshSessionID{}))
+	require.Error(t, err)
+	require.Empty(t, keyID)
+}

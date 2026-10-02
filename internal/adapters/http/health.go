@@ -79,7 +79,6 @@ func NewHealthHandler(
 
 		uptime := time.Since(startTime)
 		response := HealthResponse{
-			Status:        healthStateString(healthState),
 			Timestamp:     time.Now().UTC(),
 			UptimeSeconds: int64(uptime.Seconds()),
 		}
@@ -89,9 +88,13 @@ func NewHealthHandler(
 				response.Components = make(map[string]string, len(components))
 				for name, state := range components {
 					response.Components[name] = state
+					if healthState == ports.HealthStateHealthy && state == "unhealthy" {
+						healthState = ports.HealthStateUnhealthy
+					}
 				}
 			}
 		}
+		response.Status = healthStateString(healthState)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(healthStateHTTPStatus(healthState))

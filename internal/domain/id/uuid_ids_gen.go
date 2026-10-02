@@ -141,6 +141,35 @@ func (id *SessionID) Scan(src interface{}) error   { return (*uuid.UUID)(id).Sca
 func (id SessionID) MarshalText() ([]byte, error)  { return uuid.UUID(id).MarshalText() }
 func (id *SessionID) UnmarshalText(b []byte) error { return (*uuid.UUID)(id).UnmarshalText(b) }
 
+// RefreshSessionID uniquely identifies a refresh session entity.
+type RefreshSessionID uuid.UUID
+
+func NewRefreshSessionID() RefreshSessionID { return RefreshSessionID(uuid.New()) }
+func ParseRefreshSessionID(s string) (RefreshSessionID, error) {
+	id, err := uuid.Parse(s)
+	return RefreshSessionID(id), err
+}
+func MustParseRefreshSessionID(s string) RefreshSessionID { return RefreshSessionID(uuid.MustParse(s)) }
+func (id RefreshSessionID) String() string                { return uuid.UUID(id).String() }
+func (id RefreshSessionID) IsZero() bool                  { return uuid.UUID(id) == uuid.Nil }
+func (id RefreshSessionID) MarshalJSON() ([]byte, error)  { return json.Marshal(uuid.UUID(id).String()) }
+func (id *RefreshSessionID) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	parsed, err := uuid.Parse(s)
+	if err != nil {
+		return err
+	}
+	*id = RefreshSessionID(parsed)
+	return nil
+}
+func (id RefreshSessionID) Value() (driver.Value, error)  { return uuid.UUID(id).String(), nil }
+func (id *RefreshSessionID) Scan(src interface{}) error   { return (*uuid.UUID)(id).Scan(src) }
+func (id RefreshSessionID) MarshalText() ([]byte, error)  { return uuid.UUID(id).MarshalText() }
+func (id *RefreshSessionID) UnmarshalText(b []byte) error { return (*uuid.UUID)(id).UnmarshalText(b) }
+
 // UserID uniquely identifies a user entity.
 type UserID uuid.UUID
 

@@ -10,6 +10,7 @@
 #   - Exposes RFC 8414 discovery and JWKS endpoints
 #
 # Upstream OAuth2 URI fields are not required in local mode.
+# Feature 049 refresh policy applies to broker-issued local refresh sessions.
 
 # Dual-server architecture: end-user and admin on separate ports
 server:
@@ -24,6 +25,9 @@ server:
     port: 14000
     bind: "0.0.0.0"
     public_url: "https://broker.example.com:14000"
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
 
 # OAuth2 authorization server configuration
 oauth2_authorization_server:
@@ -33,9 +37,21 @@ oauth2_authorization_server:
 
   # Local section: token issuance configuration (required in local/hybrid mode)
   local:
-    # Token TTL: How long issued access tokens are valid.
-    # Default: 1h. Format: Go duration string (e.g., "30m", "2h", "1h30m").
+    # Issued access JWTs remain valid for up to token_ttl after consent revocation.
+    # A shorter token_ttl reduces this residual exposure; it does not shorten existing JWTs.
     token_ttl: "1h"
+
+    # Recovery of the immediately previous refresh result (maximum three returns).
+    # Default: 30s. Set 0s for strict single use, without a retry result.
+    refresh_token_reuse_interval: "30s"
+    # Default: 0s (no absolute deadline). A finite value such as 168h
+    # counts from first issuance; consent and inactivity still apply at 0s.
+    absolute_session_lifetime: "0s"
+    # Session inactivity since issuance or the last fresh successful rotation.
+    # Default: 720h (30 days). Omitted or 0s retains the 720h default.
+    # Retries and resource access do not renew inactivity.
+    # A policy increase applies only after the next valid fresh rotation.
+    refresh_token_ttl: "720h"
 
     # CEL expression evaluated at token issuance to produce custom JWT claims.
     # Available variables: agent (Agent struct), principal (string), request (map).
@@ -50,7 +66,7 @@ oauth2_authorization_server:
 
 # Storage backend
 storage:
-  backend: "memory" # Use "postgres" for production
+  backend: "memory" # One instance; restart loses all refresh sessions. Use shared PostgreSQL for production.
 
 # Encryption for signing key private material
 encryption:

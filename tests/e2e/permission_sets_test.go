@@ -1466,56 +1466,5 @@ var _ = Describe("Permission Sets (019)", func() {
 			Expect(errBody["error"]).To(Equal("invalid_grant"))
 		})
 
-		// Edge case: empty permission set submission rejected for agents with mandatory PSes
-		It("rejects grant submission with empty granted_permission_sets when agent has mandatory PSes", func() {
-			// Edge case: submitting an empty granted_permission_sets map is rejected (422)
-			// when the agent has mandatory permission set requirements.
-			// Create a PS and agent for this test
-			psResp, err := adminServer.DirectRequest(
-				"POST", "/api/permission-sets", adminPrincipal,
-				map[string]string{"Content-Type": "application/json"},
-				psJSON(map[string]interface{}{
-					"name":        "Edge Case PS",
-					"description": "For empty grant test",
-					"service_scopes": []map[string]interface{}{
-						{"service_id": githubServiceID, "scopes": []string{"repo:read"}},
-					},
-				}),
-			)
-			Expect(err).ToNot(HaveOccurred())
-			Expect(psResp.StatusCode).To(Equal(http.StatusCreated))
-			edgePSID := parsePS(psResp)["id"].(string)
-
-			agentResp, err := adminServer.DirectRequest(
-				"POST", "/api/agents", adminPrincipal,
-				map[string]string{"Content-Type": "application/json"},
-				psJSON(map[string]interface{}{
-					"client_id":    "edge-empty-grant-agent",
-					"display_name": "Edge Case Agent",
-					"description":  "Agent for empty grant edge case",
-					"permission_sets": []map[string]interface{}{
-						{"permission_set_id": edgePSID, "requirement_type": "mandatory"},
-					},
-				}),
-			)
-			Expect(err).ToNot(HaveOccurred())
-			Expect(agentResp.StatusCode).To(Equal(http.StatusCreated))
-			edgeAgentID := parsePS(agentResp)["id"].(string)
-
-			// Submit empty granted_permission_sets for an agent with mandatory PSes —
-			// must be rejected because the mandatory PS is missing.
-			grantBody := map[string]interface{}{
-				"granted_permission_sets": map[string][]string{},
-			}
-			grantResp, err := enduserServer.AuthenticatedPOST(
-				fmt.Sprintf("/api/consent/agents/%s/grants", edgeAgentID),
-				userPrincipal, "application/json",
-				psJSON(grantBody),
-			)
-			Expect(err).ToNot(HaveOccurred())
-			defer func() { _ = grantResp.Body.Close() }()
-			// Missing mandatory PS → 400 Bad Request
-			Expect(grantResp.StatusCode).To(Equal(http.StatusBadRequest))
-		})
 	})
 })

@@ -247,8 +247,8 @@ func TestUserGrantRepository_ListByPrincipalAndAgent_IncludesExpired(t *testing.
 	repo := NewUserGrantRepository()
 	ctx := context.Background()
 
-	// Create grant with very short validity (1 millisecond in future)
-	validUntil := time.Now().Add(1 * time.Millisecond)
+	// Expired grants remain visible to agent-specific lookups.
+	validUntil := time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)
 	grant := &storage.UserGrant{
 		Principal:             testPrincipal1,
 		AgentID:               testAgentID1,
@@ -261,13 +261,82 @@ func TestUserGrantRepository_ListByPrincipalAndAgent_IncludesExpired(t *testing.
 	err := repo.Create(ctx, grant)
 	require.NoError(t, err)
 
-	// Wait for grant to expire
-	time.Sleep(10 * time.Millisecond)
-
 	// List should include expired grants (filtering happens in service layer)
 	grants, err := repo.ListByPrincipalAndAgent(ctx, testPrincipal1, testAgentID1)
 	require.NoError(t, err)
 	assert.Len(t, grants, 1, "expired grants should be included in repository results")
+}
+
+func TestUserGrantRepository_ListByPrincipal_DecisionTime(t *testing.T) {
+	repo := NewUserGrantRepository()
+	ctx := context.Background()
+	expiresAt := time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)
+	finite := &storage.UserGrant{Principal: testPrincipal1, AgentID: testAgentID1, ValidUntil: &expiresAt}
+	indefinite := &storage.UserGrant{Principal: testPrincipal1, AgentID: testAgentID2}
+	other := &storage.UserGrant{Principal: testPrincipal2, AgentID: testAgentID1}
+	for _, grant := range []*storage.UserGrant{finite, indefinite, other} {
+		require.NoError(t, repo.Create(ctx, grant))
+	}
+
+	before := expiresAt.Add(-time.Nanosecond)
+	grants, err := repo.ListByPrincipal(ctx, testPrincipal1, before)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []storage.UserGrant{*finite, *indefinite}, grants)
+
+	for _, at := range []time.Time{expiresAt, expiresAt.Add(time.Nanosecond), time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)} {
+		grants, err = repo.ListByPrincipal(ctx, testPrincipal1, at)
+		require.NoError(t, err)
+		assert.Equal(t, []storage.UserGrant{*indefinite}, grants)
+	}
+
+	grants, err = repo.ListByPrincipal(ctx, testPrincipal2, expiresAt)
+	require.NoError(t, err)
+	assert.Equal(t, []storage.UserGrant{*other}, grants)
+	grants, err = repo.ListByPrincipal(ctx, testPrincipal3, before)
+	require.NoError(t, err)
+	assert.Empty(t, grants)
+
+	// Principal-and-agent lookup deliberately returns the grant even after expiry.
+	all, err := repo.ListByPrincipalAndAgent(ctx, testPrincipal1, testAgentID1)
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.Equal(t, finite.ID, all[0].ID)
+}
+
+func TestUserGrantRepository_ListByPrincipal_ScopedDecisionTime(t *testing.T) {
+	ctx := context.Background()
+	repo := NewUserGrantRepository()
+	agents := NewAgentRepository()
+	store := NewRefreshSessionStore(agents, repo, NewClientCredentialStore(), NewAuthorizationCodeStore(), NewPKCESessionStore())
+	require.NoError(t, agents.Create(ctx, &storage.Agent{
+		ID: testAgentID1, DisplayName: "Test agent", Description: "Scoped grant lookup", PermissionSets: testPermissionSets(),
+	}))
+	expiresAt := time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)
+	grant := &storage.UserGrant{Principal: testPrincipal1, AgentID: testAgentID1}
+	require.NoError(t, repo.Create(ctx, grant))
+
+	require.NoError(t, store.Run(ctx, testAgentID1, func(scope context.Context, _ time.Time) error {
+		changed := grant.Copy()
+		changed.ValidUntil = &expiresAt
+		require.NoError(t, repo.Update(scope, changed))
+
+		grants, err := repo.ListByPrincipal(scope, testPrincipal1, expiresAt.Add(-time.Nanosecond))
+		require.NoError(t, err)
+		assert.Equal(t, []storage.UserGrant{*changed}, grants)
+		grants, err = repo.ListByPrincipal(scope, testPrincipal1, expiresAt)
+		require.NoError(t, err)
+		assert.Empty(t, grants)
+
+		// Uncommitted changes must not leak to committed reads.
+		grants, err = repo.ListByPrincipal(ctx, testPrincipal1, expiresAt)
+		require.NoError(t, err)
+		assert.Equal(t, []storage.UserGrant{*grant}, grants)
+		return nil
+	}))
+
+	grants, err := repo.ListByPrincipal(ctx, testPrincipal1, expiresAt)
+	require.NoError(t, err)
+	assert.Empty(t, grants)
 }
 
 func TestUserGrantRepository_FindByPrincipalAndAgent(t *testing.T) {

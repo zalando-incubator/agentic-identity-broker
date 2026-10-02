@@ -431,6 +431,12 @@ paths:
         **Cascade Behavior**:
         - All user grants associated with this agent are automatically deleted
         - Deletion is logged for audit purposes
+        - All broker-issued local refresh sessions for this agent, across all
+          principals, end with deletion, including eligible retry results and
+          concurrent replacements. Other agents' sessions remain usable.
+        - The agent deletion and session revocation have one committed outcome.
+          A confirmed rollback preserves both. An indeterminate commit reports
+          failure, not successful deletion or a rollback guarantee.
 
         **Irreversible**: This operation cannot be undone
       operationId: deleteAgent
@@ -440,7 +446,7 @@ paths:
         - $ref: '#/components/parameters/AgentId'
       responses:
         '204':
-          description: Agent deleted successfully (no content)
+          description: Agent and all its broker-issued local refresh sessions deleted successfully (no content)
         '400':
           description: Invalid agent ID format
           content:
@@ -1267,7 +1273,17 @@ paths:
         **Rotation** (existing credentials):
         - Returns `200 OK` with new credentials and `previous_invalidated_at` timestamp
         - Previous credentials are immediately invalidated
-        - Active tokens issued with previous credentials remain valid until expiry
+        - Routine credential replacement keeps existing local refresh sessions,
+          their original clocks, and committed retry counts. Every later refresh,
+          including an eligible identical-result retry, needs the new secret.
+          The previous secret cannot authenticate.
+        - First credential creation also keeps sessions issued while the agent
+          was public. Their next refresh requires the new secret.
+        - The new secret is returned only after an acknowledged commit. A
+          confirmed rollback retains the previous credential and session state.
+          An indeterminate commit reports failure without a secret or rollback
+          guarantee. It never reports partial success.
+        - Existing access tokens issued with previous credentials retain their expiry
       operationId: generateAgentClientCredentials
       tags:
         - Client Credentials
@@ -1285,7 +1301,7 @@ paths:
                 client_secret: brk_sec_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
                 created_at: '2025-12-19T10:30:00Z'
         '200':
-          description: Client credentials rotated (previous credentials invalidated)
+          description: Client credentials replaced (previous credentials invalidated). Existing local refresh sessions remain subject to current consent, lifetimes, and the replacement credential.
           content:
             application/json:
               schema:
@@ -1351,11 +1367,15 @@ paths:
     delete:
       summary: Revoke broker-issued credentials
       description: |
-        Revoke an agent's broker-issued client credentials.
+        Revoke an agent's broker-issued client credentials. This explicitly revokes
+        all its broker-issued local refresh sessions across all principals in the
+        same committed outcome, including retry results and concurrent replacements.
+        Public-client fallback or later credential creation cannot restore them.
+        Other agents' sessions remain usable. Broker access tokens already issued
+        with these credentials retain their expiry at signature-only resource servers.
 
-        After revocation, the agent can no longer authenticate using these credentials.
-        Active tokens issued with these credentials remain valid until expiry.
-
+        A confirmed rollback preserves credentials and sessions. An indeterminate
+        commit reports failure, not successful revocation or a rollback guarantee.
         **Irreversible**: New credentials must be generated via POST after revocation.
       operationId: revokeAgentClientCredentials
       tags:
@@ -1364,7 +1384,7 @@ paths:
         - $ref: '#/components/parameters/AgentId'
       responses:
         '204':
-          description: Client credentials revoked successfully (no content)
+          description: Client credentials and all related local refresh sessions revoked successfully (no content)
         '400':
           description: Invalid agent ID format
           content:

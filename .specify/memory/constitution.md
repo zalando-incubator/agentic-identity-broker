@@ -1,19 +1,22 @@
 <!--
 Sync Impact Report
 ==================
-Version Change: 2.0.0 → 2.1.0
-Rationale: MINOR — Principle XI adds centralized semantic tokens, light/dark accessibility
-  checks, brand-asset self-hosting, and ADR review of visual-direction changes while removing
-  the prescribed aesthetic. The principle and its design-system process remain in place.
+Version Change: 2.1.0 → 2.2.0
+Rationale: MINOR — adds an explicit evidence policy for unchanged passing baseline behavior.
+  Changed behavior still requires semantic-red evidence before implementation. All acceptance
+  journeys remain mandatory; artificial failures, skips, and weakened assertions remain forbidden.
 
 Modified Principles:
-  - XI. Design System Compliance & Consistency → XI. Design System Compliance & Consistency:
-    replaced aesthetic mandates with process requirements.
+  - VIII. Test-Driven Development & Automated Testing: distinguishes changed behavior from
+    unchanged baseline regression coverage.
+  - XIII. End-to-End Acceptance Testing & Spec Traceability: permits evidenced baseline-green
+    journeys while retaining semantic-red requirements for changed acceptance behavior.
 
 Added Sections: None
 Removed Sections: None
 
 Version History:
+- 2.1.0 → 2.2.0: Added explicit baseline-green evidence for unchanged behavior while retaining semantic-red requirements for changed behavior (MINOR)
 - 2.0.0 → 2.1.0: Replaced Principle XI aesthetic mandates with token, theme, asset, accessibility, and ADR requirements (MINOR)
 - 1.9.1 → 2.0.0: Scoped Helm changes to workloads deployed by the broker chart (MAJOR)
 - 1.9.0 → 1.9.1: Clarified the bounded ADR 031 exception in Principle I (PATCH)
@@ -169,9 +172,9 @@ All runtime configuration MUST use the configuration system owned by the deploya
 Code quality and correctness MUST be ensured through Test-Driven Development (TDD) and automated tests, not manual validation.
 
 **Rules**:
-- **Tests MUST be written FIRST and MUST FAIL before implementation begins (red-green-refactor cycle)**
+- **Tests for new or changed behavior MUST be written FIRST and MUST FAIL before implementation begins (red-green-refactor cycle)**
 - New features MUST follow TDD: write test → verify test FAILS (red) → implement minimum code to pass (green) → refactor
-- **"Starting red" means tests MUST compile AND fail semantically (for the right reasons)**:
+- **"Starting red" for new or changed behavior means tests MUST compile AND fail semantically (for the right reasons)**:
   - Tests MUST compile successfully with no compilation errors
   - All expectations and assertions MUST compile and work correctly
   - Tests MUST fail semantically because the functionality under test is missing or incomplete
@@ -183,10 +186,11 @@ Code quality and correctness MUST be ensured through Test-Driven Development (TD
   - The test should fail because the method returns wrong/empty values or doesn't implement logic, NOT because the method doesn't exist
   - **Skipping or marking tests as pending is FORBIDDEN in the red phase**: `XIt`, `PIt`,
     `XDescribe`, `PDescribe`, `XContext`, `PContext`, and `Skip()` calls MUST NOT appear in
-    test files submitted as "red phase" — all tests MUST run and fail
+    test files submitted as "red phase" — all tests MUST run; changed-behavior tests MUST fail
   - **Tests MUST NOT contain comments marking them as "in the red phase"** (e.g., `// TODO: implement`,
     `// red phase`, `// will pass after implementation`). Tests are written once, turn green naturally
     as implementation progresses, and MUST NOT require cleanup of red-phase annotations later
+- Tests for unchanged behavior MAY pass before implementation. Record the observed passing assertion against the unchanged runtime as baseline-green evidence. Keep that behavior covered and passing after implementation. Never count a baseline pass as semantic-red evidence or add an unrelated assertion to force failure.
 - **Skipping tests or checking for "not implemented" errors is NOT TDD**: tests must verify actual functionality, not error handling
 - Tests MUST drive design: implementation decisions emerge from test requirements, not vice versa
 - Tests MUST change as little as possible during implementation: major test changes indicate poorly derived tests
@@ -387,7 +391,7 @@ change minimally during implementation, and follow red-green development.
 **Rules**:
 - **Every acceptance scenario in `specs/[NNN-feature-name]/spec.md` MUST have a corresponding E2E test in `tests/e2e/`**
 - E2E tests MUST be written BEFORE implementation begins (acceptance-test-driven development)
-- **E2E tests MUST compile AND fail semantically initially (red phase)**:
+- **E2E tests for new or changed acceptance behavior MUST compile AND fail semantically initially (red phase)**:
   - E2E tests MUST compile successfully with no compilation errors
   - All test expectations and assertions MUST compile and work correctly
   - **"Failing semantically" requires detailed, realistic expectations—not placeholder assertions**:
@@ -403,17 +407,18 @@ change minimally during implementation, and follow red-green development.
       acceptance criterion described by that test scenario
   - **Skipping or marking tests as pending is FORBIDDEN**: `XIt`, `PIt`, `XDescribe`, `PDescribe`,
     `XContext`, `PContext`, and `Skip()` calls MUST NOT appear in E2E test files — all tests MUST
-    run and fail semantically
+    run; journeys for changed behavior MUST fail semantically
   - **Tests MUST NOT contain comments marking them as "in the red phase"**: do not add annotations
     like `// TODO: implement`, `// red phase`, or `// will pass after implementation`. Tests are
     written once and turn green naturally without being touched again — red-phase comments create
     cleanup debt and are never reliably removed
   - E2E tests MUST fail semantically because the feature under test is missing or incomplete,
     not because of compilation errors or vacuous assertions
+  - An acceptance journey for unchanged behavior MAY start green. Before implementation, record its scenario ID, concrete passing acceptance assertion, and observed result against the unchanged runtime. Every scenario still requires its 1:1 journey and post-implementation passing evidence. A passing baseline cannot replace red evidence for changed behavior.
   - It is ACCEPTABLE to implement minimal structure to make E2E tests compile (empty handlers,
     stub routes, minimal types)
 - E2E tests MUST change minimally during implementation: major changes indicate tests were derived from implementation, not specs
-- E2E tests turn GREEN when implementation satisfies acceptance criteria (green phase)
+- Changed-behavior E2E tests turn GREEN when implementation satisfies acceptance criteria. Baseline-green journeys remain GREEN.
 - E2E tests MUST use Ginkgo/Gomega BDD framework following patterns in [tests/e2e/README.md](../../tests/e2e/README.md)
 - Each `It()` block MUST map to exactly ONE acceptance scenario from spec.md
 - Test organization MUST use hierarchical structure: `Describe` (feature) → `Context` (preconditions) → `It` (scenario)
@@ -439,8 +444,8 @@ change minimally during implementation, and follow red-green development.
 Requiring 1:1 mapping between spec scenarios and E2E tests ensures complete coverage, enables traceability
 from requirements to validation, and establishes acceptance tests as the definition of "done". Writing E2E
 tests before implementation (red-green development) ensures tests are independent verification of requirements,
-not retrofitted validation. E2E tests must fail semantically — meaning detailed, realistic expectations are
-written and those expectations fail because the feature is absent — not because of trivial always-fail
+not retrofitted validation. Journeys for changed behavior must fail semantically because the feature is absent.
+Unchanged behavior can start green with observed baseline evidence. Neither classification permits always-fail
 assertions or compilation errors. This distinction prevents agents from writing placeholder tests that
 technically "fail" but provide no verification of actual behavior. Implementing minimal structure (empty
 handlers, stub routes) to make E2E tests compile is acceptable and necessary. Frontend Playwright tests in
@@ -628,11 +633,9 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 - Reviewers MUST verify frontend components use design system and universal patterns are contributed (Principle XI)
 - Reviewers MUST verify WCAG 2.1 AA accessibility compliance for frontend components (Principle XI)
 - Reviewers MUST verify dependency injection uses Builder pattern and routing functions are thin (Principle XII)
-- Reviewers MUST verify TDD was followed: tests written first, compiled successfully, and failed semantically
-  before implementation — with detailed expectations, not placeholder assertions (Principle VIII)
-- Reviewers MUST verify E2E tests exist for all spec scenarios and changed minimally during implementation (Principle XIII)
-- Reviewers MUST verify E2E tests failed semantically in red phase: detailed expectations present and
-  failing, not trivial always-fail placeholders (Principle XIII)
+- Reviewers MUST verify TDD evidence: tests for changed behavior were written first, compiled, and failed semantically before implementation. Unchanged behavior has observed baseline-green evidence, not fabricated red evidence (Principle VIII).
+- Reviewers MUST verify E2E tests exist for all spec scenarios and changed minimally during implementation (Principle XIII).
+- Reviewers MUST verify each acceptance journey's initial classification and observed assertion: semantic-red for changed behavior or baseline-green for unchanged behavior. All journeys must pass after implementation (Principle XIII).
 - Reviewers MUST verify Helm updates for chart-managed workload configuration, or the accepted ADR and documented standalone deployment boundary for separately deployed binaries (Principle VII)
 - Reviewers MUST verify frontend UI changes have Playwright E2E tests in `tests/e2e/frontend/` and
   screenshots in `tests/e2e/screenshots/` (Principle XIII)
@@ -676,4 +679,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - The tasks-template.md uses 🔒 emoji and [MANDATORY] markers to clearly distinguish mandatory from customizable sections
 - Omitting mandatory sections violates this constitution and blocks feature completion
 
-**Version**: 2.1.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-09-25
+**Version**: 2.2.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-01

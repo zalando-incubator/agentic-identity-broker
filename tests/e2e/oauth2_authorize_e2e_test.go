@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,6 +35,8 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 	BeforeEach(func() {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 		config := fixtures.LocalConfig()
+		reuseInterval := time.Duration(0)
+		config.OAuth2AuthServer.Local.RefreshTokenReuseInterval = &reuseInterval
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		var err error
 		testStorage, err = storageFactory.NewTestStorage()

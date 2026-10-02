@@ -74,17 +74,35 @@ func NewJWXAccessTokenStrategy(
 	}, nil
 }
 
+type preparedSigningMaterialKey struct{}
+
+func withPreparedSigningMaterial(ctx context.Context, signer *cachedSigningKey) context.Context {
+	return context.WithValue(ctx, preparedSigningMaterialKey{}, signer)
+}
+
+func (s *JWXAccessTokenStrategy) signingMaterialForRequest(ctx context.Context) (*cachedSigningKey, error) {
+	if _, owned := refreshOperationFromContext(ctx); owned {
+		signer, ok := ctx.Value(preparedSigningMaterialKey{}).(*cachedSigningKey)
+		if !ok || signer == nil {
+			return nil, fmt.Errorf("owned token issuance requires prepared signing material")
+		}
+		return signer, nil
+	}
+	signer, err := s.signingKeyService.signingMaterial(ctx)
+	if isStorageNotFound(err) {
+		return nil, fmt.Errorf("no signing key provisioned: create one via the admin API (POST /api/oauth2-server/signing-keys)")
+	}
+	return signer, err
+}
+
 // GenerateAccessToken creates a signed JWT access token.
 func (s *JWXAccessTokenStrategy) GenerateAccessToken(ctx context.Context, requester fosite.Requester) (string, string, error) {
 	return s.mintAccessToken(ctx, requester, nil)
 }
 
 func (s *JWXAccessTokenStrategy) mintAccessToken(ctx context.Context, requester fosite.Requester, actor *actorClaim) (token string, signature string, err error) {
-	signer, err := s.signingKeyService.signingMaterial(ctx)
+	signer, err := s.signingMaterialForRequest(ctx)
 	if err != nil {
-		if isStorageNotFound(err) {
-			return "", "", fmt.Errorf("no signing key provisioned: create one via the admin API (POST /api/oauth2-server/signing-keys)")
-		}
 		return "", "", err
 	}
 
@@ -147,7 +165,12 @@ func (s *JWXAccessTokenStrategy) mintAccessToken(ctx context.Context, requester 
 		return "", "", fmt.Errorf("failed to sign JWT: %w", err)
 	}
 
-	return string(signed), sha256Hex(string(signed)), nil
+	recordRefreshAccessExpiry(ctx, time.Unix(now.Add(s.tokenTTL).Unix(), 0).UTC())
+	encoded := string(signed)
+	if op, ok := refreshOperationFromContext(ctx); ok {
+		op.accessToken = encoded
+	}
+	return encoded, sha256Hex(encoded), nil
 }
 
 // GenerateImpersonationToken adapts a validated impersonation request to the normal local
@@ -217,8 +240,12 @@ func (s *RandomCodeStrategy) AuthorizeCodeSignature(_ context.Context, code stri
 }
 
 // ValidateAuthorizeCode enforces the expiry hydrated from the stored authorization code.
-func (s *RandomCodeStrategy) ValidateAuthorizeCode(_ context.Context, req fosite.Requester, _ string) error {
-	if !req.GetSession().GetExpiresAt(fosite.AuthorizeCode).After(time.Now()) {
+func (s *RandomCodeStrategy) ValidateAuthorizeCode(ctx context.Context, req fosite.Requester, _ string) error {
+	now := time.Now()
+	if op, ok := refreshOperationFromContext(ctx); ok {
+		now = op.at
+	}
+	if !req.GetSession().GetExpiresAt(fosite.AuthorizeCode).After(now) {
 		return fosite.ErrTokenExpired
 	}
 	return nil
@@ -228,13 +255,16 @@ func (s *RandomCodeStrategy) ValidateAuthorizeCode(_ context.Context, req fosite
 type RandomRefreshTokenStrategy struct{}
 
 // GenerateRefreshToken generates a random refresh token.
-func (s *RandomRefreshTokenStrategy) GenerateRefreshToken(_ context.Context, _ fosite.Requester) (string, string, error) {
+func (s *RandomRefreshTokenStrategy) GenerateRefreshToken(ctx context.Context, _ fosite.Requester) (string, string, error) {
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return "", "", fmt.Errorf("failed to generate random refresh token: %w", err)
 	}
 	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
 	signature := sha256Hex(token)
+	if op, ok := refreshOperationFromContext(ctx); ok {
+		op.refreshToken = token
+	}
 	return token, signature, nil
 }
 
@@ -244,9 +274,13 @@ func (s *RandomRefreshTokenStrategy) RefreshTokenSignature(_ context.Context, to
 }
 
 // ValidateRefreshToken validates a refresh token using its hydrated session expiry.
-func (s *RandomRefreshTokenStrategy) ValidateRefreshToken(_ context.Context, req fosite.Requester, _ string) error {
+func (s *RandomRefreshTokenStrategy) ValidateRefreshToken(ctx context.Context, req fosite.Requester, _ string) error {
+	now := time.Now()
+	if op, ok := refreshOperationFromContext(ctx); ok {
+		now = op.at
+	}
 	expiresAt := req.GetSession().GetExpiresAt(fosite.RefreshToken)
-	if !expiresAt.IsZero() && time.Now().After(expiresAt) {
+	if !expiresAt.IsZero() && !now.Before(expiresAt) {
 		return fosite.ErrTokenExpired
 	}
 	return nil

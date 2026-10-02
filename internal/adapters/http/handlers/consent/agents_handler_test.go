@@ -20,6 +20,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testAuthorizationClock struct{ now time.Time }
+
+func (c testAuthorizationClock) Now(context.Context) (time.Time, error) { return c.now, nil }
+
+type mockAuthorizationCoordinator struct{ clock ports.AuthorizationClock }
+
+func (c mockAuthorizationCoordinator) Run(ctx context.Context, _ id.AgentID, operation func(context.Context, time.Time) error) error {
+	at, err := c.clock.Now(ctx)
+	if err != nil {
+		return err
+	}
+	return operation(ctx, at)
+}
+
+type mockRefreshRevocations struct{}
+
+func (mockRefreshRevocations) ListActiveByAgent(context.Context, id.AgentID, *id.Principal) ([]storage.RefreshSessionAuditIdentity, error) {
+	return nil, nil
+}
+
+func (mockRefreshRevocations) RevokeByID(context.Context, id.RefreshSessionID, time.Time, storage.RefreshRevocationReason) error {
+	return nil
+}
+
+func (mockRefreshRevocations) RevokeByPrincipalAndAgent(context.Context, id.Principal, id.AgentID, time.Time, storage.RefreshRevocationReason) error {
+	return nil
+}
+
+func (mockRefreshRevocations) RevokeByAgent(context.Context, id.AgentID, time.Time, storage.RefreshRevocationReason) error {
+	return nil
+}
+
 // TestGetAgentDelegations_Success tests successful retrieval of agent delegations.
 func TestGetAgentDelegations_Success(t *testing.T) {
 	// Setup mock data
@@ -215,7 +247,8 @@ func (m *mockAgentsService) asService() *consent.Service {
 		err:         m.err,
 	}
 
-	return consent.NewService(mockAgentRepo, newTestProviderService(mockServiceRepo), mockGrantRepo, nil, nil, slog.Default())
+	clock := testAuthorizationClock{now: time.Date(2025, 12, 17, 0, 0, 0, 0, time.UTC)}
+	return consent.NewService(mockAgentRepo, newTestProviderService(mockServiceRepo), mockGrantRepo, nil, nil, slog.Default(), clock, mockAuthorizationCoordinator{clock: clock}, mockRefreshRevocations{})
 }
 
 // Mock repository implementations for agents handler tests
@@ -342,7 +375,7 @@ func (m *mockGrantRepoForAgents) DeleteByAgent(ctx context.Context, agentID id.A
 	return nil
 }
 
-func (m *mockGrantRepoForAgents) ListByPrincipal(ctx context.Context, principal id.Principal) ([]storage.UserGrant, error) {
+func (m *mockGrantRepoForAgents) ListByPrincipal(ctx context.Context, principal id.Principal, decisionTime time.Time) ([]storage.UserGrant, error) {
 	// This is the method that GetAgentDelegations calls
 	// We need to return grants that will result in the expected delegations
 	if m.err != nil {
@@ -361,9 +394,11 @@ func (m *mockGrantRepoForAgents) ListByPrincipal(ctx context.Context, principal 
 			UpdatedAt:             delegation.LastModifiedAt,
 			GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
 		}
-		// Add multiple grants if ActiveGrantCount > 1 to simulate aggregation
-		for i := 0; i < delegation.ActiveGrantCount; i++ {
-			grants = append(grants, grant)
+		// Add multiple grants if ActiveGrantCount > 1 to simulate aggregation.
+		if grant.IsActive(decisionTime) {
+			for range delegation.ActiveGrantCount {
+				grants = append(grants, grant)
+			}
 		}
 	}
 

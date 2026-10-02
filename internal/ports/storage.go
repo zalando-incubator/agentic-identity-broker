@@ -13,7 +13,8 @@ import (
 // Sentinel errors for storage operations
 var (
 	// ErrNotFound is returned when a requested entity does not exist.
-	ErrNotFound = errors.New("entity not found")
+	ErrNotFound            = errors.New("entity not found")
+	ErrCommitIndeterminate = errors.New("storage commit outcome is indeterminate")
 )
 
 // IsNotFoundErr returns true if err represents a not-found condition from any
@@ -41,6 +42,44 @@ type StorageTransactionManager interface {
 	BeginTX(ctx context.Context) (context.Context, error)
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
+}
+
+type AuthorizationClock interface {
+	Now(ctx context.Context) (time.Time, error)
+}
+
+type AuthorizationSessionCoordinator interface {
+	Run(ctx context.Context, agentID id.AgentID, operation func(context.Context, time.Time) error) error
+}
+
+type RefreshSessionRepository interface {
+	Create(ctx context.Context, session *storage.RefreshSession) error
+	FindByID(ctx context.Context, sessionID id.RefreshSessionID) (*storage.RefreshSession, error)
+	Save(ctx context.Context, session *storage.RefreshSession) error
+}
+
+type RefreshTokenRepository interface {
+	Create(ctx context.Context, token *storage.RefreshToken) error
+	FindBySignature(ctx context.Context, signature string) (*storage.RefreshToken, error)
+	CheckCurrentLineage(ctx context.Context, sessionID id.RefreshSessionID) error
+	MarkUsed(ctx context.Context, signature string, usedAt time.Time) error
+}
+
+type RefreshSessionRevocationRepository interface {
+	// ListActiveByAgent returns nonterminal, non-credential identities in the
+	// owner's transaction. A nil principal includes every principal for the agent.
+	ListActiveByAgent(ctx context.Context, agentID id.AgentID, principal *id.Principal) ([]storage.RefreshSessionAuditIdentity, error)
+	RevokeByID(ctx context.Context, sessionID id.RefreshSessionID, at time.Time, reason storage.RefreshRevocationReason) error
+	RevokeByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID, at time.Time, reason storage.RefreshRevocationReason) error
+	RevokeByAgent(ctx context.Context, agentID id.AgentID, at time.Time, reason storage.RefreshRevocationReason) error
+}
+
+type RefreshSessionMaintenanceRepository interface {
+	ListAgentIDs(ctx context.Context, afterID id.AgentID, limit int) ([]id.AgentID, error)
+	ListActive(ctx context.Context, afterID id.RefreshSessionID, limit int) ([]*storage.RefreshSession, error)
+	ListDue(ctx context.Context, at time.Time, limit int) ([]*storage.RefreshSession, error)
+	DeleteTerminal(ctx context.Context, before time.Time, limit int) (int, error)
+	HasRemainingAuthority(ctx context.Context) (bool, error)
 }
 
 // User represents a user entity in the storage layer.
@@ -146,8 +185,8 @@ type UserGrantRepository interface {
 	// It is safe to delete non-existent grants (idempotent).
 	Delete(ctx context.Context, id id.GrantID) error
 
-	// ListByPrincipalAndAgent retrieves all active grants for a principal and specific agent.
-	// Filters expired grants (valid_until < NOW()).
+	// ListByPrincipalAndAgent retrieves grants for a principal and agent, including expired grants.
+	// Callers evaluate grant validity at their explicit decision time.
 	// Returns empty slice if no active grants exist (not an error).
 	// Returns StorageError for connection/timeout issues.
 	ListByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.UserGrant, error)
@@ -172,10 +211,10 @@ type UserGrantRepository interface {
 	DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error
 
 	// ListByPrincipal retrieves all active grants for a principal across all agents.
-	// Filters expired grants (valid_until < NOW()).
+	// Filters grants expired at the caller's shared decision time.
 	// Returns empty slice if no active grants exist (not an error).
 	// Returns StorageError for connection/timeout issues.
-	ListByPrincipal(ctx context.Context, principal id.Principal) ([]storage.UserGrant, error)
+	ListByPrincipal(ctx context.Context, principal id.Principal, decisionTime time.Time) ([]storage.UserGrant, error)
 
 	// CountAgentsByPrincipalAndServiceID counts distinct agents for the exact principal whose GrantedPermissionSets include the service ID.
 	// It includes expired grants for session dependency warnings.
@@ -409,25 +448,6 @@ type AuthorizationCodeRepository interface {
 	MarkUsed(ctx context.Context, id id.AuthorizationCodeID) error
 
 	// DeleteExpired removes expired authorization codes. Returns the count of deleted codes.
-	DeleteExpired(ctx context.Context) (int, error)
-}
-
-// RefreshTokenSessionRepository stores issued refresh tokens for single-use rotation.
-// The signature (SHA-256 of the opaque token) is the primary key.
-type RefreshTokenSessionRepository interface {
-	// Create stores a refresh token session keyed by token signature.
-	Create(ctx context.Context, session *storage.RefreshTokenSession) error
-
-	// FindBySignature retrieves a refresh token session by its signature.
-	FindBySignature(ctx context.Context, signature string) (*storage.RefreshTokenSession, error)
-
-	// MarkUsed marks a refresh token session as used or revoked.
-	MarkUsed(ctx context.Context, signature string) error
-
-	// RevokeByRequestID revokes all refresh token sessions for a fosite request ID.
-	RevokeByRequestID(ctx context.Context, requestID string) error
-
-	// DeleteExpired removes expired refresh token sessions.
 	DeleteExpired(ctx context.Context) (int, error)
 }
 

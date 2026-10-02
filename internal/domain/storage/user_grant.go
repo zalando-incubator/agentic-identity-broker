@@ -28,7 +28,7 @@ type UserGrant struct {
 }
 
 // Validate performs validation on the UserGrant entity.
-func (g *UserGrant) Validate() error {
+func (g *UserGrant) Validate(decisionTime time.Time) error {
 	// Required fields
 	if g.ID.IsZero() {
 		return errors.New("grant ID cannot be empty")
@@ -41,7 +41,7 @@ func (g *UserGrant) Validate() error {
 	}
 
 	// valid_until must be in future if provided
-	if g.ValidUntil != nil && g.ValidUntil.Before(time.Now()) {
+	if g.ValidUntil != nil && !g.ValidUntil.After(decisionTime) {
 		return errors.New("valid_until must be in the future")
 	}
 
@@ -64,7 +64,7 @@ func (g *UserGrant) Validate() error {
 }
 
 // ValidateForCreate validates a grant before creation.
-func (g *UserGrant) ValidateForCreate() error {
+func (g *UserGrant) ValidateForCreate(decisionTime time.Time) error {
 	if g.Principal.IsZero() {
 		return errors.New("principal is required")
 	}
@@ -72,7 +72,7 @@ func (g *UserGrant) ValidateForCreate() error {
 		return errors.New("agent_id is required")
 	}
 
-	if g.ValidUntil != nil && g.ValidUntil.Before(time.Now()) {
+	if g.ValidUntil != nil && !g.ValidUntil.After(decisionTime) {
 		return errors.New("valid_until must be in the future")
 	}
 
@@ -93,14 +93,9 @@ func (g *UserGrant) ValidateForCreate() error {
 	return nil
 }
 
-// IsActive returns true if the grant is currently active (not expired).
-func (g *UserGrant) IsActive() bool {
-	// Indefinite grant (valid_until = null)
-	if g.ValidUntil == nil {
-		return true
-	}
-	// Active if not yet expired
-	return g.ValidUntil.After(time.Now())
+// IsActive reports whether the grant remains valid at decisionTime.
+func (g *UserGrant) IsActive(decisionTime time.Time) bool {
+	return g.ValidUntil == nil || g.ValidUntil.After(decisionTime)
 }
 
 // Copy creates a deep copy of the UserGrant.

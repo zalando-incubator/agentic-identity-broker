@@ -8,6 +8,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 )
 
@@ -235,7 +236,7 @@ func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 	var records []*userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW()) ORDER BY created_at DESC`
 
-	err := r.adapter.db.SelectContext(ctx, &records, query, principal)
+	err := sqlx.SelectContext(ctx, r.adapter.storageExecutor(ctx), &records, query, principal)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, r.wrapError(err, "ListActiveByPrincipal")
 	}

@@ -158,16 +158,6 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate valid_until is in future
-	if req.ValidUntil != nil && req.ValidUntil.Before(time.Now()) {
-		h.logger.Warn("valid_until is in the past",
-			"valid_until", req.ValidUntil,
-			"principal", principalValue,
-			"agent_id", agentID)
-		h.writeError(w, http.StatusBadRequest, "invalid request", "valid_until must be in the future")
-		return
-	}
-
 	// Parse permission set entries from map — sort for deterministic order
 	entries := make([]storage.GrantedPermissionSetEntry, 0, len(req.GrantedPermissionSets))
 	for psStr, svcStrs := range req.GrantedPermissionSets {
@@ -287,6 +277,10 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if grant == nil && len(entries) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if grant == nil {
 		h.logger.ErrorContext(r.Context(), "grant consent returned nil grant without error", "agent_id", agentID)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")

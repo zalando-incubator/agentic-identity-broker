@@ -117,7 +117,7 @@ func (n *nopGrantRepo) DeleteByAgent(_ context.Context, _ id.AgentID) error { re
 func (n *nopGrantRepo) DeleteByPrincipalAndAgentID(_ context.Context, _ id.Principal, _ id.AgentID) error {
 	return nil
 }
-func (n *nopGrantRepo) ListByPrincipal(_ context.Context, _ id.Principal) ([]storage.UserGrant, error) {
+func (n *nopGrantRepo) ListByPrincipal(_ context.Context, _ id.Principal, _ time.Time) ([]storage.UserGrant, error) {
 	return nil, nil
 }
 func (n *nopGrantRepo) CountAgentsByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) (int, error) {

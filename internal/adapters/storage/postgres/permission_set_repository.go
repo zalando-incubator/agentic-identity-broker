@@ -153,7 +153,7 @@ func (r *PermissionSetRepository) GetByIDs(ctx context.Context, ids []id.Permiss
 	}
 
 	query := `SELECT id, canonical_id, name, description, created_at, updated_at FROM permission_sets WHERE id = ANY($1::uuid[])`
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, pq.Array(idStrings))
+	rows, err := r.adapter.storageExecutor(ctxTimeout).QueryContext(ctxTimeout, query, pq.Array(idStrings))
 	if err != nil {
 		return nil, r.handlePostgresError("GetByIDsPermissionSet", err)
 	}
@@ -476,7 +476,7 @@ func (r *PermissionSetRepository) loadServiceScopesBatch(ctx context.Context, ps
 		WHERE permission_set_id = ANY($1::uuid[])
 	`
 
-	rows, err := r.adapter.db.QueryContext(ctx, query, pq.Array(idStrings))
+	rows, err := r.adapter.storageExecutor(ctx).QueryContext(ctx, query, pq.Array(idStrings))
 	if err != nil {
 		return nil, r.handlePostgresError("LoadServiceScopesBatch", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -64,14 +65,29 @@ func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGra
 		grant.ID = id.NewGrantID()
 	}
 
+	var decisionTime time.Time
+	if scope, ok := scopedAuthorization(ctx); ok {
+		decisionTime = scope.decisionTime
+	} else {
+		clock := AuthorizationSessionCoordinator{adapter: r.adapter}
+		var err error
+		decisionTime, err = clock.Now(ctx)
+		if err != nil {
+			return r.handlePostgresError("CreateUserGrant", err)
+		}
+	}
+
 	// Validate before storing
-	if err := grant.ValidateForCreate(); err != nil {
+	if err := grant.ValidateForCreate(decisionTime); err != nil {
 		return storage.NewStorageError(
 			"CreateUserGrant",
 			storage.ErrorKindValidation,
 			err,
 			"grant validation failed",
 		)
+	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != grant.AgentID {
+		return refreshValidation("CreateUserGrant", fmt.Errorf("grant belongs to another authorization scope"))
 	}
 
 	// Serialize granted permission sets to JSON for PostgreSQL JSONB
@@ -89,12 +105,12 @@ func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGra
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTx(ctxTimeout, nil)
+	tx, owned, err := r.adapter.participantTx(ctxTimeout)
 	if err != nil {
 		return r.handlePostgresError("CreateUserGrant", err)
 	}
 	defer func() {
-		if err != nil {
+		if owned {
 			_ = tx.Rollback()
 		}
 	}()
@@ -142,8 +158,11 @@ func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGra
 		return r.handlePostgresError("CreateUserGrant", err)
 	}
 
-	if err = tx.Commit(); err != nil {
-		return r.handlePostgresError("CreateUserGrant", err)
+	if owned {
+		owned = false
+		if err = commitAuthorizationTx(tx); err != nil {
+			return err
+		}
 	}
 
 	// Update grant ID if it was changed by upsert
@@ -177,7 +196,7 @@ func (r *UserGrantRepository) Get(ctx context.Context, grantID id.GrantID) (*sto
 	var grant storage.UserGrant
 	var permissionSetsJSON []byte
 
-	err := r.adapter.db.QueryRowContext(ctxTimeout, query, grantID).Scan(
+	err := r.adapter.storageExecutor(ctxTimeout).QueryRowxContext(ctxTimeout, query, grantID).Scan(
 		&grant.ID,
 		&grant.Principal,
 		&grant.AgentID,
@@ -197,6 +216,9 @@ func (r *UserGrantRepository) Get(ctx context.Context, grantID id.GrantID) (*sto
 			)
 		}
 		return nil, r.handlePostgresError("GetUserGrant", err)
+	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != grant.AgentID {
+		return nil, refreshValidation("GetUserGrant", fmt.Errorf("grant belongs to another authorization scope"))
 	}
 
 	// Deserialize JSONB to GrantedPermissionSetEntry slice
@@ -232,6 +254,9 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 			"grant cannot be nil",
 		)
 	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != grant.AgentID {
+		return refreshValidation("UpdateUserGrant", fmt.Errorf("grant belongs to another authorization scope"))
+	}
 
 	// Serialize granted permission sets to JSON for PostgreSQL JSONB
 	permissionSetsJSON, err := json.Marshal(grant.GrantedPermissionSets)
@@ -248,11 +273,15 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTx(ctxTimeout, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	tx, owned, err := r.adapter.participantTx(ctxTimeout)
 	if err != nil {
 		return storage.NewStorageError("UpdateUserGrant", storage.ErrorKindConnection, err, "failed to begin transaction")
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if owned {
+			_ = tx.Rollback()
+		}
+	}()
 
 	// Run the UPDATE first so a stale grant ID returns NotFound before any PS check,
 	// preserving the documented error contract. The UPDATE result is not yet committed,
@@ -262,7 +291,7 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 		SET valid_until = $2,
 		    granted_permission_sets = $3,
 		    updated_at = $4
-		WHERE id = $1
+		WHERE id = $1 AND agent_id = $5
 	`
 
 	result, err := tx.ExecContext(
@@ -272,6 +301,7 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 		grant.ValidUntil,
 		permissionSetsJSON,
 		grant.UpdatedAt,
+		grant.AgentID,
 	)
 
 	if err != nil {
@@ -307,8 +337,11 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 		return err
 	}
 
-	if err := tx.Commit(); err != nil {
-		return storage.NewStorageError("UpdateUserGrant", storage.ErrorKindUnknown, err, "failed to commit transaction")
+	if owned {
+		owned = false
+		if err := commitAuthorizationTx(tx); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -325,6 +358,14 @@ func (r *UserGrantRepository) Delete(ctx context.Context, grantID id.GrantID) er
 			"database not initialized",
 		)
 	}
+	if scope, ok := scopedAuthorization(ctx); ok {
+		var owner id.AgentID
+		if err := r.adapter.storageExecutor(ctx).QueryRowxContext(ctx, `SELECT agent_id FROM user_grants WHERE id = $1`, grantID).Scan(&owner); err != nil && err != sql.ErrNoRows {
+			return r.handlePostgresError("DeleteUserGrant", err)
+		} else if err == nil && scope.agentID != owner {
+			return refreshValidation("DeleteUserGrant", fmt.Errorf("grant belongs to another authorization scope"))
+		}
+	}
 
 	// Create context with timeout
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
@@ -332,7 +373,7 @@ func (r *UserGrantRepository) Delete(ctx context.Context, grantID id.GrantID) er
 
 	query := `DELETE FROM user_grants WHERE id = $1`
 
-	_, err := r.adapter.db.ExecContext(ctxTimeout, query, grantID)
+	_, err := r.adapter.storageExecutor(ctxTimeout).ExecContext(ctxTimeout, query, grantID)
 	if err != nil {
 		return r.handlePostgresError("DeleteUserGrant", err)
 	}
@@ -353,6 +394,9 @@ func (r *UserGrantRepository) ListByPrincipalAndAgent(ctx context.Context, princ
 			"database not initialized",
 		)
 	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agentID {
+		return nil, refreshValidation("ListUserGrants", fmt.Errorf("grant belongs to another authorization scope"))
+	}
 
 	// Create context with timeout
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
@@ -365,7 +409,7 @@ func (r *UserGrantRepository) ListByPrincipalAndAgent(ctx context.Context, princ
 		ORDER BY created_at DESC
 	`
 
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, principal, agentID)
+	rows, err := r.adapter.storageExecutor(ctxTimeout).QueryxContext(ctxTimeout, query, principal, agentID)
 	if err != nil {
 		return nil, r.handlePostgresError("ListUserGrants", err)
 	}
@@ -430,6 +474,9 @@ func (r *UserGrantRepository) FindByPrincipalAndAgent(ctx context.Context, princ
 			"database not initialized",
 		)
 	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agentID {
+		return nil, refreshValidation("FindUserGrant", fmt.Errorf("grant belongs to another authorization scope"))
+	}
 
 	// Create context with timeout
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
@@ -445,7 +492,7 @@ func (r *UserGrantRepository) FindByPrincipalAndAgent(ctx context.Context, princ
 	var grant storage.UserGrant
 	var permissionSetsJSON []byte
 
-	err := r.adapter.db.QueryRowContext(ctxTimeout, query, principal, agentID).Scan(
+	err := r.adapter.storageExecutor(ctxTimeout).QueryRowxContext(ctxTimeout, query, principal, agentID).Scan(
 		&grant.ID,
 		&grant.Principal,
 		&grant.AgentID,
@@ -491,6 +538,9 @@ func (r *UserGrantRepository) DeleteByAgent(ctx context.Context, agentID id.Agen
 			"database not initialized",
 		)
 	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agentID {
+		return refreshValidation("DeleteGrantsByAgent", fmt.Errorf("grant belongs to another authorization scope"))
+	}
 
 	// Create context with timeout
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
@@ -498,7 +548,7 @@ func (r *UserGrantRepository) DeleteByAgent(ctx context.Context, agentID id.Agen
 
 	query := `DELETE FROM user_grants WHERE agent_id = $1`
 
-	_, err := r.adapter.db.ExecContext(ctxTimeout, query, agentID)
+	_, err := r.adapter.storageExecutor(ctxTimeout).ExecContext(ctxTimeout, query, agentID)
 	if err != nil {
 		return r.handlePostgresError("DeleteGrantsByAgent", err)
 	}
@@ -507,10 +557,9 @@ func (r *UserGrantRepository) DeleteByAgent(ctx context.Context, agentID id.Agen
 	return nil
 }
 
-// ListByPrincipal retrieves all active grants for a principal across all agents.
-// Filters expired grants (valid_until < NOW()).
+// ListByPrincipal retrieves grants for a principal that are active at decisionTime.
 // Returns empty slice if no active grants exist (not an error).
-func (r *UserGrantRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]storage.UserGrant, error) {
+func (r *UserGrantRepository) ListByPrincipal(ctx context.Context, principal id.Principal, decisionTime time.Time) ([]storage.UserGrant, error) {
 	ctx, span := otel.Tracer("storage").Start(ctx, "storage.list.user_grants_by_principal")
 	defer span.End()
 	span.SetAttributes(
@@ -535,11 +584,18 @@ func (r *UserGrantRepository) ListByPrincipal(ctx context.Context, principal id.
 		SELECT id, principal, agent_id, valid_until, granted_permission_sets, created_at, updated_at
 		FROM user_grants
 		WHERE principal = $1
-		  AND (valid_until IS NULL OR valid_until > NOW())
+		  AND (valid_until IS NULL OR valid_until > $2)
 		ORDER BY updated_at DESC
 	`
 
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, principal)
+	args := []any{principal, decisionTime}
+	if scope, ok := scopedAuthorization(ctx); ok {
+		query = `SELECT id, principal, agent_id, valid_until, granted_permission_sets, created_at, updated_at
+			FROM user_grants WHERE principal = $1 AND agent_id = $3
+			AND (valid_until IS NULL OR valid_until > $2) ORDER BY updated_at DESC`
+		args = append(args, scope.agentID)
+	}
+	rows, err := r.adapter.storageExecutor(ctxTimeout).QueryxContext(ctxTimeout, query, args...)
 	if err != nil {
 		return nil, r.handlePostgresError("ListByPrincipal", err)
 	}
@@ -617,7 +673,7 @@ func (r *UserGrantRepository) CountAgentsByPrincipalAndServiceID(ctx context.Con
 	defer cancel()
 
 	var count int
-	err := r.adapter.db.QueryRowContext(ctxTimeout, query, principal, serviceID.String()).Scan(&count)
+	err := r.adapter.storageExecutor(ctxTimeout).QueryRowxContext(ctxTimeout, query, principal, serviceID.String()).Scan(&count)
 	if err != nil {
 		return 0, r.handlePostgresError("CountAgentsByPrincipalAndServiceID", err)
 	}
@@ -650,7 +706,7 @@ func (r *UserGrantRepository) ListByPrincipalAndServiceID(ctx context.Context, p
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, principal, serviceID.String())
+	rows, err := r.adapter.storageExecutor(ctxTimeout).QueryxContext(ctxTimeout, query, principal, serviceID.String())
 	if err != nil {
 		return nil, r.handlePostgresError("ListByPrincipalAndServiceID", err)
 	}
@@ -700,7 +756,7 @@ func (r *UserGrantRepository) CountGrantsReferencingPermissionSet(ctx context.Co
 	}
 
 	var count int
-	err = r.adapter.db.QueryRowContext(ctxTimeout,
+	err = r.adapter.storageExecutor(ctxTimeout).QueryRowxContext(ctxTimeout,
 		`SELECT COUNT(*) FROM user_grants WHERE granted_permission_sets @> $1::jsonb AND (valid_until IS NULL OR valid_until > NOW())`,
 		jsonFilter,
 	).Scan(&count)
@@ -723,13 +779,16 @@ func (r *UserGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, p
 			"database not initialized",
 		)
 	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agentID {
+		return refreshValidation("DeleteByPrincipalAndAgentID", fmt.Errorf("grant belongs to another authorization scope"))
+	}
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
 	query := `DELETE FROM user_grants WHERE principal = $1 AND agent_id = $2`
 
-	result, err := r.adapter.db.ExecContext(ctxTimeout, query, principal, agentID)
+	result, err := r.adapter.storageExecutor(ctxTimeout).ExecContext(ctxTimeout, query, principal, agentID)
 	if err != nil {
 		return r.handlePostgresError("DeleteByPrincipalAndAgentID", err)
 	}

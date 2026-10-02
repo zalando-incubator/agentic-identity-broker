@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -18,6 +19,7 @@ import (
 // The byClientURI index enforces global uniqueness of Client ID Metadata Document URLs.
 type AgentRepository struct {
 	mu            sync.RWMutex
+	refresh       *RefreshSessionStore
 	agents        map[id.AgentID]*storage.Agent // ID -> Agent
 	byCanonicalID map[string]id.AgentID         // canonical ID -> AgentID
 	byClientID    map[id.ClientID][]id.AgentID  // ClientID -> []ID (1:many for multi-agent support)
@@ -39,6 +41,11 @@ func NewAgentRepository() *AgentRepository {
 // Returns StorageError with Kind=Conflict if agent ID already exists.
 // Multiple agents may share the same client_id (multi-agent mode support).
 func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) error {
+	if scopeFor(ctx, r.refresh) != nil {
+		return r.scopedCreate(ctx, agent)
+	}
+	unlock := r.refresh.lockWrite()
+	defer unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -96,6 +103,9 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 	for _, uri := range agent.ClientURIs {
 		r.byClientURI[uri] = agent.ID
 	}
+	if r.refresh != nil {
+		r.refresh.versions[agent.ID]++
+	}
 
 	return nil
 }
@@ -103,6 +113,11 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 // Get retrieves an agent entity by ID.
 // Returns StorageError with Kind=NotFound if agent not found.
 func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
+	if scopeFor(ctx, r.refresh) != nil {
+		return r.scopedGet(ctx, agentID)
+	}
+	unlock := r.refresh.lockRead()
+	defer unlock()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -120,7 +135,12 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 	return agent.Copy(), nil
 }
 
-func (r *AgentRepository) GetByCanonicalID(_ context.Context, canonicalID string) (*storage.Agent, error) {
+func (r *AgentRepository) GetByCanonicalID(ctx context.Context, canonicalID string) (*storage.Agent, error) {
+	if scopeFor(ctx, r.refresh) != nil {
+		return r.scopedFind(ctx, func(agent *storage.Agent) bool { return agent.CanonicalID != nil && *agent.CanonicalID == canonicalID })
+	}
+	unlock := r.refresh.lockRead()
+	defer unlock()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	agentID, exists := r.byCanonicalID[canonicalID]
@@ -133,6 +153,11 @@ func (r *AgentRepository) GetByCanonicalID(_ context.Context, canonicalID string
 // Update updates an existing agent entity.
 // Returns StorageError with Kind=NotFound if agent ID not found.
 func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) error {
+	if scopeFor(ctx, r.refresh) != nil {
+		return r.scopedPut(ctx, agent, false)
+	}
+	unlock := r.refresh.lockWrite()
+	defer unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -203,6 +228,9 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 
 	// Store deep copy
 	r.agents[agent.ID] = agent.Copy()
+	if r.refresh != nil {
+		r.refresh.versions[agent.ID]++
+	}
 
 	return nil
 }
@@ -210,6 +238,25 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 // Delete deletes an agent entity by ID.
 // Idempotent: returns nil if agent doesn't exist.
 func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error {
+	if scopeFor(ctx, r.refresh) != nil {
+		return r.scopedDelete(ctx, agentID)
+	}
+	if r.refresh != nil {
+		var entered bool
+		err := r.refresh.Run(ctx, agentID, func(scoped context.Context, at time.Time) error {
+			entered = true
+			if err := r.refresh.RevokeByAgent(scoped, agentID, at, storage.RefreshReasonAgentDeleted); err != nil {
+				return err
+			}
+			return r.scopedDelete(scoped, agentID)
+		})
+		if !entered && ports.IsNotFoundErr(err) {
+			return nil
+		}
+		return err
+	}
+	unlock := r.refresh.lockWrite()
+	defer unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -226,6 +273,9 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error 
 			delete(r.byCanonicalID, *agent.CanonicalID)
 		}
 	}
+	if r.refresh != nil {
+		r.refresh.versions[agentID]++
+	}
 
 	return nil
 }
@@ -233,6 +283,11 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error 
 // List retrieves all agent entities.
 // Returns empty slice if no agents exist (not an error).
 func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
+	if scopeFor(ctx, r.refresh) != nil {
+		return r.scopedList(ctx)
+	}
+	unlock := r.refresh.lockRead()
+	defer unlock()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -248,6 +303,11 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 // When multiple agents share the same client_id (multi-agent mode), returns the first registered one.
 // Returns StorageError with Kind=NotFound if no agent with that client_id exists.
 func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
+	if scopeFor(ctx, r.refresh) != nil {
+		return r.scopedFind(ctx, func(agent *storage.Agent) bool { return agent.ClientID != nil && *agent.ClientID == clientID })
+	}
+	unlock := r.refresh.lockRead()
+	defer unlock()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -269,6 +329,20 @@ func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientI
 // ExistsOtherWithClientID reports whether any agent other than excludeAgentID shares the given client_id.
 // When excludeAgentID is nil, all agents with that client_id are considered (create path).
 func (r *AgentRepository) ExistsOtherWithClientID(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error) {
+	if scopeFor(ctx, r.refresh) != nil {
+		list, err := r.scopedList(ctx)
+		if err != nil {
+			return false, err
+		}
+		for _, agent := range list {
+			if agent.ClientID != nil && *agent.ClientID == clientID && (excludeAgentID == nil || agent.ID != *excludeAgentID) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	unlock := r.refresh.lockRead()
+	defer unlock()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -287,6 +361,11 @@ func (r *AgentRepository) ExistsOtherWithClientID(ctx context.Context, clientID 
 // GetByClientURI retrieves an agent by a pre-registered CIMD URL or URI pattern.
 // Exact registrations take precedence. Matching patterns on multiple agents are conflicts.
 func (r *AgentRepository) GetByClientURI(ctx context.Context, uri string) (*storage.Agent, error) {
+	if scopeFor(ctx, r.refresh) != nil {
+		return r.scopedByClientURI(ctx, uri)
+	}
+	unlock := r.refresh.lockRead()
+	defer unlock()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

@@ -398,14 +398,28 @@ Configures the broker as a standalone OAuth2 authorization server using `local` 
 
 Key settings:
 - `mode: "local"` — switches from proxy mode to local token minting
-- `local.token_ttl` — access token validity period (default: 1h)
-- `local.token_claims_expression` — optional CEL expression for custom JWT claims
+- `local.token_ttl` — access JWT lifetime (default `1h`). Already-issued JWTs retain expiry after revocation. A shorter TTL reduces future exposure.
+- `local.refresh_token_reuse_interval` — default `30s`. Set `0s` to disable retries of the immediately previous result.
+- `local.absolute_session_lifetime` — default `0s`, with no total-time deadline. For a finite example, use `168h`.
+- `local.refresh_token_ttl` — inactivity lifetime (default `720h`, or 30 days). Omission or `0s` also selects `720h`.
+- `local.token_claims_expression` — optional CEL expression for custom JWT claims.
 - `local.signing_keys.bootstrap_timeout` — startup budget for signing-key bootstrap coordination
 
 **Usage:**
 ```bash
-./agentic-identity-broker --config ./examples/config/oauth2-server-mode.yaml
+set +x
+export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"
+export IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(openssl rand -base64 32)"
+export IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL=http://127.0.0.1:8000
+just build-all
+./bin/agentic-identity-broker --config ./examples/config/oauth2-server-mode.yaml
 ```
+
+Both servers use `X-Remote-User` pre-authentication, as in the hybrid example.
+For this isolated development launch, send the header only from a trusted local client.
+In production, restrict access to an authenticated proxy that replaces this header.
+Keep both generated keys unchanged until the exercise ends.
+See the [refresh smoke procedure](../../specs/049-fix-refresh-consent/quickstart.md#3-manual-lost-response-and-consent-smoke) for authorization, retry, and revocation.
 
 ### `impersonation.yaml` — RFC 8693 User Impersonation
 
@@ -438,6 +452,7 @@ Key settings:
 - `proxy.*` — upstream OAuth2 server configuration (required)
 - `proxy.upstream_jwks_min_refresh` / `proxy.upstream_jwks_max_refresh` — optional JWKS refresh bounds for the upstream cache
 - `local.*` — local token issuance configuration (required)
+- `local.refresh_token_reuse_interval`, `local.absolute_session_lifetime`, and `local.refresh_token_ttl` — only local issuance uses these durations. Upstream refresh retains provider-controlled behavior.
 - `local.signing_keys.bootstrap_timeout` — startup budget for signing-key bootstrap coordination
 - `cimd.enabled` — optional CIMD support for URL-addressed agents
 
@@ -445,6 +460,32 @@ Key settings:
 ```bash
 ./agentic-identity-broker --config ./examples/config/oauth2-hybrid-mode.yaml
 ```
+
+### Consent-Bound Local Refresh Policy (Feature 049)
+
+The broker implements these local refresh-session rules. The local and hybrid examples use quoted Go duration strings `30s`, `0s`, and `720h`. These durations affect broker-issued user refresh sessions, including the local path of hybrid mode. Proxy mode receives no local defaults and rejects explicit local-only configuration.
+
+| YAML key (under `oauth2_authorization_server.local`) | Environment variable | Dotted CLI flag | Helm value (under `broker.oauth2AuthorizationServer.local`) |
+|---|---|---|---|
+| `refresh_token_reuse_interval` | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_REUSE_INTERVAL` | `--oauth2_authorization_server.local.refresh_token_reuse_interval` | `refreshTokenReuseInterval` |
+| `absolute_session_lifetime` | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_ABSOLUTE_SESSION_LIFETIME` | `--oauth2_authorization_server.local.absolute_session_lifetime` | `absoluteSessionLifetime` |
+| `refresh_token_ttl` | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_TTL` | `--oauth2_authorization_server.local.refresh_token_ttl` | `refreshTokenTtl` |
+
+The source order is CLI, environment, YAML, then default. A higher-priority `0s` disables reuse, removes the absolute deadline, or retains `720h` inactivity. Pass `--set-string` to Helm for chart duration overrides. Bare numbers, negative or malformed durations, and overflow fail broker startup.
+
+Reuse must be strictly shorter than both `token_ttl` and `refresh_token_ttl`. A finite absolute lifetime must exceed reuse. A finite absolute lifetime shorter than inactivity logs a warning. The broker parser makes the final syntax and relation checks, not the chart schema.
+
+Only a fresh successful rotation renews inactivity. Retries and resource access do not. Default absolute `0s` does not force a return to the identity provider due to elapsed total time alone. Consent and inactivity still apply. The immediately previous token can return its original result at most three times while its successor stays unused.
+
+Access JWTs retain their original expiry after consent or session revocation, up to `token_ttl` (default `1h`). A shorter access `token_ttl` reduces residual exposure for new JWTs.
+
+Use shared PostgreSQL for restart and multi-instance recovery. The `memory` backend supports one instance and rejects old refresh tokens after restart. On restart, shorter limits persist shorter deadlines. A longer limit cannot revive expired sessions or extend an already-issued token. A higher inactivity limit applies to the next valid fresh rotation, not the current interval. A shorter or zero reuse setting reduces recovery eligibility.
+
+Zero reuse clears cached results before readiness. Live expired retry ciphertext is erased within one second while storage is reachable. Encrypted backups can retain copies, so protect backup access and retention. Never log or back up plaintext credentials.
+
+During rollout, every pre-feature unanchored refresh session requires fresh authorization. Only new-issuer anchored families with complete original authorization and lineage evidence can continue under current consent. Keep the additive legacy table for old writers. Before binary-only rollback, stop token traffic and old writers, then reconcile expiry under the outgoing policy. Do not admit old binaries if reconciliation fails. Neither rollback nor later grants restore terminal sessions.
+
+After restoring a full database or refresh-state snapshot, keep token traffic and **all** writers stopped. Run `agentic-identity-broker --config <file> refresh-sessions invalidate-restored` against the supported schema before starting brokers. The command invalidates restored local sessions, retry ciphertext, and all unused legacy rows. A failed or indeterminate result keeps brokers offline. Rerun it until acknowledged success includes zero active roots, retry ciphertext, and unused legacy rows. See [docs/configuration.md](../../docs/configuration.md#local-refresh-session-policy) and the [restore procedure](../../specs/049-fix-refresh-consent/data-model.md#restore-invalidation).
 
 ### `extproc-opa-authorization.yaml`
 

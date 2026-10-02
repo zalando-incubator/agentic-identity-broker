@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -18,6 +20,8 @@ type Service struct {
 	providerService   ServiceRequirementValidator
 	logger            *slog.Logger
 	multiAgentEnabled bool
+	coordinator       ports.AuthorizationSessionCoordinator
+	revocations       ports.RefreshSessionRevocationRepository
 }
 
 // ServiceRequirementValidator validates that service requirements reference existing services
@@ -32,7 +36,12 @@ func NewService(
 	providerService ServiceRequirementValidator,
 	logger *slog.Logger,
 	multiAgentEnabled bool,
+	coordinator ports.AuthorizationSessionCoordinator,
+	revocations ports.RefreshSessionRevocationRepository,
 ) *Service {
+	if coordinator == nil || revocations == nil {
+		panic("agents.NewService: coordinator and revocations must not be nil")
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -41,6 +50,8 @@ func NewService(
 		providerService:   providerService,
 		logger:            logger,
 		multiAgentEnabled: multiAgentEnabled,
+		coordinator:       coordinator,
+		revocations:       revocations,
 	}
 }
 
@@ -159,12 +170,41 @@ func (s *Service) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, 
 	return s.repo.Get(ctx, agentID)
 }
 
-// Delete removes an agent by ID.
+// Delete revokes local refresh authority before removing the agent in one scope.
 func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
-	if err := s.repo.Delete(ctx, agentID); err != nil {
+	var revoked []storage.RefreshSessionAuditIdentity
+	if err := s.coordinator.Run(ctx, agentID, func(owner context.Context, at time.Time) error {
+		agent, err := s.repo.Get(owner, agentID)
+		if err != nil {
+			return err
+		}
+		if agent == nil {
+			return storage.NewStorageError("DeleteAgent", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
+		}
+		revoked, err = s.revocations.ListActiveByAgent(owner, agentID, nil)
+		if err != nil {
+			return err
+		}
+		if err := s.revocations.RevokeByAgent(owner, agentID, at, storage.RefreshReasonAgentDeleted); err != nil {
+			return err
+		}
+		return s.repo.Delete(owner, agentID)
+	}); err != nil {
 		return err
 	}
-	s.logger.Info("agent deleted", "agent_id", agentID)
+	audit := security.AuditContextFields(ctx)
+	for _, root := range revoked {
+		fields := []any{"event", "RefreshSessionRevoked", "session_id", root.ID.String(), "principal", root.Principal.String(),
+			"agent_id", root.AgentID.String(), "client_id", root.ClientID.String(), "reason", string(storage.RefreshReasonAgentDeleted), "origin", audit.Origin}
+		if audit.ClientIP != "" {
+			fields = append(fields, "client_ip", audit.ClientIP)
+		}
+		if audit.UserAgent != "" {
+			fields = append(fields, "user_agent", audit.UserAgent)
+		}
+		s.logger.InfoContext(ctx, "RefreshSessionRevoked", fields...)
+	}
+	s.logger.InfoContext(ctx, "agent deleted", "agent_id", agentID)
 	return nil
 }
 

@@ -107,6 +107,59 @@ func TestExtractSubject_ServiceSubject(t *testing.T) {
 	}
 }
 
+func TestRefreshSessionBranchKeyID(t *testing.T) {
+	const sessionUUID = "550e8400-e29b-41d4-a716-446655440025"
+	sessionID := id.MustParseRefreshSessionID(sessionUUID)
+
+	branchKeyID, err := GenerateBranchKeyId(domainencryption.NewRefreshSessionBranchKeySubject(sessionID))
+	if err != nil {
+		t.Fatalf("GenerateBranchKeyId(refresh session) failed: %v", err)
+	}
+	if want := "refresh_550e8400-e29b-41d4-a716-446655440025_branch_key"; branchKeyID != want {
+		t.Fatalf("GenerateBranchKeyId(refresh session) = %q, want %q", branchKeyID, want)
+	}
+
+	extracted, err := ExtractSubject(branchKeyID)
+	if err != nil {
+		t.Fatalf("ExtractSubject(%q) failed: %v", branchKeyID, err)
+	}
+	if extracted.Kind() != domainencryption.BranchKeySubjectKindRefreshSession {
+		t.Errorf("ExtractSubject(%q) kind = %q, want refresh session", branchKeyID, extracted.Kind())
+	}
+	extractedID, ok := extracted.RefreshSessionID()
+	if !ok {
+		t.Fatal("ExtractSubject did not restore a typed refresh session ID")
+	}
+	if extractedID != sessionID {
+		t.Errorf("ExtractSubject(%q) refresh session ID = %s, want %s", branchKeyID, extractedID, sessionID)
+	}
+}
+
+func TestRefreshSessionBranchKeyIDRejectsInvalidValues(t *testing.T) {
+	if _, err := GenerateBranchKeyId(domainencryption.NewRefreshSessionBranchKeySubject(id.RefreshSessionID{})); err == nil {
+		t.Error("GenerateBranchKeyId accepted a zero refresh session ID")
+	}
+
+	const sessionUUID = "550e8400-e29b-41d4-a716-446655440025"
+	for _, tt := range []struct {
+		name        string
+		branchKeyID string
+	}{
+		{name: "empty ID", branchKeyID: "refresh__branch_key"},
+		{name: "malformed UUID", branchKeyID: "refresh_not-a-uuid_branch_key"},
+		{name: "zero UUID", branchKeyID: "refresh_00000000-0000-0000-0000-000000000000_branch_key"},
+		{name: "wrong suffix", branchKeyID: "refresh_" + sessionUUID + "_branch"},
+		{name: "trailing suffix", branchKeyID: "refresh_" + sessionUUID + "_branch_key_extra"},
+		{name: "wrong prefix", branchKeyID: "refreshed_" + sessionUUID + "_branch_key"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := ExtractSubject(tt.branchKeyID); err == nil {
+				t.Errorf("ExtractSubject(%q) accepted an invalid refresh session branch key ID", tt.branchKeyID)
+			}
+		})
+	}
+}
+
 // TestSymmetricOperations verifies that GenerateBranchKeyId and ExtractSubject are inverse operations.
 func TestSymmetricOperations(t *testing.T) {
 	testServiceIDs := []struct {

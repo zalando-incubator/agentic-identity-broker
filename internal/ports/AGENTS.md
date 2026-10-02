@@ -27,5 +27,5 @@ Ports contain **interfaces only** and minimal DTOs. Do not put business logic or
 - **No business logic**: Do not add validation, orchestration, conditionals, or error handling beyond sentinels.
 - **New ports**: New architectural boundaries require an ADR. New methods require consumer justification.
 - **Minimal DTOs**: Prefer the domain type from its owning package. Do not create port DTOs that do not add a boundary.
-- **Encryption context**: `Encrypt` and `Decrypt` take one subject key. Use `service_id` for services or `kid` for signing keys. Do not include secrets or both keys.
+- **Encryption context**: `Encrypt` and `Decrypt` take exactly one approved subject key: `service_id`, `kid`, or `refresh_session_id`. Never combine keys or include secrets.
 - **Error conventions**: Storage returns `storage.StorageError`. Encryption returns `encryption.EncryptionError`. Use `ports.ErrNotFound` for simple identity checks.

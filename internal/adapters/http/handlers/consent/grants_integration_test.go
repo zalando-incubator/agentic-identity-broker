@@ -73,6 +73,10 @@ func seedActiveSession(t *testing.T, repo ports.UserSessionRepository, principal
 	}))
 }
 
+func newGrantsIntegrationRefreshStore(agents *memory.AgentRepository, grants *memory.UserGrantRepository) *memory.RefreshSessionStore {
+	return memory.NewRefreshSessionStore(agents, grants, memory.NewClientCredentialStore(), memory.NewAuthorizationCodeStore(), memory.NewPKCESessionStore())
+}
+
 // TestGrantsIntegration_CreateUpdateRevoke tests the full lifecycle of a grant
 // with real in-memory repositories. This verifies:
 // - Grant creation (T075, T076, T079)
@@ -84,6 +88,7 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 	agentRepo := memory.NewAgentRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
 	grantRepo := memory.NewUserGrantRepository()
+	refreshStore := newGrantsIntegrationRefreshStore(agentRepo, grantRepo)
 
 	// Create providerService to handle encryption context binding (simulates domain layer)
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(serviceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
@@ -159,7 +164,7 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 	seedActiveSession(t, sessionRepo, id.Principal("alice@example.com"), googleServiceID)
 
 	// Create consent service
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, psService, slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, psService, slog.Default(), testAuthorizationClock{now: time.Now()}, refreshStore, refreshStore)
 
 	// Create handler
 	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
@@ -325,6 +330,7 @@ func TestGrantsIntegration_SessionToken_CreateGrantWithRedirect(t *testing.T) {
 	agentRepo := memory.NewAgentRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
 	grantRepo := memory.NewUserGrantRepository()
+	refreshStore := newGrantsIntegrationRefreshStore(agentRepo, grantRepo)
 
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(serviceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
 
@@ -371,7 +377,7 @@ func TestGrantsIntegration_SessionToken_CreateGrantWithRedirect(t *testing.T) {
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	seedActiveSession(t, sessionRepo, principalValue, serviceID)
 
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, newPermissivePermissionSetQuerier(serviceID), slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, newPermissivePermissionSetQuerier(serviceID), slog.Default(), testAuthorizationClock{now: time.Now()}, refreshStore, refreshStore)
 	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
 
 	validUntil := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
@@ -412,6 +418,7 @@ func TestGrantsIntegration_OptionalOnlyAgent(t *testing.T) {
 	agentRepo := memory.NewAgentRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
 	grantRepo := memory.NewUserGrantRepository()
+	refreshStore := newGrantsIntegrationRefreshStore(agentRepo, grantRepo)
 
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(serviceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
 	ctx := context.Background()
@@ -462,7 +469,7 @@ func TestGrantsIntegration_OptionalOnlyAgent(t *testing.T) {
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	seedActiveSession(t, sessionRepo, id.Principal("bob@example.com"), optionalServiceID)
 
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, newPermissivePermissionSetQuerier(optionalServiceID), slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, newPermissivePermissionSetQuerier(optionalServiceID), slog.Default(), testAuthorizationClock{now: time.Now()}, refreshStore, refreshStore)
 	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
 
 	t.Run("approve_optional_service", func(t *testing.T) {
@@ -519,6 +526,7 @@ func TestGrantsIntegration_Validation(t *testing.T) {
 	agentRepo := memory.NewAgentRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
 	grantRepo := memory.NewUserGrantRepository()
+	refreshStore := newGrantsIntegrationRefreshStore(agentRepo, grantRepo)
 
 	// Create providerService to handle encryption context binding (simulates domain layer)
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(serviceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
@@ -568,7 +576,7 @@ func TestGrantsIntegration_Validation(t *testing.T) {
 	psService := newPermissivePermissionSetQuerier(service.ID)
 	seedActiveSession(t, sessionRepo, id.Principal("test@example.com"), service.ID)
 
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, psService, slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, psService, slog.Default(), testAuthorizationClock{now: time.Now()}, refreshStore, refreshStore)
 	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
 
 	tests := []struct {
@@ -583,6 +591,16 @@ func TestGrantsIntegration_Validation(t *testing.T) {
 			agentID: testAgentID.String(),
 			reqBody: GrantRequest{
 				GrantedPermissionSets: map[string][]string{"not-a-valid-uuid": {id.NewServiceID().String()}},
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  "invalid request",
+		},
+		{
+			name:    "past_deadline_rejected_by_domain",
+			agentID: testAgentID.String(),
+			reqBody: GrantRequest{
+				ValidUntil:            ptr.To(time.Now().Add(-time.Hour)),
+				GrantedPermissionSets: map[string][]string{permissionSetID.String(): {service.ID.String()}},
 			},
 			expectedStatus: http.StatusBadRequest,
 			expectedError:  "invalid request",
@@ -638,6 +656,7 @@ func TestGrantsIntegration_FR020_UnconnectedServices(t *testing.T) {
 	agentRepo := memory.NewAgentRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
 	grantRepo := memory.NewUserGrantRepository()
+	refreshStore := newGrantsIntegrationRefreshStore(agentRepo, grantRepo)
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	unconnectedServiceID := id.NewServiceID()
 
@@ -661,7 +680,7 @@ func TestGrantsIntegration_FR020_UnconnectedServices(t *testing.T) {
 	require.NoError(t, agentRepo.Create(ctx, agent))
 
 	// Wire session repo so FR-020 validation is active; no sessions are seeded.
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, newPermissivePermissionSetQuerier(unconnectedServiceID), slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, newPermissivePermissionSetQuerier(unconnectedServiceID), slog.Default(), testAuthorizationClock{now: time.Now()}, refreshStore, refreshStore)
 	handler := NewGrantsHandler(consentService, nil, newTestSessionTokenValidator())
 
 	t.Run("returns_400_when_included_service_has_no_active_session", func(t *testing.T) {

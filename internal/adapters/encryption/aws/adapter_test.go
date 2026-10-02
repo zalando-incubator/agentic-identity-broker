@@ -8,10 +8,12 @@ import (
 	"testing"
 	"time"
 
+	mpltypes "github.com/aws/aws-cryptographic-material-providers-library/releases/go/mpl/awscryptographymaterialproviderssmithygeneratedtypes"
 	esdktypes "github.com/aws/aws-encryption-sdk/releases/go/encryption-sdk/awscryptographyencryptionsdksmithygeneratedtypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/branchkey"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 )
 
@@ -219,6 +221,71 @@ func TestContextMismatchDetection(t *testing.T) {
 	if len(decrypted) > 0 {
 		t.Fatal("decrypted should be empty/nil on context mismatch")
 	}
+}
+
+func TestRefreshSessionAADWithRawAWSKeyring(t *testing.T) {
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	plaintext := []byte("refresh-result-fixture")
+	root := map[string]string{encryption.ContextKeyRefreshSessionID: "550e8400-e29b-41d4-a716-446655440001"}
+	ciphertext, err := adapter.Encrypt(ctx, plaintext, root)
+	require.NoError(t, err)
+
+	recovered, err := adapter.Decrypt(ctx, ciphertext, root)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, recovered)
+
+	t.Run("SDK-returned public key metadata does not change routing", func(t *testing.T) {
+		result, err := adapter.encryptionClient.Decrypt(ctx, esdktypes.DecryptInput{
+			Ciphertext:        ciphertext,
+			EncryptionContext: root,
+			Keyring:           adapter.keyring,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		if _, ok := result.EncryptionContext["aws-crypto-public-key"]; !ok {
+			t.Fatal("SDK did not return signing public key metadata")
+		}
+		supplier := NewBranchKeyIdSupplier(branchkey.NewDefaultProvider())
+		output, err := supplier.GetBranchKeyId(mpltypes.GetBranchKeyIdInput{EncryptionContext: result.EncryptionContext})
+		require.NoError(t, err)
+		require.NotNil(t, output)
+		assert.Equal(t, "refresh_550e8400-e29b-41d4-a716-446655440001_branch_key", output.BranchKeyId)
+	})
+
+	for _, tt := range []struct {
+		name    string
+		context map[string]string
+	}{
+		{"another refresh session", map[string]string{encryption.ContextKeyRefreshSessionID: "550e8400-e29b-41d4-a716-446655440002"}},
+		{"another subject namespace", map[string]string{encryption.ContextKeyServiceID: "550e8400-e29b-41d4-a716-446655440001"}},
+		{"missing root subject", map[string]string{}},
+		{"mixed root subjects", map[string]string{
+			encryption.ContextKeyRefreshSessionID: "550e8400-e29b-41d4-a716-446655440001",
+			encryption.ContextKeyKID:              "kid-123",
+		}},
+		{"malformed root subject", map[string]string{encryption.ContextKeyRefreshSessionID: "not-a-uuid"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			decrypted, err := adapter.Decrypt(ctx, ciphertext, tt.context)
+			require.Error(t, err)
+			if len(decrypted) != 0 {
+				t.Fatal("rejected decryption returned plaintext")
+			}
+		})
+	}
+
+	t.Run("tampered ciphertext", func(t *testing.T) {
+		tampered := append([]byte(nil), ciphertext...)
+		tampered[len(tampered)-1] ^= 1
+		decrypted, err := adapter.Decrypt(ctx, tampered, root)
+		require.Error(t, err)
+		if len(decrypted) != 0 {
+			t.Fatal("tampered ciphertext returned plaintext")
+		}
+	})
 }
 
 // TestCancelledContextClassifiedAsKEKUnavailable verifies that a cancelled or

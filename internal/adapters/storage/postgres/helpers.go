@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -16,7 +17,7 @@ import (
 // The share lock prevents concurrent DELETE transactions from removing referenced PSes
 // before the caller's write commits, closing the write/delete TOCTOU race window.
 // Returns ErrorKindConflict with a descriptive error if any IDs are missing.
-func verifyPermissionSetExistenceInTx(ctx context.Context, tx *sql.Tx, psIDs []id.PermissionSetID) error {
+func verifyPermissionSetExistenceInTx(ctx context.Context, tx *sqlx.Tx, psIDs []id.PermissionSetID) error {
 	if len(psIDs) == 0 {
 		return nil
 	}
@@ -56,7 +57,7 @@ func verifyPermissionSetExistenceInTx(ctx context.Context, tx *sql.Tx, psIDs []i
 	return nil
 }
 
-func verifyServiceExistenceInTx(ctx context.Context, tx *sql.Tx, serviceIDs []id.ServiceID) error {
+func verifyServiceExistenceInTx(ctx context.Context, tx *sqlx.Tx, serviceIDs []id.ServiceID) error {
 	if len(serviceIDs) == 0 {
 		return nil
 	}
