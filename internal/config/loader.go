@@ -81,6 +81,12 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 	}
 
 	// Phase 6: Validate configuration (User Story 4)
+	if cfg.Encryption.AWSKMS != nil && cfg.Encryption.AWSKMS.DisableSSL && os.Getenv("GO_ENV") != "development" {
+		return nil, formatValidationError(
+			"encryption.aws_kms.disable_ssl", "true",
+			"false unless GO_ENV is explicitly set to development for AWS emulator testing", nil,
+		)
+	}
 	if err := Validate(&cfg); err != nil {
 		return nil, err
 	}

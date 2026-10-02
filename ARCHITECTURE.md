@@ -101,6 +101,7 @@ Deployment: Containerized service (Docker), deployable to Kubernetes, AWS ECS, o
 - Command injection prevention (rejects $(cmd), backticks, shell metacharacters)
 - Circular reference detection (max depth: 10)
 - Fail-closed on errors (graceful termination with clear messages)
+- AWS TLS certificate verification bypass (`encryption.aws_kms.disable_ssl`) requires explicit `GO_ENV=development`; every other environment, including unset, rejects it before AWS clients are initialized.
 - File permission validation
 - Structured audit logging (JSON to stdout)
 
