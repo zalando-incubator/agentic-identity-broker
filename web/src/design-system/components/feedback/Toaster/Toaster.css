@@ -1,0 +1,49 @@
+.aib-toaster[data-sonner-toaster][data-sonner-theme] {
+  font-family: var(--font-sans);
+  --normal-bg: var(--popover);
+  --normal-text: var(--popover-foreground);
+  --normal-border: var(--border);
+  --normal-bg-hover: var(--accent);
+  --normal-border-hover: var(--border);
+  transition: transform var(--motion-overlay) var(--motion-ease);
+}
+
+.aib-toaster[data-sonner-toaster] [data-sonner-toast] {
+  box-shadow: none;
+  transition: transform var(--motion-overlay) var(--motion-ease), opacity var(--motion-feedback) var(--motion-ease), height var(--motion-overlay) var(--motion-ease);
+  animation-duration: var(--motion-overlay);
+  animation-timing-function: var(--motion-ease);
+}
+
+.aib-toaster[data-sonner-toaster][data-sonner-theme] [data-description] {
+  color: var(--muted-foreground);
+}
+
+.aib-toaster[data-sonner-toaster][data-sonner-theme] [data-close-button] {
+  background: var(--popover);
+  border-color: var(--border);
+  color: var(--popover-foreground);
+}
+
+.aib-toaster[data-sonner-toaster][data-sonner-theme] [data-close-button]:hover,
+.aib-toaster[data-sonner-toaster] [data-button]:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  border-color: var(--border);
+}
+
+.aib-toaster[data-sonner-toaster] [data-sonner-toast]:focus-visible,
+.aib-toaster[data-sonner-toaster] button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aib-toaster[data-sonner-toaster],
+  .aib-toaster[data-sonner-toaster] [data-sonner-toast],
+  .aib-toaster[data-sonner-toaster] [data-sonner-toast] * {
+    transition: none;
+    animation: none;
+  }
+}

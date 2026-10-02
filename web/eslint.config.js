@@ -4,6 +4,7 @@ import reactPlugin from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
 import globals from 'globals';
+import noRawPalette from './eslint-rules/no-raw-palette.js';
 
 export default tseslint.config(
   {
@@ -43,6 +44,15 @@ export default tseslint.config(
       ...reactHooks.configs['recommended-latest'].rules,
       'react/prop-types': 'off',
       'react/react-in-jsx-scope': 'off',
+    },
+  },
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    plugins: {
+      local: { rules: { 'no-raw-palette': noRawPalette } },
+    },
+    rules: {
+      'local/no-raw-palette': 'error',
     },
   },
 );

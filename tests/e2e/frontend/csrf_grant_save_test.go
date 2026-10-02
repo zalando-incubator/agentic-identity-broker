@@ -118,8 +118,7 @@ var _ = Describe("Consent Grant Save Flow", func() {
 
 	It("should successfully save a grant through the consent screen", func() {
 		// specs/007-consent-frontend/spec.md — User Story 3, Scenario 7:
-		// "Given a user clicks Approve & Delegate, When the request is processed successfully,
-		// Then the system creates or updates the grant and displays a success message."
+		// The console requires an explicit draft edit before saving (047 AS-08).
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 
@@ -127,8 +126,10 @@ var _ = Describe("Consent Grant Save Flow", func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to get agent name")
 		Expect(agentName).NotTo(BeEmpty(), "Agent name should be displayed")
 
-		err = consentPage.SubmitConsent(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Failed to click Approve & Delegate button")
+		Expect(consentPage.IsSaveBarVisible(ctx)).To(BeFalse())
+		Expect(consentPage.ChooseDuration(ctx, "30 days")).To(Succeed())
+		err = consentPage.SaveChanges(ctx)
+		Expect(err).NotTo(HaveOccurred(), "Failed to save the edited grant")
 
 		err = consentPage.WaitForGrantSuccess(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Grant save should succeed")
@@ -144,13 +145,16 @@ var _ = Describe("Consent Grant Save Flow", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(agentName).NotTo(BeEmpty())
 
-		err = consentPage.SubmitConsent(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Failed to submit consent with redirect_uri")
+		Expect(consentPage.ChooseDuration(ctx, "30 days")).To(Succeed())
+		err = consentPage.SaveChanges(ctx)
+		Expect(err).NotTo(HaveOccurred(), "Failed to save grant with redirect_uri")
 
 		Expect(consentPage.WaitForGrantSuccess(ctx)).To(Succeed(),
 			"Direct grant save should display success even with redirect_uri in the page URL")
 		hasError, err := consentPage.HasError(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(hasError).To(BeFalse(), "No validation error should remain after saving the grant")
+		Expect(consentPage.GetURLQueryParam("redirect_uri")).To(Equal("/oauth2/callback?code=abc"),
+			"A direct console save must not follow an untrusted redirect_uri")
 	})
 })

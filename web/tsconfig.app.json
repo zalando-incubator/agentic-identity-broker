@@ -17,6 +17,8 @@
     "baseUrl": ".",
     "paths": {
       "@design-system/*": ["src/design-system/*"],
+      "@copy": ["src/copy/index.ts"],
+      "@copy/*": ["src/copy/*"],
       "@components/*": ["src/components/*"],
       "@hooks": ["src/hooks/index.ts"],
       "@hooks/*": ["src/hooks/*"],

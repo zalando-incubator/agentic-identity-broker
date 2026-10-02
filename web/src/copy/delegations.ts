@@ -1,0 +1,15 @@
+export const delegationsCopy = {
+  purpose: 'Review and revoke the access you have delegated to agents.',
+  search: 'Search agents',
+  agent: 'Agent',
+  expiry: 'Expiry',
+  actions: 'Actions',
+  view: 'View',
+  revoking: 'Revoking…',
+  revokeSuccess: 'Access revoked.',
+  revokeFailure: 'Could not revoke access. Try again.',
+  loadFailure: 'Could not load agents.',
+  stale: 'The agent list may be out of date.',
+  empty: 'A delegation lets an agent access services on your behalf.',
+  noMatches: 'No agents match your search.',
+} as const;

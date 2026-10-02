@@ -1,8 +1,8 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/docusaurus/static/img/AIB_Wordmark_White.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="assets/docusaurus/static/img/AIB_Wordmark_Black.svg" />
-    <img alt="Agentic Identity Broker Wordmark" src="assets/docusaurus/static/img/AIB_Wordmark_Black.svg" />
+    <source media="(prefers-color-scheme: dark)" srcset="web/public/brand/AIB_Wordmark_White.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="web/public/brand/AIB_Wordmark_Black.svg" />
+    <img alt="Agentic Identity Broker Wordmark" src="web/public/brand/AIB_Wordmark_Black.svg" />
   </picture>
   <div>
     <a href="https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/ci.yml">

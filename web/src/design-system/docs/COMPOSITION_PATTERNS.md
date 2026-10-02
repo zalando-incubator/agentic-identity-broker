@@ -1,646 +1,215 @@
 # Composition Patterns
 
-This guide shows how to effectively combine design system components to build common UI patterns and solve typical design challenges.
+## Authority and example status
 
-## Layout Patterns
+[ADR 037](../../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) was accepted on 2026-09-27.
+These recipes describe the feature 047 component system.
+Composition sketches describe responsibilities, not exact prop declarations or completed release validation.
+Read the owned component source before implementation.
 
-### Centered Hero Section
+Keep universal components in the existing design-system categories.
+Keep domain behavior, queries, navigation, and application copy outside primitives.
+Applications obtain UI strings from `@copy` and pass them through props.
 
-```tsx
-import { Container } from '@design-system/components/layout/Container';
-import { Stack } from '@design-system/components/layout/Stack';
+## Console layout
 
-<Container size="md" className="text-center py-16">
-  <Stack gap="md" align="center">
-    <h1 className="text-4xl font-bold text-trust-deep">Welcome</h1>
-    <p className="text-lg text-secondary">Your message here</p>
-    <Button variant="primary" size="lg">
-      Get Started
-    </Button>
-  </Stack>
-</Container>;
+```text
+Application route
+  ConsoleShell
+    Wordmark
+    Navigation and pending count
+    Sheet for mobile navigation
+    Search slot -> application search -> Command
+    User-menu slot -> DropdownMenu and ThemeChoice
+    Main content
+      PageHeader
+      Route content
+    Polite live region
 ```
 
-### Two-Column Layout
+ConsoleShell and PageHeader are presentational and fetch no data.
+The application supplies navigation, search results, identity, pending count, and user-menu content.
+PageHeader shows a title, one-line purpose, and only the action assigned by the route contract.
 
-```tsx
-<Grid columns={1} gap="lg" className="md:grid-cols-2">
-  <Card padding="lg">
-    <h2 className="text-2xl font-bold">Left Column</h2>
-    <p>Content here</p>
-  </Card>
-  <Card padding="lg">
-    <h2 className="text-2xl font-bold">Right Column</h2>
-    <p>Content here</p>
-  </Card>
-</Grid>
+The console routes are `/delegations`, `/sessions`, `/approvals`, `/settings`, and `/agents/:id` without an authorization session.
+The sidebar uses Agents, Connections, and Approvals navigation.
+The user menu provides settings and theme access.
+The sidebar collapse preference is browser-local and uses `aib.sidebar-collapsed`.
+
+At narrow widths, Sheet contains the same navigation.
+Preserve the skip link, navigation landmark, main landmark, Escape behavior, and focus return.
+
+## Focused decision layout
+
+```text
+Application decision route
+  DecisionShell
+    Wordmark header
+    Main content, centered and at most 640 px wide
+      Identity and authoritative context
+      Request details and choices
+      One assigned accent action
+      Next steps or resolved outcome
+    Optional monochrome footer
 ```
 
-### Three-Column Grid
+`/agents/:id` uses DecisionShell whenever an authorization-session parameter is present.
+An invalid or expired session stays a decision error.
+`/approvals/:id` always uses DecisionShell, including resolved and expired results.
+Neither decision route includes console navigation or search.
 
-```tsx
-<Grid columns={1} gap="md" className="md:grid-cols-2 lg:grid-cols-3">
-  {items.map((item) => (
-    <Card key={item.id} hover="lift">
-      <Avatar src={item.image} />
-      <h3 className="mt-4 font-semibold text-trust-deep">{item.title}</h3>
-      <p className="text-sm text-secondary">{item.description}</p>
-    </Card>
-  ))}
-</Grid>
+Keep route modules lazy. Import concrete component modules.
+Do not re-export Table or Command from barrels that decision routes import.
+This boundary protects the initial decision-route bundle from console dependencies.
+
+## Dense collection with search
+
+TanStack Table owns filtering and row state. Owned Table parts supply semantic presentation.
+The console route supplies the data and a labeled Input for search.
+
+```text
+PageHeader
+Search Input with visible label
+Loading, error, empty, or content state
+  Table
+    TableCaption
+    TableHeader -> TableRow -> TableHead
+    TableBody -> TableRow -> TableCell
+      TruncatedText for long metadata
+      Non-accent row actions
 ```
 
-### Sidebar + Content Layout
+The Agents columns are agent, expiry, and actions.
+Show “Until revoked” for a null expiry and a monospace date otherwise.
+When a row's expiry passes, remove the row.
+View navigates to the agent detail. Revoke opens a confirmation Dialog.
 
-```tsx
-<AppLayout
-  header={<Header />}
-  sidebar={<Navigation />}
-  sidebarWidth="md"
-  stickyHeader
->
-  <Container size="lg" padding="lg">
-    <h1>Main Content</h1>
-  </Container>
-</AppLayout>
+Do not show count, status, or Agent Origin Label columns.
+`activeGrantCount` counts UserGrant records, not permission sets.
+Do not issue per-agent requests for counts.
+
+Connection rows show provider, scope count, connection state, and creation time.
+Pending approval rows appear before standing allow and deny decisions.
+Their approval actions require explicit persistence and scope choices.
+
+Below the small breakpoint, rows stack into label-value groups without hiding actions.
+Preserve table relationships, readable text, and no horizontal page overflow at 320 px and 200% zoom.
+At 1920×1080, the Agents table must show at least 12 rows.
+
+## Agent detail with an unsaved draft
+
+```text
+ConsoleShell
+  PageHeader and identity links
+  DropdownMenu -> Revoke all access -> confirmation Dialog
+  Tabs
+    Permissions -> permission groups and duration
+    Connections -> required services and truthful connection states
+  Dirty draft only -> sticky Cancel and Save changes bar
 ```
 
-## Form Patterns
+React state owns the draft. Queries own remote data.
+The console detail has no Agent Origin Label.
+Required groups stay locked. Optional selections and duration remain editable.
+Cancel restores the original draft. Save waits for the authoritative server response.
 
-### Simple Form
+The sticky bar must not obscure focused controls.
+Save changes is the sole accent action and appears only after an edit.
+The overflow menu and Cancel use non-accent variants.
 
-```tsx
-<Stack gap="lg" as="form" onSubmit={handleSubmit}>
-  <Stack gap="sm">
-    <label htmlFor="name" className="font-medium">
-      Name
-    </label>
-    <TextInput
-      id="name"
-      type="text"
-      placeholder="Enter your name"
-      value={name}
-      onChange={(e) => setName(e.target.value)}
-    />
-  </Stack>
+## Consent selection and continuation
 
-  <Stack gap="sm">
-    <label htmlFor="email" className="font-medium">
-      Email
-    </label>
-    <TextInput
-      id="email"
-      type="email"
-      placeholder="you@example.com"
-      value={email}
-      onChange={(e) => setEmail(e.target.value)}
-      errorMessage={emailError}
-    />
-  </Stack>
+Group required permissions before optional permissions.
+Use Checkbox with Accordion for a name, description, selection state, and expandable service names.
+Do not add risk indicators or raw scope strings.
 
-  <Stack direction="row" gap="md">
-    <Button type="submit" variant="primary">
-      Submit
-    </Button>
-    <Button type="button" variant="secondary" onClick={onCancel}>
-      Cancel
-    </Button>
-  </Stack>
-</Stack>
-```
+On re-consent, show previously granted groups collapsed, checked, and read-only.
+Only new access needs a decision.
+Preserve prior permission-set and service selections in the submitted grant.
 
-### Multi-Step Form
+Use RadioGroup for Until revoked, 30 days, and Custom date, with DatePicker for a custom expiry.
+Start re-consent from the existing validity and preserve it unless the user changes the duration.
+A changed duration applies to the whole grant.
 
-```tsx
-import { PageTransition } from '@design-system/components/layout/PageTransition';
+Keep the draft through the existing `consent_state` provider callback flow.
+Allow is the sole `primary` action. Deny uses `secondary` and leaves the grant unchanged.
+Deny shows a local outcome without constructing a redirect.
+Invalid custom dates use linked inline errors before submission.
 
-const [step, setStep] = useState(1);
+## Tool review
 
-<PageTransition key={step} type="slideLeft" duration={300}>
-  {step === 1 && <Step1Form onNext={() => setStep(2)} />}
-  {step === 2 && (
-    <Step2Form onNext={() => setStep(3)} onPrev={() => setStep(1)} />
-  )}
-  {step === 3 && (
-    <Step3Form onPrev={() => setStep(2)} onSubmit={handleSubmit} />
-  )}
-</PageTransition>;
-```
+Show tool, agent, acting user, server-provided risk, and exact approval scope before a decision.
+Use Accordion for the escaped argument block, with JetBrains Mono for technical values.
+If risk is absent, show the neutral “Risk not rated” label.
 
-### Form with Validation
+Approve once is the sole accent action.
+Approve and remember and Deny use non-accent controls.
+Remembered decisions preserve the existing once, session, and permanent semantics.
+Resolved and expired requests show their outcome without decision actions.
 
-```tsx
-<Stack gap="lg">
-  <TextInput
-    label="Username"
-    value={username}
-    onChange={(e) => setUsername(e.target.value)}
-    errorMessage={errors.username}
-    aria-describedby={errors.username ? 'username-error' : undefined}
-  />
-  {errors.username && (
-    <InlineError id="username-error">{errors.username}</InlineError>
-  )}
+## Confirmed revocation
 
-  <Checkbox
-    id="agree"
-    label="I agree to the terms"
-    checked={agree}
-    onChange={(e) => setAgree(e.target.checked)}
-  />
-  {!agree && <Alert variant="warning">You must agree to continue</Alert>}
-</Stack>
-```
+The application opens Dialog from a non-accent row action or DropdownMenu item.
+Dialog names the target, explains the effect, and pairs secondary Cancel with destructive confirmation.
+It traps focus, supports Escape, and keeps background content inert.
 
-## Data Display Patterns
+After confirmation, mark only the affected record pending.
+Cancel matching reads and retain rollback data for that record.
+On failure, restore that record without overwriting unrelated changes.
+On settlement, reconcile affected lists, details, and counts with the server.
+Announce success only after server acceptance.
 
-### Data Table with Sorting
+Grant creation, grant edits, and approvals never use optimistic success.
+Do not automatically replay security mutations after errors.
 
-```tsx
-const [sortKey, setSortKey] = useState('name');
-const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+## Connection management
 
-<Table
-  columns={[
-    {
-      key: 'name',
-      header: 'Name',
-      sortable: true,
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      accessor: (row) => <GrantStatusBadge status={row.status} />,
-    },
-    {
-      key: 'date',
-      header: 'Date',
-      align: 'right',
-      accessor: (row) => format(row.date, 'MMM d, yyyy'),
-    },
-  ]}
-  data={data}
-  sortKey={sortKey}
-  sortDirection={sortDir}
-  onSort={(key) => {
-    if (sortKey === key) {
-      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortKey(key);
-      setSortDir('asc');
-    }
-  }}
-/>;
-```
+The application derives connection state from existing session fields and current authoritative refresh results.
+The full precedence table is in the [data model](../../../../specs/047-redesign-consent-console/data-model.md).
 
-### Card Grid with Hover Actions
+`/sessions` lists stored connections, so it never shows No connection.
+That state belongs only to a missing required service in agent detail or the consent service prompt.
+Do not infer missing scopes or invent account and last-use metadata.
 
-```tsx
-<Grid columns={1} gap="md" className="md:grid-cols-2 lg:grid-cols-3">
-  {items.map((item) => (
-    <Card
-      key={item.id}
-      hover="lift"
-      clickable
-      onClick={() => navigate(`/item/${item.id}`)}
-    >
-      <Stack gap="md">
-        <Avatar size="lg" name={item.name} />
-        <Stack gap="xs">
-          <h3 className="text-lg font-semibold text-trust-deep">{item.name}</h3>
-          <p className="text-sm text-secondary">{item.description}</p>
-        </Stack>
-        <Stack direction="row" gap="sm" className="mt-auto">
-          <Badge>{item.category}</Badge>
-          {item.featured && <Badge variant="success">Featured</Badge>}
-        </Stack>
-      </Stack>
-    </Card>
-  ))}
-</Grid>
-```
+Reconnect uses the existing authorization flow. Refresh appears only when supported.
+Disconnect requires a named confirmation and dependent-agent warnings.
+Its copy states that broker disconnection does not revoke provider-side tokens.
 
-### List with Badges and Status
+## Command search and appearance
 
-```tsx
-<Stack gap="md" as="ul">
-  {items.map((item) => (
-    <li key={item.id} className="list-none">
-      <Card padding="md" hover="lift">
-        <Stack direction="row" gap="md" align="center" justify="space-between">
-          <Stack gap="xs" flex="1">
-            <h3 className="font-semibold text-trust-deep">{item.name}</h3>
-            <p className="text-sm text-secondary">{item.description}</p>
-          </Stack>
-          <Stack direction="row" gap="sm" align="center">
-            <GrantStatusBadge status={item.status} />
-            <Button variant="ghost" icon={<ChevronRightIcon />} />
-          </Stack>
-        </Stack>
-      </Card>
-    </li>
-  ))}
-</Stack>
-```
+Command uses cmdk inside the console search composition.
+The application supplies only the acting user's agents, connections, and approvals.
+A selection navigates to an existing record view or changes the theme.
+It never grants, approves, revokes, or preselects a decision.
 
-## Navigation Patterns
+ThemeChoice is a RadioGroup with caller-supplied Light, Dark, and System labels.
+It appears in `/settings` and the user menu.
+Changes apply immediately and use `aib.theme` in browser storage.
+Settings contains no saved approval-persistence default.
 
-### Breadcrumb Navigation
+## Feedback and shared query ownership
 
-```tsx
-import { Breadcrumb } from '@design-system/components/navigation/Breadcrumb';
+TanStack Query owns remote state over Axios. React owns draft and appearance state.
+Queries are principal-scoped and clear on identity change or authentication loss.
+Do not persist API data in browser storage or keep a second GET cache.
 
-<Breadcrumb
-  items={[
-    { label: 'Home', href: '/' },
-    { label: 'Settings', href: '/settings' },
-    { label: 'Delegations', href: '/settings/delegations' },
-    { label: 'Active Delegations' },
-  ]}
-/>;
-```
+One console query refreshes `/api/approvals/pending` every 10 seconds while visible.
+Sidebar and queue share its result and announce changes without moving focus.
+Refresh after a decision and when focus returns.
+Never call the gateway-wide `GET /api/approvals` from the browser.
 
-### Tabs for Content Switching
+Use Skeleton for initial loading, EmptyState for a successful empty result, and Alert or InlineError for errors.
+Keep stale content visibly stale rather than converting a failed read to an empty list or zero count.
+Use the theme-aware Sonner Toaster for polite server-confirmed results.
 
-```tsx
-import { Tabs } from '@design-system/components/navigation/Tabs';
+## Shared presentation and validation
 
-const [activeTab, setActiveTab] = useState('overview');
+Use semantic OKLCH roles from [COLOR_GUIDE.md](COLOR_GUIDE.md) in both themes.
+Use local Wordmark artwork and safe Avatar fallbacks.
+Fonts are self-hosted Zalando Sans Variable, Inter Variable, and JetBrains Mono.
+Use CSS-only feedback at 120–200 ms with ease-out and no movement under reduced motion.
 
-<Tabs
-  tabs={[
-    {
-      id: 'overview',
-      label: 'Overview',
-      content: <OverviewPanel />,
-    },
-    {
-      id: 'details',
-      label: 'Details',
-      content: <DetailsPanel />,
-    },
-    {
-      id: 'activity',
-      label: 'Activity',
-      content: <ActivityPanel />,
-    },
-  ]}
-  activeTab={activeTab}
-  onChange={setActiveTab}
-/>;
-```
-
-### Pagination for Large Lists
-
-```tsx
-const itemsPerPage = 10;
-const [currentPage, setCurrentPage] = useState(1);
-const totalPages = Math.ceil(items.length / itemsPerPage);
-const paginatedItems = items.slice(
-  (currentPage - 1) * itemsPerPage,
-  currentPage * itemsPerPage,
-);
-
-<Stack gap="lg">
-  <ItemList items={paginatedItems} />
-  <Pagination
-    currentPage={currentPage}
-    totalPages={totalPages}
-    onPageChange={setCurrentPage}
-  />
-</Stack>;
-```
-
-## Feedback Patterns
-
-### Loading State
-
-```tsx
-const [loading, setLoading] = useState(true);
-
-{
-  loading ? <Skeleton count={5} /> : <ItemList items={items} />;
-}
-```
-
-### Empty State
-
-```tsx
-{
-  items.length === 0 ? (
-    <EmptyState
-      icon={<SearchIcon />}
-      title="No results found"
-      description="Try adjusting your filters or search query"
-      action={<Button onClick={onReset}>Reset Filters</Button>}
-    />
-  ) : (
-    <ItemList items={items} />
-  );
-}
-```
-
-### Error Handling
-
-```tsx
-{
-  error ? (
-    <Alert variant="error">
-      <h3 className="font-semibold">Something went wrong</h3>
-      <p>{error.message}</p>
-      <Button variant="secondary" size="sm" onClick={onRetry} className="mt-4">
-        Try Again
-      </Button>
-    </Alert>
-  ) : (
-    <Content />
-  );
-}
-```
-
-### Toast Notifications
-
-```tsx
-const [toast, setToast] = useState(null);
-
-const showToast = (message, variant = 'success') => {
-  setToast({ message, variant });
-  setTimeout(() => setToast(null), 3000);
-};
-
-{
-  toast && (
-    <Toast
-      message={toast.message}
-      variant={toast.variant}
-      onClose={() => setToast(null)}
-    />
-  );
-}
-```
-
-## Permission & Consent Patterns
-
-### Permission List with Selection
-
-```tsx
-import { ScopeList } from '@design-system/components/data-display/ScopeList';
-
-const [selectedScopes, setSelectedScopes] = useState([]);
-
-<ScopeList
-  scopes={scopes}
-  selectable={true}
-  searchable={true}
-  expandable={true}
-  onSelectionChange={setSelectedScopes}
-/>;
-```
-
-### Grant Status Display
-
-```tsx
-<Card padding="lg">
-  <Stack gap="md">
-    <Stack direction="row" gap="md" align="start" justify="space-between">
-      <div>
-        <h3 className="text-lg font-semibold text-trust-deep">{grant.name}</h3>
-        <p className="text-sm text-secondary">{grant.description}</p>
-      </div>
-      <GrantStatusBadge status={grant.status} />
-    </Stack>
-    <Divider />
-    <ScopeList scopes={grant.scopes} searchable={false} />
-  </Stack>
-</Card>
-```
-
-### Service Delegations
-
-```tsx
-import { DelegationList } from '@/components/consent/DelegationList';
-
-<Stack gap="lg">
-  <h2 className="text-2xl font-bold">Active Delegations</h2>
-  <DelegationList
-    delegations={delegations}
-    onDelegationClick={(delegation) => navigate(`/delegation/${delegation.id}`)}
-  />
-</Stack>;
-```
-
-## Modal & Overlay Patterns
-
-### Confirmation Dialog
-
-```tsx
-const [showConfirm, setShowConfirm] = useState(false);
-
-<Modal
-  isOpen={showConfirm}
-  onClose={() => setShowConfirm(false)}
-  title="Confirm Action"
->
-  <Stack gap="lg">
-    <p>Are you sure? This action cannot be undone.</p>
-    <Stack direction="row" gap="md" justify="flex-end">
-      <Button
-        variant="secondary"
-        onClick={() => setShowConfirm(false)}
-      >
-        Cancel
-      </Button>
-      <Button
-        variant="danger"
-        onClick={() => {
-          onConfirm();
-          setShowConfirm(false);
-        }}
-      >
-        Delete
-      </Button>
-    </Stack>
-  </Stack>
-</Modal>
-
-<Button
-  variant="danger"
-  onClick={() => setShowConfirm(true)}
->
-  Delete Item
-</Button>
-```
-
-### Dropdown Menu
-
-```tsx
-<Dropdown
-  trigger={<Button icon={<MenuIcon />} />}
-  items={[
-    {
-      id: 'edit',
-      label: 'Edit',
-      icon: <EditIcon />,
-      onClick: () => navigate(`/edit/${id}`),
-    },
-    {
-      id: 'duplicate',
-      label: 'Duplicate',
-      icon: <CopyIcon />,
-      onClick: () => onDuplicate(id),
-    },
-    {
-      id: 'delete',
-      label: 'Delete',
-      icon: <TrashIcon />,
-      destructive: true,
-      onClick: () => setShowConfirm(true),
-    },
-  ]}
-  align="right"
-/>
-```
-
-### Popover with Information
-
-```tsx
-const [showInfo, setShowInfo] = useState(false);
-
-<Popover
-  isOpen={showInfo}
-  onOpenChange={setShowInfo}
-  trigger={<Button icon={<InfoIcon />} variant="ghost" />}
-  position="top"
->
-  <Stack gap="md" padding="md" maxWidth="300px">
-    <h4 className="font-semibold text-trust-deep">About This Permission</h4>
-    <p className="text-sm text-secondary">
-      This permission allows the application to access your email address and
-      send emails on your behalf.
-    </p>
-    <p className="text-xs text-tertiary">Last used: Yesterday at 2:30 PM</p>
-  </Stack>
-</Popover>;
-```
-
-## Accordion & Collapsible Patterns
-
-### FAQ Section
-
-```tsx
-import { Accordion } from '@design-system/components/advanced/Accordion';
-
-<Accordion
-  items={[
-    {
-      id: 'q1',
-      title: 'What is a delegation?',
-      description: 'Learn about delegations',
-      content: <FAQAnswerContent id="q1" />,
-    },
-    {
-      id: 'q2',
-      title: 'How do I revoke a delegation?',
-      content: <FAQAnswerContent id="q2" />,
-    },
-  ]}
-  exclusive={true}
-/>;
-```
-
-### Expandable Settings Sections
-
-```tsx
-<Accordion
-  items={[
-    {
-      id: 'security',
-      title: 'Security Settings',
-      icon: <ShieldIcon />,
-      content: <SecuritySettings />,
-    },
-    {
-      id: 'privacy',
-      title: 'Privacy Settings',
-      icon: <LockIcon />,
-      content: <PrivacySettings />,
-    },
-    {
-      id: 'notifications',
-      title: 'Notification Settings',
-      icon: <BellIcon />,
-      content: <NotificationSettings />,
-    },
-  ]}
-  exclusive={false}
-/>
-```
-
-## Progress & Status Patterns
-
-### Multi-Step Wizard
-
-```tsx
-import { Progress } from '@design-system/components/advanced/Progress';
-
-const [step, setStep] = useState(1);
-const totalSteps = 4;
-
-<Stack gap="lg">
-  <Progress
-    value={(step / totalSteps) * 100}
-    label={`Step ${step} of ${totalSteps}`}
-    showValue={true}
-  />
-  <WizardStep step={step} onNext={() => setStep(step + 1)} />
-</Stack>;
-```
-
-### Task Completion Progress
-
-```tsx
-<Stack gap="md">
-  <h3 className="font-semibold text-trust-deep">Processing Items</h3>
-  {items.map((item) => (
-    <Stack key={item.id} gap="xs">
-      <div className="flex justify-between text-sm">
-        <span>{item.name}</span>
-        <span className="text-secondary">{item.progress}%</span>
-      </div>
-      <Progress value={item.progress} variant="success" />
-    </Stack>
-  ))}
-</Stack>
-```
-
-## Composition Best Practices
-
-### Do's
-
-✅ Compose components with clear, simple prop combinations
-✅ Use Stack and Grid for layout over custom divs
-✅ Leverage design system tokens for consistent styling
-✅ Create reusable compound patterns in application components
-✅ Test accessibility of complex patterns
-✅ Document custom patterns for team reuse
-
-### Don'ts
-
-❌ Create new components when composition works
-❌ Mix custom CSS with design system components
-❌ Nest too many component layers (keep reasonable depth)
-❌ Ignore responsive design - compose for mobile first
-❌ Forget about accessibility in complex patterns
-❌ Hardcode values instead of using design tokens
-
-## Summary
-
-Effective component composition:
-
-- Reduces custom code
-- Maintains visual consistency
-- Improves maintainability
-- Speeds up development
-- Ensures accessibility
-
-Use these patterns as starting points, adapt them to your specific needs, and share new patterns back with the team.
+Every component story requires both-theme accessibility checks and reviewed visual baselines.
+Preserve keyboard paths, visible unobscured focus, and state announcements.
+Principle XI requires WCAG 2.1 AA. Feature 047 targets WCAG 2.2 AA.
+See [COMPONENT_PAIRING_GUIDE.md](COMPONENT_PAIRING_GUIDE.md) and [ACCESSIBILITY_GUIDE.md](ACCESSIBILITY_GUIDE.md).

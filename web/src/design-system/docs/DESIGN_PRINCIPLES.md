@@ -1,435 +1,199 @@
 # Design Principles
 
-The Refined Trust Architecture design system is built on a set of core principles that guide component design, interaction patterns, and implementation decisions. These principles ensure consistency, accessibility, and developer experience across all applications using this system.
+## Status and authority
 
----
+**Current direction: the focused consent and console system in accepted ADR 037.**
+The stakeholder accepted [ADR 037](../../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) on 2026-09-27.
+[Feature 047](../../../../specs/047-redesign-consent-console/spec.md) defines the required behavior.
 
-## Visual Design Direction: "Refined Trust Architecture"
+This guide governs the implementation. Acceptance does not establish runtime or validation completion.
+The feature [tasks](../../../../specs/047-redesign-consent-console/tasks.md) record those results separately.
+There is one accepted visual system, not a choice between old and new presentations.
 
-### Design Concept
+Constitution Principle XI defines the design-system process and the WCAG 2.1 AA floor.
+It does not prescribe a palette, typeface, border style, or animation duration.
+ADR 037 selects those visual choices. Feature 047 targets WCAG 2.2 AA.
 
-**Core Aesthetic**: Sophisticated legal-financial hybrid—the visual gravity of a bank vault combined with the approachability of modern SaaS. This is where users make critical decisions about AI agent permissions, so every pixel must communicate trustworthiness, clarity, and control.
+## Binding design-system process
 
-**Tone**: Authoritative yet approachable. Think: premium law firm website meets modern fintech app. NOT corporate-bland, NOT startup-playful.
+Follow these requirements:
 
-**The Unforgettable Element**: **Serif authority with warm humanity** - Using Crimson Pro (a refined, slightly warm serif) for all headings creates immediate trust and seriousness, while Manrope's humanist sans-serif for body text softens the experience. The contrast between these two typefaces defines the entire aesthetic.
+- Reuse design-system primitives and contribute universal components to the design system.
+- Read `DECISION_TREES.md`, `COMPONENT_PAIRING_GUIDE.md`, and `COMMON_MISTAKES.md` before component work.
+- Define semantic color, type, spacing, radius, motion, and theme tokens under `web/src/design-system/tokens/`.
+- Use Tailwind v4 token mappings and CVA variants without component-specific token bypasses.
+- Do not reference raw palette utilities in components.
+- Support light and dark themes in every component story.
+- Require accessibility and reviewed visual-regression checks in both themes, with failures that block CI.
+- Use semantic HTML, appropriate ARIA, visible focus, and sufficient contrast.
+- Self-host brand assets and fonts without automatic third-party font, script, or image requests.
+- Obtain an accepted ADR before another change to the visual direction.
 
-### Visual Design Principles
+Existing source, snippets, and token names do not prove compliance.
+Implementation and rendered evidence must satisfy the accepted contract.
 
-#### 1. Visual Hierarchy Through Weight
+## A focused security tool
 
-Headlines use **Crimson Pro Bold (700)** at generous sizes (2.5rem+) to establish authority. Body text uses **Manrope** at comfortable reading sizes (1rem base, 1.5 line-height). The typographic contrast creates natural scanning patterns without needing bold colors.
+A decision view explains who requests access, what access means, and what happens next.
+A console view helps users inspect and change existing access.
 
-**Implementation:**
+Use neutral surfaces, 1px semantic borders, compact spacing, and a sans-serif hierarchy.
+Do not use decorative gradients, textures, strong card shadows, editorial serif headings, or page-entry animation.
 
-- Headings: Crimson Pro, weight 700 (bold) or 600 (semibold), letter-spacing -0.02em
-- Body text: Manrope, weight 400 (regular) or 500 (medium), letter-spacing -0.01em
-- Monospace: JetBrains Mono for technical values (OAuth scopes, agent IDs), weight 500
+Each view has at most one accent-colored primary action.
+Consent uses Allow. Tool review uses Approve once.
+Deny and remembered approval remain non-accent actions.
+Destructive confirmation appears only after an explicit request.
 
-#### 2. Color as Semantic Signal
+Required permissions remain locked. Optional choices remain explicit.
+Color, animation, and browser preferences must never imply authorization.
 
-| Color                   | Hex Values                                        | Usage                                                           |
-| ----------------------- | ------------------------------------------------- | --------------------------------------------------------------- |
-| **Navy (Trust)**        | #0A2540 (deep), #1E4D6B (medium), #E8F1F5 (light) | Primary actions, headings, critical UI chrome—conveys stability |
-| **Emerald (Success)**   | #059669                                           | Success states, granted permissions—nature's "go ahead" signal  |
-| **Amber (CTA/Warning)** | #D97706                                           | CTAs and warnings—attention without alarm                       |
-| **Warm Neutrals**       | #faf9f7 (cream), #f5f1ed (sand), #e8e3de (taupe)  | Backgrounds create gentle, non-clinical environment             |
-| **Pure White**          | #ffffff                                           | Elevated cards that "float" above warm background               |
+## Two shared shells
 
-#### 3. Elevation Through Shadow, Not Borders
+| Component | Responsibility |
+| --- | --- |
+| ConsoleShell | Collapsible sidebar, local wordmark, search, navigation, pending count, user menu, and shared page header |
+| DecisionShell | Centered column with a 640px maximum, local wordmark, focused content, and small footer |
+| PageHeader | Page title, one-line purpose, and the action assigned by the UI contract, if any |
 
-- Cards use subtle multi-layer shadows: `0 2px 8px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,1)`
-- Card hover states increase elevation: `0 8px 20px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1)`
-- Modal shadows: `0 20px 40px rgba(0,0,0,0.12)`
-- Focus states use 2px navy ring at 2px offset (clear, not aggressive)
-- Borders are used sparingly, only for visual containment (muted taupe/slate)
+These universal components belong in `web/src/design-system/components/layout/`.
+The mobile console uses Sheet. The collapsed sidebar uses a compact local mark with an accessible name.
 
-#### 4. Motion That Guides, Not Entertains
+The five existing route addresses remain unchanged. `/settings` adds browser theme preferences.
+An authorization session selects DecisionShell on `/agents/:id`, including re-consent and invalid-session errors.
+Without that context, agent detail uses ConsoleShell. Approval review always uses DecisionShell.
 
-| Timing             | Use Case                                                     | Easing                            |
-| ------------------ | ------------------------------------------------------------ | --------------------------------- |
-| **Fast (150ms)**   | Hover color transitions, focus ring appearance               | cubic-bezier(0.4, 0, 0.2, 1)      |
-| **Base (200ms)**   | Button state changes, dropdown open/close                    | cubic-bezier(0.34, 1.56, 0.64, 1) |
-| **Slow (300ms)**   | Card elevation changes, modal overlays, component animations | cubic-bezier(0.34, 1.56, 0.64, 1) |
-| **Slower (500ms)** | Page transitions, full-screen loading states                 | cubic-bezier(0.34, 1.56, 0.64, 1) |
+At 320px and 200% zoom, neither shell permits horizontal page scrolling.
+Responsive table rows retain their actions and permission details.
+The desktop Agents view must fit 12 rows in a 1080px-high viewport.
 
-All animations respect `prefers-reduced-motion` preference—fallback to instant state changes for users who prefer reduced motion.
+## Typography and local brand
 
-#### 5. Whitespace as a Luxury Signal
+| Token | Family | Use |
+| --- | --- | --- |
+| `font-display` | Zalando Sans Variable | Titles, decision names, empty-state headings, and statistics |
+| `font-sans` | Inter Variable | Body text, controls, and navigation |
+| `font-mono` | JetBrains Mono Variable | Identifiers, existing scope displays, arguments, and timestamps |
 
-- Generous padding in cards: 24px standard, 32px for important sections
-- Vertical spacing between major sections: 64px
-- Content max-width: 1280px (never full-bleed text)
-- Components breathe—never cramped or overcrowded
+Use normal-width Zalando Sans. Do not add a SemiExpanded download.
+Self-host the subsetted WOFF2 files and licenses in `web/public/fonts/`.
+Keep fallback fonts and `font-display: swap`.
+Preload only the Zalando Sans and Inter latin subsets. Load the mono face only where needed.
+Measure the compressed decision-route budget instead of assuming that variable fonts are smaller.
 
-### Distinctive Visual Details
+Preserve the supplied wordmarks through text-to-path conversion in `web/public/brand/`.
+Use the black wordmark in light mode and the white wordmark in dark mode.
+Remove remote SVG font references. Derive the compact mark from the local favicon, not a new shield.
 
-#### Gradient Backgrounds
+Unknown external logos use a local fallback.
+User-directed external links and OAuth2 navigation remain available.
+No page automatically loads third-party fonts, scripts, or images.
 
-Not typical purple-to-pink. Our gradients are **warm neutrals with subtle shifts**:
+## Color and themes
 
-```css
-background: linear-gradient(
-  135deg,
-  #faf9f7 0%,
-  #f5f1ed 50%,
-  rgba(232, 227, 222, 0.3) 100%
-);
-```
+[COLOR_GUIDE.md](COLOR_GUIDE.md) owns the complete semantic OKLCH color contract.
+[TOKEN_GUIDE.md](TOKEN_GUIDE.md) defines token use and maps the roles through Tailwind 4 `@theme inline`.
 
-This gradient creates a sophisticated, calm backdrop that doesn't compete with content.
+Neutral blue is the sole primary accent. The `accent` token is a neutral hover and selection surface.
+Status colors communicate success, warning, error, information, and authoritative tool risk.
+Risk has a label and explanation. An unrated tool shows “Risk not rated”.
+Permission groups show no risk indicator because permission sets carry no rating.
 
-#### Micro-Textures
+Light, dark, and system choices persist per browser under `aib.theme`.
+The first-paint script and React provider use the same preference precedence.
+System mode follows later OS changes. Explicit light or dark mode does not.
+Native controls, scrollbars, and portaled overlays use the resolved theme.
 
-Subtle grain overlay on cards (2% opacity noise) adds tactile quality without being distracting. This gives the interface a premium, printed feel while maintaining digital clarity.
+## Owned components and copy
 
-#### Shadow Strategy
+Use the Radix versions of shadcn/ui components in the existing design-system categories.
+Keep CVA, existing aliases, and the `cn()` utility with `tailwind-merge`.
+Do not create a competing `components/ui` library.
 
-**Cards (default state)**
+The Button variants are `primary`, `secondary`, `outline`, `ghost`, and `destructive`.
+Use Dialog, DropdownMenu, Input, RadioGroup, Separator, and Toaster instead of their replaced components.
+The [cutover inventory](../../../../specs/047-redesign-consent-console/cutover-inventory.md) records every replacement and retained component.
 
-```css
-box-shadow:
-  0 2px 8px rgba(0, 0, 0, 0.04),
-  inset 0 1px 0 rgba(255, 255, 255, 1);
-```
+Wordmark, TruncatedText, ThemeChoice, ConsoleShell, DecisionShell, and PageHeader are universal design-system components.
+Use Lucide icons with text labels. Hide decorative icons from assistive technology.
+Give each icon-only control an accessible name.
 
-Combines subtle external drop shadow with internal highlight to create depth.
+TanStack Table owns table state, not markup or authorization. Command uses cmdk for search and keyboard interaction.
+Table and Command must not enter the initial decision-route bundle.
+No barrel imported by decision routes can re-export either component. Console consumers import their concrete modules.
 
-**Cards (hover state)**
+Pages and application components take user-facing strings from `@copy`.
+Design-system components receive UI copy through required props or children. They do not import `@copy`.
+Use action-first wording and preserve technical identifiers exactly.
 
-```css
-box-shadow:
-  0 8px 20px rgba(0, 0, 0, 0.1),
-  inset 0 1px 0 rgba(255, 255, 255, 1);
-```
+## Interaction and motion
 
-Elevation increases on hover for interactive feedback.
+Use CSS-only feedback at 120–200ms with ease-out timing.
+Use 120ms for hover, 160ms for controls, and 200ms for overlays.
+`@starting-style` is an optional visual enhancement, not an interaction requirement.
 
-**Modals**
+Reduced motion removes movement and delay.
+Do not animate page entry or approval decisions with shared-layout motion.
+Do not add Framer Motion.
+[MOTION_GUIDE.md](MOTION_GUIDE.md) defines the motion tokens and reduced-motion contract.
 
-```css
-box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12);
-```
+Dialog and Sheet trap focus, provide a close control, and restore focus to the trigger.
+Tooltips supplement visible labels and support keyboard focus.
+Focus and interaction must not wait for animation completion.
 
-Strong separation from page—creates modal prominence.
+## Truthful state
 
-#### Border Radius Strategy
+A domain-verified Agent Origin Label does not verify a publisher's legal identity.
+Without CIMD metadata, consent shows “Registered by your administrator”.
+Console views show no Agent Origin Label. No existing response identifies a publisher, so the UI shows no publisher field.
+Localhost warnings remain prominent.
 
-| Component | Radius     | Pixel Value                      |
-| --------- | ---------- | -------------------------------- |
-| Buttons   | 6px (md)   | Subtle rounding, not pill-shaped |
-| Cards     | 12px (xl)  | Generous but not extreme         |
-| Modals    | 16px (2xl) | Premium feel                     |
-| Inputs    | 6px (md)   | Consistency with buttons         |
-| Badges    | 4px (base) | Compact, not rounded pills       |
+A connection is not a grant. Its state reflects token usability from existing session fields and authoritative operation results.
+“No connection” appears only for a required service without a connection in agent context.
+Do not infer missing scopes from the provider's scope catalogue.
 
-### Component Aesthetic Archetypes
+Permission groups show their human-readable name and description.
+Do not add raw scope strings to views that do not show them today.
+Do not display last use or substitute creation and modification times for it.
 
-#### Primary Button
+The Agents list shows agent identity, expiry, View, and confirmed Revoke.
+It has no permission-set count column and makes no per-agent count requests.
+The existing `activeGrantCount` counts UserGrant records, not permission sets.
+This clarification changes no API contract.
 
-The most important visual element in the interface.
+Revocation requires confirmation. An optimistic pending state is not server success.
+Failure restores the row and announces an error.
+Approval and grant creation wait for the server result.
 
-**Visual Specifications:**
+## Accessibility and verification
 
-- Background: Deep navy (#0d1829) with subtle gradient overlay
-- Text: Pure white (#ffffff) in Manrope Medium (500)
-- Height: 44px (touch-friendly)
-- Padding: 12px 16px
-- Shadow: `0 2px 8px rgba(0,0,0,0.08)` (default), `0 8px 20px rgba(0,0,0,0.1)` (hover)
-- Transform: `translateY(-1px)` on hover (subtle lift)
-- Loading state: Spinning ring in white, button slightly desaturated
-- Transition: All properties 200ms cubic-bezier(0.34, 1.56, 0.64, 1)
+Keep the WCAG 2.1 AA floor and meet the feature's WCAG 2.2 AA target.
+All text requires at least 4.5:1 contrast. Controls and focus indicators require at least 3:1 against adjacent surfaces.
 
-#### Card Component
+Every action has a keyboard path. Focus remains visible and unobscured by sticky controls.
+Target sizes meet WCAG 2.2 AA, with larger touch targets where space permits.
 
-The workhorse of the UI—used for content grouping and elevation.
+New approvals, decision results, and toasts use status announcements without moving focus.
+Accessible expansions expose truncated text and existing exact-scope displays.
+React escapes untrusted text.
 
-**Visual Specifications:**
+Every component story runs in both themes with the applicable interaction states and a reviewed visual baseline.
+Accessibility and visual-regression failures block CI.
+Browser journeys cover focus, zoom, reduced motion, and network privacy beyond automated accessibility checks.
+[ACCESSIBILITY_GUIDE.md](ACCESSIBILITY_GUIDE.md) defines the evidence requirements.
 
-- Background: Pure white with 10px blur backdrop-filter (if supported)
-- Border: 1px solid rgba(240, 237, 232, 0.8) (barely visible, just containment)
-- Padding: 24px standard, 32px for headers
-- Hover: Elevation increase + translateY(-2px) shift
-- Shadow: `0 2px 8px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,1)` (default)
-- Hover shadow: `0 8px 20px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1)`
-- Transitions: All properties 300ms cubic-bezier(0.34, 1.56, 0.64, 1)
+## Single-cutover rule
 
-#### Form Input
+Replace the design system and every affected caller in one cutover.
+Do not introduce feature flags, parallel presentations, compatibility aliases, or a second design-system directory.
+Remove obsolete presentation, tokens, fonts, animations, and dependencies in that cutover.
 
-Trust through clarity—users need to feel confident entering sensitive data.
+The [plan](../../../../specs/047-redesign-consent-console/plan.md) owns the full documentation inventory and acceptance gates.
+Every current guide must describe the accepted system. Historical feature records preserve their original decisions.
 
-**Visual Specifications:**
+## Historical note — Refined Trust Architecture, retired 2026-09-27
 
-- Border: 1.5px solid neutral-300 (default), navy-700 (focus), red-700 (error)
-- Height: 44px (touch-friendly)
-- Padding: 12px 16px
-- Label: Manrope Medium (500), 14px, positioned above input (not floating)
-- Helper text: 12px, muted secondary color
-- Error message: 12px, error color (#DC2626), with small alert icon
-- Focus ring: 2px solid navy-700 at 2px offset
-- Disabled state: gray-400 background, gray-300 border
-
-#### Modal
-
-Command attention without aggression—critical for permission dialogs.
-
-**Visual Specifications:**
-
-- Overlay: rgba(13, 24, 41, 0.5) with 8px backdrop-blur (dark navy, semi-transparent)
-- Modal body: Pure white, 16px border-radius, `0 20px 40px rgba(0,0,0,0.12)` shadow
-- Animation: Overlay fades in 200ms, modal slides up and scales in 300ms with delay
-- Close button: Ghost style in top-right, 44×44px minimum for accessibility
-- Padding: 24px (standard), 32px (spacious sections)
-- Header: Separate background (if multi-section), font-size 24px, Crimson Pro Bold
-
----
-
-## Core Principles
-
-### 1. Simplicity & Clarity
-
-**Definition**: Design systems should reduce complexity and make interfaces predictable and easy to understand.
-
-**Application:**
-
-- Each component has a single, well-defined purpose
-- Props interfaces are intuitive with sensible defaults
-- Components are named clearly (e.g., `GrantStatusBadge` for grant statuses)
-- Complex functionality is broken into smaller, composable pieces
-
-**Examples:**
-
-- `Badge` component only displays a tag/status - no interaction
-- `Button` component has clear variants (primary, secondary, ghost, danger)
-- Props like `variant`, `size`, `disabled` follow consistent naming across all components
-
-### 2. Accessibility First (WCAG 2.1 AA)
-
-**Definition**: All components must be usable by everyone, including people with disabilities.
-
-**Implementation:**
-
-- Semantic HTML (proper use of `<button>`, `<a>`, `<nav>`, `<main>`, etc.)
-- ARIA attributes for screen readers (`aria-label`, `aria-expanded`, `aria-current`)
-- Keyboard navigation support for all interactive elements
-- Color contrast ratios meet WCAG AA standards (4.5:1 for text, 3:1 for graphics)
-- Focus indicators visible and consistent across all components
-- Proper heading hierarchy (h1 > h2 > h3, etc.)
-
-**Examples:**
-
-- Modal uses ARIA `role="dialog"` with `aria-labelledby` for title
-- Accordion items have `aria-expanded` to indicate open/closed state
-- Table headers use `<th>` with proper `scope` attributes
-- All buttons have descriptive `aria-label` or visible text
-
-### 3. Consistency
-
-**Definition**: Similar functionality should look and behave the same across all components.
-
-**Application:**
-
-- Design tokens (colors, spacing, typography) are reused consistently
-- CVA (class-variance-authority) manages variants programmatically
-- Interaction patterns are standardized (e.g., all forms have similar patterns)
-- Props naming conventions are consistent (`size`, `variant`, `disabled`)
-- Animation timings and easing curves are unified
-
-**Examples:**
-
-- All components support `size` prop with same values: `sm`, `md`, `lg`
-- All buttons use same color palette and hover/focus states
-- All form inputs have consistent error display and labeling
-- All overlays (Modal, Tooltip, Dropdown) use Headless UI for consistency
-
-### 4. Flexibility
-
-**Definition**: Components should be flexible enough to handle various use cases without creating new components.
-
-**Implementation:**
-
-- Props are composable and combine predictably
-- Children support allows for custom content
-- Slots/render props for advanced customization
-- Support both controlled and uncontrolled patterns
-- Responsive design built-in via Tailwind utilities
-
-**Examples:**
-
-- `Stack` component can be used for any flex layout (horizontal, vertical, with gaps)
-- `Card` component accepts header, footer, and children for flexible layouts
-- `Button` accepts icon slot, making it versatile across use cases
-- `Accordion` supports rich content in items (not just text)
-
-### 5. Performance
-
-**Definition**: Components should be optimized for rendering performance and bundle size.
-
-**Implementation:**
-
-- Proper use of React hooks (`useMemo`, `useCallback`) to prevent unnecessary re-renders
-- Memoization of expensive operations
-- Lazy loading for heavy components
-- CSS utilities instead of inline styles where possible
-- Tree-shaking friendly exports
-
-**Examples:**
-
-- Dropdown groups items using `useMemo` to prevent infinite re-renders
-- Card uses `React.forwardRef` for efficient ref handling
-- SVG icons are inlined to avoid HTTP requests
-- CSS animations instead of JavaScript where possible
-
-### 6. Progressive Enhancement
-
-**Definition**: Core functionality works without JavaScript; enhanced experiences layer on top.
-
-**Application:**
-
-- Base HTML semantic structure works without styling
-- Form inputs work with native browser functionality
-- Links navigate properly even if JavaScript fails
-- Progressive enhancement of interactive features
-
-**Examples:**
-
-- Link components render as proper `<a>` tags with `href`
-- Form inputs accept native HTML attributes
-- Date pickers fall back to native date input
-- Modals dismiss with ESC key for accessibility
-
-## Design Values
-
-### Trust & Transparency
-
-The Agentic Identity Broker helps users make informed decisions about data sharing. This reflects in our design:
-
-- Clear, honest communication about permissions and data usage
-- Visual indicators for status and security level
-- No hidden actions or surprises
-- Explicit confirmation for important actions
-
-**Components reflecting this value:**
-
-- `GrantStatusBadge` - Clear permission status indicators
-- `ScopeList` - Transparent permission breakdown
-- `Alert` - Clear messaging for important information
-- `Modal` - Confirmation dialogs for critical actions
-
-### Efficiency
-
-Users often need to manage many delegations and permissions. Design supports this:
-
-- Quick actions and keyboard shortcuts
-- Efficient layouts that show relevant information
-- Smart defaults that reduce decision fatigue
-- Batch operations where appropriate
-
-**Components reflecting this value:**
-
-- `Pagination` - Navigate large datasets
-- `Table` - Display and sort many items
-- `Tabs` - Organize content without changing pages
-- `Breadcrumb` - Quick navigation context
-
-### User Control
-
-Users should always feel in control of their security and data:
-
-- Clear options for enabling/disabling features
-- Easy undo actions where possible
-- Explicit confirmation before destructive actions
-- Easy access to detailed information
-
-**Components reflecting this value:**
-
-- `Switch` - Clear on/off toggle
-- `Checkbox` - Explicit selection control
-- `GrantValidityControl` - Fine-grained permission control
-- `AppLayout` - Customizable layout and sidebar
-
-## Implementation Guidelines
-
-### When to Create a New Component
-
-Create a new component when:
-
-1. The component has a distinct, well-defined purpose
-2. It's reused across multiple applications
-3. It has specific styling or interaction patterns
-4. It doesn't fit naturally into existing components
-
-Don't create a new component if:
-
-1. It's application-specific logic wrapped in a component
-2. It can be composed from existing components
-3. It's used in only one place
-4. It's a simple styled wrapper (use utilities instead)
-
-### When to Extend an Existing Component
-
-Extend a component when:
-
-1. New functionality is closely related to the component's purpose
-2. The component is already complex but benefits from the new behavior
-3. The new functionality would be confusing on its own
-4. Users expect this feature as part of the component
-
-Examples of extension:
-
-- Adding `expandable` prop to Accordion (similar interface expansion)
-- Adding risk level colors to GrantStatusBadge (same purpose, more context)
-- Adding sorting to Table (common data table feature)
-
-### Component Maturity Levels
-
-**Level 1: Experimental**
-
-- New component, limited use
-- Public API stability is not guaranteed
-- Not recommended for production until Level 2
-
-**Level 2: Stable**
-
-- Used in production applications
-- API is stable
-- Comprehensive documentation and stories
-- Accessibility verified
-
-**Level 3: Mature**
-
-- Well-established in the system
-- Proven across multiple applications
-- Rich ecosystem of examples
-- Strong community adoption
-
-All current design system components are at **Level 2: Stable** or higher.
-
-## Design Evolution
-
-The design system evolves based on:
-
-1. User feedback and usage patterns
-2. Accessibility improvements and compliance
-3. Performance monitoring and optimization
-4. Emerging design patterns and best practices
-5. Framework and dependency updates
-
-### API Evolution Policy
-
-- Use a major version for incompatible public API changes
-- Prefer additive public API changes
-- Keep public APIs stable
-
-## Summary
-
-These principles ensure that the Refined Trust Architecture design system remains:
-
-- **Accessible** to all users
-- **Consistent** across applications
-- **Performant** and efficient
-- **Flexible** for different use cases
-- **Trustworthy** and transparent
-- **Maintainable** by development teams
-
-By following these principles, we create interfaces that users trust and developers love to build with.
+Refined Trust Architecture was the previous visual direction.
+It used Crimson Pro, Manrope, trust navy, amber actions, warm neutrals, shadow elevation, and a longer motion scale.
+[ADR 037](../../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) superseded that direction on 2026-09-27.
+These facts describe history. They are not current implementation rules or a second token contract.

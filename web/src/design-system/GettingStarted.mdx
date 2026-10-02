@@ -4,99 +4,135 @@ import { Meta } from '@storybook/addon-docs/blocks';
 
 # Agentic Identity Broker Design System
 
-Welcome to the **Refined Trust Architecture** design system for the consent management frontend.
+## Authority and implementation status
 
-## Overview
+[ADR 037](../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) was accepted on 2026-09-27.
+The accepted feature 047 system uses owned shadcn/Radix components and semantic OKLCH themes.
+This guide describes the current component system. Release validation remains separate from implementation.
 
-This design system provides a comprehensive component library optimized for capturing consent from non-technical end-users who delegate permissions to AI agents. Every component is designed to communicate **trustworthiness, clarity, and control**.
+[Design principles](./docs/DESIGN_PRINCIPLES.md) define the active direction.
+[Color guide](./docs/COLOR_GUIDE.md) defines exact light and dark values.
+[Token guide](./docs/TOKEN_GUIDE.md) defines the remaining visual tokens.
+The retired component APIs and TypeScript token objects are no longer available.
 
-## Design Philosophy
+## Start with the task
 
-### Refined Trust Architecture
+1. Read the [decision trees](./docs/DECISION_TREES.md) before selecting components or variants.
+2. Read the [pairing guide](./docs/COMPONENT_PAIRING_GUIDE.md) for related controls.
+3. Read the [composition patterns](./docs/COMPOSITION_PATTERNS.md) for shells and domain flows.
+4. Read [common mistakes](./docs/COMMON_MISTAKES.md) before styling a component.
+5. Read the owned source before selecting props.
 
-The aesthetic blends the visual gravity of a **bank vault** with the approachability of **modern SaaS**. This is where users make critical decisions about AI agent permissions, so every pixel must communicate authority and trust.
+Use the existing component categories, aliases, CVA, and `cn()`.
+Do not create a second primitive library or copy an unreviewed registry update over owned components.
+Deliver all consumers in one cutover without feature flags, compatibility aliases, or parallel presentations.
 
-**Core Principles:**
+## Component categories
 
-- **Serif Authority with Warm Humanity**: Crimson Pro (serif) for headings creates trust, Manrope (sans) for body text adds approachability
-- **Color as Semantic Signal**: Navy for authority, Emerald for success, Amber for attention
-- **Elevation Through Shadow**: Multi-layer shadows create depth without borders
-- **Motion That Guides**: Purposeful animations (150-500ms) that guide without entertaining
-- **Whitespace as Luxury**: Generous padding and spacing create a premium feel
+Import components from their concrete directories:
 
-## Typography
+| Category | Components and purpose |
+| --- | --- |
+| `primitives/` | Button, Badge, Avatar, Separator, Wordmark |
+| `inputs/` | Input, TextArea, Select, Checkbox, RadioGroup, Switch, DatePicker |
+| `data-display/` | Card, Table, TruncatedText |
+| `layout/` | ConsoleShell, DecisionShell, PageHeader |
+| `navigation/` | Tabs |
+| `overlays/` | Dialog, DropdownMenu, Popover, Tooltip, Sheet |
+| `feedback/` | Alert, InlineError, EmptyState, Skeleton, Toaster, and error boundaries |
+| `advanced/` | Accordion and Command |
 
-```css
-Headings: Crimson Pro (serif) - 600/700 weight
-Body: Manrope (sans-serif) - 400/500 weight
-Monospace: JetBrains Mono - 500 weight
-```
+ThemeChoice belongs in `design-system/theme/`.
+Universal patterns belong in the design system. Application components own consent, session, and approval behavior.
 
-## Color System
+## Choose a shell
 
-### Semantic Tokens
+ConsoleShell owns console navigation, mobile Sheet, search and user-menu slots, and the main content region.
+PageHeader supplies the title, one-line purpose, and optional assigned action.
+DecisionShell supplies a centered column no wider than 640 px, a wordmark, and a footer without navigation.
+Shells fetch no data.
 
-- **trust-deep** (#0A2540): Primary actions, critical UI
-- **trust** (#1E4D6B): Medium authority elements
-- **trust-light** (#E8F1F5): Light backgrounds
-- **cta** (#D97706): Call-to-action buttons, warnings
-- **success-primary** (#059669): Success states, granted permissions
-- **error-primary** (#DC2626): Error states
+An authorization session selects DecisionShell for `/agents/:id`, including invalid or expired session errors.
+Without that session, the agent page uses ConsoleShell.
+`/approvals/:id` always uses DecisionShell.
 
-## Component Categories
+Table and Command are console dependencies.
+Import concrete modules rather than barrels that pull either dependency into a decision bundle.
+Do not re-export Table or Command from a barrel used by decision routes.
 
-### Primitives
+## Use semantic roles and one accent action
 
-Button, Badge, Avatar, Divider, Spinner, Icon
+This example composes a reusable action group.
+Its caller supplies labels through props. The application obtains those strings from `@copy`.
+Primitives never import the application copy catalogue.
 
-### Inputs
-
-TextInput, TextArea, Select, Checkbox, Radio, Switch, DatePicker
-
-### Feedback
-
-Alert, Toast, InlineError, EmptyState, Skeleton
-
-### Overlays
-
-Modal, Tooltip, Dropdown, Popover
-
-### Navigation
-
-Tabs, Breadcrumb, Pagination
-
-### Data Display
-
-Table, Card, GrantStatusBadge, ScopeList
-
-### Layout
-
-Container, Stack, Grid, AppLayout, PageTransition
-
-### Advanced
-
-Accordion, Progress
-
-## Usage
-
-Import components from the design system:
-
-```typescript
+```tsx
 import { Button } from '@design-system/components/primitives/Button';
-import { cn } from '@design-system/utils';
-import { semanticColors } from '@design-system/tokens';
+
+<div className="flex flex-wrap gap-3">
+  <Button variant="secondary" onClick={onCancel}>{cancelLabel}</Button>
+  <Button variant="primary" onClick={onConfirm}>{confirmLabel}</Button>
+</div>
 ```
 
-## Accessibility
+Button variants are `primary`, `secondary`, `outline`, `ghost`, and `destructive`.
+The limit is one accent action per view, not per section.
+Agents, Connections, the approval queue, and Settings have no page-level accent action.
+Consent uses Allow. Pending tool review uses Approve once.
+Agent management uses Save changes only while its draft has unsaved changes.
+Destructive confirmation uses Dialog, not a resting accent action.
 
-All components follow **WCAG 2.1 AA** guidelines:
+Use `bg-background text-foreground` for pages and `bg-card text-card-foreground` for contained content.
+Use `text-muted-foreground` for supporting text and `border-border` for control boundaries.
+Do not import TypeScript color objects or introduce raw palette utilities, literal component colors, or decorative gradients.
 
-- Keyboard navigation support
-- Screen reader compatibility
-- Visible focus indicators
-- Proper ARIA labels
-- Color contrast compliance
+## Typography and local assets
 
-## Getting Started
+| Role | Font | Utility |
+| --- | --- | --- |
+| Page titles, decision names, empty-state headings | Zalando Sans Variable, normal width | `font-display` |
+| Body text and controls | Inter Variable | `font-sans` |
+| Identifiers, existing scopes, timestamps | JetBrains Mono | `font-mono` |
 
-Browse the component categories in the sidebar to explore interactive examples, view all variants, and experiment with the Playground stories.
+WOFF2 subsets and licenses live in `web/public/fonts/`.
+Outlined wordmarks, the favicon, and the compact mark live in `web/public/brand/`.
+Wordmark selects black artwork in light mode and white artwork in dark mode through theme CSS.
+Its accessible name comes from a required `label` prop.
+
+Asset paths are:
+
+```text
+/brand/AIB_Wordmark_Black.svg
+/brand/AIB_Wordmark_White.svg
+/brand/favicon.svg
+/brand/aib-mark.svg
+```
+
+Use the Wordmark primitive:
+
+```tsx
+<Wordmark label={brandLabel} />
+<Wordmark label={brandLabel} compact />
+```
+
+Do not load third-party fonts, scripts, or images.
+An off-origin agent or service image uses a local Avatar fallback.
+User-initiated external links and OAuth2 redirects retain their existing behavior.
+
+## Motion, stories, and accessibility
+
+Use CSS-only feedback at 120–200 ms with ease-out.
+Remove movement under `prefers-reduced-motion`.
+Do not add page-entry animation, decorative hover lifts, or strong card shadows.
+
+Principle XI requires WCAG 2.1 AA. Feature 047 targets WCAG 2.2 AA.
+Every component story needs light and dark accessibility checks and reviewed visual baselines.
+Cover default, hover, focus-visible, disabled, error, loading, and overlay-open states where applicable.
+
+Rendered text needs 4.5:1 contrast. Controls need 3:1.
+Preserve visible unobscured focus, keyboard operation, focus return, and state announcements.
+Both shells must remain usable at 320 px and 200% zoom without horizontal page scrolling.
+These are acceptance requirements, not recorded results.
+
+Browse component stories for behavior and variants.
+See [web/AGENTS.md](../../AGENTS.md) for source routing, development commands, and testing conventions.

@@ -1,100 +1,37 @@
-/**
- * PersistenceSelector - Shared design-system-radio-backed persistence picker.
- *
- * Used by both the approval detail page and the Tool Authorizations list so the
- * persistence control behaves and looks the same in both places.
- */
-
-import { Radio } from '@design-system/components/inputs/Radio';
+import { useId } from 'react';
+import { RadioGroup, RadioGroupItem } from '@design-system/components/inputs/RadioGroup';
+import { approvalCopy } from '@copy/approvals';
 import type { ApprovalPersistence } from '../../types/approval';
 
-interface PersistenceSelectorProps {
+export interface PersistenceSelectorProps {
   value: ApprovalPersistence;
   onChange: (value: ApprovalPersistence) => void;
   disabled?: boolean;
   name?: string;
+  rememberOnly?: boolean;
 }
 
-interface PersistenceOption {
-  value: ApprovalPersistence;
-  label: string;
-  description: string;
-}
+const options = [
+  { value: 'once', label: approvalCopy.once, description: approvalCopy.onceDescription },
+  { value: 'session', label: approvalCopy.session, description: approvalCopy.sessionDescription },
+  { value: 'permanent', label: approvalCopy.permanent, description: approvalCopy.permanentDescription },
+] as const;
 
-const OPTIONS: PersistenceOption[] = [
-  {
-    value: 'once',
-    label: 'Just this once',
-    description:
-      'Allow this specific tool call only. The agent will need to request approval again next time.',
-  },
-  {
-    value: 'session',
-    label: 'For this session',
-    description: 'Allow this tool for the duration of the current session.',
-  },
-  {
-    value: 'permanent',
-    label: 'Always allow',
-    description:
-      'Permanently allow this agent to use this tool without asking.',
-  },
-];
-
-export function PersistenceSelector({
-  value,
-  onChange,
-  disabled = false,
-  name = 'approval-persistence',
-}: PersistenceSelectorProps) {
-  return (
-    <fieldset className="space-y-3" disabled={disabled}>
-      <legend className="mb-2 text-sm font-medium text-neutral-700">
-        How long should this be allowed?
-      </legend>
-      <div className="grid gap-2 md:grid-cols-3">
-        {OPTIONS.map((option) => {
-          const checked = value === option.value;
-          const optionId = `${name}-${option.value}`;
-
-          return (
-            <label
-              key={option.value}
-              htmlFor={optionId}
-              className={[
-                'block rounded-lg border p-3 transition-colors',
-                checked
-                  ? 'border-trust-deep bg-trust-light'
-                  : 'border-neutral-200 bg-white hover:border-neutral-300',
-                disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
-              ].join(' ')}
-            >
-              <Radio
-                id={optionId}
-                name={name}
-                value={option.value}
-                checked={checked}
-                disabled={disabled}
-                onChange={() => onChange(option.value)}
-                label={option.label}
-                description={option.description}
-              />
-            </label>
-          );
-        })}
-      </div>
-
-      {value === 'permanent' && (
-        <div
-          className="rounded-lg border border-warning-primary/30 bg-warning-light p-3 text-sm text-warning-dark"
-          role="alert"
-        >
-          <strong>Warning:</strong> This grants permanent access. You can revoke
-          it any time from this page.
+export function PersistenceSelector({ value, onChange, disabled = false, name, rememberOnly = false }: PersistenceSelectorProps) {
+  const id = useId();
+  return <fieldset className="space-y-3" disabled={disabled}>
+    <legend className="mb-2 text-sm font-medium">{approvalCopy.persistenceLegend}</legend>
+    <RadioGroup name={name ?? id} aria-label={approvalCopy.persistence} value={rememberOnly && value === 'once' ? '' : value} disabled={disabled} onValueChange={(next) => {
+      if (next === 'once' || next === 'session' || next === 'permanent') onChange(next);
+    }}>
+      {options.filter((option) => !rememberOnly || option.value !== 'once').map((option) => <div key={option.value} className="flex items-start gap-3 rounded-md border border-border p-3">
+        <RadioGroupItem id={`${id}-${option.value}`} value={option.value} aria-describedby={`${id}-${option.value}-description`} />
+        <div className="min-w-0 space-y-1">
+          <label htmlFor={`${id}-${option.value}`} className="block text-sm font-medium">{option.label}</label>
+          <p id={`${id}-${option.value}-description`} className="text-sm text-muted-foreground">{option.description}</p>
         </div>
-      )}
-    </fieldset>
-  );
+      </div>)}
+    </RadioGroup>
+    {value === 'permanent' && <p role="alert" className="rounded-md border border-border p-3 text-sm text-warning"><strong>{approvalCopy.warning}</strong> {approvalCopy.permanentWarning}</p>}
+  </fieldset>;
 }
-
-export default PersistenceSelector;

@@ -25,11 +25,14 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mxschmitt/playwright-go"
@@ -56,10 +59,14 @@ type screenshotPage interface {
 // - Implicit waits via Playwright (no manual sleep)
 // - Clear error messages with proper error wrapping
 type Page struct {
-	page          playwright.Page
-	baseURL       string
-	timeout       time.Duration
-	screenshotDir string
+	page                     playwright.Page
+	baseURL                  string
+	timeout                  time.Duration
+	screenshotDir            string
+	requests                 requestLog
+	requestHandler           func(playwright.Request)
+	closeHandler             func(playwright.BrowserContext)
+	screenshotContextFactory func(context.Context, string) (playwright.BrowserContext, error)
 }
 
 // NewPage creates a new Page wrapper around a Playwright page.
@@ -120,29 +127,33 @@ func NewPage(page playwright.Page, baseURL string) *Page {
 //	err = p.Navigate(ctx, "/agents/123/detail")
 //	require.NoError(t, err)
 func (p *Page) Navigate(ctx context.Context, path string) error {
-	// Ensure path is absolute
 	if path != "" && path[0] != '/' {
 		path = "/" + path
 	}
-
 	url := p.baseURL + path
-
-	// Set timeout for navigation
-	_, cancel := context.WithTimeout(ctx, p.timeout)
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
-
-	// Navigate (Playwright automatically waits for page load)
-	// Note: Playwright Go client handles timeouts internally, not via context
-	_, err := p.page.Goto(url)
+	timeout, err := p.locatorTimeout(ctx)
 	if err != nil {
+		return err
+	}
+	if _, err := p.page.Goto(url, playwright.PageGotoOptions{Timeout: timeout}); err != nil {
 		return fmt.Errorf("failed to navigate to %s: %w", url, err)
 	}
-
-	// Wait for page to be fully loaded
-	if err := p.page.WaitForLoadState(); err != nil {
-		return fmt.Errorf("failed waiting for page load at %s: %w", url, err)
+	timeout, err = p.locatorTimeout(ctx)
+	if err != nil {
+		return err
 	}
-
+	_, err = p.page.WaitForFunction(`() => {
+		const main = document.getElementById('root')?.querySelector('main');
+		if (!main) return false;
+		return ![...main.querySelectorAll('[aria-busy="true"], [role="status"]')].some(element =>
+			element.getAttribute('aria-busy') === 'true' ||
+			/^Loading/.test((element.getAttribute('aria-label') || element.textContent || '').trim()));
+	}`, nil, playwright.PageWaitForFunctionOptions{Timeout: timeout})
+	if err != nil {
+		return fmt.Errorf("application did not finish loading at %s: %w", url, err)
+	}
 	return nil
 }
 
@@ -441,4 +452,633 @@ func (p *Page) GetPlaywrightPage() playwright.Page {
 func captureScreenshotsEnabled() bool {
 	value := strings.TrimSpace(os.Getenv("E2E_CAPTURE_SCREENSHOTS"))
 	return strings.EqualFold(value, "true") || value == "1"
+}
+
+// ThemeFrame records the theme observed before the browser's first painted frame.
+type ThemeFrame struct {
+	Theme       string `json:"theme"`
+	ColorScheme string `json:"colorScheme"`
+}
+
+type RecordedRequest struct {
+	URL    string
+	Method string
+}
+
+// requestLog protects event callbacks against simultaneous reads and late events
+// from an earlier recording. Returned snapshots never share the mutable buffer.
+type requestLog struct {
+	mu         sync.Mutex
+	generation uint64
+	active     bool
+	entries    []RecordedRequest
+}
+
+func (r *requestLog) start() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.generation++
+	r.active = true
+	r.entries = nil
+	return r.generation
+}
+
+func (r *requestLog) record(generation uint64, request RecordedRequest) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.active && generation == r.generation {
+		r.entries = append(r.entries, request)
+	}
+}
+
+func (r *requestLog) stop() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.active = false
+}
+
+func (r *requestLog) snapshot() []RecordedRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]RecordedRequest{}, r.entries...)
+}
+
+func (p *Page) locatorTimeout(ctx context.Context) (*float64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	timeout := p.timeout
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = min(timeout, time.Until(deadline))
+	}
+	// Playwright interprets zero as unlimited.
+	return playwright.Float(max(1, float64(timeout.Milliseconds()))), nil
+}
+
+func (p *Page) locatorClick(ctx context.Context, locator playwright.Locator, description string) error {
+	timeout, err := p.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	if err := locator.Click(playwright.LocatorClickOptions{Timeout: timeout}); err != nil {
+		return fmt.Errorf("click %s: %w", description, err)
+	}
+	return ctx.Err()
+}
+
+func (p *Page) locatorText(ctx context.Context, locator playwright.Locator, description string) (string, error) {
+	timeout, err := p.locatorTimeout(ctx)
+	if err != nil {
+		return "", err
+	}
+	text, err := locator.InnerText(playwright.LocatorInnerTextOptions{Timeout: timeout})
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", description, err)
+	}
+	return strings.TrimSpace(text), ctx.Err()
+}
+
+func (p *Page) locatorVisible(ctx context.Context, locator playwright.Locator, description string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	visible, err := locator.IsVisible()
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", description, err)
+	}
+	return visible, ctx.Err()
+}
+
+func (p *Page) evaluateJSON(ctx context.Context, locator playwright.Locator, script string, result any) error {
+	timeout, err := p.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	value, err := locator.Evaluate(script, nil, playwright.LocatorEvaluateOptions{Timeout: timeout})
+	if err != nil {
+		return fmt.Errorf("evaluate page observation: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode page observation: %w", err)
+	}
+	if err := json.Unmarshal(data, result); err != nil {
+		return fmt.Errorf("decode page observation: %w", err)
+	}
+	return nil
+}
+
+// SetThemePreference seeds a fresh browser before navigation. Existing stored
+// preferences are preserved on reload so tests can observe real user changes.
+// Install it before the first navigation; the same script records the first frame.
+func (p *Page) SetThemePreference(ctx context.Context, value string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if value != "light" && value != "dark" && value != "system" {
+		return fmt.Errorf("unsupported theme preference %q", value)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	script := `(() => {
+		if (window !== window.top) return;
+		if (localStorage.getItem('__aibE2EThemeSeeded') === null) {
+			if (localStorage.getItem('aib.theme') === null) localStorage.setItem('aib.theme', ` + string(encoded) + `);
+			localStorage.setItem('__aibE2EThemeSeeded', 'true');
+		}
+		requestAnimationFrame(() => {
+			window.__aibFirstPaintTheme = {
+				theme: document.documentElement.dataset.theme || '',
+				colorScheme: getComputedStyle(document.documentElement).colorScheme
+			};
+		});
+	})()`
+	if err := p.page.Context().AddInitScript(playwright.Script{Content: &script}); err != nil {
+		return fmt.Errorf("install theme preference and first-frame recorder: %w", err)
+	}
+	return ctx.Err()
+}
+
+func (p *Page) EmulateColorScheme(ctx context.Context, scheme string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if scheme != "light" && scheme != "dark" && scheme != "no-override" {
+		return fmt.Errorf("unsupported color scheme %q", scheme)
+	}
+	colorScheme := playwright.ColorScheme(scheme)
+	if err := p.page.EmulateMedia(playwright.PageEmulateMediaOptions{ColorScheme: &colorScheme}); err != nil {
+		return fmt.Errorf("emulate color scheme: %w", err)
+	}
+	return ctx.Err()
+}
+
+func (p *Page) ResolvedTheme(ctx context.Context) (string, error) {
+	var theme string
+	err := p.evaluateJSON(ctx, p.page.Locator("html"), `root => root.dataset.theme || ''`, &theme)
+	return theme, err
+}
+
+func (p *Page) FirstPaintTheme(ctx context.Context) (ThemeFrame, error) {
+	var frame ThemeFrame
+	timeout, err := p.locatorTimeout(ctx)
+	if err != nil {
+		return frame, err
+	}
+	handle, err := p.page.WaitForFunction(`() => window.__aibFirstPaintTheme !== undefined`, nil,
+		playwright.PageWaitForFunctionOptions{Timeout: timeout})
+	if err != nil {
+		return frame, fmt.Errorf("wait for first frame (install SetThemePreference before navigation): %w", err)
+	}
+	if err := handle.Dispose(); err != nil {
+		return frame, err
+	}
+	err = p.evaluateJSON(ctx, p.page.Locator("html"), `() => window.__aibFirstPaintTheme`, &frame)
+	return frame, err
+}
+
+// StartRequestRecorder observes the entire context, including popup requests,
+// navigations, and subresources. Start/stop are called by the scenario goroutine;
+// callbacks and snapshots may run concurrently.
+func (p *Page) StartRequestRecorder(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := p.StopRequestRecorder(ctx); err != nil {
+		return err
+	}
+	generation := p.requests.start()
+	p.requestHandler = func(request playwright.Request) {
+		p.requests.record(generation, RecordedRequest{URL: request.URL(), Method: request.Method()})
+	}
+	p.closeHandler = func(playwright.BrowserContext) { p.requests.stop() }
+	p.page.Context().OnRequest(p.requestHandler)
+	p.page.Context().OnClose(p.closeHandler)
+	return nil
+}
+
+// StopRequestRecorder always detaches its own listeners, even after cancellation.
+func (p *Page) StopRequestRecorder(ctx context.Context) error {
+	p.requests.stop()
+	if p.requestHandler != nil {
+		p.page.Context().RemoveListener("request", p.requestHandler)
+		p.requestHandler = nil
+	}
+	if p.closeHandler != nil {
+		p.page.Context().RemoveListener("close", p.closeHandler)
+		p.closeHandler = nil
+	}
+	return ctx.Err()
+}
+
+func (p *Page) RecordedRequests(ctx context.Context) ([]RecordedRequest, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return p.requests.snapshot(), nil
+}
+
+func (p *Page) HasHorizontalPageOverflow(ctx context.Context) (bool, error) {
+	var overflow bool
+	err := p.evaluateJSON(ctx, p.page.Locator("html"), `root => root.scrollWidth > root.clientWidth`, &overflow)
+	return overflow, err
+}
+
+func zoomViewport(percent int) (int, int, error) {
+	if percent <= 0 {
+		return 0, 0, fmt.Errorf("zoom must be positive, got %d", percent)
+	}
+	width, height := 128000/percent, 108000/percent
+	if width < 1 || height < 1 {
+		return 0, 0, fmt.Errorf("zoom %d produces an empty viewport", percent)
+	}
+	return width, height, nil
+}
+
+// EmulateZoom changes CSS layout dimensions, not deviceScaleFactor, which only
+// changes rasterization and does not exercise the reflow required at 200%.
+func (p *Page) EmulateZoom(ctx context.Context, percent int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	width, height, err := zoomViewport(percent)
+	if err != nil {
+		return err
+	}
+	if err := p.page.SetViewportSize(width, height); err != nil {
+		return fmt.Errorf("emulate %d%% layout: %w", percent, err)
+	}
+	return ctx.Err()
+}
+
+func (p *Page) PrimaryAccentActionCount(ctx context.Context) (int, error) {
+	labels, err := p.PrimaryAccentActionLabels(ctx)
+	return len(labels), err
+}
+
+func (p *Page) PrimaryAccentActionLabels(ctx context.Context) ([]string, error) {
+	var labels []string
+	err := p.evaluateJSON(ctx, p.page.Locator("html"), `root =>
+		[...root.querySelectorAll('[data-variant="primary"]')].filter(el => {
+			if (el.closest('[aria-hidden="true"], [inert]')) return false;
+			const style = getComputedStyle(el);
+			const rect = el.getBoundingClientRect();
+			return style.visibility === 'visible' && style.display !== 'none' &&
+				Number(style.opacity) > 0 && rect.width > 0 && rect.height > 0;
+		}).map(el => {
+			const labelled = (el.getAttribute('aria-labelledby') || '').split(/\s+/)
+				.map(id => document.getElementById(id)?.textContent || '').join(' ').trim();
+			return (el.getAttribute('aria-label') || labelled || el.innerText || el.value || '').trim();
+		})`, &labels)
+	return labels, err
+}
+
+type FocusDescription struct {
+	Tag          string `json:"tag"`
+	Role         string `json:"role"`
+	Name         string `json:"name"`
+	Visible      bool   `json:"visible"`
+	FocusVisible bool   `json:"focusVisible"`
+	Unobscured   bool   `json:"unobscured"`
+}
+
+const describeFocusScript = `() => {
+	const el = document.activeElement;
+	if (!el) return {tag:'', role:'', name:'', visible:false, focusVisible:false, unobscured:false};
+	const rect = el.getBoundingClientRect(), style = getComputedStyle(el);
+	const labelled = (el.getAttribute('aria-labelledby') || '').split(/\s+/)
+		.map(id => document.getElementById(id)?.textContent || '').join(' ').trim();
+	const name = el.getAttribute('aria-label') || labelled ||
+		[...(el.labels || [])].map(label => label.textContent).join(' ') ||
+		el.innerText || el.getAttribute('title') || el.getAttribute('placeholder') || '';
+	const visible = rect.width > 0 && rect.height > 0 &&
+		el.checkVisibility({checkOpacity: true, checkVisibilityCSS: true}) &&
+		!el.closest('[inert], [aria-hidden="true"]');
+	const x = Math.max(0, rect.left) + (Math.min(innerWidth, rect.right) - Math.max(0, rect.left))/2;
+	const y = Math.max(0, rect.top) + (Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top))/2;
+	const hit = document.elementFromPoint(x,y);
+	const unobscured = visible && x >= 0 && y >= 0 && x < innerWidth && y < innerHeight &&
+		!!hit && (hit === el || el.contains(hit));
+	const decoration = node => {
+		const css = getComputedStyle(node);
+		return {outline: [css.outlineWidth, css.outlineStyle, css.outlineColor].join(' '),
+			shadow: css.boxShadow, border: [css.borderColor, css.borderWidth, css.borderStyle].join(' ')};
+	};
+	const focused = decoration(el);
+	const hasFocus = el.matches(':focus-within');
+	let baseline = window.__aibKeyboardBaselines?.get(el);
+	if (!baseline && typeof el.blur === 'function' && typeof el.focus === 'function') {
+		el.blur();
+		baseline = decoration(el);
+		el.focus({preventScroll:true});
+	}
+	const hasOutline = parseFloat(style.outlineWidth) > 0 && style.outlineStyle !== 'none' &&
+		style.outlineColor !== 'transparent' && style.outlineColor !== 'rgba(0, 0, 0, 0)';
+	const hasShadow = focused.shadow.split(/,(?![^(]*\))/).some(layer => {
+		const transparent = /\btransparent\b|rgba\([^)]*,\s*0(?:\.0+)?\)|\/\s*0(?:\.0+)?%?\s*\)/.test(layer);
+		const hasExtent = [...layer.matchAll(/(-?[\d.]+)px/g)].some(match => Number(match[1]) !== 0);
+		return !transparent && hasExtent;
+	});
+	const hasRing = !!baseline && (
+		(hasOutline && focused.outline !== baseline.outline) ||
+		(hasShadow && focused.shadow !== baseline.shadow) ||
+		focused.border !== baseline.border);
+	return {tag:el.tagName.toLowerCase(), role:el.getAttribute('role') || '',
+		name:name.trim(), visible, focusVisible:visible && hasFocus && hasRing, unobscured};
+}`
+
+func (p *Page) ActiveElementDescription(ctx context.Context) (FocusDescription, error) {
+	var description FocusDescription
+	err := p.evaluateJSON(ctx, p.page.Locator("html"), describeFocusScript, &description)
+	return description, err
+}
+
+func (p *Page) VisibleText(ctx context.Context) (string, error) {
+	return p.locatorText(ctx, p.page.Locator("body"), "visible page text")
+}
+
+type KeyboardAction struct {
+	Name         string
+	Reached      bool
+	VisibleFocus bool
+}
+
+// KeyboardActionCoverage uses Tab for sequential targets and arrow keys for
+// every enabled item in a tablist/radiogroup. Each roving group is returned to its
+// starting selection before continuing; no action button is activated.
+func (p *Page) KeyboardActionCoverage(ctx context.Context) ([]KeyboardAction, error) {
+	var actions []struct {
+		Name  string `json:"name"`
+		Group int    `json:"group"`
+	}
+	err := p.evaluateJSON(ctx, p.page.Locator("html"), `root => {
+		const original = document.activeElement;
+		window.__aibKeyboardOriginal = original;
+		original?.blur();
+		const actionSelector = 'a[href],button,input:not([type="hidden"]),select,textarea,[role="button"],[role="tab"],[role="radio"],[role="checkbox"],[role="switch"],[role="option"],[role^="menuitem"]';
+		window.__aibKeyboardFindTargets = () => [...root.querySelectorAll(actionSelector + ',[tabindex]')].filter(el => {
+			const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+			return (el.tabIndex >= 0 || el.matches(actionSelector)) && !el.disabled && el.getAttribute('aria-disabled') !== 'true' &&
+				!el.closest('[inert],[aria-hidden="true"]') && r.width > 0 && r.height > 0 &&
+				s.visibility === 'visible' && s.display !== 'none' &&
+				!el.matches('[role="tablist"],[role="radiogroup"]');
+		});
+		window.__aibKeyboardTargets = window.__aibKeyboardFindTargets();
+		window.__aibKeyboardIdentity = el => [el.tagName, el.getAttribute('role'), el.getAttribute('aria-label'), el.textContent].join('|');
+		window.__aibKeyboardIdentities = window.__aibKeyboardTargets.map(window.__aibKeyboardIdentity);
+		const groups = [...root.querySelectorAll('[role="tablist"],[role="radiogroup"]')];
+		window.__aibKeyboardGroups = groups;
+		window.__aibKeyboardBaselines = new WeakMap();
+		for (const el of window.__aibKeyboardTargets) {
+			const css = getComputedStyle(el);
+			window.__aibKeyboardBaselines.set(el, {
+				outline:[css.outlineWidth,css.outlineStyle,css.outlineColor].join(' '),
+				shadow:css.boxShadow, border:[css.borderColor,css.borderWidth,css.borderStyle].join(' ')
+			});
+		}
+		original?.focus({preventScroll:true});
+		return window.__aibKeyboardTargets.map(el => ({
+			name:el.getAttribute('aria-label') ||
+				[...(el.labels || [])].map(label => label.textContent).join(' ') ||
+				el.innerText || el.getAttribute('placeholder') || el.tagName.toLowerCase(),
+			group:groups.indexOf(el.closest('[role="tablist"],[role="radiogroup"]'))
+		}));
+	}`, &actions)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_, _ = p.page.Evaluate(`() => {
+			window.__aibKeyboardOriginal?.focus({preventScroll:true});
+			delete window.__aibKeyboardTargets;
+			delete window.__aibKeyboardOriginal;
+			delete window.__aibKeyboardGroups;
+			delete window.__aibKeyboardBaselines;
+			delete window.__aibKeyboardFindTargets;
+			delete window.__aibKeyboardIdentity;
+			delete window.__aibKeyboardIdentities;
+		}`)
+	}()
+	results := make([]KeyboardAction, len(actions))
+	for i, action := range actions {
+		results[i].Name = strings.TrimSpace(action.Name)
+	}
+	observe := func() (int, error) {
+		var index int
+		if err := p.evaluateJSON(ctx, p.page.Locator("html"),
+			`() => window.__aibKeyboardTargets.indexOf(document.activeElement)`, &index); err != nil {
+			return -1, err
+		}
+		if index >= 0 {
+			focus, err := p.ActiveElementDescription(ctx)
+			if err != nil {
+				return -1, err
+			}
+			results[index].Reached = true
+			results[index].VisibleFocus = focus.Visible && focus.FocusVisible && focus.Unobscured
+		}
+		return index, nil
+	}
+	visitedGroups := make(map[int]bool)
+	for range len(actions)*2 + 2 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := p.page.Keyboard().Press("Tab"); err != nil {
+			return nil, fmt.Errorf("tab through page actions: %w", err)
+		}
+		index, err := observe()
+		if err != nil {
+			return nil, err
+		}
+		if index < 0 || actions[index].Group < 0 || visitedGroups[actions[index].Group] {
+			continue
+		}
+		group := actions[index].Group
+		visitedGroups[group] = true
+		if err := p.coverRovingGroup(ctx, group, observe); err != nil {
+			return nil, err
+		}
+	}
+	return results, nil
+}
+
+func (p *Page) coverRovingGroup(ctx context.Context, group int, observe func() (int, error)) (err error) {
+	var state struct {
+		Count    int    `json:"count"`
+		Forward  string `json:"forward"`
+		Backward string `json:"backward"`
+		Selected string `json:"selected"`
+	}
+	script := fmt.Sprintf(`() => {
+		const group = window.__aibKeyboardGroups[%d];
+		const items = window.__aibKeyboardTargets.filter(el => group.contains(el));
+		const selected = items.map(el => el.getAttribute('aria-selected') || el.getAttribute('aria-checked') || String(el.checked || false)).join(',');
+		const vertical = group.getAttribute('aria-orientation') === 'vertical';
+		const rtl = getComputedStyle(group).direction === 'rtl';
+		return {count:items.length, selected,
+			forward:vertical ? 'ArrowDown' : rtl ? 'ArrowLeft' : 'ArrowRight',
+			backward:vertical ? 'ArrowUp' : rtl ? 'ArrowRight' : 'ArrowLeft'};
+	}`, group)
+	if err := p.evaluateJSON(ctx, p.page.Locator("html"), script, &state); err != nil {
+		return err
+	}
+	pressRovingKey := func(key string) error {
+		if err := p.page.Keyboard().Down(key); err != nil {
+			return err
+		}
+		// Radix moves roving focus asynchronously; keep the key held through that render.
+		_, renderErr := p.page.Evaluate(`() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+		return errors.Join(renderErr, p.page.Keyboard().Up(key))
+	}
+	steps := 0
+	defer func() {
+		for range steps {
+			if restoreErr := pressRovingKey(state.Backward); restoreErr != nil {
+				err = errors.Join(err, fmt.Errorf("restore roving selection: %w", restoreErr))
+				break
+			}
+		}
+		var restored struct {
+			Selected string `json:"selected"`
+		}
+		if restoreErr := p.evaluateJSON(ctx, p.page.Locator("html"), script, &restored); restoreErr != nil {
+			err = errors.Join(err, restoreErr)
+		} else if restored.Selected != state.Selected {
+			err = errors.Join(err, fmt.Errorf("roving group %d did not restore its original selection", group))
+		}
+		// Automatic tabs can remount their original panel when restored. Match
+		// that unchanged action order rather than retaining detached DOM nodes.
+		_, refreshErr := p.page.Evaluate(`async () => {
+			await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+			const old = window.__aibKeyboardTargets;
+			if (old.every(el => el.isConnected)) return;
+			const fresh = window.__aibKeyboardFindTargets();
+			const identity = window.__aibKeyboardIdentity;
+			const identities = window.__aibKeyboardIdentities;
+			if (fresh.length !== identities.length || fresh.some((el,i) => identity(el) !== identities[i])) {
+				const changes = Array.from({length:Math.max(old.length, fresh.length)}, (_, index) => ({
+					index, previous:identities[index] ?? null, current:fresh[index] ? identity(fresh[index]) : null
+				})).filter(change => change.previous !== change.current).slice(0, 3);
+				throw new Error('restoring a roving selection changed the action set on ' + location.pathname +
+					' (' + old.length + ' to ' + fresh.length + '): ' + JSON.stringify(changes));
+			}
+			fresh.forEach((el,i) => window.__aibKeyboardBaselines.set(el, window.__aibKeyboardBaselines.get(old[i])));
+			window.__aibKeyboardTargets = fresh;
+			window.__aibKeyboardGroups = [...document.querySelectorAll('[role="tablist"],[role="radiogroup"]')];
+		}`)
+		if refreshErr != nil {
+			err = errors.Join(err, fmt.Errorf("restore roving action references: %w", refreshErr))
+		}
+	}()
+	for range max(0, state.Count-1) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := pressRovingKey(state.Forward); err != nil {
+			return fmt.Errorf("traverse roving control: %w", err)
+		}
+		steps++
+		if _, err := observe(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetScreenshotContextFactory supplies the suite's authenticated context setup,
+// including its clock and locale. Each call must return a new owned context.
+func (p *Page) SetScreenshotContextFactory(factory func(context.Context, string) (playwright.BrowserContext, error)) {
+	p.screenshotContextFactory = factory
+}
+
+// TakeThemedScreenshots captures each theme in a fresh context, never reloading
+// or modifying the caller's page, its preferences, or its transient selections.
+func (p *Page) TakeThemedScreenshots(ctx context.Context, stem string) error {
+	if !captureScreenshotsEnabled() {
+		return nil
+	}
+	if stem == "" || filepath.Base(stem) != stem {
+		return fmt.Errorf("screenshot stem must be a nonempty filename")
+	}
+	if p.screenshotContextFactory == nil {
+		return fmt.Errorf("themed screenshots require an authenticated screenshot context factory")
+	}
+	for _, theme := range []string{"light", "dark"} {
+		if err := p.takeThemedScreenshot(ctx, stem, theme); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+func (p *Page) takeThemedScreenshot(ctx context.Context, stem, theme string) (err error) {
+	timeout, err := p.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	browserContext, err := p.screenshotContextFactory(ctx, theme)
+	if err != nil {
+		return fmt.Errorf("create %s screenshot context: %w", theme, err)
+	}
+	defer func() {
+		if closeErr := browserContext.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close %s screenshot context: %w", theme, closeErr))
+		}
+	}()
+	page, err := browserContext.NewPage()
+	if err != nil {
+		return fmt.Errorf("create screenshot page: %w", err)
+	}
+	if viewport := p.page.ViewportSize(); viewport != nil {
+		if err := page.SetViewportSize(viewport.Width, viewport.Height); err != nil {
+			return fmt.Errorf("copy screenshot viewport: %w", err)
+		}
+	}
+	capture := NewPage(page, p.baseURL)
+	if err := capture.SetThemePreference(ctx, theme); err != nil {
+		return err
+	}
+	if _, err := page.Goto(p.page.URL(), playwright.PageGotoOptions{Timeout: timeout}); err != nil {
+		return fmt.Errorf("open %s screenshot route: %w", theme, err)
+	}
+	handle, err := page.WaitForFunction(`theme =>
+		document.documentElement.dataset.theme === theme &&
+		!document.querySelector('[aria-busy="true"], [data-query-pending="true"]')`,
+		theme, playwright.PageWaitForFunctionOptions{Timeout: timeout})
+	if err != nil {
+		return fmt.Errorf("wait for settled %s theme: %w", theme, err)
+	}
+	if err := handle.Dispose(); err != nil {
+		return err
+	}
+	if err := page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+		State: playwright.LoadStateNetworkidle, Timeout: timeout,
+	}); err != nil {
+		return fmt.Errorf("settle screenshot queries: %w", err)
+	}
+	if _, err := page.Evaluate(`async () => {
+		await document.fonts.ready;
+		await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+		window.scrollTo(0,0);
+	}`); err != nil {
+		return fmt.Errorf("settle screenshot fonts: %w", err)
+	}
+	path := filepath.Join(p.screenshotDir, stem+"_"+theme+".png")
+	if err := os.MkdirAll(p.screenshotDir, 0o700); err != nil {
+		return err
+	}
+	if _, err := page.Screenshot(playwright.PageScreenshotOptions{
+		Path: &path, FullPage: playwright.Bool(true), Timeout: timeout,
+		Animations: playwright.ScreenshotAnimationsDisabled,
+		Style:      playwright.String(screenshotDynamicStyle),
+	}); err != nil {
+		return fmt.Errorf("capture %s: %w", path, err)
+	}
+	return ctx.Err()
 }

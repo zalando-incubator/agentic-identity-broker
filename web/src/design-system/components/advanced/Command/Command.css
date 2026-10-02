@@ -1,0 +1,11 @@
+.ds-command-item {
+  transition-property: background-color, color;
+  transition-duration: var(--motion-feedback);
+  transition-timing-function: var(--motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-command-item {
+    transition: none;
+  }
+}

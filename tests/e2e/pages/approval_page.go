@@ -5,6 +5,7 @@ package pages
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mxschmitt/playwright-go"
 )
@@ -81,10 +82,10 @@ func (ap *ApprovalPage) GetErrorTitle(ctx context.Context) (string, error) {
 	return text, nil
 }
 
-// HasRetryButton returns true if the "Try Again" retry button is visible.
+// HasRetryButton returns true if the retry button is visible.
 func (ap *ApprovalPage) HasRetryButton(ctx context.Context) (bool, error) {
 	locator := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name: "Try Again",
+		Name: "Try again",
 	})
 	count, err := locator.Count()
 	if err != nil {
@@ -123,7 +124,7 @@ func (ap *ApprovalPage) HasReviewHeading(ctx context.Context) (bool, error) {
 
 // GetToolName returns the tool name displayed in the ToolCallCard (h3 element).
 func (ap *ApprovalPage) GetToolName(ctx context.Context) (string, error) {
-	locator := ap.pwPage().Locator("h3").First()
+	locator := ap.pwPage().GetByTestId("approval-tool-name").Locator("> h3")
 	count, err := locator.Count()
 	if err != nil {
 		return "", fmt.Errorf("failed to count tool name heading: %w", err)
@@ -138,9 +139,9 @@ func (ap *ApprovalPage) GetToolName(ctx context.Context) (string, error) {
 	return text, nil
 }
 
-// GetAgentName returns the agent display name shown as "Requested by {name}".
+// GetAgentName returns the requesting agent's display name.
 func (ap *ApprovalPage) GetAgentName(ctx context.Context) (string, error) {
-	locator := ap.pwPage().GetByText("Requested by")
+	locator := ap.pwPage().GetByTestId("approval-agent-name").Locator("> p")
 	count, err := locator.Count()
 	if err != nil {
 		return "", fmt.Errorf("failed to check agent name: %w", err)
@@ -186,11 +187,9 @@ func (ap *ApprovalPage) HasVisibleText(ctx context.Context, text string) (bool, 
 	return visible, nil
 }
 
-// HasGlobalErrorBoundary returns true if the global Oops error screen is visible.
+// HasGlobalErrorBoundary returns true if the global error screen is visible.
 func (ap *ApprovalPage) HasGlobalErrorBoundary(ctx context.Context) (bool, error) {
-	locator := ap.pwPage().GetByText("Oops! Something went wrong", playwright.PageGetByTextOptions{
-		Exact: playwright.Bool(true),
-	})
+	locator := ap.pwPage().GetByTestId("global-error-boundary")
 	count, err := locator.Count()
 	if err != nil {
 		return false, fmt.Errorf("failed to check global error boundary: %w", err)
@@ -213,13 +212,23 @@ func (ap *ApprovalPage) HasRiskBadge(ctx context.Context, level string) (bool, e
 // SelectPersistence clicks the radio button for the given persistence option.
 // Valid values: "Just this once", "For this session", "Always allow"
 func (ap *ApprovalPage) SelectPersistence(ctx context.Context, label string) error {
-	radio := ap.pwPage().GetByRole("radio", playwright.PageGetByRoleOptions{
-		Name: label,
-	})
-	if err := radio.Click(); err != nil {
-		return fmt.Errorf("failed to click radio %q: %w", label, err)
+	remember := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Approve and remember", Exact: playwright.Bool(true)})
+	expanded, err := remember.GetAttribute("aria-expanded")
+	if err != nil {
+		return fmt.Errorf("read remembered approval controls: %w", err)
 	}
-	return nil
+	if label == "Just this once" {
+		if expanded == "true" {
+			return ap.locatorClick(ctx, remember, "close remembered approval controls")
+		}
+		return nil
+	}
+	if expanded != "true" {
+		if err := ap.ClickApproveAndRemember(ctx); err != nil {
+			return err
+		}
+	}
+	return ap.ChooseRememberDuration(ctx, label)
 }
 
 // HasPermanentWarning returns true if the permanent warning alert is visible.
@@ -234,15 +243,18 @@ func (ap *ApprovalPage) HasPermanentWarning(ctx context.Context) (bool, error) {
 
 // --- Action buttons ---
 
-// ClickApprove clicks the "Approve" button.
+// ClickApprove submits the selected remembered duration or approves once.
 func (ap *ApprovalPage) ClickApprove(ctx context.Context) error {
-	button := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name: "Approve",
-	})
-	if err := button.Click(); err != nil {
-		return fmt.Errorf("failed to click Approve button: %w", err)
+	selected := ap.pwPage().GetByRole("radiogroup", playwright.PageGetByRoleOptions{Name: "Approval persistence", Exact: playwright.Bool(true)}).
+		Locator("[role='radio'][aria-checked='true']")
+	count, err := selected.Count()
+	if err != nil {
+		return fmt.Errorf("read selected approval persistence: %w", err)
 	}
-	return nil
+	if count > 0 {
+		return ap.ConfirmRememberedApproval(ctx)
+	}
+	return ap.ClickApproveOnce(ctx)
 }
 
 // ClickDeny clicks the "Deny" button.
@@ -362,12 +374,96 @@ func (ap *ApprovalPage) HasPersistenceText(ctx context.Context, text string) (bo
 	return count > 0, nil
 }
 
-// HasPermanentDenialNote returns true if the permanent denial note is visible.
-func (ap *ApprovalPage) HasPermanentDenialNote(ctx context.Context) (bool, error) {
-	locator := ap.pwPage().GetByText("permanent and will apply to future requests")
-	count, err := locator.Count()
+func (ap *ApprovalPage) ExpandArguments(ctx context.Context) error {
+	toggle := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Arguments", Exact: playwright.Bool(true)})
+	timeout, err := ap.locatorTimeout(ctx)
 	if err != nil {
-		return false, fmt.Errorf("failed to check permanent denial note: %w", err)
+		return err
 	}
-	return count > 0, nil
+	expanded, err := toggle.GetAttribute("aria-expanded", playwright.LocatorGetAttributeOptions{Timeout: timeout})
+	if err != nil {
+		return fmt.Errorf("read tool arguments disclosure: %w", err)
+	}
+	if expanded == "true" {
+		return nil
+	}
+	return ap.locatorClick(ctx, toggle, "expand tool arguments")
+}
+
+func (ap *ApprovalPage) ArgumentsText(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-arguments"), "tool arguments")
+}
+
+func (ap *ApprovalPage) ActingUser(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-acting-user"), "acting user")
+}
+
+func (ap *ApprovalPage) RiskLabel(ctx context.Context) (string, error) {
+	label, err := ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-risk"), "tool risk label")
+	return strings.TrimSuffix(label, " Risk"), err
+}
+
+func (ap *ApprovalPage) ApprovalScopeText(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.pwPage().GetByLabel("Approval pattern preview").Locator("code"), "approval scope preview")
+}
+
+func (ap *ApprovalPage) ClickApproveOnce(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Approve once", Exact: playwright.Bool(true)}), "approve tool call once")
+}
+
+// ClickApproveAndRemember opens the remembered-decision controls; it does not submit a decision.
+func (ap *ApprovalPage) ClickApproveAndRemember(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Approve and remember", Exact: playwright.Bool(true)}), "review remembered approval")
+}
+
+func (ap *ApprovalPage) ChooseRememberDuration(ctx context.Context, label string) error {
+	if label == "This session" {
+		label = "For this session"
+	}
+	return ap.locatorClick(ctx, ap.pwPage().GetByRole("radiogroup", playwright.PageGetByRoleOptions{Name: "Approval persistence", Exact: playwright.Bool(true)}).
+		GetByRole("radio", playwright.LocatorGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "choose remembered approval duration "+label)
+}
+
+func (ap *ApprovalPage) HasDecisionActions(ctx context.Context) (bool, error) {
+	var visible bool
+	err := ap.evaluateJSON(ctx, ap.pwPage().GetByRole("main"), `root =>
+		Array.from(root.querySelectorAll('button')).some(button =>
+			button.getClientRects().length > 0 &&
+			['Approve once', 'Approve and remember', 'Deny', 'Confirm approval',
+				'Deny permanently — block this tool for this agent', 'Confirm permanent denial'].includes(
+				(button.getAttribute('aria-label') || button.innerText).trim()))`, &visible)
+	return visible, err
+}
+
+func (ap *ApprovalPage) ResolvedOutcomeText(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-outcome"), "resolved approval outcome")
+}
+
+func (ap *ApprovalPage) ToolName(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-tool-name").Locator("> h3"), "approval tool name")
+}
+
+func (ap *ApprovalPage) AgentName(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-agent-name").Locator("> p"), "approval agent name")
+}
+
+func (ap *ApprovalPage) ArgumentsAreMonospace(ctx context.Context) (bool, error) {
+	var monospace bool
+	err := ap.evaluateJSON(ctx, ap.pwPage().GetByTestId("approval-arguments"), `element =>
+		element.getClientRects().length > 0 &&
+		getComputedStyle(element).fontFamily.split(',').some(family =>
+			['monospace', 'ui-monospace'].includes(family.trim().replace(/["']/g, '')))`, &monospace)
+	return monospace, err
+}
+
+func (ap *ApprovalPage) HasRememberAndDenyActions(ctx context.Context) (bool, error) {
+	remember, err := ap.locatorVisible(ctx, ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Approve and remember", Exact: playwright.Bool(true)}), "remember approval action")
+	if err != nil || !remember {
+		return false, err
+	}
+	return ap.locatorVisible(ctx, ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Deny", Exact: playwright.Bool(true)}), "deny approval action")
+}
+
+func (ap *ApprovalPage) ConfirmRememberedApproval(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Confirm approval", Exact: playwright.Bool(true)}), "confirm remembered approval")
 }

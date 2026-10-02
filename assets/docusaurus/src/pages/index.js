@@ -8,8 +8,8 @@ import styles from './index.module.css';
 
 function HomepageHeader() {
   const wordmarkSources = {
-    light: useBaseUrl('/img/AIB_Wordmark_Black.svg'),
-    dark: useBaseUrl('/img/AIB_Wordmark_White.svg'),
+    light: useBaseUrl('/AIB_Wordmark_Black.svg'),
+    dark: useBaseUrl('/AIB_Wordmark_White.svg'),
   };
   const previewImage = useBaseUrl('/img/teaser-browser.webp');
 

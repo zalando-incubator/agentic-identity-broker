@@ -131,12 +131,29 @@ jobs:
         run: just web-ci
       - name: Static checks (fmt, vet, lint)
         run: just check
+      - name: Frontend accessibility and semantic-token lint
+        run: just web-lint
+      - name: Install Storybook Chromium
+        run: ./web/node_modules/.bin/playwright install --with-deps chromium
+      - name: Build shared component documentation
+        run: just web-storybook-build
+      - name: Check both component themes and reviewed visuals
+        run: just web-storybook-test
+      - name: Upload component visual differences
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: storybook-visual-diff
+          path: web/.storybook/test-results/
+          if-no-files-found: warn
       - name: Unit suites with JUnit
         run: just verify-unit-junit
       - name: Build artifacts
         run: |
           just build-all
           test -f web/dist/index.html
+      - name: Check decision route bundle budgets
+        run: just web-bundle-check
       - name: Upload unit test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -334,6 +351,15 @@ jobs:
         run: just web-ci
       - name: Frontend E2E suite with JUnit
         run: just verify-e2e-frontend-junit
+      - name: Compare reviewed frontend screenshots
+        run: just test-e2e-frontend-visual
+      - name: Upload frontend visual differences
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-frontend-visual-diff
+          path: tests/e2e/frontend/coverage/visual-diff/
+          if-no-files-found: warn
       - name: Upload frontend E2E test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

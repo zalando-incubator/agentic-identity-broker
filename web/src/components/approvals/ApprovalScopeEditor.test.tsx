@@ -1,9 +1,19 @@
 import { useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApprovalScopeEditor } from './ApprovalScopeEditor';
 import type { ApprovalPersistence, ToolApprovalDetail } from '../../types/approval';
+import { approvalApi } from '@services/api/approvals';
+
+beforeEach(() => {
+  vi.spyOn(approvalApi, 'previewApprovalScope').mockResolvedValue({
+    tool_pattern: 'create_pull_request',
+    params_pattern: { repo: 'acme/app', title: 'Fix bug' },
+    preview: 'create_pull_request(repo=acme/app,title=Fix bug)',
+  });
+});
+afterEach(() => vi.restoreAllMocks());
 
 const approval: ToolApprovalDetail = {
   id: 'approval-1',
@@ -111,9 +121,9 @@ describe('ApprovalScopeEditor', () => {
 
     await user.click(screen.getByRole('button', { name: /approval scope/i }));
     const titleBlock = screen.getByTestId('approval-scope-param-title');
-    expect(within(titleBlock).getByRole('button', { name: 'Title match mode' })).toHaveTextContent('This value');
+    expect(within(titleBlock).getByRole('combobox', { name: 'Title match mode' })).toHaveTextContent('This value');
 
-    await user.click(within(titleBlock).getByRole('button', { name: 'Title match mode' }));
+    await user.click(within(titleBlock).getByRole('combobox', { name: 'Title match mode' }));
     await user.click(screen.getByRole('option', { name: 'Any value' }));
 
     expect(onParamsPatternChange).toHaveBeenCalledWith({ repo: 'acme/app' });
@@ -153,7 +163,7 @@ describe('ApprovalScopeEditor', () => {
 
     await user.click(screen.getByRole('button', { name: /approval scope/i }));
     const repoBlock = screen.getByTestId('approval-scope-param-repo');
-    await user.click(within(repoBlock).getByRole('button', { name: 'Repo match mode' }));
+    await user.click(within(repoBlock).getByRole('combobox', { name: 'Repo match mode' }));
     await user.click(screen.getByRole('option', { name: 'Custom match' }));
     await user.clear(within(repoBlock).getByRole('textbox'));
     await user.type(within(repoBlock).getByRole('textbox'), 'acme/*');
@@ -164,7 +174,7 @@ describe('ApprovalScopeEditor', () => {
 
     expect(screen.getByText('Exact request')).toBeInTheDocument();
     const restored = screen.getByTestId('approval-scope-param-repo');
-    expect(within(restored).getByRole('button', { name: 'Repo match mode' })).toHaveTextContent('This value');
+    expect(within(restored).getByRole('combobox', { name: 'Repo match mode' })).toHaveTextContent('This value');
     expect(within(restored).queryByRole('textbox')).not.toBeInTheDocument();
   });
 });
@@ -178,7 +188,43 @@ it('labels custom inputs with their distinct targets', async () => {
   expect(screen.queryByRole('button', { name: 'Tool matching rule' })).not.toBeInTheDocument();
 
   const repoBlock = screen.getByTestId('approval-scope-param-repo');
-  await user.click(within(repoBlock).getByRole('button', { name: 'Repo match mode' }));
+  await user.click(within(repoBlock).getByRole('combobox', { name: 'Repo match mode' }));
   await user.click(screen.getByRole('option', { name: 'Custom match' }));
   expect(within(repoBlock).getByRole('textbox', { name: 'Repo custom match' })).toBeInTheDocument();
+});
+
+it('aborts superseded preview and ignores its late acceptance after a changed scope is rejected', async () => {
+  const first = Promise.withResolvers<{ tool_pattern: string; params_pattern: Record<string, string>; preview: string }>();
+  vi.mocked(approvalApi.previewApprovalScope)
+    .mockReturnValueOnce(first.promise)
+    .mockRejectedValueOnce({ status: 422, message: 'Scope does not match' });
+  const onValidation = vi.fn();
+  const editorProps = { approval, persistence: 'session' as const, onParamsPatternChange: vi.fn(), onScopeValidationChange: onValidation };
+  const { rerender } = render(<ApprovalScopeEditor {...editorProps} paramsPattern={approval.params_pattern} />);
+  await waitFor(() => expect(approvalApi.previewApprovalScope).toHaveBeenCalledTimes(1));
+  const signal = vi.mocked(approvalApi.previewApprovalScope).mock.calls[0][2]?.signal;
+  rerender(<ApprovalScopeEditor {...editorProps} paramsPattern={{ repo: 'other/*' }} />);
+  await waitFor(() => expect(approvalApi.previewApprovalScope).toHaveBeenCalledTimes(2));
+  expect(signal?.aborted).toBe(true);
+  await act(async () => { first.resolve({ tool_pattern: 'create_pull_request', params_pattern: approval.params_pattern, preview: 'stale accepted scope' }); });
+  expect(onValidation).toHaveBeenLastCalledWith(false);
+  expect(screen.queryByText('stale accepted scope')).not.toBeInTheDocument();
+});
+
+it('preserves a literal __proto__ parameter when its constraint is restored', async () => {
+  const user = userEvent.setup();
+  const detail: ToolApprovalDetail = {
+    ...approval,
+    arguments: JSON.parse('{"__proto__":"sensitive"}') as Record<string, unknown>,
+    params_pattern: JSON.parse('{"__proto__":"sensitive"}') as Record<string, string>,
+  };
+  const change = vi.fn();
+  render(<ApprovalScopeEditor approval={detail} paramsPattern={{}} persistence="session" onParamsPatternChange={change} />);
+  await user.click(screen.getByRole('button', { name: /approval scope/i }));
+  await user.click(screen.getByRole('combobox'));
+  await user.click(screen.getByRole('option', { name: 'This value' }));
+  const pattern = change.mock.calls[0][0] as Record<string, string>;
+  expect(Object.hasOwn(pattern, '__proto__')).toBe(true);
+  expect(pattern['__proto__']).toBe('sensitive');
+  expect(Object.getPrototypeOf(pattern)).toBe(Object.prototype);
 });

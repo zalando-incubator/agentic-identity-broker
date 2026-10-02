@@ -1,353 +1,76 @@
-/**
- * Accordion Component
+/*
+ * Adapted from shadcn/ui (https://github.com/shadcn-ui/ui), MIT License.
+ * Copyright (c) 2023 shadcn
  *
- * Collapsible panel component for organizing content sections.
- * Follows the "Refined Trust Architecture" design system.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Features:
- * - Built on Headless UI Disclosure for full accessibility
- * - Multiple collapsible panels
- * - Single or multiple open panels (exclusive vs non-exclusive)
- * - Header with title, optional icon, chevron indicator
- * - Smooth expand/collapse animations
- * - 2 size variants (sm, md)
- * - Optional descriptions/subtitles in header
- * - Keyboard navigation (ArrowUp/Down, Enter/Space)
- * - Support for nested accordions
- * - Optional header actions (badges, icons)
- * - WCAG 2.1 AA accessible with proper ARIA
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
+import type { ComponentProps } from 'react';
+import { Accordion as AccordionPrimitive } from 'radix-ui';
+import { ChevronDown } from 'lucide-react';
+import { cn } from '@design-system/utils/cn';
+import './Accordion.css';
 
-import React, { useState, useEffect } from 'react';
-import { Disclosure, Transition } from '@headlessui/react';
-import { cva } from 'class-variance-authority';
-import { cn } from '@design-system/utils';
+export type AccordionProps = ComponentProps<typeof AccordionPrimitive.Root>;
+export type AccordionItemProps = ComponentProps<typeof AccordionPrimitive.Item>;
+export type AccordionTriggerProps = ComponentProps<typeof AccordionPrimitive.Trigger>;
+export type AccordionContentProps = ComponentProps<typeof AccordionPrimitive.Content>;
 
-const accordionVariants = cva(
-  // Base accordion container styles
-  'divide-y divide-neutral-200 border border-neutral-200 rounded-lg overflow-hidden',
-  {
-    variants: {
-      size: {
-        sm: '',
-        md: '',
-      },
-    },
-    defaultVariants: {
-      size: 'md',
-    },
-  },
-);
+export function Accordion({ className, ...props }: AccordionProps) {
+  return <AccordionPrimitive.Root data-slot="accordion" className={cn('text-foreground', className)} {...props} />;
+}
 
-const accordionItemVariants = cva(
-  // Base item button styles
-  'w-full flex items-center justify-between gap-3 text-left transition-colors duration-150',
-  {
-    variants: {
-      size: {
-        sm: 'px-4 py-3 text-sm',
-        md: 'px-6 py-4 text-base',
-      },
-      disabled: {
-        true: 'cursor-not-allowed opacity-50',
-        false: 'hover:bg-neutral-50 cursor-pointer',
-      },
-      open: {
-        true: 'bg-neutral-50',
-        false: 'bg-white',
-      },
-    },
-    defaultVariants: {
-      size: 'md',
-      disabled: false,
-      open: false,
-    },
-  },
-);
-
-const accordionContentVariants = cva(
-  // Base content area styles
-  'border-t border-neutral-200 bg-white',
-  {
-    variants: {
-      size: {
-        sm: 'px-4 py-3 text-sm',
-        md: 'px-6 py-4 text-base',
-      },
-    },
-    defaultVariants: {
-      size: 'md',
-    },
-  },
-);
-
-const ChevronDownIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg
-    className={cn('w-5 h-5 transition-transform duration-200', className)}
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M19 9l-7 7-7-7"
+export function AccordionItem({ className, ...props }: AccordionItemProps) {
+  return (
+    <AccordionPrimitive.Item
+      data-slot="accordion-item"
+      className={cn('border-b border-border-soft last:border-b-0', className)}
+      {...props}
     />
-  </svg>
-);
-
-export interface AccordionItem {
-  /** Unique identifier for the item */
-  id: string;
-  /** Item title */
-  title: string;
-  /** Optional description/subtitle */
-  description?: string;
-  /** Content to display when expanded */
-  content: React.ReactNode;
-  /** Optional icon to display before title */
-  icon?: React.ReactNode;
-  /** Whether the item is disabled */
-  disabled?: boolean;
-  /** Optional badge/action element */
-  badge?: React.ReactNode;
+  );
 }
 
-export interface AccordionProps {
-  /** Array of accordion items */
-  items: AccordionItem[];
-  /** Size variant */
-  size?: 'sm' | 'md';
-  /** Only allow one item open at a time */
-  exclusive?: boolean;
-  /** ID(s) of initially open items */
-  defaultOpen?: string | string[];
-  /** Callback when open items change */
-  onChange?: (openIds: string[]) => void;
-  /** Additional class names */
-  className?: string;
+export function AccordionTrigger({ className, children, ...props }: AccordionTriggerProps) {
+  return (
+    <AccordionPrimitive.Header className="flex">
+      <AccordionPrimitive.Trigger
+        data-slot="accordion-trigger"
+        className={cn(
+          'ds-accordion-trigger flex min-h-11 min-w-0 flex-1 items-center justify-between gap-4 rounded-md px-2 py-3 text-left text-sm font-medium outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:text-muted-foreground disabled:hover:bg-transparent',
+          className,
+        )}
+        {...props}
+      >
+        {children}
+        <ChevronDown aria-hidden="true" className="ds-accordion-indicator size-4 shrink-0 text-muted-foreground" />
+      </AccordionPrimitive.Trigger>
+    </AccordionPrimitive.Header>
+  );
 }
 
-/**
- * Accordion component for collapsible content sections.
- * Uses Headless UI Disclosure for full accessibility and keyboard support.
- *
- * @example
- * ```tsx
- * // Basic accordion
- * <Accordion
- *   items={[
- *     { id: '1', title: 'Section 1', content: 'Content 1' },
- *     { id: '2', title: 'Section 2', content: 'Content 2' },
- *   ]}
- * />
- *
- * // Non-exclusive with multiple open
- * <Accordion
- *   exclusive={false}
- *   defaultOpen={['1', '2']}
- *   items={items}
- * />
- *
- * // With icons and badges
- * <Accordion
- *   items={[
- *     {
- *       id: '1',
- *       title: 'Settings',
- *       icon: <SettingsIcon />,
- *       badge: <Badge>3</Badge>,
- *       content: <SettingsForm />
- *     }
- *   ]}
- * />
- * ```
- */
-export const Accordion = React.forwardRef<HTMLDivElement, AccordionProps>(
-  (
-    { items, size = 'md', exclusive = true, defaultOpen, onChange, className },
-    ref,
-  ) => {
-    // Track open items internally
-    const [openItems, setOpenItems] = useState<Set<string>>(() => {
-      if (!defaultOpen) return new Set();
-      return new Set(Array.isArray(defaultOpen) ? defaultOpen : [defaultOpen]);
-    });
-
-    // Notify parent of changes
-    useEffect(() => {
-      if (onChange) {
-        onChange(Array.from(openItems));
-      }
-    }, [openItems, onChange]);
-
-    const handleToggle = (itemId: string) => {
-      setOpenItems((prev) => {
-        const next = new Set(prev);
-
-        if (next.has(itemId)) {
-          // Close the item
-          next.delete(itemId);
-        } else {
-          // Open the item
-          if (exclusive) {
-            // In exclusive mode, close all others
-            next.clear();
-          }
-          next.add(itemId);
-        }
-
-        return next;
-      });
-    };
-
-    // Handle keyboard navigation
-    const handleKeyDown = (
-      event: React.KeyboardEvent,
-      currentIndex: number,
-    ) => {
-      const enabledItems = items.filter((item) => !item.disabled);
-      const currentEnabledIndex = enabledItems.findIndex(
-        (item) => item === items[currentIndex],
-      );
-
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        const nextIndex = (currentEnabledIndex + 1) % enabledItems.length;
-        const nextItem = enabledItems[nextIndex];
-        const nextButton = document.querySelector(
-          `[data-accordion-button="${nextItem.id}"]`,
-        ) as HTMLButtonElement;
-        nextButton?.focus();
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        const prevIndex =
-          currentEnabledIndex === 0
-            ? enabledItems.length - 1
-            : currentEnabledIndex - 1;
-        const prevItem = enabledItems[prevIndex];
-        const prevButton = document.querySelector(
-          `[data-accordion-button="${prevItem.id}"]`,
-        ) as HTMLButtonElement;
-        prevButton?.focus();
-      } else if (event.key === 'Home') {
-        event.preventDefault();
-        const firstItem = enabledItems[0];
-        const firstButton = document.querySelector(
-          `[data-accordion-button="${firstItem.id}"]`,
-        ) as HTMLButtonElement;
-        firstButton?.focus();
-      } else if (event.key === 'End') {
-        event.preventDefault();
-        const lastItem = enabledItems[enabledItems.length - 1];
-        const lastButton = document.querySelector(
-          `[data-accordion-button="${lastItem.id}"]`,
-        ) as HTMLButtonElement;
-        lastButton?.focus();
-      }
-    };
-
-    if (items.length === 0) {
-      return (
-        <div
-          ref={ref}
-          className={cn(
-            'border border-neutral-200 rounded-lg p-8 text-center text-neutral-500',
-            className,
-          )}
-        >
-          <p className="text-sm">No items to display</p>
-        </div>
-      );
-    }
-
-    return (
-      <div ref={ref} className={cn(accordionVariants({ size }), className)}>
-        {items.map((item, index) => {
-          const isOpen = openItems.has(item.id);
-
-          return (
-            <Disclosure key={item.id} as="div">
-              {() => {
-                // Sync Disclosure open state with our controlled state
-                const isItemOpen = isOpen;
-
-                return (
-                  <>
-                    <Disclosure.Button
-                      as="button"
-                      disabled={item.disabled}
-                      onClick={() => handleToggle(item.id)}
-                      onKeyDown={(e) => handleKeyDown(e, index)}
-                      data-accordion-button={item.id}
-                      className={cn(
-                        accordionItemVariants({
-                          size,
-                          disabled: item.disabled,
-                          open: isItemOpen,
-                        }),
-                      )}
-                      aria-expanded={isItemOpen}
-                      aria-controls={`accordion-content-${item.id}`}
-                    >
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
-                        {item.icon && (
-                          <div className="flex-shrink-0 w-5 h-5 text-trust-deep mt-0.5">
-                            {item.icon}
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-neutral-900">
-                            {item.title}
-                          </div>
-                          {item.description && (
-                            <div className="mt-1 text-sm text-neutral-600">
-                              {item.description}
-                            </div>
-                          )}
-                        </div>
-                        {item.badge && (
-                          <div className="flex-shrink-0">{item.badge}</div>
-                        )}
-                      </div>
-                      <ChevronDownIcon
-                        className={cn(
-                          'flex-shrink-0 text-neutral-400',
-                          isItemOpen && 'rotate-180',
-                        )}
-                      />
-                    </Disclosure.Button>
-
-                    <Transition
-                      show={isItemOpen}
-                      enter="transition duration-200 ease-out"
-                      enterFrom="transform scale-95 opacity-0"
-                      enterTo="transform scale-100 opacity-100"
-                      leave="transition duration-150 ease-out"
-                      leaveFrom="transform scale-100 opacity-100"
-                      leaveTo="transform scale-95 opacity-0"
-                    >
-                      <Disclosure.Panel
-                        static
-                        id={`accordion-content-${item.id}`}
-                        className={accordionContentVariants({ size })}
-                      >
-                        {item.content}
-                      </Disclosure.Panel>
-                    </Transition>
-                  </>
-                );
-              }}
-            </Disclosure>
-          );
-        })}
-      </div>
-    );
-  },
-);
-
-Accordion.displayName = 'Accordion';
-
-export default Accordion;
+export function AccordionContent({ className, children, ...props }: AccordionContentProps) {
+  return (
+    <AccordionPrimitive.Content
+      data-slot="accordion-content"
+      className={cn('text-sm', className)}
+      {...props}
+    >
+      <div className="px-2 pt-1 pb-4">{children}</div>
+    </AccordionPrimitive.Content>
+  );
+}

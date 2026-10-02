@@ -1,0 +1,39 @@
+.aib-wordmark-light,
+.aib-wordmark-dark {
+  width: 100%;
+  height: auto;
+}
+
+.aib-wordmark-light {
+  display: block;
+}
+
+.aib-wordmark-dark {
+  display: none;
+}
+
+:root[data-theme='dark'] .aib-wordmark-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .aib-wordmark-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .aib-wordmark-light {
+    display: none;
+  }
+
+  :root:not([data-theme]) .aib-wordmark-dark {
+    display: block;
+  }
+}
+
+.aib-wordmark-compact {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-color: currentColor;
+  mask: url('/brand/aib-mark.svg') center / contain no-repeat;
+}

@@ -1,272 +1,56 @@
-/**
- * Tooltip Component
+/*
+ * Adapted from shadcn/ui (New York v4 tooltip), MIT License.
+ * Copyright (c) 2023 shadcn
  *
- * Lightweight overlay component for displaying contextual information on hover or focus.
- * Follows the "Refined Trust Architecture" design system.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Features:
- * - 4 position variants: top, right, bottom, left
- * - 2 theme variants: dark (default), light
- * - Optional arrow indicator pointing to trigger
- * - Configurable hover delay (default 200ms)
- * - Keyboard focus support for accessibility
- * - WCAG 2.1 AA compliant with proper ARIA attributes
- * - Uses Headless UI Popover for positioning
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
+import type { ComponentProps } from 'react';
+import { Tooltip as TooltipPrimitive } from 'radix-ui';
+import { cn } from '@design-system/utils/cn';
+import '../overlay-motion.css';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { cva } from 'class-variance-authority';
-import { cn } from '@design-system/utils';
-
-const tooltipVariants = cva(
-  // Base styles - applied to all variants
-  'absolute z-50 px-3 py-2 text-sm font-medium rounded-md shadow-lg pointer-events-none transition-opacity duration-150',
-  {
-    variants: {
-      theme: {
-        // Dark theme (default) - high contrast
-        dark: 'bg-neutral-900 text-white',
-
-        // Light theme - subtle with border
-        light: 'bg-white text-neutral-900 border border-neutral-300 shadow-md',
-      },
-      position: {
-        top: '',
-        right: '',
-        bottom: '',
-        left: '',
-      },
-    },
-    defaultVariants: {
-      theme: 'dark',
-      position: 'top',
-    },
-  },
-);
-
-const arrowVariants = cva('absolute w-2 h-2 rotate-45', {
-  variants: {
-    theme: {
-      dark: 'bg-neutral-900',
-      light: 'bg-white border-neutral-300',
-    },
-    position: {
-      top: 'bottom-[-4px] left-1/2 -translate-x-1/2',
-      right: 'left-[-4px] top-1/2 -translate-y-1/2',
-      bottom: 'top-[-4px] left-1/2 -translate-x-1/2',
-      left: 'right-[-4px] top-1/2 -translate-y-1/2',
-    },
-  },
-  defaultVariants: {
-    theme: 'dark',
-    position: 'top',
-  },
-});
-
-// Border variants for light theme arrow
-const arrowBorderVariants = cva('', {
-  variants: {
-    theme: {
-      dark: '',
-      light: 'border-l border-t',
-    },
-    position: {
-      top: '',
-      right: 'border-l border-t',
-      bottom: '',
-      left: 'border-l border-t',
-    },
-  },
-});
-
-export interface TooltipProps {
-  /** Content to display in the tooltip */
-  content: string | React.ReactNode;
-  /** Element that triggers the tooltip */
-  children: React.ReactNode;
-  /** Position of tooltip relative to trigger */
-  position?: 'top' | 'right' | 'bottom' | 'left';
-  /** Visual theme variant */
-  theme?: 'dark' | 'light';
-  /** Whether to show arrow indicator */
-  showArrow?: boolean;
-  /** Delay in milliseconds before showing tooltip */
-  delay?: number;
-  /** Additional CSS classes */
-  className?: string;
-  /** Whether tooltip is disabled */
-  disabled?: boolean;
+export function TooltipProvider({ delayDuration = 200, ...props }: ComponentProps<typeof TooltipPrimitive.Provider>) {
+  return <TooltipPrimitive.Provider delayDuration={delayDuration} {...props} />;
 }
 
-/**
- * Tooltip component for displaying contextual help on hover or focus.
- * Automatically positions itself based on the position prop.
- *
- * @example
- * ```tsx
- * <Tooltip content="This is a helpful tip">
- *   <button>Hover me</button>
- * </Tooltip>
- *
- * <Tooltip content="Info about this field" position="right" theme="light">
- *   <InfoIcon />
- * </Tooltip>
- *
- * <Tooltip content="Multi-line content\nSupported here" showArrow delay={500}>
- *   <span>Long delay tooltip</span>
- * </Tooltip>
- * ```
- */
-export const Tooltip = React.forwardRef<HTMLDivElement, TooltipProps>(
-  (
-    {
-      content,
-      children,
-      position = 'top',
-      theme = 'dark',
-      showArrow = true,
-      delay = 200,
-      className,
-      disabled = false,
-      ...props
-    },
-    ref,
-  ) => {
-    const [isVisible, setIsVisible] = useState(false);
-    const [showTooltip, setShowTooltip] = useState(false);
-    const timeoutRef = useRef<number | null>(null);
-    const tooltipRef = useRef<HTMLDivElement>(null);
-    const triggerRef = useRef<HTMLDivElement>(null);
+export function Tooltip(props: ComponentProps<typeof TooltipPrimitive.Root>) {
+  return <TooltipPrimitive.Root {...props} />;
+}
 
-    // Clear timeout on unmount
-    useEffect(() => {
-      return () => {
-        if (timeoutRef.current) {
-          window.clearTimeout(timeoutRef.current);
-        }
-      };
-    }, []);
+export function TooltipTrigger({ className, ...props }: ComponentProps<typeof TooltipPrimitive.Trigger>) {
+  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" className={cn('focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background', className)} {...props} />;
+}
 
-    // Handle show with delay
-    const handleShow = () => {
-      if (disabled) return;
+export function TooltipPortal(props: ComponentProps<typeof TooltipPrimitive.Portal>) {
+  return <TooltipPrimitive.Portal {...props} />;
+}
 
-      if (delay > 0) {
-        timeoutRef.current = window.setTimeout(() => {
-          setIsVisible(true);
-          // Small additional delay for fade-in effect
-          setTimeout(() => setShowTooltip(true), 10);
-        }, delay);
-      } else {
-        setIsVisible(true);
-        setTimeout(() => setShowTooltip(true), 10);
-      }
-    };
-
-    // Handle hide
-    const handleHide = () => {
-      if (timeoutRef.current) {
-        window.clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-      setShowTooltip(false);
-      // Wait for fade-out animation before removing from DOM
-      setTimeout(() => setIsVisible(false), 150);
-    };
-
-    // Calculate tooltip position
-    const getTooltipPosition = () => {
-      if (!triggerRef.current || !tooltipRef.current) return {};
-
-      const gap = 8; // Gap between trigger and tooltip
-
-      switch (position) {
-        case 'top':
-          return {
-            bottom: `calc(100% + ${gap}px)`,
-            left: '50%',
-            transform: 'translateX(-50%)',
-          };
-        case 'bottom':
-          return {
-            top: `calc(100% + ${gap}px)`,
-            left: '50%',
-            transform: 'translateX(-50%)',
-          };
-        case 'left':
-          return {
-            right: `calc(100% + ${gap}px)`,
-            top: '50%',
-            transform: 'translateY(-50%)',
-          };
-        case 'right':
-          return {
-            left: `calc(100% + ${gap}px)`,
-            top: '50%',
-            transform: 'translateY(-50%)',
-          };
-        default:
-          return {};
-      }
-    };
-
-    if (disabled) {
-      return <>{children}</>;
-    }
-
-    return (
-      <div
-        ref={ref}
-        className="relative inline-flex"
-        onMouseEnter={handleShow}
-        onMouseLeave={handleHide}
-        onFocus={handleShow}
-        onBlur={handleHide}
+export function TooltipContent({ className, sideOffset = 4, forceMount, ...props }: ComponentProps<typeof TooltipPrimitive.Content>) {
+  return (
+    <TooltipPortal forceMount={forceMount}>
+      <TooltipPrimitive.Content
+        data-slot="tooltip-content"
+        forceMount={forceMount}
+        sideOffset={sideOffset}
+        className={cn('overlay-motion z-50 max-w-[min(20rem,calc(100vw-2rem))] rounded-md border border-border bg-popover px-3 py-2 text-sm text-popover-foreground', className)}
         {...props}
-      >
-        {/* Trigger element */}
-        <div
-          ref={triggerRef}
-          className="inline-flex"
-          tabIndex={0}
-          role="button"
-          aria-describedby={isVisible ? 'tooltip' : undefined}
-        >
-          {children}
-        </div>
-
-        {/* Tooltip content */}
-        {isVisible && (
-          <div
-            ref={tooltipRef}
-            id="tooltip"
-            role="tooltip"
-            className={cn(
-              tooltipVariants({ theme, position }),
-              showTooltip ? 'opacity-100' : 'opacity-0',
-              className,
-            )}
-            style={getTooltipPosition()}
-          >
-            {/* Arrow indicator */}
-            {showArrow && (
-              <div
-                className={cn(
-                  arrowVariants({ theme, position }),
-                  arrowBorderVariants({ theme, position }),
-                )}
-              />
-            )}
-
-            {/* Content */}
-            <div className="relative z-10 whitespace-nowrap">{content}</div>
-          </div>
-        )}
-      </div>
-    );
-  },
-);
-
-Tooltip.displayName = 'Tooltip';
-
-export default Tooltip;
+      />
+    </TooltipPortal>
+  );
+}

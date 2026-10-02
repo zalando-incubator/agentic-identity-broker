@@ -1,12 +1,31 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import { themeInitPlugin } from './build/themeInitPlugin'
+import { decisionModulesPlugin } from './build/decisionModulesPlugin'
+import { assetCompressionPlugin } from './build/assetCompressionPlugin'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    themeInitPlugin(),
+    decisionModulesPlugin(),
+    assetCompressionPlugin(),
+    {
+      name: 'react-router-production',
+      apply: 'build',
+      enforce: 'pre',
+      // React Router's published exports still select development code: remix-run/react-router#14102.
+      resolveId(source) {
+        if (source === 'react-router') return path.resolve(__dirname, 'node_modules/react-router/dist/production/index.mjs')
+        if (source === 'react-router/dom') return path.resolve(__dirname, 'node_modules/react-router/dist/production/dom-export.mjs')
+      },
+    },
+  ],
   base: '/',
   build: {
     outDir: 'dist',
+    manifest: true,
     sourcemap: false,
     minify: 'terser',
   },
@@ -45,6 +64,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@design-system': path.resolve(__dirname, './src/design-system'),
+      '@copy': path.resolve(__dirname, './src/copy'),
       '@components': path.resolve(__dirname, './src/components'),
       '@hooks': path.resolve(__dirname, './src/hooks'),
       '@services': path.resolve(__dirname, './src/services'),

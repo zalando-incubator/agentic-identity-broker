@@ -88,6 +88,8 @@
 
 ### Phase 2e: Frontend/Design System Review [MANDATORY IF FRONTEND]
 
+> **Historical visual scope**: The visual choices and design checks in this task record retain their original wording and completion states, not renewed aesthetic requirements. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 **Constitution Reference**: Principle XI (Design System Compliance & Consistency)
 
 - [x] T008 Review design system at `web/src/design-system/docs/INDEX.md` for component selection

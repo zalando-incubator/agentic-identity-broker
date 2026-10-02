@@ -1,5 +1,7 @@
-/**
- * Tooltip component exports
- */
-
-export { Tooltip, type TooltipProps, Tooltip as default } from './Tooltip';
+export {
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipPortal,
+  TooltipContent,
+} from './Tooltip';

@@ -1,1 +1,8 @@
-export { Popover, type PopoverProps, Popover as default } from './Popover';
+export {
+  Popover,
+  PopoverTrigger,
+  PopoverAnchor,
+  PopoverPortal,
+  PopoverContent,
+  PopoverClose,
+} from './Popover';

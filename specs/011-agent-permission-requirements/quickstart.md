@@ -557,6 +557,8 @@ func validateRedirectURI(redirectURI string, r *http.Request) error {
 
 ### Phase 8: Frontend - Service Requirements Components
 
+> **Historical visual scope**: Styling and token examples below record this feature's original design, not a current constitutional aesthetic mandate. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 **File**: `web/src/components/consent/ServiceRequirementCard.tsx` (NEW)
 
 ```tsx

@@ -20,23 +20,18 @@ import (
 const (
 	agentDetailPath   = "/agents/%s"
 	overviewPath      = "/delegations"
-	revokeDialogTitle = "Revoke All Access"
+	revokeDialogTitle = "Revoke access"
 )
 
-// ConsentPage represents the OAuth2 consent flow page where users grant
-// OAuth2 scopes to agents. This page is actually the AgentGrantDetailPage
-// in the React app, which allows users to delegate services and scopes.
-//
-// ConsentPage wraps the base Page object for common navigation and utilities.
-// All selectors use Playwright's semantic methods (GetByRole, GetByLabel, GetByText)
-// to interact with accessible UI elements, never relying on HTML structure or CSS classes.
+// ConsentPage models the authorization decision and console grant editor.
+// Selectors target accessible controls and the owned components' semantic test IDs.
 //
 // Usage pattern:
 //
 //	consentPage := NewConsentPage(page, baseURL)
 //	consentPage.NavigateToAgent(ctx, "agent-id")
-//	consentPage.SelectScope(ctx, "user:read")
-//	consentPage.SubmitConsent(ctx)
+//	consentPage.TogglePermissionSet(ctx, "Optional access")
+//	consentPage.SaveChanges(ctx)
 type ConsentPage struct {
 	*Page // Embed Page for method forwarding
 }
@@ -131,7 +126,7 @@ func (cp *ConsentPage) NavigateToAgentWithRedirectURI(ctx context.Context, agent
 }
 
 // NavigateToOverview navigates to the consent overview page (list of delegations).
-// The React app serves the overview at the root route ("/").
+// The React app serves the overview at /delegations.
 //
 // Returns an error if navigation fails.
 //
@@ -151,36 +146,11 @@ func (cp *ConsentPage) page() playwright.Page {
 	return cp.GetPlaywrightPage()
 }
 
-func (cp *ConsentPage) getConsentActionButton(label string) playwright.Locator {
-	return cp.page().GetByRole(
-		"button",
-		playwright.PageGetByRoleOptions{Name: label},
-	)
-}
-
-func (cp *ConsentPage) isConsentActionEnabled(label string) (bool, error) {
-	button := cp.getConsentActionButton(label)
-	count, err := button.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to locate consent action button: %w", err)
-	}
-	if count == 0 {
-		return false, fmt.Errorf("consent action button not found")
-	}
-
-	enabled, err := button.IsEnabled()
-	if err != nil {
-		return false, fmt.Errorf("failed to check consent action button enabled state: %w", err)
-	}
-
-	return enabled, nil
-}
-
 // waitForAgentNameHeading waits for the main h1 heading (agent name) to appear.
 // This waits for the page to load the agent detail content (not the header).
 // Uses data-testid to avoid ambiguity when multiple h1 elements exist on page.
 func (cp *ConsentPage) waitForAgentNameHeading(ctx context.Context) error {
-	agentNameHeading := cp.page().GetByTestId("agent-name-heading")
+	agentNameHeading := cp.page().GetByTestId("agent-name-heading").GetByRole("heading", playwright.LocatorGetByRoleOptions{Level: playwright.Int(1)})
 	err := agentNameHeading.WaitFor(playwright.LocatorWaitForOptions{
 		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
 	})
@@ -190,51 +160,7 @@ func (cp *ConsentPage) waitForAgentNameHeading(ctx context.Context) error {
 	return nil
 }
 
-// SelectScope is not applicable in the current UI (Phase 8 - Simplified UI).
-//
-// In the current design, scopes are displayed as read-only StatusIndicator badges.
-// Service delegation happens at the service level (Login/Delegate buttons), not at the scope level.
-// Scopes are automatically included based on service requirements.
-//
-// This method is kept for API compatibility but always returns an error.
-//
-// Returns:
-//   - error: Always returns an error indicating scopes are not selectable
-//
-// Deprecated: Scopes are determined by service requirements, not user selection.
-func (cp *ConsentPage) SelectScope(ctx context.Context, scopeName string) error {
-	if scopeName == "" {
-		return fmt.Errorf("scopeName cannot be empty")
-	}
-
-	// In the current UI (Phase 8), scopes are not selectable.
-	// Scopes are automatically included based on service requirements.
-	// Use DelegateService() instead to grant access to a service with its required scopes.
-	return fmt.Errorf("scope selection is not available in current UI; scopes are determined by service requirements. Use DelegateService() to grant service access")
-}
-
-// ClearScope is not applicable in the current UI (Phase 8 - Simplified UI).
-//
-// In the current design, scopes are displayed as read-only StatusIndicator badges.
-// Scopes cannot be individually cleared; instead, revoke access to the entire service using RevokeService().
-//
-// This method is kept for API compatibility but always returns an error.
-//
-// Returns:
-//   - error: Always returns an error indicating scopes are not modifiable
-//
-// Deprecated: Use RevokeService() instead to revoke all scopes for a service.
-func (cp *ConsentPage) ClearScope(ctx context.Context, scopeName string) error {
-	if scopeName == "" {
-		return fmt.Errorf("scopeName cannot be empty")
-	}
-
-	// In the current UI (Phase 8), scopes are not individually modifiable.
-	// Use RevokeService() instead to revoke all scopes for a service.
-	return fmt.Errorf("scope clearing is not available in current UI; scopes are determined by service requirements. Use RevokeService() to revoke all scopes for a service")
-}
-
-// SubmitConsent clicks the "Approve & Delegate" action for a new grant.
+// SubmitConsent submits the decision or console draft for the current route context.
 //
 // Parameters:
 //   - ctx: Context for cancellation
@@ -244,26 +170,20 @@ func (cp *ConsentPage) ClearScope(ctx context.Context, scopeName string) error {
 //
 // The button may be disabled if mandatory requirements are not met.
 func (cp *ConsentPage) SubmitConsent(ctx context.Context) error {
-	button := cp.getConsentActionButton("Approve & Delegate")
-	if err := button.Click(); err != nil {
-		return fmt.Errorf("failed to click approve and delegate button: %w", err)
+	sessionToken, err := cp.GetURLQueryParam("session_token")
+	if err != nil {
+		return err
 	}
-	return nil
+	if sessionToken != "" {
+		return cp.ClickAllow(ctx)
+	}
+	return cp.SaveChanges(ctx)
 }
 
-func (cp *ConsentPage) endDateInput() (playwright.Locator, error) {
-	input := cp.page().GetByLabel("End date", playwright.PageGetByLabelOptions{
+func (cp *ConsentPage) endDateInput() playwright.Locator {
+	return cp.page().Locator("input[type='date']").And(cp.page().GetByLabel("Custom date", playwright.PageGetByLabelOptions{
 		Exact: playwright.Bool(true),
-	})
-	count, err := input.Count()
-	if err != nil {
-		return nil, fmt.Errorf("failed to count expiration input: %w", err)
-	}
-	if count == 0 {
-		return nil, fmt.Errorf("expiration input not found")
-	}
-
-	return input, nil
+	}))
 }
 
 // SetExpiration sets the grant expiration days using the expiration input.
@@ -287,27 +207,12 @@ func (cp *ConsentPage) SetExpiration(ctx context.Context, expirationDays int) er
 		return fmt.Errorf("expirationDays must be positive")
 	}
 
-	input, err := cp.endDateInput()
-	if err != nil {
-		return err
-	}
-
-	// Calculate expiration date
-	expirationDate := time.Now().AddDate(0, 0, expirationDays).Format("2006-01-02")
-
-	// Fill the input
-	if err := input.Fill(expirationDate); err != nil {
-		return fmt.Errorf("failed to set expiration date: %w", err)
-	}
-
-	return nil
+	return cp.SetExpirationDate(ctx, time.Now().AddDate(0, 0, expirationDays))
 }
 
 // EnableSpecificEndDate selects the specific end date option.
-func (cp *ConsentPage) EnableSpecificEndDate(_ context.Context) error {
-	return cp.page().GetByRole("checkbox", playwright.PageGetByRoleOptions{
-		Name: "Specific end date",
-	}).Check()
+func (cp *ConsentPage) EnableSpecificEndDate(ctx context.Context) error {
+	return cp.ChooseDuration(ctx, "Custom date")
 }
 
 // SetExpirationDate sets the grant expiration to a specific date.
@@ -327,20 +232,10 @@ func (cp *ConsentPage) EnableSpecificEndDate(_ context.Context) error {
 //	err := consentPage.SetExpirationDate(ctx, tomorrow)
 //	Expect(err).NotTo(HaveOccurred())
 func (cp *ConsentPage) SetExpirationDate(ctx context.Context, date time.Time) error {
-	input, err := cp.endDateInput()
-	if err != nil {
+	if err := cp.EnableSpecificEndDate(ctx); err != nil {
 		return err
 	}
-
-	// Format date as ISO 8601
-	dateStr := date.Format("2006-01-02")
-
-	// Fill the input
-	if err := input.Fill(dateStr); err != nil {
-		return fmt.Errorf("failed to set expiration date: %w", err)
-	}
-
-	return nil
+	return cp.SetCustomDate(ctx, date.Format("2006-01-02"))
 }
 
 // GetAgentName retrieves the agent display name from the page heading.
@@ -358,205 +253,29 @@ func (cp *ConsentPage) SetExpirationDate(ctx context.Context, date time.Time) er
 //	Expect(err).NotTo(HaveOccurred())
 //	Expect(name).To(Equal("GitHub Agent"))
 func (cp *ConsentPage) GetAgentName(ctx context.Context) (string, error) {
-	// Find h1 heading in the main content area using semantic role
-	heading := cp.page().GetByRole(
-		"heading",
-		playwright.PageGetByRoleOptions{Level: playwright.Int(1)},
-	).First()
-
-	// Check if element exists
-	count, err := heading.Count()
-	if err != nil {
-		return "", fmt.Errorf("failed to count h1 heading: %w", err)
-	}
-	if count == 0 {
-		return "", fmt.Errorf("agent name heading not found")
-	}
-
-	// Get the text content
-	text, err := heading.TextContent()
-	if err != nil {
-		return "", fmt.Errorf("failed to get agent name heading: %w", err)
-	}
-
-	if text == "" {
-		return "", fmt.Errorf("agent name heading is empty")
-	}
-
-	return strings.TrimSpace(text), nil
-}
-
-// GetAvailableScopes retrieves all available scopes displayed on the page.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//
-// Returns:
-//   - []string: Slice of scope names (e.g., ["repo", "user"])
-//   - error: If no scopes found
-//
-// Scopes are displayed as StatusIndicator badges in the "Permissions" sections
-// of each service card. This method finds all visible scope labels on the page.
-//
-// Example:
-//
-//	scopes, err := consentPage.GetAvailableScopes(ctx)
-//	Expect(err).NotTo(HaveOccurred())
-//	Expect(scopes).To(ContainElement("repo"))
-func (cp *ConsentPage) GetAvailableScopes(ctx context.Context) ([]string, error) {
-	// StatusIndicators use data-testid for semantic identification
-	// Pattern: data-testid="scope-indicator-*"
-	indicators := cp.page().Locator("[data-testid^='scope-indicator-']")
-
-	// Get count of indicators
-	count, err := indicators.Count()
-	if err != nil {
-		return nil, fmt.Errorf("failed to count scope indicators: %w", err)
-	}
-	if count == 0 {
-		return nil, fmt.Errorf("no scopes found on page")
-	}
-
-	scopes := []string{}
-	seen := make(map[string]bool) // Track unique scopes
-
-	// Iterate through each StatusIndicator
-	for i := 0; i < count; i++ {
-		indicator := indicators.Nth(i)
-
-		// Get all spans within the indicator
-		// The last span contains the scope label (first span is the icon)
-		spans := indicator.Locator("span")
-		spanCount, _ := spans.Count()
-
-		if spanCount > 0 {
-			// Get the last span which contains the label
-			lastSpan := spans.Last()
-			text, err := lastSpan.TextContent()
-			if err == nil && text != "" {
-				text = strings.TrimSpace(text)
-				// Avoid duplicates and skip non-scope text (like "Permissions")
-				if !seen[text] && text != "" && !strings.Contains(strings.ToLower(text), "permissions") {
-					scopes = append(scopes, text)
-					seen[text] = true
-				}
-			}
-		}
-	}
-
-	if len(scopes) == 0 {
-		return nil, fmt.Errorf("no scope labels found")
-	}
-
-	return scopes, nil
-}
-
-// GetSelectedScopes retrieves all currently selected/checked scopes.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//
-// Returns:
-//   - []string: Slice of selected scope names
-//   - error: Only if there's an error accessing the page
-//
-// Returns an empty slice if no scopes are selected (not an error).
-//
-// Example:
-//
-//	selected, err := consentPage.GetSelectedScopes(ctx)
-//	Expect(err).NotTo(HaveOccurred())
-//	Expect(selected).To(HaveLen(2))
-func (cp *ConsentPage) GetSelectedScopes(ctx context.Context) ([]string, error) {
-	// Find all checkboxes
-	checkboxes := cp.page().GetByRole("checkbox")
-
-	// Get count
-	count, err := checkboxes.Count()
-	if err != nil {
-		return nil, fmt.Errorf("failed to count checkboxes: %w", err)
-	}
-
-	selected := []string{}
-
-	// Iterate through each checkbox and check if it's checked
-	for i := 0; i < count; i++ {
-		checkbox := checkboxes.Nth(i)
-
-		// Check if this checkbox is checked
-		isChecked, err := checkbox.IsChecked()
-		if err != nil {
-			continue
-		}
-
-		if isChecked {
-			// Get the scope label
-			label, err := checkbox.GetAttribute("aria-label")
-			if err == nil && label != "" {
-				selected = append(selected, label)
-			} else {
-				// Try to find associated label by id
-				id, err := checkbox.GetAttribute("id")
-				if err == nil && id != "" {
-					labelElem := cp.page().Locator(fmt.Sprintf("label[for='%s']", id))
-					if count, _ := labelElem.Count(); count > 0 {
-						text, err := labelElem.TextContent()
-						if err == nil && text != "" {
-							selected = append(selected, strings.TrimSpace(text))
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return selected, nil
-}
-
-// IsConsentButtonEnabled checks if the new-grant consent action is enabled.
-func (cp *ConsentPage) IsConsentButtonEnabled(ctx context.Context) (bool, error) {
-	return cp.isConsentActionEnabled("Approve & Delegate")
+	return cp.locatorText(ctx, cp.page().GetByTestId("agent-name-heading").
+		GetByRole("heading", playwright.LocatorGetByRoleOptions{Level: playwright.Int(1)}), "agent name")
 }
 
 // IsSaveButtonEnabled checks if the existing-grant Save action is enabled.
 func (cp *ConsentPage) IsSaveButtonEnabled(ctx context.Context) (bool, error) {
-	return cp.isConsentActionEnabled("Save")
+	button := cp.page().GetByTestId("grant-save-bar").
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Save changes", Exact: playwright.Bool(true)})
+	visible, err := cp.locatorVisible(ctx, button, "save grant changes")
+	if err != nil || !visible {
+		return false, err
+	}
+	return button.IsEnabled()
 }
 
-// GetSuccessMessage retrieves the success message after form submission.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//
-// Returns:
-//   - string: Success message text
-//   - error: If success message not found
-//
-// Searches for an element with role="status" which contains the success feedback.
-// This is typically a toast or status region that appears after successful submission.
-//
-// Example:
-//
-//	msg, err := consentPage.GetSuccessMessage(ctx)
-//	Expect(err).NotTo(HaveOccurred())
-//	Expect(msg).To(ContainSubstring("updated successfully"))
-func (cp *ConsentPage) GetSuccessMessage(ctx context.Context) (string, error) {
-	// Find status region
-	status := cp.page().GetByRole("status")
+func (cp *ConsentPage) grantErrors() playwright.Locator {
+	return cp.page().GetByRole("main").Locator("[role='alert']:not([data-testid='localhost-warning'])")
+}
 
-	// Check if it exists
-	count, err := status.Count()
-	if err != nil || count == 0 {
-		return "", fmt.Errorf("success message (status region) not found")
-	}
-
-	// Get the text content
-	text, err := status.First().TextContent()
-	if err != nil {
-		return "", fmt.Errorf("failed to get success message text: %w", err)
-	}
-
-	return strings.TrimSpace(text), nil
+func (cp *ConsentPage) grantSavedStatus() playwright.Locator {
+	return cp.page().Locator("form").GetByRole("status").Filter(playwright.LocatorFilterOptions{
+		HasText: "Grant updated successfully.",
+	})
 }
 
 // GetErrorMessage retrieves the error message if one is displayed.
@@ -568,8 +287,7 @@ func (cp *ConsentPage) GetSuccessMessage(ctx context.Context) (string, error) {
 //   - string: Error message text
 //   - error: If error region not found or empty
 //
-// Searches for an element with role="alert" which contains the error feedback.
-// Returns empty string and nil if no error is found (not an error condition).
+// Reads decision/editor errors without treating the localhost safety warning as a failure.
 //
 // Example:
 //
@@ -580,7 +298,7 @@ func (cp *ConsentPage) GetSuccessMessage(ctx context.Context) (string, error) {
 //	}
 func (cp *ConsentPage) GetErrorMessage(ctx context.Context) (string, error) {
 	// Find alert region
-	alert := cp.page().GetByRole("alert")
+	alert := cp.grantErrors()
 
 	// Check if it exists
 	count, err := alert.Count()
@@ -617,7 +335,7 @@ func (cp *ConsentPage) GetErrorMessage(ctx context.Context) (string, error) {
 //	Expect(hasErr).To(BeTrue())
 func (cp *ConsentPage) HasError(ctx context.Context) (bool, error) {
 	// Try to find alert region
-	count, err := cp.page().GetByRole("alert").Count()
+	count, err := cp.grantErrors().Count()
 	if err != nil {
 		return false, fmt.Errorf("failed to check for error: %w", err)
 	}
@@ -640,503 +358,85 @@ func (cp *ConsentPage) HasError(ctx context.Context) (bool, error) {
 //	Expect(err).NotTo(HaveOccurred())
 //	Expect(date).To(Equal("2026-02-15"))
 func (cp *ConsentPage) GetExpirationDate(ctx context.Context) (string, error) {
-	input, err := cp.endDateInput()
-	if err != nil {
-		return "", err
-	}
-
-	// Get the value attribute
-	value, err := input.InputValue()
-	if err != nil {
-		return "", fmt.Errorf("failed to get expiration input value: %w", err)
-	}
-
-	return value, nil
+	return cp.CustomDateValue(ctx)
 }
 
-// DelegateService clicks the Delegate or Login button for a service.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//   - serviceDisplayName: Display name of the service (e.g., "GitHub")
-//
-// Returns:
-//   - error: If service button not found or not clickable
-//
-// Finds the service by its display name heading (semantic role="heading" level 3)
-// then locates and clicks the action button (Login or Delegate).
-// Uses data-testid for reliable button identification without brittle XPath selectors.
-//
-// Example:
-//
-//	err := consentPage.DelegateService(ctx, "GitHub")
-//	Expect(err).NotTo(HaveOccurred())
+// DelegateService starts the provider connection flow without changing the grant.
 func (cp *ConsentPage) DelegateService(ctx context.Context, serviceDisplayName string) error {
 	if serviceDisplayName == "" {
 		return fmt.Errorf("serviceDisplayName cannot be empty")
 	}
-
-	// Step 1: Find the service heading (semantic)
-	serviceHeading := cp.page().GetByRole(
-		"heading",
-		playwright.PageGetByRoleOptions{Name: serviceDisplayName, Level: playwright.Int(3)},
-	)
-
-	count, err := serviceHeading.Count()
-	if err != nil {
-		return fmt.Errorf("failed to find service %q: %w", serviceDisplayName, err)
-	}
-	if count == 0 {
-		return fmt.Errorf("service %q not found on page", serviceDisplayName)
-	}
-
-	// Step 2: Find the article parent (semantic role wrapper added in React)
-	// Use aria-label attribute for semantic, accessible selector
-	serviceArticle := cp.page().Locator(
-		fmt.Sprintf(`article[aria-label="Service: %s"]`, serviceDisplayName),
-	).First()
-
-	articleCount, err := serviceArticle.Count()
-	if err != nil || articleCount == 0 {
-		return fmt.Errorf("service article wrapper not found for %q", serviceDisplayName)
-	}
-
-	// Step 3: Find action button within the service article (not page-wide)
-	// Try Login button first (for services not yet connected)
-	actionBtn := serviceArticle.Locator("[data-testid='service-login-button']")
-	if btnCount, _ := actionBtn.Count(); btnCount > 0 {
-		if err := actionBtn.Click(); err != nil {
-			return fmt.Errorf("failed to click login button for service %q: %w", serviceDisplayName, err)
-		}
-		return nil
-	}
-
-	// Try Delegate button (for connected services not yet delegated)
-	actionBtn = serviceArticle.Locator("[data-testid='service-delegate-button']")
-	if btnCount, _ := actionBtn.Count(); btnCount > 0 {
-		if err := actionBtn.Click(); err != nil {
-			return fmt.Errorf("failed to click delegate button for service %q: %w", serviceDisplayName, err)
-		}
-		return nil
-	}
-
-	return fmt.Errorf("action button (Login or Delegate) not found for service %q", serviceDisplayName)
+	return cp.ClickConnect(ctx, serviceDisplayName)
 }
 
 // TogglePermissionSet changes an optional permission set's selection by name.
-func (cp *ConsentPage) TogglePermissionSet(_ context.Context, permissionSetName string) error {
+func (cp *ConsentPage) TogglePermissionSet(ctx context.Context, permissionSetName string) error {
 	if permissionSetName == "" {
 		return fmt.Errorf("permission set name cannot be empty")
 	}
-	return cp.page().GetByRole("switch", playwright.PageGetByRoleOptions{
-		Name: "Toggle " + permissionSetName,
-	}).Click()
+	return cp.locatorClick(ctx, cp.permissionGroup(permissionSetName).
+		Locator("[role='checkbox'][aria-label]"), "toggle permission group "+permissionSetName)
 }
 
-// RevokeService clicks the Revoke button for a service.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//   - serviceDisplayName: Display name of the service (e.g., "GitHub")
-//
-// Returns:
-//   - error: If service or Revoke button not found
-//
-// Example:
-//
-//	err := consentPage.RevokeService(ctx, "GitHub")
-//	Expect(err).NotTo(HaveOccurred())
-func (cp *ConsentPage) RevokeService(ctx context.Context, serviceDisplayName string) error {
-	if serviceDisplayName == "" {
-		return fmt.Errorf("serviceDisplayName cannot be empty")
-	}
-
-	// Find service heading (semantic)
-	serviceHeading := cp.page().GetByRole(
-		"heading",
-		playwright.PageGetByRoleOptions{Name: serviceDisplayName, Level: playwright.Int(3)},
-	)
-
-	count, err := serviceHeading.Count()
-	if err != nil {
-		return fmt.Errorf("failed to find service %q: %w", serviceDisplayName, err)
-	}
-	if count == 0 {
-		return fmt.Errorf("service %q not found on page", serviceDisplayName)
-	}
-
-	// Find the article parent (semantic role wrapper)
-	// Use aria-label attribute for semantic, accessible selector
-	serviceArticle := cp.page().Locator(
-		fmt.Sprintf(`article[aria-label="Service: %s"]`, serviceDisplayName),
-	).First()
-
-	if articleCount, _ := serviceArticle.Count(); articleCount == 0 {
-		return fmt.Errorf("service article wrapper not found for %q", serviceDisplayName)
-	}
-
-	// Find Revoke button within service article
-	revokeBtn := serviceArticle.GetByRole(
-		"button",
-		playwright.LocatorGetByRoleOptions{Name: "Revoke"},
-	).First()
-
-	btnCount, err := revokeBtn.Count()
-	if err != nil || btnCount == 0 {
-		return fmt.Errorf("revoke button not found for service %q", serviceDisplayName)
-	}
-
-	if err := revokeBtn.Click(); err != nil {
-		return fmt.Errorf("failed to click revoke button for service %q: %w", serviceDisplayName, err)
-	}
-
-	return nil
-}
-
-// GetServiceCount returns the number of services displayed on the page.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//
-// Returns:
-//   - int: Number of services
-//   - error: If failed to count services
-//
-// Example:
-//
-//	count, err := consentPage.GetServiceCount(ctx)
-//	Expect(err).NotTo(HaveOccurred())
-//	Expect(count).To(Equal(3))
-func (cp *ConsentPage) GetServiceCount(ctx context.Context) (int, error) {
-	// Count service headings (level 3)
-	headings := cp.page().GetByRole(
-		"heading",
-		playwright.PageGetByRoleOptions{Level: playwright.Int(3)},
-	)
-
-	count, err := headings.Count()
-	if err != nil {
-		return 0, fmt.Errorf("failed to count service headings: %w", err)
-	}
-
-	// Exclude the main title (Services) heading
-	if count > 0 {
-		count-- // Subtract 1 for the "Services" section heading
-	}
-
-	return count, nil
-}
-
-// GetServiceNames returns the display names of all services on the page.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//
-// Returns:
-//   - []string: Slice of service display names
-//   - error: If failed to retrieve service names
-//
-// Example:
-//
-//	names, err := consentPage.GetServiceNames(ctx)
-//	Expect(err).NotTo(HaveOccurred())
-//	Expect(names).To(Equal([]string{"GitHub", "Google Cloud"}))
-func (cp *ConsentPage) GetServiceNames(ctx context.Context) ([]string, error) {
-	// Count service headings (level 3)
-	headings := cp.page().GetByRole(
-		"heading",
-		playwright.PageGetByRoleOptions{Level: playwright.Int(3)},
-	)
-
-	count, err := headings.Count()
-	if err != nil {
-		return nil, fmt.Errorf("failed to count service headings: %w", err)
-	}
-
-	names := []string{}
-
-	// Iterate through headings starting from index 1 (skip the main "Services" heading)
-	for i := 1; i < count; i++ {
-		heading := headings.Nth(i)
-		text, err := heading.TextContent()
-		if err != nil {
-			continue
-		}
-		names = append(names, strings.TrimSpace(text))
-	}
-
-	return names, nil
-}
-
-// GetValidationErrorCount returns the number of validation errors displayed.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//
-// Returns:
-//   - int: Number of validation errors
-//   - error: If failed to count errors
-//
-// Example:
-//
-//	count, err := consentPage.GetValidationErrorCount(ctx)
-//	Expect(err).NotTo(HaveOccurred())
-//	Expect(count).To(Equal(1))
-func (cp *ConsentPage) GetValidationErrorCount(ctx context.Context) (int, error) {
-	// Find error container using semantic role="alert"
-	errorAlert := cp.page().GetByRole("alert").First()
-
-	// Check if error container exists
-	count, err := cp.page().GetByRole("alert").Count()
-	if err != nil {
-		return 0, fmt.Errorf("failed to check for error container: %w", err)
-	}
-
-	if count == 0 {
-		return 0, nil
-	}
-
-	// Count list items in error container
-	errorItems := errorAlert.GetByRole("listitem")
-	itemCount, err := errorItems.Count()
-	if err != nil {
-		return 0, fmt.Errorf("failed to count error items: %w", err)
-	}
-
-	return itemCount, nil
-}
-
-// GetValidationErrors returns all validation error messages displayed.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//
-// Returns:
-//   - []string: Slice of error message texts
-//   - error: If failed to retrieve error messages
-//
-// Example:
-//
-//	errors, err := consentPage.GetValidationErrors(ctx)
-//	Expect(err).NotTo(HaveOccurred())
-//	Expect(errors).To(ContainElement(ContainSubstring("required")))
-func (cp *ConsentPage) GetValidationErrors(ctx context.Context) ([]string, error) {
-	// Find error container using semantic role="alert"
-	errorAlert := cp.page().GetByRole("alert").First()
-
-	// Check if error container exists
-	count, err := cp.page().GetByRole("alert").Count()
-	if err != nil {
-		return nil, fmt.Errorf("failed to check for error container: %w", err)
-	}
-
-	if count == 0 {
-		return []string{}, nil
-	}
-
-	// Get all error items
-	errorItems := errorAlert.GetByRole("listitem")
-	itemCount, err := errorItems.Count()
-	if err != nil {
-		return nil, fmt.Errorf("failed to count error items: %w", err)
-	}
-
-	errors := []string{}
-	for i := 0; i < itemCount; i++ {
-		item := errorItems.Nth(i)
-		text, err := item.TextContent()
-		if err != nil {
-			continue
-		}
-		errors = append(errors, strings.TrimSpace(text))
-	}
-
-	return errors, nil
-}
-
-// IsMandatoryServiceConnected checks if a mandatory service shows as connected/delegated.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//   - serviceDisplayName: Display name of the service
-//
-// Returns:
-//   - bool: True if service is connected/delegated
-//   - error: If service not found
-//
-// Example:
-//
-//	connected, err := consentPage.IsMandatoryServiceConnected(ctx, "GitHub")
-//	Expect(err).NotTo(HaveOccurred())
-//	Expect(connected).To(BeTrue())
-func (cp *ConsentPage) IsMandatoryServiceConnected(ctx context.Context, serviceDisplayName string) (bool, error) {
-	if serviceDisplayName == "" {
-		return false, fmt.Errorf("serviceDisplayName cannot be empty")
-	}
-
-	// Find service heading (semantic)
-	serviceHeading := cp.page().GetByRole(
-		"heading",
-		playwright.PageGetByRoleOptions{Name: serviceDisplayName, Level: playwright.Int(3)},
-	)
-
-	count, err := serviceHeading.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to find service %q: %w", serviceDisplayName, err)
-	}
-	if count == 0 {
-		return false, fmt.Errorf("service %q not found", serviceDisplayName)
-	}
-
-	// Find the article parent (semantic role wrapper)
-	// Use aria-label attribute for semantic, accessible selector
-	serviceArticle := cp.page().Locator(
-		fmt.Sprintf(`article[aria-label="Service: %s"]`, serviceDisplayName),
-	).First()
-
-	if articleCount, _ := serviceArticle.Count(); articleCount == 0 {
-		return false, fmt.Errorf("service article wrapper not found for %q", serviceDisplayName)
-	}
-
-	// Check for Revoke button (indicates service is delegated)
-	revokeBtn := serviceArticle.GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Revoke"})
-	btnCount, _ := revokeBtn.Count()
-
-	return btnCount > 0, nil
-}
-
-// ===== Revoke Grant Page Object Methods =====
-// These methods support the RevokeGrantButton and RevokeGrantDialog UI components
-// introduced by feature 022-revoke-agent-consent.
-
-// GetRevokeButton returns the "Revoke All Access" button locator on the agent detail page.
-// The button is only rendered when the user has an active grant for the agent (FR-009).
+// GetRevokeButton returns the destructive menu item after OpenOverflowMenu.
 func (cp *ConsentPage) GetRevokeButton(ctx context.Context) playwright.Locator {
-	return cp.page().GetByRole(
-		"button",
-		playwright.PageGetByRoleOptions{Name: revokeDialogTitle},
-	)
-}
-
-// ClickRevokeButton clicks the "Revoke All Access" button on the detail page.
-// Returns an error if the button is not found or not clickable.
-func (cp *ConsentPage) ClickRevokeButton(ctx context.Context) error {
-	btn := cp.GetRevokeButton(ctx)
-
-	count, err := btn.Count()
-	if err != nil {
-		return fmt.Errorf("failed to count revoke button: %w", err)
-	}
-	if count == 0 {
-		return fmt.Errorf("revoke all access button not found")
-	}
-
-	if err := btn.Click(); err != nil {
-		return fmt.Errorf("failed to click revoke all access button: %w", err)
-	}
-	return nil
-}
-
-// GetRevokeDialog returns the RevokeGrantDialog locator (role="dialog").
-// The dialog is shown after clicking the Revoke All Access button.
-// NOTE: In Headless UI v2 with portal rendering, prefer WaitForRevokeDialog
-// (heading-based) over calling WaitFor() on this locator directly.
-func (cp *ConsentPage) GetRevokeDialog(ctx context.Context) playwright.Locator {
-	return cp.revokeDialogHeading().Locator("xpath=ancestor::*[@role='dialog'][1]")
-}
-
-// ConfirmRevoke clicks the primary confirmation button inside the RevokeGrantDialog.
-// This is the destructive action that permanently deletes the grant.
-func (cp *ConsentPage) ConfirmRevoke(ctx context.Context) error {
-	dialog := cp.GetRevokeDialog(ctx)
-
-	count, err := dialog.Count()
-	if err != nil {
-		return fmt.Errorf("failed to find revoke dialog: %w", err)
-	}
-	if count == 0 {
-		return fmt.Errorf("revoke dialog not found; call ClickRevokeButton first")
-	}
-
-	// Confirmation button inside dialog — labeled "Revoke All Access" or "Confirm"
-	confirmBtn := dialog.GetByRole("button", playwright.LocatorGetByRoleOptions{Name: revokeDialogTitle})
-	btnCount, err := confirmBtn.Count()
-	if err != nil || btnCount == 0 {
-		// Try alternate label "Confirm"
-		confirmBtn = dialog.GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Confirm"})
-		btnCount, _ = confirmBtn.Count()
-		if btnCount == 0 {
-			return fmt.Errorf("confirm button not found inside revoke dialog")
-		}
-	}
-
-	if err := confirmBtn.Click(); err != nil {
-		return fmt.Errorf("failed to click confirm button in revoke dialog: %w", err)
-	}
-	return nil
-}
-
-// CancelRevoke clicks the cancel button inside the RevokeGrantDialog.
-// The dialog is dismissed without making any changes.
-func (cp *ConsentPage) CancelRevoke(ctx context.Context) error {
-	dialog := cp.GetRevokeDialog(ctx)
-
-	count, err := dialog.Count()
-	if err != nil {
-		return fmt.Errorf("failed to find revoke dialog: %w", err)
-	}
-	if count == 0 {
-		return fmt.Errorf("revoke dialog not found; call ClickRevokeButton first")
-	}
-
-	cancelBtn := dialog.GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Cancel"})
-	btnCount, err := cancelBtn.Count()
-	if err != nil || btnCount == 0 {
-		return fmt.Errorf("cancel button not found inside revoke dialog")
-	}
-
-	if err := cancelBtn.Click(); err != nil {
-		return fmt.Errorf("failed to click cancel button in revoke dialog: %w", err)
-	}
-	return nil
-}
-
-// IsRevokeButtonPresent checks whether the "Revoke All Access" button is visible on the page.
-// Returns false (not an error) when the button is absent, which is the expected state
-// when the user has no active grant for the agent (FR-009).
-func (cp *ConsentPage) IsRevokeButtonPresent(ctx context.Context) (bool, error) {
-	btn := cp.GetRevokeButton(ctx)
-
-	count, err := btn.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to count revoke button: %w", err)
-	}
-	if count == 0 {
-		return false, nil
-	}
-
-	visible, err := btn.IsVisible()
-	if err != nil {
-		return false, fmt.Errorf("failed to check revoke button visibility: %w", err)
-	}
-	return visible, nil
-}
-
-// revokeDialogHeading returns a locator for the dialog title heading.
-// This heading ("Revoke All Access") is only visible when the RevokeGrantDialog is open.
-// Headless UI v2 renders the Dialog in a portal and may hide it with display:none when
-// closed, making GetByRole("dialog").WaitFor() unreliable for detecting when the dialog opens.
-// Waiting for the heading provides a reliable, animation-safe check.
-func (cp *ConsentPage) revokeDialogHeading() playwright.Locator {
-	return cp.page().GetByRole("heading", playwright.PageGetByRoleOptions{
-		Name: revokeDialogTitle,
+	return cp.page().GetByRole("menuitem", playwright.PageGetByRoleOptions{
+		Name: "Revoke all access", Exact: playwright.Bool(true),
 	})
 }
 
-// WaitForRevokeDialog waits for the RevokeGrantDialog to appear on the page.
-// Should be called after ClickRevokeButton or ClickOverviewRevokeButton.
-// Uses the dialog title heading as a reliable indicator rather than GetByRole("dialog"),
-// which can have timing issues with Headless UI v2's portal-based rendering.
+// ClickRevokeButton opens the overflow action and its confirmation dialog.
+func (cp *ConsentPage) ClickRevokeButton(ctx context.Context) error {
+	if err := cp.OpenOverflowMenu(ctx); err != nil {
+		return err
+	}
+	return cp.ChooseRevokeAllAccess(ctx)
+}
+
+// GetRevokeDialog returns the shared, named grant-revocation dialog.
+func (cp *ConsentPage) GetRevokeDialog(ctx context.Context) playwright.Locator {
+	return cp.page().GetByRole("dialog", playwright.PageGetByRoleOptions{Name: revokeDialogTitle, Exact: playwright.Bool(true)})
+}
+
+// ConfirmRevoke confirms deletion of the acting user's grant.
+func (cp *ConsentPage) ConfirmRevoke(ctx context.Context) error {
+	return cp.locatorClick(ctx, cp.GetRevokeDialog(ctx).
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Revoke", Exact: playwright.Bool(true)}), "confirm grant revocation")
+}
+
+// CancelRevoke dismisses the confirmation without changing access.
+func (cp *ConsentPage) CancelRevoke(ctx context.Context) error {
+	return cp.locatorClick(ctx, cp.GetRevokeDialog(ctx).
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Cancel", Exact: playwright.Bool(true)}), "cancel grant revocation")
+}
+
+// IsRevokeButtonPresent inspects the overflow menu and restores it closed.
+// Agents without an active grant have no overflow trigger.
+func (cp *ConsentPage) IsRevokeButtonPresent(ctx context.Context) (bool, error) {
+	trigger := cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Agent actions", Exact: playwright.Bool(true)})
+	visible, err := cp.locatorVisible(ctx, trigger, "agent actions")
+	if err != nil || !visible {
+		return false, err
+	}
+	if err := cp.OpenOverflowMenu(ctx); err != nil {
+		return false, err
+	}
+	item := cp.GetRevokeButton(ctx)
+	present, err := cp.locatorVisible(ctx, item, "revoke all access")
+	if closeErr := cp.page().Keyboard().Press("Escape"); closeErr != nil {
+		return false, fmt.Errorf("close agent actions: %w", closeErr)
+	}
+	return present, err
+}
+
+// revokeDialogHeading identifies the shared confirmation title.
+func (cp *ConsentPage) revokeDialogHeading() playwright.Locator {
+	return cp.page().GetByRole("heading", playwright.PageGetByRoleOptions{
+		Name: revokeDialogTitle, Exact: playwright.Bool(true),
+	})
+}
+
+// WaitForRevokeDialog waits for the confirmation opened from the detail or overview.
 func (cp *ConsentPage) WaitForRevokeDialog(ctx context.Context) error {
 	if err := cp.revokeDialogHeading().WaitFor(); err != nil {
 		return fmt.Errorf("revoke grant dialog did not appear: %w", err)
@@ -1145,7 +445,7 @@ func (cp *ConsentPage) WaitForRevokeDialog(ctx context.Context) error {
 }
 
 func (cp *ConsentPage) revokeDialogPanel() playwright.Locator {
-	return cp.page().Locator(`[role="dialog"] .bg-white.rounded-2xl`).First()
+	return cp.page().GetByRole("dialog", playwright.PageGetByRoleOptions{Name: revokeDialogTitle, Exact: playwright.Bool(true)})
 }
 
 // TakeRevokeDialogScreenshot captures only the revoke dialog panel.
@@ -1163,40 +463,28 @@ func (cp *ConsentPage) TakeRevokeDialogScreenshot(ctx context.Context, name stri
 
 // IsRevokeDialogVisible reports whether the RevokeGrantDialog is currently visible.
 // Returns false (not an error) when the dialog has been dismissed.
-// Uses the dialog title heading as the visibility indicator.
+// Inspects the named dialog rather than content behind its portal.
 func (cp *ConsentPage) IsRevokeDialogVisible(ctx context.Context) (bool, error) {
-	count, err := cp.revokeDialogHeading().Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to check revoke dialog visibility: %w", err)
-	}
-	return count > 0, nil
+	return cp.locatorVisible(ctx, cp.GetRevokeDialog(ctx), "grant revocation dialog")
 }
 
-// RevokeDialogContainsText checks whether text is visible on the page that matches
-// what is expected to appear inside the RevokeGrantDialog.
-// Uses page-wide text search since the dialog renders in a Headless UI portal.
-// Must be called after WaitForRevokeDialog to ensure the dialog is open.
+// RevokeDialogContainsText reads only the open confirmation, not the page behind it.
 func (cp *ConsentPage) RevokeDialogContainsText(ctx context.Context, text string) (bool, error) {
-	count, err := cp.page().GetByText(text).Count()
+	count, err := cp.GetRevokeDialog(ctx).GetByText(text).Count()
 	if err != nil {
 		return false, fmt.Errorf("failed to locate text %q on page: %w", text, err)
 	}
 	return count > 0, nil
 }
 
-// getOverviewRevokeButton returns the locator for the first "Revoke" button on an agent card
-// in the consent overview page. Shared by IsOverviewRevokeButtonPresent and ClickOverviewRevokeButton.
-//
-// Uses GetByLabel to match the DelegationCard button's aria-label="Revoke access for {displayName}".
-// This is more precise than GetByRole("button", {Name: "Revoke"}) which would also match the
-// Card wrapper div (which has role="button" and an accessible name that includes the inner button's
-// aria-label text via the ARIA accessible name computation algorithm).
+// getOverviewRevokeButton selects the first row action in the Agents table.
 func (cp *ConsentPage) getOverviewRevokeButton() playwright.Locator {
-	return cp.page().GetByLabel("Revoke access for", playwright.PageGetByLabelOptions{Exact: playwright.Bool(false)}).First()
+	return cp.page().GetByRole("table", playwright.PageGetByRoleOptions{Name: "Agents", Exact: playwright.Bool(true)}).
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Revoke", Exact: playwright.Bool(true)}).First()
 }
 
 // IsOverviewRevokeButtonPresent reports whether at least one "Revoke" action button
-// is visible on an agent card in the consent overview page.
+// is visible in the Agents table.
 // Waits for the button to appear (delegation list loads asynchronously after navigation).
 func (cp *ConsentPage) IsOverviewRevokeButtonPresent(ctx context.Context) (bool, error) {
 	btn := cp.getOverviewRevokeButton()
@@ -1207,13 +495,12 @@ func (cp *ConsentPage) IsOverviewRevokeButtonPresent(ctx context.Context) (bool,
 	return true, nil
 }
 
-// ClickOverviewRevokeButton clicks the first "Revoke" action button on an agent card
-// in the consent overview page, opening the RevokeGrantDialog.
+// ClickOverviewRevokeButton opens confirmation for the first Agents table row.
 // Waits for the button to appear before clicking (delegation list loads asynchronously).
 func (cp *ConsentPage) ClickOverviewRevokeButton(ctx context.Context) error {
 	btn := cp.getOverviewRevokeButton()
 	if err := btn.WaitFor(); err != nil {
-		return fmt.Errorf("no Revoke button found on overview page agent cards: %w", err)
+		return fmt.Errorf("no Revoke button found in the Agents table: %w", err)
 	}
 	if err := btn.Click(); err != nil {
 		return fmt.Errorf("failed to click overview Revoke button: %w", err)
@@ -1233,26 +520,6 @@ func (cp *ConsentPage) WaitForRevokeDialogDismissed(ctx context.Context) error {
 	return nil
 }
 
-// ServiceScopeRequiredIndicatorCount returns the number of service-scope chips
-// marked as required within the given permission-set card (identified by data-testid).
-// Locked service chips carry aria-label="<ServiceName> (required)" — this method counts them.
-// Returns an error if more than one element matches psTestID to prevent silent false positives.
-func (cp *ConsentPage) ServiceScopeRequiredIndicatorCount(ctx context.Context, psTestID string) (int, error) {
-	locator := cp.page().GetByTestId(psTestID)
-	count, err := locator.Count()
-	if err != nil {
-		return 0, fmt.Errorf("failed to locate PS card %q: %w", psTestID, err)
-	}
-	if count == 0 {
-		return 0, nil
-	}
-	if count > 1 {
-		return 0, fmt.Errorf("ambiguous locator: %d elements found with testid %q; use a unique test ID per card", count, psTestID)
-	}
-	chips := locator.GetByLabel("(required)", playwright.LocatorGetByLabelOptions{Exact: playwright.Bool(false)})
-	return chips.Count()
-}
-
 // WaitForServiceToAppear waits for a specific service to appear on the page.
 //
 // Parameters:
@@ -1269,22 +536,28 @@ func (cp *ConsentPage) WaitForServiceToAppear(ctx context.Context, serviceDispla
 	if serviceDisplayName == "" {
 		return fmt.Errorf("serviceDisplayName cannot be empty")
 	}
-
-	// Wait for service heading using Playwright's built-in wait mechanism
-	heading := cp.page().GetByRole(
-		"heading",
-		playwright.PageGetByRoleOptions{
-			Name:  serviceDisplayName,
-			Level: playwright.Int(3),
-		},
-	)
-	err := heading.WaitFor(playwright.LocatorWaitForOptions{
-		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
-	})
+	groups, err := cp.PermissionGroups(ctx)
 	if err != nil {
-		return fmt.Errorf("service %q did not appear: %w", serviceDisplayName, err)
+		return err
 	}
-	return nil
+	for _, group := range groups {
+		if !group.Checked {
+			continue
+		}
+		if err := cp.ExpandPermissionGroup(ctx, group.Name); err != nil {
+			return err
+		}
+		services, err := cp.GroupServices(ctx, group.Name)
+		if err != nil {
+			return err
+		}
+		for _, name := range services {
+			if name == serviceDisplayName {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("service %q is not displayed in a selected permission group", serviceDisplayName)
 }
 
 // WaitForPageLoad waits for the consent page to be fully interactive — specifically,
@@ -1317,10 +590,9 @@ func (cp *ConsentPage) NavigateToAgentWithSessionToken(ctx context.Context, agen
 	return nil
 }
 
-// IsCIMDSummaryVisible reports whether the CIMDConsentSummary component is visible
-// on the page (the "The application … wants to access …" paragraph).
+// IsCIMDSummaryVisible checks the plain-language access request.
 func (cp *ConsentPage) IsCIMDSummaryVisible(ctx context.Context) (bool, error) {
-	loc := cp.page().GetByText("wants to access", playwright.PageGetByTextOptions{
+	loc := cp.page().GetByText("requests permission to use the services you select below.", playwright.PageGetByTextOptions{
 		Exact: playwright.Bool(false),
 	})
 	if err := loc.WaitFor(playwright.LocatorWaitForOptions{
@@ -1335,9 +607,7 @@ func (cp *ConsentPage) IsCIMDSummaryVisible(ctx context.Context) (bool, error) {
 // HasCIMDDomainBadge reports whether the CIMDDomainBadge component ("Verified domain: …")
 // is visible on the page.
 func (cp *ConsentPage) HasCIMDDomainBadge(ctx context.Context) (bool, error) {
-	loc := cp.page().GetByText("Verified domain:", playwright.PageGetByTextOptions{
-		Exact: playwright.Bool(false),
-	})
+	loc := cp.page().GetByTestId("agent-origin-label").Filter(playwright.LocatorFilterOptions{HasText: "Verified domain:"})
 	if err := loc.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
 		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
@@ -1347,12 +617,9 @@ func (cp *ConsentPage) HasCIMDDomainBadge(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// HasCIMDLocalhostWarning reports whether the CIMDLocalhostWarning alert is visible.
-// The warning uses role="alert" and appears only when the redirect_uri points to localhost.
+// HasCIMDLocalhostWarning checks the prominent local-machine redirect warning.
 func (cp *ConsentPage) HasCIMDLocalhostWarning(ctx context.Context) (bool, error) {
-	loc := cp.page().GetByRole("alert").Filter(playwright.LocatorFilterOptions{
-		HasText: "This app is requesting a redirect to your local machine",
-	}).First()
+	loc := cp.page().GetByTestId("localhost-warning")
 	if err := loc.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
 		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
@@ -1362,54 +629,38 @@ func (cp *ConsentPage) HasCIMDLocalhostWarning(ctx context.Context) (bool, error
 	return true, nil
 }
 
-// ClickCIMDAdvancedDetails clicks the "Advanced Details" disclosure button in the
-// CIMDAdvancedDetails component, expanding the detail panel.
+// ClickCIMDAdvancedDetails toggles the technical authorization details.
 func (cp *ConsentPage) ClickCIMDAdvancedDetails(ctx context.Context) error {
-	btn := cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Advanced Details"})
-	count, err := btn.Count()
-	if err != nil {
-		return fmt.Errorf("failed to locate Advanced Details button: %w", err)
-	}
-	if count == 0 {
-		return fmt.Errorf("advanced details button not found")
-	}
-	if err := btn.Click(); err != nil {
-		return fmt.Errorf("failed to click Advanced Details button: %w", err)
-	}
-	return nil
+	return cp.locatorClick(ctx, cp.page().GetByRole("button", playwright.PageGetByRoleOptions{
+		Name: "Advanced details", Exact: playwright.Bool(true),
+	}), "toggle advanced details")
 }
 
-// IsCIMDAdvancedDetailsExpanded reports whether the CIMDAdvancedDetails panel is
-// expanded, indicated by the presence of the "Client ID" detail label.
+// IsCIMDAdvancedDetailsExpanded reads the accordion's disclosure state.
 func (cp *ConsentPage) IsCIMDAdvancedDetailsExpanded(ctx context.Context) (bool, error) {
-	loc := cp.page().GetByText("Client ID", playwright.PageGetByTextOptions{
-		Exact: playwright.Bool(true),
-	})
-	visible, err := loc.IsVisible()
+	timeout, err := cp.locatorTimeout(ctx)
 	if err != nil {
-		return false, fmt.Errorf("failed to check advanced details panel state: %w", err)
+		return false, err
 	}
-	return visible, nil
+	expanded, err := cp.page().GetByRole("button", playwright.PageGetByRoleOptions{
+		Name: "Advanced details", Exact: playwright.Bool(true),
+	}).GetAttribute("aria-expanded", playwright.LocatorGetAttributeOptions{Timeout: timeout})
+	if err != nil {
+		return false, fmt.Errorf("read advanced details state: %w", err)
+	}
+	return expanded == "true", nil
 }
 
-// HasCIMDClientName reports whether the given name is visible on the CIMD consent page.
-// Uses Count to avoid strict-mode violations when the name appears in multiple elements
-// (e.g., the agent heading and the consent summary paragraph).
+// HasCIMDClientName checks the visible identity heading.
 func (cp *ConsentPage) HasCIMDClientName(ctx context.Context, name string) (bool, error) {
-	count, err := cp.page().GetByText(name, playwright.PageGetByTextOptions{
-		Exact: playwright.Bool(false),
-	}).Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to check CIMD client name %q: %w", name, err)
-	}
-	return count > 0, nil
+	return cp.locatorVisible(ctx, cp.page().GetByTestId("agent-name-heading").
+		GetByRole("heading", playwright.LocatorGetByRoleOptions{Level: playwright.Int(1)}).
+		And(cp.page().GetByText(name, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)})), "CIMD agent name")
 }
 
 // HasCIMDDomainText reports whether the given domain string appears within the verified domain badge.
 func (cp *ConsentPage) HasCIMDDomainText(ctx context.Context, domain string) (bool, error) {
-	loc := cp.page().GetByText(domain, playwright.PageGetByTextOptions{
-		Exact: playwright.Bool(false),
-	})
+	loc := cp.page().GetByTestId("agent-origin-label").Filter(playwright.LocatorFilterOptions{HasText: domain})
 	visible, err := loc.IsVisible()
 	if err != nil {
 		return false, fmt.Errorf("failed to check CIMD domain text %q: %w", domain, err)
@@ -1419,7 +670,7 @@ func (cp *ConsentPage) HasCIMDDomainText(ctx context.Context, domain string) (bo
 
 // GetCIMDLocalhostWarningText returns the text content of the localhost warning alert.
 func (cp *ConsentPage) GetCIMDLocalhostWarningText(ctx context.Context) (string, error) {
-	loc := cp.page().GetByRole("alert")
+	loc := cp.page().GetByTestId("localhost-warning")
 	text, err := loc.TextContent()
 	if err != nil {
 		return "", fmt.Errorf("failed to get localhost warning text: %w", err)
@@ -1427,22 +678,15 @@ func (cp *ConsentPage) GetCIMDLocalhostWarningText(ctx context.Context) (string,
 	return text, nil
 }
 
-// GetCIMDClientNameFromDetails returns whether the client name is visible in the expanded
-// CIMDAdvancedDetails panel. Scopes to <dd> (role="definition") to avoid strict-mode
-// violations when the same name also appears in the consent summary header.
-func (cp *ConsentPage) GetCIMDClientNameFromDetails(ctx context.Context, name string) (bool, error) {
-	loc := cp.page().GetByRole("definition").Filter(playwright.LocatorFilterOptions{HasText: name})
-	visible, err := loc.IsVisible()
-	if err != nil {
-		return false, fmt.Errorf("failed to check client name %q in advanced details: %w", name, err)
-	}
-	return visible, nil
+func (cp *ConsentPage) cimdDetail(label string) playwright.Locator {
+	return cp.page().GetByText(label, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}).
+		Locator("xpath=following-sibling::dd")
 }
 
 // HasCIMDRedirectURIInDetails reports whether the given redirect URI value is visible
 // in the expanded CIMDAdvancedDetails panel under the "Redirect URI" label.
 func (cp *ConsentPage) HasCIMDRedirectURIInDetails(ctx context.Context, uri string) (bool, error) {
-	loc := cp.page().GetByRole("definition").Filter(playwright.LocatorFilterOptions{HasText: uri})
+	loc := cp.cimdDetail("Redirect URI").Filter(playwright.LocatorFilterOptions{HasText: uri})
 	visible, err := loc.IsVisible()
 	if err != nil {
 		return false, fmt.Errorf("failed to check redirect URI %q in advanced details: %w", uri, err)
@@ -1450,11 +694,9 @@ func (cp *ConsentPage) HasCIMDRedirectURIInDetails(ctx context.Context, uri stri
 	return visible, nil
 }
 
-// HasCIMDScopeInDetails reports whether the given scope badge is visible in the
-// expanded CIMDAdvancedDetails panel under "Requested Scopes". Scopes to <dd>
-// (role="definition") since scope badges are children of the scopes <dd> element.
+// HasCIMDScopeInDetails checks an exact requested scope in expanded CIMD metadata.
 func (cp *ConsentPage) HasCIMDScopeInDetails(ctx context.Context, scope string) (bool, error) {
-	loc := cp.page().GetByRole("definition").Filter(playwright.LocatorFilterOptions{HasText: scope})
+	loc := cp.cimdDetail("Requested scopes").GetByText(scope, playwright.LocatorGetByTextOptions{Exact: playwright.Bool(true)})
 	visible, err := loc.IsVisible()
 	if err != nil {
 		return false, fmt.Errorf("failed to check scope %q in advanced details: %w", scope, err)
@@ -1465,7 +707,7 @@ func (cp *ConsentPage) HasCIMDScopeInDetails(ctx context.Context, scope string) 
 // HasCIMDClientIDInDetails reports whether the given client ID URL is visible in the
 // expanded CIMDAdvancedDetails panel under the "Client ID" label.
 func (cp *ConsentPage) HasCIMDClientIDInDetails(ctx context.Context, clientID string) (bool, error) {
-	loc := cp.page().GetByRole("definition").Filter(playwright.LocatorFilterOptions{HasText: clientID})
+	loc := cp.cimdDetail("Client ID").Filter(playwright.LocatorFilterOptions{HasText: clientID})
 	visible, err := loc.IsVisible()
 	if err != nil {
 		return false, fmt.Errorf("failed to check client ID %q in advanced details: %w", clientID, err)
@@ -1473,50 +715,24 @@ func (cp *ConsentPage) HasCIMDClientIDInDetails(ctx context.Context, clientID st
 	return visible, nil
 }
 
-// WaitForGrantSuccess waits for the "Grant updated successfully!" toast to appear.
-// Returns an error if the toast does not appear within the page timeout or an error toast appears instead.
+// WaitForGrantSuccess waits for the server-confirmed outcome for this route context.
 func (cp *ConsentPage) WaitForGrantSuccess(ctx context.Context) error {
-
-	successToast := cp.page().GetByRole("status").Filter(playwright.LocatorFilterOptions{
-		HasText: "Grant updated successfully",
-	})
-
-	err := successToast.WaitFor(playwright.LocatorWaitForOptions{
-		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
-	})
+	sessionToken, err := cp.GetURLQueryParam("session_token")
 	if err != nil {
-		// Check if an error toast appeared instead
-		errorToast := cp.page().GetByRole("alert")
-		if count, _ := errorToast.Count(); count > 0 {
-			text, _ := errorToast.First().TextContent()
-			return fmt.Errorf("expected success toast but got: %s", text)
-		}
-		return fmt.Errorf("grant success toast did not appear: %w", err)
+		return err
 	}
-
+	success := cp.grantSavedStatus()
+	if sessionToken != "" {
+		success = cp.page().GetByTestId("consent-outcome").Filter(playwright.LocatorFilterOptions{HasText: "Access allowed."})
+	}
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	if err := success.WaitFor(playwright.LocatorWaitForOptions{Timeout: timeout}); err != nil {
+		return fmt.Errorf("grant success outcome did not appear: %w", err)
+	}
 	return nil
-}
-
-// WaitForGrantError waits for an error toast (role="alert") to appear after grant submission.
-// Returns the error message text, or an error if no error toast appears within the page timeout.
-func (cp *ConsentPage) WaitForGrantError(ctx context.Context) (string, error) {
-
-	alert := cp.page().GetByRole("alert")
-	err := alert.WaitFor(playwright.LocatorWaitForOptions{
-		State:   playwright.WaitForSelectorStateVisible,
-		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
-	})
-	if err != nil {
-		return "", fmt.Errorf("no error toast appeared: %w", err)
-	}
-
-	text, err := alert.First().TextContent()
-	if err != nil {
-		return "", fmt.Errorf("failed to read error toast text: %w", err)
-	}
-
-	return strings.TrimSpace(text), nil
 }
 
 // NavigateToAgentWithSelections navigates to the consent page with pre-selected
@@ -1557,12 +773,344 @@ func (cp *ConsentPage) GetURLQueryParam(param string) (string, error) {
 	return parsed.Query().Get(param), nil
 }
 
-// encodeSelections encodes permission set selections to base64url JSON.
+// encodeSelections encodes the canonical consent draft envelope to base64url JSON.
 func encodeSelections(selections map[string][]string) (string, error) {
-	jsonBytes, err := json.Marshal(selections)
+	jsonBytes, err := json.Marshal(struct {
+		Selections map[string][]string `json:"selections"`
+		Duration   string              `json:"duration"`
+		CustomDate string              `json:"customDate"`
+	}{Selections: selections, Duration: "until-revoked", CustomDate: ""})
 	if err != nil {
 		return "", err
 	}
 	encoded := base64.RawURLEncoding.EncodeToString(jsonBytes)
 	return encoded, nil
+}
+
+// PermissionGroup is the displayed selection state, in the order shown to the user.
+type PermissionGroup struct {
+	Name           string
+	Description    string
+	Required       bool
+	AlreadyGranted bool
+	ReadOnly       bool
+	Checked        bool
+	Expanded       bool
+}
+
+// PermissionService is a service control displayed inside an expanded group.
+type PermissionService struct {
+	Name     string
+	Required bool
+	ReadOnly bool
+	Checked  bool
+}
+
+// AgentConnectionRow describes a service required by the agent.
+type AgentConnectionRow struct {
+	Service string
+	State   string
+	Action  string
+}
+
+type IdentityLink struct {
+	Label string
+	URL   string
+}
+
+func (cp *ConsentPage) OriginLabelText(ctx context.Context) (string, error) {
+	return cp.locatorText(ctx, cp.page().GetByTestId("agent-origin-label"), "agent origin label")
+}
+
+func (cp *ConsentPage) HasLocalhostBanner(ctx context.Context) (bool, error) {
+	return cp.locatorVisible(ctx, cp.page().GetByTestId("localhost-warning"), "localhost warning")
+}
+
+func (cp *ConsentPage) PermissionGroups(ctx context.Context) ([]PermissionGroup, error) {
+	var groups []PermissionGroup
+	err := cp.evaluateJSON(ctx, cp.page().GetByTestId("permission-groups"), `root => {
+		const text = (group, id) => {
+			const element = group.querySelector('[data-testid="' + id + '"]');
+			if (!element) throw new Error('Missing permission group ' + id);
+			return element.innerText.trim();
+		};
+		return Array.from(root.querySelectorAll('[data-testid="permission-group"]')).map(group => {
+			const control = group.querySelector('[role="checkbox"][aria-label]');
+			const disclosure = group.querySelector('button[aria-expanded]');
+			if (!control || !disclosure) throw new Error('Missing permission selection or disclosure');
+			return {
+				Name: text(group, 'permission-group-name'),
+				Description: text(group, 'permission-group-description'),
+				Required: !!group.querySelector('[data-testid="permission-group-required"]'),
+				AlreadyGranted: !!group.querySelector('[data-testid="permission-group-granted"]'),
+				ReadOnly: control.disabled === true,
+				Checked: control.getAttribute('aria-checked') === 'true',
+				Expanded: disclosure.getAttribute('aria-expanded') === 'true'
+			};
+		});
+	}`, &groups)
+	return groups, err
+}
+
+func (cp *ConsentPage) permissionGroup(name string) playwright.Locator {
+	return cp.page().GetByTestId("permission-group").Filter(playwright.LocatorFilterOptions{
+		Has: cp.page().GetByTestId("permission-group-name").
+			And(cp.page().GetByText(name, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)})),
+	})
+}
+
+func (cp *ConsentPage) ExpandPermissionGroup(ctx context.Context, name string) error {
+	toggle := cp.permissionGroup(name).Locator("button[aria-expanded]")
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	expanded, err := toggle.GetAttribute("aria-expanded", playwright.LocatorGetAttributeOptions{Timeout: timeout})
+	if err != nil {
+		return fmt.Errorf("read permission group %q disclosure: %w", name, err)
+	}
+	if expanded == "true" {
+		return nil
+	}
+	return cp.locatorClick(ctx, toggle, "expand permission group "+name)
+}
+
+func (cp *ConsentPage) GroupServices(ctx context.Context, name string) ([]string, error) {
+	var services []string
+	err := cp.evaluateJSON(ctx, cp.permissionGroup(name), `group =>
+		Array.from(group.querySelectorAll('[data-testid="permission-service-name"]'))
+			.filter(element => element.getClientRects().length > 0)
+			.map(element => element.innerText.trim())`, &services)
+	return services, err
+}
+
+// PermissionServices expands a group and reads its actual service controls.
+func (cp *ConsentPage) PermissionServices(ctx context.Context, name string) ([]PermissionService, error) {
+	if err := cp.ExpandPermissionGroup(ctx, name); err != nil {
+		return nil, err
+	}
+	var services []PermissionService
+	err := cp.evaluateJSON(ctx, cp.permissionGroup(name).GetByRole("list", playwright.LocatorGetByRoleOptions{
+		Name: "Services", Exact: playwright.Bool(true),
+	}), `root => Array.from(root.querySelectorAll('[data-testid="permission-service"]')).map(row => {
+		const name = row.querySelector('[data-testid="permission-service-name"]');
+		const control = row.querySelector('[role="checkbox"]');
+		if (!name || !control) throw new Error('Missing permission service name or control');
+		return {
+			Name: name.innerText.trim(),
+			Required: Array.from(row.querySelectorAll('[data-slot="badge"]')).some(badge => badge.innerText.trim() === 'Required'),
+			ReadOnly: control.disabled === true,
+			Checked: control.getAttribute('aria-checked') === 'true'
+		};
+	})`, &services)
+	return services, err
+}
+
+func (cp *ConsentPage) SetPermissionServiceChecked(ctx context.Context, group, service string, checked bool) error {
+	if err := cp.ExpandPermissionGroup(ctx, group); err != nil {
+		return err
+	}
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	control := cp.permissionGroup(group).GetByTestId("permission-service").
+		Filter(playwright.LocatorFilterOptions{Has: cp.page().GetByTestId("permission-service-name").
+			And(cp.page().GetByText(service, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}))}).
+		GetByRole("checkbox")
+	if err := control.SetChecked(checked, playwright.LocatorSetCheckedOptions{Timeout: timeout}); err != nil {
+		return fmt.Errorf("set service %q in permission group %q checked=%t: %w", service, group, checked, err)
+	}
+	return nil
+}
+
+func (cp *ConsentPage) HasServiceConnectPrompt(ctx context.Context, service string) (bool, error) {
+	row := cp.page().GetByTestId("consent-service").Filter(playwright.LocatorFilterOptions{
+		Has: cp.page().GetByText(service, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}),
+	})
+	return cp.locatorVisible(ctx, row.GetByRole("button", playwright.LocatorGetByRoleOptions{
+		Name: "Connect", Exact: playwright.Bool(true),
+	}), "connect prompt for "+service)
+}
+
+func (cp *ConsentPage) GroupHasRiskIndicator(ctx context.Context, name string) (bool, error) {
+	return cp.locatorVisible(ctx, cp.permissionGroup(name).GetByTestId("risk-indicator"), "permission group risk indicator")
+}
+
+func (cp *ConsentPage) GroupShowsScopeStrings(ctx context.Context, name string) (bool, error) {
+	var visible bool
+	err := cp.evaluateJSON(ctx, cp.permissionGroup(name), `group =>
+		Array.from(group.querySelectorAll('code, [data-testid="permission-scope"]'))
+			.some(element => element.getClientRects().length > 0 && element.innerText.trim() !== '')`, &visible)
+	return visible, err
+}
+
+func (cp *ConsentPage) ChooseDuration(ctx context.Context, label string) error {
+	return cp.locatorClick(ctx, cp.page().GetByRole("radiogroup", playwright.PageGetByRoleOptions{Name: "Access duration", Exact: playwright.Bool(true)}).
+		GetByRole("radio", playwright.LocatorGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "choose access duration "+label)
+}
+
+func (cp *ConsentPage) SelectedDuration(ctx context.Context) (string, error) {
+	var selected string
+	err := cp.evaluateJSON(ctx, cp.page().GetByRole("radiogroup", playwright.PageGetByRoleOptions{Name: "Access duration", Exact: playwright.Bool(true)}), `root => {
+		const radio = root.querySelector('[role="radio"][aria-checked="true"]');
+		if (!radio) throw new Error('No access duration is selected');
+		const label = (radio.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+			.map(id => document.getElementById(id)?.innerText || '').join(' ');
+		if (!label.trim()) throw new Error('Selected access duration has no accessible label');
+		return label.trim();
+	}`, &selected)
+	return selected, err
+}
+
+func (cp *ConsentPage) CustomDateValue(ctx context.Context) (string, error) {
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return "", err
+	}
+	value, err := cp.endDateInput().InputValue(playwright.LocatorInputValueOptions{Timeout: timeout})
+	if err != nil {
+		return "", fmt.Errorf("read custom expiry date: %w", err)
+	}
+	return value, nil
+}
+
+func (cp *ConsentPage) SetCustomDate(ctx context.Context, value string) error {
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	if err := cp.endDateInput().Fill(value, playwright.LocatorFillOptions{Timeout: timeout}); err != nil {
+		return fmt.Errorf("set custom expiry date: %w", err)
+	}
+	return nil
+}
+
+func (cp *ConsentPage) ClickAllow(ctx context.Context) error {
+	return cp.locatorClick(ctx, cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Allow", Exact: playwright.Bool(true)}), "allow access")
+}
+
+func (cp *ConsentPage) ClickDeny(ctx context.Context) error {
+	return cp.locatorClick(ctx, cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Deny", Exact: playwright.Bool(true)}), "deny access")
+}
+
+func (cp *ConsentPage) DecisionOutcomeText(ctx context.Context) (string, error) {
+	return cp.locatorText(ctx, cp.page().GetByTestId("consent-outcome"), "consent outcome")
+}
+
+func (cp *ConsentPage) DecisionErrorText(ctx context.Context) (string, error) {
+	return cp.locatorText(ctx, cp.page().GetByTestId("consent-error"), "consent error")
+}
+
+func (cp *ConsentPage) OpenTab(ctx context.Context, label string) error {
+	return cp.locatorClick(ctx, cp.page().GetByRole("tab", playwright.PageGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "open agent tab "+label)
+}
+
+func (cp *ConsentPage) ConnectionsTabRows(ctx context.Context) ([]AgentConnectionRow, error) {
+	var rows []AgentConnectionRow
+	err := cp.evaluateJSON(ctx, cp.page().GetByRole("tabpanel", playwright.PageGetByRoleOptions{Name: "Connections", Exact: playwright.Bool(true)}).
+		GetByRole("list"), `root =>
+		Array.from(root.querySelectorAll('[data-testid="agent-connection-row"]')).map(row => {
+			const text = id => {
+				const element = row.querySelector('[data-testid="' + id + '"]');
+				if (!element) throw new Error('Missing connection ' + id);
+				return element.innerText.trim();
+			};
+			const action = row.querySelector('[data-testid="connection-action"]');
+			return {Service: text('connection-provider'), State: text('connection-state'), Action: action?.innerText.trim() || ''};
+		})`, &rows)
+	return rows, err
+}
+
+func (cp *ConsentPage) IsSaveBarVisible(ctx context.Context) (bool, error) {
+	return cp.locatorVisible(ctx, cp.page().GetByTestId("grant-save-bar"), "grant save bar")
+}
+
+func (cp *ConsentPage) CancelChanges(ctx context.Context) error {
+	return cp.locatorClick(ctx, cp.page().GetByTestId("grant-save-bar").
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Cancel", Exact: playwright.Bool(true)}), "cancel grant changes")
+}
+
+// SaveChanges waits for the console's visible result, including validation and
+// server errors. Callers inspect that result; submitting does not imply success.
+func (cp *ConsentPage) SaveChanges(ctx context.Context) error {
+	if err := cp.locatorClick(ctx, cp.page().GetByTestId("grant-save-bar").
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Save changes", Exact: playwright.Bool(true)}), "save grant changes"); err != nil {
+		return err
+	}
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	saveErrors := cp.page().GetByRole("main").Locator("form > [role='alert'], form fieldset [role='alert']")
+	if err := cp.grantSavedStatus().Or(saveErrors).First().WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateVisible, Timeout: timeout,
+	}); err != nil {
+		return fmt.Errorf("grant save outcome did not appear: %w", err)
+	}
+	return ctx.Err()
+}
+
+func (cp *ConsentPage) OpenOverflowMenu(ctx context.Context) error {
+	return cp.locatorClick(ctx, cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Agent actions", Exact: playwright.Bool(true)}), "open agent actions")
+}
+
+func (cp *ConsentPage) ChooseRevokeAllAccess(ctx context.Context) error {
+	return cp.locatorClick(ctx, cp.GetRevokeButton(ctx), "choose revoke all access")
+}
+
+func (cp *ConsentPage) DurationOptions(ctx context.Context) ([]string, error) {
+	var labels []string
+	err := cp.evaluateJSON(ctx, cp.page().GetByRole("radiogroup", playwright.PageGetByRoleOptions{Name: "Access duration", Exact: playwright.Bool(true)}), `root =>
+		Array.from(root.querySelectorAll('[role="radio"]')).map(radio =>
+			(radio.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+				.map(id => document.getElementById(id)?.innerText || '').join(' ').trim()
+		)`, &labels)
+	return labels, err
+}
+
+func (cp *ConsentPage) NextStepsText(ctx context.Context) (string, error) {
+	return cp.locatorText(ctx, cp.page().GetByTestId("consent-next-steps"), "consent next steps")
+}
+
+func (cp *ConsentPage) HasSecondaryDeny(ctx context.Context) (bool, error) {
+	var secondary bool
+	err := cp.evaluateJSON(ctx, cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Deny", Exact: playwright.Bool(true)}), `button =>
+		button.getClientRects().length > 0 &&
+		button.getAttribute('data-variant') === 'secondary'`, &secondary)
+	return secondary, err
+}
+
+func (cp *ConsentPage) SetPermissionGroupChecked(ctx context.Context, name string, checked bool) error {
+	control := cp.permissionGroup(name).Locator("[role='checkbox'][aria-label]")
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	if err := control.SetChecked(checked, playwright.LocatorSetCheckedOptions{Timeout: timeout}); err != nil {
+		return fmt.Errorf("set permission group %q checked=%t: %w", name, checked, err)
+	}
+	return nil
+}
+
+func (cp *ConsentPage) IdentityLinks(ctx context.Context) ([]IdentityLink, error) {
+	var links []IdentityLink
+	err := cp.evaluateJSON(ctx, cp.page().GetByTestId("agent-identity"), `root =>
+		Array.from(root.querySelectorAll('a[href]')).map(link => ({Label: link.innerText.trim(), URL: link.getAttribute('href')}))`, &links)
+	return links, err
+}
+
+func (cp *ConsentPage) RevokeDialogText(ctx context.Context) (string, error) {
+	return cp.locatorText(ctx, cp.GetRevokeDialog(ctx), "revoke access dialog")
+}
+
+func (cp *ConsentPage) ClickConnect(ctx context.Context, service string) error {
+	row := cp.page().GetByTestId("consent-service").Filter(playwright.LocatorFilterOptions{
+		Has: cp.page().GetByText(service, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}),
+	})
+	return cp.locatorClick(ctx, row.GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Connect", Exact: playwright.Bool(true)}), "connect service "+service)
+}
+
+func (cp *ConsentPage) HasOriginLabel(ctx context.Context) (bool, error) {
+	return cp.locatorVisible(ctx, cp.page().GetByTestId("agent-origin-label"), "agent origin label")
 }

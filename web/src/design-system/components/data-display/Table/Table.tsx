@@ -1,427 +1,72 @@
-/**
- * Table Component
+/*
+ * Adapted from shadcn/ui (https://github.com/shadcn-ui/ui).
+ * MIT License — Copyright (c) 2023 shadcn
  *
- * Flexible data table component with sorting and pagination support.
- * Follows the "Refined Trust Architecture" design system.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Features:
- * - Responsive table with horizontal scroll on mobile
- * - Optional striped rows (alternating background)
- * - Optional hover highlighting rows
- * - Optional sorting indicators on headers
- * - Column alignment options (left, center, right)
- * - Sticky header option
- * - Compact and default density variants
- * - Support for custom cell content (React components)
- * - Optional loading skeleton state
- * - Caption/title support
- * - Empty state display
- * - WCAG 2.1 AA compliant
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
+import type { ComponentProps } from 'react';
+import { cn } from '@design-system/utils/cn';
 
-import React from 'react';
-import { cva } from 'class-variance-authority';
-import { cn } from '@design-system/utils';
-import { Skeleton } from '@design-system/components/feedback/Skeleton';
-
-const tableVariants = cva('w-full border-collapse', {
-  variants: {
-    density: {
-      compact: '',
-      default: '',
-    },
-  },
-  defaultVariants: {
-    density: 'default',
-  },
-});
-
-const cellVariants = cva(
-  'border-b border-neutral-200 text-left transition-colors',
-  {
-    variants: {
-      density: {
-        compact: 'px-3 py-2 text-sm',
-        default: 'px-4 py-3 text-base',
-      },
-      align: {
-        left: 'text-left',
-        center: 'text-center',
-        right: 'text-right',
-      },
-      type: {
-        header: 'font-semibold text-neutral-900 bg-neutral-50',
-        body: 'text-neutral-700',
-      },
-    },
-    defaultVariants: {
-      density: 'default',
-      align: 'left',
-      type: 'body',
-    },
-  },
-);
-
-const rowVariants = cva('transition-colors', {
-  variants: {
-    striped: {
-      true: 'odd:bg-white even:bg-neutral-50',
-      false: 'bg-white',
-    },
-    hover: {
-      true: 'hover:bg-neutral-100',
-      false: '',
-    },
-  },
-  defaultVariants: {
-    striped: false,
-    hover: false,
-  },
-});
-
-export interface TableColumn<T> {
-  /** Unique key for the column */
-  key: string;
-  /** Header content (text or React node) */
-  header: React.ReactNode;
-  /** Function to extract cell content from row data */
-  accessor?: (row: T) => React.ReactNode;
-  /** Text alignment for the column */
-  align?: 'left' | 'center' | 'right';
-  /** Column width (CSS value) */
-  width?: string;
-  /** Whether the column is sortable */
-  sortable?: boolean;
+// Explicit table roles retain semantics in browsers that otherwise remove them
+// when the narrow layout changes native table display values.
+export function Table({ className, ...props }: ComponentProps<'table'>) {
+  return <div data-slot="table-container" className="relative min-w-0 w-full max-w-full">
+    <table data-slot="table" role="table" className={cn('block w-full caption-bottom text-sm text-foreground sm:table sm:table-fixed', className)} {...props} />
+  </div>;
 }
 
-export interface TableProps<T> extends Omit<
-  React.HTMLAttributes<HTMLDivElement>,
-  'children'
-> {
-  /** Column definitions */
-  columns: TableColumn<T>[];
-  /** Array of row data */
-  data: T[];
-  /** Optional table caption/title */
-  caption?: string;
-  /** Enable striped rows (alternating background) */
-  striped?: boolean;
-  /** Enable hover highlighting on rows */
-  hover?: boolean;
-  /** Table density variant */
-  density?: 'compact' | 'default';
-  /** Enable sticky header that stays visible when scrolling */
-  stickyHeader?: boolean;
-  /** Show loading skeleton state */
-  loading?: boolean;
-  /** Content to display when table is empty */
-  empty?: React.ReactNode;
-  /** Callback when a sortable column header is clicked */
-  onSort?: (key: string) => void;
-  /** Currently sorted column key */
-  sortKey?: string;
-  /** Current sort direction */
-  sortDirection?: 'asc' | 'desc';
-  /** Additional CSS classes for the wrapper */
-  className?: string;
+export function TableHeader({ className, ...props }: ComponentProps<'thead'>) {
+  return <thead data-slot="table-header" className={cn('sr-only sm:not-sr-only sm:table-header-group', className)} {...props} />;
 }
 
-/**
- * Sort icon component for table headers
- */
-const SortIcon: React.FC<{
-  sortKey?: string;
-  columnKey: string;
-  sortDirection?: 'asc' | 'desc';
-}> = ({ sortKey, columnKey, sortDirection }) => {
-  const isActive = sortKey === columnKey;
-  const isAsc = isActive && sortDirection === 'asc';
-  const isDesc = isActive && sortDirection === 'desc';
+export function TableBody({ className, ...props }: ComponentProps<'tbody'>) {
+  return <tbody data-slot="table-body" className={cn('block sm:table-row-group [&>tr:last-child]:border-b-0', className)} {...props} />;
+}
 
-  return (
-    <span className="ml-2 inline-flex flex-col" aria-hidden="true">
-      <svg
-        className={cn(
-          'w-3 h-3 -mb-1',
-          isAsc ? 'text-trust-deep' : 'text-neutral-400',
-        )}
-        fill="currentColor"
-        viewBox="0 0 20 20"
-      >
-        <path d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" />
-      </svg>
-      <svg
-        className={cn(
-          'w-3 h-3',
-          isDesc ? 'text-trust-deep' : 'text-neutral-400',
-        )}
-        fill="currentColor"
-        viewBox="0 0 20 20"
-      >
-        <path d="M14.707 10.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 12.586V5a1 1 0 012 0v7.586l2.293-2.293a1 1 0 011.414 0z" />
-      </svg>
-    </span>
-  );
-};
+export function TableRow({ className, ...props }: ComponentProps<'tr'>) {
+  return <tr data-slot="table-row" role="row" className={cn('grid min-w-0 border-b border-border-soft py-2 transition-colors duration-[var(--motion-feedback)] ease-[var(--motion-ease)] hover:bg-muted data-[state=selected]:bg-muted motion-reduce:transition-none sm:table-row sm:py-0', className)} {...props} />;
+}
 
-/**
- * Table component for displaying tabular data with sorting and pagination support.
- * Supports striped rows, hover effects, sticky headers, and custom cell rendering.
- *
- * @example
- * ```tsx
- * // Basic table
- * <Table
- *   columns={[
- *     { key: 'name', header: 'Name', accessor: (row) => row.name },
- *     { key: 'email', header: 'Email', accessor: (row) => row.email },
- *   ]}
- *   data={users}
- * />
- *
- * // Sortable table with striped rows
- * <Table
- *   columns={columns}
- *   data={data}
- *   striped
- *   hover
- *   onSort={handleSort}
- *   sortKey={sortKey}
- *   sortDirection={sortDirection}
- * />
- *
- * // Compact density with sticky header
- * <Table
- *   columns={columns}
- *   data={data}
- *   density="compact"
- *   stickyHeader
- * />
- * ```
- */
-export const Table = <T extends Record<string, unknown>>({
-  columns,
-  data,
-  caption,
-  striped = false,
-  hover = false,
-  density = 'default',
-  stickyHeader = false,
-  loading = false,
-  empty,
-  onSort,
-  sortKey,
-  sortDirection,
-  className,
-  ...props
-}: TableProps<T>) => {
-  // Handle sort click
-  const handleSort = (column: TableColumn<T>) => {
-    if (column.sortable && onSort) {
-      onSort(column.key);
-    }
-  };
+type TableHeadProps = ComponentProps<'th'> & { label?: string };
+type TableCellProps = ComponentProps<'td'> & { label?: string };
 
-  // Render loading skeleton
-  if (loading) {
-    return (
-      <div
-        className={cn(
-          'overflow-x-auto rounded-lg border border-neutral-200',
-          className,
-        )}
-        {...props}
-      >
-        <table className={cn(tableVariants({ density }))}>
-          {caption && <caption className="sr-only">{caption}</caption>}
-          <thead>
-            <tr>
-              {columns.map((column) => (
-                <th
-                  key={column.key}
-                  className={cn(
-                    cellVariants({
-                      density,
-                      align: column.align,
-                      type: 'header',
-                    }),
-                    stickyHeader && 'sticky top-0 z-10',
-                  )}
-                  style={{ width: column.width }}
-                >
-                  <Skeleton width="80%" height="16px" />
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {Array.from({ length: 5 }).map((_, index) => (
-              <tr key={index}>
-                {columns.map((column) => (
-                  <td
-                    key={column.key}
-                    className={cn(
-                      cellVariants({
-                        density,
-                        align: column.align,
-                        type: 'body',
-                      }),
-                    )}
-                  >
-                    <Skeleton width="90%" height="16px" />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
+export function TableHead({ className, scope = 'col', label, children, ...props }: TableHeadProps) {
+  const rowHeader = scope === 'row' || scope === 'rowgroup';
+  return <th data-slot="table-head" role={rowHeader ? 'rowheader' : 'columnheader'} scope={scope} className={cn(
+    'min-w-0 px-3 py-2 text-left align-middle font-medium [overflow-wrap:anywhere]',
+    rowHeader ? 'grid items-start gap-x-3 sm:table-cell' : 'text-muted-foreground',
+    rowHeader && label && 'grid-cols-[minmax(0,1fr)_minmax(0,2fr)]',
+    className,
+  )} {...props}>
+    {rowHeader && label && <span aria-hidden="true" className="min-w-0 text-muted-foreground sm:hidden">{label}</span>}
+    <div className="min-w-0 [overflow-wrap:anywhere]">{children}</div>
+  </th>;
+}
 
-  // Render empty state
-  if (!loading && data.length === 0) {
-    return (
-      <div
-        className={cn(
-          'overflow-x-auto rounded-lg border border-neutral-200',
-          className,
-        )}
-        {...props}
-      >
-        <table className={cn(tableVariants({ density }))}>
-          {caption && <caption className="sr-only">{caption}</caption>}
-          <thead>
-            <tr>
-              {columns.map((column) => (
-                <th
-                  key={column.key}
-                  className={cn(
-                    cellVariants({
-                      density,
-                      align: column.align,
-                      type: 'header',
-                    }),
-                    stickyHeader && 'sticky top-0 z-10',
-                  )}
-                  style={{ width: column.width }}
-                >
-                  {column.header}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td
-                colSpan={columns.length}
-                className={cn(
-                  cellVariants({ density, align: 'center', type: 'body' }),
-                  'py-12',
-                )}
-              >
-                {empty || (
-                  <div className="text-neutral-500">
-                    <p className="text-sm">No data available</p>
-                  </div>
-                )}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    );
-  }
+/** Supply the column label for mobile rows; spanning status cells may omit it. */
+export function TableCell({ className, label, children, ...props }: TableCellProps) {
+  return <td data-slot="table-cell" className={cn('grid min-w-0 items-start gap-x-3 px-3 py-2 align-middle sm:table-cell', label && 'grid-cols-[minmax(0,1fr)_minmax(0,2fr)]', className)} {...props}>
+    {label && <span aria-hidden="true" className="min-w-0 font-medium text-muted-foreground [overflow-wrap:anywhere] sm:hidden">{label}</span>}
+    <div className="min-w-0 [overflow-wrap:anywhere]">{children}</div>
+  </td>;
+}
 
-  // Render table with data
-  return (
-    <div
-      className={cn(
-        'overflow-x-auto rounded-lg border border-neutral-200',
-        className,
-      )}
-      {...props}
-    >
-      <table className={cn(tableVariants({ density }))}>
-        {caption && (
-          <caption className="px-4 py-3 text-left text-sm font-semibold text-neutral-900 bg-neutral-50 border-b border-neutral-200">
-            {caption}
-          </caption>
-        )}
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th
-                key={column.key}
-                className={cn(
-                  cellVariants({
-                    density,
-                    align: column.align,
-                    type: 'header',
-                  }),
-                  stickyHeader && 'sticky top-0 z-10',
-                  column.sortable &&
-                    'cursor-pointer select-none hover:bg-neutral-100',
-                )}
-                style={{ width: column.width }}
-                onClick={() => handleSort(column)}
-                role={column.sortable ? 'button' : undefined}
-                tabIndex={column.sortable ? 0 : undefined}
-                onKeyDown={(e) => {
-                  if (column.sortable && (e.key === 'Enter' || e.key === ' ')) {
-                    e.preventDefault();
-                    handleSort(column);
-                  }
-                }}
-                aria-sort={
-                  column.sortable && sortKey === column.key
-                    ? sortDirection === 'asc'
-                      ? 'ascending'
-                      : 'descending'
-                    : undefined
-                }
-              >
-                <div className="flex items-center justify-between">
-                  <span>{column.header}</span>
-                  {column.sortable && (
-                    <SortIcon
-                      sortKey={sortKey}
-                      columnKey={column.key}
-                      sortDirection={sortDirection}
-                    />
-                  )}
-                </div>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row, rowIndex) => (
-            <tr key={rowIndex} className={cn(rowVariants({ striped, hover }))}>
-              {columns.map((column) => (
-                <td
-                  key={column.key}
-                  className={cn(
-                    cellVariants({
-                      density,
-                      align: column.align,
-                      type: 'body',
-                    }),
-                  )}
-                >
-                  {column.accessor
-                    ? column.accessor(row)
-                    : (row[column.key] as React.ReactNode)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
-Table.displayName = 'Table';
-
-export default Table;
+export function TableCaption({ className, ...props }: ComponentProps<'caption'>) {
+  return <caption data-slot="table-caption" className={cn('block py-2 text-left text-sm text-muted-foreground sm:table-caption', className)} {...props} />;
+}

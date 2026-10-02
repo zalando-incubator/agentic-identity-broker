@@ -207,7 +207,8 @@ paths:
         - **Display Name**: Human-readable name for display in UI
         - **Picture URL**: Optional avatar/profile picture URL
 
-        The principal is extracted from the `X-Remote-User` header set by the upstream authentication proxy (oauth2-proxy, nginx, etc.).
+        The handler uses the authenticated principal or JWT profile from the request context.
+        Without a profile, `displayName` equals `principal`. Unavailable `email` and `pictureUrl` fields are omitted.
 
         **Use Cases**:
 
@@ -253,10 +254,9 @@ paths:
 
         - **Agent ID**: Unique identifier for the agent
         - **Display Name**: Human-readable agent name
-        - **Logo URL**: Optional agent logo/icon
-        - **Active Grant Count**: Number of third-party services delegated
-        - **Last Modified**: When the delegation was last updated
-        - **Expires At**: Optional expiration date (null = indefinite)
+        - **Active Grant Count**: Number of active `UserGrant` records for this user and agent, not services or permission sets
+        - **Last Modified**: Latest update timestamp among these grants
+        - **Expires At**: Earliest finite expiration, omitted when all grants are indefinite
 
         **Response Characteristics**:
 
@@ -286,13 +286,11 @@ paths:
                     data:
                       - agentId: 550e8400-e29b-41d4-a716-446655440000
                         displayName: Data Analysis Assistant
-                        logoUrl: https://cdn.example.com/agents/data-assistant.png
-                        activeGrantCount: 3
+                        activeGrantCount: 1
                         lastModifiedAt: "2025-12-17T14:30:00Z"
-                        expiresAt: null
                       - agentId: 660e8400-e29b-41d4-a716-446655440001
                         displayName: Document Processor
-                        activeGrantCount: 2
+                        activeGrantCount: 1
                         lastModifiedAt: "2025-12-16T09:15:00Z"
                         expiresAt: "2026-01-15T00:00:00Z"
                 noDelegations:
@@ -305,13 +303,13 @@ paths:
           $ref: "#/components/responses/InternalServerError"
   /api/consent/agents/{agent-id}:
     get:
-      summary: Get agent detail and available services
+      summary: Get agent detail and requested services
       description: |
-        Returns detailed information about a specific agent and all available third-party OAuth2 services that can be delegated to that agent.
+        Returns agent metadata, requested third-party services with connection status, permission sets, and active session service IDs.
 
         **Agent Detail Includes**:
 
-        - Agent metadata (name, description, logo)
+        - Agent metadata (name, description, client identifiers, timestamps)
         - Governance documentation URL
         - User documentation URL
         - Agent interface URL
@@ -320,13 +318,12 @@ paths:
 
         - Service ID (UUID)
         - Service name (e.g., "Google Drive", "GitHub")
-        - Service logo URL
         - The OAuth2 permissions the agent can receive for the service, with human-readable descriptions. For a `require_all_scopes` requirement, this is the sorted, deduplicated union from this agent's assigned Permission Sets that cover that service.
 
         **Use Cases**:
 
         - Display agent information before granting access
-        - Show available services and permissions
+        - Show requested services and permissions
         - Help users make informed consent decisions
         - Link to governance and documentation
       operationId: getAgentDetail
@@ -339,11 +336,9 @@ paths:
           required: false
           description: >-
             JWE authorization session token for all agent modes (local, proxy, CIMD).
-            When present, the response includes authorization context extracted from the
-            decrypted token (agent_id, principal, original_url). For CIMD agents, also
-            includes CIMD metadata (client_id_url, redirect_uri, verified_domain,
-            requested_scopes, logo_uri). Present whenever the user arrived via an
-            OAuth2 authorization redirect.
+            The handler validates the token against the agent and authenticated principal.
+            When the token contains CIMD metadata, the response includes cimd_metadata.
+            It does not expose the token's agent_id, principal, or original_url claims.
           schema:
             type: string
             minLength: 1
@@ -362,12 +357,13 @@ paths:
                     data:
                       agent:
                         agentId: 550e8400-e29b-41d4-a716-446655440000
-                        displayName: Data Analysis Assistant
+                        display_name: Data Analysis Assistant
                         description: Analyzes datasets and generates insights using advanced algorithms
-                        logoUrl: https://cdn.example.com/agents/data-assistant.png
-                        governanceUrl: https://example.com/governance/data-assistant
-                        userDocumentationUrl: https://docs.example.com/agents/data-assistant
-                        agentInterfaceUrl: https://agents.example.com/data-assistant
+                        governance_url: https://example.com/governance/data-assistant
+                        user_documentation_url: https://docs.example.com/agents/data-assistant
+                        agent_interface_url: https://agents.example.com/data-assistant
+                        created_at: "2025-12-01T10:00:00Z"
+                        updated_at: "2025-12-17T14:30:00Z"
                       services:
                         - serviceId: 11111111-1111-1111-1111-111111111111
                           serviceName: Google Drive
@@ -387,6 +383,24 @@ paths:
                             - name: write:repos
                               description: Write access to repositories
                           connectionStatus: not_connected
+                      permission_sets:
+                        - permission_set:
+                            id: 770e8400-e29b-41d4-a716-446655440001
+                            name: File and repository access
+                            description: Access files and repositories
+                            service_scopes:
+                              - service_id: 11111111-1111-1111-1111-111111111111
+                                requirement_type: mandatory
+                              - service_id: 22222222-2222-2222-2222-222222222222
+                                requirement_type: optional
+                          requirement_type: mandatory
+                      active_session_service_ids:
+                        - 11111111-1111-1111-1111-111111111111
+                      service_requirements:
+                        - service_id: 11111111-1111-1111-1111-111111111111
+                          requirement_type: mandatory
+                        - service_id: 22222222-2222-2222-2222-222222222222
+                          requirement_type: optional
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -397,25 +411,25 @@ paths:
           $ref: "#/components/responses/InternalServerError"
   /api/consent/agents/{agent-id}/grants:
     get:
-      summary: Get user's grants for an agent
+      summary: Get the user's grant for an agent
       description: |
-        Returns all active grants the authenticated user has granted to the specified agent.
+        Returns one stored grant for the authenticated user and specified agent, or `data: null` when no grant exists.
 
         **Grant Information Includes**:
 
         - Grant ID (UUID)
         - Principal (user identifier)
         - Agent ID
-        - Valid until date (null = indefinite)
-        - Delegated OAuth2 tokens (services and scopes)
+        - Optional expiration timestamp (omitted for an indefinite grant)
+        - Granted permission sets and their included service IDs
         - Creation timestamp
         - Last update timestamp
 
         **Response Characteristics**:
 
-        - Returns empty array if no grants exist
-        - Only includes active (non-expired) grants
-        - Typically one grant per user-agent pair (upsert semantics)
+        - Returns a single grant object, not an array
+        - Returns `data: null` if no grant exists
+        - Can return an expired grant. Unlike the agent list, this lookup does not filter by expiration.
 
         **Use Cases**:
 
@@ -429,7 +443,7 @@ paths:
         - $ref: "#/components/parameters/AgentIdParam"
       responses:
         "200":
-          description: Grants retrieved successfully
+          description: Grant retrieved successfully
           content:
             application/json:
               schema:
@@ -439,22 +453,22 @@ paths:
                   summary: User has existing grant
                   value:
                     data:
-                      - id: 770e8400-e29b-41d4-a716-446655440002
-                        principal: user@example.com
-                        agent_id: 550e8400-e29b-41d4-a716-446655440000
-                        valid_until: "2026-06-01T00:00:00Z"
-                        granted_permission_sets:
-                          770e8400-e29b-41d4-a716-446655440001:
-                            - 880e8400-e29b-41d4-a716-446655440010
-                            - 880e8400-e29b-41d4-a716-446655440011
-                          770e8400-e29b-41d4-a716-446655440002:
-                            - 880e8400-e29b-41d4-a716-446655440012
-                        created_at: "2025-12-18T10:00:00Z"
-                        updated_at: "2025-12-18T10:00:00Z"
+                      id: 770e8400-e29b-41d4-a716-446655440002
+                      principal: user@example.com
+                      agent_id: 550e8400-e29b-41d4-a716-446655440000
+                      valid_until: "2026-06-01T00:00:00Z"
+                      granted_permission_sets:
+                        770e8400-e29b-41d4-a716-446655440001:
+                          - 880e8400-e29b-41d4-a716-446655440010
+                          - 880e8400-e29b-41d4-a716-446655440011
+                        770e8400-e29b-41d4-a716-446655440002:
+                          - 880e8400-e29b-41d4-a716-446655440012
+                      created_at: "2025-12-18T10:00:00Z"
+                      updated_at: "2025-12-18T10:00:00Z"
                 noGrants:
                   summary: No existing grants
                   value:
-                    data: []
+                    data: null
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -479,14 +493,12 @@ paths:
 
         - `valid_until` is optional (omit for indefinite grant)
         - Must be a future date if specified
-        - Expired grants are automatically filtered out
+        - The agent list excludes expired grants. The grant lookup can return them.
 
-        **Revocation (Special Case)**:
+        **Revocation**:
 
-        - Submit empty `granted_permission_sets` object to revoke
-
-        - Returns `204 No Content` on successful revocation
-        - Deletes the grant entirely
+        - Use `DELETE /api/consent/agents/{agent-id}/grants` to revoke the grant
+        - Empty `granted_permission_sets` does not revoke. It returns `400 Bad Request`.
 
         **Session-Based Consent (FR-029)**:
 
@@ -495,7 +507,7 @@ paths:
         - Token is a self-contained JWE carrying all authorization session claims (agent_id, principal, original_url, TTL) — no server-side session lookup is performed
         - Returns HTTP 201 with `redirect_url` field containing the original authorization URL (with original `state`, `redirect_uri`, PKCE, and `client_id` parameters intact)
         - Frontend must navigate to `redirect_url` using `window.location.href` to resume the OAuth2 flow
-        - Returns `400 Bad Request` with error code `session_expired` if the token is invalid or expired
+        - An expired token returns `400 Bad Request` with `session_expired`. An invalid token returns `400 Bad Request` with `invalid_token`.
         - Returns `400 Bad Request` if the session agent does not match the agent in the URL path
         - Returns `403 Forbidden` if the session principal does not match the authenticated user
 
@@ -506,16 +518,16 @@ paths:
 
         **Validation**:
 
-        - All service IDs must exist and be available to the agent
-        - All scopes must be valid for the specified services
-        - At least one scope required per service
+        - Permission sets must be assigned to the agent, including all mandatory sets
+        - Included services must belong to the permission set and, when configured, the agent's explicit service requirements
+        - Each selected permission set must include its effective mandatory services. Each mandatory permission set must include at least one service.
+        - Every included service must have an active OAuth2 session
         - Returns `400 Bad Request` with details if validation fails
 
         **Use Cases**:
 
         - User grants initial access to an agent
-        - User updates existing grant (adds/removes services or scopes)
-        - User revokes all access to an agent
+        - User updates an existing grant (permission sets, included services, or expiration)
         - Redirect to authorization flow continuation URL after consent approval
 
       operationId: createOrUpdateGrant
@@ -559,10 +571,6 @@ paths:
                   granted_permission_sets:
                     770e8400-e29b-41d4-a716-446655440002:
                       - 880e8400-e29b-41d4-a716-446655440012
-              revokeGrant:
-                summary: Revoke grant (empty permission sets)
-                value:
-                  granted_permission_sets: {}
       responses:
         "201":
           description: Grant created or updated. When session_token was provided, response includes redirect_url containing the original authorization URL for flow resumption.
@@ -578,7 +586,6 @@ paths:
                       id: 770e8400-e29b-41d4-a716-446655440002
                       principal: user@example.com
                       agent_id: 550e8400-e29b-41d4-a716-446655440000
-                      valid_until: null
                       granted_permission_sets:
                         770e8400-e29b-41d4-a716-446655440001:
                           - 880e8400-e29b-41d4-a716-446655440010
@@ -594,15 +601,12 @@ paths:
                       id: 770e8400-e29b-41d4-a716-446655440002
                       principal: user@example.com
                       agent_id: 550e8400-e29b-41d4-a716-446655440000
-                      valid_until: null
                       granted_permission_sets:
                         770e8400-e29b-41d4-a716-446655440001:
                           - 880e8400-e29b-41d4-a716-446655440010
                       created_at: "2025-12-19T10:00:00Z"
                       updated_at: "2025-12-19T10:00:00Z"
                     redirect_url: /oauth2/authorize?client_id=550e8400-e29b-41d4-a716-446655440000&redirect_uri=https%3A%2F%2Fagent.example.com%2Fcb&response_type=code&state=abc123
-        "204":
-          description: Grant revoked successfully (empty granted_permission_sets)
         "400":
           description: Bad Request - Expired or invalid session token, or invalid grant data.
           content:
@@ -611,10 +615,15 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
               examples:
                 sessionExpired:
-                  summary: Session token expired or invalid
+                  summary: Session token expired
                   value:
                     error: session_expired
                     message: "authorization session has expired, please restart the authorization flow"
+                invalidToken:
+                  summary: Session token invalid
+                  value:
+                    error: invalid_token
+                    message: authorization session token is invalid
                 invalidGrant:
                   summary: Invalid grant data
                   value:
@@ -650,9 +659,7 @@ paths:
         sessions (e.g., GitHub, Google) remain active and are NOT terminated by this
         action. Users may manage OAuth2 sessions separately.
 
-        **Idempotency**: Non-idempotent — returns 404 if no grant exists. To silently
-        revoke if a grant exists, use `POST /api/consent/agents/{agent-id}/grants` with
-        an empty `granted_permission_sets` object.
+        Returns `404 Not Found` if no grant exists. An empty POST request is not a revocation operation.
 
         **Security**: Only the grant owner may revoke. The principal is derived from the
         `X-Remote-User` authentication header. Cross-user revocation is not possible —
@@ -684,14 +691,17 @@ paths:
   /api/third-party/sessions:
     get:
       operationId: listThirdPartySessions
-      summary: List third-party services with session status
+      summary: List the current user's third-party sessions
       description: |
-        Returns a list of all configured third-party OAuth2 services along with the current user's session status for each service.
+        Returns the authenticated user's stored third-party OAuth2 sessions, including sessions whose tokens have expired.
 
-        For services where the user has an active session, includes:
+        Services without a stored session for the user are not listed. A session whose service configuration no longer exists is omitted.
 
-        - Session initiation timestamp
-        - Token expiration status
+        Each session summary includes:
+
+        - Service identifier and display name
+        - Granted scopes and session initiation timestamp
+        - Access-token and refresh-token expiry status
         - Number of agents depending on this session, derived only from grants owned by the authenticated session principal
         - Encryption status indicator
 
@@ -701,7 +711,7 @@ paths:
         - preAuth: []
       responses:
         "200":
-          description: List of services with session status
+          description: The user's third-party sessions
           content:
             application/json:
               schema:
@@ -710,40 +720,32 @@ paths:
                   - data
                 properties:
                   data:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ThirdPartyServiceWithSession"
+                    type: object
+                    required:
+                      - sessions
+                    properties:
+                      sessions:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserSessionSummary"
+                        description: Empty array if the user has no stored sessions.
               example:
                 data:
-                  - service:
-                      id: 550e8400-e29b-41d4-a716-446655440000
-                      display_name: GitHub
-                      description: GitHub OAuth2 integration
-                      scopes:
-                        - scope_value: repo
-                          description: Full control of private repositories
-                        - scope_value: user:email
-                          description: Access user email addresses
-                    session:
-                      session_id: 660e8400-e29b-41d4-a716-446655440001
-                      initiated_at: "2025-12-20T10:30:00Z"
-                      access_token_expires_at: "2025-12-20T11:30:00Z"
-                      refresh_token_expires_at: "2026-01-20T10:30:00Z"
-                      is_expired: false
-                      has_refresh_token: true
+                  sessions:
+                    - id: 660e8400-e29b-41d4-a716-446655440001
+                      service_id: 550e8400-e29b-41d4-a716-446655440000
+                      service_display_name: GitHub
+                      token_type: Bearer
                       scope:
                         - repo
                         - user:email
+                      initiated_at: "2025-12-20T10:30:00Z"
+                      is_expired: false
+                      access_token_expired: false
+                      has_refresh_token: true
+                      refresh_token_expires_at: "2026-01-20T10:30:00Z"
                       dependent_agent_count: 3
-                      tokens_encrypted: true
-                  - service:
-                      id: 550e8400-e29b-41d4-a716-446655440002
-                      display_name: Google Workspace
-                      description: Google OAuth2 integration
-                      scopes:
-                        - scope_value: calendar.readonly
-                          description: Read calendar events
-                    session: null
+                      is_encrypted: true
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -2394,23 +2396,21 @@ components:
           type: string
           description: |
             Human-readable display name for the user.
-            Used in UI for personalization and identification.
+            Equals the principal when no enriched profile is available.
           example: Jane Doe
         pictureUrl:
           type: string
           format: uri
-          nullable: true
           description: |
             Optional URL to user's profile picture or avatar.
-            Should be a publicly accessible HTTPS URL.
+            Omitted when unavailable.
           example: https://cdn.example.com/users/jane.jpg
         email:
           type: string
           format: email
-          nullable: true
           description: |
             Optional email address extracted from JWT claims via CEL expression.
-            Only present when JWT pre-authentication is configured with an email_expression and the JWT contains a matching claim. Null/absent when not available.
+            Present when JWT pre-authentication supplies an email claim through email_expression. Omitted when unavailable.
           example: jane.doe@example.com
     GetUserInfoResponse:
       type: object
@@ -2436,36 +2436,25 @@ components:
           type: string
           description: Human-readable agent name
           example: Data Analysis Assistant
-        logoUrl:
-          type: string
-          format: uri
-          nullable: true
-          description: Optional URL to agent's logo or icon
-          example: https://cdn.example.com/agents/data-assistant.png
         activeGrantCount:
           type: integer
           minimum: 0
-          description:
-            "Number of permission sets currently granted to this agent.
-
-            Reflects the count of granted_permission_sets in the active grant.
-
-            "
-          example: 3
+          description: |
+            Number of active UserGrant records for this user and agent.
+            This does not count services or permission sets.
+          example: 1
         lastModifiedAt:
           type: string
           format: date-time
           description: |
-            ISO 8601 timestamp when the delegation was last modified.
-            Corresponds to the grant's updated_at timestamp.
+            Latest updated_at timestamp among the agent's active grants for this user.
           example: "2025-12-17T14:30:00Z"
         expiresAt:
           type: string
           format: date-time
-          nullable: true
           description: |
-            Optional grant expiration timestamp (ISO 8601).
-            Null value indicates indefinite grant (no expiration).
+            Earliest finite expiration among the agent's active grants for this user.
+            Omitted when all grants are indefinite.
           example: "2026-01-15T00:00:00Z"
     GetAgentDelegationsResponse:
       type: object
@@ -2482,15 +2471,25 @@ components:
       type: object
       required:
         - agentId
-        - displayName
+        - display_name
         - description
+        - created_at
+        - updated_at
       properties:
         agentId:
           type: string
           format: uuid
           description: Unique agent identifier
           example: 550e8400-e29b-41d4-a716-446655440000
-        displayName:
+        client_id:
+          type: string
+          description: OAuth2 client identifier. Omitted when absent.
+        client_uris:
+          type: array
+          items:
+            type: string
+          description: Client URI list. Omitted when empty.
+        display_name:
           type: string
           description: Human-readable agent name
           example: Data Analysis Assistant
@@ -2500,36 +2499,35 @@ components:
             Detailed description of the agent's purpose and capabilities.
             Helps users understand what the agent does before granting access.
           example: Analyzes datasets and generates insights using advanced algorithms
-        logoUrl:
+        governance_url:
           type: string
           format: uri
-          nullable: true
-          description: Optional URL to agent's logo or icon
-          example: https://cdn.example.com/agents/data-assistant.png
-        governanceUrl:
-          type: string
-          format: uri
-          nullable: true
           description: |
             Optional link to agent governance documentation.
-            Should explain policies, compliance, and oversight.
+            Omitted when absent.
           example: https://example.com/governance/data-assistant
-        userDocumentationUrl:
+        user_documentation_url:
           type: string
           format: uri
-          nullable: true
           description: |
             Optional link to user-facing documentation.
-            Should explain how to use the agent and what to expect.
+            Omitted when absent.
           example: https://docs.example.com/agents/data-assistant
-        agentInterfaceUrl:
+        agent_interface_url:
           type: string
           format: uri
-          nullable: true
           description: |
             Optional link to the agent's public interface or web UI.
-            Where users can interact with the agent directly.
+            Omitted when absent.
           example: https://agents.example.com/data-assistant
+        created_at:
+          type: string
+          format: date-time
+          description: Agent creation timestamp.
+        updated_at:
+          type: string
+          format: date-time
+          description: Agent update timestamp.
     ServiceScope:
       type: object
       required:
@@ -2591,8 +2589,7 @@ components:
           example: read:user
         description:
           type: string
-          nullable: true
-          description: Human-readable description of scope permissions
+          description: Human-readable scope description. Omitted when empty.
           example: Read user profile information
     ServiceRequirementForUser:
       type: object
@@ -2607,7 +2604,7 @@ components:
           type: string
           format: uuid
           description: Unique identifier for third-party service
-          example: github-service-uuid
+          example: 22222222-2222-2222-2222-222222222222
         serviceName:
           type: string
           description: Human-readable service name for display
@@ -2643,6 +2640,9 @@ components:
           required:
             - agent
             - services
+            - permission_sets
+            - active_session_service_ids
+            - service_requirements
           properties:
             agent:
               $ref: "#/components/schemas/AgentDetail"
@@ -2654,45 +2654,38 @@ components:
                 Array of service requirements for this agent with user connection status.
                 Includes mandatory and optional third-party services the agent needs,
                 sorted mandatory-first. Empty array if the agent has no service requirements.
-
-                '
             permission_sets:
               type: array
               items:
                 $ref: "#/components/schemas/PermissionSetWithRequirement"
-              description:
-                "Phase 4 US2: Array of permission sets assigned to this agent with requirement types.
-
-                Empty array if no permission sets are assigned.
-
-                "
+              description: Permission sets assigned to the agent, with requirement types.
             active_session_service_ids:
               type: array
               items:
                 type: string
                 format: uuid
-              description:
-                "Phase 4 US2: Array of service IDs for which the authenticated user has active sessions.
-
-                Empty array if no active sessions.
-
-                "
-            available_services:
+              description: Service IDs with active sessions for the authenticated user. Empty array when none exist.
+            service_requirements:
               type: array
               items:
-                $ref: "#/components/schemas/AvailableService"
-              description:
-                "Phase 4 US2: Array of all available third-party services (redacted).
-
-                Same as services field but with reduced detail.
-
-                "
+                type: object
+                required:
+                  - service_id
+                  - requirement_type
+                properties:
+                  service_id:
+                    type: string
+                    format: uuid
+                  requirement_type:
+                    type: string
+                    enum:
+                      - mandatory
+                      - optional
+              description: Agent service requirements, derived from assigned permission sets when no explicit requirements exist.
             cimd_metadata:
-              $ref: "#/components/schemas/CIMDMetadata"
-              nullable: true
-              description: |
-                CIMD trust metadata present when the authorization request used a URL-format
-                client_id. Null for agents with opaque (UUID) client identifiers.
+              allOf:
+                - $ref: "#/components/schemas/CIMDMetadata"
+              description: CIMD metadata from the authorization session token. Omitted when the token has no CIMD metadata or is absent.
     CIMDMetadata:
       type: object
       required:
@@ -2725,7 +2718,6 @@ components:
         logo_uri:
           type: string
           format: uri
-          nullable: true
           description: Logo URL from the CIMD document, if present. Always an absolute HTTPS URL.
           example: https://agent.example.com/logo.png
     DelegatedToken:
@@ -2796,7 +2788,6 @@ components:
                     enum:
                       - mandatory
                       - optional
-                    default: optional
                     description: Whether this service is mandatory or optional within the permission set. Raw scopes are intentionally omitted; the frontend uses this field to determine lock status (FR-007).
         requirement_type:
           type: string
@@ -2805,21 +2796,6 @@ components:
             - optional
           description: Whether this permission set is mandatory or optional for the agent
           example: mandatory
-    AvailableService:
-      type: object
-      required:
-        - id
-        - display_name
-      properties:
-        id:
-          type: string
-          format: uuid
-          description: Service identifier
-          example: 770e8400-e29b-41d4-a716-446655440001
-        display_name:
-          type: string
-          description: Service display name
-          example: GitHub
     UserGrant:
       type: object
       required:
@@ -2847,11 +2823,10 @@ components:
         valid_until:
           type: string
           format: date-time
-          nullable: true
           description: |
             Optional grant expiration (ISO 8601 format).
-            Null indicates indefinite grant (no expiration).
-            Expired grants are filtered out automatically.
+            Omitted for an indefinite grant.
+            The grant lookup can return expired grants.
           example: "2026-06-01T00:00:00Z"
         granted_permission_sets:
           type: object
@@ -2860,13 +2835,8 @@ components:
             items:
               type: string
               format: uuid
-          description:
-            "Map of granted permission sets. Keys are permission set UUIDs,
-            values are arrays of service UUIDs included in that permission set grant.
-
-            Empty object `{}` is only allowed when revoking (POST endpoint).
-
-            "
+          description: |
+            Map of granted permission set UUIDs to arrays of included service UUIDs.
           example:
             770e8400-e29b-41d4-a716-446655440001:
               - 880e8400-e29b-41d4-a716-446655440010
@@ -2889,13 +2859,13 @@ components:
         - data
       properties:
         data:
-          type: array
-          items:
-            $ref: "#/components/schemas/UserGrant"
-          description: |
-            Array of user grants for the specified agent.
-            Typically contains one grant (upsert semantics).
-            Empty array if no grants exist.
+          oneOf:
+            - $ref: "#/components/schemas/UserGrant"
+            - type: object
+              nullable: true
+              enum:
+                - null
+          description: One stored grant for the user and agent, or null if none exists. Can include an expired grant.
     CreateOrUpdateGrantRequest:
       type: object
       required:
@@ -2903,29 +2873,19 @@ components:
       properties:
         granted_permission_sets:
           type: object
+          minProperties: 1
           additionalProperties:
             type: array
             items:
               type: string
               format: uuid
-          description:
-            "Map of permission sets to grant to the agent. Keys are permission
-            set UUIDs, values are arrays of service UUIDs included in each permission set grant.
-
-
-            **Special Case**: Empty object `{}` revokes the grant entirely
-
-            and returns `204 No Content`.
-
-            **Special Case**: Empty array `[]` revokes the grant entirely and returns `204 No Content`.
-
-            **Validation**:
-
-            - Each permission set ID must exist and be assigned to the agent
-
-            - Each service ID must be valid for the specified permission set
-
-            "
+          description: |
+            Map of permission set UUIDs to arrays of included service UUIDs.
+            Each permission set must be assigned to the agent. All mandatory permission sets must be included, with at least one service each.
+            Each selected permission set must include its effective mandatory services.
+            Included services must belong to the permission set and, when configured, the agent's explicit service requirements.
+            Every included service must have an active OAuth2 session.
+            Empty objects and arrays return 400. Use DELETE to revoke the grant.
           example:
             770e8400-e29b-41d4-a716-446655440001:
               - 880e8400-e29b-41d4-a716-446655440010
@@ -2946,7 +2906,7 @@ components:
 
             **Behavior**:
 
-            - Expired grants are automatically filtered out in queries
+            - The agent list excludes expired grants. The grant lookup can return them.
             - Users can extend expiration by updating the grant
           example: "2026-06-01T00:00:00Z"
     CreateOrUpdateGrantResponse:
@@ -3245,52 +3205,6 @@ components:
           description: |
             Optional human-readable error message. Provides additional context about the error. May be empty for generic errors.
           example: authentication required
-    ThirdPartyServiceWithSession:
-      type: object
-      required:
-        - service
-      properties:
-        service:
-          $ref: "#/components/schemas/ThirdPartyService"
-        session:
-          $ref: "#/components/schemas/SessionStatus"
-          nullable: true
-          description: Session status if user has an active session, null otherwise
-    ThirdPartyService:
-      type: object
-      required:
-        - id
-        - display_name
-        - scopes
-      properties:
-        id:
-          type: string
-          format: uuid
-          description: Unique service identifier
-        display_name:
-          type: string
-          description: Human-readable service name
-          maxLength: 255
-        description:
-          type: string
-          description: Service description
-        scopes:
-          type: array
-          description: Available OAuth2 scopes
-          items:
-            $ref: "#/components/schemas/OAuthScope"
-    OAuthScope:
-      type: object
-      required:
-        - scope_value
-        - description
-      properties:
-        scope_value:
-          type: string
-          description: OAuth2 scope identifier
-        description:
-          type: string
-          description: Human-readable scope description
     UserSessionSummary:
       type: object
       description: |

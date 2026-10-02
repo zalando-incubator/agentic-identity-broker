@@ -1,0 +1,37 @@
+.overlay-motion {
+  opacity: 1;
+  transition: opacity var(--motion-overlay) var(--motion-ease);
+}
+
+@starting-style {
+  .overlay-motion[data-state='open'],
+  .overlay-motion[data-state='delayed-open'],
+  .overlay-motion[data-state='instant-open'] {
+    opacity: 0;
+  }
+}
+
+/* Presence observes animationend, not transitionend, before unmounting. */
+.overlay-motion[data-state='closed'] {
+  pointer-events: none;
+  animation: overlay-exit var(--motion-overlay) var(--motion-ease) both;
+}
+
+@keyframes overlay-exit {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay-motion {
+    transition: none;
+  }
+
+  .overlay-motion[data-state='closed'] {
+    animation: none;
+  }
+}

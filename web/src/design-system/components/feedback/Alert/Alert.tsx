@@ -1,330 +1,51 @@
-/**
- * Alert Component
- *
- * Contextual feedback component for displaying important messages.
- * Follows the "Refined Trust Architecture" design system.
- *
- * Features:
- * - 4 semantic variants: info, success, warning, error
- * - Optional icon support
- * - Optional title with description
- * - Dismissible with fade-out animation
- * - Optional action button
- * - Banner style for full-width alerts
- * - WCAG 2.1 AA compliant with proper ARIA attributes
- */
-
-import React, { useState } from 'react';
+import { useState, type ComponentProps, type ReactNode } from 'react';
 import { cva } from 'class-variance-authority';
+import { CircleAlert, CircleCheck, Info, TriangleAlert, X } from 'lucide-react';
 import { cn } from '@design-system/utils';
+import { Button } from '@design-system/components/primitives/Button';
 
-const alertVariants = cva(
-  // Base styles - applied to all variants
-  'relative flex gap-3 rounded-lg border p-4 transition-all duration-300',
-  {
-    variants: {
-      variant: {
-        // Info: Blue - informational messages
-        info: 'bg-info-light text-info-dark border-info-primary/30',
-
-        // Success: Green - positive confirmations
-        success: 'bg-success-light text-success-dark border-success-primary/30',
-
-        // Warning: Amber - caution messages
-        warning: 'bg-warning-light text-warning-dark border-warning-primary/30',
-
-        // Error: Red - error messages
-        error: 'bg-error-light text-error-dark border-error-primary/30',
-      },
-      banner: {
-        true: 'rounded-none border-l-0 border-r-0 w-full',
-        false: '',
-      },
-    },
-    defaultVariants: {
-      variant: 'info',
-      banner: false,
-    },
-  },
-);
-
-const iconColorVariants = cva('flex-shrink-0 w-5 h-5', {
+const alertVariants = cva('relative flex gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground', {
   variants: {
-    variant: {
-      info: 'text-info-primary',
-      success: 'text-success-primary',
-      warning: 'text-warning-primary',
-      error: 'text-error-primary',
-    },
+    variant: { info: '[&>svg]:text-info', success: '[&>svg]:text-success', warning: '[&>svg]:text-warning', error: '[&>svg]:text-destructive' },
+    banner: { true: 'w-full rounded-none border-x-0', false: '' },
   },
-  defaultVariants: {
-    variant: 'info',
-  },
+  defaultVariants: { variant: 'info', banner: false },
 });
+const icons = { info: Info, success: CircleCheck, warning: TriangleAlert, error: CircleAlert };
 
-export interface AlertProps extends Omit<
-  React.ComponentPropsWithoutRef<'div'>,
-  'title'
-> {
-  /** Alert variant based on message severity */
+type Dismissal = { dismissible: true; dismissLabel: string; onDismiss?: () => void } | { dismissible?: false; dismissLabel?: never; onDismiss?: never };
+export type AlertProps = Omit<ComponentProps<'div'>, 'title'> & Dismissal & {
   variant?: 'info' | 'success' | 'warning' | 'error';
-  /** Optional icon to display (overrides default icon) */
-  icon?: React.ReactNode;
-  /** Optional title text (bold) */
-  title?: string;
-  /** Whether alert can be dismissed */
-  dismissible?: boolean;
-  /** Callback when alert is dismissed */
-  onDismiss?: () => void;
-  /** Optional action button */
-  action?: {
-    label: string;
-    onClick: () => void;
-  };
-  /** Display as full-width banner */
+  icon?: ReactNode;
+  title?: ReactNode;
+  action?: { label: string; onClick: () => void };
   banner?: boolean;
-  /** Hide default icon */
   hideIcon?: boolean;
+};
+
+export function Alert({ variant = 'info', icon, title, dismissible, dismissLabel, onDismiss, action, banner, hideIcon, className, children, ...props }: AlertProps) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  const Icon = icons[variant];
+  return (
+    <div role={variant === 'error' ? 'alert' : 'status'} aria-live={variant === 'error' ? 'assertive' : 'polite'} aria-atomic="true" {...props} data-slot="alert" className={cn(alertVariants({ variant, banner }), className)}>
+      {!hideIcon && (icon ? <span aria-hidden="true" className="shrink-0">{icon}</span> : <Icon aria-hidden="true" className="mt-0.5 size-5 shrink-0" />)}
+      <div className="min-w-0 flex-1 space-y-2">
+        {title && <AlertTitle>{title}</AlertTitle>}
+        {children && <AlertDescription>{children}</AlertDescription>}
+        {action && <Button variant="outline" size="sm" onClick={action.onClick}>{action.label}</Button>}
+      </div>
+      {dismissible && <Button variant="ghost" size="icon" aria-label={dismissLabel} className="shrink-0" onClick={() => { setDismissed(true); onDismiss?.(); }}><X aria-hidden="true" className="size-4" /></Button>}
+    </div>
+  );
 }
 
-// Default icons for each variant (SVG)
-const InfoIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-    />
-  </svg>
-);
+export function AlertTitle({ className, children, ...props }: ComponentProps<'h3'>) {
+  return <h3 {...props} data-slot="alert-title" className={cn('font-display font-semibold leading-tight text-foreground', className)}>{children}</h3>;
+}
 
-const SuccessIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-    />
-  </svg>
-);
-
-const WarningIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-    />
-  </svg>
-);
-
-const ErrorIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
-    />
-  </svg>
-);
-
-const CloseIcon = () => (
-  <svg
-    className="w-5 h-5"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    aria-hidden="true"
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      d="M6 18L18 6M6 6l12 12"
-    />
-  </svg>
-);
-
-/**
- * Alert component for displaying contextual feedback messages.
- * Supports multiple variants, icons, titles, and actions.
- *
- * @example
- * ```tsx
- * <Alert variant="success">
- *   Your changes have been saved successfully.
- * </Alert>
- *
- * <Alert variant="warning" title="Warning" dismissible>
- *   Please review the following information before proceeding.
- * </Alert>
- *
- * <Alert
- *   variant="error"
- *   title="Error"
- *   action={{ label: "Retry", onClick: handleRetry }}
- * >
- *   Failed to process your request.
- * </Alert>
- * ```
- */
-export const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
-  (
-    {
-      variant = 'info',
-      icon,
-      title,
-      dismissible = false,
-      onDismiss,
-      action,
-      banner = false,
-      hideIcon = false,
-      className,
-      children,
-      ...props
-    },
-    ref,
-  ) => {
-    const [isVisible, setIsVisible] = useState(true);
-    const [isExiting, setIsExiting] = useState(false);
-
-    // Get default icon based on variant
-    const getDefaultIcon = () => {
-      switch (variant) {
-        case 'success':
-          return <SuccessIcon />;
-        case 'warning':
-          return <WarningIcon />;
-        case 'error':
-          return <ErrorIcon />;
-        case 'info':
-        default:
-          return <InfoIcon />;
-      }
-    };
-
-    // Handle dismiss with animation
-    const handleDismiss = () => {
-      setIsExiting(true);
-      setTimeout(() => {
-        setIsVisible(false);
-        onDismiss?.();
-      }, 300); // Match transition duration
-    };
-
-    // Don't render if dismissed
-    if (!isVisible) {
-      return null;
-    }
-
-    // Determine ARIA role and aria-live based on variant
-    const role = variant === 'error' ? 'alert' : 'status';
-    const ariaLive = variant === 'error' ? 'assertive' : 'polite';
-
-    return (
-      <div
-        ref={ref}
-        role={role}
-        aria-live={ariaLive}
-        className={cn(
-          alertVariants({ variant, banner }),
-          isExiting && 'opacity-0 scale-95',
-          className,
-        )}
-        {...props}
-      >
-        {/* Icon */}
-        {!hideIcon && (
-          <div className={iconColorVariants({ variant })}>
-            {icon || getDefaultIcon()}
-          </div>
-        )}
-
-        {/* Content */}
-        <div className="flex-1 min-w-0">
-          {title && (
-            <h4 className="text-sm font-semibold mb-1 leading-tight">
-              {title}
-            </h4>
-          )}
-          <div className="text-sm leading-relaxed">{children}</div>
-        </div>
-
-        {/* Action button */}
-        {action && (
-          <button
-            type="button"
-            onClick={action.onClick}
-            className={cn(
-              'flex-shrink-0 px-3 py-1.5 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2',
-              variant === 'info' &&
-                'text-info-primary hover:bg-info-primary/10 focus:ring-info-primary',
-              variant === 'success' &&
-                'text-success-primary hover:bg-success-primary/10 focus:ring-success-primary',
-              variant === 'warning' &&
-                'text-warning-primary hover:bg-warning-primary/10 focus:ring-warning-primary',
-              variant === 'error' &&
-                'text-error-primary hover:bg-error-primary/10 focus:ring-error-primary',
-            )}
-          >
-            {action.label}
-          </button>
-        )}
-
-        {/* Dismiss button */}
-        {dismissible && (
-          <button
-            type="button"
-            onClick={handleDismiss}
-            aria-label="Dismiss alert"
-            className={cn(
-              'flex-shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2',
-              variant === 'info' &&
-                'text-info-primary/70 hover:text-info-primary hover:bg-info-primary/10 focus:ring-info-primary',
-              variant === 'success' &&
-                'text-success-primary/70 hover:text-success-primary hover:bg-success-primary/10 focus:ring-success-primary',
-              variant === 'warning' &&
-                'text-warning-primary/70 hover:text-warning-primary hover:bg-warning-primary/10 focus:ring-warning-primary',
-              variant === 'error' &&
-                'text-error-primary/70 hover:text-error-primary hover:bg-error-primary/10 focus:ring-error-primary',
-            )}
-          >
-            <CloseIcon />
-          </button>
-        )}
-      </div>
-    );
-  },
-);
-
-Alert.displayName = 'Alert';
+export function AlertDescription({ className, ...props }: ComponentProps<'div'>) {
+  return <div {...props} data-slot="alert-description" className={cn('text-sm leading-relaxed text-muted-foreground', className)} />;
+}
 
 export default Alert;

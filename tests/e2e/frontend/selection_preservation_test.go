@@ -1,7 +1,6 @@
 // Package e2e_test provides end-to-end tests for consent state preservation
 // across third-party OAuth2 login redirects.
-// This file verifies that the consent_state URL parameter (currently containing
-// permission set and service selections) survives the OAuth2 redirect round-trip.
+// The consent_state envelope preserves selections and duration across provider callbacks.
 package e2e_test
 
 import (
@@ -30,6 +29,12 @@ var (
 	selMandatoryPSID = id.MustParsePermissionSetID("e0000000-0000-0000-0000-000000000001")
 	selOptionalPSID  = id.MustParsePermissionSetID("e0000000-0000-0000-0000-000000000002")
 )
+
+type preservedConsentState struct {
+	Selections map[string][]string `json:"selections"`
+	Duration   string              `json:"duration"`
+	CustomDate string              `json:"customDate"`
+}
 
 // selPreservationService creates a ThirdpartyOAuth2ProviderEntity for selection preservation tests,
 // using fixtures.ServiceWithID as a base and configuring service-specific fields.
@@ -140,29 +145,16 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 
 		page := consentPage.GetPlaywrightPage()
 
-		// Find and toggle the optional PS switch
-		optionalCard := page.Locator("[data-testid='permission-set-optional']").First()
-		optionalCardCount, err := optionalCard.Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(optionalCardCount).To(BeNumerically(">=", 1), "Optional PS card should exist")
-
-		toggle := optionalCard.GetByRole("switch", playwright.LocatorGetByRoleOptions{
-			Name: "Toggle Productivity Suite",
-		})
-		toggleCount, err := toggle.Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(toggleCount).To(BeNumerically(">=", 1), "Optional PS should have a toggle switch")
-
-		err = toggle.Click()
-		Expect(err).NotTo(HaveOccurred(), "Failed to toggle optional PS")
+		Expect(consentPage.SetPermissionGroupChecked(ctx, "Productivity Suite", true)).To(Succeed())
+		expectPermissionGroupSelection(ctx, consentPage, "Productivity Suite", true)
+		Expect(consentPage.ChooseDuration(ctx, "30 days")).To(Succeed())
 
 		// Wait for the optional PS service to appear after selecting it.
 		Expect(consentPage.WaitForServiceToAppear(ctx, "Google")).To(Succeed(),
 			"Google service should appear after toggling optional PS")
 		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_selected_before_login")).NotTo(HaveOccurred())
 
-		// Intercept the navigation that happens when Login is clicked.
-		// We expect the URL to contain consent_state with both PSes.
+		// Intercept Connect and inspect the callback's canonical draft envelope.
 		capturedNavigation := make(chan struct {
 			url string
 			err error
@@ -177,9 +169,8 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		})
 		Expect(err).NotTo(HaveOccurred(), "Failed to set up route intercept")
 
-		// Click Login on Google service (from the optional PS we just toggled)
 		err = consentPage.DelegateService(ctx, "Google")
-		Expect(err).NotTo(HaveOccurred(), "Failed to click Login on Google service")
+		Expect(err).NotTo(HaveOccurred(), "Failed to connect Google")
 
 		var navigation struct {
 			url string
@@ -201,20 +192,19 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		psSelectionsEncoded := parsedRedirect.Query().Get("consent_state")
 		Expect(psSelectionsEncoded).NotTo(BeEmpty(), "consent_state should be encoded in redirect_uri")
 
-		// Decode and verify the selections contain both PSes
+		// Decode the envelope and verify the exact groups and service inclusions.
 		decoded, err := base64.RawURLEncoding.DecodeString(psSelectionsEncoded)
 		Expect(err).NotTo(HaveOccurred(), "consent_state should be valid base64url")
 
-		var selections map[string][]string
-		err = json.Unmarshal(decoded, &selections)
-		Expect(err).NotTo(HaveOccurred(), "consent_state should be valid JSON")
-
-		// Mandatory PS should be present
-		Expect(selections).To(HaveKey(selMandatoryPSID.String()),
-			"Selections should include mandatory PS")
-		// Optional PS should be present (we toggled it ON)
-		Expect(selections).To(HaveKey(selOptionalPSID.String()),
-			"Selections should include optional PS after toggling")
+		var state preservedConsentState
+		Expect(json.Unmarshal(decoded, &state)).To(Succeed(), "consent_state should be a valid draft envelope")
+		Expect(state.Selections).To(HaveLen(2))
+		Expect(state.Selections).To(HaveKey(selMandatoryPSID.String()))
+		Expect(state.Selections).To(HaveKey(selOptionalPSID.String()))
+		Expect(state.Selections[selMandatoryPSID.String()]).To(ConsistOf(selGitHubServiceID.String()))
+		Expect(state.Selections[selOptionalPSID.String()]).To(ConsistOf(selGoogleServiceID.String(), selSlackServiceID.String()))
+		Expect(state.Duration).To(Equal("30-days"))
+		Expect(state.CustomDate).To(BeEmpty())
 
 	})
 
@@ -229,41 +219,21 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		err := consentPage.NavigateToAgentWithSelections(ctx, testAgentID, selections)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate with selections")
 
-		page := consentPage.GetPlaywrightPage()
-
-		// The optional PS "Productivity Suite" should be selected (toggle ON)
-		optionalCard := page.Locator("[data-testid='permission-set-optional']").First()
-		optionalCardCount, err := optionalCard.Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(optionalCardCount).To(BeNumerically(">=", 1), "Optional PS card should exist")
-
-		// The optional PS toggle switch should be checked (selected from consent_state)
-		toggle := optionalCard.GetByRole("switch", playwright.LocatorGetByRoleOptions{
-			Name: "Toggle Productivity Suite",
-		})
-		toggleCount, err := toggle.Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(toggleCount).To(BeNumerically(">=", 1), "Optional PS 'Productivity Suite' should have a toggle switch")
-		ariaChecked, err := toggle.GetAttribute("aria-checked")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(ariaChecked).To(Equal("true"), "Optional PS 'Productivity Suite' toggle should be ON from consent_state")
-
-		// Services from the optional PS (Google, Slack) should appear in the service connections section
-		err = consentPage.WaitForServiceToAppear(ctx, "Google")
-		Expect(err).NotTo(HaveOccurred(), "Google service should appear when optional PS is selected")
-
-		err = consentPage.WaitForServiceToAppear(ctx, "Slack")
-		Expect(err).NotTo(HaveOccurred(), "Slack service should appear when optional PS is selected")
+		expectPermissionGroupSelection(ctx, consentPage, "Code Access", true)
+		expectPermissionGroupSelection(ctx, consentPage, "Productivity Suite", true)
+		Expect(consentPage.PermissionServices(ctx, "Code Access")).To(Equal([]pages.PermissionService{
+			{Name: "GitHub", Required: true, ReadOnly: true, Checked: true},
+		}))
+		Expect(consentPage.PermissionServices(ctx, "Productivity Suite")).To(ConsistOf(
+			pages.PermissionService{Name: "Google", Checked: true},
+			pages.PermissionService{Name: "Slack", Checked: true},
+		))
 
 		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_restored_from_url")).NotTo(HaveOccurred())
 	})
 
 	// Scenario 5.3 from specs/008-thirdparty-oauth2-sessions/spec.md
-	It("should complete full OAuth2 redirect round-trip preserving selections", func() {
-		// This test exercises the complete flow:
-		// 1. Navigate with consent_state (simulating return from successful OAuth2 callback)
-		// 2. Verify page loads with the optional PS selected and services visible
-		// 3. Verify the success query param is present (as added by the callback handler)
+	It("should restore selections and duration from a provider callback URL", func() {
 
 		selections := map[string][]string{
 			selMandatoryPSID.String(): {selGitHubServiceID.String()},
@@ -271,7 +241,9 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		}
 
 		// Simulate the callback redirect URL pattern: consent page URL + success=true + service_id + consent_state
-		selectionsJSON, err := json.Marshal(selections)
+		selectionsJSON, err := json.Marshal(preservedConsentState{
+			Selections: selections, Duration: "custom", CustomDate: "2099-11-06",
+		})
 		Expect(err).NotTo(HaveOccurred())
 		encoded := base64.RawURLEncoding.EncodeToString(selectionsJSON)
 
@@ -284,30 +256,16 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		err = consentPage.WaitForPageLoad(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Page did not load after callback redirect")
 
-		page := consentPage.GetPlaywrightPage()
-
-		// Verify optional PS is selected
-		optionalCard := page.Locator("[data-testid='permission-set-optional']").First()
-		optionalCardCount, err := optionalCard.Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(optionalCardCount).To(BeNumerically(">=", 1), "Optional PS card should exist after round-trip")
-
-		toggle := optionalCard.GetByRole("switch", playwright.LocatorGetByRoleOptions{
-			Name: "Toggle Productivity Suite",
-		})
-		toggleCount, err := toggle.Count()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(toggleCount).To(BeNumerically(">=", 1), "Optional PS should have a toggle switch after round-trip")
-		ariaChecked, err := toggle.GetAttribute("aria-checked")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(ariaChecked).To(Equal("true"), "Optional PS should remain selected after OAuth2 round-trip")
-
-		// Verify Google and Slack services are visible (from the optional PS)
-		err = consentPage.WaitForServiceToAppear(ctx, "Google")
-		Expect(err).NotTo(HaveOccurred(), "Google service should be visible after round-trip")
-
-		err = consentPage.WaitForServiceToAppear(ctx, "Slack")
-		Expect(err).NotTo(HaveOccurred(), "Slack service should be visible after round-trip")
+		expectPermissionGroupSelection(ctx, consentPage, "Code Access", true)
+		expectPermissionGroupSelection(ctx, consentPage, "Productivity Suite", true)
+		Expect(consentPage.PermissionServices(ctx, "Productivity Suite")).To(ConsistOf(
+			pages.PermissionService{Name: "Google", Checked: true},
+			pages.PermissionService{Name: "Slack", Checked: true},
+		))
+		Expect(consentPage.SelectedDuration(ctx)).To(Equal("Custom date"))
+		Expect(consentPage.CustomDateValue(ctx)).To(Equal("2099-11-06"))
+		Expect(consentPage.GetURLQueryParam("success")).To(Equal("true"))
+		Expect(consentPage.GetURLQueryParam("service_id")).To(Equal(selGitHubServiceID.String()))
 
 		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_full_roundtrip")).NotTo(HaveOccurred())
 	})

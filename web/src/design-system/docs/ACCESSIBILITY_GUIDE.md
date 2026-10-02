@@ -1,499 +1,220 @@
 # Accessibility Guide
 
-The Refined Trust Architecture design system is built with accessibility at its core. This guide explains WCAG 2.1 AA compliance and best practices for using the design system accessibly.
-
-## Overview
-
-All design system components meet **WCAG 2.1 Level AA** accessibility standards, which include:
-
-- Perceivable: Information and UI are visible/perceivable to all
-- Operable: All functionality accessible via keyboard
-- Understandable: Text is clear and UI is intuitive
-- Robust: Works with assistive technologies
-
-## Core Accessibility Features
+## Authority and evidence
+
+[ADR 037](../../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) became Accepted on 2026-09-27.
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current visual direction for [feature 047](../../../../specs/047-redesign-consent-console/spec.md).
 
-### Semantic HTML
+Constitution Principle XI keeps **WCAG 2.1 AA as the mandatory floor**.
+Feature 047 targets **WCAG 2.2 AA**, including visible, unobscured focus and accessible target sizes.
+Dynamic status changes must reach assistive technology without taking focus.
 
-Components use proper semantic HTML elements:
+These are requirements, not a claim of measured compliance.
+Component reuse, Radix behavior, token calculations, and automated accessibility results do not replace browser evidence.
+The feature [tasks](../../../../specs/047-redesign-consent-console/tasks.md) record implementation and verification separately.
 
-```tsx
-// Button component renders actual <button>
-<Button onClick={handleClick}>Click me</Button>
-// → <button type="button">Click me</button>
+## Semantic structure and names
 
-// Link component renders actual <a>
-<Link href="/page">Go to page</Link>
-// → <a href="/page">Go to page</a>
+Use semantic HTML before additional ARIA:
 
-// Navigation uses <nav>
-<Breadcrumb items={items} />
-// → <nav aria-label="Breadcrumb">...
-
-// Headings maintain hierarchy
-<h1>Main Title</h1>
-<h2>Section</h2>
-<h3>Subsection</h3>
-```
-
-### ARIA Attributes
-
-Components include proper ARIA attributes:
-
-```tsx
-// Modal has proper ARIA
-<Modal
-  isOpen={true}
-  title="Confirm Action"
->
-  {/* Internally:
-    role="dialog"
-    aria-labelledby="modal-title"
-    aria-modal="true"
-  */}
-</Modal>
-
-// Accordion indicates state
-<Accordion items={items} />
-{/* Each item has:
-  aria-expanded="true|false"
-  aria-controls="panel-id"
-*/}
-
-// Table has proper structure
-<Table columns={columns} data={data} />
-{/* Uses <th>, <td>, proper headers, scope attributes */}
-
-// Progress bar shows value
-<Progress value={65} />
-{/* Has:
-  role="progressbar"
-  aria-valuenow="65"
-  aria-valuemin="0"
-  aria-valuemax="100"
-*/}
-```
-
-### Keyboard Navigation
-
-All interactive components support full keyboard navigation:
-
-```tsx
-// Tab through buttons and links
-<Button>Submit</Button>
-<Button>Cancel</Button>
-// Navigate with Tab/Shift+Tab
-
-// Enter/Space to activate
-// ESC to close dropdowns, modals
-// Arrow keys in menus
-
-// Focus always visible
-// Proper focus styling on all interactive elements
-```
-
-### Color Contrast
-
-All colors meet WCAG AA contrast requirements:
-
-| Use Case           | Ratio | Status      |
-| ------------------ | ----- | ----------- |
-| Text on background | 4.5:1 | ✓ Meets     |
-| Large text (18pt+) | 3:1   | ✓ Meets     |
-| UI components      | 3:1   | ✓ Meets     |
-| Disabled state     | N/A   | ✓ Exception |
-
-## Component Accessibility
-
-### Button Component
-
-```tsx
-// ✓ Good - Clear text label
-<Button>Submit Form</Button>
-
-// ✓ Good - Icon with aria-label
-<Button icon={<DeleteIcon />} aria-label="Delete item" />
-
-// ✓ Good - Disabled state is perceivable
-<Button disabled>Submit</Button>
-
-// ✗ Avoid - Icon-only without label
-<Button icon={<DeleteIcon />} />
-
-// ✗ Avoid - Unclear label
-<Button>OK</Button>
-```
-
-### Link Component
-
-```tsx
-// ✓ Good - Descriptive link text
-<Link href="/permissions">View all permissions</Link>
-
-// ✓ Good - External link indicator
-<Link href="https://example.com" external>
-  External documentation
-</Link>
-
-// ✗ Avoid - "Click here" links
-<Link href="/page">Click here</Link>
-
-// ✗ Avoid - Vague link text
-<Link href="/page">More</Link>
-```
-
-### Form Inputs
-
-```tsx
-// ✓ Good - Proper label association
-<label htmlFor="email">Email address</label>
-<TextInput id="email" type="email" />
-
-// ✓ Good - Error messaging
-<TextInput
-  id="email"
-  errorMessage="Invalid email format"
-  aria-describedby="email-error"
-/>
-
-// ✓ Good - Required indicator
-<TextInput
-  id="name"
-  label="Full Name"
-  required
-  aria-required="true"
-/>
-
-// ✗ Avoid - Missing label
-<TextInput type="text" placeholder="Search..." />
-
-// ✗ Avoid - Error color-only indication
-<TextInput style={{ borderColor: 'red' }} />
-```
-
-### Modal Component
-
-```tsx
-// ✓ Good - Proper modal structure
-<Modal isOpen={true} title="Confirm Deletion" onClose={handleClose}>
-  <p>Are you sure?</p>
-  <Button variant="danger">Delete</Button>
-  <Button onClick={handleClose}>Cancel</Button>
-</Modal>
-
-// ✓ Features:
-// - Focus trap (cannot tab out of modal)
-// - ESC key closes modal
-// - Dialog role and labeling
-// - Backdrop prevents interaction behind modal
-```
-
-### Table Component
-
-```tsx
-// ✓ Good - Proper table semantics
-<Table
-  columns={[
-    { key: 'name', header: 'Name' },
-    { key: 'status', header: 'Status' },
-  ]}
-  data={data}
-  caption="List of active permissions"
-/>
-
-// ✓ Includes:
-// - <table>, <thead>, <tbody>, <tr>, <th>, <td>
-// - Caption for context
-// - Scope attributes on headers
-// - Sortable indicators
-
-// ✗ Avoid - HTML table structure as divs
-<div className="table">
-  <div className="row">
-    <div>Data</div>
-  </div>
-</div>
-```
-
-### Accordion Component
-
-```tsx
-// ✓ Good - Semantic structure
-<Accordion
-  items={[
-    {
-      id: 'item1',
-      title: 'What is a delegation?',
-      content: <AnswerContent />,
-    },
-  ]}
-/>
-
-// ✓ Features:
-// - Proper heading hierarchy
-// - aria-expanded indicates state
-// - aria-controls links header to content
-// - Keyboard navigation (Arrow keys)
-// - Enter/Space to toggle
-```
-
-## Testing for Accessibility
-
-### Keyboard Navigation Testing
-
-Test these keyboard interactions:
-
-```
-Tab          → Move focus forward
-Shift+Tab    → Move focus backward
-Enter/Space  → Activate buttons, checkboxes
-Arrow Keys   → Navigate menus, tabs, sliders
-ESC          → Close modals, dropdowns
-Home/End     → Jump to start/end
-```
-
-Ensure:
-
-- All interactive elements are reachable via keyboard
-- Focus is always visible
-- Tab order is logical (left-to-right, top-to-bottom)
-- No keyboard traps (can always escape)
-
-### Screen Reader Testing
-
-Test with NVDA (Windows) or JAWS, or test using browser extensions:
-
-```bash
-# Browser DevTools accessibility tree
-# Shows how screen readers see the page
-
-# Key things to verify:
-# - Page title/heading is clear
-# - Navigation structure is logical
-# - Form labels associated with inputs
-# - Link text is descriptive
-# - Dynamic content announcements
-# - ARIA live regions working
-```
-
-### Contrast Testing
-
-```bash
-# Check color contrast with:
-# - WebAIM Contrast Checker
-# - Chrome DevTools > Elements > Accessibility
-# - Stark plugin (Figma)
-# - deque axe DevTools
-
-# Minimum ratios:
-# - Normal text: 4.5:1
-# - Large text (18pt+): 3:1
-# - UI components: 3:1
-```
-
-### Automated Testing
-
-```typescript
-// Using axe-core in tests
-import { axe } from 'jest-axe';
-
-test('button is accessible', async () => {
-  const { container } = render(<Button>Click me</Button>);
-  const results = await axe(container);
-  expect(results).toHaveNoViolations();
-});
-
-// Using Cypress accessibility plugin
-cy.injectAxe();
-cy.checkA11y();
-```
-
-## Accessibility Checklist
-
-### Before Launch
-
-- [ ] All page headings present and hierarchical
-- [ ] Form labels associated with inputs (htmlFor)
-- [ ] All buttons have text or aria-label
-- [ ] Links have descriptive text (not "Click here")
-- [ ] Color is not the only indicator
-- [ ] Images have alt text
-- [ ] Interactive elements keyboard accessible
-- [ ] Focus indicators visible
-- [ ] Page readable without CSS
-- [ ] Text has sufficient contrast (4.5:1)
-- [ ] Error messages clearly associated
-- [ ] No keyboard traps
-- [ ] ARIA used correctly (not overused)
-- [ ] Page passes automated accessibility testing
-
-### Ongoing
-
-- [ ] Test with screen reader (monthly)
-- [ ] Test keyboard navigation (monthly)
-- [ ] Update alt text for new images
-- [ ] Review ARIA usage in new components
-- [ ] Check color contrast of new colors
-- [ ] Test with actual users with disabilities
-- [ ] Update accessibility documentation
-
-## Common Issues & Fixes
-
-### Issue: "Inputs don't have labels"
-
-**Fix:**
-
-```tsx
-// ✗ Before
-<TextInput placeholder="Email" />
-
-// ✓ After
-<label htmlFor="email">Email address</label>
-<TextInput id="email" placeholder="you@example.com" />
-```
-
-### Issue: "Buttons don't have text"
-
-**Fix:**
-
-```tsx
-// ✗ Before
-<button className="icon-only"><TrashIcon /></button>
-
-// ✓ After
-<Button icon={<TrashIcon />} aria-label="Delete item" />
-```
-
-### Issue: "Images lack alt text"
-
-**Fix:**
-
-```tsx
-// ✗ Before
-<img src="profile.jpg" />
-
-// ✓ After
-<img src="profile.jpg" alt="Profile photo of John Doe" />
-```
-
-### Issue: "Links unclear"
-
-**Fix:**
-
-```tsx
-// ✗ Before
-<a href="/permissions">Click here to manage permissions</a>
-
-// ✓ After
-<a href="/permissions">Manage your permissions</a>
-```
-
-### Issue: "Focus not visible"
-
-**Fix:**
-
-```tsx
-// ✗ Before (no focus indicator)
-button { outline: none; }
-
-// ✓ After
-button:focus {
-  outline: 2px solid navy-700;
-  outline-offset: 2px;
-}
-```
-
-## Responsive Accessibility
-
-### Mobile Accessibility
-
-```tsx
-// ✓ Good - Touch targets large enough
-<Button size="md" />     // At least 44x44px
-
-// ✓ Good - Responsive font sizes
-<p className="text-base md:text-lg" />
-
-// ✗ Avoid - Too small touch targets
-<button className="w-6 h-6" />
-
-// ✗ Avoid - Unreadable on mobile
-<p className="text-xs" />
-```
-
-### Reduced Motion
-
-```tsx
-// ✓ Good - Respects prefers-reduced-motion
-<div className="motion-safe:animate-in motion-reduce:animate-none">
-  {children}
-</div>
-
-// Tailwind automatically handles this
-// Components with animations include motion-safe/motion-reduce
-```
-
-## Documentation & Labeling
-
-### Page Structure
-
-```tsx
-// ✓ Good - Clear page structure
-<main>
-  <h1>Page Title</h1>
-  <nav aria-label="main">...</nav>
-  <article>
-    <h2>Section</h2>
-    <p>Content</p>
-  </article>
-</main>
-
-// ✓ Good - Meaningful page title
-<head>
-  <title>Delegations - Manage your OAuth grants</title>
-</head>
-```
-
-### ARIA Live Regions
-
-```tsx
-// ✓ Good - Dynamic content announcements
-<div aria-live="polite" aria-atomic="true">
-  {successMessage && <p>{successMessage}</p>}
-</div>
-
-// ✓ Good - Loading states
-<div aria-live="polite">
-  {loading && "Loading..."}
-</div>
-```
-
-## Resources
-
-### External References
-
-- [WCAG 2.1 Guidelines](https://www.w3.org/WAI/WCAG21/quickref/)
+- Use a button for an action and a link for navigation.
+- Keep one clear page heading and a logical heading hierarchy.
+- Give navigation and main content their proper landmarks.
+- Associate each input with a visible label.
+- Give each icon-only control an accessible name.
+- Hide decorative icons from assistive technology.
+- Give informative images useful alternative text.
+- Keep the local wordmark and compact mark accessible without SVG font dependencies.
+
+Use owned design-system primitives rather than custom interactive containers.
+Do not use a placeholder as the only label.
+Tooltips supplement labels. They do not replace the name of a control.
+
+Pages and application components take user-facing strings from `@copy`.
+Design-system components receive labels, descriptions, and messages through required props or children.
+Technical names and identifiers retain their exact spelling.
+
+## Keyboard and focus
+
+Every user flow must work without a pointer.
+Focus order must match the reading order.
+No control can depend on hover alone.
+
+| Interaction | Required behavior |
+| --- | --- |
+| Tab and Shift+Tab | Move through the available controls in logical order |
+| Enter and Space | Activate the focused control according to its semantics |
+| Arrow keys | Navigate composite controls such as menus, radio groups, tabs, and command results |
+| Home and End | Reach the first or last item where the control pattern supports them |
+| Escape | Close the active dismissible overlay without submitting a decision |
+| Overlay close | Restore focus to its trigger or a logical remaining control |
+
+Use the semantic `ring` role for focus indicators.
+Keep an immediately visible indicator with at least 3:1 contrast against adjacent surfaces.
+Do not remove the outline without an equivalent focus-visible indicator.
+
+Sticky headers and draft action bars must not obscure the focused element.
+Keep focused content visible during scrolling and keyboard navigation.
+A user must always have a keyboard exit from an overlay.
+Do not use animation delays to postpone focus or interaction.
+
+## Forms and selection
+
+Every input needs a programmatically associated label.
+Helper text and error text must connect through `aria-describedby` where appropriate.
+Invalid fields expose `aria-invalid` and an actionable error message.
+The error cannot rely on a colored border alone.
+
+Required permissions and required services remain selected and locked.
+Their text explains why they cannot change.
+Optional permissions retain explicit, keyboard-operable controls.
+A disabled presentation must not hide the control's meaning or state.
+
+Use Input for text entry and RadioGroup for mutually exclusive choices.
+Select, Switch, Checkbox, TextArea, and DatePicker follow the same label and keyboard requirements.
+DatePicker must expose a valid date-entry path and the applicable minimum date.
+ThemeChoice is a RadioGroup with caller-supplied Light, Dark, and System labels.
+
+An invalid submission must identify the affected field without losing the user's selections.
+A browser preference must never select or submit an authorization decision.
+
+## Overlays and disclosure
+
+Dialog and Sheet require an accessible name, appropriate initial focus, focus containment, and an available close control.
+Inactive content behind a modal overlay must not receive interaction or assistive-technology focus.
+Escape closes the active dismissible overlay. Closing it restores focus.
+
+DropdownMenu uses menu keyboard behavior, not a custom clickable list.
+Popover and Tooltip must work from keyboard focus as well as pointer interaction.
+Tooltips remain supplementary and dismissible.
+
+Accordion and expandable content expose their expanded state and the controlled content.
+TruncatedText must provide an accessible expansion, not only a pointer-only tooltip.
+Long names and descriptions use two-line truncation. Table cells use one line before expansion.
+Expanded text must remain readable at narrow widths and zoom.
+
+Portaled content must inherit the resolved root theme.
+Do not override positioning transforms to disable motion. Remove only decorative movement.
+
+## Tables and command search
+
+Owned Table presentation must retain table semantics, headers, and an accessible caption or name.
+TanStack Table manages state, not accessible markup or authorization.
+Sorting controls expose their action and current sort state.
+Repeated row actions need enough context to identify the affected record.
+
+Responsive layouts retain labels, actions, and details without horizontal page scrolling.
+The Agents list contains agent identity, expiry, View, and confirmed Revoke.
+It contains no permission-set count column or per-agent count requests.
+
+Command must support keyboard search, result navigation, selection, dismissal, and focus return.
+Its accessible names must describe search and result groups.
+Results contain only records available to the acting user.
+Table and Command remain outside the initial decision bundle and its import barrels.
+
+## Status, errors, and announcements
+
+New approvals, changed pending counts, decision results, and toasts must announce meaningful changes without moving focus.
+Use a polite status region for routine updates.
+Use an alert only for an error that requires immediate attention.
+Do not announce the same unchanged pending count after every refresh.
+
+A loading region can expose `aria-busy` and a text status.
+A decorative Skeleton must not produce repeated screen-reader content.
+Toaster uses the owned Sonner presentation and must expose its messages accessibly.
+Do not rely on a disappearing toast as the only explanation of a persistent error.
+
+Revocation requires explicit confirmation.
+The optimistic state says that the operation is pending, not that the server accepted it.
+On failure, restore the affected record and announce the error.
+Grant creation and approval must wait for the server result.
+
+Color does not carry status or risk by itself.
+Use a text label and an accessible explanation for server-provided tool risk.
+An unrated tool uses “Risk not rated”. Permission groups have no risk indicator.
+Agent Origin Labels describe domain metadata, not verified legal publisher identity.
+
+## Contrast and themes
+
+[COLOR_GUIDE.md](COLOR_GUIDE.md) defines every semantic color and its light/dark value.
+Measure rendered colors after opacity, overlays, state styles, and focus styles apply.
+Do not substitute raw palette utilities or component-local colors.
+
+| Content | Minimum contrast |
+| --- | --- |
+| Text, including supporting text, placeholders, and filled status text | 4.5:1 |
+| Required control boundaries and meaningful non-text indicators | 3:1 against adjacent surfaces |
+| Focus indicators | 3:1 against adjacent surfaces |
+
+Inactive controls have WCAG exceptions where applicable. Placeholder text is not exempt merely because it is a placeholder.
+Decorative separators can use `border-soft`. They cannot establish a required control boundary.
+The project text requirement remains 4.5:1 even where WCAG permits a lower large-text ratio.
+
+Light, dark, and system preferences must preserve the same information and actions.
+Native controls, scrollbars, and overlays use the resolved theme.
+Forced-color mode must retain control boundaries, focus, status labels, and selection meaning.
+
+## Size, zoom, and motion
+
+At 320px width and 200% zoom, every route must work without horizontal page scrolling.
+Do not hide actions or permission details to make the layout fit.
+Target sizes meet WCAG 2.2 AA through sufficient size or its permitted spacing exceptions.
+Use larger touch targets where space permits.
+
+[MOTION_GUIDE.md](MOTION_GUIDE.md) requires CSS-only 120–200ms ease-out feedback.
+Under `prefers-reduced-motion: reduce`, remove movement and delay.
+Keep status text, focus, disclosure, and authorization behavior unchanged.
+Do not add page-entry animation or Framer Motion.
+
+## Blocking story checks
+
+Every component and shared shell needs light and dark stories.
+Each theme must cover every applicable state:
+
+| State | Evidence |
+| --- | --- |
+| Default | Accessible structure, names, text, and boundaries |
+| Hover | Feedback without information available only on hover |
+| Focus-visible | Visible, unobscured focus and keyboard activation |
+| Disabled | Meaningful label and state without an available action |
+| Error | Associated message, state, and appropriate announcement |
+| Loading | Accessible progress status without decorative noise |
+| Overlay-open | Name, focus containment, dismissal, focus return, and portal theme |
+
+Every story must pass the Storybook accessibility addon in both themes.
+Use `parameters.a11y.test = 'error'` so violations fail the run.
+A themes toolbar alone does not exercise both themes in CI.
+
+Every story also needs a reviewed visual-regression baseline for each theme.
+Accessibility failures, visual differences, missing baselines, and stale baselines must block CI according to the feature gates.
+Automation uploads candidate images and diffs. It must not accept baseline changes automatically.
+
+Story checks must include composed states, not only isolated default controls.
+Passing automated checks does not establish complete WCAG compliance.
+
+## Browser verification
+
+Before release, collect evidence from the actual application:
+
+1. Navigate every flow with the keyboard in both themes.
+2. Open and close overlays, then verify focus return.
+3. Verify visible focus around sticky headers and draft controls.
+4. Use a screen reader to verify names, labels, state changes, and announcements.
+5. Measure contrast on actual surfaces and interaction states.
+6. Exercise every route at 320px and 200% zoom.
+7. Enable reduced motion and verify that movement and delay disappear.
+8. Exercise forced colors and native form controls.
+9. Verify explicit-theme precedence, system changes, and first paint.
+10. Verify that no page automatically requests third-party fonts, scripts, or images.
+
+The route visual gate includes all six routes and both agent contexts in both themes.
+Keep reviewed results separate from requirements and planning calculations.
+
+## References
+
+- [WCAG 2.1 quick reference](https://www.w3.org/WAI/WCAG21/quickref/)
+- [WCAG 2.2](https://www.w3.org/TR/WCAG22/)
 - [WAI-ARIA Authoring Practices](https://www.w3.org/WAI/ARIA/apg/)
-- [WebAIM](https://webaim.org/)
-- [Deque axe DevTools](https://www.deque.com/axe/devtools/)
+- [Feature UI contract](../../../../specs/047-redesign-consent-console/contracts/ui-and-configuration.md)
 
-### Tools
-
-- Chrome DevTools Accessibility Inspector
-- NVDA Screen Reader (free)
-- JAWS Screen Reader
-- ColorSnack for contrast checking
-- Lighthouse accessibility audit
-
-## Summary
-
-Accessibility is not an afterthought—it's built into every component:
-
-- **Semantic HTML** ensures proper structure
-- **ARIA attributes** provide context to assistive tech
-- **Keyboard navigation** works without mouse
-- **Color contrast** meets WCAG AA standards
-- **Focus indicators** are always visible
-- **Testing** ensures real-world usability
-
-By using the design system components correctly and following these guidelines, we ensure our applications are accessible to everyone.
+These links are reading references, not frontend resource dependencies.

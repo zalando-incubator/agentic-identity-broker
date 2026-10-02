@@ -1,32 +1,51 @@
+import { createElement, useLayoutEffect, type ReactNode } from 'react';
 import type { Preview } from '@storybook/react';
-import '../src/styles/index.css'; // Import TailwindCSS and global styles
+import { withThemeByDataAttribute } from '@storybook/addon-themes';
+import { ThemeProvider, useTheme } from '../src/design-system/theme/ThemeProvider';
+import { writeThemePreference } from '../src/design-system/theme/themePreference';
+import '../src/styles/index.css';
+
+function StoryTheme({ theme, children }: { theme: 'light' | 'dark'; children: ReactNode }) {
+  const { setTheme } = useTheme();
+  useLayoutEffect(() => { setTheme(theme); }, [setTheme, theme]);
+  return children;
+}
 
 const preview: Preview = {
+  initialGlobals: {
+    theme: 'light',
+    viewport: { value: 'desktop', isRotated: false },
+  },
+  beforeEach: ({ globals }) => {
+    writeThemePreference(globals.theme === 'dark' ? 'dark' : 'light');
+  },
+  decorators: [
+    withThemeByDataAttribute({
+      themes: { light: 'light', dark: 'dark' },
+      defaultTheme: 'light',
+      attributeName: 'data-theme',
+      parentSelector: 'html',
+    }),
+    (Story, context) => {
+      const theme = context.globals.theme === 'dark' ? 'dark' : 'light';
+      return createElement(ThemeProvider, {
+        key: theme,
+        children: createElement(StoryTheme, { theme, children: createElement(Story) }),
+      });
+    },
+  ],
   parameters: {
-    actions: { argTypesRegex: '^on[A-Z].*' },
-    controls: {
-      matchers: {
-        color: /(background|color)$/i,
-        date: /Date$/,
-      },
-    },
-    backgrounds: {
-      default: 'cream',
-      values: [
-        { name: 'cream', value: '#faf9f7' },
-        { name: 'white', value: '#ffffff' },
-        { name: 'navy', value: '#0d1829' },
-        { name: 'sand', value: '#f5f1ed' },
-      ],
-    },
+    controls: { matchers: { color: /(background|color)$/i, date: /Date$/ } },
     viewport: {
-      viewports: {
-        mobile: { name: 'Mobile', styles: { width: '375px', height: '667px' } },
+      options: {
+        narrow320: { name: 'Narrow 320px', styles: { width: '320px', height: '800px' } },
+        mobile: { name: 'Mobile', styles: { width: '375px', height: '812px' } },
         tablet: { name: 'Tablet', styles: { width: '768px', height: '1024px' } },
-        desktop: { name: 'Desktop', styles: { width: '1280px', height: '800px' } },
+        desktop: { name: 'Desktop', styles: { width: '1280px', height: '900px' } },
       },
     },
     a11y: {
+      test: 'error',
       config: {
         rules: [
           { id: 'color-contrast', enabled: true },

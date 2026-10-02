@@ -85,33 +85,6 @@ export interface AgentDetail {
 }
 
 /**
- * External OAuth2 service delegated to an agent (scoped variant).
- * Used when the backend returns a plain service with available scopes.
- */
-export interface ServiceWithScopes {
-  kind: 'scoped';
-  serviceId: string;
-  displayName?: string;
-  logoUrl?: string;
-  scopes?: ServiceScope[];
-  /** Effective requirement type, set by the permission-sets layer (PS feature). */
-  requirementType?: 'mandatory' | 'optional';
-}
-
-export type ThirdpartyService = ServiceWithScopes | ServiceRequirement;
-
-/**
- * OAuth2 scope within a third-party service.
- */
-export interface ServiceScope {
-  /** OAuth2 scope value (e.g., "read:email") */
-  value: string;
-
-  /** Human-readable scope description */
-  description: string;
-}
-
-/**
  * Service entry within a permission set for the consent-info response.
  * Raw scopes are intentionally omitted per FR-007; use requirement_type to determine lock status.
  */
@@ -180,17 +153,6 @@ export interface UserGrant {
   updated_at: string;
 }
 
-/**
- * Service-specific delegation within a grant.
- */
-export interface DelegatedToken {
-  /** Third-party service identifier */
-  thirdparty_oauth2_service_id: string;
-
-  /** OAuth2 scopes granted for this service */
-  scopes: string[];
-}
-
 // API Request/Response Types
 
 /**
@@ -242,7 +204,7 @@ export interface GetAgentDetailResponse {
       created_at: string;
       updated_at: string;
     };
-    services?: ThirdpartyService[];
+    services: Array<Omit<ServiceRequirement, 'kind'>>;
     permission_sets?: ResolvedPermissionSetEntry[];
     active_session_service_ids?: string[];
     service_requirements?: Array<{
@@ -282,7 +244,6 @@ export interface CreateOrUpdateGrantResponse {
 
 export type GrantResult =
   | { kind: 'created'; grant: UserGrant }
-  | { kind: 'noContent' }
   | { kind: 'redirect'; redirectUrl: string };
 
 /**
@@ -300,34 +261,6 @@ export interface ApiError {
 
   /** Optional field-level validation errors */
   details?: Record<string, string[]>;
-}
-
-// UI State Types
-
-/**
- * UI state for service grant toggle.
- */
-export interface ServiceGrantState {
-  serviceId: string;
-  isEnabled: boolean;
-  isExpanded: boolean;
-  selectedScopes: Set<string>;
-}
-
-/**
- * Grant validity form state.
- */
-export interface GrantValidityState {
-  noExpiration: boolean;
-  expiresAt?: Date;
-}
-
-/**
- * Loading state for async operations.
- */
-export interface LoadingState {
-  isLoading: boolean;
-  error?: ApiError;
 }
 
 /**
@@ -351,13 +284,3 @@ export interface ServiceRequirement {
   logoUrl?: string;
 }
 
-/**
- * Agent with service requirements (Phase 6).
- * Response from GET /api/consent/agents/:agent-id with requirements.
- */
-export interface AgentWithServiceRequirements extends AgentDetail {
-  /** List of service requirements for this agent */
-  serviceRequirements: ServiceRequirement[];
-}
-
-// Note: Validation functions moved to utils/validation.ts
