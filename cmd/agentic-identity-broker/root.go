@@ -190,6 +190,13 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Wait for both binds to complete
 	if err := g.Wait(); err != nil {
+		select {
+		case listener := <-enduserListenerCh:
+			_ = listener.Close()
+		case listener := <-adminListenerCh:
+			_ = listener.Close()
+		default:
+		}
 		logger.Error("Atomic startup failed during bind phase", "error", err)
 		return err
 	}
