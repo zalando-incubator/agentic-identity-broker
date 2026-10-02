@@ -1,1 +1,3 @@
-{"feature_directory":"specs/026-extproc-approval-sync"}
+{
+  "feature_directory": "specs/051-oauth2-secret-file-overrides"
+}
