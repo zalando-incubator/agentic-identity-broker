@@ -209,13 +209,20 @@ func validateCORSConfig(cfg *ports.CORSConfig, prefix string) error {
 		return nil
 	}
 
-	// When CORS is enabled, validate that no entry is an empty string.
 	for i, origin := range cfg.AllowedOrigins {
 		if origin == "" {
 			return formatValidationError(
 				fmt.Sprintf("%s.allowed_origins[%d]", prefix, i),
 				"",
 				"non-empty origin value",
+				nil,
+			)
+		}
+		if origin == "*" {
+			return formatValidationError(
+				fmt.Sprintf("%s.allowed_origins[%d]", prefix, i),
+				origin,
+				"specific origin instead of wildcard '*'",
 				nil,
 			)
 		}
