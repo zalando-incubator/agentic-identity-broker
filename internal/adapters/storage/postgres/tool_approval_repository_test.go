@@ -405,6 +405,228 @@ func TestToolApprovalRepository_MutationsAdvanceSyncVersion(t *testing.T) {
 	assert.Equal(t, baselineVersion+2, version)
 }
 
+func TestToolApprovalRepository_DedupReturnsPersistedApprovalWithoutSyncBump(t *testing.T) {
+	adapter, cleanup := setupApprovalTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewToolApprovalRepository(adapter)
+	syncRepo := NewApprovalSyncStateRepository(adapter)
+	agentID := id.NewAgentID()
+	seedAgent(t, adapter, agentID)
+	baseline, err := syncRepo.GetVersion(ctx)
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	first := &storage.ToolApproval{
+		ID:              id.NewApprovalID(),
+		Principal:       id.Principal("dedup@example.com"),
+		AgentID:         agentID,
+		GatewayClientID: "original-gateway",
+		ToolName:        "read_file",
+		Arguments:       map[string]any{"path": "/report"},
+		ArgumentsHash:   "same-invocation",
+		Description:     "Original request",
+		RiskLevel:       "low",
+		Status:          storage.ApprovalStatusPending,
+		ApprovalURL:     "https://broker.example.com/approvals/original",
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(time.Hour),
+	}
+	_, err = createPatternedApproval(ctx, repo, first)
+	require.NoError(t, err)
+	original, err := repo.Get(ctx, first.ID)
+	require.NoError(t, err)
+	versionAfterInsert, err := syncRepo.GetVersion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, baseline+1, versionAfterInsert)
+
+	duplicate := *first
+	duplicate.ID = id.NewApprovalID()
+	duplicate.GatewayClientID = "other-gateway"
+	duplicate.Description = "Changed request"
+	duplicate.RiskLevel = "high"
+	duplicate.ApprovalURL = "https://broker.example.com/approvals/duplicate"
+	duplicate.ExpiresAt = now.Add(2 * time.Hour)
+	returned, err := createPatternedApproval(ctx, repo, &duplicate)
+	require.NoError(t, err)
+	assert.NotEqual(t, duplicate.ID, returned.ID)
+	assert.Equal(t, original, returned)
+
+	persisted, err := repo.Get(ctx, first.ID)
+	require.NoError(t, err)
+	assert.Equal(t, original, persisted)
+	_, err = repo.Get(ctx, duplicate.ID)
+	var storageErr *storage.StorageError
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+	versionAfterDuplicate, err := syncRepo.GetVersion(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, versionAfterInsert, versionAfterDuplicate)
+}
+
+func TestToolApprovalRepository_ActiveQueriesExcludeExpiredAndConsumed(t *testing.T) {
+	adapter, cleanup := setupApprovalTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewToolApprovalRepository(adapter)
+	principal := id.Principal("active@example.com")
+	agentID := id.NewAgentID()
+	otherAgentID := id.NewAgentID()
+	seedAgent(t, adapter, agentID)
+	seedAgent(t, adapter, otherAgentID)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	createPending := func(owner id.Principal, agent id.AgentID, hash string, expiry time.Time) *storage.ToolApproval {
+		t.Helper()
+		approval := &storage.ToolApproval{
+			ID:              id.NewApprovalID(),
+			Principal:       owner,
+			AgentID:         agent,
+			GatewayClientID: "test-gateway",
+			ToolName:        "read_file",
+			ArgumentsHash:   hash,
+			Status:          storage.ApprovalStatusPending,
+			ApprovalURL:     "https://broker.example.com/approvals/" + hash,
+			CreatedAt:       now.Add(-2 * time.Hour),
+			ExpiresAt:       expiry,
+		}
+		_, err := createPatternedApproval(ctx, repo, approval)
+		require.NoError(t, err)
+		return approval
+	}
+
+	live := createPending(principal, agentID, "live", now.Add(2*time.Hour))
+	expired := createPending(principal, agentID, "expired", now.Add(-time.Hour))
+	retired := createPending(principal, agentID, "retired", now.Add(-time.Hour))
+	replacement := createPending(principal, agentID, "retired", now.Add(2*time.Hour))
+	once := createPending(principal, agentID, "once", now.Add(2*time.Hour))
+	_, err := repo.Approve(ctx, once.ID, storage.ApprovalDecision{
+		Persistence:   storage.ApprovalPersistenceOnce,
+		ToolPattern:   once.ToolPattern,
+		ParamsPattern: once.ParamsPattern,
+	}, now)
+	require.NoError(t, err)
+	_, err = repo.Consume(ctx, once.ID, now)
+	require.NoError(t, err)
+	permanent := createPending(principal, agentID, "permanent", now.Add(2*time.Hour))
+	_, err = repo.Approve(ctx, permanent.ID, storage.ApprovalDecision{
+		Persistence:   storage.ApprovalPersistencePermanent,
+		ToolPattern:   permanent.ToolPattern,
+		ParamsPattern: permanent.ParamsPattern,
+	}, now.Add(-90*time.Minute))
+	require.NoError(t, err)
+	_, err = adapter.db.ExecContext(ctx, `UPDATE tool_approvals SET expires_at = $1 WHERE id = $2`, now.Add(-time.Hour), permanent.ID)
+	require.NoError(t, err)
+	otherAgent := createPending(principal, otherAgentID, "other-agent", now.Add(2*time.Hour))
+	otherPrincipal := createPending(id.Principal("another@example.com"), agentID, "other-principal", now.Add(2*time.Hour))
+
+	expiredStored, err := repo.Get(ctx, expired.ID)
+	require.NoError(t, err)
+	require.False(t, expiredStored.Consumed)
+	retiredStored, err := repo.Get(ctx, retired.ID)
+	require.NoError(t, err)
+	require.True(t, retiredStored.Consumed)
+	onceStored, err := repo.Get(ctx, once.ID)
+	require.NoError(t, err)
+	require.True(t, onceStored.Consumed)
+
+	approvalIDs := func(approvals []*storage.ToolApproval) []id.ApprovalID {
+		ids := make([]id.ApprovalID, 0, len(approvals))
+		for _, approval := range approvals {
+			ids = append(ids, approval.ID)
+		}
+		return ids
+	}
+
+	count, err := repo.CountPendingByPrincipalAndAgent(ctx, principal, agentID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	byPair, err := repo.ListActiveByPrincipalAndAgent(ctx, principal, agentID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []id.ApprovalID{live.ID, replacement.ID, permanent.ID}, approvalIDs(byPair))
+
+	byPrincipal, err := repo.ListAllActive(ctx, &principal, nil)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []id.ApprovalID{live.ID, replacement.ID, permanent.ID, otherAgent.ID}, approvalIDs(byPrincipal))
+
+	all, err := repo.ListAllActive(ctx, nil, nil)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []id.ApprovalID{live.ID, replacement.ID, permanent.ID, otherAgent.ID, otherPrincipal.ID}, approvalIDs(all))
+}
+
+func TestToolApprovalRepository_FailedCreateDoesNotPersistOrAdvanceSync(t *testing.T) {
+	adapter, cleanup := setupApprovalTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewToolApprovalRepository(adapter)
+	syncRepo := NewApprovalSyncStateRepository(adapter)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	validAgentID := id.NewAgentID()
+	seedAgent(t, adapter, validAgentID)
+	existing := &storage.ToolApproval{
+		ID:              id.NewApprovalID(),
+		Principal:       id.Principal("existing@example.com"),
+		AgentID:         validAgentID,
+		GatewayClientID: "test-gateway",
+		ToolName:        "read_file",
+		ArgumentsHash:   "existing",
+		Description:     "Keep this request",
+		Status:          storage.ApprovalStatusPending,
+		ApprovalURL:     "https://broker.example.com/approvals/existing",
+		CreatedAt:       now.Add(-2 * time.Hour),
+		ExpiresAt:       now.Add(-time.Hour),
+	}
+	_, err := createPatternedApproval(ctx, repo, existing)
+	require.NoError(t, err)
+	before, err := repo.Get(ctx, existing.ID)
+	require.NoError(t, err)
+	require.False(t, before.Consumed)
+	baseline, err := syncRepo.GetVersion(ctx)
+	require.NoError(t, err)
+
+	invalid := &storage.ToolApproval{
+		ID:              id.NewApprovalID(),
+		Principal:       id.Principal("failed@example.com"),
+		AgentID:         id.NewAgentID(), // No agent row: the insert must fail its foreign key.
+		GatewayClientID: "test-gateway",
+		ToolName:        "read_file",
+		ArgumentsHash:   "failed",
+		Status:          storage.ApprovalStatusPending,
+		ApprovalURL:     "https://broker.example.com/approvals/failed",
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(time.Hour),
+	}
+	created, err := createPatternedApproval(ctx, repo, invalid)
+	require.Nil(t, created)
+	var storageErr *storage.StorageError
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindConnection, storageErr.Kind)
+
+	_, err = repo.Get(ctx, invalid.ID)
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+
+	conflict := *existing
+	conflict.CreatedAt = now
+	conflict.ExpiresAt = now.Add(time.Hour)
+	created, err = createPatternedApproval(ctx, repo, &conflict)
+	require.Nil(t, created)
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindConnection, storageErr.Kind)
+
+	after, err := repo.Get(ctx, existing.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	assert.False(t, after.Consumed)
+	versionAfterFailure, err := syncRepo.GetVersion(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, baseline, versionAfterFailure)
+}
+
 func TestApprovalSyncStateRepository(t *testing.T) {
 	adapter, cleanup := setupApprovalTestDB(t)
 	defer cleanup()
