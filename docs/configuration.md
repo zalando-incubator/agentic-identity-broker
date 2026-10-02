@@ -859,6 +859,10 @@ DB_PASSWORD=mypassword
 
 The startup summary and audit logs show both values as `***REDACTED***`.
 
+PostgreSQL connection URL validation errors redact the entire rejected value as
+`***REDACTED***`, including malformed URLs that may contain credentials. The error
+still identifies `storage.postgres.connection_url` and the expected URL format.
+
 ### Do not commit secrets
 
 1. Use `.env.local` and `.env.{environment}.local` for local secrets. Git ignores these
