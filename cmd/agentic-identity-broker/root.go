@@ -332,6 +332,7 @@ func displayStartupSummary(loader *config.Loader, cfg interface{}) {
 		displayConfigValue("server.admin.port", fmt.Sprintf("%d", c.Server.Admin.Port), keyToSource["server.admin.port"])
 		displayConfigValue("server.admin.bind", c.Server.Admin.Bind, keyToSource["server.admin.bind"])
 		displayConfigValue("server.shutdown.timeout", c.Server.Shutdown.Timeout.String(), keyToSource["server.shutdown.timeout"])
+		displayConfigValue("security.skip_cimd_ssrf_validation", fmt.Sprintf("%t", c.Security.SkipCIMDSSRFValidation), keyToSource["security.skip_cimd_ssrf_validation"])
 	}
 
 	fmt.Println("\n=== Configuration Sources ===")

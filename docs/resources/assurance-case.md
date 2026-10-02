@@ -145,7 +145,7 @@ This argument depends on operator conditions that the broker cannot enforce:
 - In `proxy` and `hybrid` modes, `token_exchange.client_assertion.issuer_uri` names an issuer distinct from the one that issues agent subject tokens, or the CEL authorization policy identifies the gateway by claim. The default policy `true` accepts any valid assertion from the anchor.
 - PostgreSQL storage backs every deployment with more than one replica. The `memory` storage backend keeps codes, sessions, and signing keys per pod.
 - TLS protects every connection, including PostgreSQL. The validator accepts `sslmode=disable`.
-- Production does not use the `memory` encryption backend, `security.skip_cimd_ssrf_validation`, `security.skip_thirdparty_https_validation`, or JWT `verification: none`. The broker logs a warning for some of these but still starts.
+- Production does not use the `memory` encryption backend, `security.skip_thirdparty_https_validation`, or JWT `verification: none`. The broker logs a warning for some of these but still starts. Production never sets `GO_ENV=development`. The configuration loader rejects `security.skip_cimd_ssrf_validation: true` unless `GO_ENV` is explicitly `development`.
 - The gateway runs with `preserveToken: false`. Thus, the agent's original token never reaches the upstream resource.
 
 We accept these risks:

@@ -44,6 +44,7 @@ services:
       - ./go.mod:/app/go.mod
       - ./go.sum:/app/go.sum
     environment:
+      - GO_ENV=development
       - IDENTITY_BROKER_CONFIG_PATH=configs/config.docker.yaml
       - IDENTITY_BROKER_LOG_LEVEL=debug
       - IDENTITY_BROKER_JWE_SIGNING_KEY=${IDENTITY_BROKER_JWE_SIGNING_KEY}
