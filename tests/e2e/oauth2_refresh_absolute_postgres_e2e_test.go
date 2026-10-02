@@ -77,9 +77,20 @@ var _ = Describe("Consent-Bound Refresh Sessions / US4 / PostgreSQL", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(second.Status).To(Equal(http.StatusOK))
 			Expect(second.Tokens.RefreshToken).NotTo(BeEmpty())
-			history, err := ageVerifiedAbsoluteHistory(ctx, database, [3]string{
-				initial.Tokens.RefreshToken, first.Tokens.RefreshToken, second.Tokens.RefreshToken,
+			environment.Stop()
+			oldCleanup := cleanup
+			var history agedAbsoluteHistory
+			store, historical, closeHistorical, err := bootstrap.NewHistoricalRefreshFixture(refreshSuiteTestingT, config, database, func(fixture *sqlx.DB) error {
+				var err error
+				history, err = ageVerifiedAbsoluteHistory(ctx, fixture, [3]string{
+					initial.Tokens.RefreshToken, first.Tokens.RefreshToken, second.Tokens.RefreshToken,
+				})
+				return err
 			})
+			Expect(err).NotTo(HaveOccurred())
+			cleanup = func() { closeHistorical(); oldCleanup() }
+			database = historical
+			environment, err = bootstrap.NewRefreshEnvironment(config, store)
 			Expect(err).NotTo(HaveOccurred())
 			sharedBefore, err := helpers.RefreshSharedTime(ctx, database)
 			Expect(err).NotTo(HaveOccurred())

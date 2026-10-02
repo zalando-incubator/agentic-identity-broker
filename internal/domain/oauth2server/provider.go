@@ -388,6 +388,9 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 		return nil, err
 	}
 	if replayError != nil {
+		if !input.replayRoot.ID.IsZero() {
+			logRefreshTransition(p.logger, ctx, input.replayRoot, storage.RefreshReasonCodeReplay)
+		}
 		return nil, replayError
 	}
 	return staged, nil
@@ -399,6 +402,7 @@ type codeExchangeInput struct {
 	codeRecord                                               *storage.AuthorizationCode
 	clientAgentID                                            id.AgentID
 	rootID                                                   id.RefreshSessionID
+	replayRoot                                               storage.RefreshSessionAuditIdentity
 }
 
 func (p *Provider) codeClientInOwner(owner context.Context, at time.Time, input *codeExchangeInput) (*storage.AuthorizationCode, fosite.Client, id.GrantID, error) {
@@ -453,6 +457,16 @@ func (p *Provider) exchangeCodeInOwner(owner context.Context, at time.Time, inpu
 		"grant_type":    {"authorization_code"},
 	}
 
+	var activeRoot storage.RefreshSessionAuditIdentity
+	if current.UsedAt != nil {
+		original, err := p.refreshDeps.Sessions.FindByID(owner, input.rootID)
+		if err != nil && !isStorageNotFound(err) {
+			return nil, nil, fosite.ErrServerError.WithWrap(err)
+		}
+		if err == nil && original.TerminalReason == nil {
+			activeRoot = original.AuditIdentity()
+		}
+	}
 	// Fosite's used-code path revokes the original request even when the
 	// replaying client differs. Commit that side effect, but not other errors.
 	if handleErr := p.authCodeHandler.HandleTokenEndpointRequest(owner, req); handleErr != nil {
@@ -463,6 +477,9 @@ func (p *Provider) exchangeCodeInOwner(owner context.Context, at time.Time, inpu
 			}
 			if rootErr == nil && root.TerminalReason == nil {
 				return nil, nil, fosite.ErrServerError.WithDebug("authorization-code replay failed to revoke its refresh session")
+			}
+			if rootErr == nil && root.TerminalReason != nil && *root.TerminalReason == storage.RefreshReasonCodeReplay {
+				input.replayRoot = activeRoot
 			}
 			return nil, handleErr, nil
 		}
@@ -560,6 +577,9 @@ func (p *Provider) HandleRefreshToken(
 		return nil, err
 	}
 	if reuseError != nil {
+		if input.auditStage == "prohibited_reuse" && input.auditRoot != nil {
+			logRefreshTransition(p.logger, ctx, input.auditRoot.AuditIdentity(), storage.RefreshReasonProhibitedReuse)
+		}
 		return nil, reuseError
 	}
 	return staged, nil
@@ -599,10 +619,10 @@ func (p *Provider) prepareRefreshExchange(ctx context.Context, clientID, secret,
 		}
 		return nil, nil, fosite.ErrServerError.WithWrap(err)
 	}
-	// Never let another authenticated client reach Fosite's consumed-token
-	// path: that path revokes the original client's entire refresh family.
+	// Keep the root for audit only. A mismatched authenticated client must not
+	// enter the owner's transaction or trigger Fosite's consumed-token revocation.
 	if root.ClientID.String() != clientID || root.AgentID != agentID {
-		return nil, nil, fosite.ErrInvalidGrant.WithHint("refresh token belongs to another client")
+		return nil, &refreshExchangeInput{auditRoot: root, auditStage: "client_binding"}, fosite.ErrInvalidGrant.WithHint("refresh token belongs to another client")
 	}
 	if token.UsedAt == nil {
 		signer, err := p.accessStrategy.signingKeyService.signingMaterial(ctx)

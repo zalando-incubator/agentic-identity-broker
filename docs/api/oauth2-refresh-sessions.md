@@ -258,3 +258,11 @@ and all writers. Admit traffic only after acknowledged success from
 Encrypted backup copies cannot reauthorize an old session.
 The authorization-server metadata remains unchanged: there is no advertised
 revocation or introspection endpoint.
+
+## Audit records
+
+Committed revocation and lifetime expiry produce `RefreshSessionRevoked` and `RefreshSessionExpired` events through the existing structured-log pipeline.
+Each event includes the principal, agent, bound client, non-credential session ID, reason, and request or maintenance origin.
+Request context contains only the trusted client IP and truncated user agent. Receipts retain the same redacted context before cascade deletion.
+Confirmed rollback produces no successful transition event. A known-token client mismatch preserves the owner identity for rejection auditing without changing its session.
+Unknown tokens do not produce invented owner identity. Neither audit events nor receipts contain tokens, credentials, or request targets.

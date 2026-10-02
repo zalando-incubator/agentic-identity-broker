@@ -16,6 +16,10 @@ func (adminLifecycleCoordinator) Run(ctx context.Context, _ id.AgentID, operatio
 
 type adminLifecycleRevocations struct{}
 
+func (adminLifecycleRevocations) ListActiveByAgent(context.Context, id.AgentID, *id.Principal) ([]storage.RefreshSessionAuditIdentity, error) {
+	return nil, nil
+}
+
 func (adminLifecycleRevocations) RevokeByID(context.Context, id.RefreshSessionID, time.Time, storage.RefreshRevocationReason) error {
 	return nil
 }

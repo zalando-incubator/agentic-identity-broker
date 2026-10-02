@@ -125,19 +125,29 @@ func (e *RefreshEnvironment) ReplaceCredentials(ctx context.Context, client *fix
 }
 
 func NewRefreshPostgresStorage(t *testing.T, config *ports.Config) (*storageadapter.Adapter, *sqlx.DB, func(), error) {
+	return newRefreshPostgresStorage(t, config, 0)
+}
+
+func newRefreshPostgresStorage(t *testing.T, config *ports.Config, version uint) (*storageadapter.Adapter, *sqlx.DB, func(), error) {
 	t.Helper()
 	shared := integrationbootstrap.RequireSharedPostgres(t)
 	root, err := integrationbootstrap.FindProjectRoot()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	_, connectionURL, drop := shared.SetupDatabaseFromTemplate(t, "refresh_sessions", func(t *testing.T, database string) {
+	template := fmt.Sprintf("refresh_sessions_%d", version)
+	_, connectionURL, drop := shared.SetupDatabaseFromTemplate(t, template, func(t *testing.T, database string) {
 		runner, err := migrate.New("file://"+filepath.Join(root, "migrations"), shared.ConnectionString(database))
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer func() { _, _ = runner.Close() }()
-		if err := runner.Up(); err != nil && err != migrate.ErrNoChange {
+		if version == 0 {
+			err = runner.Up()
+		} else {
+			err = runner.Migrate(version)
+		}
+		if err != nil && err != migrate.ErrNoChange {
 			t.Fatal(err)
 		}
 	})

@@ -101,6 +101,7 @@ func (s *CredentialService) Get(ctx context.Context, agentID id.AgentID) (*stora
 }
 
 func (s *CredentialService) Revoke(ctx context.Context, agentID id.AgentID) error {
+	var revoked []storage.RefreshSessionAuditIdentity
 	err := s.coordinator.Run(ctx, agentID, func(owner context.Context, at time.Time) error {
 		credential, err := s.credentials.GetByAgentID(owner, agentID)
 		if err != nil {
@@ -108,6 +109,10 @@ func (s *CredentialService) Revoke(ctx context.Context, agentID id.AgentID) erro
 		}
 		if credential == nil {
 			return errors.New("credential lookup returned no result")
+		}
+		revoked, err = s.revocations.ListActiveByAgent(owner, agentID, nil)
+		if err != nil {
+			return err
 		}
 		if err := s.revocations.RevokeByAgent(owner, agentID, at.UTC(), storage.RefreshReasonCredentialRevoked); err != nil {
 			return err
@@ -119,6 +124,9 @@ func (s *CredentialService) Revoke(ctx context.Context, agentID id.AgentID) erro
 			s.logger.ErrorContext(ctx, "failed to revoke credentials", "agent_id", agentID)
 		}
 		return err
+	}
+	for _, root := range revoked {
+		logRefreshTransition(s.logger, ctx, root, storage.RefreshReasonCredentialRevoked)
 	}
 	s.logger.InfoContext(ctx, "credentials revoked", "agent_id", agentID)
 	return nil

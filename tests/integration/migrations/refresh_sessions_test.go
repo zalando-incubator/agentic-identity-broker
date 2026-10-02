@@ -138,8 +138,9 @@ func insertMigrationRefreshRoot(t *testing.T, f *MigrationTestFramework, rootID,
 	require.NoError(t, err)
 	_, err = tx.ExecContext(context.Background(), `
 		INSERT INTO refresh_token_sessions
-		(signature, request_id, agent_id, client_id, principal, scope, expires_at, session_id)
-		VALUES ($1, $2::uuid::text, $3, $4, $5, 'openid profile', TIMESTAMPTZ '2026-11-01 00:00:00+00', $2::uuid)`,
+		(signature, request_id, agent_id, client_id, principal, scope, created_at, expires_at, session_id)
+		VALUES ($1, $2::uuid::text, $3, $4, $5, 'openid profile',
+		TIMESTAMPTZ '2026-09-01 00:00:00+00', TIMESTAMPTZ '2026-11-01 00:00:00+00', $2::uuid)`,
 		signature, rootID, agentID, clientID, principal)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())

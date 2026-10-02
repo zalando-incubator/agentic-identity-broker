@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -130,6 +131,7 @@ func (s *SessionCleanup) Reconcile(ctx context.Context) error {
 // Callers must keep every broker offline until this operation succeeds.
 func (s *SessionCleanup) InvalidateRestored(ctx context.Context) error {
 	s.ready.Store(false)
+	ctx = security.WithMaintenanceAuditOrigin(ctx)
 	var after id.AgentID
 	for {
 		if err := ctx.Err(); err != nil {
@@ -143,10 +145,19 @@ func (s *SessionCleanup) InvalidateRestored(ctx context.Context) error {
 			if agentID.IsZero() || (!after.IsZero() && agentID.String() <= after.String()) {
 				return s.fail(ctx, "refresh_sessions", "invalid restoration listing")
 			}
+			var revoked []storage.RefreshSessionAuditIdentity
 			if err := s.refresh.Coordinator.Run(ctx, agentID, func(owner context.Context, at time.Time) error {
+				var err error
+				revoked, err = s.refresh.Revocations.ListActiveByAgent(owner, agentID, nil)
+				if err != nil {
+					return err
+				}
 				return s.refresh.Revocations.RevokeByAgent(owner, agentID, at, storage.RefreshReasonRestoreInvalidation)
 			}); err != nil {
 				return s.fail(ctx, "refresh_sessions", "restoration commit unavailable")
+			}
+			for _, root := range revoked {
+				logRefreshTransition(s.logger, ctx, root, storage.RefreshReasonRestoreInvalidation)
 			}
 			after = agentID
 		}
@@ -169,6 +180,9 @@ func (s *SessionCleanup) InvalidateRestored(ctx context.Context) error {
 
 func (s *SessionCleanup) reconcileRoot(ctx context.Context, sessionID id.RefreshSessionID, agentID id.AgentID) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	ctx = security.WithMaintenanceAuditOrigin(ctx)
+	var expiredRoot storage.RefreshSessionAuditIdentity
+	var expiryReason storage.RefreshRevocationReason
 	defer cancel()
 	err := s.refresh.Coordinator.Run(ctx, agentID, func(owner context.Context, _ time.Time) error {
 		root, err := s.refresh.Sessions.FindByID(owner, sessionID)
@@ -218,6 +232,7 @@ func (s *SessionCleanup) reconcileRoot(ctx context.Context, sessionID id.Refresh
 			if err := s.refresh.Revocations.RevokeByID(owner, root.ID, now, reason); err != nil {
 				return err
 			}
+			expiredRoot, expiryReason = root.AuditIdentity(), reason
 			root, err = s.refresh.Sessions.FindByID(owner, root.ID)
 			if err != nil {
 				return err
@@ -255,6 +270,9 @@ func (s *SessionCleanup) reconcileRoot(ctx context.Context, sessionID id.Refresh
 	})
 	if err != nil {
 		return s.fail(ctx, "refresh_sessions", "reconciliation unavailable")
+	}
+	if !expiredRoot.ID.IsZero() {
+		logRefreshTransition(s.logger, ctx, expiredRoot, expiryReason)
 	}
 	return nil
 }

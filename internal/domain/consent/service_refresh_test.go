@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"sort"
 	"testing"
 	"time"
 
@@ -60,6 +61,26 @@ type consentRenewalRoots struct {
 	roots  map[id.RefreshSessionID]*storage.RefreshSession
 	tokens map[string]*storage.RefreshToken
 	fault  error
+}
+
+func (r *consentRenewalRoots) ListActiveByAgent(ctx context.Context, agentID id.AgentID, principal *id.Principal) ([]storage.RefreshSessionAuditIdentity, error) {
+	scope, ok := ctx.Value(consentRenewalScopeKey{}).(*consentRenewalScope)
+	if !ok || scope.agentID != agentID {
+		return nil, errors.New("refresh listing requires its authorization scope")
+	}
+	var active []storage.RefreshSessionAuditIdentity
+	for _, original := range r.roots {
+		root := original
+		if staged, ok := scope.roots[root.ID]; ok {
+			root = staged
+		}
+		if root.AgentID != agentID || root.TerminalReason != nil || (principal != nil && root.Principal != *principal) {
+			continue
+		}
+		active = append(active, root.AuditIdentity())
+	}
+	sort.Slice(active, func(i, j int) bool { return active[i].ID.String() < active[j].ID.String() })
+	return active, nil
 }
 
 func (r *consentRenewalRoots) revoke(ctx context.Context, at time.Time, reason storage.RefreshRevocationReason, match func(*storage.RefreshSession) bool) error {

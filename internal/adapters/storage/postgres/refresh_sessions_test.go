@@ -59,7 +59,10 @@ func createPGRefreshRoot(t *testing.T, adapter *Adapter, agentID id.AgentID, pri
 	repo := NewRefreshSessionRepo(adapter)
 	tokens := NewRefreshTokenRepo(adapter)
 	coordinator := NewAuthorizationSessionCoordinator(adapter)
-	require.NoError(t, coordinator.Run(ctx, agentID, func(scope context.Context, _ time.Time) error {
+	require.NoError(t, coordinator.Run(ctx, agentID, func(scope context.Context, at time.Time) error {
+		root.StartedAt, root.LastFreshAt = at, at
+		root.InactivityExpiresAt, root.RetainUntil = at.Add(time.Hour), at.Add(time.Hour)
+		first.IssuedAt, first.ExpiresAt = at, at.Add(time.Hour)
 		if err := repo.Create(scope, root); err != nil {
 			return err
 		}

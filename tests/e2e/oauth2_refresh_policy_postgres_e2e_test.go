@@ -129,6 +129,15 @@ var _ = Describe("Consent-Bound Refresh Sessions / US6 PostgreSQL", func() {
 		return policy
 	}
 
+	rebuildHistory := func(age func(*sqlx.DB) error) {
+		policyStopPG(env)
+		oldCleanup := cleanup
+		historicalStore, historicalDB, closeHistorical, err := bootstrap.NewHistoricalRefreshFixture(refreshSuiteTestingT, config, db, age)
+		Expect(err).NotTo(HaveOccurred())
+		store, db = historicalStore, historicalDB
+		cleanup = func() { closeHistorical(); oldCleanup() }
+	}
+
 	// US6-S4 from specs/049-fix-refresh-consent/spec.md.
 	It("US6-S4 requires new authorization for every pre-feature unanchored family while complete new-issuer evidence survives restart", func() {
 		client := policyPersistedClient(ctx, store)
@@ -194,13 +203,16 @@ var _ = Describe("Consent-Bound Refresh Sessions / US6 PostgreSQL", func() {
 		Expect(err).NotTo(HaveOccurred())
 		absoluteSession, err := helpers.AuthorizeRefreshSession(ctx, env.Enduser.BaseURL(), *absoluteClient, "read offline_access")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(helpers.AgeInitialRefreshSession(ctx, db, absoluteSession.Tokens.RefreshToken, 3*time.Minute)).To(Succeed())
 		survivorClient, err := env.AddClient(ctx, policyPrincipal(), false)
 		Expect(err).NotTo(HaveOccurred())
 		survivor, err := helpers.AuthorizeRefreshSession(ctx, env.Enduser.BaseURL(), *survivorClient, "read offline_access")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(helpers.AgeInitialRefreshSession(ctx, db, survivor.Tokens.RefreshToken, 20*time.Second)).To(Succeed())
-		policyStopPG(env)
+		rebuildHistory(func(historical *sqlx.DB) error {
+			if err := helpers.AgeInitialRefreshSession(ctx, historical, absoluteSession.Tokens.RefreshToken, 3*time.Minute); err != nil {
+				return err
+			}
+			return helpers.AgeInitialRefreshSession(ctx, historical, survivor.Tokens.RefreshToken, 20*time.Second)
+		})
 
 		shortAbsolute := withStorage("1s", "2m", "10m")
 		env, err = bootstrap.NewRefreshEnvironment(shortAbsolute, store)
@@ -226,13 +238,16 @@ var _ = Describe("Consent-Bound Refresh Sessions / US6 PostgreSQL", func() {
 		Expect(err).NotTo(HaveOccurred())
 		idleSession, err := helpers.AuthorizeRefreshSession(ctx, env.Enduser.BaseURL(), *idleClient, "read offline_access")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(helpers.AgeInitialRefreshSession(ctx, db, idleSession.Tokens.RefreshToken, 3*time.Minute)).To(Succeed())
 		idleSurvivorClient, err := env.AddClient(ctx, policyPrincipal(), false)
 		Expect(err).NotTo(HaveOccurred())
 		idleSurvivor, err := helpers.AuthorizeRefreshSession(ctx, env.Enduser.BaseURL(), *idleSurvivorClient, "read offline_access")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(helpers.AgeInitialRefreshSession(ctx, db, idleSurvivor.Tokens.RefreshToken, 20*time.Second)).To(Succeed())
-		policyStopPG(env)
+		rebuildHistory(func(historical *sqlx.DB) error {
+			if err := helpers.AgeInitialRefreshSession(ctx, historical, idleSession.Tokens.RefreshToken, 3*time.Minute); err != nil {
+				return err
+			}
+			return helpers.AgeInitialRefreshSession(ctx, historical, idleSurvivor.Tokens.RefreshToken, 20*time.Second)
+		})
 
 		shortInactivity := withStorage("1s", "0s", "2m")
 		env, err = bootstrap.NewRefreshEnvironment(shortInactivity, store)

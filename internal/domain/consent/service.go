@@ -11,6 +11,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -302,11 +303,12 @@ type GrantRequest struct {
 // Returns the created/updated grant or an error.
 func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage.UserGrant, error) {
 	var staged *storage.UserGrant
+	var revoked []storage.RefreshSessionAuditIdentity
 	var entered bool
 	err := s.coordinator.Run(ctx, req.AgentID, func(owner context.Context, at time.Time) error {
 		entered = true
 		var err error
-		staged, err = s.grantConsentInOwner(owner, req, at)
+		staged, err = s.grantConsentInOwner(owner, req, at, &revoked)
 		return err
 	})
 	if err != nil {
@@ -315,10 +317,15 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 		}
 		return nil, err
 	}
+	reason := storage.RefreshReasonExpiredGrantRenewal
+	if len(req.GrantedPermissionSets) == 0 {
+		reason = storage.RefreshReasonGrantDeleted
+	}
+	s.logRevokedSessions(ctx, revoked, reason)
 	return staged, nil
 }
 
-func (s *Service) grantConsentInOwner(ctx context.Context, req *GrantRequest, at time.Time) (*storage.UserGrant, error) {
+func (s *Service) grantConsentInOwner(ctx context.Context, req *GrantRequest, at time.Time, revoked *[]storage.RefreshSessionAuditIdentity) (*storage.UserGrant, error) {
 	agent, err := s.agentRepo.Get(ctx, req.AgentID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
@@ -330,7 +337,9 @@ func (s *Service) grantConsentInOwner(ctx context.Context, req *GrantRequest, at
 		return nil, fmt.Errorf("%w: agent_id=%s", ErrAgentNotFound, req.AgentID)
 	}
 	if len(req.GrantedPermissionSets) == 0 {
-		return nil, s.revokeConsentInOwner(ctx, req.Principal, req.AgentID, at)
+		var err error
+		*revoked, err = s.revokeConsentInOwner(ctx, req.Principal, req.AgentID, at)
+		return nil, err
 	}
 	if req.ValidUntil != nil && !req.ValidUntil.After(at) {
 		return nil, fmt.Errorf("%w: valid_until must be in the future", ErrGrantValidation)
@@ -392,6 +401,10 @@ func (s *Service) grantConsentInOwner(ctx context.Context, req *GrantRequest, at
 	var grant *storage.UserGrant
 	if existingGrant != nil {
 		if !existingGrant.IsActive(at) {
+			*revoked, err = s.revocations.ListActiveByAgent(ctx, req.AgentID, &req.Principal)
+			if err != nil {
+				return nil, fmt.Errorf("failed to list pre-renewal refresh sessions: %w", err)
+			}
 			if err := s.revocations.RevokeByPrincipalAndAgent(ctx, req.Principal, req.AgentID, at, storage.RefreshReasonExpiredGrantRenewal); err != nil {
 				return nil, fmt.Errorf("failed to revoke pre-renewal refresh sessions: %w", err)
 			}
@@ -618,24 +631,34 @@ func permissionSetsMatch(left, right []storage.GrantedPermissionSetEntry) bool {
 // Used by the POST /grants path with empty tokens.
 func (s *Service) RevokeConsent(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
 	var entered bool
+	var revoked []storage.RefreshSessionAuditIdentity
 	err := s.coordinator.Run(ctx, agentID, func(owner context.Context, at time.Time) error {
 		entered = true
-		return s.revokeConsentInOwner(owner, principal, agentID, at)
+		var err error
+		revoked, err = s.revokeConsentInOwner(owner, principal, agentID, at)
+		return err
 	})
 	if !entered && ports.IsNotFoundErr(err) {
 		return nil
 	}
+	if err == nil {
+		s.logRevokedSessions(ctx, revoked, storage.RefreshReasonGrantDeleted)
+	}
 	return err
 }
 
-func (s *Service) revokeConsentInOwner(ctx context.Context, principal id.Principal, agentID id.AgentID, at time.Time) error {
+func (s *Service) revokeConsentInOwner(ctx context.Context, principal id.Principal, agentID id.AgentID, at time.Time) ([]storage.RefreshSessionAuditIdentity, error) {
+	revoked, err := s.revocations.ListActiveByAgent(ctx, agentID, &principal)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list refresh sessions: %w", err)
+	}
 	if err := s.revocations.RevokeByPrincipalAndAgent(ctx, principal, agentID, at, storage.RefreshReasonGrantDeleted); err != nil {
-		return fmt.Errorf("failed to revoke refresh sessions: %w", err)
+		return nil, fmt.Errorf("failed to revoke refresh sessions: %w", err)
 	}
 	if err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID); err != nil && !ports.IsNotFoundErr(err) {
-		return fmt.Errorf("failed to revoke consent: %w", err)
+		return nil, fmt.Errorf("failed to revoke consent: %w", err)
 	}
-	return nil
+	return revoked, nil
 }
 
 // RevokeConsentForPrincipal revokes the authenticated user's grant for the given agent (FR-014).
@@ -646,6 +669,7 @@ func (s *Service) revokeConsentInOwner(ctx context.Context, principal id.Princip
 // - Emits a structured audit log on success with action, principal, agent_id, and grant_id
 func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
 	var grant *storage.UserGrant
+	var revoked []storage.RefreshSessionAuditIdentity
 	var entered bool
 	err := s.coordinator.Run(ctx, agentID, func(owner context.Context, at time.Time) error {
 		entered = true
@@ -654,7 +678,8 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 		if err != nil && !ports.IsNotFoundErr(err) {
 			return fmt.Errorf("failed to find grant: %w", err)
 		}
-		return s.revokeConsentInOwner(owner, principal, agentID, at)
+		revoked, err = s.revokeConsentInOwner(owner, principal, agentID, at)
+		return err
 	})
 	if !entered && ports.IsNotFoundErr(err) {
 		return ErrGrantNotFound
@@ -662,6 +687,7 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 	if err != nil {
 		return err
 	}
+	s.logRevokedSessions(ctx, revoked, storage.RefreshReasonGrantDeleted)
 	if grant == nil {
 		return ErrGrantNotFound
 	}
@@ -671,6 +697,21 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 		"agent_id", agentID,
 		"grant_id", grant.ID)
 	return nil
+}
+
+func (s *Service) logRevokedSessions(ctx context.Context, roots []storage.RefreshSessionAuditIdentity, reason storage.RefreshRevocationReason) {
+	audit := security.AuditContextFields(ctx)
+	for _, root := range roots {
+		fields := []any{"event", "RefreshSessionRevoked", "session_id", root.ID.String(), "principal", root.Principal.String(),
+			"agent_id", root.AgentID.String(), "client_id", root.ClientID.String(), "reason", string(reason), "origin", audit.Origin}
+		if audit.ClientIP != "" {
+			fields = append(fields, "client_ip", audit.ClientIP)
+		}
+		if audit.UserAgent != "" {
+			fields = append(fields, "user_agent", audit.UserAgent)
+		}
+		s.logger.InfoContext(ctx, "RefreshSessionRevoked", fields...)
+	}
 }
 
 // GetActiveGrants retrieves all active grants for a principal and agent.

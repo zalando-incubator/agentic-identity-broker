@@ -47,6 +47,10 @@ func (c testAuthorizationClock) Run(ctx context.Context, _ id.AgentID, operation
 
 type unexpectedRefreshRevocations struct{}
 
+func (unexpectedRefreshRevocations) ListActiveByAgent(context.Context, id.AgentID, *id.Principal) ([]storagedomain.RefreshSessionAuditIdentity, error) {
+	panic("unexpected refresh revocation in token exchange test")
+}
+
 func (unexpectedRefreshRevocations) RevokeByID(context.Context, id.RefreshSessionID, time.Time, storagedomain.RefreshRevocationReason) error {
 	panic("unexpected refresh revocation in token exchange test")
 }

@@ -522,13 +522,16 @@ The memory backend supports one instance and loses refresh history on restart. D
 
 Every pre-feature unanchored session requires fresh authorization. Only complete anchored new-issuer families can continue under current consent.
 
-1. Retain migration 036 and the legacy `refresh_token_sessions` table during mixed-version rollout.
+1. Retain migrations 036 and 037 and the legacy `refresh_token_sessions` table during mixed-version rollout.
 2. Before binary-only rollback, stop token traffic and all old writers.
 3. Start the outgoing broker image with its outgoing policy and no token traffic.
 4. Wait for successful startup reconciliation and ready health.
 5. Stop the outgoing instance before you admit the old binary.
 
 If reconciliation fails, keep token traffic stopped. Neither schema-preserving rollback nor later grants can restore terminal sessions.
+
+Migration 037 verifies complete ancestry once and maintains the indexed lineage proof for later refreshes.
+Its down migration invalidates anchored legacy authority before removing that proof. Reapplication does not restore those sessions.
 
 ### Restore Admission
 

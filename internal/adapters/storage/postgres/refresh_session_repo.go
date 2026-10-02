@@ -3,10 +3,12 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -59,6 +61,7 @@ type refreshSessionRecord struct {
 	RevokedAt                         *time.Time          `db:"revoked_at"`
 	ExpiredAt                         *time.Time          `db:"expired_at"`
 	TerminalReason                    *string             `db:"terminal_reason"`
+	LineageValid                      bool                `db:"lineage_valid"`
 }
 
 func (r *refreshSessionRecord) model() *storage.RefreshSession {
@@ -185,7 +188,7 @@ func (r *RefreshSessionRepo) Save(ctx context.Context, s *storage.RefreshSession
 	if err := requireAuthorizationAgent(ctx, s.AgentID); err != nil {
 		return err
 	}
-	previous, err := loadRefreshSession(ctx, r.adapter.storageExecutor(ctx), s.ID, true)
+	previous, err := loadRefreshSession(ctx, r.adapter.storageExecutor(ctx), s.ID, s.TerminalReason == nil)
 	if err != nil {
 		return err
 	}
@@ -283,10 +286,14 @@ func writeRefreshReceipt(ctx context.Context, exec sqlx.ExtContext, s *storage.R
 	if s.TerminalReason == nil {
 		return refreshValidation("RefreshSession.Revoke", errors.New("revocation reason required"))
 	}
-	_, err := exec.ExecContext(ctx, `INSERT INTO refresh_revocation_receipts
+	contextJSON, err := json.Marshal(security.RedactedAuditContext(ctx))
+	if err != nil {
+		return refreshStoreError("RefreshSession.Receipt", err)
+	}
+	_, err = exec.ExecContext(ctx, `INSERT INTO refresh_revocation_receipts
 		(session_id, agent_id, principal, client_id, reason, "at", redacted_context)
-		VALUES ($1,$2,$3,$4,$5,$6,'{}'::jsonb) ON CONFLICT (session_id, reason) DO NOTHING`,
-		s.ID, s.AgentID, s.Principal, s.ClientID, *s.TerminalReason, at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (session_id, reason) DO NOTHING`,
+		s.ID, s.AgentID, s.Principal, s.ClientID, *s.TerminalReason, at, contextJSON)
 	return refreshStoreError("RefreshSession.Receipt", err)
 }
 
@@ -329,6 +336,8 @@ func invalidateRefreshLineage(ctx context.Context, exec sqlx.ExtContext, s *stor
 }
 
 func (r *RefreshSessionRepo) revoke(ctx context.Context, s *storage.RefreshSession, at time.Time, reason storage.RefreshRevocationReason) error {
+	// The agent gate owns native root state. Fence mirrors before the root write
+	// so an old writer can commit its deferred proof invalidation without a cycle.
 	if s.TerminalReason != nil {
 		if reason != storage.RefreshReasonRestoreInvalidation || len(s.RetryCiphertext) == 0 {
 			return nil
@@ -355,11 +364,41 @@ func (r *RefreshSessionRepo) revoke(ctx context.Context, s *storage.RefreshSessi
 	return updateRefreshSession(ctx, r.adapter.storageExecutor(ctx), s)
 }
 
+func (r *RefreshSessionRepo) ListActiveByAgent(ctx context.Context, agentID id.AgentID, principal *id.Principal) ([]storage.RefreshSessionAuditIdentity, error) {
+	if err := requireAuthorizationAgent(ctx, agentID); err != nil {
+		return nil, err
+	}
+	query := `SELECT id, agent_id, principal, client_id FROM refresh_sessions WHERE agent_id = $1 AND terminal_reason IS NULL`
+	args := []any{agentID}
+	if principal != nil {
+		query += ` AND principal = $2`
+		args = append(args, *principal)
+	}
+	query += ` ORDER BY id`
+	rows, err := r.adapter.storageExecutor(ctx).QueryxContext(ctx, query, args...)
+	if err != nil {
+		return nil, refreshStoreError("RefreshSession.ListActiveByAgent", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var identities []storage.RefreshSessionAuditIdentity
+	for rows.Next() {
+		var identity storage.RefreshSessionAuditIdentity
+		if err := rows.Scan(&identity.ID, &identity.AgentID, &identity.Principal, &identity.ClientID); err != nil {
+			return nil, refreshStoreError("RefreshSession.ListActiveByAgent", err)
+		}
+		identities = append(identities, identity)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, refreshStoreError("RefreshSession.ListActiveByAgent", err)
+	}
+	return identities, nil
+}
+
 func (r *RefreshSessionRepo) RevokeByID(ctx context.Context, sessionID id.RefreshSessionID, at time.Time, reason storage.RefreshRevocationReason) error {
 	if _, scoped := scopedAuthorization(ctx); !scoped {
 		return refreshValidation("RefreshSession.RevokeByID", errors.New("agent-scoped authorization transaction required"))
 	}
-	s, err := loadRefreshSession(ctx, r.adapter.storageExecutor(ctx), sessionID, true)
+	s, err := loadRefreshSession(ctx, r.adapter.storageExecutor(ctx), sessionID, false)
 	if err != nil {
 		return err
 	}
@@ -407,7 +446,7 @@ func (r *RefreshSessionRepo) revokeMatching(ctx context.Context, agentID id.Agen
 		query += ` AND principal = $2`
 		args = append(args, *principal)
 	}
-	query += ` ORDER BY id FOR UPDATE`
+	query += ` ORDER BY id`
 	var records []refreshSessionRecord
 	if err := sqlx.SelectContext(ctx, r.adapter.storageExecutor(ctx), &records, query, args...); err != nil {
 		return refreshStoreError("RefreshSession.Revoke", err)
@@ -614,6 +653,9 @@ func (r *RefreshTokenRepo) CheckCurrentLineage(ctx context.Context, sessionID id
 }
 
 func checkAnchoredCurrent(ctx context.Context, exec sqlx.ExtContext, root *storage.RefreshSession) error {
+	if err := root.Validate(); err != nil {
+		return storage.NewStorageError("RefreshToken.LegacyOrigin", storage.ErrorKindNotFound, ports.ErrNotFound, "refresh root lacks valid lineage metadata")
+	}
 	var legacy struct {
 		SessionID            *id.RefreshSessionID `db:"session_id"`
 		RequestID            string               `db:"request_id"`
@@ -644,34 +686,34 @@ func checkAnchoredCurrent(ctx context.Context, exec sqlx.ExtContext, root *stora
 		return refreshStoreError("RefreshToken.LegacyCurrent", err)
 	}
 	if native.SessionID != root.ID || native.UsedAt != nil || !legacy.CreatedAt.Equal(native.IssuedAt) ||
-		!legacy.ExpiresAt.Equal(native.ExpiresAt) || !native.IssuedAt.Equal(root.LastFreshAt) {
+		!legacy.ExpiresAt.Equal(native.ExpiresAt) || !native.IssuedAt.Equal(root.LastFreshAt) ||
+		native.ExpiresAt.After(root.RetainUntil) {
 		return storage.NewStorageError("RefreshToken.LegacyCurrent", storage.ErrorKindNotFound, ports.ErrNotFound, "unsupported legacy refresh lineage")
 	}
+	// The durable proof is invalidated by database triggers for any unsupported
+	// historical write. Lock it after the current mirror: an older writer holds
+	// that row before its proof invalidation, so the reverse order deadlocks.
 	var complete bool
-	err := exec.QueryRowxContext(ctx, `WITH RECURSIVE lineage AS (
-		SELECT signature, predecessor_signature FROM refresh_token_sessions
-		WHERE signature = $1 AND session_id = $2
-		UNION
-		SELECT parent.signature, parent.predecessor_signature
-		FROM refresh_token_sessions parent JOIN lineage child ON parent.signature = child.predecessor_signature
-		WHERE parent.session_id = $2
-	)
-	SELECT (SELECT count(*) FROM lineage) = (SELECT count(*) FROM refresh_tokens WHERE session_id = $2)
-	AND EXISTS (SELECT 1 FROM lineage WHERE signature = $3 AND predecessor_signature IS NULL)
-	AND NOT EXISTS (
-		SELECT 1 FROM lineage link
-		JOIN refresh_token_sessions bridge ON bridge.signature = link.signature
-		LEFT JOIN refresh_tokens token ON token.signature = link.signature AND token.session_id = $2
-		LEFT JOIN refresh_token_sessions child ON child.predecessor_signature = link.signature AND child.session_id = $2
-		WHERE token.signature IS NULL OR bridge.request_id <> $4 OR bridge.agent_id <> $5
-		OR bridge.principal <> $6 OR bridge.client_id <> $7 OR bridge.scope <> $8
-		OR bridge.created_at <> token.issued_at OR bridge.expires_at <> token.expires_at
-		OR bridge.used_at IS DISTINCT FROM token.used_at
-		OR (link.signature = $3 AND token.issued_at <> $9)
-		OR (link.signature <> $1 AND token.used_at IS NULL)
-		OR (child.signature IS NOT NULL AND child.created_at IS DISTINCT FROM token.used_at)
-	)`, root.CurrentSignature, root.ID, root.OriginalTokenSignature, root.ID.String(),
-		root.AgentID, root.Principal, root.ClientID, root.Scope, root.StartedAt).Scan(&complete)
+	err := exec.QueryRowxContext(ctx, `SELECT r.lineage_valid AND r.original_token_signature = $2
+		AND r.started_at = $3 AND r.agent_id = $4 AND r.principal = $5
+		AND r.client_id = $6 AND r.scope = $7 AND r.original_grant_id = $8
+		AND origin.session_id = r.id AND origin.issued_at = r.started_at
+		AND origin.expires_at <= r.retain_until
+		AND first_mirror.session_id = r.id AND first_mirror.request_id = r.id::text
+		AND first_mirror.predecessor_signature IS NULL
+		AND first_mirror.agent_id = r.agent_id AND first_mirror.principal = r.principal
+		AND first_mirror.client_id = r.client_id AND first_mirror.scope = r.scope
+		AND first_mirror.email IS NOT DISTINCT FROM r.email
+		AND first_mirror.display_name = r.display_name
+		AND first_mirror.created_at = origin.issued_at
+		AND first_mirror.expires_at = origin.expires_at
+		AND first_mirror.used_at IS NOT DISTINCT FROM origin.used_at
+		FROM refresh_sessions r
+		JOIN refresh_tokens origin ON origin.signature = r.original_token_signature
+		JOIN refresh_token_sessions first_mirror ON first_mirror.signature = origin.signature
+		WHERE r.id = $1 FOR UPDATE OF r`, root.ID, root.OriginalTokenSignature,
+		root.StartedAt, root.AgentID, root.Principal, root.ClientID, root.Scope,
+		root.OriginalGrantID).Scan(&complete)
 	if err != nil {
 		return refreshStoreError("RefreshToken.LegacyOrigin", err)
 	}

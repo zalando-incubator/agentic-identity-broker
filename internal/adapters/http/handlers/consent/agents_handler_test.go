@@ -36,6 +36,10 @@ func (c mockAuthorizationCoordinator) Run(ctx context.Context, _ id.AgentID, ope
 
 type mockRefreshRevocations struct{}
 
+func (mockRefreshRevocations) ListActiveByAgent(context.Context, id.AgentID, *id.Principal) ([]storage.RefreshSessionAuditIdentity, error) {
+	return nil, nil
+}
+
 func (mockRefreshRevocations) RevokeByID(context.Context, id.RefreshSessionID, time.Time, storage.RefreshRevocationReason) error {
 	return nil
 }

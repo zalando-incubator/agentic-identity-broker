@@ -61,16 +61,31 @@ var _ = Describe("Consent-Bound Refresh Sessions / US5 inactivity", func() {
 		}
 	})
 
+	rebuildHistory := func(age func(*sqlx.DB) error) {
+		environment.Stop()
+		oldCleanup := cleanup
+		store, historical, closeHistorical, err := bootstrap.NewHistoricalRefreshFixture(refreshSuiteTestingT, cfg, database, age)
+		Expect(err).NotTo(HaveOccurred())
+		cleanup = func() { closeHistorical(); oldCleanup() }
+		database = historical
+		environment, err = bootstrap.NewRefreshEnvironment(cfg, store)
+		Expect(err).NotTo(HaveOccurred())
+	}
+
 	Context("with the default inactivity lifetime", func() {
 		// US5-S1 from specs/049-fix-refresh-consent/spec.md.
 		It("permits a still-active interval and denies renewal after thirty inactive days", func() {
 			near, err := helpers.AuthorizeRefreshSession(ctx, environment.Enduser.BaseURL(), *client, "read offline_access")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(helpers.AgeInitialRefreshSession(ctx, database, near.Tokens.RefreshToken, 719*time.Hour)).To(Succeed())
+			rebuildHistory(func(historical *sqlx.DB) error {
+				if err := helpers.AgeInitialRefreshSession(ctx, historical, near.Tokens.RefreshToken, 719*time.Hour); err != nil {
+					return err
+				}
+				return helpers.AgeInitialRefreshSession(ctx, historical, authorization.Tokens.RefreshToken, 721*time.Hour)
+			})
 			valid, err := helpers.RotateRefreshSession(ctx, environment.Enduser.BaseURL(), *client, near.Tokens.RefreshToken, "")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(valid.Status).To(Equal(http.StatusOK))
-			Expect(helpers.AgeInitialRefreshSession(ctx, database, authorization.Tokens.RefreshToken, 721*time.Hour)).To(Succeed())
 			expired, err := helpers.RotateRefreshSession(ctx, environment.Enduser.BaseURL(), *client, authorization.Tokens.RefreshToken, "")
 			Expect(err).NotTo(HaveOccurred())
 			expectInactivityDenial(expired)
@@ -86,7 +101,9 @@ var _ = Describe("Consent-Bound Refresh Sessions / US5 inactivity", func() {
 
 		// US5-S2 from specs/049-fix-refresh-consent/spec.md.
 		It("keeps the successor usable after the original inactivity interval closes", func() {
-			Expect(helpers.AgeInitialRefreshSession(ctx, database, authorization.Tokens.RefreshToken, 2*time.Second)).To(Succeed())
+			rebuildHistory(func(historical *sqlx.DB) error {
+				return helpers.AgeInitialRefreshSession(ctx, historical, authorization.Tokens.RefreshToken, 2*time.Second)
+			})
 			originalExpiry := inactivityTokenExpiry(ctx, database, authorization.Tokens.RefreshToken)
 			rotated, err := helpers.RotateRefreshSession(ctx, environment.Enduser.BaseURL(), *client, authorization.Tokens.RefreshToken, "")
 			Expect(err).NotTo(HaveOccurred())

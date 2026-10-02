@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -171,6 +172,7 @@ func (s *Service) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, 
 
 // Delete revokes local refresh authority before removing the agent in one scope.
 func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
+	var revoked []storage.RefreshSessionAuditIdentity
 	if err := s.coordinator.Run(ctx, agentID, func(owner context.Context, at time.Time) error {
 		agent, err := s.repo.Get(owner, agentID)
 		if err != nil {
@@ -179,6 +181,10 @@ func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
 		if agent == nil {
 			return storage.NewStorageError("DeleteAgent", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
 		}
+		revoked, err = s.revocations.ListActiveByAgent(owner, agentID, nil)
+		if err != nil {
+			return err
+		}
 		if err := s.revocations.RevokeByAgent(owner, agentID, at, storage.RefreshReasonAgentDeleted); err != nil {
 			return err
 		}
@@ -186,7 +192,19 @@ func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
 	}); err != nil {
 		return err
 	}
-	s.logger.Info("agent deleted", "agent_id", agentID)
+	audit := security.AuditContextFields(ctx)
+	for _, root := range revoked {
+		fields := []any{"event", "RefreshSessionRevoked", "session_id", root.ID.String(), "principal", root.Principal.String(),
+			"agent_id", root.AgentID.String(), "client_id", root.ClientID.String(), "reason", string(storage.RefreshReasonAgentDeleted), "origin", audit.Origin}
+		if audit.ClientIP != "" {
+			fields = append(fields, "client_ip", audit.ClientIP)
+		}
+		if audit.UserAgent != "" {
+			fields = append(fields, "user_agent", audit.UserAgent)
+		}
+		s.logger.InfoContext(ctx, "RefreshSessionRevoked", fields...)
+	}
+	s.logger.InfoContext(ctx, "agent deleted", "agent_id", agentID)
 	return nil
 }
 

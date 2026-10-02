@@ -190,6 +190,13 @@ func AgeInitialRefreshSession(ctx context.Context, database *sqlx.DB, token stri
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var proofInstalled bool
+	if err := tx.GetContext(ctx, &proofInstalled, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'refresh_sessions' AND column_name = 'lineage_valid')`); err != nil {
+		return err
+	}
+	if proofInstalled {
+		return fmt.Errorf("aging requires an isolated pre-proof refresh fixture")
+	}
 	seconds := age.Seconds()
 	var hasRoots bool
 	if err := tx.GetContext(ctx, &hasRoots, "SELECT to_regclass('refresh_sessions') IS NOT NULL"); err != nil {

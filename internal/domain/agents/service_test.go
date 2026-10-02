@@ -133,6 +133,10 @@ func (unusedAgentCoordinator) Run(context.Context, id.AgentID, func(context.Cont
 
 type unusedAgentRevocations struct{}
 
+func (unusedAgentRevocations) ListActiveByAgent(context.Context, id.AgentID, *id.Principal) ([]storage.RefreshSessionAuditIdentity, error) {
+	panic("unexpected refresh revocation in unrelated service test")
+}
+
 func (unusedAgentRevocations) RevokeByID(context.Context, id.RefreshSessionID, time.Time, storage.RefreshRevocationReason) error {
 	panic("unexpected refresh revocation in unrelated service test")
 }

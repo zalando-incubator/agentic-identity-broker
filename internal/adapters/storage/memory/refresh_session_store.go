@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -24,20 +25,21 @@ var (
 // shared clock, gates and committed refresh records. Participant repositories
 // remain the owners of their own records and indexes.
 type RefreshSessionStore struct {
-	mu           sync.RWMutex
-	gatesMu      sync.Mutex
-	gates        map[id.AgentID]chan struct{}
-	versions     map[id.AgentID]uint64
-	roots        map[id.RefreshSessionID]*storage.RefreshSession
-	tokens       map[string]*storage.RefreshToken
-	tokensByRoot map[id.RefreshSessionID]map[string]struct{}
-	receipts     map[receiptKey]*storage.RefreshRevocationReceipt
-	agents       *AgentRepository
-	grants       *UserGrantRepository
-	credentials  *ClientCredentialStore
-	codes        *AuthorizationCodeStore
-	pkce         *PKCESessionStore
-	legacy       map[string]*legacyRefreshToken
+	mu                 sync.RWMutex
+	gatesMu            sync.Mutex
+	gates              map[id.AgentID]chan struct{}
+	versions           map[id.AgentID]uint64
+	roots              map[id.RefreshSessionID]*storage.RefreshSession
+	activeRootsByAgent map[id.AgentID]map[id.RefreshSessionID]struct{}
+	tokens             map[string]*storage.RefreshToken
+	tokensByRoot       map[id.RefreshSessionID]map[string]struct{}
+	receipts           map[receiptKey]*storage.RefreshRevocationReceipt
+	agents             *AgentRepository
+	grants             *UserGrantRepository
+	credentials        *ClientCredentialStore
+	codes              *AuthorizationCodeStore
+	pkce               *PKCESessionStore
+	legacy             map[string]*legacyRefreshToken
 }
 
 type RefreshTokenStore struct{ refresh *RefreshSessionStore }
@@ -46,10 +48,11 @@ func NewRefreshSessionStore(agents *AgentRepository, grants *UserGrantRepository
 	s := &RefreshSessionStore{
 		gates: make(map[id.AgentID]chan struct{}), versions: make(map[id.AgentID]uint64),
 		roots: make(map[id.RefreshSessionID]*storage.RefreshSession), tokens: make(map[string]*storage.RefreshToken),
-		tokensByRoot: make(map[id.RefreshSessionID]map[string]struct{}),
-		receipts:     make(map[receiptKey]*storage.RefreshRevocationReceipt),
-		legacy:       make(map[string]*legacyRefreshToken),
-		agents:       agents, grants: grants, credentials: credentials, codes: codes, pkce: pkce,
+		activeRootsByAgent: make(map[id.AgentID]map[id.RefreshSessionID]struct{}),
+		tokensByRoot:       make(map[id.RefreshSessionID]map[string]struct{}),
+		receipts:           make(map[receiptKey]*storage.RefreshRevocationReceipt),
+		legacy:             make(map[string]*legacyRefreshToken),
+		agents:             agents, grants: grants, credentials: credentials, codes: codes, pkce: pkce,
 	}
 	agents.refresh = s
 	grants.refresh = s
@@ -135,15 +138,16 @@ func copyRefreshToken(token *storage.RefreshToken) *storage.RefreshToken {
 // legacyRefreshToken is a backend-private row of the old refresh table. It is
 // kept for mixed-version invalidation, never as a source of session authority.
 type legacyRefreshToken struct {
-	Signature string
-	RequestID string
-	AgentID   id.AgentID
-	ClientID  id.ClientID
-	Principal id.Principal
-	Scope     string
-	ExpiresAt time.Time
-	UsedAt    *time.Time
-	CreatedAt time.Time
+	Signature            string
+	RequestID            string
+	AgentID              id.AgentID
+	ClientID             id.ClientID
+	Principal            id.Principal
+	Scope                string
+	ExpiresAt            time.Time
+	UsedAt               *time.Time
+	CreatedAt            time.Time
+	PredecessorSignature *string
 }
 
 func copyLegacy(session *legacyRefreshToken) *legacyRefreshToken {
@@ -155,6 +159,10 @@ func copyLegacy(session *legacyRefreshToken) *legacyRefreshToken {
 		value := *session.UsedAt
 		copy.UsedAt = &value
 	}
+	if session.PredecessorSignature != nil {
+		value := *session.PredecessorSignature
+		copy.PredecessorSignature = &value
+	}
 	return &copy
 }
 
@@ -163,12 +171,25 @@ func refreshNotFound(operation string) error {
 }
 
 func refreshConflict(operation string) error {
-	return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "refresh record already exists")
+	return storage.NewStorageError(operation, storage.ErrorKindConflict, errors.New("refresh record already exists"), "refresh record already exists")
+}
+
+func memoryRefreshValidation(operation string, cause error) error {
+	return storage.NewStorageError(operation, storage.ErrorKindValidation, cause, "invalid refresh session transition")
+}
+
+func memoryRefreshContextError(operation string, err error) error {
+	kind := storage.ErrorKindConnection
+	if errors.Is(err, context.DeadlineExceeded) {
+		kind = storage.ErrorKindTimeout
+	}
+	return storage.NewStorageError(operation, kind, err, "refresh storage operation failed")
 }
 
 func (s *RefreshSessionStore) Create(ctx context.Context, root *storage.RefreshSession) error {
+	const op = "RefreshSession.Create"
 	if err := root.Validate(); err != nil {
-		return err
+		return memoryRefreshValidation(op, err)
 	}
 	if scope := scopeFor(ctx, s); scope != nil {
 		s.mu.RLock()
@@ -177,7 +198,7 @@ func (s *RefreshSessionStore) Create(ctx context.Context, root *storage.RefreshS
 			return err
 		}
 		if scope.root(root.ID) != nil {
-			return refreshConflict("CreateRefreshSession")
+			return refreshConflict(op)
 		}
 		if scope.roots == nil {
 			scope.roots = make(map[id.RefreshSessionID]*storage.RefreshSession)
@@ -186,7 +207,7 @@ func (s *RefreshSessionStore) Create(ctx context.Context, root *storage.RefreshS
 		scope.roots[root.ID] = copyRefreshSession(root)
 		return nil
 	}
-	return errors.New("initial refresh issuance requires an authorization transaction with its token")
+	return memoryRefreshValidation(op, errors.New("initial refresh issuance requires an authorization transaction with its token"))
 }
 
 func (s *RefreshSessionStore) FindByID(ctx context.Context, sessionID id.RefreshSessionID) (*storage.RefreshSession, error) {
@@ -195,7 +216,7 @@ func (s *RefreshSessionStore) FindByID(ctx context.Context, sessionID id.Refresh
 	var root *storage.RefreshSession
 	if scope := scopeFor(ctx, s); scope != nil {
 		if scope.closed {
-			return nil, errors.New("authorization transaction is closed")
+			return nil, memoryRefreshValidation("AuthorizationSession", errors.New("authorization transaction is closed"))
 		}
 		root = scope.root(sessionID)
 		if root != nil {
@@ -207,14 +228,18 @@ func (s *RefreshSessionStore) FindByID(ctx context.Context, sessionID id.Refresh
 		root = s.roots[sessionID]
 	}
 	if root == nil {
-		return nil, refreshNotFound("FindRefreshSession")
+		return nil, refreshNotFound("RefreshSession.FindByID")
 	}
 	return copyRefreshSession(root), nil
 }
 
 func (s *RefreshSessionStore) Save(ctx context.Context, root *storage.RefreshSession) error {
+	const op = "RefreshSession.Save"
 	if root == nil {
-		return errors.New("missing refresh root")
+		return memoryRefreshValidation(op, errors.New("missing refresh root"))
+	}
+	if err := root.Validate(); err != nil {
+		return memoryRefreshValidation(op, err)
 	}
 	if scope := scopeFor(ctx, s); scope != nil {
 		s.mu.RLock()
@@ -224,10 +249,17 @@ func (s *RefreshSessionStore) Save(ctx context.Context, root *storage.RefreshSes
 		}
 		previous := scope.root(root.ID)
 		if previous == nil {
-			return refreshNotFound("SaveRefreshSession")
+			return refreshNotFound(op)
 		}
 		if err := root.ValidateTransition(previous, time.Now().UTC()); err != nil {
-			return err
+			return memoryRefreshValidation(op, err)
+		}
+		if previous.TerminalReason == nil && root.TerminalReason != nil {
+			at := root.RevokedAt
+			if at == nil {
+				at = root.ExpiredAt
+			}
+			return scope.stageTerminalRoot(ctx, previous, copyRefreshSession(root), *at, op)
 		}
 		if scope.roots == nil {
 			scope.roots = make(map[id.RefreshSessionID]*storage.RefreshSession)
@@ -244,8 +276,9 @@ func (s *RefreshSessionStore) Save(ctx context.Context, root *storage.RefreshSes
 }
 
 func (r *RefreshTokenStore) Create(ctx context.Context, token *storage.RefreshToken) error {
+	const op = "RefreshToken.Create"
 	if err := token.Validate(); err != nil {
-		return err
+		return memoryRefreshValidation(op, err)
 	}
 	s := r.refresh
 	if scope := scopeFor(ctx, s); scope != nil {
@@ -253,19 +286,36 @@ func (r *RefreshTokenStore) Create(ctx context.Context, token *storage.RefreshTo
 		defer s.mu.RUnlock()
 		root := scope.root(token.SessionID)
 		if root == nil {
-			return refreshNotFound("CreateRefreshTokenRoot")
+			return refreshNotFound("RefreshSession.FindByID")
 		}
 		if err := scope.checkAgent(root.AgentID); err != nil {
 			return err
 		}
 		if scope.token(token.Signature) != nil {
-			return refreshConflict("CreateRefreshToken")
+			return refreshConflict(op)
 		}
 		if scope.legacySession(token.Signature) != nil {
-			return refreshConflict("CreateRefreshTokenMirror")
+			return refreshConflict(op)
 		}
-		if root.TerminalReason != nil {
-			return errors.New("refresh token requires an active root")
+		if root.TerminalReason != nil || token.UsedAt != nil {
+			return memoryRefreshValidation(op, errors.New("only an active, unconsumed child can be issued"))
+		}
+		var predecessor *string
+		if token.Signature == root.OriginalTokenSignature {
+			if root.CurrentSignature != token.Signature || !token.IssuedAt.Equal(root.StartedAt) ||
+				!token.ExpiresAt.Equal(root.RetainUntil) || !token.ExpiresAt.Equal(root.InactivityExpiresAt) {
+				return memoryRefreshValidation(op, errors.New("first token must bind the original root and issuance time"))
+			}
+		} else {
+			previous := scope.token(root.CurrentSignature)
+			mirror := scope.legacySession(root.CurrentSignature)
+			if previous == nil || previous.UsedAt == nil || !previous.UsedAt.Equal(token.IssuedAt) ||
+				mirror == nil || mirror.UsedAt == nil || !mirror.UsedAt.Equal(token.IssuedAt) ||
+				!token.IssuedAt.After(root.LastFreshAt) {
+				return memoryRefreshValidation(op, errors.New("successor requires matching anchored predecessor consumption"))
+			}
+			value := root.CurrentSignature
+			predecessor = &value
 		}
 		if scope.tokens == nil {
 			scope.tokens = make(map[string]*storage.RefreshToken)
@@ -279,6 +329,7 @@ func (r *RefreshTokenStore) Create(ctx context.Context, token *storage.RefreshTo
 			Signature: token.Signature, RequestID: root.ID.String(), AgentID: root.AgentID,
 			ClientID: root.ClientID, Principal: root.Principal, Scope: root.Scope,
 			ExpiresAt: token.ExpiresAt, UsedAt: token.UsedAt, CreatedAt: token.IssuedAt,
+			PredecessorSignature: predecessor,
 		}
 		return nil
 	}
@@ -296,13 +347,13 @@ func (r *RefreshTokenStore) FindBySignature(ctx context.Context, signature strin
 	var token *storage.RefreshToken
 	if scope := scopeFor(ctx, s); scope != nil {
 		if scope.closed {
-			return nil, errors.New("authorization transaction is closed")
+			return nil, memoryRefreshValidation("AuthorizationSession", errors.New("authorization transaction is closed"))
 		}
 		token = scope.token(signature)
 		if token != nil {
 			root := scope.root(token.SessionID)
 			if root == nil {
-				return nil, refreshNotFound("FindRefreshTokenRoot")
+				return nil, refreshNotFound("RefreshSession.FindByID")
 			}
 			if err := scope.checkAgent(root.AgentID); err != nil {
 				return nil, err
@@ -312,7 +363,7 @@ func (r *RefreshTokenStore) FindBySignature(ctx context.Context, signature strin
 		token = s.tokens[signature]
 	}
 	if token == nil {
-		return nil, refreshNotFound("FindRefreshToken")
+		return nil, refreshNotFound("RefreshToken.FindBySignature")
 	}
 	return copyRefreshToken(token), nil
 }
@@ -320,14 +371,14 @@ func (r *RefreshTokenStore) FindBySignature(ctx context.Context, signature strin
 func (r *RefreshTokenStore) CheckCurrentLineage(ctx context.Context, sessionID id.RefreshSessionID) error {
 	s := r.refresh
 	scope := scopeFor(ctx, s)
-	if scope == nil {
-		return errors.New("current refresh lineage requires an authorization scope")
+	if scope == nil || scope.agentID.IsZero() || scope.closed {
+		return memoryRefreshValidation("AuthorizationSession", errors.New("current refresh lineage requires an active agent scope"))
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	root := scope.root(sessionID)
 	if root == nil {
-		return refreshNotFound("CheckCurrentLineage")
+		return refreshNotFound("RefreshSession.FindByID")
 	}
 	return scope.checkCurrentLineage(root)
 }
@@ -337,31 +388,63 @@ func (scope *memoryScope) checkCurrentLineage(root *storage.RefreshSession) erro
 	if err := scope.checkAgent(root.AgentID); err != nil {
 		return err
 	}
-	if root.TerminalReason != nil || root.Validate() != nil {
-		return refreshNotFound("CheckCurrentLineage")
-	}
-	first := scope.token(root.OriginalTokenSignature)
-	current := scope.token(root.CurrentSignature)
-	if first == nil || first.SessionID != root.ID || !first.IssuedAt.Equal(root.StartedAt) || current == nil || current.SessionID != root.ID || current.UsedAt != nil {
-		return refreshNotFound("CheckCurrentLineage")
-	}
-	legacy := scope.legacySession(root.CurrentSignature)
-	if legacy == nil || legacy.Signature != current.Signature || legacy.RequestID != root.ID.String() ||
-		legacy.AgentID != root.AgentID || legacy.ClientID != root.ClientID || legacy.Principal != root.Principal ||
-		legacy.Scope != root.Scope || !legacy.CreatedAt.Equal(current.IssuedAt) ||
-		!legacy.ExpiresAt.Equal(current.ExpiresAt) || legacy.ExpiresAt.After(root.RetainUntil) || legacy.UsedAt != nil {
-		return refreshNotFound("CheckCurrentLineage")
-	}
-	if root.PreviousSignature != nil {
-		previous := scope.token(*root.PreviousSignature)
-		mirror := scope.legacySession(*root.PreviousSignature)
-		if previous == nil || previous.SessionID != root.ID || previous.UsedAt == nil ||
-			!previous.UsedAt.Equal(*root.PreviousConsumedAt) || mirror == nil || mirror.UsedAt == nil ||
-			!mirror.UsedAt.Equal(*root.PreviousConsumedAt) {
-			return refreshNotFound("CheckCurrentLineage")
-		}
+	if root.TerminalReason != nil || root.Validate() != nil || !scope.completeRefreshLineage(root) {
+		return refreshNotFound("RefreshToken.LegacyOrigin")
 	}
 	return nil
+}
+
+// completeRefreshLineage walks every native token and matching private mirror.
+// The mirror records predecessor links; native rows alone cannot prove ancestry.
+func (scope *memoryScope) completeRefreshLineage(root *storage.RefreshSession) bool {
+	expected, allPresent := 0, true
+	scope.eachTokenForRoot(root.ID, func(token *storage.RefreshToken) {
+		if token == nil || token.SessionID != root.ID {
+			allPresent = false
+			return
+		}
+		expected++
+	})
+	if !allPresent || expected == 0 {
+		return false
+	}
+	signature := root.CurrentSignature
+	requestID := root.ID.String()
+	var successorIssuedAt time.Time
+	for visited := range expected {
+		token := scope.token(signature)
+		mirror := scope.legacySession(signature)
+		if token == nil || token.Signature != signature || token.SessionID != root.ID || token.Validate() != nil ||
+			mirror == nil || mirror.Signature != signature || mirror.RequestID != requestID ||
+			mirror.AgentID != root.AgentID || mirror.ClientID != root.ClientID || mirror.Principal != root.Principal ||
+			mirror.Scope != root.Scope || !mirror.CreatedAt.Equal(token.IssuedAt) ||
+			!mirror.ExpiresAt.Equal(token.ExpiresAt) || token.ExpiresAt.After(root.RetainUntil) {
+			return false
+		}
+		if signature == root.CurrentSignature {
+			if token.UsedAt != nil || mirror.UsedAt != nil || !token.IssuedAt.Equal(root.LastFreshAt) ||
+				(root.PreviousSignature == nil) != (mirror.PredecessorSignature == nil) ||
+				(root.PreviousSignature != nil && *root.PreviousSignature != *mirror.PredecessorSignature) {
+				return false
+			}
+		} else if token.UsedAt == nil || mirror.UsedAt == nil || !token.UsedAt.Equal(*mirror.UsedAt) ||
+			!token.UsedAt.Equal(successorIssuedAt) {
+			return false
+		}
+		if root.PreviousSignature != nil && signature == *root.PreviousSignature &&
+			(token.UsedAt == nil || !token.UsedAt.Equal(*root.PreviousConsumedAt)) {
+			return false
+		}
+		if signature == root.OriginalTokenSignature {
+			return mirror.PredecessorSignature == nil && token.IssuedAt.Equal(root.StartedAt) && visited+1 == expected
+		}
+		if mirror.PredecessorSignature == nil || *mirror.PredecessorSignature == signature {
+			return false
+		}
+		successorIssuedAt = token.IssuedAt
+		signature = *mirror.PredecessorSignature
+	}
+	return false
 }
 
 func (r *RefreshTokenStore) MarkUsed(ctx context.Context, signature string, usedAt time.Time) error {
@@ -371,22 +454,25 @@ func (r *RefreshTokenStore) MarkUsed(ctx context.Context, signature string, used
 		defer s.mu.RUnlock()
 		token := scope.token(signature)
 		if token == nil {
-			return refreshNotFound("MarkRefreshTokenUsed")
+			return refreshNotFound("RefreshToken.MarkUsed")
 		}
 		root := scope.root(token.SessionID)
 		if root == nil {
-			return refreshNotFound("MarkRefreshTokenRoot")
+			return refreshNotFound("RefreshSession.FindByID")
 		}
 		if err := scope.checkAgent(root.AgentID); err != nil {
 			return err
 		}
-		if token.UsedAt != nil || root.TerminalReason != nil || root.CurrentSignature != signature {
-			return refreshConflict("MarkRefreshTokenUsed")
+		if token.UsedAt != nil {
+			return refreshNotFound("RefreshToken.LegacyCurrent")
+		}
+		if root.TerminalReason != nil || root.CurrentSignature != signature {
+			return memoryRefreshValidation("RefreshToken.MarkUsed", errors.New("only the live current token can be consumed"))
 		}
 		changed := copyRefreshToken(token)
 		changed.UsedAt = &usedAt
 		if err := changed.ValidateTransition(token); err != nil {
-			return err
+			return memoryRefreshValidation("RefreshToken.MarkUsed", err)
 		}
 		if err := scope.checkCurrentLineage(root); err != nil {
 			return err
@@ -430,7 +516,7 @@ func validMemoryRevocation(at time.Time, reason storage.RefreshRevocationReason)
 
 func (s *RefreshSessionStore) RevokeByID(ctx context.Context, sessionID id.RefreshSessionID, at time.Time, reason storage.RefreshRevocationReason) error {
 	if err := validMemoryRevocation(at, reason); err != nil {
-		return err
+		return memoryRefreshValidation("RefreshSession.Revoke", err)
 	}
 	if scope := scopeFor(ctx, s); scope != nil {
 		s.mu.RLock()
@@ -442,7 +528,7 @@ func (s *RefreshSessionStore) RevokeByID(ctx context.Context, sessionID id.Refre
 		if err := scope.checkAgent(root.AgentID); err != nil {
 			return err
 		}
-		return scope.revokeRoot(root, at, reason)
+		return scope.revokeRoot(ctx, root, at, reason)
 	}
 	root, err := s.FindByID(ctx, sessionID)
 	if ports.IsNotFoundErr(err) {
@@ -456,7 +542,7 @@ func (s *RefreshSessionStore) RevokeByID(ctx context.Context, sessionID id.Refre
 
 func (s *RefreshSessionStore) RevokeByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID, at time.Time, reason storage.RefreshRevocationReason) error {
 	if err := validMemoryRevocation(at, reason); err != nil {
-		return err
+		return memoryRefreshValidation("RefreshSession.Revoke", err)
 	}
 	if scope := scopeFor(ctx, s); scope != nil {
 		s.mu.RLock()
@@ -471,7 +557,7 @@ func (s *RefreshSessionStore) RevokeByPrincipalAndAgent(ctx context.Context, pri
 			}
 		})
 		for _, root := range matching {
-			if err := scope.revokeRoot(root, at, reason); err != nil {
+			if err := scope.revokeRoot(ctx, root, at, reason); err != nil {
 				return err
 			}
 		}
@@ -485,7 +571,7 @@ func (s *RefreshSessionStore) RevokeByPrincipalAndAgent(ctx context.Context, pri
 
 func (s *RefreshSessionStore) RevokeByAgent(ctx context.Context, agentID id.AgentID, at time.Time, reason storage.RefreshRevocationReason) error {
 	if err := validMemoryRevocation(at, reason); err != nil {
-		return err
+		return memoryRefreshValidation("RefreshSession.Revoke", err)
 	}
 	if scope := scopeFor(ctx, s); scope != nil {
 		s.mu.RLock()
@@ -500,7 +586,7 @@ func (s *RefreshSessionStore) RevokeByAgent(ctx context.Context, agentID id.Agen
 			}
 		})
 		for _, root := range matching {
-			if err := scope.revokeRoot(root, at, reason); err != nil {
+			if err := scope.revokeRoot(ctx, root, at, reason); err != nil {
 				return err
 			}
 		}
@@ -525,7 +611,7 @@ func (scope *memoryScope) invalidateLegacy(agentID id.AgentID, principal *id.Pri
 	})
 }
 
-func (scope *memoryScope) revokeRoot(root *storage.RefreshSession, at time.Time, reason storage.RefreshRevocationReason) error {
+func (scope *memoryScope) revokeRoot(ctx context.Context, root *storage.RefreshSession, at time.Time, reason storage.RefreshRevocationReason) error {
 	changed := copyRefreshSession(root)
 	if changed.TerminalReason == nil {
 		changed.TerminalReason = &reason
@@ -536,11 +622,19 @@ func (scope *memoryScope) revokeRoot(root *storage.RefreshSession, at time.Time,
 		}
 	}
 	changed.RetryCiphertext = nil
+	return scope.stageTerminalRoot(ctx, root, changed, at, "RefreshSession.Revoke")
+}
+
+func (scope *memoryScope) stageTerminalRoot(ctx context.Context, previous, changed *storage.RefreshSession, at time.Time, operation string) error {
 	known := make(map[string]bool)
-	scope.eachTokenForRoot(root.ID, func(token *storage.RefreshToken) { known[token.Signature] = true })
+	scope.eachTokenForRoot(previous.ID, func(token *storage.RefreshToken) {
+		if token != nil {
+			known[token.Signature] = true
+		}
+	})
 	legacyChanges := make(map[string]*legacyRefreshToken)
 	scope.eachLegacy(func(legacy *legacyRefreshToken) {
-		if legacy.AgentID != root.AgentID || (legacy.RequestID != root.ID.String() && !known[legacy.Signature]) {
+		if legacy.AgentID != previous.AgentID || (legacy.RequestID != previous.ID.String() && !known[legacy.Signature]) {
 			return
 		}
 		if legacy.ExpiresAt.After(changed.RetainUntil) {
@@ -552,16 +646,21 @@ func (scope *memoryScope) revokeRoot(root *storage.RefreshSession, at time.Time,
 			legacyChanges[legacy.Signature] = copy
 		}
 	})
-	if err := changed.ValidateTransition(root, at); err != nil {
-		return err
+	if err := changed.ValidateTransition(previous, at); err != nil {
+		return memoryRefreshValidation(operation, err)
 	}
-	if root.TerminalReason == nil {
+	if previous.TerminalReason == nil {
 		if scope.receipts == nil {
 			scope.receipts = make(map[receiptKey]*storage.RefreshRevocationReceipt)
 		}
-		key := receiptKey{session: root.ID, reason: reason}
+		reason := *changed.TerminalReason
+		key := receiptKey{session: previous.ID, reason: reason}
 		if _, exists := scope.store.receipts[key]; !exists {
-			scope.receipts[key] = &storage.RefreshRevocationReceipt{SessionID: root.ID, AgentID: root.AgentID, Principal: root.Principal, ClientID: root.ClientID, Reason: reason, At: at, RedactedContext: map[string]string{}}
+			scope.receipts[key] = &storage.RefreshRevocationReceipt{
+				SessionID: previous.ID, AgentID: previous.AgentID, Principal: previous.Principal,
+				ClientID: previous.ClientID, Reason: reason, At: at,
+				RedactedContext: security.RedactedAuditContext(ctx),
+			}
 		}
 	}
 	if len(legacyChanges) != 0 && scope.legacy == nil {
@@ -573,17 +672,14 @@ func (scope *memoryScope) revokeRoot(root *storage.RefreshSession, at time.Time,
 	if scope.roots == nil {
 		scope.roots = make(map[id.RefreshSessionID]*storage.RefreshSession)
 	}
-	scope.touch(root.AgentID)
-	scope.roots[root.ID] = changed
+	scope.touch(previous.AgentID)
+	scope.roots[previous.ID] = changed
 	return nil
 }
 
 func boundedRefreshLimit(limit int) (int, error) {
-	if limit <= 0 {
-		return 0, errors.New("refresh listing requires a positive limit")
-	}
-	if limit > 1000 {
-		return 1000, nil
+	if limit < 1 || limit > 1000 {
+		return 0, memoryRefreshValidation("RefreshSession.List", errors.New("limit must be between 1 and 1000"))
 	}
 	return limit, nil
 }
@@ -598,7 +694,7 @@ func (s *RefreshSessionStore) ListAgentIDs(ctx context.Context, afterID id.Agent
 	ids := make(map[id.AgentID]bool)
 	if scope := scopeFor(ctx, s); scope != nil {
 		if scope.closed {
-			return nil, errors.New("authorization transaction is closed")
+			return nil, memoryRefreshValidation("AuthorizationSession", errors.New("authorization transaction is closed"))
 		}
 		scope.eachRoot(func(root *storage.RefreshSession) {
 			if scope.agentID.IsZero() || scope.agentID == root.AgentID {
@@ -647,7 +743,7 @@ func (s *RefreshSessionStore) ListActive(ctx context.Context, afterID id.Refresh
 	}
 	if scope != nil {
 		if scope.closed {
-			return nil, errors.New("authorization transaction is closed")
+			return nil, memoryRefreshValidation("AuthorizationSession", errors.New("authorization transaction is closed"))
 		}
 		scope.eachRoot(func(root *storage.RefreshSession) {
 			if scope.agentID.IsZero() || scope.agentID == root.AgentID {
@@ -672,16 +768,45 @@ func (s *RefreshSessionStore) ListActive(ctx context.Context, afterID id.Refresh
 	return result, nil
 }
 
+func (s *RefreshSessionStore) ListActiveByAgent(ctx context.Context, agentID id.AgentID, principal *id.Principal) ([]storage.RefreshSessionAuditIdentity, error) {
+	const op = "RefreshSession.ListActiveByAgent"
+	scope := scopeFor(ctx, s)
+	if agentID.IsZero() || scope == nil || scope.agentID != agentID || scope.closed {
+		return nil, memoryRefreshValidation("AuthorizationSession", errors.New("agent-scoped authorization transaction required"))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, memoryRefreshContextError(op, err)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]storage.RefreshSessionAuditIdentity, 0, len(s.activeRootsByAgent[agentID]))
+	appendActive := func(root *storage.RefreshSession) {
+		if root != nil && root.AgentID == agentID && root.TerminalReason == nil && (principal == nil || root.Principal == *principal) {
+			result = append(result, root.AuditIdentity())
+		}
+	}
+	for sessionID := range s.activeRootsByAgent[agentID] {
+		appendActive(scope.root(sessionID))
+	}
+	for sessionID, root := range scope.roots {
+		if _, exists := s.activeRootsByAgent[agentID][sessionID]; !exists {
+			appendActive(root)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return bytes.Compare(result[i].ID[:], result[j].ID[:]) < 0 })
+	return result, nil
+}
+
 func (s *RefreshSessionStore) HasRemainingAuthority(ctx context.Context) (bool, error) {
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return false, memoryRefreshContextError("RefreshSession.HasRemainingAuthority", err)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	scope := scopeFor(ctx, s)
 	if scope != nil {
 		if scope.closed {
-			return false, errors.New("authorization transaction is closed")
+			return false, memoryRefreshValidation("AuthorizationSession", errors.New("authorization transaction is closed"))
 		}
 		for _, root := range scope.roots {
 			if root != nil && (root.TerminalReason == nil || len(root.RetryCiphertext) != 0) {
@@ -736,7 +861,7 @@ func (s *RefreshSessionStore) ListDue(ctx context.Context, at time.Time, limit i
 	}
 	if scope != nil {
 		if scope.closed {
-			return nil, errors.New("authorization transaction is closed")
+			return nil, memoryRefreshValidation("AuthorizationSession", errors.New("authorization transaction is closed"))
 		}
 		scope.eachRoot(func(root *storage.RefreshSession) {
 			if scope.agentID.IsZero() || scope.agentID == root.AgentID {
@@ -782,7 +907,7 @@ func (s *RefreshSessionStore) DeleteTerminal(ctx context.Context, before time.Ti
 	defer s.mu.RUnlock()
 	scope := scopeFor(ctx, s)
 	if scope.closed {
-		return 0, errors.New("authorization transaction is closed")
+		return 0, memoryRefreshValidation("AuthorizationSession", errors.New("authorization transaction is closed"))
 	}
 	var expired []*storage.RefreshSession
 	scope.eachRoot(func(root *storage.RefreshSession) {

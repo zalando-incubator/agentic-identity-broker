@@ -66,6 +66,9 @@ type RefreshTokenRepository interface {
 }
 
 type RefreshSessionRevocationRepository interface {
+	// ListActiveByAgent returns nonterminal, non-credential identities in the
+	// owner's transaction. A nil principal includes every principal for the agent.
+	ListActiveByAgent(ctx context.Context, agentID id.AgentID, principal *id.Principal) ([]storage.RefreshSessionAuditIdentity, error)
 	RevokeByID(ctx context.Context, sessionID id.RefreshSessionID, at time.Time, reason storage.RefreshRevocationReason) error
 	RevokeByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID, at time.Time, reason storage.RefreshRevocationReason) error
 	RevokeByAgent(ctx context.Context, agentID id.AgentID, at time.Time, reason storage.RefreshRevocationReason) error

@@ -24,6 +24,10 @@ func (c testAuthorizationClock) Run(ctx context.Context, _ id.AgentID, operation
 
 type unexpectedRefreshRevocations struct{}
 
+func (unexpectedRefreshRevocations) ListActiveByAgent(context.Context, id.AgentID, *id.Principal) ([]storage.RefreshSessionAuditIdentity, error) {
+	panic("unexpected refresh revocation in delegation verifier test")
+}
+
 func (unexpectedRefreshRevocations) RevokeByID(context.Context, id.RefreshSessionID, time.Time, storage.RefreshRevocationReason) error {
 	panic("unexpected refresh revocation in delegation verifier test")
 }

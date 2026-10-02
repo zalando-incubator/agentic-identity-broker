@@ -14,8 +14,8 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// agedAbsoluteHistory is observed after aging a real three-token PKCE lineage,
-// never constructed by inserting a session or replacing its original identity.
+// agedAbsoluteHistory retains the verified HTTP-issued root and token identities
+// in an isolated pre-proof fixture before the complete migration backfill.
 type agedAbsoluteHistory struct {
 	FirstIssuedAt          time.Time
 	LastFreshAt            time.Time
@@ -78,6 +78,13 @@ func ageVerifiedAbsoluteHistory(ctx context.Context, database *sqlx.DB, raw [3]s
 		return agedAbsoluteHistory{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var proofInstalled bool
+	if err := tx.GetContext(ctx, &proofInstalled, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'refresh_sessions' AND column_name = 'lineage_valid')`); err != nil {
+		return agedAbsoluteHistory{}, err
+	}
+	if proofInstalled {
+		return agedAbsoluteHistory{}, fmt.Errorf("aging requires an isolated pre-proof refresh fixture")
+	}
 
 	var hasRoot bool
 	if err := tx.GetContext(ctx, &hasRoot, "SELECT to_regclass('public.refresh_sessions') IS NOT NULL"); err != nil {

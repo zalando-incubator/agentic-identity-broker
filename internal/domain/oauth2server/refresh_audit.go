@@ -3,6 +3,7 @@ package oauth2server
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/ory/fosite"
 	"go.opentelemetry.io/otel"
@@ -24,15 +25,27 @@ func newRefreshMetrics() (metric.Int64Counter, metric.Int64Counter, error) {
 }
 
 func (p *Provider) auditRefresh(ctx context.Context, event, reason, clientID string, root *storage.RefreshSession) {
-	fields := []any{"event", event, "reason", reason, "client_id", clientID}
+	boundClientID := clientID
+	if root != nil {
+		boundClientID = root.ClientID.String()
+	}
+	fields := []any{"event", event, "reason", reason, "client_id", boundClientID}
 	if root != nil {
 		fields = append(fields, "session_id", root.ID.String(), "principal", root.Principal.String(), "agent_id", root.AgentID.String())
+		if boundClientID != clientID {
+			fields = append(fields, "presented_client_id", clientID)
+		}
 		if root.OriginalRequestContextFingerprint != nil {
 			fields = append(fields, "request_context_changed", *root.OriginalRequestContextFingerprint != refreshRequestFingerprint(ctx))
 		}
 	}
-	if context, ok := security.FromContext(ctx); ok {
-		fields = append(fields, "client_ip", context.ClientIP, "user_agent", security.TruncateUserAgent(context.UserAgent))
+	audit := security.AuditContextFields(ctx)
+	fields = append(fields, "origin", audit.Origin)
+	if audit.ClientIP != "" {
+		fields = append(fields, "client_ip", audit.ClientIP)
+	}
+	if audit.UserAgent != "" {
+		fields = append(fields, "user_agent", audit.UserAgent)
 	}
 	switch event {
 	case "RefreshRetryAccepted":
@@ -41,6 +54,23 @@ func (p *Provider) auditRefresh(ctx context.Context, event, reason, clientID str
 		p.refreshRejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
 	}
 	p.logger.InfoContext(ctx, event, fields...)
+}
+
+func logRefreshTransition(logger *slog.Logger, ctx context.Context, root storage.RefreshSessionAuditIdentity, reason storage.RefreshRevocationReason) {
+	event := "RefreshSessionRevoked"
+	if reason == storage.RefreshReasonAbsoluteExpiry || reason == storage.RefreshReasonInactivityExpiry {
+		event = "RefreshSessionExpired"
+	}
+	audit := security.AuditContextFields(ctx)
+	fields := []any{"event", event, "reason", string(reason), "session_id", root.ID.String(),
+		"principal", root.Principal.String(), "agent_id", root.AgentID.String(), "client_id", root.ClientID.String(), "origin", audit.Origin}
+	if audit.ClientIP != "" {
+		fields = append(fields, "client_ip", audit.ClientIP)
+	}
+	if audit.UserAgent != "" {
+		fields = append(fields, "user_agent", audit.UserAgent)
+	}
+	logger.InfoContext(ctx, event, fields...)
 }
 
 func refreshFailureReason(err error, stage string) string {

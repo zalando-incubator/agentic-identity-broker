@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
@@ -129,6 +131,26 @@ type deleteRevocations struct {
 	revokeErr  error
 }
 
+func (r *deleteRevocations) ListActiveByAgent(ctx context.Context, agentID id.AgentID, principal *id.Principal) ([]storage.RefreshSessionAuditIdentity, error) {
+	scope, ok := ctx.Value(deleteScopeKey{}).(*deleteScope)
+	if !ok || scope.agentID != agentID {
+		return nil, errors.New("agent listing requires its scoped authorization transaction")
+	}
+	var active []storage.RefreshSessionAuditIdentity
+	for _, original := range r.state.roots {
+		root := original
+		if staged, ok := scope.roots[root.ID]; ok {
+			root = staged
+		}
+		if root.AgentID != agentID || root.TerminalReason != nil || (principal != nil && root.Principal != *principal) {
+			continue
+		}
+		active = append(active, root.AuditIdentity())
+	}
+	sort.Slice(active, func(i, j int) bool { return active[i].ID.String() < active[j].ID.String() })
+	return active, nil
+}
+
 func (r *deleteRevocations) RevokeByAgent(ctx context.Context, agentID id.AgentID, at time.Time, reason storage.RefreshRevocationReason) error {
 	scope, ok := ctx.Value(deleteScopeKey{}).(*deleteScope)
 	if !ok || scope.agentID != agentID || !at.Equal(scope.at) || reason != storage.RefreshReasonAgentDeleted {
@@ -145,7 +167,7 @@ func (r *deleteRevocations) RevokeByAgent(ctx context.Context, agentID id.AgentI
 		// a root that the agent deletion will remove.
 		scope.receipts[root.ID] = storage.RefreshRevocationReceipt{
 			SessionID: root.ID, AgentID: root.AgentID, Principal: root.Principal,
-			ClientID: root.ClientID, Reason: reason, At: at, RedactedContext: map[string]string{},
+			ClientID: root.ClientID, Reason: reason, At: at, RedactedContext: security.RedactedAuditContext(ctx),
 		}
 	}
 	if r.revokeErr != nil {
@@ -308,11 +330,12 @@ func TestService_Delete_RevokesEveryPrincipalAndKeepsIndependentReceipts(t *test
 		assert.NotContains(t, f.state.legacy, previous.CurrentSignature)
 		receipt, ok := f.state.receipts[previous.ID]
 		require.True(t, ok, "agent cascade must retain an independent receipt for each root")
-		assert.Equal(t, storage.RefreshRevocationReceipt{
-			SessionID: previous.ID, AgentID: f.agentID, Principal: previous.Principal,
-			ClientID: previous.ClientID, Reason: storage.RefreshReasonAgentDeleted,
-			At: f.at, RedactedContext: map[string]string{},
-		}, receipt)
+		assert.Equal(t, previous.ID, receipt.SessionID)
+		assert.Equal(t, f.agentID, receipt.AgentID)
+		assert.Equal(t, previous.Principal, receipt.Principal)
+		assert.Equal(t, previous.ClientID, receipt.ClientID)
+		assert.Equal(t, storage.RefreshReasonAgentDeleted, receipt.Reason)
+		assert.Equal(t, f.at, receipt.At)
 	}
 	assert.NotContains(t, f.state.tokens, *rotated.PreviousSignature)
 	assert.NotContains(t, f.state.legacy, *rotated.PreviousSignature)
