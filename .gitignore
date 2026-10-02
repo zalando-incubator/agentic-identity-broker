@@ -10,6 +10,8 @@
 bin/*
 dist/
 build/
+!web/build/
+!web/build/**
 
 # Test binary, built with `go test -c`
 *.test
@@ -40,6 +42,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.log
 .pnp
 .pnp.js
 assets/docusaurus/build/
@@ -78,7 +81,7 @@ infra/cdk/cdk.out
 bin/extproc-token-exchange
 extproc-token-exchange
 mocks/mcp-server/mcp-server
-imgdiff
+/imgdiff
 .githooks/
 .pi/
 .pi-lens/

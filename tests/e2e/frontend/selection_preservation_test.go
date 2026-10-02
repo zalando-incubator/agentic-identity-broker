@@ -148,6 +148,11 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(consentPage.SetPermissionGroupChecked(ctx, "Productivity Suite", true)).To(Succeed())
 		expectPermissionGroupSelection(ctx, consentPage, "Productivity Suite", true)
 		Expect(consentPage.ChooseDuration(ctx, "30 days")).To(Succeed())
+		Expect(consentPage.SelectedDuration(ctx)).To(Equal("30 days"))
+		Expect(consentPage.PermissionServices(ctx, "Productivity Suite")).To(ConsistOf(
+			pages.PermissionService{Name: "Google", Checked: true},
+			pages.PermissionService{Name: "Slack", Checked: true},
+		))
 
 		// Wait for the optional PS service to appear after selecting it.
 		Expect(consentPage.WaitForServiceToAppear(ctx, "Google")).To(Succeed(),
@@ -183,6 +188,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		// Parse redirect_uri from the intercepted URL
 		parsedURL, err := url.Parse(capturedURL)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(parsedURL.Path).To(Equal("/api/third-party/" + selGoogleServiceID.String() + "/oauth2/authorize"))
 		redirectURI := parsedURL.Query().Get("redirect_uri")
 		Expect(redirectURI).NotTo(BeEmpty(), "redirect_uri should be present in authorize URL")
 
@@ -228,6 +234,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 			pages.PermissionService{Name: "Google", Checked: true},
 			pages.PermissionService{Name: "Slack", Checked: true},
 		))
+		Expect(consentPage.SelectedDuration(ctx)).To(Equal("Until revoked"))
 
 		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_restored_from_url")).NotTo(HaveOccurred())
 	})
@@ -237,7 +244,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 
 		selections := map[string][]string{
 			selMandatoryPSID.String(): {selGitHubServiceID.String()},
-			selOptionalPSID.String():  {selGoogleServiceID.String(), selSlackServiceID.String()},
+			selOptionalPSID.String():  {selGoogleServiceID.String()},
 		}
 
 		// Simulate the callback redirect URL pattern: consent page URL + success=true + service_id + consent_state
@@ -257,15 +264,24 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(err).NotTo(HaveOccurred(), "Page did not load after callback redirect")
 
 		expectPermissionGroupSelection(ctx, consentPage, "Code Access", true)
+		Expect(consentPage.PermissionGroups(ctx)).To(ConsistOf(
+			And(HaveField("Name", "Code Access"), HaveField("Checked", true)),
+			And(HaveField("Name", "Productivity Suite"), HaveField("Checked", true)),
+		))
+		Expect(consentPage.PermissionServices(ctx, "Code Access")).To(Equal([]pages.PermissionService{
+			{Name: "GitHub", Required: true, ReadOnly: true, Checked: true},
+		}))
 		expectPermissionGroupSelection(ctx, consentPage, "Productivity Suite", true)
 		Expect(consentPage.PermissionServices(ctx, "Productivity Suite")).To(ConsistOf(
 			pages.PermissionService{Name: "Google", Checked: true},
-			pages.PermissionService{Name: "Slack", Checked: true},
+			pages.PermissionService{Name: "Slack"},
 		))
 		Expect(consentPage.SelectedDuration(ctx)).To(Equal("Custom date"))
 		Expect(consentPage.CustomDateValue(ctx)).To(Equal("2099-11-06"))
 		Expect(consentPage.GetURLQueryParam("success")).To(Equal("true"))
 		Expect(consentPage.GetURLQueryParam("service_id")).To(Equal(selGitHubServiceID.String()))
+		Expect(consentPage.GetURLQueryParam("consent_state")).To(Equal(encoded))
+		Expect(consentPage.IsSaveBarVisible(ctx)).To(BeTrue(), "restored selections and duration are intentional unsaved edits")
 
 		Expect(consentPage.TakeScreenshot(ctx, "selection_preservation_full_roundtrip")).NotTo(HaveOccurred())
 	})

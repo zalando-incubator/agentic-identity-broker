@@ -194,6 +194,6 @@ Every current guide must describe the accepted system. Historical feature record
 ## Historical note — Refined Trust Architecture, retired 2026-09-27
 
 Refined Trust Architecture was the previous visual direction.
-It used Crimson Pro, Manrope, trust navy, amber actions, warm neutrals, shadow elevation, and a longer motion scale.
+Its typography, palette, elevation, and motion decisions remain recorded in [ADR 006](../../../../adrs/006-frontend-stack.md).
 [ADR 037](../../../../adrs/037-design-system-rebuilt-on-shadcn-radix.md) superseded that direction on 2026-09-27.
 These facts describe history. They are not current implementation rules or a second token contract.

@@ -29,7 +29,11 @@ export function DisconnectDialog({ session, onCancel, onConfirm, onReturnFocus }
     <DialogContent closeLabel={commonCopy.close} onCloseAutoFocus={event => { if (onReturnFocus) { event.preventDefault(); onReturnFocus(); } }}>
       <DialogHeader>
         <DialogTitle>{connectionsCopy.disconnectTitle}</DialogTitle>
-        <DialogDescription>{connectionsCopy.disconnectDescription(session?.service_display_name ?? '')}</DialogDescription>
+        <DialogDescription asChild>
+          <div className="min-w-0">
+            <TruncatedText text={connectionsCopy.disconnectDescription(session?.service_display_name ?? '')} lines={2} expandLabel={commonCopy.showMore} collapseLabel={commonCopy.showLess} />
+          </div>
+        </DialogDescription>
       </DialogHeader>
       <p className="text-sm text-foreground">{connectionsCopy.providerWarning}</p>
       {details.isPending && <p role="status">{commonCopy.loading}</p>}

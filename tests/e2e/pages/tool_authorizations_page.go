@@ -11,6 +11,7 @@ import (
 )
 
 var inlineDecisionConfirmation = regexp.MustCompile("^(Confirm approve|Deny this request)$")
+var inlineDecisionToggle = regexp.MustCompile("^(Approve|Deny)$")
 
 // ToolAuthorizationsPage represents the tool authorizations management page where users
 // view pending approvals and manage permanent tool permissions.
@@ -121,7 +122,7 @@ func (tp *ToolAuthorizationsPage) GetPendingCount(ctx context.Context) (int, err
 
 func (tp *ToolAuthorizationsPage) unexpandedPendingRows() playwright.Locator {
 	return tp.pwPage().GetByTestId("pending-approval-row").Filter(playwright.LocatorFilterOptions{
-		HasNot: tp.pwPage().Locator("button[aria-expanded='true']"),
+		HasNot: tp.pwPage().Locator("button[aria-expanded='true']").Filter(playwright.LocatorFilterOptions{HasText: inlineDecisionToggle}),
 	})
 }
 
@@ -219,12 +220,12 @@ func (tp *ToolAuthorizationsPage) HasPermanentWarning(ctx context.Context) (bool
 
 // --- Permanent section ---
 
-// HasPermanentSection returns true if the standing decisions headings are visible.
+// HasPermanentSection returns true when a standing decision row is visible.
 func (tp *ToolAuthorizationsPage) HasPermanentSection(ctx context.Context) (bool, error) {
-	locator := tp.pwPage().GetByTestId("standing-decisions").GetByRole("heading")
+	locator := tp.pwPage().GetByTestId("standing-decisions").GetByTestId("standing-decision-row")
 	count, err := locator.Count()
 	if err != nil {
-		return false, fmt.Errorf("failed to check permanent section: %w", err)
+		return false, fmt.Errorf("failed to check standing decisions: %w", err)
 	}
 	return count > 0, nil
 }
@@ -251,8 +252,9 @@ func (tp *ToolAuthorizationsPage) HasPermanentlyDenied(ctx context.Context) (boo
 
 // HasRevokeButton returns true if a "Revoke" button is visible.
 func (tp *ToolAuthorizationsPage) HasRevokeButton(ctx context.Context) (bool, error) {
-	locator := tp.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name: "Revoke",
+	locator := tp.pwPage().GetByTestId("standing-decisions").GetByTestId("standing-decision-row").GetByRole("button", playwright.LocatorGetByRoleOptions{
+		Name:  "Revoke",
+		Exact: playwright.Bool(true),
 	})
 	count, err := locator.Count()
 	if err != nil {
@@ -264,7 +266,7 @@ func (tp *ToolAuthorizationsPage) HasRevokeButton(ctx context.Context) (bool, er
 // ClickRevokeOnFirst clicks the first "Revoke" button.
 func (tp *ToolAuthorizationsPage) ClickRevokeOnFirst(ctx context.Context) error {
 	tool, err := tp.locatorText(ctx, tp.pwPage().GetByTestId("standing-decision-row").First().
-		GetByTestId("approval-tool-name").Locator("> span"), "first standing decision tool")
+		GetByTestId("approval-tool-name").Locator(":scope > span"), "first standing decision tool")
 	if err != nil {
 		return err
 	}

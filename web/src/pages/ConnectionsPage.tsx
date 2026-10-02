@@ -53,7 +53,7 @@ export function ConnectionsPage() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  return <div ref={pageRef} tabIndex={-1} className="min-w-0 space-y-4 outline-none">
+  return <div ref={pageRef} tabIndex={-1} className="min-w-0 space-y-4 rounded-md outline-none focus:ring-2 focus:ring-inset focus:ring-ring">
     <PageHeader title={navigationCopy.connections} purpose={connectionsCopy.purpose} />
     {notice && <div role={notice.type === 'error' ? 'alert' : 'status'} className="flex items-start justify-between gap-3 rounded-md border border-border bg-muted p-3">
       <TruncatedText text={notice.message} as="p" lines={2} expandLabel={commonCopy.showMore} collapseLabel={commonCopy.showLess} />

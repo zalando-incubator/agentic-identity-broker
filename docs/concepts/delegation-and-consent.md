@@ -87,6 +87,29 @@ these types:
 An agent can state that it requires repository access but can also use calendar access. The
 broker enforces this distinction during authorization.
 
+## Consent console
+
+The broker serves one interface with light, dark, and system themes. Its console routes are:
+
+| Route | Purpose |
+| --- | --- |
+| `/delegations` | Find your unexpired agent grants and confirm a revoke. |
+| `/agents/:id` | Edit an agent's Permissions and Connections tabs outside an authorization request. |
+| `/sessions` | Review stored connections, refresh or reconnect them, and confirm a disconnect. |
+| `/approvals` | Review pending tool requests before standing allow and deny decisions. |
+| `/approvals/:id` | Review one tool call, its arguments, risk, and exact approval scope. |
+| `/settings` | Choose a theme for this browser. |
+
+An authorization request adds an opaque `session_token` to `/agents/:id`. That address shows a focused consent decision without console navigation.
+The decision shows permission-set names, descriptions, services, and duration choices. It does not add raw provider scopes or permission-group risk ratings.
+
+Allow resumes the validated authorization flow. Deny leaves existing grants unchanged and shows a local result without a redirect.
+Re-consent keeps previously granted access read-only. Changes to existing access belong in the console detail view.
+
+The console detail shows Save changes only after an edit. Cancel restores the loaded selections.
+Appearance preferences never select a consent or tool decision. Settings has no approval-persistence default.
+
+
 ## Creating a delegation
 
 The consent flow is where a user turns a request for access into a grant.
@@ -120,9 +143,9 @@ During an authorization flow, the broker seals the consent context in a short-li
 encrypted server-side token. The context identifies the agent and user. It also contains the
 original request. The consent interface cannot use attacker-provided parameters.
 
-If a mandatory service has no session, the broker starts the
-[third-party authorization flow](/docs/concepts/architecture#how-a-delegated-request-flows).
-The broker stores the resulting tokens in encrypted form before it completes the delegation.
+If a selected service has no session, the interface offers Connect.
+The broker then starts the [third-party authorization flow](/docs/concepts/architecture#how-a-delegated-request-flows).
+It stores the resulting tokens in encrypted form before it completes the delegation.
 
 ## Using a delegation
 
@@ -134,12 +157,10 @@ identifies a user, agent, and resource.
 
 ## Revoking a delegation
 
-Users stay in control through two independent levers:
+Users control access with two separate actions:
 
-- **Revoke a grant** — withdraw one or more permission sets from an agent. An empty grant
-  removes all agent access.
-- **Terminate a session** — delete the stored tokens for a third-party service. This affects
-  each agent that uses the session. The broker lists these agents before it proceeds.
+- **Revoke a grant** — confirm Revoke on Agents, or Revoke all access in the agent detail menu. Only your grant changes.
+- **Disconnect a connection** — confirm Disconnect on Connections. The dialog lists dependent agents. Broker disconnection does not revoke provider-side tokens.
 
 Administrators can delete an agent. This removes its grants. Administrators can also delete
 a service when no grant references it. This prevents delegations that point to a missing

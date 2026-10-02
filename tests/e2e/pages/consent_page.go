@@ -378,6 +378,26 @@ func (cp *ConsentPage) TogglePermissionSet(ctx context.Context, permissionSetNam
 		Locator("[role='checkbox'][aria-label]"), "toggle permission group "+permissionSetName)
 }
 
+// Radix renders checkbox controls as buttons, so SetChecked (for native inputs)
+// cannot set these controls. Click only when the displayed state differs.
+func (cp *ConsentPage) setCheckboxChecked(ctx context.Context, control playwright.Locator, checked bool) error {
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	state, err := control.GetAttribute("aria-checked", playwright.LocatorGetAttributeOptions{Timeout: timeout})
+	if err != nil {
+		return fmt.Errorf("read checkbox selection: %w", err)
+	}
+	if state != "true" && state != "false" {
+		return fmt.Errorf("checkbox has unexpected aria-checked value %q", state)
+	}
+	if (state == "true") == checked {
+		return nil
+	}
+	return cp.locatorClick(ctx, control, "checkbox")
+}
+
 // GetRevokeButton returns the destructive menu item after OpenOverflowMenu.
 func (cp *ConsentPage) GetRevokeButton(ctx context.Context) playwright.Locator {
 	return cp.page().GetByRole("menuitem", playwright.PageGetByRoleOptions{
@@ -429,23 +449,18 @@ func (cp *ConsentPage) IsRevokeButtonPresent(ctx context.Context) (bool, error) 
 	return present, err
 }
 
-// revokeDialogHeading identifies the shared confirmation title.
-func (cp *ConsentPage) revokeDialogHeading() playwright.Locator {
-	return cp.page().GetByRole("heading", playwright.PageGetByRoleOptions{
-		Name: revokeDialogTitle, Exact: playwright.Bool(true),
-	})
-}
-
 // WaitForRevokeDialog waits for the confirmation opened from the detail or overview.
 func (cp *ConsentPage) WaitForRevokeDialog(ctx context.Context) error {
-	if err := cp.revokeDialogHeading().WaitFor(); err != nil {
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	if err := cp.GetRevokeDialog(ctx).WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateVisible, Timeout: timeout,
+	}); err != nil {
 		return fmt.Errorf("revoke grant dialog did not appear: %w", err)
 	}
-	return nil
-}
-
-func (cp *ConsentPage) revokeDialogPanel() playwright.Locator {
-	return cp.page().GetByRole("dialog", playwright.PageGetByRoleOptions{Name: revokeDialogTitle, Exact: playwright.Bool(true)})
+	return ctx.Err()
 }
 
 // TakeRevokeDialogScreenshot captures only the revoke dialog panel.
@@ -454,16 +469,11 @@ func (cp *ConsentPage) TakeRevokeDialogScreenshot(ctx context.Context, name stri
 	if err := cp.WaitForRevokeDialog(ctx); err != nil {
 		return err
 	}
-	panel := cp.revokeDialogPanel()
-	if err := panel.WaitFor(); err != nil {
-		return fmt.Errorf("revoke dialog panel not ready for screenshot: %w", err)
-	}
-	return cp.TakeLocatorScreenshot(ctx, name, panel)
+	return cp.TakeLocatorScreenshot(ctx, name, cp.GetRevokeDialog(ctx))
 }
 
-// IsRevokeDialogVisible reports whether the RevokeGrantDialog is currently visible.
+// IsRevokeDialogVisible reports whether the RevokeAgentDialog is currently visible.
 // Returns false (not an error) when the dialog has been dismissed.
-// Inspects the named dialog rather than content behind its portal.
 func (cp *ConsentPage) IsRevokeDialogVisible(ctx context.Context) (bool, error) {
 	return cp.locatorVisible(ctx, cp.GetRevokeDialog(ctx), "grant revocation dialog")
 }
@@ -508,16 +518,20 @@ func (cp *ConsentPage) ClickOverviewRevokeButton(ctx context.Context) error {
 	return nil
 }
 
-// WaitForRevokeDialogDismissed waits for the RevokeGrantDialog to fully close.
+// WaitForRevokeDialogDismissed waits for the RevokeAgentDialog to fully close.
 // Should be called after CancelRevoke or ConfirmRevoke to ensure the dialog has
 // fully animated out before asserting on page state.
 func (cp *ConsentPage) WaitForRevokeDialogDismissed(ctx context.Context) error {
-	if err := cp.revokeDialogHeading().WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateHidden,
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	if err := cp.GetRevokeDialog(ctx).WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateHidden, Timeout: timeout,
 	}); err != nil {
 		return fmt.Errorf("revoke grant dialog did not close: %w", err)
 	}
-	return nil
+	return ctx.Err()
 }
 
 // WaitForServiceToAppear waits for a specific service to appear on the page.
@@ -910,15 +924,11 @@ func (cp *ConsentPage) SetPermissionServiceChecked(ctx context.Context, group, s
 	if err := cp.ExpandPermissionGroup(ctx, group); err != nil {
 		return err
 	}
-	timeout, err := cp.locatorTimeout(ctx)
-	if err != nil {
-		return err
-	}
 	control := cp.permissionGroup(group).GetByTestId("permission-service").
 		Filter(playwright.LocatorFilterOptions{Has: cp.page().GetByTestId("permission-service-name").
 			And(cp.page().GetByText(service, playwright.PageGetByTextOptions{Exact: playwright.Bool(true)}))}).
 		GetByRole("checkbox")
-	if err := control.SetChecked(checked, playwright.LocatorSetCheckedOptions{Timeout: timeout}); err != nil {
+	if err := cp.setCheckboxChecked(ctx, control, checked); err != nil {
 		return fmt.Errorf("set service %q in permission group %q checked=%t: %w", service, group, checked, err)
 	}
 	return nil
@@ -1083,11 +1093,7 @@ func (cp *ConsentPage) HasSecondaryDeny(ctx context.Context) (bool, error) {
 
 func (cp *ConsentPage) SetPermissionGroupChecked(ctx context.Context, name string, checked bool) error {
 	control := cp.permissionGroup(name).Locator("[role='checkbox'][aria-label]")
-	timeout, err := cp.locatorTimeout(ctx)
-	if err != nil {
-		return err
-	}
-	if err := control.SetChecked(checked, playwright.LocatorSetCheckedOptions{Timeout: timeout}); err != nil {
+	if err := cp.setCheckboxChecked(ctx, control, checked); err != nil {
 		return fmt.Errorf("set permission group %q checked=%t: %w", name, checked, err)
 	}
 	return nil

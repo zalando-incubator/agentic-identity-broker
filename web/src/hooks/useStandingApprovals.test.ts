@@ -68,3 +68,16 @@ it('keeps failed rows without restoring an unrelated successful revoke', async (
   await waitFor(() => expect(result.current.revoke.error).toBeTruthy());
   expect(result.current.data).toEqual([record]);
 });
+
+it('keeps standing rows stable across refreshes with tied creation times', async () => {
+  const first = { ...record, id: 'first' };
+  const second = { ...record, id: 'second', created_at: '2025-12-31T19:00:00-05:00' };
+  const newest = { ...record, id: 'newest', created_at: '2026-01-02T00:00:00Z' };
+  vi.spyOn(approvalApi, 'listPermanentApprovals')
+    .mockResolvedValueOnce([newest, second, first])
+    .mockResolvedValueOnce([second, first, newest]);
+  const { result } = renderHook(() => useStandingApprovals(), { wrapper });
+  await waitFor(() => expect(result.current.data?.map(item => item.id)).toEqual(['newest', 'first', 'second']));
+  await act(async () => { await result.current.refetch(); });
+  expect(result.current.data?.map(item => item.id)).toEqual(['newest', 'first', 'second']);
+});

@@ -134,4 +134,18 @@ describe('connection authority and ownership', () => {
     expect(success).toHaveBeenCalledTimes(1);
     expect(success).toHaveBeenCalledWith('calendar');
   });
+
+  it('keeps newest-first connections stable when a reread changes source order', async () => {
+    const { wrapper } = setup();
+    const first = { ...session, service_id: 'first' };
+    const second = { ...session, service_id: 'second', initiated_at: '2025-12-31T19:00:00-05:00' };
+    const newest = { ...session, service_id: 'newest', initiated_at: '2026-01-02T00:00:00Z' };
+    vi.mocked(sessionsApi.listSessions)
+      .mockResolvedValueOnce([newest, first, second])
+      .mockResolvedValueOnce([first, second, newest]);
+    const { result } = renderHook(() => useConnections(), { wrapper });
+    await waitFor(() => expect(result.current.sessions.map(item => item.service_id)).toEqual(['newest', 'second', 'first']));
+    await act(async () => { await result.current.refetch(); });
+    expect(result.current.sessions.map(item => item.service_id)).toEqual(['newest', 'second', 'first']);
+  });
 });

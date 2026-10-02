@@ -124,7 +124,7 @@ func (ap *ApprovalPage) HasReviewHeading(ctx context.Context) (bool, error) {
 
 // GetToolName returns the tool name displayed in the ToolCallCard (h3 element).
 func (ap *ApprovalPage) GetToolName(ctx context.Context) (string, error) {
-	locator := ap.pwPage().GetByTestId("approval-tool-name").Locator("> h3")
+	locator := ap.pwPage().GetByTestId("approval-tool-name").Locator(":scope > h3")
 	count, err := locator.Count()
 	if err != nil {
 		return "", fmt.Errorf("failed to count tool name heading: %w", err)
@@ -141,7 +141,7 @@ func (ap *ApprovalPage) GetToolName(ctx context.Context) (string, error) {
 
 // GetAgentName returns the requesting agent's display name.
 func (ap *ApprovalPage) GetAgentName(ctx context.Context) (string, error) {
-	locator := ap.pwPage().GetByTestId("approval-agent-name").Locator("> p")
+	locator := ap.pwPage().GetByTestId("approval-agent-name").Locator(":scope > p")
 	count, err := locator.Count()
 	if err != nil {
 		return "", fmt.Errorf("failed to check agent name: %w", err)
@@ -440,11 +440,11 @@ func (ap *ApprovalPage) ResolvedOutcomeText(ctx context.Context) (string, error)
 }
 
 func (ap *ApprovalPage) ToolName(ctx context.Context) (string, error) {
-	return ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-tool-name").Locator("> h3"), "approval tool name")
+	return ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-tool-name").Locator(":scope > h3"), "approval tool name")
 }
 
 func (ap *ApprovalPage) AgentName(ctx context.Context) (string, error) {
-	return ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-agent-name").Locator("> p"), "approval agent name")
+	return ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-agent-name").Locator(":scope > p"), "approval agent name")
 }
 
 func (ap *ApprovalPage) ArgumentsAreMonospace(ctx context.Context) (bool, error) {

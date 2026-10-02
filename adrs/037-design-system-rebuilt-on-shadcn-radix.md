@@ -78,7 +78,7 @@ The team owns component source, theme integration, and dependency updates. Radix
 
 The cutover removes old primitives, fonts, animations, tokens, wrappers, and caches. No compatibility aliases or older-server fallbacks remain.
 
-Table, Command, and console-only dependencies must stay outside the initial decision-route bundle. The consent route retains the under-150-kB compressed-code target.
+Table, Command, and console-only dependencies must stay outside the initial decision-route bundle. On 2026-09-28, the stakeholder approved a 170-kB gzip limit per decision graph and a 5-second cold consent target on Chrome Slow 4G. The feature specification records this performance clarification.
 
 The stakeholder accepted this ADR on 2026-09-27. This acceptance clears T013, but it does not establish implementation or validation completion.
 

@@ -71,6 +71,10 @@ var _ = Describe("Consent Flow", func() {
 		// This makes the agent appear in the user's consent page with delegated services/scopes
 		principal := fixtures.DefaultPrincipal().String()
 		grant := fixtures.IndefiniteGrant(principal, testAgentID, "550e8400-e29b-41d4-a716-446655440000", []string{"repo", "user"})
+		grant.GrantedPermissionSets = []storage.GrantedPermissionSetEntry{{
+			PermissionSetID:    fixtures.PlaceholderPermissionSetID,
+			IncludedServiceIDs: []id.ServiceID{service.ID},
+		}}
 		err = GetTestStorage().UserGrants().Create(ctx, grant)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create test grant")
 

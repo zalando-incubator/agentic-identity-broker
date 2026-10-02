@@ -79,4 +79,18 @@ describe('shared pending approvals', () => {
     expect(result.current.count).toBeUndefined();
     expect(result.current.stale).toBe(true);
   });
+
+  it('keeps newest-first rows stable across refreshes with equivalent timestamps', async () => {
+    const tiedFirst = { ...approval, id: 'first' };
+    const tiedSecond = { ...approval, id: 'second', created_at: '2025-12-31T19:00:00-05:00' };
+    const newest = { ...approval, id: 'newest', created_at: '2026-01-02T00:00:00Z' };
+    vi.spyOn(approvalApi, 'listPendingApprovals')
+      .mockResolvedValueOnce([newest, tiedSecond, tiedFirst])
+      .mockResolvedValueOnce([tiedSecond, newest, tiedFirst]);
+    const { result } = renderHook(() => usePendingApprovals(), { wrapper });
+    await flush(); await flush();
+    expect(result.current.data?.map(item => item.id)).toEqual(['newest', 'first', 'second']);
+    await act(async () => { await result.current.refetch(); });
+    expect(result.current.data?.map(item => item.id)).toEqual(['newest', 'first', 'second']);
+  });
 });

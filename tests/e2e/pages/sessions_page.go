@@ -25,11 +25,20 @@ func (sp *SessionsPage) NavigateToSessions(ctx context.Context) error {
 }
 
 func (sp *SessionsPage) GetRefreshButtonCount(ctx context.Context) (int, error) {
+	timeout, err := sp.locatorTimeout(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if err := sp.page().GetByTestId("connections-table").WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateVisible, Timeout: timeout,
+	}); err != nil {
+		return 0, fmt.Errorf("connections table did not become visible: %w", err)
+	}
 	count, err := sp.refreshButtonLocator().Count()
 	if err != nil {
 		return 0, fmt.Errorf("failed to count refresh buttons: %w", err)
 	}
-	return count, nil
+	return count, ctx.Err()
 }
 
 func (sp *SessionsPage) IsRefreshButtonVisible(ctx context.Context) (bool, error) {
@@ -81,7 +90,7 @@ func (sp *SessionsPage) waitForPageLoad(ctx context.Context) error {
 }
 
 func (sp *SessionsPage) refreshButtonLocator() playwright.Locator {
-	return sp.page().GetByRole("button", playwright.PageGetByRoleOptions{
+	return sp.page().GetByTestId("connections-table").GetByRole("button", playwright.LocatorGetByRoleOptions{
 		Name:  "Refresh",
 		Exact: playwright.Bool(true),
 	})
@@ -126,7 +135,7 @@ func (sp *SessionsPage) ConnectionRows(ctx context.Context) ([]ConnectionRow, er
 }
 
 func (sp *SessionsPage) connectionRow(provider string) playwright.Locator {
-	return sp.page().GetByTestId("connection-row").Filter(playwright.LocatorFilterOptions{
+	return sp.page().GetByTestId("connections-table").GetByTestId("connection-row").Filter(playwright.LocatorFilterOptions{
 		Has: sp.page().GetByTestId("connection-provider").GetByText(provider, playwright.LocatorGetByTextOptions{Exact: playwright.Bool(true)}),
 	})
 }
@@ -147,7 +156,7 @@ func (sp *SessionsPage) ClickDisconnect(ctx context.Context, provider string) er
 }
 
 func (sp *SessionsPage) DisconnectDialogText(ctx context.Context) (string, error) {
-	dialog := sp.page().GetByRole("dialog")
+	dialog := sp.page().GetByRole("dialog", playwright.PageGetByRoleOptions{Name: "Disconnect service", Exact: playwright.Bool(true)})
 	timeout, err := sp.locatorTimeout(ctx)
 	if err != nil {
 		return "", err
@@ -160,6 +169,6 @@ func (sp *SessionsPage) DisconnectDialogText(ctx context.Context) (string, error
 }
 
 func (sp *SessionsPage) ConfirmDisconnect(ctx context.Context) error {
-	return sp.locatorClick(ctx, sp.page().GetByRole("dialog").
+	return sp.locatorClick(ctx, sp.page().GetByRole("dialog", playwright.PageGetByRoleOptions{Name: "Disconnect service", Exact: playwright.Bool(true)}).
 		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Disconnect", Exact: playwright.Bool(true)}), "confirm connection disconnection")
 }

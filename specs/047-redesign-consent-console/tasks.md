@@ -25,6 +25,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 **Execution status (2026-09-28)**: The new component system, data layer, routes, and application journeys are implemented. The full frontend unit run passed 661 tests. The first integrated browser run passed 64 of 75 journeys; reported fixture, readiness, focus-observation, callback, and conflict-feedback issues are being corrected without weakening acceptance assertions. Component accessibility and bundle-budget gates remain active. Linux screenshots, human review, performance measurements, and final release verification are not complete.
 
+**Resume status (2026-10-02)**: Recovered the missing `web/build/` plugins and regression gates and corrected source ignore rules. All 667 frontend unit tests, the production Storybook build, and both decision-bundle checks pass. All 432 light/dark component stories pass when generating macOS and native Linux arm64 review candidates. T066 remains open: human-reviewed Linux baselines and comparison on the amd64 CI renderer are still a foundation prerequisite. See the "Implementation resume" section of `cutover-inventory.md`; no later task is marked complete from this build-path verification.
+
 **Omitted optional sections**:
 - Phase 0 (Pre-implementation Refactoring): plan.md requires refactors to stay with their consumers. A separate refactoring PR would ship a partial presentation.
 - Phase 2.7 (Entity Boilerplate): the feature adds no domain entity, port, storage adapter, or HTTP handler.
@@ -618,8 +620,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - `ConsentActions.tsx`: a primary Allow, a secondary Deny, and the next-steps text
       - `ServiceConnectPrompt.tsx`: connects a required service. It encodes the draft into `consent_state` and navigates to the existing `/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=…` URL
 - [X] T090 [US1] Implement `web/src/pages/AgentDecisionPage.tsx` in DecisionShell from T085–T089, and switch the decision branch of `web/src/components/layout/AgentRoute.tsx` to it. Move the session-token, `consent_state`, redirect, and service-login logic from `web/src/pages/AgentGrantDetailPage.tsx` (about lines 47–64 and 230–272) without changing its semantics
-- [ ] T091 [US1] Update decision-view selectors through `tests/e2e/pages/consent_page.go`, following T004. Migrate the `consent_state` fixtures and decoding in `selection_preservation_test.go` to the canonical envelope without weakening selection assertions. Keep security, authorization, storage, and callback behavior in `cimd_consent_test.go`, `cimd_flow_test.go`, `selection_preservation_test.go`, and `permission_sets_frontend_test.go`; replace only obsolete presentation assertions under the 2026-09-28 clarification
-- [ ] T092 [US1] Run `ginkgo -v --focus "AS-0[1-3]" ./tests/e2e/frontend/` and the journeys from T091 until they pass, then run `just web-test`. Measure SC-002 once with T204's procedure and record it in the "Performance" section of `cutover-inventory.md`; fix a miss before continuing
+- [X] T091 [US1] Update decision-view selectors through `tests/e2e/pages/consent_page.go`, following T004. Migrate the `consent_state` fixtures and decoding in `selection_preservation_test.go` to the canonical envelope without weakening selection assertions. Keep security, authorization, storage, and callback behavior in `cimd_consent_test.go`, `cimd_flow_test.go`, `selection_preservation_test.go`, and `permission_sets_frontend_test.go`; replace only obsolete presentation assertions under the 2026-09-28 clarification
+- [X] T092 [US1] Run `ginkgo -v --focus "AS-0[1-3]" ./tests/e2e/frontend/` and the journeys from T091 until they pass, then run `just web-test`. Measure SC-002 once with T204's procedure and record it in the "Performance" section of `cutover-inventory.md`; fix a miss before continuing
 
 **Checkpoint (not a release)**: AS-01–AS-03 pass on the branch
 
@@ -659,8 +661,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [X] T096 [P] [US2] Rebuild `web/src/components/approvals/ToolCallCard.tsx` (tool, agent, acting user, and collapsible monospace arguments) and `web/src/components/approvals/RiskBadge.tsx` on design-system primitives, using strings from `@copy`
 - [X] T097 [P] [US2] Rebuild these files in `web/src/components/approvals/` on design-system primitives: `PersistenceSelector.tsx`, `ApprovalScopeEditor.tsx`, `ApprovalConfirmation.tsx`, `ApprovalErrorBanner.tsx`, `ApprovalLoadingSkeleton.tsx`, and `ApprovalRequestSummary.tsx`. Keep the once, session, and permanent behavior and the scope-preview validation unchanged
 - [X] T098 [US2] Rebuild `web/src/components/approvals/ApprovalReviewPage.tsx` in DecisionShell, and wire `web/src/pages/ApprovalPage.tsx` to `useApprovalReview`
-- [ ] T099 [US2] Update selectors in `tests/e2e/pages/approval_page.go` only, so that `tests/e2e/frontend/approval_ui_test.go` passes with unchanged assertions
-- [ ] T100 [US2] Run `ginkgo -v --focus "AS-0[45]" ./tests/e2e/frontend/` and `approval_ui_test.go` until they pass. `just web-bundle-check` passes from this point
+- [X] T099 [US2] Update selectors in `tests/e2e/pages/approval_page.go` only, so that `tests/e2e/frontend/approval_ui_test.go` passes with unchanged assertions
+- [X] T100 [US2] Run `ginkgo -v --focus "AS-0[45]" ./tests/e2e/frontend/` and `approval_ui_test.go` until they pass. `just web-bundle-check` passes from this point
 
 **Checkpoint (not a release)**: AS-04 and AS-05 pass. Both P1 decision flows work on the branch
 
@@ -690,8 +692,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [X] T103 [US3] Implement `web/src/hooks/useDelegations.ts`
 - [X] T104 [P] [US3] Build `web/src/components/delegations/DelegationsTable.tsx` (TanStack Table with `data-display/Table` at compact density)
 - [X] T105 [US3] Implement `web/src/pages/DelegationsPage.tsx`, and route `/delegations` to it in `web/src/App.tsx`
-- [ ] T106 [US3] Update the overview selectors in `tests/e2e/pages/consent_page.go` (`NavigateToOverview`, `IsOverviewRevokeButtonPresent`, and `ClickOverviewRevokeButton`), so that the overview scenarios in `tests/e2e/frontend/revoke_grant_flow_test.go` pass with unchanged assertions
-- [ ] T107 [US3] Run `ginkgo -v --focus "AS-0[67]" ./tests/e2e/frontend/` and the overview revoke journeys until they pass
+- [X] T106 [US3] Update the overview selectors in `tests/e2e/pages/consent_page.go` (`NavigateToOverview`, `IsOverviewRevokeButtonPresent`, and `ClickOverviewRevokeButton`), so that the overview scenarios in `tests/e2e/frontend/revoke_grant_flow_test.go` pass with unchanged assertions
+- [X] T107 [US3] Run `ginkgo -v --focus "AS-0[67]" ./tests/e2e/frontend/` and the overview revoke journeys until they pass
 
 **Checkpoint (not a release)**: AS-06 and AS-07 pass
 
@@ -723,8 +725,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [X] T111 [P] [US4] Build `web/src/components/consent/GrantEditBar.tsx` and `web/src/components/consent/AgentOverflowMenu.tsx`. GrantEditBar is sticky and sets `scroll-padding-bottom` so focus stays visible. AgentOverflowMenu is a DropdownMenu that opens `RevokeAgentDialog`
 - [X] T112 [P] [US4] Build `web/src/components/consent/AgentConnectionsTab.tsx`. It lists the services the agent requires by joining `services[].connectionStatus` from the agent detail with `useConnections`: `not_connected` shows No connection with a Connect link to the existing authorize URL, and a connected service shows its ConnectionState badge and a link to `/sessions`
 - [X] T113 [US4] Implement `web/src/pages/AgentConsolePage.tsx`, reusing AgentIdentityHeader, PermissionGroupList, DurationChoice, and `consentDraft`. Switch the console branch of `web/src/components/layout/AgentRoute.tsx` to it
-- [ ] T114 [US4] Update detail selectors through `tests/e2e/pages/consent_page.go`: revoke uses the overflow menu and save uses the dirty-draft bar. Under the 2026-09-28 clarification, replace raw-scope and initial-Save assertions with permission-group and dirty-only-Save coverage, and make an explicit edit in `csrf_grant_save_test.go`. Preserve security, storage, callback, and revoke assertions in `consent_flow_test.go`, `csrf_grant_save_test.go`, `revoke_grant_flow_test.go`, and `permission_sets_frontend_test.go`
-- [ ] T115 [US4] Run `ginkgo -v --focus "AS-0[89]" ./tests/e2e/frontend/` and the journeys from T114 until they pass
+- [X] T114 [US4] Update detail selectors through `tests/e2e/pages/consent_page.go`: revoke uses the overflow menu and save uses the dirty-draft bar. Under the 2026-09-28 clarification, replace raw-scope and initial-Save assertions with permission-group and dirty-only-Save coverage, and make an explicit edit in `csrf_grant_save_test.go`. Preserve security, storage, callback, and revoke assertions in `consent_flow_test.go`, `csrf_grant_save_test.go`, `revoke_grant_flow_test.go`, and `permission_sets_frontend_test.go`
+- [X] T115 [US4] Run `ginkgo -v --focus "AS-0[89]" ./tests/e2e/frontend/` and the journeys from T114 until they pass
 
 **Checkpoint (not a release)**: AS-08 and AS-09 pass. Both `/agents/:id` contexts are migrated
 
@@ -758,8 +760,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [X] T118 [US5] Implement `web/src/hooks/useConnections.ts`
 - [X] T119 [P] [US5] Build `web/src/components/sessions/ConnectionsTable.tsx`, `web/src/components/sessions/ConnectionStateBadge.tsx`, and `web/src/components/sessions/DisconnectDialog.tsx`. DisconnectDialog replaces `TerminationDialog.tsx`
 - [X] T120 [US5] Implement `web/src/pages/ConnectionsPage.tsx`, porting the callback handling from `web/src/pages/ThirdPartySessionsPage.tsx` (about lines 95–110). Route `/sessions` to it in `web/src/App.tsx`
-- [ ] T121 [US5] Update selectors in `tests/e2e/pages/sessions_page.go` only, so that `tests/e2e/frontend/session_refresh_button_test.go` passes with unchanged assertions
-- [ ] T122 [US5] Run `ginkgo -v --focus "AS-1[01]" ./tests/e2e/frontend/` and `session_refresh_button_test.go` until they pass
+- [X] T121 [US5] Update selectors in `tests/e2e/pages/sessions_page.go` only, so that `tests/e2e/frontend/session_refresh_button_test.go` passes with unchanged assertions
+- [X] T122 [US5] Run `ginkgo -v --focus "AS-1[01]" ./tests/e2e/frontend/` and `session_refresh_button_test.go` until they pass
 
 **Checkpoint (not a release)**: AS-10 and AS-11 pass
 
@@ -788,8 +790,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [X] T126 [P] [US6] Build `web/src/components/approvals/PendingApprovalsTable.tsx` and `web/src/components/approvals/InlineApprovalActions.tsx`, reusing `PersistenceSelector` and `ApprovalScopeEditor`
 - [X] T127 [P] [US6] Build `web/src/components/approvals/StandingDecisionsTable.tsx` and `web/src/components/approvals/ApprovalArrivalAnnouncer.tsx`. The announcer compares pending IDs between refetches and announces arrivals and decision-state changes
 - [X] T128 [US6] Implement `web/src/pages/ApprovalsPage.tsx`, and route `/approvals` to it in `web/src/App.tsx`
-- [ ] T129 [US6] Update selectors in `tests/e2e/pages/tool_authorizations_page.go` only, so that `tests/e2e/frontend/tool_authorizations_test.go` passes with unchanged assertions
-- [ ] T130 [US6] Run `ginkgo -v --focus "AS-1[23]" ./tests/e2e/frontend/` and `tool_authorizations_test.go` until they pass
+- [X] T129 [US6] Update selectors in `tests/e2e/pages/tool_authorizations_page.go` only, so that `tests/e2e/frontend/tool_authorizations_test.go` passes with unchanged assertions
+- [X] T130 [US6] Run `ginkgo -v --focus "AS-1[23]" ./tests/e2e/frontend/` and `tool_authorizations_test.go` until they pass
 
 **Checkpoint (not a release)**: AS-12 and AS-13 pass. The browser never calls `GET /api/approvals`
 
@@ -816,7 +818,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - No page overflows at 320 px or 200% zoom
       - No view has a second accent action
       - Reduced motion removes all movement
-- [ ] T134 [US7] Run `ginkgo -v --focus "AS-1[45]" ./tests/e2e/frontend/` until it passes
+- [X] T134 [US7] Run `ginkgo -v --focus "AS-1[45]" ./tests/e2e/frontend/` until it passes
 
 **Checkpoint (not a release)**: AS-14 and AS-15 pass
 
@@ -840,7 +842,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 ### Implementation for User Story 8
 
 - [X] T137 [US8] Implement `web/src/pages/SettingsPage.tsx`. Add a lazy `/settings` route under ConsoleLayout in `web/src/App.tsx`, and add a Settings item to the sidebar navigation in `web/src/components/layout/ConsoleLayout.tsx`
-- [ ] T138 [US8] Run `ginkgo -v --focus "AS-17" ./tests/e2e/frontend/` until it passes
+- [X] T138 [US8] Run `ginkgo -v --focus "AS-17" ./tests/e2e/frontend/` until it passes
 
 **Checkpoint (not a release)**: AS-17 passes
 
@@ -910,7 +912,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
       Then `just test-e2e-frontend-visual` must pass
 - [ ] T150 [P] Add a "Consent UI" section to `README.md` (FR-031). Write one short paragraph for each route: `/delegations`, `/agents/:id` in both the decision and console contexts, `/sessions`, `/approvals`, `/approvals/:id`, and `/settings`. Show each route's light and dark screenshots from `tests/e2e/screenshots/` in `<picture>` elements with `prefers-color-scheme` sources. Replace the old-UI teaser `assets/docusaurus/static/img/teaser-browser.webp` (referenced near line 87 of `README.md`) with a current capture
-- [ ] T151 [P] Update `docs/concepts/delegation-and-consent.md` and `docs/get-started/index.md` wherever they describe the old "Consent Management" UI, the shield, or the old routes. Then run `just docs-build`
+- [X] T151 [P] Update `docs/concepts/delegation-and-consent.md` and `docs/get-started/index.md` wherever they describe the old "Consent Management" UI, the shield, or the old routes. Then run `just docs-build`
 
 **Checkpoint**: One presentation remains, with no obsolete code, dependencies, fonts, caches, or flags. Baselines and README are published
 
@@ -950,7 +952,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [ ] T165 Verify that API documentation matches the existing session-list and consent responses, with no runtime API change. End-user UI documentation lives in `README.md` and `docs/` (T150, T151)
 
 **Architecture & Documentation** (Principle II):
-- [ ] T166 Update the frontend section of `ARCHITECTURE.md` (about lines 135–160) to the delivered stack. Remove the "proposed" framing and the pre-migration inventory (Headless UI, React Router 6, and "no external state library")
+- [X] T166 Update the frontend section of `ARCHITECTURE.md` (about lines 135–160) to the delivered stack. Remove the "proposed" framing and the pre-migration inventory (Headless UI, React Router 6, and "no external state library")
 - [ ] T167 Verify that the Glossary in `ARCHITECTURE.md` matches the terms used in code and in `web/src/copy/index.ts`
 - [ ] T168 [P] Verify that `adrs/037-design-system-rebuilt-on-shadcn-radix.md` is Accepted and cross-referenced from ADRs 006 and 035. Write a further ADR only if the implementation deviated from ADR 037
 

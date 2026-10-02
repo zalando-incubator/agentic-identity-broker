@@ -22,6 +22,8 @@ pnpm-lock.yaml
 
 # Build artifacts
 build/
+!web/build/
+!web/build/**
 bin/
 !bin/linux/
 dist/*

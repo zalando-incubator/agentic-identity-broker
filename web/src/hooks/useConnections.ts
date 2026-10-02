@@ -30,7 +30,12 @@ export function useConnections(options: ConnectionsOptions = {}) {
   const mutationKey = [...listKey, 'refresh'];
   const query = useQuery({
     queryKey: listKey,
-    queryFn: ({ signal }) => sessionsApi.listSessions({ signal }),
+    queryFn: async ({ signal }) => {
+      const sessions = await sessionsApi.listSessions({ signal });
+      return sessions.sort((left, right) =>
+        Date.parse(right.initiated_at) - Date.parse(left.initiated_at) ||
+        left.service_display_name.localeCompare(right.service_display_name) || right.service_id.localeCompare(left.service_id));
+    },
   });
   const sessions = query.data ?? noSessions;
   const byService = useMemo(() => new Map(sessions.map(session => [session.service_id, session])), [sessions]);

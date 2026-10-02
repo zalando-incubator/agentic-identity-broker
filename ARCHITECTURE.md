@@ -130,7 +130,7 @@ Application Startup
 
 **Purpose**: User-facing web interface for managing OAuth2 consent delegations to AI agents.
 
-**Architecture**: React 18 Single Page Application with TypeScript, served from Go backend
+**Architecture**: React 19 Single Page Application with TypeScript, served from Go backend
 
 **Technology Stack**:
 

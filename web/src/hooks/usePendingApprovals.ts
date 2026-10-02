@@ -17,7 +17,12 @@ export function PendingApprovalsProvider({ children }: { children: ReactNode }) 
   const { principal } = usePrincipal();
   const query = useQuery({
     queryKey: queryKeys.pending(principal),
-    queryFn: ({ signal }) => approvalApi.listPendingApprovals({ signal }),
+    queryFn: async ({ signal }) => {
+      const approvals = await approvalApi.listPendingApprovals({ signal });
+      return approvals.sort((left, right) =>
+        Date.parse(right.created_at) - Date.parse(left.created_at) ||
+        left.tool_name.localeCompare(right.tool_name) || left.id.localeCompare(right.id));
+    },
     refetchInterval: 10_000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,

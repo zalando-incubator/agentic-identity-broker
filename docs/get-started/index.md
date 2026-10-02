@@ -97,14 +97,20 @@ that requests access.
 
 ## Step 4: Review and grant consent
 
-The consent interface shows the requested **permission sets**. Each set is **mandatory**
-or **optional**. The sets group provider scopes into business-readable capabilities.
+The focused consent view identifies the agent and its requested **permission sets**.
+Required groups stay selected. Optional groups remain editable. Each group explains access with a name, description, and service names.
 
-Select the permission sets to grant. You can set an expiry. Then submit the request.
+1. Select the optional groups that you want to grant.
+2. If a selected service needs a connection, click **Connect** and complete its provider authorization.
+3. Choose **Until revoked**, **30 days**, or a valid **Custom date**.
+4. Click **Allow** to save the grant and resume the sample client's authorization request.
 
-The consent interface shows the grant. The broker resumes the authorization request and
-redirects you to the sample client. The sample client then holds broker-issued, scoped
-access. It does not hold a third-party credential.
+The provider callback preserves your selections and duration. The sample client receives broker-issued, scoped access, not a third-party credential.
+**Deny** leaves existing grants unchanged and shows a local result without a redirect.
+
+The console starts at `http://localhost:3000/delegations` in this development stack.
+Agents shows unexpired grants. Connections (`/sessions`) shows stored provider sessions. Approvals (`/approvals`) shows pending requests before standing decisions.
+The agent detail (`/agents/:id` without `session_token`) saves only deliberate edits. Settings (`/settings`) changes only this browser's theme.
 
 ## Step 5: View the stored delegation
 

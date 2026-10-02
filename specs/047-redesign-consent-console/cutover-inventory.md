@@ -889,3 +889,75 @@ On 2026-09-28, the stakeholder selected **Use the redesigned behavior** after re
 - Keep authorization, acting-user isolation, server mutations, safe redirects, provider callbacks, and revocation scopes unchanged.
 
 The decision is recorded in `spec.md`, `plan.md`, FR-029, SC-009, T091, and T114. It does not authorize a compatibility path or backend change.
+
+## Implementation resume — 2026-10-02
+
+The prerequisite script initially had no saved feature context. The active branch identified feature 047, and the explicit `SPECIFY_FEATURE_DIRECTORY` override resolved all required artifacts. The read-only requirements checklist passed: 16 checked, 0 unchecked.
+
+### Build-source recovery
+
+The first `just web-storybook-build` failed because all three plugins imported by `web/vite.config.ts` were absent. `web/build/` had been excluded by both repository and frontend `build/` ignore rules. No copy was present in the available worktrees.
+
+Restored `themeInitPlugin.ts`, `assetCompressionPlugin.ts`, `decisionModulesPlugin.ts`, their theme/compression integration tests, and `decisionBundle.test.ts`. Repository and Docker ignore rules now explicitly retain `web/build/`; the frontend ignore file no longer excludes that source directory. The repository also ignores general `*.log` artifacts.
+
+Observed verification:
+
+- Locked frontend dependency installation succeeded.
+- The first integration-test run exposed macOS `/var` versus `/private/var` fixture paths. Canonicalizing temporary roots fixed the fixture; the corrected run passed all 3 tests across 2 files.
+- The build-source TypeScript project passes `tsc -p web/tsconfig.node.json --noEmit` with its target aligned to Node's ES2022 support.
+- `just web-test` passed all 667 tests across 70 files, including the recovered build regressions.
+- `just web-storybook-build` passed after source recovery.
+- `just web-bundle-check` passed both route checks. The production consent graph measured 164,039 bytes gzip across 16 static JavaScript/CSS assets; approval measured 155,595 bytes across 14. Both are below 170,000 bytes and contain no rendered Table or Command modules.
+- Module-inventory IDs are relative to the project root rather than exposing the checkout path; the production build and both bundle checks pass with that normalization.
+- A temporary server using the real `SPAHandler` served the production build. Chromium observed Dark and `color-scheme: dark`, no CSP violations, a script-hash CSP, and Brotli HTML delivery. Both gzip and Brotli wordmark responses decoded to SVG.
+- A real Storybook browser session changed ThemeChoice from Light to Dark and observed the selected radio and resolved document theme. Temporary smoke-server source and processes were removed.
+- `just web-storybook-visual-candidates` passed all 432 stories across 68 light/dark project files. These macOS captures are unreviewed candidates, not Linux baselines.
+- Two Linux amd64 container attempts exited 137 before reporting any story results; the second serialized test files and limited the Node heap. Neither produced candidate images or establishes an accessibility failure.
+- Native Ubuntu Noble arm64 capture with Playwright 1.62.1 passed 216 Light and 216 Dark tests (34 files per project). Separate, unreviewed Linux candidates are in `web/.storybook/candidates/linux-arm64/`. The amd64 CI renderer has not been validated against them.
+- `ripwire --quality-delta` could not index the build-source path in the repository-root scan, and the source-directory scan had no Git baseline. A scoped structural/lexical quality panel reported no ranked findings; this is not a clean quality-delta claim.
+- Container dependency installation reported one high-severity advisory. No automatic dependency upgrade was applied.
+
+The user explicitly authorized deferring T066's human visual review while continuing the remaining implementation tasks. This changes execution order, not release requirements: approved Linux baselines and comparison on the amd64 CI renderer remain mandatory before completion.
+
+
+### Journey migration and accessibility
+
+T091, T099, T106, T114, T121, and T129 now use the current decision, table, overflow, save-bar, and confirmation controls. Canonical consent-state journeys retain exact group/service selections and also cover duration and custom-date preservation. The CSRF journey makes a deliberate edit before saving and retains its storage and safe-redirect assertions. Canonical acceptance assertions were not weakened.
+
+Additional requirement fixes:
+
+| File | Fix and evidence |
+| --- | --- |
+| `web/src/components/sessions/DisconnectDialog.tsx` | Long provider descriptions use the existing two-line TruncatedText control with accessible expansion. Dependency warnings and provider-token text remain visible. |
+| `web/src/pages/ConnectionsPage.tsx` | Focus returning after removal of the trigger row has a visible semantic ring on the page fallback. |
+| `web/src/components/approvals/PermanentDenialDialog.tsx` | Long tool/agent context uses TruncatedText; the permanent-denial effect stays separately visible. At 320 px, real Chromium measured 286 px dialog width and 2,089 px content width before repair; afterward both widths were 286 px, including after expanding the full names. The temporary reproduction story was removed. |
+| `tests/e2e/pages/page.go` | Legacy captures failed with `font Crimson Pro unavailable` in the real CIMD journey. Readiness now checks the CSS-declared Zalando Sans Variable, Inter Variable, and JetBrains Mono Variable families without suppressing unavailable-font errors. |
+
+After the application-dialog fixes, `just web-lint` passed and `just web-test` passed all 667 tests across 70 files. AS-01 passed with themed capture enabled before the legacy readiness repair; it uses a separate themed-capture path. The full migrated frontend capture run is the subsequent green checkpoint.
+
+`just check` uncovered a second ignored-source omission: `tools/imgdiff/main.go` called an absent `runGate`. The executable ignore rule is now root-scoped (`/imgdiff`) instead of excluding the source directory. The gate and its filesystem/PNG regressions are restored; available images become review artifacts, never automatically accepted baselines.
+
+
+### Stable list reads and pre-integration checkpoint
+
+The first complete migrated capture run passed 74 of 75 journeys. AS-15 exposed a real focus problem: tied-timestamp pending records changed order on refresh and moved a focused control out of the viewport. A later run exposed unordered session reads as the same problem on Connections. PostgreSQL already orders sessions by creation time; the memory repository iterates its map without an order.
+
+The shared pending, connection, and standing queries now keep newest-first order, with a displayed-name and ID tie-breaker. No backend endpoint, response, token, or persistence behavior changed. Three regressions failed semantically before their fixes and then passed; the complete targeted hook batch passed 20 tests. Temporary focus diagnostics and source scaffolds were removed.
+
+The final pre-integration run executed all 75 frontend journeys with capture enabled: 75 passed, 0 failed, 0 pending, 0 skipped. This includes all 17 active acceptance scenarios and the preserved security, storage, and callback journeys. The frontend unit gate passed 670 tests across 70 files. Frontend lint, both decision-bundle cases, and the updated Docusaurus build passed.
+
+The quality-delta report flagged locator/error-handling clone matches, including semantically unrelated browser and PNG helpers, plus complexity in the new image gate. Those findings were examined without refactoring code merely to satisfy the heuristic. The report is not recorded as clean.
+
+### Performance
+
+The actual broker binary and frontend were built with `just build-all`. A temporary harness launched that binary with real memory encryption, signed approval credentials, isolated loopback providers, and authenticated HTTP seeding.
+
+Chromium measured cold consent content at **4,340.4 ms**. It used Chrome DevTools' current Slow 4G constants: 562.5 ms latency, 180,000 bytes/s download, and 84,375 bytes/s upload. The preset values came from `ChromeDevTools/devtools-frontend/front_end/core/sdk/NetworkManager.ts`. The browser cache was empty and disabled. A genuine `/oauth2/authorize` redirect supplied the authorization session before the measured consent navigation.
+
+The HTML response used Brotli and public module-preload hints. The browser observed no CSP violations and no automatic cross-origin requests. This satisfies the 5-second measurement on this pre-integration build; no claim is made about moderated decision-time studies.
+
+### Newly approved upstream integration
+
+The user approved integrating current `main` and migrating to its existing consent-state form POST and tab-local storage flow. The user also approved documentation-only corrections for existing session-detail/termination responses and approval error statuses. Neither approval permits new API behavior or compatibility fallbacks.
+
+The contract audit also identified an expired-grant draft defect and misleading optional fields/error mocks. These reachable frontend corrections remain part of the implementation, and the affected gates will run after integration. The earlier implementation's test-first chronology cannot be reconstructed from its combined implementation commit; historical assertions remain unverified rather than inferred from task checkmarks.
