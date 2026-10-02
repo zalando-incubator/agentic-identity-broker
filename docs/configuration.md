@@ -839,6 +839,22 @@ See [`examples/config/request-context.yaml`](../examples/config/request-context.
 
 ## Security Best Practices
 
+### CIMD SSRF protection
+
+Never enable `security.skip_cimd_ssrf_validation` in production. The default is `false`.
+This flag disables both the IP blocklist and TLS certificate verification for CIMD document fetches.
+Use it only for local mock servers in development or tests.
+
+Set `GO_ENV=development` explicitly only for local CIMD mock testing.
+Otherwise, the configuration loader rejects `security.skip_cimd_ssrf_validation: true` before storage or network initialization, even when CIMD is disabled.
+This includes unset, empty, staging, test, production, and unrecognized environment values.
+The default development environment for `.env` file selection does not permit this bypass.
+
+Audit the effective flag value and its source in the startup configuration summary.
+Alert on `security.skip_cimd_ssrf_validation: true` outside local development or tests.
+The `configuration_loaded` JSON audit event identifies the configuration source and key, but does not include the effective value.
+When the builder creates an insecure CIMD fetcher, it also emits a warning.
+
 ### Sensitive Values
 
 Any configuration key starting with `IDENTITY_BROKER_` or containing these keywords is considered sensitive and will be redacted in logs:
