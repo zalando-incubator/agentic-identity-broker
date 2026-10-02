@@ -3,6 +3,7 @@ package telemetry
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,10 +12,17 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	collogpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	colmetricpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
@@ -293,6 +301,92 @@ func TestNewProvider_HTTPInitializes(t *testing.T) {
 		cancel()
 		_ = shutdown(shutdownCtx)
 	})
+}
+
+func TestBuildHTTPProviders_ExportsToSignalPaths(t *testing.T) {
+	type exportRequest struct {
+		path        string
+		contentType string
+		body        []byte
+	}
+	requests := make(chan exportRequest, 4)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/traces" && r.URL.Path != "/v1/metrics" && r.URL.Path != "/v1/logs" {
+			http.NotFound(w, r)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		requests <- exportRequest{path: r.URL.Path, contentType: r.Header.Get("Content-Type"), body: body}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+	}))
+	defer collector.Close()
+
+	cfg := minimalEnabledConfig("http")
+	cfg.Exporter.Endpoint = collector.URL
+	cfg.Logs.Enabled = true
+	cfg.Metrics.ExportInterval = time.Hour
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tp, mp, lp, err := buildHTTPProviders(ctx, cfg, resource.Empty(), newTestLogger(new(bytes.Buffer)))
+	require.NoError(t, err)
+	require.NotNil(t, lp)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		assert.NoError(t, buildShutdown(tp, mp, lp)(shutdownCtx))
+	}()
+
+	_, span := tp.Tracer("export-regression").Start(ctx, "exported-span")
+	span.End()
+	counter, err := mp.Meter("export-regression").Int64Counter("exported.counter")
+	require.NoError(t, err)
+	counter.Add(ctx, 3)
+	require.NoError(t, tp.ForceFlush(ctx))
+	require.NoError(t, mp.ForceFlush(ctx))
+	record := log.Record{}
+	record.SetBody(attribute.StringValue("exported-log"))
+	lp.Logger("export-regression").Emit(ctx, record)
+	require.NoError(t, lp.ForceFlush(ctx))
+	require.Len(t, requests, 3)
+
+	traceRequest := <-requests
+	assert.Equal(t, "/v1/traces", traceRequest.path)
+	assert.Equal(t, "application/x-protobuf", traceRequest.contentType)
+	traces := new(coltracepb.ExportTraceServiceRequest)
+	require.NoError(t, proto.Unmarshal(traceRequest.body, traces))
+	require.Len(t, traces.ResourceSpans, 1)
+	require.Len(t, traces.ResourceSpans[0].ScopeSpans, 1)
+	require.Len(t, traces.ResourceSpans[0].ScopeSpans[0].Spans, 1)
+	assert.Equal(t, "exported-span", traces.ResourceSpans[0].ScopeSpans[0].Spans[0].Name)
+
+	metricRequest := <-requests
+	assert.Equal(t, "/v1/metrics", metricRequest.path)
+	assert.Equal(t, "application/x-protobuf", metricRequest.contentType)
+	metrics := new(colmetricpb.ExportMetricsServiceRequest)
+	require.NoError(t, proto.Unmarshal(metricRequest.body, metrics))
+	require.Len(t, metrics.ResourceMetrics, 1)
+	require.Len(t, metrics.ResourceMetrics[0].ScopeMetrics, 1)
+	require.Len(t, metrics.ResourceMetrics[0].ScopeMetrics[0].Metrics, 1)
+	metric := metrics.ResourceMetrics[0].ScopeMetrics[0].Metrics[0]
+	assert.Equal(t, "exported.counter", metric.Name)
+	sum := metric.GetSum()
+	require.NotNil(t, sum)
+	require.Len(t, sum.DataPoints, 1)
+	assert.Equal(t, int64(3), sum.DataPoints[0].GetAsInt())
+
+	logRequest := <-requests
+	assert.Equal(t, "/v1/logs", logRequest.path)
+	assert.Equal(t, "application/x-protobuf", logRequest.contentType)
+	logs := new(collogpb.ExportLogsServiceRequest)
+	require.NoError(t, proto.Unmarshal(logRequest.body, logs))
+	require.Len(t, logs.ResourceLogs, 1)
+	require.Len(t, logs.ResourceLogs[0].ScopeLogs, 1)
+	require.Len(t, logs.ResourceLogs[0].ScopeLogs[0].LogRecords, 1)
+	assert.Equal(t, "exported-log", logs.ResourceLogs[0].ScopeLogs[0].LogRecords[0].Body.GetStringValue())
 }
 
 // Custom service name appears in TracerProvider resource via emitted spans.

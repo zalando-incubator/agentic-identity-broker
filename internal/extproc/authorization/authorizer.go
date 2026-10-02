@@ -11,6 +11,7 @@ import (
 	"time"
 
 	envoyplugin "github.com/open-policy-agent/opa-envoy-plugin/plugin"
+	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/plugins"
 	oparego "github.com/open-policy-agent/opa/v1/rego"
 	opasdk "github.com/open-policy-agent/opa/v1/sdk"
@@ -149,30 +150,41 @@ func newSDKAuthorizer(cfg *config.AuthorizationConfig, logger *slog.Logger) (*OP
 func (a *OPAAuthorizer) Evaluate(ctx context.Context, input OPAInput) (*OPADecision, error) {
 	ctx, span := otel.Tracer("extproc").Start(ctx, "extproc.opa.evaluate")
 	defer span.End()
-	if a.sdkOPA != nil {
-		return a.evaluateSDK(ctx, input)
+	start := time.Now()
+	evalCtx, cancel := context.WithTimeout(ctx, a.cfg.EvaluationTimeout)
+	defer cancel()
+	// Fast policies can ignore a cancelled context; deny before entering OPA.
+	if evalCtx.Err() != nil {
+		return a.timeoutDecision(ctx, input, start), nil
 	}
-	return a.evaluateQuery(ctx, input)
+	parsed, err := ast.InterfaceToValue(input)
+	// AST conversion cannot be interrupted; reject if its deadline elapsed.
+	if evalCtx.Err() != nil {
+		return a.timeoutDecision(ctx, input, start), nil
+	}
+	if err != nil {
+		durationMS := time.Since(start).Milliseconds()
+		a.logger.ErrorContext(ctx, "opa input conversion error — denying", "error", err)
+		traceDecision(ctx, input, ActionDeny, "error", durationMS)
+		a.logAudit(ctx, ActionDeny, nil, durationMS, input, "error")
+		return &OPADecision{Action: ActionDeny, Reasons: []string{"policy evaluation error"}}, nil
+	}
+	if a.sdkOPA != nil {
+		return a.evaluateSDK(ctx, evalCtx, input, parsed, start)
+	}
+	return a.evaluateQuery(ctx, evalCtx, input, parsed, start)
+}
+
+func (a *OPAAuthorizer) timeoutDecision(ctx context.Context, input OPAInput, start time.Time) *OPADecision {
+	durationMS := time.Since(start).Milliseconds()
+	traceDecision(ctx, input, ActionDeny, "timeout", durationMS)
+	a.logAudit(ctx, ActionDeny, nil, durationMS, input, "timeout")
+	return &OPADecision{Action: ActionDeny, Reasons: []string{"evaluation timeout"}}
 }
 
 // evaluateQuery evaluates using rego.PreparedEvalQuery (path mode).
-func (a *OPAAuthorizer) evaluateQuery(ctx context.Context, input OPAInput) (*OPADecision, error) {
-	start := time.Now()
-
-	evalCtx, cancel := context.WithTimeout(ctx, a.cfg.EvaluationTimeout)
-	defer cancel()
-
-	// Fast-path: if the context is already done (pre-cancelled or deadline already passed),
-	// deny immediately without calling OPA. OPA's Eval does not check the context for fast
-	// policies, so we must enforce the deadline explicitly here.
-	if evalCtx.Err() != nil {
-		durationMS := time.Since(start).Milliseconds()
-		traceDecision(ctx, input, "deny", "timeout", durationMS)
-		a.logAudit(ctx, "deny", nil, durationMS, input, "timeout")
-		return &OPADecision{Action: "deny", Reasons: []string{"evaluation timeout"}}, nil
-	}
-
-	rs, err := a.query.Eval(evalCtx, oparego.EvalInput(input))
+func (a *OPAAuthorizer) evaluateQuery(ctx, evalCtx context.Context, input OPAInput, parsed ast.Value, start time.Time) (*OPADecision, error) {
+	rs, err := a.query.Eval(evalCtx, oparego.EvalParsedInput(parsed))
 	durationMS := time.Since(start).Milliseconds()
 
 	if err != nil {
@@ -195,28 +207,14 @@ func (a *OPAAuthorizer) evaluateQuery(ctx context.Context, input OPAInput) (*OPA
 }
 
 // evaluateSDK evaluates using the OPA SDK (config file mode).
-func (a *OPAAuthorizer) evaluateSDK(ctx context.Context, input OPAInput) (*OPADecision, error) {
-	start := time.Now()
-
-	evalCtx, cancel := context.WithTimeout(ctx, a.cfg.EvaluationTimeout)
-	defer cancel()
-
-	// Fast-path: if the context is already done (pre-cancelled or deadline already passed),
-	// deny immediately without calling OPA.
-	if evalCtx.Err() != nil {
-		durationMS := time.Since(start).Milliseconds()
-		traceDecision(ctx, input, "deny", "timeout", durationMS)
-		a.logAudit(ctx, "deny", nil, durationMS, input, "timeout")
-		return &OPADecision{Action: "deny", Reasons: []string{"evaluation timeout"}}, nil
-	}
-
+func (a *OPAAuthorizer) evaluateSDK(ctx, evalCtx context.Context, input OPAInput, parsed ast.Value, start time.Time) (*OPADecision, error) {
 	// Convert package+decision to slash-separated SDK path format with leading slash.
 	// e.g., "aib.extproc.authz" + "result" → "/aib/extproc/authz/result"
 	decisionPath := "/" + strings.ReplaceAll(a.cfg.Policy.Package, ".", "/") + "/" + a.cfg.Policy.Decision
 
 	dr, err := a.sdkOPA.Decision(evalCtx, opasdk.DecisionOptions{
 		Path:  decisionPath,
-		Input: input,
+		Input: parsed,
 	})
 	durationMS := time.Since(start).Milliseconds()
 
@@ -301,10 +299,10 @@ func auditDimensions(input OPAInput) auditFields {
 			fields.protocol = "unknown"
 		}
 	}
-	if mcp, ok := input["mcp"].(*MCPInput); ok && mcp != nil {
-		fields.toolName = mcp.ToolName
-		fields.method = mcp.Method
-		fields.targetServerName = mcp.TargetServerName
+	if mcp, ok := input["mcp"].(map[string]any); ok {
+		fields.toolName, _ = mcp["tool_name"].(string)
+		fields.method, _ = mcp["method"].(string)
+		fields.targetServerName, _ = mcp["target_server_name"].(string)
 	}
 	return fields
 }
