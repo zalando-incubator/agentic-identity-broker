@@ -151,14 +151,7 @@ func TestGrantConsent_RejectsUndeclaredPermissionSets(t *testing.T) {
 			for grantID, stored := range grantRepo.grants {
 				originalGrants[grantID] = stored.Copy()
 			}
-			svc := NewService(
-				&mockAgentRepo{agents: map[id.AgentID]*storage.Agent{agentID: agent}},
-				nil,
-				grantRepo,
-				sessionRepo,
-				psService,
-				slog.Default(),
-			)
+			svc := NewService(&mockAgentRepo{agents: map[id.AgentID]*storage.Agent{agentID: agent}}, nil, grantRepo, sessionRepo, psService, slog.Default(), testAuthorizationClock{now: time.Now()}, testAuthorizationClock{now: time.Now()}, mockRefreshRevocations{})
 
 			grant, err := svc.GrantConsent(context.Background(), &GrantRequest{
 				Principal:             principal,

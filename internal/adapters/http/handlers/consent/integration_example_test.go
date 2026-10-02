@@ -28,6 +28,10 @@ import (
 	"github.com/lestrrat-go/jwx/v4/jwk"
 )
 
+type integrationAuthorizationClock struct{ now time.Time }
+
+func (c integrationAuthorizationClock) Now(context.Context) (time.Time, error) { return c.now, nil }
+
 func newIntegrationJWETokenService() *domjwe.TokenService {
 	keyBytes, err := base64.StdEncoding.DecodeString("ASNFZ4mrze/+3LqYdlQyEAEjRWeJq83v/ty6mHZUMhA=")
 	if err != nil {
@@ -48,6 +52,10 @@ func newIntegrationProviderService(t *testing.T) *thirdparty.ThirdpartyOAuth2Pro
 	t.Helper()
 	repo := memorystorage.NewInMemoryThirdpartyOAuth2ProviderRepository()
 	return thirdparty.NewThirdpartyOAuth2ProviderService(repo, testutil.NewTestEncryptionAdapter(t), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
+}
+
+func newIntegrationRefreshStore(agents *memorystorage.AgentRepository, grants *memorystorage.UserGrantRepository) *memorystorage.RefreshSessionStore {
+	return memorystorage.NewRefreshSessionStore(agents, grants, memorystorage.NewClientCredentialStore(), memorystorage.NewAuthorizationCodeStore(), memorystorage.NewPKCESessionStore())
 }
 
 func testAgentPermissionSets() []storage.AgentPermissionSetEntry {
@@ -102,6 +110,7 @@ func TestIntegration_GetAgentDetail(t *testing.T) {
 	agentRepo := memorystorage.NewAgentRepository()
 	providerService := newIntegrationProviderService(t)
 	grantRepo := memorystorage.NewUserGrantRepository()
+	refreshStore := newIntegrationRefreshStore(agentRepo, grantRepo)
 
 	ctx := context.Background()
 	principalValue := "user@example.com"
@@ -128,7 +137,7 @@ func TestIntegration_GetAgentDetail(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), testPermissionSetQuerier{}, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), testPermissionSetQuerier{}, slog.Default(), integrationAuthorizationClock{now: time.Now()}, refreshStore, refreshStore)
 	handler := consent.NewAgentDetailHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
 
 	reqCtx := principal.WithPrincipal(ctx, principalValue)
@@ -171,6 +180,7 @@ func TestIntegration_GetAgentGrants(t *testing.T) {
 	agentRepo := memorystorage.NewAgentRepository()
 	providerService := newIntegrationProviderService(t)
 	grantRepo := memorystorage.NewUserGrantRepository()
+	refreshStore := newIntegrationRefreshStore(agentRepo, grantRepo)
 
 	ctx := context.Background()
 	principalValue := "user@example.com"
@@ -205,7 +215,7 @@ func TestIntegration_GetAgentGrants(t *testing.T) {
 		t.Fatalf("failed to create grant: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, nil, testPermissionSetQuerier{}, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, nil, testPermissionSetQuerier{}, slog.Default(), integrationAuthorizationClock{now: time.Now()}, refreshStore, refreshStore)
 	handler := consent.NewGrantsHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
 
 	reqCtx := principal.WithPrincipal(ctx, principalValue)
@@ -252,6 +262,7 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 	agentRepo := memorystorage.NewAgentRepository()
 	providerService := newIntegrationProviderService(t)
 	grantRepo := memorystorage.NewUserGrantRepository()
+	refreshStore := newIntegrationRefreshStore(agentRepo, grantRepo)
 
 	ctx := context.Background()
 	principalValue := "alice@example.com"
@@ -338,7 +349,7 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 		t.Fatalf("failed to create grant: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), testPermissionSetQuerier{}, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), testPermissionSetQuerier{}, slog.Default(), integrationAuthorizationClock{now: time.Now()}, refreshStore, refreshStore)
 
 	t.Run("GetAgentDetail", func(t *testing.T) {
 		handler := consent.NewAgentDetailHandler(consentSvc, nil, newIntegrationSessionTokenValidator())

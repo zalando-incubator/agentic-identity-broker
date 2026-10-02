@@ -255,6 +255,11 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		)
 		return nil, encryption.NewKEKUnavailableError("encryption adapter not properly initialized", nil)
 	}
+	if _, refresh := encryptionContext[encryption.ContextKeyRefreshSessionID]; refresh {
+		if _, err := encryption.BranchKeySubjectFromEncryptionContext(encryptionContext); err != nil {
+			return nil, encryption.NewContextMismatchError("invalid refresh-session encryption context", err)
+		}
+	}
 
 	// Extract service_id from context for logging (sanitized)
 	serviceID := encryptionContext["service_id"]
@@ -443,6 +448,11 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 		)
 		return nil, encryption.NewDecryptionFailedError("ciphertext cannot be empty", nil)
 	}
+	if _, refresh := encryptionContext[encryption.ContextKeyRefreshSessionID]; refresh {
+		if _, err := encryption.BranchKeySubjectFromEncryptionContext(encryptionContext); err != nil {
+			return nil, encryption.NewContextMismatchError("invalid refresh-session encryption context", err)
+		}
+	}
 
 	// Apply a per-operation timeout when configured. This deadline is shared by
 	// all downstream calls within the operation (DynamoDB branch key fetches and
@@ -572,6 +582,16 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 			"reason", "nil_result",
 		)
 		return nil, encryption.NewDecryptionFailedError("decryption returned nil result", nil)
+	}
+	expectedRoot, expectsRefresh := encryptionContext[encryption.ContextKeyRefreshSessionID]
+	actualRoot, authenticatedRefresh := result.EncryptionContext[encryption.ContextKeyRefreshSessionID]
+	if expectsRefresh || authenticatedRefresh {
+		if !expectsRefresh || !authenticatedRefresh || actualRoot != expectedRoot {
+			return nil, encryption.NewContextMismatchError("authenticated refresh-session subject does not match the expected root", nil)
+		}
+		if _, err := encryption.BranchKeySubjectFromEncryptionContext(result.EncryptionContext); err != nil {
+			return nil, encryption.NewContextMismatchError("invalid authenticated refresh-session subject", err)
+		}
 	}
 
 	// Ensure plaintext is not empty

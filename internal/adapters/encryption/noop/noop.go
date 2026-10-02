@@ -13,6 +13,12 @@ type BranchKeyManager struct{}
 
 var _ ports.BranchKeyManager = (*BranchKeyManager)(nil)
 
-func (n *BranchKeyManager) Create(_ context.Context, _ domainencryption.BranchKeySubject) (string, error) {
+func (n *BranchKeyManager) Create(_ context.Context, subject domainencryption.BranchKeySubject) (string, error) {
+	if subject.Kind() == domainencryption.BranchKeySubjectKindRefreshSession {
+		if err := subject.Validate(); err != nil {
+			return "", err
+		}
+		return "refresh_" + subject.Identifier() + "_branch_key", nil
+	}
 	return "", nil
 }

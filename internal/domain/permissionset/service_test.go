@@ -118,7 +118,7 @@ func (s *stubGrantRepository) DeleteByAgent(_ context.Context, _ id.AgentID) err
 func (s *stubGrantRepository) DeleteByPrincipalAndAgentID(_ context.Context, _ id.Principal, _ id.AgentID) error {
 	return nil
 }
-func (s *stubGrantRepository) ListByPrincipal(_ context.Context, _ id.Principal) ([]storage.UserGrant, error) {
+func (s *stubGrantRepository) ListByPrincipal(_ context.Context, _ id.Principal, _ time.Time) ([]storage.UserGrant, error) {
 	return nil, nil
 }
 func (s *stubGrantRepository) CountAgentsByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) (int, error) {

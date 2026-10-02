@@ -407,10 +407,7 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 
 	// Determine route setup and server config based on server type.
 	// Use production NewHandler to align bootstrap with production server path.
-	var (
-		routeSetup       func(chi.Router)
-		healthComponents func() map[string]string
-	)
+	var routeSetup func(chi.Router)
 	serverCfg := httpAdapter.ServerConfig{
 		Telemetry:      app.Config.Telemetry,
 		RequestContext: &app.Config.RequestContext,
@@ -418,7 +415,7 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 
 	switch options.serverType {
 	case ServerTypeEndUser:
-		healthComponents = app.EnduserHealthComponents
+		serverCfg.HealthComponents = app.EnduserHealthComponents
 		routeSetup = func(r chi.Router) {
 			routing.SetupEnduserRoutes(r, app.EnduserHandlers, routing.EnduserRouteConfig{
 				Authentication:               app.Config.Server.EndUser.Authentication,
@@ -453,9 +450,9 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 	router := httpAdapter.NewHandler(serverCfg, routeSetup, app.Logger)
 
 	router.Get("/health", httpAdapter.NewHealthHandler(
-		func() ports.HealthState { return ports.HealthStateHealthy },
+		nil,
 		time.Now(),
-		healthComponents,
+		serverCfg.HealthComponents,
 		app.Logger,
 	))
 
@@ -913,9 +910,9 @@ func (b *TestServerBuilderImpl) Build() (*TestServer, error) {
 	}
 	router := httpAdapter.NewHandler(serverCfg, routeSetup, appInstance.Logger)
 	router.Get("/health", httpAdapter.NewHealthHandler(
-		func() ports.HealthState { return ports.HealthStateHealthy },
-		time.Now(),
 		nil,
+		time.Now(),
+		appInstance.EnduserHealthComponents,
 		appInstance.Logger,
 	))
 

@@ -8,6 +8,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/jmoiron/sqlx"
 )
 
 // Compile-time interface check
@@ -27,11 +28,17 @@ func (r *ClientCredentialRepo) Create(ctx context.Context, credential *storage.C
 	if r.adapter.db == nil {
 		return storage.NewStorageError("ClientCredentialRepo.Create", storage.ErrorKindConnection, nil, "database not initialized")
 	}
+	if credential == nil || credential.AgentID.IsZero() {
+		return refreshValidation("ClientCredentialRepo.Create", errors.New("credential agent required"))
+	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != credential.AgentID {
+		return refreshValidation("ClientCredentialRepo.Create", errors.New("credential belongs to another authorization scope"))
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.db.ExecContext(execCtx,
+	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`INSERT INTO client_credentials (id, agent_id, secret_hash, created_at, rotated_at)
 		 VALUES ($1, $2, $3, $4, $5)`,
 		credential.ID, credential.AgentID,
@@ -52,7 +59,7 @@ func (r *ClientCredentialRepo) GetByAgentID(ctx context.Context, agentID id.Agen
 	defer cancel()
 
 	var cred storage.ClientCredential
-	err := r.adapter.db.GetContext(queryCtx, &cred,
+	err := sqlx.GetContext(queryCtx, r.adapter.storageExecutor(queryCtx), &cred,
 		`SELECT id, agent_id, secret_hash, created_at, rotated_at
 		 FROM client_credentials WHERE agent_id = $1`, agentID)
 	if err != nil {
@@ -63,6 +70,9 @@ func (r *ClientCredentialRepo) GetByAgentID(ctx context.Context, agentID id.Agen
 			return nil, storage.NewStorageError("ClientCredentialRepo.GetByAgentID", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
 		return nil, storage.NewStorageError("ClientCredentialRepo.GetByAgentID", storage.ErrorKindConnection, err, "failed to query credential")
+	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != cred.AgentID {
+		return nil, refreshValidation("ClientCredentialRepo.GetByAgentID", errors.New("credential belongs to another authorization scope"))
 	}
 	return &cred, nil
 }
@@ -80,10 +90,13 @@ func (r *ClientCredentialRepo) Delete(ctx context.Context, agentID id.AgentID) e
 		return storage.NewStorageError("ClientCredentialRepo.Delete", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agentID {
+		return refreshValidation("ClientCredentialRepo.Delete", errors.New("credential belongs to another authorization scope"))
+	}
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	result, err := r.adapter.db.ExecContext(execCtx,
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`DELETE FROM client_credentials WHERE agent_id = $1`, agentID)
 	if err != nil {
 		return storage.NewStorageError("ClientCredentialRepo.Delete", storage.ErrorKindUnknown, err, "failed to delete credential")
@@ -99,15 +112,25 @@ func (r *ClientCredentialRepo) Rotate(ctx context.Context, agentID id.AgentID, n
 	if r.adapter.db == nil {
 		return storage.NewStorageError("ClientCredentialRepo.Rotate", storage.ErrorKindConnection, nil, "database not initialized")
 	}
+	if newCredential == nil || newCredential.AgentID != agentID {
+		return refreshValidation("ClientCredentialRepo.Rotate", errors.New("credential must belong to the replaced agent"))
+	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != agentID {
+		return refreshValidation("ClientCredentialRepo.Rotate", errors.New("credential belongs to another authorization scope"))
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTxx(execCtx, nil)
+	tx, owned, err := r.adapter.participantTx(execCtx)
 	if err != nil {
 		return storage.NewStorageError("ClientCredentialRepo.Rotate", storage.ErrorKindUnknown, err, "failed to begin transaction")
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if owned {
+			_ = tx.Rollback()
+		}
+	}()
 
 	// DELETE before INSERT: agent_id is UNIQUE, so we must remove the old row first.
 	// The transaction guarantees atomicity: if the INSERT fails the DELETE rolls back.
@@ -132,8 +155,11 @@ func (r *ClientCredentialRepo) Rotate(ctx context.Context, agentID id.AgentID, n
 		return storage.NewStorageError("ClientCredentialRepo.Rotate", storage.ErrorKindUnknown, err, "failed to insert new credential")
 	}
 
-	if err := tx.Commit(); err != nil {
-		return storage.NewStorageError("ClientCredentialRepo.Rotate", storage.ErrorKindUnknown, err, "failed to commit rotation transaction")
+	if owned {
+		owned = false
+		if err := commitAuthorizationTx(tx); err != nil {
+			return err
+		}
 	}
 	return nil
 }

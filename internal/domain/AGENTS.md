@@ -63,8 +63,8 @@ Keep cross-domain imports narrowly scoped. Read the importing package and its di
 
 - `OAuthScope` — permission scope in `model/`
 - `RequirementType` and `ServiceRequirement` — service requirements in `storage/`
-- `EncryptionContext` — service-scoped AAD in `storage/`
-- `BranchKeySubject` — service or signing-key encryption namespace in `encryption/`
+- `EncryptionContext` — subject-bound AAD in `storage/`
+- `BranchKeySubject` — service, signing-key, or refresh-session encryption namespace in `encryption/`
 - `ConnectionParameters`, `StorageBackend`, `DiscoveryConfig`, and `OAuth2Endpoints` in `storage/`
 
 ### Validation

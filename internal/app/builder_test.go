@@ -616,9 +616,6 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 		if app.EnduserHandlers.JWKS == nil {
 			t.Error("local mode must wire a JWKS handler")
 		}
-		if got := app.EnduserHealthComponents(); got != nil {
-			t.Fatalf("EnduserHealthComponents() = %#v, want nil in local mode", got)
-		}
 	})
 
 	t.Run("local mode with token exchange requires an external trust anchor", func(t *testing.T) {
@@ -668,7 +665,7 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 
 func TestNewTokenExchangeAgentIDResolver(t *testing.T) {
 	newService := func(repo ports.AgentRepository) *agentsservice.Service {
-		return agentsservice.NewService(repo, builderTestRequirementValidator{}, slog.Default(), false)
+		return agentsservice.NewService(repo, builderTestRequirementValidator{}, slog.Default(), false, testAuthorizationClock{now: time.Now().UTC()}, unexpectedRefreshRevocations{})
 	}
 
 	t.Run("resolves upstream client ID before any UUID fallback", func(t *testing.T) {

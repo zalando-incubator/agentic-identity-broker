@@ -29,7 +29,7 @@ For evaluation and testing:
 helm install broker ./charts/agentic-identity-broker
 ```
 
-⚠️ **Warning**: In-memory storage is ephemeral. Data is lost on pod restart. Use PostgreSQL for production.
+⚠️ **Warning**: In-memory storage supports one instance and loses every refresh session on pod restart. Use shared PostgreSQL for restart or replica recovery.
 
 ### Install with External PostgreSQL
 
@@ -137,14 +137,17 @@ See [values.yaml](values.yaml) for the complete list of configuration options.
 | `broker.encryption.awsKms.dynamodbTableName` | DynamoDB table for branch keys | `IdentityBrokerEncryptionBranchKeys` |
 | `broker.encryption.awsKms.branchKeyTtl` | Branch key TTL | `1h` |
 | `broker.telemetry.enabled` | Enable OpenTelemetry tracing and metrics | `false` |
-| `broker.oauth2AuthorizationServer.mode` | Operation mode: `proxy`, `local`, or `hybrid`. Required. | `"proxy"` |
+| `broker.oauth2AuthorizationServer.mode` | Operation mode: `proxy`, `local`, or `hybrid`. Required. | `"local"` |
 | `broker.oauth2AuthorizationServer.proxy.upstreamIssuerUri` | Upstream OAuth2 issuer URI (required in proxy/hybrid mode) | `""` |
 | `broker.oauth2AuthorizationServer.proxy.upstreamAuthorizeEndpoint` | Upstream authorize endpoint | `""` |
 | `broker.oauth2AuthorizationServer.proxy.upstreamTokenEndpoint` | Upstream token endpoint | `""` |
 | `broker.oauth2AuthorizationServer.proxy.upstreamTimeout` | Upstream request timeout (empty = use application default of 30s; accepts Go duration syntax: 30s, 500ms) | `""` |
 | `broker.oauth2AuthorizationServer.proxy.upstreamJwksMinRefresh` | Minimum interval between upstream JWKS refresh attempts (empty = use application default of 15m) | `""` |
 | `broker.oauth2AuthorizationServer.proxy.upstreamJwksMaxRefresh` | Maximum interval between upstream JWKS refresh attempts (empty = use application default of 1h) | `""` |
-| `broker.oauth2AuthorizationServer.local.tokenTtl` | Access token validity period (required in local/hybrid mode) | `""` |
+| `broker.oauth2AuthorizationServer.local.tokenTtl` | Locally issued access JWT lifetime, including residual validity after refresh revocation | `""` (broker default `1h`) |
+| `broker.oauth2AuthorizationServer.local.refreshTokenReuseInterval` | Retry window for the immediately previous local refresh result. `0s` disables retries. | `"30s"` |
+| `broker.oauth2AuthorizationServer.local.absoluteSessionLifetime` | Total local refresh-session lifetime. `0s` removes only the absolute deadline. | `"0s"` |
+| `broker.oauth2AuthorizationServer.local.refreshTokenTtl` | Local refresh-session inactivity lifetime. `0s` retains the `720h` default. | `"720h"` |
 | `broker.oauth2AuthorizationServer.local.tokenClaimsExpression` | CEL expression for custom JWT claims | `""` |
 | `broker.oauth2AuthorizationServer.local.signingKeys.bootstrapTimeout` | Startup budget for signing-key bootstrap coordination | `""` |
 | `broker.oauth2AuthorizationServer.impersonation` | RFC 8693 user impersonation (signed or unverified subject). Only valid in `local` mode. Omitted when unset. Subtree keys use the broker config's snake_case names (`audience_prefix`, `rules[].{name,roles,trusted_issuers,authorization}`). `audience_prefix` is routing-only: a request appends one target agent's canonical lower-case UUID or `canonical_id`, both resolving to the same registered target; its UUID supplies minted `agent_id` and local-policy `agent.*`; local `tokenClaimsExpression` alone controls emitted `aud`. | _unset_ |
@@ -169,6 +172,34 @@ See [values.yaml](values.yaml) for the complete list of configuration options.
 | `broker.requestContext.trustedProxy.enabled` | Trust forwarded headers from an upstream proxy for caller-IP derivation | `false` |
 | `broker.requestContext.trustedProxy.forwardedHeader` | Forwarded header to inspect when trusted proxy mode is enabled | `X-Forwarded-For` |
 | `broker.requestContext.trace.responseEnabled` | Emit the additive W3C `traceresponse` response header | `true` |
+
+### Local Refresh Policy (Feature 049)
+
+The broker implements the Feature 049 refresh policy. The chart renders the three policy durations as quoted strings under `oauth2_authorization_server.local` only in `local` and `hybrid` modes. They affect broker-issued local refresh sessions, not upstream refresh in `hybrid` or `proxy` mode. Chart defaults do not inject a `local` block into a proxy deployment. A non-default local refresh policy in proxy mode fails chart rendering.
+
+Set local refresh durations as strings:
+
+```bash
+helm template broker ./charts/agentic-identity-broker \
+  --set broker.oauth2AuthorizationServer.mode=local \
+  --set-string broker.oauth2AuthorizationServer.local.refreshTokenReuseInterval=0s \
+  --set-string broker.oauth2AuthorizationServer.local.absoluteSessionLifetime=168h \
+  --set-string broker.oauth2AuthorizationServer.local.refreshTokenTtl=720h
+```
+
+The schema rejects non-string values, negative durations, bare numbers, empty strings, and obvious malformed durations. Use Go duration units such as `ms`, `s`, `m`, and `h`, including compounds such as `1h30m`. `--set-string` keeps `0s` a string. At startup, the broker validates syntax, overflow, and cross-setting limits. Reuse must be shorter than both `token_ttl` and `refresh_token_ttl`. A finite absolute lifetime must be longer than reuse. A finite absolute lifetime shorter than `refresh_token_ttl` logs a warning, not an error. The earliest consent, token, session, or retry deadline still applies.
+
+A shorter `token_ttl` reduces residual exposure for newly issued access JWTs. Already-issued JWTs keep their original expiry after refresh revocation.
+
+The default `30s` reuse interval permits at most three returns of the immediately previous result while its successor is unused. `0s` gives strict single use. The `0s` absolute default does not force a return to the identity provider based on total elapsed time. Consent and inactivity still apply. Inactivity defaults to `720h` (30 days). Only a fresh successful rotation renews it.
+
+Retries and resource access do not renew inactivity. A shorter restart policy persists shorter deadlines. Increasing inactivity cannot extend the current token or activity interval. The next eligible fresh rotation applies the new lifetime. A revoked or expired session never returns to active state.
+
+For rollout, every pre-feature unanchored refresh session requires fresh authorization. Only new-issuer anchored families with complete authorization and lineage evidence can continue, subject to current consent. Keep the additive legacy table during mixed-version rollout. Before binary-only rollback, stop token traffic and old writers, then reconcile expiry under the outgoing policy. If reconciliation fails, do not admit old binaries. Rollback cannot restore terminally expired or revoked sessions.
+
+For a full database or refresh-state restore, stop all token traffic and writers. Restore the supported schema. Then run `agentic-identity-broker --config <file> refresh-sessions invalidate-restored` before starting brokers. If the command fails or its commit is indeterminate, keep brokers offline. Rerun until acknowledged success includes zero active roots, retry ciphertext, and unused legacy rows.
+
+Encrypted backups can retain erased live retry ciphertext. Restrict backup access and retention. Never store plaintext credentials in backups or logs. See the [configuration reference](../../docs/configuration.md#oauth2-authorization-server-configuration) and [restore procedure](../../specs/049-fix-refresh-consent/data-model.md#restore-invalidation).
 
 ### Custom Values File
 

@@ -11,6 +11,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/jmoiron/sqlx"
 )
 
 // Compile-time interface check
@@ -29,6 +30,12 @@ func NewAuthorizationCodeRepo(adapter *Adapter) *AuthorizationCodeRepo {
 func (r *AuthorizationCodeRepo) Create(ctx context.Context, code *storage.AuthorizationCode) error {
 	if r.adapter.db == nil {
 		return storage.NewStorageError("AuthorizationCodeRepo.Create", storage.ErrorKindConnection, nil, "database not initialized")
+	}
+	if code == nil {
+		return refreshValidation("AuthorizationCodeRepo.Create", errors.New("authorization code required"))
+	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != code.AgentID {
+		return refreshValidation("AuthorizationCodeRepo.Create", errors.New("authorization code belongs to another agent"))
 	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
@@ -56,9 +63,9 @@ func (r *AuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash str
 	defer cancel()
 
 	var code storage.AuthorizationCode
-	err := r.adapter.db.GetContext(queryCtx, &code,
+	err := sqlx.GetContext(queryCtx, r.adapter.storageExecutor(queryCtx), &code,
 		`SELECT id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, used_at, created_at, email, display_name
-		 FROM authorization_codes WHERE code_hash = $1 AND expires_at > NOW()`, codeHash)
+		 FROM authorization_codes WHERE code_hash = $1 AND expires_at > clock_timestamp()`, codeHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return nil, storage.NewStorageError("AuthorizationCodeRepo.FindByCodeHash", storage.ErrorKindNotFound, err, "authorization code not found")
@@ -68,6 +75,9 @@ func (r *AuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash str
 		}
 		return nil, storage.NewStorageError("AuthorizationCodeRepo.FindByCodeHash", storage.ErrorKindConnection, err, "failed to query authorization code")
 	}
+	if scope, ok := scopedAuthorization(ctx); ok && scope.agentID != code.AgentID {
+		return nil, refreshValidation("AuthorizationCodeRepo.FindByCodeHash", errors.New("authorization code belongs to another agent"))
+	}
 	return &code, nil
 }
 
@@ -75,11 +85,23 @@ func (r *AuthorizationCodeRepo) MarkUsed(ctx context.Context, codeID id.Authoriz
 	if r.adapter.db == nil {
 		return storage.NewStorageError("AuthorizationCodeRepo.MarkUsed", storage.ErrorKindConnection, nil, "database not initialized")
 	}
+	if scope, ok := scopedAuthorization(ctx); ok {
+		var owner id.AgentID
+		if err := r.adapter.storageExecutor(ctx).QueryRowxContext(ctx, `SELECT agent_id FROM authorization_codes WHERE id = $1`, codeID).Scan(&owner); err != nil {
+			return refreshStoreError("AuthorizationCodeRepo.MarkUsed", err)
+		}
+		if owner != scope.agentID {
+			return refreshValidation("AuthorizationCodeRepo.MarkUsed", errors.New("authorization code belongs to another agent"))
+		}
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	now := time.Now()
+	now, err := NewAuthorizationSessionCoordinator(r.adapter).Now(execCtx)
+	if err != nil {
+		return err
+	}
 	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`UPDATE authorization_codes SET used_at = $1 WHERE id = $2 AND used_at IS NULL`, now, codeID)
 	if err != nil {
@@ -92,12 +114,15 @@ func (r *AuthorizationCodeRepo) DeleteExpired(ctx context.Context) (int, error) 
 	if r.adapter.db == nil {
 		return 0, storage.NewStorageError("AuthorizationCodeRepo.DeleteExpired", storage.ErrorKindConnection, nil, "database not initialized")
 	}
+	if _, scoped := scopedAuthorization(ctx); scoped {
+		return 0, refreshValidation("AuthorizationCodeRepo.DeleteExpired", errors.New("global cleanup cannot run inside an agent scope"))
+	}
 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
 	now := time.Now()
-	result, err := r.adapter.db.ExecContext(execCtx,
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`DELETE FROM authorization_codes WHERE expires_at < $1`, now)
 	if err != nil {
 		return 0, storage.NewStorageError("AuthorizationCodeRepo.DeleteExpired", storage.ErrorKindUnknown, err, "failed to delete expired codes")

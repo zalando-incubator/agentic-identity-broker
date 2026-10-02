@@ -16,6 +16,7 @@ var uuidTypes = []struct {
 	{"ServiceID", "service"},
 	{"GrantID", "grant"},
 	{"SessionID", "session"},
+	{"RefreshSessionID", "refresh session"},
 	{"UserID", "user"},
 	{"PermissionSetID", "permission_set"},
 	{"CredentialID", "broker client credential"},

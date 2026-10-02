@@ -64,6 +64,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 `docs/ENCRYPTION_INTEGRATION_GUIDE.md` | Encryption integration guide
 `docs/STORAGE_EXTENSION_GUIDE.md` | Adding new storage entities
 `docs/STORAGE_TROUBLESHOOTING.md` | Storage debugging
+`docs/api/oauth2-refresh-sessions.md` | Local refresh, lifecycle, retry, and restore contract
 `docs/configuration.md` | Configuration reference
 `docs/deployment/` | Deployment guides (Kubernetes, IRSA)
 `docs/operations/` | Operations runbooks
@@ -146,7 +147,7 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
-| 038 | `adrs/038-consent-bound-refresh-sessions.md` | Accepted refresh-session encryption subject and agent-scoped transaction ownership. Feature 049 implementation remains pending. |
+| 038 | `adrs/038-consent-bound-refresh-sessions.md` | Refresh-session encryption subject and agent-scoped transaction ownership. Feature 049 implements native consent-bound refresh sessions. |
 
 ## Domain Glossary
 
@@ -161,10 +162,11 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | **Secret** | Value object with exclusive plaintext or encrypted state. |
 | **ServiceRequirement** | Agent requirement for a mandatory or optional service. |
 | **BranchKey** | DynamoDB-cached key between a KMS KEK and an operation DEK. |
-| **EncryptionContext** | AAD with exactly one approved subject key. `service_id` and `kid` remain unchanged. ADR 038 approves `refresh_session_id`. Its implementation is pending. Never store secrets. |
+| **EncryptionContext** | AAD with exactly one approved subject key: `service_id`, `kid`, or `refresh_session_id`. Never store secrets. |
 | **ResourceURI** | Normalized protected-resource URI for RFC 8693 token exchange. |
 | **CEL Expression** | Policy for privileged-client authorization and JWT claim extraction. |
 | **ToolApproval** | Human-in-the-loop authorization for an agent tool call with pending, approved, or denied status. |
+| **RefreshSession** | Native local refresh authority with immutable consent origin, token lineage, lifetime deadlines, and encrypted bounded retry state. |
 
 ## Development Workflow
 

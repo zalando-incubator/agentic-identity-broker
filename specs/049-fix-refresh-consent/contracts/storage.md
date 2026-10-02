@@ -69,6 +69,7 @@ type RefreshSessionRepository interface {
 type RefreshTokenRepository interface {
     Create(ctx context.Context, token *storage.RefreshToken) error
     FindBySignature(ctx context.Context, signature string) (*storage.RefreshToken, error)
+    CheckCurrentLineage(ctx context.Context, sessionID id.RefreshSessionID) error
     MarkUsed(ctx context.Context, signature string, usedAt time.Time) error
 }
 
@@ -83,10 +84,15 @@ type RefreshSessionMaintenanceRepository interface {
     ListActive(ctx context.Context, afterID id.RefreshSessionID, limit int) ([]*storage.RefreshSession, error)
     ListDue(ctx context.Context, at time.Time, limit int) ([]*storage.RefreshSession, error)
     DeleteTerminal(ctx context.Context, before time.Time, limit int) (int, error)
+    HasRemainingAuthority(ctx context.Context) (bool, error)
 }
 ```
 
 Domain enums and models use project-native ID and timestamp types. None imports Fosite or SQL. List results use stable UUID ordering and bounded positive limits. `ListAgentIDs` returns the sorted, distinct union of agent IDs from roots and all legacy rows. It includes used and unanchored rows without a root. `afterID` is an exclusive cursor, so a bounded scan can reach every restored agent. `ListDue` selects stored deadline and retry-cleanup candidates. The domain evaluates policy inside `Run` at shared time. Maintenance also scans active roots after a policy change so shorter deadlines persist before readiness.
+
+`FindBySignature` reads native evidence without deciding issuance eligibility. Maintenance can read terminal or old-writer-consumed families to erase ciphertext and invalidate descendants. `CheckCurrentLineage` locks and validates complete anchored ancestry under the owner scope. Refresh calls it after authentication, consent, lifetime, and capability checks, before classification. `MarkUsed` and successful retry persistence retain the fence through commit.
+
+`HasRemainingAuthority` returns whether active roots, stored retry ciphertext, or unused legacy rows remain. Offline restore admission calls it after acknowledged owner commits.
 
 `Create` rejects conflicts. `Save` enforces immutable root ID, `OriginalGrantID`, `OriginalTokenSignature`, owner, scope ceiling, `StartedAt`, and `BranchKeyID`. It rejects `RetryCount` outside `0..3`, a decreasing `RetainUntil`, or reversal of terminal state. For the same `PreviousSignature`, `Save` cannot increase or clear the persisted effective `RetryExpiresAt`. While the root remains in its current activity interval, `Save` cannot increase its persisted `InactivityExpiresAt`. Only a fresh successful rotation resets `LastFreshAt`. It sets the successor's immutable `ExpiresAt` and new `InactivityExpiresAt` from the rotation time and current configured inactivity lifetime. `MarkUsed` requires an unused token and the coordinator time. Revocation methods are idempotent. They erase ciphertext and update roots and matching live legacy current rows within the same transaction. Terminal expiry uses the same scoped root/mirror atomicity without adding another repository port.
 
@@ -97,6 +103,8 @@ For DB-008, RevokeByID/RevokeByAgent/scoped revocation writes an immutable recei
 For `restore_invalidation`, `RevokeByAgent` revokes active roots. It erases ciphertext on every root of that agent, including terminal roots. It marks every unused legacy row for that agent used, including unanchored rows without a root. Existing terminal reasons, receipts, and history remain unchanged. A repeated invalidation makes no further change. The supported offline [restore invalidation procedure](../data-model.md#restore-invalidation) defines admission and failure handling.
 
 `FositeStorage.RevokeRefreshToken` maps the original authorization-code request UUID to `id.RefreshSessionID` and calls `RevokeByID`, including on code replay by another client authenticated as itself. Code replay does not require the replaying client to match the root's bound client. Scoped revocation covers all roots for the principal/agent, even when a grant is already absent. Explicit credential revocation revokes agent roots. Credential replacement does **not**.
+
+Scoped principal/agent and agent-wide lifecycle revocation also invalidate every matching unused legacy row, including rootless pre-feature rows. This prevents old binaries from renewing authority after lifecycle success. It creates no native origin evidence and leaves unrelated ownership unchanged. Single-root replay revocation remains limited to that root's matching lineage. Restore invalidation additionally erases ciphertext on existing terminal roots without changing their reasons or receipts.
 
 Migrate all factory, provider, cleanup, fixtures, and test callers from source-level `RefreshTokenSessionRepository` and `RefreshTokenSession` to the root/token facets and models. Remove those source symbols, aliases, and runtime fallback paths. Retain the old SQL table for rolling old binaries; the new repository implements any legacy mirror internally, not as a second domain model or port.
 

@@ -100,7 +100,7 @@ func TestGrantFixtures(t *testing.T) {
 		if g == nil {
 			t.Fatal("ActiveGrant returned nil")
 		}
-		if !g.IsActive() {
+		if !g.IsActive(time.Now()) {
 			t.Error("ActiveGrant should be active")
 		}
 		if g.Principal.String() != principalEmail {
@@ -109,7 +109,7 @@ func TestGrantFixtures(t *testing.T) {
 		if g.AgentID.String() != agentID {
 			t.Errorf("got AgentID %q, want %q", g.AgentID, agentID)
 		}
-		if err := g.Validate(); err != nil {
+		if err := g.Validate(time.Now()); err != nil {
 			t.Errorf("validation failed: %v", err)
 		}
 	})
@@ -119,7 +119,7 @@ func TestGrantFixtures(t *testing.T) {
 		if g == nil {
 			t.Fatal("ExpiredGrant returned nil")
 		}
-		if g.IsActive() {
+		if g.IsActive(time.Now()) {
 			t.Error("ExpiredGrant should not be active")
 		}
 		if g.Principal.String() != principalEmail {
@@ -135,13 +135,13 @@ func TestGrantFixtures(t *testing.T) {
 		if g == nil {
 			t.Fatal("GrantExpiringIn returned nil")
 		}
-		if !g.IsActive() {
+		if !g.IsActive(time.Now()) {
 			t.Error("GrantExpiringIn should be active")
 		}
 		if g.Principal.String() != principalEmail {
 			t.Errorf("got Principal %q, want %q", g.Principal, principalEmail)
 		}
-		if err := g.Validate(); err != nil {
+		if err := g.Validate(time.Now()); err != nil {
 			t.Errorf("validation failed: %v", err)
 		}
 	})
@@ -151,7 +151,7 @@ func TestGrantFixtures(t *testing.T) {
 		if g == nil {
 			t.Fatal("IndefiniteGrant returned nil")
 		}
-		if !g.IsActive() {
+		if !g.IsActive(time.Now()) {
 			t.Error("IndefiniteGrant should always be active")
 		}
 		if g.ValidUntil != nil {
@@ -160,7 +160,7 @@ func TestGrantFixtures(t *testing.T) {
 		if g.Principal.String() != principalEmail {
 			t.Errorf("got Principal %q, want %q", g.Principal, principalEmail)
 		}
-		if err := g.Validate(); err != nil {
+		if err := g.Validate(time.Now()); err != nil {
 			t.Errorf("validation failed: %v", err)
 		}
 	})

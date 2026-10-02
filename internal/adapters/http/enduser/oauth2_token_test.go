@@ -1857,6 +1857,7 @@ func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.S
 				CEL:  ports.CELAuthorizationConfig{Expression: "true"},
 			},
 		},
+		testAuthorizationClock{now: time.Now()},
 	)
 	require.NoError(t, err)
 	return service

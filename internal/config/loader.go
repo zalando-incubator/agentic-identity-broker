@@ -69,6 +69,17 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 		return nil, err
 	}
 
+	// ParseDuration accepts unitless "0"; policy durations require explicit units.
+	for _, key := range []string{
+		"oauth2_authorization_server.local.refresh_token_reuse_interval",
+		"oauth2_authorization_server.local.absolute_session_lifetime",
+		"oauth2_authorization_server.local.refresh_token_ttl",
+	} {
+		if value, ok := l.v.Get(key).(string); ok && (value == "0" || value == "+0" || value == "-0") {
+			return nil, &config.ConfigError{Field: key, Value: value, Expected: "Go duration with units (e.g. 0s)"}
+		}
+	}
+
 	// Unmarshal to Config struct
 	var cfg ports.Config
 	if err := l.v.Unmarshal(&cfg, func(c *mapstructure.DecoderConfig) {
@@ -77,6 +88,26 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 		return nil, &config.ConfigError{
 			Expected: "valid configuration structure",
 			Err:      err,
+		}
+	}
+	// A zero-valued duration still counts as local configuration in proxy mode.
+	if cfg.OAuth2AuthServer.Mode == "proxy" {
+		for _, key := range []string{
+			"oauth2_authorization_server.local.issuer_uri",
+			"oauth2_authorization_server.local.token_ttl",
+			"oauth2_authorization_server.local.refresh_token_ttl",
+			"oauth2_authorization_server.local.refresh_token_reuse_interval",
+			"oauth2_authorization_server.local.absolute_session_lifetime",
+			"oauth2_authorization_server.local.token_claims_expression",
+			"oauth2_authorization_server.local.signing_keys.bootstrap_timeout",
+		} {
+			if l.v.IsSet(key) {
+				return nil, &config.ConfigError{
+					Field:    key,
+					Value:    "configured",
+					Expected: "local-only settings must be empty in proxy mode",
+				}
+			}
 		}
 	}
 
@@ -230,6 +261,8 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv("oauth2_authorization_server.proxy.upstream_timeout", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_TIMEOUT")
 	_ = l.v.BindEnv("oauth2_authorization_server.supported_scopes", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_SUPPORTED_SCOPES")
 	_ = l.v.BindEnv("oauth2_authorization_server.local.refresh_token_ttl", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_TTL")
+	_ = l.v.BindEnv("oauth2_authorization_server.local.refresh_token_reuse_interval", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_REUSE_INTERVAL")
+	_ = l.v.BindEnv("oauth2_authorization_server.local.absolute_session_lifetime", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_ABSOLUTE_SESSION_LIFETIME")
 	_ = l.v.BindEnv("oauth2_authorization_server.local.token_ttl", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL")
 	_ = l.v.BindEnv("oauth2_authorization_server.local.token_claims_expression", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION")
 	_ = l.v.BindEnv("oauth2_authorization_server.local.signing_keys.bootstrap_timeout", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT")
@@ -391,6 +424,11 @@ func (l *Loader) loadYAML() error {
 	configPath := os.Getenv("IDENTITY_BROKER_CONFIG_PATH")
 	if configPath == "" {
 		configPath = "config.yaml"
+	}
+	if l.cmd != nil {
+		if flag := l.cmd.Flag("config"); flag != nil && flag.Changed {
+			configPath = flag.Value.String()
+		}
 	}
 
 	// Check if file exists
@@ -634,12 +672,6 @@ func (l *Loader) bindFlags() error {
 	// Track which keys came from CLI flags
 	cliKeys := make([]string, 0)
 
-	// Bind config file path flag
-	if l.cmd.Flags().Changed("config") {
-		configPath, _ := l.cmd.Flags().GetString("config")
-		_ = os.Setenv("IDENTITY_BROKER_CONFIG_PATH", configPath)
-	}
-
 	// Bind log.level flag
 	if l.cmd.Flags().Changed("log-level") {
 		logLevel, _ := l.cmd.Flags().GetString("log-level")
@@ -687,6 +719,18 @@ func (l *Loader) bindFlags() error {
 		timeout, _ := l.cmd.Flags().GetDuration("server.shutdown.timeout")
 		l.v.Set("server.shutdown.timeout", timeout)
 		cliKeys = append(cliKeys, "server.shutdown.timeout")
+	}
+
+	for _, key := range [...]string{
+		"oauth2_authorization_server.local.refresh_token_reuse_interval",
+		"oauth2_authorization_server.local.absolute_session_lifetime",
+		"oauth2_authorization_server.local.refresh_token_ttl",
+	} {
+		if l.cmd.Flags().Changed(key) {
+			value, _ := l.cmd.Flags().GetString(key)
+			l.v.Set(key, value)
+			cliKeys = append(cliKeys, key)
+		}
 	}
 
 	// Bind request_context.trusted_proxy.enabled flag

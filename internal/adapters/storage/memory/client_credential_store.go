@@ -16,6 +16,7 @@ var _ ports.ClientCredentialRepository = (*ClientCredentialStore)(nil)
 // ClientCredentialStore is an in-memory implementation of ClientCredentialRepository.
 type ClientCredentialStore struct {
 	mu        sync.RWMutex
+	refresh   *RefreshSessionStore
 	byID      map[id.CredentialID]*storage.ClientCredential
 	byAgentID map[id.AgentID]*storage.ClientCredential
 }
@@ -29,6 +30,11 @@ func NewClientCredentialStore() *ClientCredentialStore {
 }
 
 func (s *ClientCredentialStore) Create(ctx context.Context, credential *storage.ClientCredential) error {
+	if scopeFor(ctx, s.refresh) != nil {
+		return s.scopedPut(ctx, credential, false)
+	}
+	unlock := s.refresh.lockWrite()
+	defer unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -36,14 +42,25 @@ func (s *ClientCredentialStore) Create(ctx context.Context, credential *storage.
 		return storage.NewStorageError("ClientCredentialStore.Create", storage.ErrorKindConflict, nil,
 			fmt.Sprintf("credential for agent %s already exists", credential.AgentID))
 	}
+	if existing := s.byID[credential.ID]; existing != nil && existing.AgentID != credential.AgentID {
+		return storage.NewStorageError("ClientCredentialStore.Create", storage.ErrorKindConflict, nil, "credential ID belongs to another agent")
+	}
 
-	cred := *credential
-	s.byID[cred.ID] = &cred
-	s.byAgentID[cred.AgentID] = &cred
+	cred := copyCredential(credential)
+	s.byID[cred.ID] = cred
+	s.byAgentID[cred.AgentID] = cred
+	if s.refresh != nil {
+		s.refresh.versions[credential.AgentID]++
+	}
 	return nil
 }
 
 func (s *ClientCredentialStore) GetByAgentID(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+	if scopeFor(ctx, s.refresh) != nil {
+		return s.scopedGet(ctx, agentID)
+	}
+	unlock := s.refresh.lockRead()
+	defer unlock()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -52,8 +69,7 @@ func (s *ClientCredentialStore) GetByAgentID(ctx context.Context, agentID id.Age
 		return nil, storage.NewStorageError("ClientCredentialStore.GetByAgentID", storage.ErrorKindNotFound, nil,
 			fmt.Sprintf("no credential for agent %s", agentID))
 	}
-	result := *cred
-	return &result, nil
+	return copyCredential(cred), nil
 }
 
 // GetByClientID looks up credentials by the OAuth2 client_id string.
@@ -68,6 +84,11 @@ func (s *ClientCredentialStore) GetByClientID(ctx context.Context, clientID id.C
 }
 
 func (s *ClientCredentialStore) Delete(ctx context.Context, agentID id.AgentID) error {
+	if scopeFor(ctx, s.refresh) != nil {
+		return s.scopedDelete(ctx, agentID)
+	}
+	unlock := s.refresh.lockWrite()
+	defer unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -79,10 +100,21 @@ func (s *ClientCredentialStore) Delete(ctx context.Context, agentID id.AgentID) 
 
 	delete(s.byID, cred.ID)
 	delete(s.byAgentID, agentID)
+	if s.refresh != nil {
+		s.refresh.versions[agentID]++
+	}
 	return nil
 }
 
 func (s *ClientCredentialStore) Rotate(ctx context.Context, agentID id.AgentID, newCredential *storage.ClientCredential) error {
+	if newCredential == nil || newCredential.AgentID != agentID {
+		return storage.NewStorageError("ClientCredentialStore.Rotate", storage.ErrorKindValidation, nil, "replacement credential must belong to same agent")
+	}
+	if scopeFor(ctx, s.refresh) != nil {
+		return s.scopedPut(ctx, newCredential, true)
+	}
+	unlock := s.refresh.lockWrite()
+	defer unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -91,10 +123,16 @@ func (s *ClientCredentialStore) Rotate(ctx context.Context, agentID id.AgentID, 
 		return storage.NewStorageError("ClientCredentialStore.Rotate", storage.ErrorKindNotFound, nil,
 			fmt.Sprintf("no existing credential for agent %s", agentID))
 	}
+	if existing := s.byID[newCredential.ID]; existing != nil && existing.AgentID != agentID {
+		return storage.NewStorageError("ClientCredentialStore.Rotate", storage.ErrorKindConflict, nil, "credential ID belongs to another agent")
+	}
 
-	newCred := *newCredential
+	newCred := copyCredential(newCredential)
 	delete(s.byID, old.ID)
-	s.byID[newCred.ID] = &newCred
-	s.byAgentID[agentID] = &newCred
+	s.byID[newCred.ID] = newCred
+	s.byAgentID[agentID] = newCred
+	if s.refresh != nil {
+		s.refresh.versions[agentID]++
+	}
 	return nil
 }

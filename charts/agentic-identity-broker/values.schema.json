@@ -743,6 +743,21 @@
                   "type": "string",
                   "description": "Access token TTL (e.g. '1h', '30m'). Defaults to 1h if empty."
                 },
+                "refreshTokenReuseInterval": {
+                  "type": "string",
+                  "pattern": "^(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$",
+                  "description": "Non-negative Go duration (default 30s); 0s disables retries. Broker checks policy limits."
+                },
+                "absoluteSessionLifetime": {
+                  "type": "string",
+                  "pattern": "^(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$",
+                  "description": "Non-negative Go duration (default 0s); 0s has no absolute deadline. Broker checks policy limits."
+                },
+                "refreshTokenTtl": {
+                  "type": "string",
+                  "pattern": "^(([0-9]+(\\.[0-9]+)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$",
+                  "description": "Non-negative Go duration (default 720h); 0s also selects 720h. Broker checks policy limits."
+                },
                 "tokenClaimsExpression": {
                   "type": "string",
                   "description": "CEL expression for custom token claims"

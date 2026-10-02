@@ -483,8 +483,16 @@ broker:
 
     # Local token issuance configuration (local/hybrid mode)
     local:
+      # Refresh defaults render only for local/hybrid issuance, never for proxy mode.
+      # Use quoted Go duration strings; the broker validates cross-setting limits.
       # -- Access token TTL (e.g. "1h", "30m"). Defaults to 1h if empty.
       tokenTtl: ""
+      # -- Retry interval for the immediately previous local refresh token. Default 30s. Set 0s to disable retries.
+      refreshTokenReuseInterval: "30s"
+      # -- Total local refresh-session lifetime from first issuance. 0s means no absolute deadline.
+      absoluteSessionLifetime: "0s"
+      # -- Local refresh inactivity lifetime. Omitted or 0s uses 720h (30 days).
+      refreshTokenTtl: "720h"
       # -- CEL expression for custom token claims. Empty means no extra claims.
       tokenClaimsExpression: ""
       signingKeys:

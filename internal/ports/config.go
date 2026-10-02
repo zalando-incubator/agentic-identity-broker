@@ -383,11 +383,13 @@ const DefaultSigningKeyBootstrapTimeout = 90 * time.Second
 type LocalModeConfig struct {
 	// IssuerURI is the JWT iss claim for locally-minted tokens. Optional — defaults to
 	// server.enduser.public_url when empty, allowing independent control behind CDNs or proxies.
-	IssuerURI             string                 `mapstructure:"issuer_uri"`
-	TokenTTL              time.Duration          `mapstructure:"token_ttl"`
-	RefreshTokenTTL       time.Duration          `mapstructure:"refresh_token_ttl"`
-	TokenClaimsExpression string                 `mapstructure:"token_claims_expression"`
-	SigningKeys           LocalSigningKeysConfig `mapstructure:"signing_keys"`
+	IssuerURI                 string                 `mapstructure:"issuer_uri"`
+	TokenTTL                  time.Duration          `mapstructure:"token_ttl"`
+	RefreshTokenTTL           time.Duration          `mapstructure:"refresh_token_ttl"`
+	RefreshTokenReuseInterval *time.Duration         `mapstructure:"refresh_token_reuse_interval"`
+	AbsoluteSessionLifetime   time.Duration          `mapstructure:"absolute_session_lifetime"`
+	TokenClaimsExpression     string                 `mapstructure:"token_claims_expression"`
+	SigningKeys               LocalSigningKeysConfig `mapstructure:"signing_keys"`
 }
 
 // LocalSigningKeysConfig holds local signing-key startup settings.
@@ -447,7 +449,7 @@ func (c *OAuth2AuthServerConfig) validateProxyMode() error {
 		return c.newValidationError("oauth2_authorization_server.cimd.enabled requires mode 'local' or 'hybrid'; CIMD is incompatible with proxy mode")
 	}
 
-	if c.Local.TokenTTL != 0 || c.Local.RefreshTokenTTL != 0 || c.Local.TokenClaimsExpression != "" || c.Local.IssuerURI != "" || c.Local.SigningKeys.BootstrapTimeout != 0 {
+	if c.Local.TokenTTL != 0 || c.Local.RefreshTokenTTL != 0 || c.Local.RefreshTokenReuseInterval != nil || c.Local.AbsoluteSessionLifetime != 0 || c.Local.TokenClaimsExpression != "" || c.Local.IssuerURI != "" || c.Local.SigningKeys.BootstrapTimeout != 0 {
 		return c.newValidationError("oauth2_authorization_server.local must be empty in proxy mode")
 	}
 
@@ -481,7 +483,7 @@ func (c *OAuth2AuthServerConfig) validateLocalMode() error {
 	}
 
 	c.applyLocalDefaults()
-	if err := c.validateRefreshTokenTTL(); err != nil {
+	if err := c.validateLocalLifetimes(); err != nil {
 		return err
 	}
 	c.applySharedDefaults([]string{"authorization_code", "client_credentials", "refresh_token"})
@@ -509,7 +511,7 @@ func (c *OAuth2AuthServerConfig) validateHybridMode() error {
 		return err
 	}
 	c.applyLocalDefaults()
-	if err := c.validateRefreshTokenTTL(); err != nil {
+	if err := c.validateLocalLifetimes(); err != nil {
 		return err
 	}
 	c.applySharedDefaults([]string{"authorization_code", "client_credentials", "refresh_token"})
@@ -550,6 +552,10 @@ func (c *OAuth2AuthServerConfig) applyLocalDefaults() {
 	if c.Local.TokenTTL == 0 {
 		c.Local.TokenTTL = time.Hour
 	}
+	if c.Local.RefreshTokenReuseInterval == nil {
+		interval := 30 * time.Second
+		c.Local.RefreshTokenReuseInterval = &interval
+	}
 	if c.Local.RefreshTokenTTL == 0 {
 		c.Local.RefreshTokenTTL = 30 * 24 * time.Hour
 	}
@@ -558,9 +564,21 @@ func (c *OAuth2AuthServerConfig) applyLocalDefaults() {
 	}
 }
 
-func (c *OAuth2AuthServerConfig) validateRefreshTokenTTL() error {
+func (c *OAuth2AuthServerConfig) validateLocalLifetimes() error {
 	if c.Local.RefreshTokenTTL < 0 {
 		return c.newValidationError("oauth2_authorization_server.local.refresh_token_ttl must be a positive duration")
+	}
+	if *c.Local.RefreshTokenReuseInterval < 0 {
+		return c.newValidationError("oauth2_authorization_server.local.refresh_token_reuse_interval must not be negative")
+	}
+	if c.Local.AbsoluteSessionLifetime < 0 {
+		return c.newValidationError("oauth2_authorization_server.local.absolute_session_lifetime must not be negative")
+	}
+	if *c.Local.RefreshTokenReuseInterval >= c.Local.TokenTTL || *c.Local.RefreshTokenReuseInterval >= c.Local.RefreshTokenTTL {
+		return c.newValidationError("oauth2_authorization_server.local.refresh_token_reuse_interval must be shorter than token_ttl and refresh_token_ttl")
+	}
+	if c.Local.AbsoluteSessionLifetime > 0 && c.Local.AbsoluteSessionLifetime <= *c.Local.RefreshTokenReuseInterval {
+		return c.newValidationError("oauth2_authorization_server.local.absolute_session_lifetime must be longer than refresh_token_reuse_interval")
 	}
 	return nil
 }
@@ -614,15 +632,17 @@ func (c *OAuth2AuthServerConfig) Resolve() (OAuth2ModeConfig, error) {
 		}, nil
 	case servermode.Local:
 		return &LocalOAuth2Config{
-			IssuerURI:              c.Local.IssuerURI,
-			TokenTTL:               c.Local.TokenTTL,
-			RefreshTokenTTL:        c.Local.RefreshTokenTTL,
-			TokenClaimsExpression:  c.Local.TokenClaimsExpression,
-			SigningKeys:            c.Local.SigningKeys,
-			SupportedResponseTypes: c.SupportedResponseTypes,
-			SupportedGrantTypes:    c.SupportedGrantTypes,
-			SupportedScopes:        c.SupportedScopes,
-			CIMD:                   c.CIMD,
+			IssuerURI:                 c.Local.IssuerURI,
+			TokenTTL:                  c.Local.TokenTTL,
+			RefreshTokenReuseInterval: *c.Local.RefreshTokenReuseInterval,
+			AbsoluteSessionLifetime:   c.Local.AbsoluteSessionLifetime,
+			RefreshTokenTTL:           c.Local.RefreshTokenTTL,
+			TokenClaimsExpression:     c.Local.TokenClaimsExpression,
+			SigningKeys:               c.Local.SigningKeys,
+			SupportedResponseTypes:    c.SupportedResponseTypes,
+			SupportedGrantTypes:       c.SupportedGrantTypes,
+			SupportedScopes:           c.SupportedScopes,
+			CIMD:                      c.CIMD,
 		}, nil
 	case servermode.Hybrid:
 		return &HybridOAuth2Config{
@@ -639,15 +659,17 @@ func (c *OAuth2AuthServerConfig) Resolve() (OAuth2ModeConfig, error) {
 				MultiAgentClient:          c.MultiAgentClient,
 			},
 			Local: LocalOAuth2Config{
-				IssuerURI:              c.Local.IssuerURI,
-				TokenTTL:               c.Local.TokenTTL,
-				RefreshTokenTTL:        c.Local.RefreshTokenTTL,
-				TokenClaimsExpression:  c.Local.TokenClaimsExpression,
-				SigningKeys:            c.Local.SigningKeys,
-				SupportedResponseTypes: c.SupportedResponseTypes,
-				SupportedGrantTypes:    c.SupportedGrantTypes,
-				SupportedScopes:        c.SupportedScopes,
-				CIMD:                   c.CIMD,
+				IssuerURI:                 c.Local.IssuerURI,
+				TokenTTL:                  c.Local.TokenTTL,
+				RefreshTokenTTL:           c.Local.RefreshTokenTTL,
+				RefreshTokenReuseInterval: *c.Local.RefreshTokenReuseInterval,
+				AbsoluteSessionLifetime:   c.Local.AbsoluteSessionLifetime,
+				TokenClaimsExpression:     c.Local.TokenClaimsExpression,
+				SigningKeys:               c.Local.SigningKeys,
+				SupportedResponseTypes:    c.SupportedResponseTypes,
+				SupportedGrantTypes:       c.SupportedGrantTypes,
+				SupportedScopes:           c.SupportedScopes,
+				CIMD:                      c.CIMD,
 			},
 		}, nil
 	default:

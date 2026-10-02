@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,7 +57,7 @@ func TestResolveTarget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, err := NewService(testImpersonationConfig(), func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return stubJWKSProvider{}, nil
-			}, stubAgentRepository{get: tc.lookup, getCanonical: tc.canonicalLookup}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+			}, stubAgentRepository{get: tc.lookup, getCanonical: tc.canonicalLookup}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com", testAuthorizationClock{now: time.Now()})
 			require.NoError(t, err)
 
 			target, activated, err := svc.ResolveTarget(context.Background(), tc.audiences)

@@ -4,16 +4,16 @@
 
 The feature applies only to broker-issued user refresh sessions in `local` mode and the local minting path of `hybrid` mode. Upstream refresh in `proxy` mode and the upstream path of `hybrid` mode remains unchanged. Vaulted third-party provider tokens remain unchanged. Mode-isolation journeys verify this boundary.
 
-This is a post-implementation validation guide. It does not claim that the planned journeys, restore command, or migration exist. A focused run with zero executed scenarios is not a passing acceptance gate.
+This guide validates the implemented feature through real broker, database, command, and browser journeys. A focused run with zero executed scenarios is not a passing acceptance gate.
 
-The [current API definition](../../api/enduser/openapi.yaml) remains unchanged until implementation. Planned behavior belongs to the [refresh and lifecycle design](contracts/lifecycle.md), [configuration](contracts/configuration.md), and [storage](contracts/storage.md) contracts. The [data model](data-model.md) defines internal deadline and recovery rules.
+The [canonical API definition](../../api/enduser/openapi.yaml) documents the approved behavior. The [refresh and lifecycle](contracts/lifecycle.md), [configuration](contracts/configuration.md), and [storage](contracts/storage.md) contracts define the behavior. The [data model](data-model.md) defines internal deadline and recovery rules.
 
 ## Prerequisites
 
 - Go 1.27.1, `just`, Ginkgo, frontend build dependencies, and Playwright browsers.
 - Docker or Podman for PostgreSQL acceptance, adapter, and migration tests.
 - Helm for deployment configuration validation.
-- [ADR 038](../../adrs/038-consent-bound-refresh-sessions.md) is accepted, including the narrow ADR 008 subject extension and transaction ownership. Complete the remaining API/release and Open Decisions review before runtime implementation.
+- [ADR 038](../../adrs/038-consent-bound-refresh-sessions.md), all five Open Decisions, and API/release handling are approved. The [validation record](plan.md#validation-record) contains initial evidence and final passing outcomes for all 47 primary journeys.
 - Supply a valid JWE key for the existing OAuth state flow and a working `EncryptionPort` backend for credentials and signing keys. Persisted retry results use `EncryptionPort`, not JWE. Durable replicas share PostgreSQL and can decrypt the same branch keys.
 - Run commands from the repository root. Do not enable `GOEXPERIMENT=jsonv2` on Go 1.27.
 
@@ -34,7 +34,7 @@ The specification contains 47 acceptance scenarios: 9 for US1, 10 for US2, 11 fo
 
 Map each scenario to one production-bootstrap journey in [plan.md](plan.md). US1-S2 uses the browser. US6-S8 recovers an original pair before memory restart rejection. Verify the documented storage limit separately. Do not assert documentation source text or count skipped cases.
 
-Before runtime implementation, record acceptance-linked semantic failure for every primary scenario. Each primary It must compile and fail for its actual feature behavior. Keep unchanged baseline regressions separate from these 47 entries. Do not force failures with unrelated assertions or placeholders. After implementation, run all primary scenarios and existing regressions.
+Before runtime implementation, run all 47 primary journeys and record each scenario ID, acceptance assertion, and observed initial result. Changed behavior requires semantic-red evidence. Unchanged behavior can pass as baseline-green evidence under constitution v2.2.0. Do not count baseline passes as red evidence or force failures with unrelated assertions. Keep standalone regressions separate. After implementation, all primary journeys and existing regressions must pass.
 
 US2-S10 must recover the identical pair before a different client authenticates as itself and replays the authorization code. Then both refresh tokens must fail and an unrelated session must remain usable. A mismatched client presenting a refresh token does not revoke the session. The positive recovery control supplies the feature-specific semantic-red assertion. T050 completes this retry-dependent journey after US3 implementation.
 
@@ -143,7 +143,7 @@ The development pre-auth header is a deployment trust boundary, not a production
 
 ## 4. Prove lifetimes and direct-JWKS behavior
 
-The future lifetime journeys use short configured durations or aged fixture state. They preserve the initial authorization journey and original clock metadata. PostgreSQL decisions use shared `clock_timestamp()` after the agent gate. Memory decisions use the coordinator's clock. Exercise before, at, and after each deadline without node-local time assumptions.
+The lifetime journeys use short configured durations or aged fixture state. They preserve the initial authorization journey and original clock metadata. PostgreSQL decisions use shared `clock_timestamp()` after the agent gate. Memory decisions use the coordinator clock. Exercise before, at, and after each deadline without node-local time assumptions.
 
 | Journey | Deciding observation |
 |---------|----------------------|
@@ -189,7 +189,7 @@ Memory runs prove in-process outcomes and staged rollback. A memory process rest
 
 ### Validate a full database or refresh-state restore
 
-This post-implementation procedure covers an additional focused integration regression, not a new primary scenario. The one-shot command is a planned supported interface. It uses existing configuration, storage, coordinator, clock, and maintenance. It starts no HTTP server and returns no credentials.
+This procedure covers an additional focused integration regression, not a new primary scenario. The supported one-shot command uses existing configuration, storage, coordinator, clock, and maintenance. It starts no HTTP server and returns no credentials.
 
 1. Stop token traffic and all writers, including old broker instances, before restoring an encrypted snapshot.
 2. Restore the full database or refresh state in an isolated environment. Apply the supported schema. Keep brokers offline.

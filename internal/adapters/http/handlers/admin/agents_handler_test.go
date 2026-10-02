@@ -101,14 +101,14 @@ func newAgentsHandlerForTest(mockRepo *MockAgentRepository, mockServiceRepo *Moc
 	providerSvc := thirdparty.NewThirdpartyOAuth2ProviderService(mockServiceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, logger)
 	// Use multiAgentEnabled=true so existing CRUD tests don't need ExistsOtherWithClientID expectations.
 	// T033 tests use newAgentsHandlerForTestWithMultiAgent with explicit flags.
-	agentSvc := agents.NewService(mockRepo, providerSvc, logger, true)
+	agentSvc := agents.NewService(mockRepo, providerSvc, logger, true, adminLifecycleCoordinator{}, adminLifecycleRevocations{})
 	return NewAgentsHandler(agentSvc, providerSvc, nil, logger)
 }
 
 // newAgentsHandlerForTestWithMultiAgent creates an AgentsHandler with the given multiAgentEnabled flag.
 func newAgentsHandlerForTestWithMultiAgent(mockRepo *MockAgentRepository, mockServiceRepo *MockProviderRepository, logger *slog.Logger, multiAgentEnabled bool) *AgentsHandler {
 	providerSvc := thirdparty.NewThirdpartyOAuth2ProviderService(mockServiceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, logger)
-	agentSvc := agents.NewService(mockRepo, providerSvc, logger, multiAgentEnabled)
+	agentSvc := agents.NewService(mockRepo, providerSvc, logger, multiAgentEnabled, adminLifecycleCoordinator{}, adminLifecycleRevocations{})
 	return NewAgentsHandler(agentSvc, providerSvc, nil, logger)
 }
 
@@ -761,6 +761,7 @@ func TestAgentsHandler_DeleteAgent(t *testing.T) {
 		handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger)
 
 		agentID := id.NewAgentID()
+		mockRepo.On("Get", mock.Anything, agentID).Return(&storage.Agent{ID: agentID}, nil)
 		mockRepo.On("Delete", mock.Anything, agentID).Return(nil)
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/agents/"+agentID.String(), nil)
@@ -775,6 +776,25 @@ func TestAgentsHandler_DeleteAgent(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, w.Code)
 		assert.Empty(t, w.Body.String())
 
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("missing agent", func(t *testing.T) {
+		mockRepo := new(MockAgentRepository)
+		handler := newAgentsHandlerForTest(mockRepo, new(MockProviderRepository), logger)
+		agentID := id.NewAgentID()
+		mockRepo.On("Get", mock.Anything, agentID).Return(nil,
+			storage.NewStorageError("GetAgent", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found"))
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/agents/"+agentID.String(), nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("agent-id", agentID.String())
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+		handler.DeleteAgent(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		mockRepo.AssertNotCalled(t, "Delete", mock.Anything, agentID)
 		mockRepo.AssertExpectations(t)
 	})
 
@@ -1193,7 +1213,7 @@ func newAgentsHandlerForFR019Test(
 	logger *slog.Logger,
 ) *AgentsHandler {
 	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockServiceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, logger)
-	agentSvc := agents.NewService(mockRepo, svc, logger, true)
+	agentSvc := agents.NewService(mockRepo, svc, logger, true, adminLifecycleCoordinator{}, adminLifecycleRevocations{})
 	return NewAgentsHandler(agentSvc, svc, mockPS, logger)
 }
 
@@ -1647,7 +1667,7 @@ func (v canonicalPermissionSetValidator) CanonicalIDs(_ context.Context, _ []id.
 
 func newAgentsHandlerWithCanonicalPermissionSets(agentRepo *MockAgentRepository, serviceRepo *MockProviderRepository, permissionSets PermissionSetValidator) *AgentsHandler {
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(serviceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
-	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true)
+	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true, adminLifecycleCoordinator{}, adminLifecycleRevocations{})
 	return NewAgentsHandler(agentService, providerService, permissionSets, slog.Default())
 }
 

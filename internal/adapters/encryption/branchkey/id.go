@@ -12,11 +12,13 @@ const (
 	servicePrefix                     = "service_"
 	signingKeyPrefix                  = "key_"
 	cimdClientAuthenticationKeyPrefix = "cimd_key_"
+	refreshSessionPrefix              = "refresh_"
 	suffix                            = "_branch_key"
 
 	serviceIDFormat                     = servicePrefix + "%s" + suffix
 	signingKeyIDFormat                  = signingKeyPrefix + "%s" + suffix
 	cimdClientAuthenticationKeyIDFormat = cimdClientAuthenticationKeyPrefix + "%s" + suffix
+	refreshSessionIDFormat              = refreshSessionPrefix + "%s" + suffix
 )
 
 func generateServiceBranchKeyID(serviceID string) string {
@@ -47,6 +49,9 @@ func GenerateBranchKeyId(subject domainencryption.BranchKeySubject) (string, err
 	case domainencryption.BranchKeySubjectKindCIMDClientAuthenticationKey:
 		keyID, _ := subject.KeyID()
 		return generateCIMDClientAuthenticationBranchKeyID(keyID.String()), nil
+	case domainencryption.BranchKeySubjectKindRefreshSession:
+		sessionID, _ := subject.RefreshSessionID()
+		return refreshSessionPrefix + sessionID.String() + suffix, nil
 	default:
 		return "", fmt.Errorf("unsupported branch key subject kind: %q", subject.Kind())
 	}
@@ -67,6 +72,20 @@ func extractCIMDClientAuthenticationKeyID(branchKeyID string) (string, error) {
 // ExtractSubject parses a branch key ID back into its typed branch key subject.
 func ExtractSubject(branchKeyID string) (domainencryption.BranchKeySubject, error) {
 	switch {
+	case strings.HasPrefix(branchKeyID, refreshSessionPrefix):
+		identifier, err := extractIdentifier(branchKeyID, refreshSessionPrefix, refreshSessionIDFormat, "refresh session ID")
+		if err != nil {
+			return domainencryption.BranchKeySubject{}, err
+		}
+		sessionID, err := id.ParseRefreshSessionID(identifier)
+		if err != nil {
+			return domainencryption.BranchKeySubject{}, fmt.Errorf("invalid refresh session subject: %w", err)
+		}
+		subject := domainencryption.NewRefreshSessionBranchKeySubject(sessionID)
+		if err := subject.Validate(); err != nil {
+			return domainencryption.BranchKeySubject{}, err
+		}
+		return subject, nil
 	case strings.HasPrefix(branchKeyID, servicePrefix):
 		serviceID, err := extractServiceID(branchKeyID)
 		if err != nil {
@@ -91,11 +110,12 @@ func ExtractSubject(branchKeyID string) (domainencryption.BranchKeySubject, erro
 		return domainencryption.NewSigningKeyBranchKeySubject(id.NewKeyID(signingKeyID)), nil
 	default:
 		return domainencryption.BranchKeySubject{}, fmt.Errorf(
-			"invalid branch key ID format: %q (expected format: %s, %s, or %s)",
+			"invalid branch key ID format: %q (expected format: %s, %s, %s, or %s)",
 			branchKeyID,
 			serviceIDFormat,
 			signingKeyIDFormat,
 			cimdClientAuthenticationKeyIDFormat,
+			refreshSessionIDFormat,
 		)
 	}
 }

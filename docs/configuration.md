@@ -35,7 +35,7 @@ The Identity Broker supports multiple configuration sources with clear precedenc
 
 ## Configuration Sources
 
-The Identity Broker loads configuration from four sources (in order of precedence):
+The Identity Broker reads these configuration sources. See [Precedence Rules](#precedence-rules) for local refresh policy order:
 
 ### 1. Built-in Defaults
 
@@ -97,12 +97,13 @@ agentic-identity-broker --log-level debug --log-format json
 
 ## Precedence Rules
 
-When the same configuration key is provided by multiple sources, the value from the highest-precedence source wins:
+For the local refresh policy, command-line flags take precedence over environment variables, YAML, and defaults, in that order.
 
 ```
-CLI Flags > YAML > .env Files > Defaults
-   (3)       (2)      (1)        (0)
+CLI Flags > Environment Variables (.env included) > YAML > Defaults
 ```
+
+A higher-priority `0s` is explicit. It does not fall back to a lower-priority value.
 
 **Example**:
 
@@ -323,6 +324,8 @@ Storage configuration controls the persistence backend and steady-state timeout 
   operations.
 - `oauth2_authorization_server.local.signing_keys.bootstrap_timeout` defines the
   signing-key startup time limit. It applies to local and hybrid token issuance.
+- The `memory` backend supports one broker instance. Process restart loses all refresh sessions,
+  so old refresh tokens cannot renew. Use shared PostgreSQL for restart and replica recovery.
 
 **Example YAML:**
 
@@ -1083,6 +1086,8 @@ In `local` mode, set `issuer_uri` whenever token exchange or approval authentica
 - **`local`**: The broker acts as a standalone OAuth2 authorization server, minting its own JWT access tokens signed with managed asymmetric keys. Supports `client_credentials` and `authorization_code` (with PKCE) grant types, and exposes RFC 8414 discovery and JWKS endpoints.
 - **`hybrid`**: Both proxy and local paths coexist. Agents are classified by their properties: agents with an upstream `ClientID` are routed to the proxy path; local agents (no `ClientID`, no `client_uris`) and CIMD agents (`client_uris` set) are issued local tokens. Requires both `proxy` and `local` configuration sections.
 
+The refresh-policy fields in this section control the implemented Feature 049 policy for broker-issued local refresh sessions.
+
 **Configuration block** (nested under `oauth2_authorization_server`):
 
 | Option | Type | Default | Valid Values | Required? | Environment Variable | CLI Flag | Description |
@@ -1094,6 +1099,9 @@ In `local` mode, set `issuer_uri` whenever token exchange or approval authentica
 | `oauth2_authorization_server.proxy.upstream_jwks_min_refresh` | duration | `15m` | Go duration (e.g. `30s`, `5m`, `1h`) | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_JWKS_MIN_REFRESH` | — | Minimum interval between upstream JWKS refresh attempts. Applies a floor to the cache cadence derived from upstream cache headers. |
 | `oauth2_authorization_server.proxy.upstream_jwks_max_refresh` | duration | `1h` | Go duration (e.g. `5m`, `30m`, `2h`) | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_JWKS_MAX_REFRESH` | — | Maximum interval between upstream JWKS refresh attempts. Caps how stale the broker will allow upstream JWKS cache entries to become. |
 | `oauth2_authorization_server.local.token_ttl` | duration | `1h` | Go duration (e.g. `30m`, `2h`) | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL` | — | Validity period for locally issued JWT access tokens. |
+| `oauth2_authorization_server.local.refresh_token_reuse_interval` | duration | `30s` | Non-negative Go duration. `0s` disables retries. | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_REUSE_INTERVAL` | `--oauth2_authorization_server.local.refresh_token_reuse_interval` | Fixed retry window for the immediately previous local refresh result. |
+| `oauth2_authorization_server.local.absolute_session_lifetime` | duration | `0s` | Non-negative Go duration. `0s` has no absolute deadline. | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_ABSOLUTE_SESSION_LIFETIME` | `--oauth2_authorization_server.local.absolute_session_lifetime` | Total local refresh-session lifetime from first issuance. |
+| `oauth2_authorization_server.local.refresh_token_ttl` | duration | `720h` | Positive Go duration. Omission or `0s` retains `720h`. | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_TTL` | `--oauth2_authorization_server.local.refresh_token_ttl` | Existing local refresh-token TTL is the only inactivity-lifetime setting. |
 | `oauth2_authorization_server.local.token_claims_expression` | string | `""` | CEL expression | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION` | — | CEL expression to inject custom claims into issued JWTs. |
 | `oauth2_authorization_server.local.signing_keys.bootstrap_timeout` | duration | `90s` | Positive duration | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT` | — | Startup budget for signing-key bootstrap in local/hybrid mode. Covers advisory locking, key generation, encryption, and persistence. |
 
@@ -1121,6 +1129,9 @@ oauth2_authorization_server:
   mode: "local"
   local:
     token_ttl: "1h"
+    refresh_token_reuse_interval: "30s"
+    absolute_session_lifetime: "0s"
+    refresh_token_ttl: "720h"
     token_claims_expression: '{"team": agent.display_name}'
     signing_keys:
       bootstrap_timeout: 90s
@@ -1139,9 +1150,52 @@ oauth2_authorization_server:
     upstream_jwks_max_refresh: "1h"
   local:
     token_ttl: "1h"
+    refresh_token_reuse_interval: "30s"
+    absolute_session_lifetime: "0s"
+    refresh_token_ttl: "720h"
     signing_keys:
       bootstrap_timeout: 90s
 ```
+
+#### Local refresh-session policy
+
+The three durations apply only to broker-issued user refresh sessions in `local` mode and the local minting path of `hybrid` mode. They do not change upstream provider-controlled refresh in `hybrid` or `proxy` mode, or vaulted third-party tokens. Proxy mode receives no local policy defaults and rejects explicitly supplied local-only broker configuration.
+
+The chart exposes `broker.oauth2AuthorizationServer.local.refreshTokenReuseInterval`, `broker.oauth2AuthorizationServer.local.absoluteSessionLifetime`, and `broker.oauth2AuthorizationServer.local.refreshTokenTtl`. Local/hybrid rendering quotes each duration under `oauth2_authorization_server.local`. Proxy rendering omits the policy defaults. Pass `--set-string` to Helm to preserve `0s` as a string. The chart schema rejects wrong types and obvious invalid durations. The broker checks syntax and cross-setting limits.
+
+Set each duration in Go syntax, for example `30s`, `1h30m`, or `168h` (seven days). Bare numbers, negative values, overflow, and malformed strings fail startup with the setting identified. The reuse interval must be strictly shorter than both access `token_ttl` and inactivity `refresh_token_ttl`. A finite absolute lifetime must be strictly longer than reuse. For example, `absolute_session_lifetime: "168h"` with default `refresh_token_ttl: "720h"` logs a warning, but starts. The earliest grant, access-token, session, or reuse deadline always wins.
+
+The default `30s` reuse interval permits at most three returns of the same original result for the immediately previous token. Its successor must remain unused. A retry never creates another successor or advances a session clock. Set `0s` for strict single use with no cached retry result.
+
+The default absolute lifetime `0s` has no total-time deadline. It does not force a return to the identity provider by itself. Current consent and inactivity remain mandatory. Inactivity defaults to `720h` (30 days). Its clock starts at issuance and resets only after a fresh successful rotation. Resource traffic, rejected requests, and eligible retries do not renew it.
+
+The following command-line example overrides both the environment variable and YAML value for reuse, including an explicit zero:
+
+```bash
+IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_REUSE_INTERVAL=15s \
+  agentic-identity-broker --config ./examples/config/oauth2-server-mode.yaml \
+  --oauth2_authorization_server.local.refresh_token_reuse_interval=0s
+```
+
+Configuration order for each of the three durations is CLI flag, environment variable, YAML, then default. The chart delivers broker YAML rather than a separate precedence tier. A higher-priority `0s` does not fall back to `30s` for reuse. For inactivity, omission or `0s` selects `720h` regardless of the source. For absolute lifetime, `0s` disables only the absolute deadline.
+
+Changing a policy does not restart session clocks. Startup checks elapsed stored deadlines before any increase. It persists shorter effective session and retry deadlines before readiness. Decreasing reuse shortens existing retry eligibility. Setting reuse to `0s` removes existing live retry results before readiness. With reachable storage, maintenance erases overdue live ciphertext within one second after its effective retry deadline.
+
+Missed cleanup or unavailable storage blocks readiness until overdue results are cleared. An increase cannot reactivate a revoked or expired session. It cannot lengthen an already-issued refresh token or extend its current activity interval. Only a fresh successful rotation before expiry uses an increased inactivity lifetime for its successor and next interval. A nonterminal absolute deadline uses the original first issuance, never the restart time.
+
+Consent and revocation override retry eligibility. A lost commit acknowledgement returns a token-free `server_error` without a rollback guarantee. A later request follows durable state and ordinary retry rules. With `0s` reuse, a committed consumption has no recovery result and requires fresh authorization.
+
+Existing access JWTs retain their original expiry after consent or session revocation, up to `token_ttl` (default `1h`). A shorter `token_ttl` reduces residual exposure for newly issued tokens. Signature-only resource servers cannot invalidate already-issued JWTs early.
+
+For rolling upgrades, every pre-feature unanchored refresh session and unsupported old-writer descendant requires fresh authorization. Only anchored families created by new issuers with complete original-grant, ownership, issuance, lineage, and revocation evidence can continue under current authorization. Preserve the legacy table during mixed-version rollout. Before binary-only rollback, stop token traffic and old writers, then reconcile session expiry under the outgoing policy. Admit old binaries only after successful reconciliation. Neither that rollback nor a down migration can restore terminally expired or revoked sessions.
+
+After a full database or refresh-state restore, stop token traffic and **all** other writers before restoring. Apply the supported schema. Then run `agentic-identity-broker --config <file> refresh-sessions invalidate-restored` before starting brokers. The command invalidates restored local roots, encrypted retry results, and unused legacy rows, including unanchored rows without roots. It preserves existing terminal reasons, agents, grants, credentials, signing keys, and third-party sessions.
+
+The offline command starts no HTTP servers or background workers. Successful exit requires acknowledged owner commits and an authoritative empty-authority scan.
+
+If the command fails or its commit is indeterminate, keep brokers offline. Rerun until acknowledged success includes zero active roots, retry ciphertext, and unused legacy rows. Normal startup cannot detect a restore automatically. Encrypted backups can retain copies after live ciphertext erasure, so restrict backup access and retention. Never put plaintext tokens or client secrets in logs or backups. See the [restore invalidation contract](../specs/049-fix-refresh-consent/data-model.md#restore-invalidation).
+
+The non-durable memory backend supports only one broker instance and loses all refresh sessions at restart. Use shared PostgreSQL and the same encryption keys and refresh policy across instances for durable retry, revocation, and lifetime decisions. Key loss for a still-live encrypted retry result fails closed, without a plaintext fallback.
 
 **Security notes**:
 

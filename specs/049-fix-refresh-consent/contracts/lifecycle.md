@@ -2,9 +2,9 @@
 
 These are changes to existing operations, not new endpoints. Canonical contracts remain `api/enduser/openapi.yaml` and `api/admin/openapi.yaml`.
 
-This is a feature 049 design document, not a claim of implemented behavior. Current canonical APIs remain unchanged until implementation. Approved contract updates belong to T005 before runtime edits.
+This is the approved feature 049 contract, not a claim of implemented runtime behavior. T005 published its canonical API documentation before runtime edits.
 
-These design choices remain provisional until [T001 Open Decisions](../tasks.md). If a choice changes, reconcile the specification, plan, contracts, examples, scenario mapping, and tasks. Validate traceability before dependent work. The T005 API review and release gate below remain in force.
+The owner confirmed all five Open Decisions and API/release handling in T001 on 2026-10-01. A later choice change requires artifact reconciliation and traceability validation before dependent work. Existing routes and wire shapes remain; released-contract breaks require major-release handling.
 
 ## Refresh Grant Design
 

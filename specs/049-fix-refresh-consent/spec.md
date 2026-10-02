@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-30
 
-**Status**: Draft
+**Status**: Approved for implementation
 
 **Scope**: Local token minting only: `local` mode and the local minting path of `hybrid` mode. No upstream refresh-policy changes.
 
@@ -14,7 +14,7 @@
 
 **Task-generation decisions**: The feature owner selected constitution-compliant CLI support for all three settings and permitted encrypted backup copies of retry results. Live retry results still expire under DB-006. Logs must not contain retry results.
 
-**Analysis remediation decisions**: The constitution remains unchanged. Every primary acceptance journey must first fail on a genuine feature assertion. Confirmed rollback and an indeterminate commit have different recovery guarantees under FR-031.
+**Analysis remediation decisions**: The owner approved constitution v2.2.0's baseline-green clarification on 2026-10-01. Changed acceptance behavior requires a genuine semantic failure before implementation. Unchanged behavior can start green with observed baseline evidence. All 47 journeys remain mandatory. Confirmed rollback and an indeterminate commit have different recovery guarantees under FR-031.
 
 ## Scope and Mode Boundary
 
@@ -389,7 +389,7 @@ oauth2_authorization_server:
 
 ## Open Decisions
 
-The requirements use the recommended option for each decision. Planning and task generation are provisional until the feature owner confirms these options in T001. If an option changes, reconcile the specification, plan, contracts, examples, scenario mappings, and tasks before dependent work starts. Validate traceability again after that reconciliation.
+The feature owner confirmed all five recommended options in T001 on 2026-10-01. The table preserves the reviewed alternatives; implementation uses the confirmed options. A later decision change requires reconciliation of the specification, plan, contracts, examples, scenario mappings, and tasks before dependent work, followed by traceability validation.
 
 | Decision | Recommended option in this specification | Alternative |
 |----------|------------------------------------------|-------------|

@@ -125,8 +125,28 @@ func (m *mockServiceReqValidator) ValidateServiceRequirements(_ context.Context,
 	return m.err
 }
 
+type unusedAgentCoordinator struct{}
+
+func (unusedAgentCoordinator) Run(context.Context, id.AgentID, func(context.Context, time.Time) error) error {
+	panic("unexpected agent deletion in unrelated service test")
+}
+
+type unusedAgentRevocations struct{}
+
+func (unusedAgentRevocations) RevokeByID(context.Context, id.RefreshSessionID, time.Time, storage.RefreshRevocationReason) error {
+	panic("unexpected refresh revocation in unrelated service test")
+}
+
+func (unusedAgentRevocations) RevokeByPrincipalAndAgent(context.Context, id.Principal, id.AgentID, time.Time, storage.RefreshRevocationReason) error {
+	panic("unexpected refresh revocation in unrelated service test")
+}
+
+func (unusedAgentRevocations) RevokeByAgent(context.Context, id.AgentID, time.Time, storage.RefreshRevocationReason) error {
+	panic("unexpected refresh revocation in unrelated service test")
+}
+
 func newTestService(repo ports.AgentRepository, multiAgent bool) *Service {
-	return NewService(repo, &mockServiceReqValidator{}, slog.Default(), multiAgent)
+	return NewService(repo, &mockServiceReqValidator{}, slog.Default(), multiAgent, unusedAgentCoordinator{}, unusedAgentRevocations{})
 }
 
 func testPermissionSets() []storage.AgentPermissionSetEntry {

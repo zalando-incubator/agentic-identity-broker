@@ -28,6 +28,37 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 )
 
+type testAuthorizationClock struct {
+	now time.Time
+	err error
+}
+
+func (c testAuthorizationClock) Now(context.Context) (time.Time, error) {
+	return c.now, c.err
+}
+
+func (c testAuthorizationClock) Run(ctx context.Context, _ id.AgentID, operation func(context.Context, time.Time) error) error {
+	at, err := c.Now(ctx)
+	if err != nil {
+		return err
+	}
+	return operation(ctx, at)
+}
+
+type unexpectedRefreshRevocations struct{}
+
+func (unexpectedRefreshRevocations) RevokeByID(context.Context, id.RefreshSessionID, time.Time, storagedomain.RefreshRevocationReason) error {
+	panic("unexpected refresh revocation in token exchange test")
+}
+
+func (unexpectedRefreshRevocations) RevokeByPrincipalAndAgent(context.Context, id.Principal, id.AgentID, time.Time, storagedomain.RefreshRevocationReason) error {
+	panic("unexpected refresh revocation in token exchange test")
+}
+
+func (unexpectedRefreshRevocations) RevokeByAgent(context.Context, id.AgentID, time.Time, storagedomain.RefreshRevocationReason) error {
+	panic("unexpected refresh revocation in token exchange test")
+}
+
 type noopBranchKeyManager struct{}
 
 func newNoopBranchKeyManager() *noopBranchKeyManager {
@@ -125,23 +156,16 @@ func (m *MockPermissionSetRepository) CountPermissionSetsForService(ctx context.
 
 // newMockConsentService creates a consent.Service with mock repositories for testing
 func newMockConsentService() *consent.Service {
-	return consent.NewService(
-		&MockAgentRepository{},
-		newTestProviderService(&MockServiceRepository{}),
-		&MockGrantRepository{
-			grant: &storagedomain.UserGrant{
-				ID:         id.NewGrantID(),
-				Principal:  id.Principal("test-principal"),
-				AgentID:    id.NewAgentID(),
-				ValidUntil: func() *time.Time { t := time.Now().Add(24 * time.Hour); return &t }(),
-				CreatedAt:  time.Now(),
-				UpdatedAt:  time.Now(),
-			},
+	return consent.NewService(&MockAgentRepository{}, newTestProviderService(&MockServiceRepository{}), &MockGrantRepository{
+		grant: &storagedomain.UserGrant{
+			ID:         id.NewGrantID(),
+			Principal:  id.Principal("test-principal"),
+			AgentID:    id.NewAgentID(),
+			ValidUntil: func() *time.Time { t := time.Now().Add(24 * time.Hour); return &t }(),
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
 		},
-		nil,
-		nil,
-		slog.Default(),
-	)
+	}, nil, nil, slog.Default(), testAuthorizationClock{now: time.Now()}, testAuthorizationClock{now: time.Now()}, unexpectedRefreshRevocations{})
 }
 
 // MockAgentRepository mocks the AgentRepository for consent service testing
@@ -326,7 +350,7 @@ func (m *MockGrantRepository) DeleteByAgent(ctx context.Context, agentID id.Agen
 	return nil
 }
 
-func (m *MockGrantRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]storagedomain.UserGrant, error) {
+func (m *MockGrantRepository) ListByPrincipal(ctx context.Context, principal id.Principal, decisionTime time.Time) ([]storagedomain.UserGrant, error) {
 	return nil, nil
 }
 
@@ -418,6 +442,7 @@ func NewTokenExchangeServiceForTest(
 		psService,
 		agentRepository,
 		config,
+		testAuthorizationClock{now: time.Now()},
 	)
 }
 
@@ -565,6 +590,7 @@ func TestNewTokenExchangeService_RequiresPermissionSetService(t *testing.T) {
 		nil,
 		&MockAgentRepository{},
 		&ports.TokenExchangeConfig{},
+		testAuthorizationClock{now: time.Now()},
 	)
 
 	require.Error(t, err)
@@ -1395,14 +1421,7 @@ func newServiceForStep9TestWithAuthz(t *testing.T, keySet jwk.Set, agentRepo por
 	}
 	providerRepo := &MockServiceRepository{service: providerEntity}
 
-	consentSvc := consent.NewService(
-		&MockAgentRepository{},
-		newTestProviderService(&MockServiceRepository{}),
-		&MockGrantRepository{err: ports.ErrNotFound},
-		nil,
-		nil,
-		slog.Default(),
-	)
+	consentSvc := consent.NewService(&MockAgentRepository{}, newTestProviderService(&MockServiceRepository{}), &MockGrantRepository{err: ports.ErrNotFound}, nil, nil, slog.Default(), testAuthorizationClock{now: time.Now()}, testAuthorizationClock{now: time.Now()}, unexpectedRefreshRevocations{})
 
 	svc, err := NewTokenExchangeServiceForTest(
 		jwtValidator,
@@ -1519,6 +1538,26 @@ func TestExchange_AgentLookup_InvalidUUIDReturnsInvalidRequest(t *testing.T) {
 		"non-UUID agentClientID must return invalid_request (not access_denied)")
 }
 
+func TestExchange_AuthorizationClockFailureDeniesBeforeGrantOrSession(t *testing.T) {
+	privateKey, keySet := generateTestRSAKeySet(t)
+	agentID := id.NewAgentID()
+	svc := newServiceForStep9Test(t, keySet, &singleAgentRepo{agentID: agentID, agent: &storagedomain.Agent{ID: agentID}})
+	svc.clock = testAuthorizationClock{err: assert.AnError}
+	now := time.Now()
+	claims := map[string]interface{}{
+		"iss": "https://auth.example.com", "aud": "agentic-identity-broker",
+		"sub": "user@example.com", "azp": agentID.String(),
+		"exp": now.Add(time.Hour).Unix(), "iat": now.Unix(),
+	}
+	jwtToken := signServiceTestJWT(t, privateKey, claims)
+	req := NewTokenExchangeRequest(TokenExchangeGrantType, jwtToken, AccessTokenType, jwtToken, JWTBearerType, "https://api.example.com/resource", "")
+	result, err := svc.Exchange(context.Background(), req)
+	var tokenErr *TokenExchangeError
+	require.ErrorAs(t, err, &tokenErr)
+	assert.Equal(t, ServerErrorCode, tokenErr.Code())
+	assert.Nil(t, result)
+}
+
 // singleAgentRepo is a minimal ports.AgentRepository that returns one fixed agent.
 type singleAgentRepo struct {
 	agentID id.AgentID
@@ -1593,14 +1632,7 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 		ProtectedResources: []string{"https://api.example.com/resource"},
 	}
 
-	consentSvc := consent.NewService(
-		agentRepo,
-		newTestProviderService(&MockServiceRepository{}),
-		grantRepo,
-		nil,
-		nil,
-		slog.Default(),
-	)
+	consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, slog.Default(), testAuthorizationClock{now: time.Now()}, testAuthorizationClock{now: time.Now()}, unexpectedRefreshRevocations{})
 
 	jwtValidator, err := NewJWTValidator(
 		&MockJWKSProvider{keySet: keySet},
@@ -1626,6 +1658,7 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 		consentService:       consentSvc,
 		agentRepository:      agentRepo,
 		permissionSetService: psService,
+		clock:                testAuthorizationClock{now: time.Now()},
 		config: &ports.TokenExchangeConfig{
 			ClaimExtraction: ports.ClaimExtractionConfig{
 				PrincipalExpression: "subject_token.sub",
@@ -1725,14 +1758,7 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 		},
 	}}
 	psService := permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default())
-	consentSvc := consent.NewService(
-		agentRepo,
-		newTestProviderService(&MockServiceRepository{}),
-		grantRepo,
-		nil,
-		nil,
-		slog.Default(),
-	)
+	consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, slog.Default(), testAuthorizationClock{now: time.Now()}, testAuthorizationClock{now: time.Now()}, unexpectedRefreshRevocations{})
 
 	sessionRepo := &MockSessionRepository{
 		session: &storagedomain.UserSession{
@@ -1787,6 +1813,7 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 		consentService:       consentSvc,
 		permissionSetService: psService,
 		agentRepository:      agentRepo,
+		clock:                testAuthorizationClock{now: time.Now()},
 		config: &ports.TokenExchangeConfig{
 			ClaimExtraction: ports.ClaimExtractionConfig{PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.azp"},
 			Authorization:   ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},

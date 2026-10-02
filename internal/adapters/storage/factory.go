@@ -16,15 +16,6 @@ import (
 // Compile-time interface check
 var _ ports.StorageTransactionManager = (*Adapter)(nil)
 
-type noOpStorageTransactionManager struct{}
-
-func (noOpStorageTransactionManager) BeginTX(ctx context.Context) (context.Context, error) {
-	return ctx, nil
-}
-
-func (noOpStorageTransactionManager) Commit(context.Context) error   { return nil }
-func (noOpStorageTransactionManager) Rollback(context.Context) error { return nil }
-
 // lifecycleAdapter defines the lifecycle operations expected on storage adapters.
 type lifecycleAdapter interface {
 	Initialize(context.Context) error
@@ -41,24 +32,29 @@ type signingKeyAdapter interface {
 // Adapters implement repository interfaces (UserRepository, etc.)
 // This struct is returned by NewAdapter factory function.
 type Adapter struct {
-	lifecycle            lifecycleAdapter
-	users                ports.UserRepository
-	agents               ports.AgentRepository
-	providers            ports.ThirdpartyOAuth2ProviderRepository
-	userGrants           ports.UserGrantRepository
-	userSessions         ports.UserSessionRepository
-	sessionRefresh       ports.UserSessionRefreshRepository
-	toolApprovals        ports.ToolApprovalRepository
-	toolApprovalQueries  ports.ToolApprovalQueryRepository
-	toolApprovalMetrics  ports.ToolApprovalMetricsRepository
-	approvalSyncState    ports.ApprovalSyncStateRepository
-	permissionSets       ports.PermissionSetRepository
-	brokerCredentials    ports.ClientCredentialRepository
-	signingKeys          signingKeyAdapter
-	refreshTokenSessions ports.RefreshTokenSessionRepository
-	transactions         ports.StorageTransactionManager
-	authorizationCodes   ports.AuthorizationCodeRepository
-	pkceSessions         ports.PKCESessionRepository
+	lifecycle                lifecycleAdapter
+	users                    ports.UserRepository
+	agents                   ports.AgentRepository
+	providers                ports.ThirdpartyOAuth2ProviderRepository
+	userGrants               ports.UserGrantRepository
+	userSessions             ports.UserSessionRepository
+	sessionRefresh           ports.UserSessionRefreshRepository
+	toolApprovals            ports.ToolApprovalRepository
+	toolApprovalQueries      ports.ToolApprovalQueryRepository
+	toolApprovalMetrics      ports.ToolApprovalMetricsRepository
+	approvalSyncState        ports.ApprovalSyncStateRepository
+	permissionSets           ports.PermissionSetRepository
+	brokerCredentials        ports.ClientCredentialRepository
+	signingKeys              signingKeyAdapter
+	refreshSessions          ports.RefreshSessionRepository
+	refreshTokens            ports.RefreshTokenRepository
+	refreshRevocations       ports.RefreshSessionRevocationRepository
+	refreshMaintenance       ports.RefreshSessionMaintenanceRepository
+	authorizationClock       ports.AuthorizationClock
+	authorizationCoordinator ports.AuthorizationSessionCoordinator
+	transactions             ports.StorageTransactionManager
+	authorizationCodes       ports.AuthorizationCodeRepository
+	pkceSessions             ports.PKCESessionRepository
 }
 
 // NewAdapter creates a storage adapter based on configuration.
@@ -95,25 +91,35 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	toolApprovalRepo := memory.NewToolApprovalRepository()
 	signingKeys := memory.NewSigningKeyStore()
 	sessions := memory.NewInMemoryUserSessionRepository()
+	credentials := memory.NewClientCredentialStore()
+	codes := memory.NewAuthorizationCodeStore()
+	pkce := memory.NewPKCESessionStore()
+	refresh := memory.NewRefreshSessionStore(agentRepo, userGrants, credentials, codes, pkce)
+	tokens := memory.NewRefreshTokenStore(refresh)
 	return &Adapter{
-		lifecycle:            memAdapter,
-		users:                memAdapter,
-		agents:               agentRepo,
-		providers:            memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
-		userGrants:           userGrants,
-		userSessions:         sessions,
-		sessionRefresh:       sessions,
-		toolApprovals:        toolApprovalRepo,
-		toolApprovalQueries:  toolApprovalRepo,
-		toolApprovalMetrics:  toolApprovalRepo,
-		approvalSyncState:    memory.NewApprovalSyncStateRepository(),
-		permissionSets:       permissionSets,
-		brokerCredentials:    memory.NewClientCredentialStore(),
-		signingKeys:          signingKeys,
-		authorizationCodes:   memory.NewAuthorizationCodeStore(),
-		refreshTokenSessions: memory.NewRefreshTokenSessionStore(),
-		transactions:         noOpStorageTransactionManager{},
-		pkceSessions:         memory.NewPKCESessionStore(),
+		lifecycle:                memAdapter,
+		users:                    memAdapter,
+		agents:                   agentRepo,
+		providers:                memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
+		userGrants:               userGrants,
+		userSessions:             sessions,
+		sessionRefresh:           sessions,
+		toolApprovals:            toolApprovalRepo,
+		toolApprovalQueries:      toolApprovalRepo,
+		toolApprovalMetrics:      toolApprovalRepo,
+		approvalSyncState:        memory.NewApprovalSyncStateRepository(),
+		permissionSets:           permissionSets,
+		brokerCredentials:        credentials,
+		signingKeys:              signingKeys,
+		authorizationCodes:       codes,
+		refreshSessions:          refresh,
+		refreshTokens:            tokens,
+		refreshRevocations:       refresh,
+		refreshMaintenance:       refresh,
+		authorizationClock:       refresh,
+		authorizationCoordinator: refresh,
+		transactions:             refresh,
+		pkceSessions:             pkce,
 	}, nil
 }
 
@@ -131,25 +137,33 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	signingKeys := postgres.NewSigningKeyRepo(pgAdapter)
 	sessions := postgres.NewUserSessionRepository(pgAdapter)
 
+	refresh := postgres.NewRefreshSessionRepo(pgAdapter)
+	tokens := postgres.NewRefreshTokenRepo(pgAdapter)
+	coordinator := postgres.NewAuthorizationSessionCoordinator(pgAdapter)
 	return &Adapter{
-		lifecycle:            pgAdapter,
-		users:                pgAdapter,
-		agents:               postgres.NewAgentRepository(pgAdapter),
-		providers:            postgres.NewPostgresThirdpartyOAuth2ProviderRepository(pgAdapter),
-		userGrants:           postgres.NewUserGrantRepository(pgAdapter),
-		userSessions:         sessions,
-		sessionRefresh:       sessions,
-		toolApprovals:        toolApprovalRepo,
-		toolApprovalQueries:  toolApprovalRepo,
-		toolApprovalMetrics:  toolApprovalRepo,
-		approvalSyncState:    postgres.NewApprovalSyncStateRepository(pgAdapter),
-		permissionSets:       postgres.NewPermissionSetRepository(pgAdapter),
-		brokerCredentials:    postgres.NewClientCredentialRepo(pgAdapter),
-		signingKeys:          signingKeys,
-		authorizationCodes:   postgres.NewAuthorizationCodeRepo(pgAdapter),
-		refreshTokenSessions: postgres.NewRefreshTokenSessionRepo(pgAdapter),
-		transactions:         pgAdapter,
-		pkceSessions:         postgres.NewPKCESessionRepo(pgAdapter),
+		lifecycle:                pgAdapter,
+		users:                    pgAdapter,
+		agents:                   postgres.NewAgentRepository(pgAdapter),
+		providers:                postgres.NewPostgresThirdpartyOAuth2ProviderRepository(pgAdapter),
+		userGrants:               postgres.NewUserGrantRepository(pgAdapter),
+		userSessions:             sessions,
+		sessionRefresh:           sessions,
+		toolApprovals:            toolApprovalRepo,
+		toolApprovalQueries:      toolApprovalRepo,
+		toolApprovalMetrics:      toolApprovalRepo,
+		approvalSyncState:        postgres.NewApprovalSyncStateRepository(pgAdapter),
+		permissionSets:           postgres.NewPermissionSetRepository(pgAdapter),
+		brokerCredentials:        postgres.NewClientCredentialRepo(pgAdapter),
+		signingKeys:              signingKeys,
+		authorizationCodes:       postgres.NewAuthorizationCodeRepo(pgAdapter),
+		refreshSessions:          refresh,
+		refreshTokens:            tokens,
+		refreshRevocations:       refresh,
+		refreshMaintenance:       refresh,
+		authorizationClock:       coordinator,
+		authorizationCoordinator: coordinator,
+		transactions:             pgAdapter,
+		pkceSessions:             postgres.NewPKCESessionRepo(pgAdapter),
 	}, nil
 }
 
@@ -274,11 +288,6 @@ func (a *Adapter) AuthorizationCodes() ports.AuthorizationCodeRepository {
 	return a.authorizationCodes
 }
 
-// RefreshTokenSessions returns the RefreshTokenSessionRepository interface implementation.
-func (a *Adapter) RefreshTokenSessions() ports.RefreshTokenSessionRepository {
-	return a.refreshTokenSessions
-}
-
 // BeginTX starts the configured backend's transaction scope.
 func (a *Adapter) BeginTX(ctx context.Context) (context.Context, error) {
 	return a.transactions.BeginTX(ctx)
@@ -297,4 +306,28 @@ func (a *Adapter) Rollback(ctx context.Context) error {
 // PKCESessions returns the PKCESessionRepository interface implementation.
 func (a *Adapter) PKCESessions() ports.PKCESessionRepository {
 	return a.pkceSessions
+}
+
+func (a *Adapter) RefreshSessions() ports.RefreshSessionRepository {
+	return a.refreshSessions
+}
+
+func (a *Adapter) RefreshTokens() ports.RefreshTokenRepository {
+	return a.refreshTokens
+}
+
+func (a *Adapter) RefreshRevocations() ports.RefreshSessionRevocationRepository {
+	return a.refreshRevocations
+}
+
+func (a *Adapter) RefreshMaintenance() ports.RefreshSessionMaintenanceRepository {
+	return a.refreshMaintenance
+}
+
+func (a *Adapter) AuthorizationClock() ports.AuthorizationClock {
+	return a.authorizationClock
+}
+
+func (a *Adapter) AuthorizationCoordinator() ports.AuthorizationSessionCoordinator {
+	return a.authorizationCoordinator
 }

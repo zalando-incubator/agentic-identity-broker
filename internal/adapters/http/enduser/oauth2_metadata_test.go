@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -15,21 +16,14 @@ import (
 
 // TestOAuth2MetadataHandler_ServeHTTP_SuccessfulMetadata tests successful metadata generation
 func TestOAuth2MetadataHandler_ServeHTTP_SuccessfulMetadata(t *testing.T) {
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(newMockAgentRepo(), nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			UpstreamTokenEndpoint:     "https://auth.example.com/token",
-			PublicURL:                 "https://broker.example.com",
-			SupportedResponseTypes:    []string{"code"},
-			SupportedGrantTypes:       []string{"authorization_code"},
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(newMockGrantRepo(), &noopSessionRepository{}, oauth2.NewAgentClientResolver(newMockAgentRepo(), nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		UpstreamTokenEndpoint:     "https://auth.example.com/token",
+		PublicURL:                 "https://broker.example.com",
+		SupportedResponseTypes:    []string{"code"},
+		SupportedGrantTypes:       []string{"authorization_code"},
+	}, nil, newTestSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 
 	handler := &OAuth2MetadataHandler{
 		Service: svc,
@@ -57,21 +51,14 @@ func TestOAuth2MetadataHandler_ServeHTTP_SuccessfulMetadata(t *testing.T) {
 
 // TestOAuth2MetadataHandler_ServeHTTP_JSONEncoding tests proper JSON encoding
 func TestOAuth2MetadataHandler_ServeHTTP_JSONEncoding(t *testing.T) {
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(newMockAgentRepo(), nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			UpstreamTokenEndpoint:     "https://auth.example.com/token",
-			PublicURL:                 "https://broker.example.com",
-			SupportedResponseTypes:    []string{"code"},
-			SupportedGrantTypes:       []string{"authorization_code", "refresh_token"},
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(newMockGrantRepo(), &noopSessionRepository{}, oauth2.NewAgentClientResolver(newMockAgentRepo(), nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		UpstreamTokenEndpoint:     "https://auth.example.com/token",
+		PublicURL:                 "https://broker.example.com",
+		SupportedResponseTypes:    []string{"code"},
+		SupportedGrantTypes:       []string{"authorization_code", "refresh_token"},
+	}, nil, newTestSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 
 	handler := &OAuth2MetadataHandler{
 		Service: svc,
@@ -100,19 +87,12 @@ func TestOAuth2MetadataHandler_ServeHTTP_JSONEncoding(t *testing.T) {
 
 // TestOAuth2MetadataHandler_ServeHTTP_CacheHeaders tests appropriate cache headers
 func TestOAuth2MetadataHandler_ServeHTTP_CacheHeaders(t *testing.T) {
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(newMockAgentRepo(), nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			UpstreamTokenEndpoint:     "https://auth.example.com/token",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(newMockGrantRepo(), &noopSessionRepository{}, oauth2.NewAgentClientResolver(newMockAgentRepo(), nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		UpstreamTokenEndpoint:     "https://auth.example.com/token",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, newTestSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 
 	handler := &OAuth2MetadataHandler{
 		Service: svc,
@@ -130,18 +110,11 @@ func TestOAuth2MetadataHandler_ServeHTTP_CacheHeaders(t *testing.T) {
 
 // TestOAuth2MetadataHandler_ServeHTTP_AllowGETOnly tests only GET method allowed
 func TestOAuth2MetadataHandler_ServeHTTP_AllowGETOnly(t *testing.T) {
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(newMockAgentRepo(), nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(newMockGrantRepo(), &noopSessionRepository{}, oauth2.NewAgentClientResolver(newMockAgentRepo(), nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, newTestSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 
 	handler := &OAuth2MetadataHandler{
 		Service: svc,
@@ -162,19 +135,12 @@ func TestOAuth2MetadataHandler_ServeHTTP_AllowGETOnly(t *testing.T) {
 
 // TestOAuth2MetadataHandler_ServeHTTP_PublicEndpoint tests endpoint is public (no auth required)
 func TestOAuth2MetadataHandler_ServeHTTP_PublicEndpoint(t *testing.T) {
-	svc := oauth2.NewAuthorizationService(
-		newMockGrantRepo(),
-		&noopSessionRepository{},
-		oauth2.NewAgentClientResolver(newMockAgentRepo(), nil),
-		&oauth2.OAuth2Config{
-			ModeStrategy:              oauth2.NewProxyModeStrategy(),
-			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
-			UpstreamTokenEndpoint:     "https://auth.example.com/token",
-			PublicURL:                 "https://broker.example.com",
-		},
-		nil,
-		newTestSessionTokenSvc(),
-	)
+	svc := oauth2.NewAuthorizationService(newMockGrantRepo(), &noopSessionRepository{}, oauth2.NewAgentClientResolver(newMockAgentRepo(), nil), &oauth2.OAuth2Config{
+		ModeStrategy:              oauth2.NewProxyModeStrategy(),
+		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
+		UpstreamTokenEndpoint:     "https://auth.example.com/token",
+		PublicURL:                 "https://broker.example.com",
+	}, nil, newTestSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 
 	handler := &OAuth2MetadataHandler{
 		Service: svc,
