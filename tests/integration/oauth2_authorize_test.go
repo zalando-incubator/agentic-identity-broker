@@ -17,6 +17,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/enduser"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
@@ -25,6 +26,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,13 +53,13 @@ func TestOAuth2AuthorizeEndpoint_NonUUIDClientIDError(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, ledgerfixture.NewRecorder()), memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager()), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		SupportedResponseTypes:    []string{"code"},
 		SupportedGrantTypes:       []string{"authorization_code"},
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), ledgerfixture.NewRecorder())
 	handler := &enduser.OAuth2AuthorizeHandler{Service: svc}
 
 	req := httptest.NewRequest(
@@ -81,13 +83,13 @@ func TestOAuth2AuthorizeEndpoint_UnknownAgentUUIDDirectError(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, ledgerfixture.NewRecorder()), memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager()), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		SupportedResponseTypes:    []string{"code"},
 		SupportedGrantTypes:       []string{"authorization_code"},
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), ledgerfixture.NewRecorder())
 	handler := &enduser.OAuth2AuthorizeHandler{Service: svc}
 
 	unknownUUID := id.NewAgentID().String()
@@ -114,11 +116,11 @@ func TestOAuth2AuthorizeEndpoint_MissingParameterError(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, ledgerfixture.NewRecorder()), memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager()), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), ledgerfixture.NewRecorder())
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service: svc,
@@ -169,11 +171,11 @@ func TestOAuth2AuthorizeEndpoint_NoGrantRedirectsToConsent(t *testing.T) {
 	}
 	_ = agentRepo.Create(context.Background(), agent)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, ledgerfixture.NewRecorder()), memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager()), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, sessiontoken.NewService(newIntegrationJWETokenService()))
+	}, nil, sessiontoken.NewService(newIntegrationJWETokenService()), ledgerfixture.NewRecorder())
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service: svc,
@@ -223,11 +225,11 @@ func TestOAuth2AuthorizeEndpoint_ActiveGrantRedirectsToUpstream(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, ledgerfixture.NewRecorder()), memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager()), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), ledgerfixture.NewRecorder())
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -286,11 +288,11 @@ func TestOAuth2AuthorizeEndpoint_ExpiredGrantRedirectsToConsent(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, ledgerfixture.NewRecorder()), memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager()), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, sessiontoken.NewService(newIntegrationJWETokenService()))
+	}, nil, sessiontoken.NewService(newIntegrationJWETokenService()), ledgerfixture.NewRecorder())
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service: svc,
@@ -342,11 +344,11 @@ func TestOAuth2AuthorizeEndpoint_WithMiddleware(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, ledgerfixture.NewRecorder()), memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager()), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), ledgerfixture.NewRecorder())
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -401,11 +403,11 @@ func TestOAuth2AuthorizeEndpoint_PKCEParametersPreserved(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(consent.NewService(nil, nil, grantRepo, nil, nil, nil, ledgerfixture.NewRecorder()), memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager()), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), ledgerfixture.NewRecorder())
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -508,6 +510,7 @@ func (r *inMemoryAgentRepo) ExistsOtherWithClientID(_ context.Context, _ id.Clie
 
 type inMemoryGrantRepo struct {
 	grants map[id.GrantID]*storage.UserGrant
+	ledgerfixture.GrantExpiryMarkers
 }
 
 func newInMemoryGrantRepo() *inMemoryGrantRepo {

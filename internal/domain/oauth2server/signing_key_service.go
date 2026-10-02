@@ -25,6 +25,8 @@ import (
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/keylifecycle"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -57,13 +59,17 @@ type cachedSigningKey struct {
 	expiresAt  time.Time
 }
 
+type signingBootstrapActorKey struct{}
+
 // SigningKeyService manages signing key lifecycle including generation,
 // encryption, storage, and JWKS building.
 type SigningKeyService struct {
-	repo       ports.SigningKeyRepository
-	encryption ports.EncryptionPort
-	logger     *slog.Logger
-	engine     *keylifecycle.Engine
+	repo                 ports.SigningKeyRepository
+	bootstrapCoordinator ports.SigningKeyBootstrapCoordinator
+	encryption           ports.EncryptionPort
+	logger               *slog.Logger
+	engine               *keylifecycle.Engine
+	ledger               *ledger.Service
 
 	jwksMu         sync.RWMutex
 	jwksSet        jwk.Set
@@ -85,12 +91,18 @@ func NewSigningKeyService(
 	encryption ports.EncryptionPort,
 	branchKeyManager ports.BranchKeyManager,
 	logger *slog.Logger,
+	recorder *ledger.Service,
 ) *SigningKeyService {
+	if recorder == nil {
+		panic("signing selection recorder is required")
+	}
 	return &SigningKeyService{
-		repo:       repo,
-		encryption: encryption,
-		logger:     logger,
-		engine:     keylifecycle.NewEngine(repo, bootstrapCoordinator, encryption, branchKeyManager, logger),
+		repo:                 repo,
+		bootstrapCoordinator: bootstrapCoordinator,
+		encryption:           encryption,
+		logger:               logger,
+		engine:               keylifecycle.NewEngine(repo, bootstrapCoordinator, encryption, branchKeyManager, logger),
+		ledger:               recorder,
 	}
 }
 
@@ -104,15 +116,31 @@ func (s *SigningKeyService) GenerateAndStoreKey(ctx context.Context, algorithm s
 // generateAndStore accepts an explicit activation time for bootstrap and tests.
 // A zero time selects the normal publication grace period immediately before storage.
 func (s *SigningKeyService) generateAndStore(ctx context.Context, algorithm string, makeCurrent bool, activatesAt time.Time) (*storage.SigningKey, error) {
-	key, err := s.engine.GenerateAndStore(ctx, tokenSigningPolicy(), algorithm, makeCurrent, activatesAt)
+	var key *storage.SigningKey
+	var err error
+	if makeCurrent {
+		err = s.ledger.WithTransaction(ctx, ports.StorageTransactionHintsFromContext(ctx), func(txCtx context.Context) error {
+			key, err = s.engine.GenerateAndStore(txCtx, tokenSigningPolicy(), algorithm, true, activatesAt)
+			if err != nil {
+				return err
+			}
+			if err := s.recordPromotion(txCtx, key); err != nil {
+				return err
+			}
+			return s.invalidateAfterCommit(txCtx)
+		})
+	} else {
+		key, err = s.engine.GenerateAndStore(ctx, tokenSigningPolicy(), algorithm, false, activatesAt)
+		if err == nil {
+			err = s.invalidateAfterCommit(ctx)
+		}
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "provision branch key") {
 			return nil, fmt.Errorf("failed to provision branch key for signing key: %w", err)
 		}
 		return nil, fmt.Errorf("generate and store signing key: %w", err)
 	}
-	s.invalidateJWKSCache()
-	s.invalidateSigner()
 
 	s.logger.Info("signing key generated", "kid", key.KID, "algorithm", key.Algorithm, "is_current", makeCurrent, "activates_at", key.ActivatesAt)
 	return key, nil
@@ -300,20 +328,48 @@ func (s *SigningKeyService) invalidateJWKSCache() {
 	s.jwksExpiresAt = time.Time{}
 }
 
+func (s *SigningKeyService) invalidateAfterCommit(ctx context.Context) error {
+	invalidate := func() {
+		s.invalidateJWKSCache()
+		s.invalidateSigner()
+	}
+	if effects, ok := ports.StorageTransactionEffectsFromContext(ctx); ok {
+		return effects.AfterCommit(invalidate)
+	}
+	invalidate()
+	return nil
+}
+
 // ListKeys returns all active signing keys for admin listing.
 func (s *SigningKeyService) ListKeys(ctx context.Context) ([]*storage.SigningKey, error) {
 	return s.engine.List(ctx, tokenSigningPolicy())
 }
 
-// PromoteKey promotes a signing key and returns the updated key metadata.
+// PromoteKey immediately selects an existing key, recording an actual change atomically.
 func (s *SigningKeyService) PromoteKey(ctx context.Context, kid id.KeyID) (*storage.SigningKey, error) {
-	key, err := s.engine.Promote(ctx, tokenSigningPolicy(), kid, time.Now().UTC())
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Isolation = ports.StorageSerializable
+	var selected *storage.SigningKey
+	err := s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		previous, err := s.repo.GetByKIDInDomain(txCtx, storage.KeyDomainTokenSigning, kid)
+		if err != nil {
+			return err
+		}
+		selected, err = s.engine.Promote(txCtx, tokenSigningPolicy(), kid, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if !previous.IsCurrent {
+			if err := s.recordPromotion(txCtx, selected); err != nil {
+				return err
+			}
+		}
+		return s.invalidateAfterCommit(txCtx)
+	})
 	if err != nil {
 		return nil, err
 	}
-	s.invalidateJWKSCache()
-	s.invalidateSigner()
-	return key, nil
+	return selected, nil
 }
 
 // GetCurrent returns the active signing key used for token signing.
@@ -459,14 +515,39 @@ func (s *SigningKeyService) EnsureInitialKey(ctx context.Context, algorithm stri
 	if algorithm != "ES256" {
 		return nil, false, fmt.Errorf("unsupported algorithm: %s", algorithm)
 	}
-	key, created, err := s.engine.EnsureInitialKey(ctx, tokenSigningPolicy(), time.Now().UTC().Add(-time.Second))
-	if err != nil {
-		if strings.Contains(err.Error(), "count active keys") {
-			return nil, false, fmt.Errorf("failed to count active keys: %w", err)
+	var created *storage.SigningKey
+	err := s.bootstrapCoordinator.WithBootstrapLock(ctx, func(lockCtx context.Context) error {
+		count, err := s.repo.CountActiveInDomain(lockCtx, storage.KeyDomainTokenSigning)
+		if err != nil {
+			return fmt.Errorf("failed to count active keys: %w", err)
 		}
-		return nil, false, fmt.Errorf("failed to generate initial signing key: %w", err)
+		if count > 0 {
+			return nil
+		}
+		bootstrapCtx := context.WithValue(lockCtx, signingBootstrapActorKey{}, true)
+		created, err = s.generateAndStore(bootstrapCtx, algorithm, true, time.Now().UTC().Add(-time.Second))
+		if err != nil {
+			return fmt.Errorf("failed to generate initial signing key: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		var storageErr *storage.StorageError
+		if created != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+			(errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindTimeout) {
+			recoveryCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			count, countErr := s.repo.CountActiveInDomain(recoveryCtx, storage.KeyDomainTokenSigning)
+			if countErr != nil {
+				s.logger.Warn("bootstrap recovery count probe failed", "created_locally", created != nil, "error", err, "recovery_error", countErr)
+			} else if count > 0 {
+				s.logger.Warn("bootstrap lock returned error after signing key bootstrap work; treating startup as recovered", "active_key_count", count, "created_locally", created != nil, "error", err)
+				return created, created != nil, nil
+			}
+		}
+		return nil, false, err
 	}
-	return key, created, nil
+	return created, created != nil, nil
 }
 
 // DeleteKey removes a signing key after validating lifecycle invariants in the shared engine.
@@ -474,9 +555,7 @@ func (s *SigningKeyService) DeleteKey(ctx context.Context, kid id.KeyID) error {
 	if err := s.engine.Delete(ctx, tokenSigningPolicy(), kid, time.Now().UTC()); err != nil {
 		return fmt.Errorf("delete signing key: %w", err)
 	}
-	s.invalidateJWKSCache()
-	s.invalidateSigner()
-	return nil
+	return s.invalidateAfterCommit(ctx)
 }
 
 // DecryptPrivateKey decrypts the private key material of a signing key.
@@ -651,4 +730,20 @@ func setJWKMetadata(jwkKey jwk.Key, kid id.KeyID, algorithm jwa.SignatureAlgorit
 		return fmt.Errorf("failed to set use: %w", err)
 	}
 	return nil
+}
+
+func (s *SigningKeyService) recordPromotion(ctx context.Context, key *storage.SigningKey) error {
+	actor := model.BusinessEventActor{Kind: "admin"}
+	if bootstrap, _ := ctx.Value(signingBootstrapActorKey{}).(bool); bootstrap {
+		systemID := "broker-lifecycle"
+		actor = model.BusinessEventActor{Kind: "system", ID: &systemID}
+	}
+	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+"signing-key-promoted", model.BusinessEvent{
+		OccurredAt: time.Now().UTC(), Actor: actor,
+		Data: map[string]any{"signing_key_id": key.ID.String(), "activates_at": key.ActivatesAt.UTC().Format(time.RFC3339Nano)},
+	})
+	if err != nil {
+		return err
+	}
+	return s.ledger.Record(ctx, event)
 }

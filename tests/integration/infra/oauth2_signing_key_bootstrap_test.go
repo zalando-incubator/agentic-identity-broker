@@ -272,7 +272,8 @@ func newPostgresStorageAdapter(t *testing.T, connStr string) (*storageadapter.Ad
 func newLocalModePostgresConfig(connStr string) *ports.Config {
 	jweKey := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 	return &ports.Config{
-		Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+		Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+		BusinessEvents: ports.BusinessEventsConfig{Retention: 2160 * time.Hour},
 		Server: ports.ServerConfig{
 			EndUser: ports.ServerInstanceConfig{
 				Port:      8000,

@@ -17,6 +17,7 @@ import (
 	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
@@ -107,14 +108,7 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 			}
 			psService := permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default())
 			t.Cleanup(psService.Close)
-			consentSvc := consent.NewService(
-				agentRepo,
-				newTestProviderService(&MockServiceRepository{}),
-				grantRepo,
-				nil,
-				nil,
-				slog.Default(),
-			)
+			consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, slog.Default(), ledgerfixture.NewRecorder())
 			sessionRepo := &MockSessionRepository{
 				session: &storagedomain.UserSession{
 					ID:                   id.NewSessionID(),
@@ -137,6 +131,8 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 				nil,
 				oauth2session.Config{CallbackBaseURL: "https://broker.example.com/"},
 				slog.Default(),
+				ledgerfixture.NewRecorder(),
+				nil,
 			)
 			jwtValidator, err := NewJWTValidator(
 				&MockJWKSProvider{keySet: keySet},
@@ -152,8 +148,7 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 				EvaluationTimeout:       100 * time.Millisecond,
 			})
 			require.NoError(t, err)
-			svc := &TokenExchangeService{
-				jwtValidator: jwtValidator,
+			svc := &TokenExchangeService{ledger: ledgerfixture.NewRecorder(), jwtValidator: jwtValidator,
 				celEvaluator: celEvaluator,
 				providerService: newTestProviderService(&MockServiceRepository{
 					service: &model.ThirdpartyOAuth2ProviderEntity{
@@ -171,8 +166,7 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 				config: &ports.TokenExchangeConfig{
 					ClaimExtraction: ports.ClaimExtractionConfig{PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.azp"},
 					Authorization:   ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},
-				},
-			}
+				}}
 			claims := map[string]interface{}{
 				"iss": "https://auth.example.com",
 				"aud": "agentic-identity-broker",
@@ -227,10 +221,12 @@ func TestResolveEffectiveScopes_RejectsRemovedDeclaration(t *testing.T) {
 	psService := permissionset.NewPermissionSetService(psRepo, &MockGrantRepository{}, slog.Default())
 	t.Cleanup(psService.Close)
 	svc := &TokenExchangeService{
+		ledger:               ledgerfixture.NewRecorder(),
 		permissionSetService: psService,
 		oauth2SessionService: oauth2session.NewOAuth2SessionService(
 			nil, nil, nil, nil, nil, nil, nil, nil,
 			oauth2session.Config{CallbackBaseURL: "https://broker.example.com/"}, nil,
+			ledgerfixture.NewRecorder(), nil,
 		),
 	}
 	agent := &storagedomain.Agent{

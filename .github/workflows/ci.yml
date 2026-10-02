@@ -299,6 +299,39 @@ jobs:
           path: test-results/
           if-no-files-found: warn
 
+  e2e-ledger-postgres:
+    name: PostgreSQL ledger E2E tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install just
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: just
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.32.2
+      - name: Install web dependencies
+        run: just web-ci
+      - name: PostgreSQL ledger acceptance
+        run: just test-e2e-ledger-postgres
+
   e2e-extproc:
     name: ExtProc E2E tests
     needs: changes
@@ -502,7 +535,7 @@ jobs:
   gate:
     name: CI gate
     if: always()
-    needs: [changes, unit, docker-build-flags, integration, e2e-backend, e2e-extproc, e2e-frontend, docs, helm, workflows, dependency-review]
+    needs: [changes, unit, docker-build-flags, integration, e2e-backend, e2e-ledger-postgres, e2e-extproc, e2e-frontend, docs, helm, workflows, dependency-review]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

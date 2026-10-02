@@ -173,8 +173,8 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | **Ledger Telemetry Copy** | Recoverable OpenTelemetry log for a retained event, separate from existing slog. |
 | **Retention Policy** | Positive recorded-time lifetime, default 90 days, with bounded removal grace. |
 
-**Ledger status**: These terms describe accepted design, not implemented ledger behavior.
-Read the ledger section in `ARCHITECTURE.md` and `specs/048-business-event-ledger/data-model.md` before implementation.
+**Ledger status**: Atomic recording, lifecycle barriers, retention, erasure, and recoverable telemetry are implemented. Performance release acceptance remains open.
+Read `ARCHITECTURE.md`, `specs/048-business-event-ledger/data-model.md`, and the feature quickstart evidence before changing ledger behavior.
 
 ## Development Workflow
 

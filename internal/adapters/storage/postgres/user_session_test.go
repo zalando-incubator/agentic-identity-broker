@@ -13,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	eventschemas "github.com/agentic-identity-broker/agentic-identity-broker/api/events"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -290,9 +292,12 @@ func TestUserSessionRefreshDoesNotWaitForProviderConnectionInsideTransaction(t *
 		EncryptionContext: storage.EncryptionContext{ServiceID: provider.ID},
 		InitiatedAt:       now, CreatedAt: now, UpdatedAt: now,
 	}))
+	registry, err := ledger.NewRegistry(eventschemas.Schemas)
+	require.NoError(t, err)
 	service := oauth2session.NewOAuth2SessionService(
 		thirdparty.NewThirdpartyOAuth2ProviderService(NewPostgresThirdpartyOAuth2ProviderRepository(adapter), encryption, &noop.BranchKeyManager{}, nil, false, slog.Default()),
 		sessions, sessions, nil, nil, encryption, &http.Client{Timeout: time.Second}, nil, oauth2session.DefaultConfig(), slog.Default(),
+		ledger.NewService(registry, NewBusinessEventRepository(adapter, registry), nil, adapter, false), adapter,
 	)
 	adapter.db.SetMaxOpenConns(1)
 	refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Second)

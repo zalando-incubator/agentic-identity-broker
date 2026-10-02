@@ -542,3 +542,25 @@ func TestUserGrantRepository(t *testing.T) {
 		assert.Equal(t, 2, count)
 	})
 }
+
+func TestPostgresGrantExpirationRecognitionJoinsOwner(t *testing.T) {
+	adapter, agents, grants, cleanup := setupUserGrantTestDB(t)
+	defer cleanup()
+	agent := createUserGrantTestAgent(t, agents, "expiration")
+	grant := newUserGrant(id.Principal("expiration-user"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+	require.NoError(t, grants.Create(context.Background(), grant))
+	expiry := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	_, err := adapter.db.Exec(`UPDATE public.user_grants SET valid_until=$2 WHERE id=$1`, grant.ID, expiry)
+	require.NoError(t, err)
+	owner, err := adapter.BeginTX(context.Background())
+	require.NoError(t, err)
+	defer func() { _ = adapter.Rollback(owner) }()
+	won, err := grants.RecordExpiration(owner, grant.ID, expiry)
+	require.NoError(t, err)
+	require.NoError(t, adapter.Rollback(owner))
+	require.True(t, won)
+	candidates, err := grants.ListUnrecordedExpired(context.Background(), time.Now().UTC(), 100)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, grant.ID, candidates[0].ID)
+}

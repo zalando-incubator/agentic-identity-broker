@@ -33,17 +33,17 @@ var (
 )
 
 type signingKeyRepoTestConfig struct {
-	beginErr        error
-	execErr         error
-	execErrs        []error
-	queryErr        error
-	queryColumns    []string
-	queryRows       [][]driver.Value
-	queryResults    []signingKeyRepoTestQueryResult
-	commitErr       error
-	rowsAffected    int64
+	beginErr      error
+	execErr       error
+	execErrs      []error
+	queryErr      error
+	queryColumns  []string
+	queryRows     [][]driver.Value
+	queryResults  []signingKeyRepoTestQueryResult
+	commitErr     error
+	rowsAffected  int64
+	recordedExecs *[]string
 	recordedQueries *[]string
-	recordedExecs   *[]string
 }
 
 type signingKeyRepoTestQueryResult struct {
@@ -359,7 +359,7 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 		},
 		{
 			name:      "CreateAndSetCurrent maps unique violation on insert to conflict",
-			cfg:       signingKeyRepoTestConfig{execErrs: []error{nil, &pgconn.PgError{Code: "23505"}}},
+			cfg:       signingKeyRepoTestConfig{execErrs: []error{nil, nil, &pgconn.PgError{Code: "23505"}}},
 			operation: "SigningKeyRepo.CreateAndSetCurrent",
 			kind:      storage.ErrorKindConflict,
 			call: func(repo *SigningKeyRepo) error {
@@ -712,7 +712,6 @@ func TestSigningKeyRepo_MutationPathsLockActiveKeysInDeterministicOrder(t *testi
 		assert.Contains(t, queries[0], "FOR UPDATE")
 	})
 }
-
 func TestSigningKeyRepo_DeleteRejectsRemovingCurrentlyUsableFallbackKey(t *testing.T) {
 	now := time.Now().UTC()
 	repo := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{

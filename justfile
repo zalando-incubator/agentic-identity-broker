@@ -98,10 +98,15 @@ test-e2e-backend: web-build
     @echo "Running backend E2E suite..."
     @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
-# Run the SC-001 backend performance measurement separately from functional E2E tests
-test-e2e-performance:
+# Run ledger acceptance against memory and PostgreSQL, excluding performance
+test-e2e-ledger-postgres: web-build
+    @echo "Running PostgreSQL ledger E2E suite..."
+    ginkgo -v --tags=integration --procs=1 --fail-on-empty --label-filter='business-event-ledger && !performance' ./tests/e2e/
+
+# Run backend performance measurements separately from functional E2E tests
+test-e2e-performance label_filter="performance" build_tags="": web-build
     @echo "Running backend E2E performance measurement..."
-    @if command -v ginkgo > /dev/null; then ginkgo -v --procs=1 --label-filter="performance" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    @if command -v ginkgo > /dev/null; then ginkgo -v --procs=1 --fail-on-empty --tags="{{build_tags}}" --label-filter="{{label_filter}}" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@v2.32.2"; exit 1; fi
 
 # Run the backend E2E acceptance suite with coverage report
 test-e2e-backend-coverage: web-build
@@ -544,7 +549,7 @@ verify-junit:
     exit "$MERGE_EXIT"
 
 # Run the full local verification gate with security scanning and E2E as the final guard layer
-verify: check security test web-test cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-all test-e2e
+verify: check security test web-test cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-all test-e2e test-e2e-ledger-postgres
     @echo "Verification suite completed"
 
 # Run non-mutating format, vet, and lint checks (no tests)

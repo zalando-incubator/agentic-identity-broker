@@ -2,7 +2,9 @@ package memory
 
 import (
 	"context"
+	"slices"
 	"sync"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -13,20 +15,81 @@ import (
 // Thread-safe implementation using sync.RWMutex.
 // Implements upsert semantics: one grant per (principal, agent_id) pair.
 type UserGrantRepository struct {
-	mu                  sync.RWMutex
-	grants              map[id.GrantID]*storage.UserGrant // ID -> Grant
-	byPrincipalAndAgent map[string]id.GrantID             // "principal:agent_id" -> ID
-	grantIDsByAgent     map[id.AgentID][]id.GrantID       // agent_id -> []grant_id (for cascade delete)
-	psRepo              ports.PermissionSetRepository     // optional: for service-based lookups
+	mu                    sync.RWMutex
+	transactions          *TransactionManager
+	grants                map[id.GrantID]*storage.UserGrant // ID -> Grant
+	byPrincipalAndAgent   map[string]id.GrantID             // "principal:agent_id" -> ID
+	grantIDsByAgent       map[id.AgentID][]id.GrantID       // agent_id -> []grant_id (for cascade delete)
+	psRepo                ports.PermissionSetRepository     // optional: for service-based lookups
+	expirationRecordedFor map[id.GrantID]time.Time
 }
 
 // NewUserGrantRepository creates a new in-memory user grant repository.
-func NewUserGrantRepository() *UserGrantRepository {
+func NewUserGrantRepository(transactions *TransactionManager) *UserGrantRepository {
 	return &UserGrantRepository{
-		grants:              make(map[id.GrantID]*storage.UserGrant),
-		byPrincipalAndAgent: make(map[string]id.GrantID),
-		grantIDsByAgent:     make(map[id.AgentID][]id.GrantID),
+		transactions:          transactions,
+		grants:                make(map[id.GrantID]*storage.UserGrant),
+		byPrincipalAndAgent:   make(map[string]id.GrantID),
+		grantIDsByAgent:       make(map[id.AgentID][]id.GrantID),
+		expirationRecordedFor: make(map[id.GrantID]time.Time),
 	}
+}
+
+func (r *UserGrantRepository) ListUnrecordedExpired(ctx context.Context, at time.Time, limit int) ([]*storage.UserGrant, error) {
+	return r.listUnrecordedExpired(ctx, nil, at, limit)
+}
+
+func (r *UserGrantRepository) listUnrecordedExpired(ctx context.Context, principal *id.Principal, at time.Time, limit int) ([]*storage.UserGrant, error) {
+	if at.IsZero() || limit <= 0 || limit > 1000 {
+		return nil, storage.NewStorageError("ListExpiredUserGrants", storage.ErrorKindValidation, nil, "invalid expiration query")
+	}
+	guard, err := r.transactions.lock(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	defer guard.release()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []*storage.UserGrant
+	for _, grant := range r.grants {
+		if principal != nil && grant.Principal != *principal {
+			continue
+		}
+		if grant.ValidUntil != nil && !grant.ValidUntil.After(at) && !r.expirationRecordedFor[grant.ID].Equal(*grant.ValidUntil) {
+			result = append(result, grant.Copy())
+			if len(result) == limit {
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func (r *UserGrantRepository) ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.UserGrant, error) {
+	if principal.IsZero() {
+		return nil, storage.NewStorageError("ListExpiredUserGrants", storage.ErrorKindValidation, nil, "principal is required")
+	}
+	return r.listUnrecordedExpired(ctx, &principal, at, limit)
+}
+
+func (r *UserGrantRepository) RecordExpiration(ctx context.Context, grantID id.GrantID, effectiveExpiry time.Time) (bool, error) {
+	if grantID.IsZero() || effectiveExpiry.IsZero() {
+		return false, storage.NewStorageError("RecordUserGrantExpiration", storage.ErrorKindValidation, nil, "invalid expiration recognition")
+	}
+	guard, err := r.transactions.lock(ctx, true)
+	if err != nil {
+		return false, err
+	}
+	defer guard.release()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	grant := r.grants[grantID]
+	if grant == nil || grant.ValidUntil == nil || grant.ValidUntil.After(time.Now()) || !grant.ValidUntil.Equal(effectiveExpiry) || r.expirationRecordedFor[grantID].Equal(effectiveExpiry) {
+		return false, nil
+	}
+	journalEntry(ctx, r.expirationRecordedFor, grantID)
+	r.expirationRecordedFor[grantID] = effectiveExpiry
+	return true, nil
 }
 
 // WithPermissionSetRepository sets the permission set repository for service-based lookups.
@@ -38,6 +101,11 @@ func (r *UserGrantRepository) WithPermissionSetRepository(psRepo ports.Permissio
 // Create creates a new user grant or updates existing grant for same principal+agent (upsert semantics).
 // Returns deep copy of the created/updated grant.
 func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGrant) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -50,19 +118,23 @@ func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGra
 	key := principalAgentKey(grant.Principal, grant.AgentID)
 	if existingID, exists := r.byPrincipalAndAgent[key]; exists {
 		// Update existing grant
-		existingGrant := r.grants[existingID]
-		existingGrant.ValidUntil = grant.ValidUntil
-		existingGrant.GrantedPermissionSets = grant.GrantedPermissionSets
-		existingGrant.UpdatedAt = grant.UpdatedAt
+		updated := grant.Copy()
+		updated.ID = existingID
+		updated.CreatedAt = r.grants[existingID].CreatedAt
+		journalEntry(ctx, r.grants, existingID)
+		r.grants[existingID] = updated
 
 		// Copy back the existing ID to the provided grant
 		grant.ID = existingID
 	} else {
 		// Store new grant
+		journalEntry(ctx, r.grants, grant.ID)
 		r.grants[grant.ID] = grant.Copy()
+		journalEntry(ctx, r.byPrincipalAndAgent, key)
 		r.byPrincipalAndAgent[key] = grant.ID
 
 		// Update agent index for cascade delete
+		journalEntry(ctx, r.grantIDsByAgent, grant.AgentID)
 		r.grantIDsByAgent[grant.AgentID] = append(r.grantIDsByAgent[grant.AgentID], grant.ID)
 	}
 
@@ -73,6 +145,11 @@ func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGra
 // Returns StorageError with Kind=NotFound if grant not found.
 // Returns deep copy to prevent external mutation.
 func (r *UserGrantRepository) Get(ctx context.Context, grantID id.GrantID) (*storage.UserGrant, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -92,6 +169,11 @@ func (r *UserGrantRepository) Get(ctx context.Context, grantID id.GrantID) (*sto
 // Update updates an existing user grant.
 // Returns StorageError with Kind=NotFound if grant not found.
 func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGrant) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -107,6 +189,7 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 	}
 
 	// Store deep copy
+	journalEntry(ctx, r.grants, grant.ID)
 	r.grants[grant.ID] = grant.Copy()
 
 	return nil
@@ -115,6 +198,11 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 // Delete deletes a user grant by ID.
 // Idempotent: returns nil if grant doesn't exist.
 func (r *UserGrantRepository) Delete(ctx context.Context, grantID id.GrantID) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -122,13 +210,17 @@ func (r *UserGrantRepository) Delete(ctx context.Context, grantID id.GrantID) er
 	if grant, exists := r.grants[grantID]; exists {
 		// Remove from principal+agent index
 		key := principalAgentKey(grant.Principal, grant.AgentID)
+		journalEntry(ctx, r.byPrincipalAndAgent, key)
 		delete(r.byPrincipalAndAgent, key)
 
 		// Remove from agent index
-		r.removeGrantFromAgentIndex(grant.AgentID, grantID)
+		r.removeGrantFromAgentIndex(ctx, grant.AgentID, grantID)
 
 		// Remove grant
+		journalEntry(ctx, r.grants, grantID)
 		delete(r.grants, grantID)
+		journalEntry(ctx, r.expirationRecordedFor, grantID)
+		delete(r.expirationRecordedFor, grantID)
 	}
 
 	return nil
@@ -139,6 +231,11 @@ func (r *UserGrantRepository) Delete(ctx context.Context, grantID id.GrantID) er
 // Returns empty slice if no grants exist (not an error).
 // Returns deep copies to prevent external mutation.
 func (r *UserGrantRepository) ListByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.UserGrant, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -161,6 +258,11 @@ func (r *UserGrantRepository) ListByPrincipalAndAgent(ctx context.Context, princ
 // Returns StorageError with Kind=NotFound if grant not found.
 // Returns deep copy to prevent external mutation.
 func (r *UserGrantRepository) FindByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -192,6 +294,11 @@ func (r *UserGrantRepository) FindByPrincipalAndAgent(ctx context.Context, princ
 // Used during cascade deletion when agent is deleted (FR-021).
 // Idempotent: returns nil if agent has no grants.
 func (r *UserGrantRepository) DeleteByAgent(ctx context.Context, agentID id.AgentID) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -206,14 +313,19 @@ func (r *UserGrantRepository) DeleteByAgent(ctx context.Context, agentID id.Agen
 		if grant, exists := r.grants[grantID]; exists {
 			// Remove from principal+agent index
 			key := principalAgentKey(grant.Principal, grant.AgentID)
+			journalEntry(ctx, r.byPrincipalAndAgent, key)
 			delete(r.byPrincipalAndAgent, key)
 
 			// Remove grant
+			journalEntry(ctx, r.grants, grantID)
 			delete(r.grants, grantID)
+			journalEntry(ctx, r.expirationRecordedFor, grantID)
+			delete(r.expirationRecordedFor, grantID)
 		}
 	}
 
 	// Remove agent index
+	journalEntry(ctx, r.grantIDsByAgent, agentID)
 	delete(r.grantIDsByAgent, agentID)
 
 	return nil
@@ -223,6 +335,11 @@ func (r *UserGrantRepository) DeleteByAgent(ctx context.Context, agentID id.Agen
 // Returns StorageError wrapping ports.ErrNotFound when no grant exists for the pair.
 // This is NOT idempotent: absence of a grant is an error (revocation semantics FR-014).
 func (r *UserGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -238,13 +355,17 @@ func (r *UserGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, p
 	}
 
 	// Remove from principal+agent index
+	journalEntry(ctx, r.byPrincipalAndAgent, key)
 	delete(r.byPrincipalAndAgent, key)
 
 	// Remove from agent index
-	r.removeGrantFromAgentIndex(agentID, grantID)
+	r.removeGrantFromAgentIndex(ctx, agentID, grantID)
 
 	// Remove grant
+	journalEntry(ctx, r.grants, grantID)
 	delete(r.grants, grantID)
+	journalEntry(ctx, r.expirationRecordedFor, grantID)
+	delete(r.expirationRecordedFor, grantID)
 
 	return nil
 }
@@ -259,6 +380,11 @@ func principalAgentKey(principal id.Principal, agentID id.AgentID) string {
 // Returns empty slice if no active grants exist (not an error).
 // Returns deep copies to prevent external mutation.
 func (r *UserGrantRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]storage.UserGrant, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -277,6 +403,11 @@ func (r *UserGrantRepository) ListByPrincipal(ctx context.Context, principal id.
 // CountAgentsByPrincipalAndServiceID counts distinct agents for the exact principal
 // whose GrantedPermissionSets include the given service. Expired grants are included for session dependency warnings.
 func (r *UserGrantRepository) CountAgentsByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (int, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return 0, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -293,6 +424,11 @@ func (r *UserGrantRepository) CountAgentsByPrincipalAndServiceID(ctx context.Con
 // ListByPrincipalAndServiceID returns distinct agent IDs for the exact principal
 // whose GrantedPermissionSets include the given service. Expired grants are included for session dependency warnings.
 func (r *UserGrantRepository) ListByPrincipalAndServiceID(ctx context.Context, principal id.Principal, serviceID id.ServiceID) ([]id.AgentID, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -312,7 +448,12 @@ func (r *UserGrantRepository) ListByPrincipalAndServiceID(ctx context.Context, p
 }
 
 // CountGrantsReferencingPermissionSet counts active user grants that contain the given permission set ID.
-func (r *UserGrantRepository) CountGrantsReferencingPermissionSet(_ context.Context, psID id.PermissionSetID) (int, error) {
+func (r *UserGrantRepository) CountGrantsReferencingPermissionSet(ctx context.Context, psID id.PermissionSetID) (int, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return 0, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -349,17 +490,19 @@ func (r *UserGrantRepository) grantReferencesService(ctx context.Context, grant 
 }
 
 // removeGrantFromAgentIndex removes a grant ID from the agent's grant list.
-func (r *UserGrantRepository) removeGrantFromAgentIndex(agentID id.AgentID, grantID id.GrantID) {
+func (r *UserGrantRepository) removeGrantFromAgentIndex(ctx context.Context, agentID id.AgentID, grantID id.GrantID) {
 	grantIDs, exists := r.grantIDsByAgent[agentID]
 	if !exists {
 		return
 	}
+	grantIDs = slices.Clone(grantIDs)
 
 	// Find and remove grant ID
 	for i, id := range grantIDs {
 		if id == grantID {
 			// Remove by swapping with last element and truncating
 			grantIDs[i] = grantIDs[len(grantIDs)-1]
+			journalEntry(ctx, r.grantIDsByAgent, agentID)
 			r.grantIDsByAgent[agentID] = grantIDs[:len(grantIDs)-1]
 			break
 		}
@@ -367,6 +510,7 @@ func (r *UserGrantRepository) removeGrantFromAgentIndex(agentID id.AgentID, gran
 
 	// Clean up empty agent index
 	if len(r.grantIDsByAgent[agentID]) == 0 {
+		journalEntry(ctx, r.grantIDsByAgent, agentID)
 		delete(r.grantIDsByAgent, agentID)
 	}
 }
@@ -375,6 +519,11 @@ func (r *UserGrantRepository) removeGrantFromAgentIndex(agentID id.AgentID, gran
 // This method MUST NOT be used in production - it bypasses all validation.
 // Only available on memory storage for testing purposes.
 func (r *UserGrantRepository) CreateTestGrant(ctx context.Context, grant *storage.UserGrant) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -387,19 +536,23 @@ func (r *UserGrantRepository) CreateTestGrant(ctx context.Context, grant *storag
 	key := principalAgentKey(grant.Principal, grant.AgentID)
 	if existingID, exists := r.byPrincipalAndAgent[key]; exists {
 		// Update existing grant
-		existingGrant := r.grants[existingID]
-		existingGrant.ValidUntil = grant.ValidUntil
-		existingGrant.GrantedPermissionSets = grant.GrantedPermissionSets
-		existingGrant.UpdatedAt = grant.UpdatedAt
+		updated := grant.Copy()
+		updated.ID = existingID
+		updated.CreatedAt = r.grants[existingID].CreatedAt
+		journalEntry(ctx, r.grants, existingID)
+		r.grants[existingID] = updated
 
 		// Copy back the existing ID to the provided grant
 		grant.ID = existingID
 	} else {
 		// Store new grant
+		journalEntry(ctx, r.grants, grant.ID)
 		r.grants[grant.ID] = grant.Copy()
+		journalEntry(ctx, r.byPrincipalAndAgent, key)
 		r.byPrincipalAndAgent[key] = grant.ID
 
 		// Update agent index for cascade delete
+		journalEntry(ctx, r.grantIDsByAgent, grant.AgentID)
 		r.grantIDsByAgent[grant.AgentID] = append(r.grantIDsByAgent[grant.AgentID], grant.ID)
 	}
 

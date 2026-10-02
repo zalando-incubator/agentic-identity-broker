@@ -23,7 +23,7 @@ func refreshTestSession(principal id.Principal, serviceID id.ServiceID) *storage
 }
 
 func TestWithLockedSessionDoesNotBlockOtherSessions(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	principal := id.Principal("slow-refresh@example.com")
 	serviceID := id.NewServiceID()
@@ -80,7 +80,7 @@ func TestWithLockedSessionDoesNotBlockOtherSessions(t *testing.T) {
 }
 
 func TestWithLockedSessionDoesNotResurrectDeletedSession(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryUserSessionRepository(NewTransactionManager())
 	ctx := context.Background()
 	principal := id.Principal("deleted-user@example.com")
 	serviceID := id.NewServiceID()
@@ -123,4 +123,33 @@ func TestWithLockedSessionDoesNotResurrectDeletedSession(t *testing.T) {
 	found, err := repo.FindByPrincipalAndService(ctx, principal, serviceID)
 	require.NoError(t, err)
 	assert.Nil(t, found)
+}
+
+func TestWithLockedSessionRollbackRestoresRotatingTokens(t *testing.T) {
+	transactions := NewTransactionManager()
+	repo := NewInMemoryUserSessionRepository(transactions)
+	ctx := context.Background()
+	principal := id.Principal("rollback-user@example.com")
+	serviceID := id.NewServiceID()
+	session := refreshTestSession(principal, serviceID)
+	require.NoError(t, repo.Create(ctx, session))
+
+	txCtx, err := transactions.BeginTX(ctx)
+	require.NoError(t, err)
+	_, err = repo.WithLockedSession(txCtx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		current.EncryptedAccessToken = []byte("new-access")
+		current.EncryptedRefreshToken = []byte("rotated-refresh")
+		return true, nil
+	})
+	require.NoError(t, err)
+	require.NoError(t, transactions.Rollback(txCtx))
+
+	byPair, err := repo.FindByPrincipalAndService(ctx, principal, serviceID)
+	require.NoError(t, err)
+	byID, err := repo.Get(ctx, session.ID)
+	require.NoError(t, err)
+	for _, current := range []*storage.UserSession{byPair, byID} {
+		assert.Equal(t, []byte("old-access"), current.EncryptedAccessToken)
+		assert.Equal(t, []byte("old-refresh"), current.EncryptedRefreshToken)
+	}
 }

@@ -66,7 +66,7 @@ func (id *ApprovalID) UnmarshalText(b []byte) error { return (*uuid.UUID)(id).Un
 // BusinessEventID uniquely identifies a business event entity.
 type BusinessEventID uuid.UUID
 
-func NewBusinessEventID() BusinessEventID { return BusinessEventID(uuid.New()) }
+func NewBusinessEventID() BusinessEventID { return BusinessEventID(uuid.Must(uuid.NewV7())) }
 func ParseBusinessEventID(s string) (BusinessEventID, error) {
 	id, err := uuid.Parse(s)
 	return BusinessEventID(id), err

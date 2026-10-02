@@ -27,6 +27,7 @@ func DefaultOAuth2Config() *ports.Config {
 	}
 
 	return &ports.Config{
+		BusinessEvents: ports.DefaultBusinessEventsConfig(),
 		Log: ports.LogConfig{
 			Level:  ports.LogLevelInfo,
 			Format: ports.LogFormatText,

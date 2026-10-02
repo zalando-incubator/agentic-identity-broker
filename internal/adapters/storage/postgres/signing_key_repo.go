@@ -8,7 +8,6 @@ import (
 
 	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jmoiron/sqlx"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -38,7 +37,7 @@ func NewSigningKeyRepo(adapter *Adapter) *SigningKeyRepo {
 	return &SigningKeyRepo{adapter: adapter}
 }
 
-func (r *SigningKeyRepo) lockActiveSigningKeysInDomain(ctx context.Context, tx *sqlx.Tx, domain storage.KeyDomain) ([]lockedSigningKeyRow, error) {
+func (r *SigningKeyRepo) lockActiveSigningKeysInDomain(ctx context.Context, tx storageSQLExecutor, domain storage.KeyDomain) ([]lockedSigningKeyRow, error) {
 	var rows []lockedSigningKeyRow
 	err := tx.SelectContext(ctx, &rows,
 		`SELECT kid, is_current, activates_at
@@ -77,7 +76,7 @@ func (r *SigningKeyRepo) Create(ctx context.Context, key *storage.SigningKey) er
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.db.ExecContext(execCtx,
+	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`INSERT INTO signing_keys (id, kid, key_domain, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		key.ID, key.KID, key.KeyDomain, key.Algorithm, key.PrivateKeyEncrypted, key.PublicJWK,
@@ -100,11 +99,15 @@ func (r *SigningKeyRepo) CreateAndSetCurrent(ctx context.Context, key *storage.S
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTxx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return classifySigningKeyRepoError("SigningKeyRepo.CreateAndSetCurrent", err, "failed to begin transaction")
 	}
 	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := r.lockActiveSigningKeysInDomain(execCtx, tx, key.KeyDomain); err != nil {
+		return classifySigningKeyRepoError("SigningKeyRepo.CreateAndSetCurrent", err, "failed to lock active signing keys")
+	}
 
 	_, err = tx.ExecContext(execCtx, `UPDATE signing_keys SET is_current = false WHERE key_domain = $1 AND is_current = true`, key.KeyDomain)
 	if err != nil {
@@ -136,7 +139,7 @@ func (r *SigningKeyRepo) GetByKIDInDomain(ctx context.Context, domain storage.Ke
 	defer cancel()
 
 	var key storage.SigningKey
-	err := r.adapter.db.GetContext(queryCtx, &key,
+	err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &key,
 		`SELECT id, kid, key_domain, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at
 		 FROM signing_keys WHERE kid = $1 AND key_domain = $2 AND removed_at IS NULL`, kid, domain)
 	if err != nil {
@@ -165,7 +168,7 @@ func (r *SigningKeyRepo) GetCurrentInDomain(ctx context.Context, domain storage.
 	defer cancel()
 
 	var key storage.SigningKey
-	err := r.adapter.db.GetContext(queryCtx, &key,
+	err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &key,
 		`SELECT id, kid, key_domain, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at
 		 FROM signing_keys
 		 WHERE key_domain = $1 AND removed_at IS NULL AND activates_at <= NOW()
@@ -194,7 +197,7 @@ func (r *SigningKeyRepo) ListActiveInDomain(ctx context.Context, domain storage.
 	defer cancel()
 
 	var keys []*storage.SigningKey
-	err := r.adapter.db.SelectContext(queryCtx, &keys,
+	err := r.adapter.storageExecutor(queryCtx).SelectContext(queryCtx, &keys,
 		`SELECT id, kid, key_domain, algorithm, private_key_encrypted, public_jwk, is_current, activates_at, created_at, removed_at
 		 FROM signing_keys WHERE key_domain = $1 AND removed_at IS NULL ORDER BY created_at DESC`, domain)
 	if err != nil {
@@ -212,7 +215,7 @@ func (r *SigningKeyRepo) KeySetVersion(ctx context.Context) (int64, error) {
 	defer cancel()
 
 	var version int64
-	if err := r.adapter.db.GetContext(queryCtx, &version, `SELECT version FROM signing_key_set_state WHERE id = 1`); err != nil {
+	if err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &version, `SELECT version FROM signing_key_set_state WHERE id = 1`); err != nil {
 		return 0, classifySigningKeyRepoError("SigningKeyRepo.KeySetVersion", err, "failed to read signing key set version")
 	}
 	return version, nil
@@ -229,7 +232,7 @@ func (r *SigningKeyRepo) SetCurrentInDomain(ctx context.Context, domain storage.
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTxx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return nil, classifySigningKeyRepoError("SigningKeyRepo.SetCurrentInDomain", err, "failed to begin transaction")
 	}
@@ -280,7 +283,7 @@ func (r *SigningKeyRepo) SetPublicJWK(ctx context.Context, kid id.KeyID, publicJ
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	result, err := r.adapter.db.ExecContext(execCtx,
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`UPDATE signing_keys
 		 SET public_jwk = $2
 		 WHERE kid = $1 AND removed_at IS NULL AND public_jwk IS NULL`, kid, publicJWK)
@@ -296,7 +299,7 @@ func (r *SigningKeyRepo) SetPublicJWK(ctx context.Context, kid id.KeyID, publicJ
 	}
 
 	var exists bool
-	err = r.adapter.db.GetContext(execCtx, &exists,
+	err = r.adapter.storageExecutor(execCtx).GetContext(execCtx, &exists,
 		`SELECT EXISTS(SELECT 1 FROM signing_keys WHERE kid = $1 AND removed_at IS NULL)`, kid)
 	if err != nil {
 		return false, classifySigningKeyRepoError("SigningKeyRepo.SetPublicJWK", err, "failed to query signing key")
@@ -315,7 +318,7 @@ func (r *SigningKeyRepo) DeleteInDomain(ctx context.Context, domain storage.KeyD
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTxx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return classifySigningKeyRepoError("SigningKeyRepo.DeleteInDomain", err, "failed to begin transaction")
 	}
@@ -372,6 +375,13 @@ func (r *SigningKeyRepo) WithBootstrapLock(ctx context.Context, fn func(context.
 	if r.adapter.db == nil {
 		return storage.NewStorageError("SigningKeyRepo.WithBootstrapLock", storage.ErrorKindConnection, nil, "database not initialized")
 	}
+	if _, joined := storageTransaction(ctx); joined {
+		return storage.NewStorageError("SigningKeyRepo.WithBootstrapLock", storage.ErrorKindConflict, nil, "bootstrap lock must precede the transaction lifecycle gate")
+	}
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	if hints.Isolation > ports.StorageSerializable || hints.Lifecycle > ports.StorageLifecycleExclusive {
+		return storage.NewStorageError("SigningKeyRepo.WithBootstrapLock", storage.ErrorKindValidation, nil, "invalid transaction hints")
+	}
 
 	conn, err := r.adapter.db.Connx(ctx)
 	if err != nil {
@@ -379,7 +389,8 @@ func (r *SigningKeyRepo) WithBootstrapLock(ctx context.Context, fn func(context.
 	}
 	defer conn.Close() //nolint:errcheck
 
-	tx, err := conn.BeginTxx(ctx, nil)
+	levels := [...]sql.IsolationLevel{sql.LevelReadCommitted, sql.LevelRepeatableRead, sql.LevelSerializable}
+	tx, err := conn.BeginTxx(ctx, &sql.TxOptions{Isolation: levels[hints.Isolation]})
 	if err != nil {
 		return classifySigningKeyRepoError("SigningKeyRepo.WithBootstrapLock", err, "failed to begin transaction")
 	}
@@ -388,12 +399,17 @@ func (r *SigningKeyRepo) WithBootstrapLock(ctx context.Context, fn func(context.
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, signingKeyBootstrapLockID); err != nil {
 		return classifySigningKeyRepoError("SigningKeyRepo.WithBootstrapLock", err, "failed to acquire signing key bootstrap lock")
 	}
+	txCtx, err := r.adapter.ownTransaction(ctx, tx, hints)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.adapter.Rollback(txCtx) }()
 
-	if err := fn(ctx); err != nil {
+	if err := fn(txCtx); err != nil {
 		return err
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := r.adapter.Commit(txCtx); err != nil {
 		return classifySigningKeyRepoError("SigningKeyRepo.WithBootstrapLock", err, "failed to commit transaction")
 	}
 	return nil
@@ -408,7 +424,7 @@ func (r *SigningKeyRepo) CountActiveInDomain(ctx context.Context, domain storage
 	defer cancel()
 
 	var count int
-	err := r.adapter.db.GetContext(queryCtx, &count,
+	err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &count,
 		`SELECT COUNT(*) FROM signing_keys WHERE key_domain = $1 AND removed_at IS NULL`, domain)
 	if err != nil {
 		if isContextTimeoutOrCanceled(err) {

@@ -10,6 +10,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,7 +20,7 @@ func TestUserDelegationVerifier(t *testing.T) {
 	agentID := id.NewAgentID()
 
 	newVerifier := func(repo ports.UserGrantRepository) ports.UserDelegationVerifier {
-		return newUserDelegationVerifier(consent.NewService(nil, nil, repo, nil, nil, nil))
+		return newUserDelegationVerifier(consent.NewService(nil, nil, repo, nil, nil, nil, ledgerfixture.NewRecorder()))
 	}
 	createGrant := func(t *testing.T, repo ports.UserGrantRepository, validUntil time.Time) {
 		t.Helper()
@@ -32,7 +33,7 @@ func TestUserDelegationVerifier(t *testing.T) {
 	}
 
 	t.Run("classifies active delegation", func(t *testing.T) {
-		repo := memorystorage.NewUserGrantRepository()
+		repo := memorystorage.NewUserGrantRepository(memorystorage.NewTransactionManager())
 		createGrant(t, repo, time.Now().Add(time.Hour))
 
 		status, err := newVerifier(repo).VerifyUserDelegation(context.Background(), principal, agentID)
@@ -41,13 +42,13 @@ func TestUserDelegationVerifier(t *testing.T) {
 	})
 
 	t.Run("classifies missing delegation", func(t *testing.T) {
-		status, err := newVerifier(memorystorage.NewUserGrantRepository()).VerifyUserDelegation(context.Background(), principal, agentID)
+		status, err := newVerifier(memorystorage.NewUserGrantRepository(memorystorage.NewTransactionManager())).VerifyUserDelegation(context.Background(), principal, agentID)
 		require.NoError(t, err)
 		assert.Equal(t, ports.UserDelegationMissing, status)
 	})
 
 	t.Run("classifies expired delegation", func(t *testing.T) {
-		repo := memorystorage.NewUserGrantRepository()
+		repo := memorystorage.NewUserGrantRepository(memorystorage.NewTransactionManager())
 		createGrant(t, repo, time.Now().Add(-time.Hour))
 
 		status, err := newVerifier(repo).VerifyUserDelegation(context.Background(), principal, agentID)

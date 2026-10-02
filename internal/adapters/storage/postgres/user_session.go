@@ -8,6 +8,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/lib/pq"
 )
 
@@ -95,13 +96,12 @@ func (r *PostgresUserSessionRepository) Create(ctx context.Context, session *sto
 			updated_at = NOW()
 	`
 
-	_, err := r.adapter.db.ExecContext(ctx, query,
+	_, err := r.adapter.storageExecutor(ctx).ExecContext(ctx, query,
 		session.ID, session.Principal, session.ServiceID,
 		session.EncryptedAccessToken, session.EncryptedRefreshToken,
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
 		pq.Array(session.Scope), session.EncryptionContext,
-		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
-	)
+		session.InitiatedAt, session.CreatedAt, session.UpdatedAt)
 
 	if err != nil {
 		return r.wrapError(err, "Create")
@@ -118,7 +118,7 @@ func (r *PostgresUserSessionRepository) Get(ctx context.Context, sessionID id.Se
 	var rec userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE id = $1`
 
-	err := r.adapter.db.GetContext(ctx, &rec, query, sessionID)
+	err := r.adapter.storageExecutor(ctx).GetContext(ctx, &rec, query, sessionID)
 	if err == sql.ErrNoRows {
 		return nil, storage.NewStorageError("Get", storage.ErrorKindNotFound, err, "session not found")
 	}
@@ -136,8 +136,15 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 
 	var rec userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2`
+	if _, ambient := storageTransaction(ctx); ambient {
+		if _, err := r.adapter.storageExecutor(ctx).ExecContext(ctx,
+			`SELECT pg_advisory_xact_lock($1, hashtext($2 || '/' || $3))`, int32(1095320150), principal.String(), serviceID.String()); err != nil {
+			return nil, businessEventStorageError("FindUserSession", err)
+		}
+		query += " FOR UPDATE"
+	}
 
-	err := r.adapter.db.GetContext(ctx, &rec, query, principal, serviceID)
+	err := r.adapter.storageExecutor(ctx).GetContext(ctx, &rec, query, principal, serviceID)
 	if err == sql.ErrNoRows {
 		return nil, nil // Not found is not an error
 	}
@@ -152,36 +159,39 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 	if principal.IsZero() || serviceID.IsZero() {
 		return nil, errors.New("principal and serviceID required")
 	}
-	if r.adapter.db == nil {
-		return nil, storage.NewStorageError("WithLockedSession", storage.ErrorKindConnection, nil, "database not initialized")
-	}
-
-	acquireCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
-	conn, err := r.adapter.db.Connx(acquireCtx)
-	cancel()
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	txCtx, err := r.adapter.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
 	if err != nil {
 		return nil, r.wrapError(err, "WithLockedSession")
 	}
-	defer conn.Close() //nolint:errcheck
+	committed := false
+	defer func() {
+		if !committed {
+			_ = r.adapter.Rollback(txCtx)
+		}
+	}()
 
-	tx, err := conn.BeginTxx(ctx, nil)
-	if err != nil {
+	if _, err := r.adapter.storageExecutor(txCtx).ExecContext(txCtx,
+		`SELECT pg_advisory_xact_lock($1, hashtext($2 || '/' || $3))`, int32(1095320150), principal.String(), serviceID.String()); err != nil {
 		return nil, r.wrapError(err, "WithLockedSession")
 	}
-	defer tx.Rollback() //nolint:errcheck
-
 	var rec userSessionRecord
-	readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
-	err = tx.GetContext(readCtx, &rec, `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
+	readCtx, cancel := context.WithTimeout(txCtx, r.adapter.timeouts.Read)
+	err = r.adapter.storageExecutor(readCtx).GetContext(readCtx, &rec, `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
 	cancel()
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, r.wrapError(err, "WithLockedSession")
+	}
 	if errors.Is(err, sql.ErrNoRows) {
+		if err := r.adapter.Commit(txCtx); err != nil {
+			return nil, r.wrapError(err, "WithLockedSession")
+		}
+		committed = true
 		return nil, nil
 	}
-	if err != nil {
-		return nil, r.wrapError(err, "WithLockedSession")
-	}
 	session := recordToSession(&rec)
-	updated, err := refresh(ctx, session)
+	updated, err := refresh(txCtx, session)
 	if err != nil {
 		return nil, err
 	}
@@ -189,8 +199,8 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 		if err := session.Validate(); err != nil {
 			return nil, err
 		}
-		writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
-		_, err = tx.ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
+		writeCtx, cancel := context.WithTimeout(txCtx, r.adapter.timeouts.Write)
+		_, err = r.adapter.storageExecutor(writeCtx).ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
 			access_token_expires_at = $3, updated_at = $4 WHERE id = $5`,
 			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt, session.UpdatedAt, session.ID)
 		cancel()
@@ -198,9 +208,10 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 			return nil, r.wrapError(err, "WithLockedSession")
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := r.adapter.Commit(txCtx); err != nil {
 		return nil, r.wrapError(err, "WithLockedSession")
 	}
+	committed = true
 	return session, nil
 }
 
@@ -214,7 +225,7 @@ func (r *PostgresUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 	var records []*userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 ORDER BY created_at DESC`
 
-	err := r.adapter.db.SelectContext(ctx, &records, query, principal)
+	err := r.adapter.storageExecutor(ctx).SelectContext(ctx, &records, query, principal)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, r.wrapError(err, "ListByPrincipal")
 	}
@@ -235,7 +246,7 @@ func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 	var records []*userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > NOW()) ORDER BY created_at DESC`
 
-	err := r.adapter.db.SelectContext(ctx, &records, query, principal)
+	err := r.adapter.storageExecutor(ctx).SelectContext(ctx, &records, query, principal)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, r.wrapError(err, "ListActiveByPrincipal")
 	}
@@ -253,7 +264,7 @@ func (r *PostgresUserSessionRepository) Delete(ctx context.Context, sessionID id
 	}
 
 	query := `DELETE FROM user_sessions WHERE id = $1`
-	_, err := r.adapter.db.ExecContext(ctx, query, sessionID)
+	_, err := r.adapter.storageExecutor(ctx).ExecContext(ctx, query, sessionID)
 	if err != nil {
 		return r.wrapError(err, "Delete")
 	}
@@ -267,7 +278,7 @@ func (r *PostgresUserSessionRepository) DeleteByPrincipalAndService(ctx context.
 	}
 
 	query := `DELETE FROM user_sessions WHERE principal = $1 AND service_id = $2`
-	_, err := r.adapter.db.ExecContext(ctx, query, principal, serviceID)
+	_, err := r.adapter.storageExecutor(ctx).ExecContext(ctx, query, principal, serviceID)
 	if err != nil {
 		return r.wrapError(err, "DeleteByPrincipalAndService")
 	}
@@ -283,7 +294,7 @@ func (r *PostgresUserSessionRepository) CountByService(ctx context.Context, serv
 	var count int
 	query := `SELECT COUNT(*) FROM user_sessions WHERE service_id = $1`
 
-	err := r.adapter.db.GetContext(ctx, &count, query, serviceID)
+	err := r.adapter.storageExecutor(ctx).GetContext(ctx, &count, query, serviceID)
 	if err != nil {
 		return 0, r.wrapError(err, "CountByService")
 	}

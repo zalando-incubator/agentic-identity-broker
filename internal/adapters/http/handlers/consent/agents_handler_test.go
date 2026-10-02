@@ -16,6 +16,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -215,7 +216,7 @@ func (m *mockAgentsService) asService() *consent.Service {
 		err:         m.err,
 	}
 
-	return consent.NewService(mockAgentRepo, newTestProviderService(mockServiceRepo), mockGrantRepo, nil, nil, slog.Default())
+	return consent.NewService(mockAgentRepo, newTestProviderService(mockServiceRepo), mockGrantRepo, nil, nil, slog.Default(), ledgerfixture.NewRecorder())
 }
 
 // Mock repository implementations for agents handler tests
@@ -312,6 +313,18 @@ func (m *mockServiceRepoForAgents) ListProtectedResources(_ context.Context, _ i
 type mockGrantRepoForAgents struct {
 	delegations []consent.AgentDelegation
 	err         error
+}
+
+func (m *mockGrantRepoForAgents) ListUnrecordedExpired(context.Context, time.Time, int) ([]*storage.UserGrant, error) {
+	return nil, m.err
+}
+
+func (m *mockGrantRepoForAgents) ListUnrecordedExpiredForPrincipal(context.Context, id.Principal, time.Time, int) ([]*storage.UserGrant, error) {
+	return nil, m.err
+}
+
+func (*mockGrantRepoForAgents) RecordExpiration(context.Context, id.GrantID, time.Time) (bool, error) {
+	panic("unexpected expiry mutation for active delegation fixture")
 }
 
 func (m *mockGrantRepoForAgents) Create(ctx context.Context, grant *storage.UserGrant) error {

@@ -116,7 +116,7 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 	t.Helper()
 
 	sharedPostgres := bootstrap.RequireSharedPostgres(t)
-	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_035", func(t *testing.T, dbName string) {
+	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_035", func(dbName string) {
 		projectRoot, err := bootstrap.FindProjectRoot()
 		require.NoError(t, err)
 		migrationsDir, err := filepath.Abs(filepath.Join(projectRoot, "migrations"))

@@ -358,7 +358,7 @@ func (m *ledgerCredentialMatcher) scanByteArray(value reflect.Value) {
 		for start := 0; start+len(pattern.bytes) <= value.Len(); start++ {
 			matches := true
 			for offset, expected := range pattern.bytes {
-				if byte(value.Index(start+offset).Uint()) != expected {
+				if value.Index(start+offset).Uint() != uint64(expected) {
 					matches = false
 					break
 				}

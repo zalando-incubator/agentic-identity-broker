@@ -20,6 +20,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type strategySigningKeyStore struct {
@@ -42,7 +43,7 @@ func newStrategySigningKeyStore() *strategySigningKeyStore {
 
 func newStrategyTestSigningKeyService() (*SigningKeyService, *strategySigningKeyStore) {
 	repo := newStrategySigningKeyStore()
-	return NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger()), repo
+	return NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder()), repo
 }
 
 func cloneStrategySigningKey(key *storage.SigningKey) *storage.SigningKey {
@@ -525,7 +526,7 @@ func TestJWXAccessTokenStrategy_GenerateAccessToken_DecryptFailure(t *testing.T)
 	t.Run("decrypt failure returns wrapped error", func(t *testing.T) {
 		// Use failingDecryptor so Encrypt succeeds (key is stored) but Decrypt always fails.
 		repo := newStrategySigningKeyStore()
-		svc := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &failingDecryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		ctx := context.Background()
 
 		// generateAndStore with time.Now() so activates_at is in the past and GetCurrent returns the key.
@@ -980,7 +981,7 @@ func TestJWXAccessTokenStrategy_GetCurrent_NonNotFoundError(t *testing.T) {
 	t.Run("connection error does not produce 'no signing key provisioned' message", func(t *testing.T) {
 		repo := &connectionErrorSigningKeyRepo{strategySigningKeyStore: newStrategySigningKeyStore()}
 		enc := &testEncryptor{}
-		svc := NewSigningKeyService(repo, repo, enc, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, enc, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
 		require.NoError(t, err)
 

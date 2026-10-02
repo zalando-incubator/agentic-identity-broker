@@ -18,6 +18,11 @@ This package defines ID types for each entity. The types prevent incompatible ID
 
 See `uuid_ids_gen.go` for methods and the current type catalogue.
 
+`BusinessEventID` uses UUIDv7. Other UUID-backed constructors use UUIDv4.
+An event ID is immutable and is never accepted from a request.
+UUIDv7 order does not guarantee global causal order.
+Read the [ledger data model](../../../specs/048-business-event-ledger/data-model.md) before you change these rules.
+
 ### String-backed types
 
 `ClientID`, `ExternalID`, `KeyID`, and `Principal` wrap `string`. They expose `String()`, `IsZero()`, and `New*()`.

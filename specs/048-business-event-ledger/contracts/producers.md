@@ -50,7 +50,9 @@ For proxy mode, separate upstream transport from the domain completion decision 
 - Impersonation: separate the permission decision from minting. Grant decision may remain if minting fails; successful minting is an exchange occurrence. Only one final denied decision after rule evaluation, not one per tested rule. An internal evaluation error produces token request failure, not an invented permission decision.
 - Request retries: genuinely new issuance/exchange is a new occurrence; re-reading unchanged business state is not. There is no new client request-idempotency key.
 - Cascades: enumerate affected grants, sessions, approvals and credentials under the owning deletion transaction before SQL cascades. Translate actual catalogued terminal state changes into their existing terminal event types, not new cascade event types. An already denied approval removed solely as dependent data is not a new user denial. No destructive path may delete an event FK because none exists.
+- Provider session boundary: migration 004 keeps `fk_user_sessions_service` as `ON DELETE RESTRICT`; no later migration changes it. A provider deletion with retained sessions is rejected, not a session cascade, and emits no `session-terminated` fact. Preserve this existing restriction rather than introducing a new destructive HTTP behavior. Session termination remains owned by the explicit session lifecycle service.
 - Expiry: domain reads that currently filter away expired state must recognize candidates internally and atomically mark them before retaining the existing filtered result. Erasure/retention must not erase these business-row markers. A validity change reopens only a genuinely different effective expiry.
+- Expired pending deduplication: repository creation returns an unrecognized expired duplicate without consuming it. The domain appends its marker/expiry fact, then calls creation again in the same owner to retire it and create the replacement. This covers TTL crossings after preflight discovery without burning a second rate-limit attempt or adding a scheduler.
 - Signing selection: the catalogue records selecting the current key, not proof of a signature or completion of the JWKS waiting period. `activates_at` explicitly retains the eligibility time. Bootstrap losers and repeated current-key selection do not generate new promotion facts.
 
 ### Pinned Fosite failure-side revocation boundaries
@@ -64,13 +66,14 @@ The shared transaction rename does not move these boundaries:
 | Refresh-token reuse | `handler/oauth2/flow_refresh.go:47-56` calls `handleRefreshTokenReuse`. Lines 178-203 begin a transaction, invalidate the presented token, revoke its request chain, and commit before the caller returns `invalid_grant`. | Let this scope commit independently of the denied refresh request. Do not join it to an outer scope that rolls back the request. |
 | Authorization-code success | `flow_authorize_code_token.go:155-187` begins a transaction for code invalidation and token-session writes, populates the response, and commits. Its deferred handler rolls back errors. | The later ledger owner must enclose response population, not the earlier replay-detection path. Inner scopes must join that owner. |
 | Refresh success | `flow_refresh.go:135-163` begins a transaction for rotation and replacement-token writes. Its error helper rolls back storage errors. | The later ledger owner must enclose these success writes without absorbing the independent reuse-revocation transaction. |
+| PKCE challenge consumption | `handler/pkce/handler.go:135-151` reads and deletes the challenge before verifier validation; `PopulateTokenEndpointResponse` is a no-op. | Enclose PKCE validation in the authorization-code owner after replay detection. Preserve the one-shot deletion by committing a validation rejection without issuance; on later response-population or recording failure roll back deletion together with the code/token changes. Record the terminal failure independently. |
 
 The broker maps refresh revocation to `RefreshTokenSessionRepository.RevokeByRequestID`.
 `DeleteRefreshTokenSession` marks the presented token used and treats an absent or already-used token as success.
 `RevokeAccessToken` remains a no-op because access tokens are stateless JWTs.
 This refactor does not add access-token revocation guarantees.
 
-The provider must complete `HandleTokenEndpointRequest` validation before it starts the future issuance-success owner.
+The provider must complete authorization-code/refresh replay-detecting `HandleTokenEndpointRequest` validation before it starts the issuance-success owner. PKCE validation consumes state and belongs inside the authorization-code owner as described above.
 `fosite.NewAccessRequest` only constructs the request.
 Independent failure recording starts only after an unsuccessful success scope ends.
 The PostgreSQL context and executor retain their existing behavior in Phase 0.

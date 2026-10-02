@@ -19,6 +19,7 @@ and declared domain libraries.
 | `id/` | Strongly typed entity IDs | `AgentID`, `ServiceID` |
 | `jwe/` | Encrypted token service | `TokenService` |
 | `jwtauth/` | JWT authentication and claim extraction | `JWTAuthenticator`, `CELEvaluator` |
+| `ledger/` | Closed-schema recording, trusted context, investigation, and lifecycle invariants | `Service`, `Registry`, `NormalizeRetention` |
 | `model/` | Shared domain entities and value objects | `Secret`, `OAuthScope` |
 | `oauth2/` | OAuth2 authorization, CIMD, and JWKS publishing | `OAuth2AuthorizationService` |
 | `oauth2server/` | Broker OAuth2 authorization-server logic | `Provider`, `SigningKeyService` |
@@ -30,6 +31,8 @@ and declared domain libraries.
 | `thirdparty/` | Third-party OAuth2 provider management | `ThirdpartyOAuth2ProviderService` |
 | `tokenexchange/` | RFC 8693 token exchange and CEL evaluation | `TokenExchangeService` |
 | `urivalidation/` | Redirect and resource URI validation | `MatchesRedirectURI()`, `NormalizeResourceURI()` |
+
+Ledger recipes determine credential-free facts from domain-established outcomes. Read accepted ADR 037 and `specs/048-business-event-ledger/contracts/producers.md` before changing a producer. Record mutations and facts in one owning transaction. Keep initiating caller, affected subject, and represented principal distinct.
 
 ## Critical Rules
 

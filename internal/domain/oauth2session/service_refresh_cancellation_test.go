@@ -15,6 +15,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,8 +82,10 @@ func TestGetValidAccessToken_LeaderCancellationDoesNotLoseRotatedToken(t *testin
 			close(paused.release)
 		}
 	}()
+	store := &ledgerfixture.Store{}
 	service := oauth2session.NewOAuth2SessionService(
 		providers, sessions, paused, nil, nil, encryption, &http.Client{Timeout: time.Second}, nil, oauth2session.DefaultConfig(), slog.Default(),
+		store.Recorder(t), store,
 	)
 	leaderCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

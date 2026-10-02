@@ -225,6 +225,17 @@ func (pg *SharedPostgres) ExecuteSQL(t PostgresTestHandle, dbName, query string)
 	_ = pg.execPSQL(t, dbName, "-c", query)
 }
 
+// ExecutePSQLScript runs psql-specific commands (including \gexec) inside the shared container.
+func (pg *SharedPostgres) ExecutePSQLScript(t *testing.T, dbName, brokerUser, script string) {
+	t.Helper()
+	localFile := filepath.Join(t.TempDir(), "grants.sql")
+	require.NoError(t, os.WriteFile(localFile, []byte(script), 0o600))
+	containerFile := "/tmp/" + dbName + "-grants.sql"
+	defer pg.execContainerCommand(t, "rm", "-f", containerFile)
+	require.NoError(t, pg.container.CopyFileToContainer(context.Background(), localFile, containerFile, 0o644))
+	pg.execPSQL(t, dbName, "-X", "-v", "ON_ERROR_STOP=1", "-v", "broker_user="+brokerUser, "-f", containerFile)
+}
+
 func (pg *SharedPostgres) execPSQL(t PostgresTestHandle, dbName string, args ...string) string {
 	t.Helper()
 

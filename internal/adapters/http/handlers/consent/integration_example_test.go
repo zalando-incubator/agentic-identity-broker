@@ -24,6 +24,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/go-chi/chi/v5"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 )
@@ -46,7 +47,7 @@ func newIntegrationSessionTokenValidator() ports.SessionTokenValidator {
 
 func newIntegrationProviderService(t *testing.T) *thirdparty.ThirdpartyOAuth2ProviderService {
 	t.Helper()
-	repo := memorystorage.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := memorystorage.NewInMemoryThirdpartyOAuth2ProviderRepository(memorystorage.NewTransactionManager())
 	return thirdparty.NewThirdpartyOAuth2ProviderService(repo, testutil.NewTestEncryptionAdapter(t), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
 }
 
@@ -99,9 +100,9 @@ func newGitHubServiceEntity() *model.ThirdpartyOAuth2ProviderEntity {
 // TestIntegration_GetAgentDetail exercises the GET /api/consent/agent/:agentId endpoint
 // with real in-memory storage and encryption. No service requirements → Services list is empty.
 func TestIntegration_GetAgentDetail(t *testing.T) {
-	agentRepo := memorystorage.NewAgentRepository()
+	agentRepo := memorystorage.NewAgentRepository(memorystorage.NewTransactionManager())
 	providerService := newIntegrationProviderService(t)
-	grantRepo := memorystorage.NewUserGrantRepository()
+	grantRepo := memorystorage.NewUserGrantRepository(memorystorage.NewTransactionManager())
 
 	ctx := context.Background()
 	principalValue := "user@example.com"
@@ -128,7 +129,7 @@ func TestIntegration_GetAgentDetail(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), testPermissionSetQuerier{}, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(memorystorage.NewTransactionManager()), testPermissionSetQuerier{}, slog.Default(), ledgerfixture.NewRecorder())
 	handler := consent.NewAgentDetailHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
 
 	reqCtx := principal.WithPrincipal(ctx, principalValue)
@@ -168,9 +169,9 @@ func TestIntegration_GetAgentDetail(t *testing.T) {
 
 // TestIntegration_GetAgentGrants exercises the GET /api/consent/agent/:agentId/grants endpoint.
 func TestIntegration_GetAgentGrants(t *testing.T) {
-	agentRepo := memorystorage.NewAgentRepository()
+	agentRepo := memorystorage.NewAgentRepository(memorystorage.NewTransactionManager())
 	providerService := newIntegrationProviderService(t)
-	grantRepo := memorystorage.NewUserGrantRepository()
+	grantRepo := memorystorage.NewUserGrantRepository(memorystorage.NewTransactionManager())
 
 	ctx := context.Background()
 	principalValue := "user@example.com"
@@ -205,7 +206,7 @@ func TestIntegration_GetAgentGrants(t *testing.T) {
 		t.Fatalf("failed to create grant: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, nil, testPermissionSetQuerier{}, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, nil, testPermissionSetQuerier{}, slog.Default(), ledgerfixture.NewRecorder())
 	handler := consent.NewGrantsHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
 
 	reqCtx := principal.WithPrincipal(ctx, principalValue)
@@ -249,9 +250,9 @@ func TestIntegration_GetAgentGrants(t *testing.T) {
 
 // TestIntegration_AgentDetailFlow tests the complete consent detail + grants flow.
 func TestIntegration_AgentDetailFlow(t *testing.T) {
-	agentRepo := memorystorage.NewAgentRepository()
+	agentRepo := memorystorage.NewAgentRepository(memorystorage.NewTransactionManager())
 	providerService := newIntegrationProviderService(t)
-	grantRepo := memorystorage.NewUserGrantRepository()
+	grantRepo := memorystorage.NewUserGrantRepository(memorystorage.NewTransactionManager())
 
 	ctx := context.Background()
 	principalValue := "alice@example.com"
@@ -338,7 +339,7 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 		t.Fatalf("failed to create grant: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), testPermissionSetQuerier{}, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(memorystorage.NewTransactionManager()), testPermissionSetQuerier{}, slog.Default(), ledgerfixture.NewRecorder())
 
 	t.Run("GetAgentDetail", func(t *testing.T) {
 		handler := consent.NewAgentDetailHandler(consentSvc, nil, newIntegrationSessionTokenValidator())

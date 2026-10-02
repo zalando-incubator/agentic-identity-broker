@@ -14,7 +14,7 @@ This plan provides the complete Phase 0 research and Phase 1 design, not product
 
 **Language/Version**: Go 1.27.1 from go.mod; no frontend changes.
 **Primary Dependencies**: Existing sqlx 1.4.0, pgx/v5 5.11.0, google/uuid 1.6.0, Fosite 0.49.0, chi/v5 5.3.2, Cobra 1.10.2, Viper 1.21.0, OTel 1.46.0 and log/sdk-log 0.22.0. Promote existing google/jsonschema-go 0.4.2 from indirect to direct; do not introduce a second schema validator.
-**Storage**: PostgreSQL (existing PostgreSQL 17 deployment/test baseline) and memory. Six-hour UTC event/delivery partitions; broker-owned business state remains in existing tables. Plan migration 035 because the unmerged `046-cimd-upstream-client` branch holds 033 and 034; recheck allocation before implementation.
+**Storage**: PostgreSQL (existing PostgreSQL 17 deployment/test baseline) and memory. Six-hour UTC event/delivery partitions; broker-owned business state remains in existing tables. Migration 036 follows main's CIMD migrations 033–035.
 **Testing**: Standard Go tests/testify, Ginkgo 2.32.2/Gomega, shared testcontainers PostgreSQL, production app.Builder bootstrap, local OTLP receiver. No frontend Playwright work for this backend-only feature.
 **Target Platform**: Existing Linux broker deployment on amd64/arm64, local development on supported Go hosts; Kubernetes chart plus equivalent external PostgreSQL scheduler.
 **Project Type**: Existing Go hexagonal backend within the monorepo, not a new service or event bus.
@@ -133,7 +133,7 @@ internal/app/business_event_delivery.go   ledger telemetry copy delivery worker
 internal/app/business_event_retention.go  in-memory logical retention worker
 internal/config/                     defaults, bindings and validation
 cmd/agentic-identity-broker/          dotted flags and lifecycle integration
-migrations/035_business_event_ledger.{up,down}.sql
+migrations/036_business_event_ledger.{up,down}.sql
 charts/agentic-identity-broker/       values, config, grants, maintenance Job, README
 tests/e2e/                          21 mapped acceptance journeys
 tests/e2e/bootstrap/                builder wrappers, backend selection, child-process and fault-wrapped ports

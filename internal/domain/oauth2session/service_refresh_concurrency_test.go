@@ -18,6 +18,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -261,9 +262,11 @@ func TestGetValidAccessToken_DoesNotAuditRefreshSuccessBeforePersistence(t *test
 		InitiatedAt:       time.Now(), CreatedAt: time.Now(),
 	}))
 	var logs strings.Builder
+	store := &ledgerfixture.Store{}
 	service := oauth2session.NewOAuth2SessionService(
 		providers, sessions, failedCommitRefreshRepo{sessions.(ports.UserSessionRefreshRepository)},
 		nil, nil, encryption, &http.Client{}, nil, oauth2session.DefaultConfig(), slog.New(slog.NewJSONHandler(&logs, nil)),
+		store.Recorder(t), store,
 	)
 	_, _, err = service.GetValidAccessToken(ctx, principal, serviceID)
 	require.ErrorContains(t, err, "failed to commit refreshed session")

@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type testQueryRepo struct {
@@ -79,45 +81,8 @@ func (m *testSyncStateRepo) IncrementVersion(_ context.Context) (int64, error) {
 	return m.version.Add(1), nil
 }
 
-type testApprovalRepo struct{}
-
-func (m *testApprovalRepo) Create(_ context.Context, a *storage.ToolApproval) (*storage.ToolApproval, error) {
-	return a, nil
-}
-
-func (m *testApprovalRepo) Get(_ context.Context, _ id.ApprovalID) (*storage.ToolApproval, error) {
-	return nil, nil
-}
-
-func (m *testApprovalRepo) Approve(_ context.Context, _ id.ApprovalID, _ storage.ApprovalDecision, _ time.Time) (*storage.ToolApproval, error) {
-	return nil, nil
-}
-
-func (m *testApprovalRepo) Deny(_ context.Context, _ id.ApprovalID, _ *storage.ApprovalPersistence, _ time.Time) (*storage.ToolApproval, error) {
-	return nil, nil
-}
-
-func (m *testApprovalRepo) RevokePermanent(_ context.Context, _ id.ApprovalID, _ time.Time) (*storage.ToolApproval, error) {
-	return nil, nil
-}
-
-func (m *testApprovalRepo) Consume(_ context.Context, _ id.ApprovalID, _ time.Time) (*storage.ToolApproval, error) {
-	return nil, nil
-}
-
 func newTestSyncService(queries *testQueryRepo, syncState *testSyncStateRepo, broadcaster *domainapproval.ApprovalSyncBroadcaster) *domainapproval.Service {
-	return domainapproval.NewService(
-		&testApprovalRepo{},
-		queries,
-		nil,
-		syncState,
-		nil,
-		domainapproval.NewApprovalRateLimiter(50, 10),
-		broadcaster,
-		10*time.Minute,
-		"https://broker.example.com",
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-	)
+	return domainapproval.NewService(memory.NewToolApprovalRepository(memory.NewTransactionManager()), queries, nil, syncState, nil, domainapproval.NewApprovalRateLimiter(50, 10), broadcaster, 10*time.Minute, "https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)), ledgerfixture.NewRecorder())
 }
 
 func TestSyncHandler_ImmediateReturn(t *testing.T) {

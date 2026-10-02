@@ -28,7 +28,14 @@ func ValidateAudiencePrefix(prefix string) error {
 }
 
 // ResolveTarget determines whether an audience activates impersonation and resolves its target.
-func (s *Service) ResolveTarget(ctx context.Context, audiences []string) (*Target, bool, error) {
+func (s *Service) ResolveTarget(ctx context.Context, audiences []string) (target *Target, activated bool, err error) {
+	defer func() {
+		if err != nil {
+			if recordErr := s.completeImpersonation(ctx, id.AgentID{}, nil, err); recordErr != nil {
+				err = serverError("failed to record impersonation target outcome", "recording_failed")
+			}
+		}
+	}()
 	if len(audiences) != 1 {
 		return nil, false, nil
 	}

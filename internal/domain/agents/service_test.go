@@ -10,6 +10,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/cascadefixture"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -126,7 +128,7 @@ func (m *mockServiceReqValidator) ValidateServiceRequirements(_ context.Context,
 }
 
 func newTestService(repo ports.AgentRepository, multiAgent bool) *Service {
-	return NewService(repo, &mockServiceReqValidator{}, slog.Default(), multiAgent)
+	return NewService(repo, &mockServiceReqValidator{}, slog.Default(), multiAgent, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 }
 
 func testPermissionSets() []storage.AgentPermissionSetEntry {

@@ -39,6 +39,7 @@ type OAuth2TokenHandler struct {
 	OAuth2Service ports.OAuth2Service
 	Logger        *slog.Logger
 	GrantHandler  TokenGrantStrategy // always non-nil: proxy, local, or hybrid
+	Outcomes      ports.TokenFailureRecorder
 
 	// Impersonation is non-nil only in local mode when configured. Its routing prefix resolves a
 	// canonical registered target agent before third-party token-exchange parameter validation.
@@ -48,13 +49,13 @@ type OAuth2TokenHandler struct {
 // ServeHTTP implements http.Handler for the token endpoint.
 func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		writeOAuth2ErrorJSON(w, http.StatusMethodNotAllowed, "invalid_request", "method not allowed")
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestMalformed, id.AgentID{}, http.StatusMethodNotAllowed, "invalid_request", "method not allowed")
 		return
 	}
 
 	// OAuth 2.0 token endpoint must accept application/x-www-form-urlencoded per RFC 6749 Section 4.1.3.
 	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/x-www-form-urlencoded" {
-		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "invalid Content-Type: expected application/x-www-form-urlencoded")
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestMalformed, id.AgentID{}, http.StatusBadRequest, "invalid_request", "invalid Content-Type: expected application/x-www-form-urlencoded")
 		return
 	}
 
@@ -63,24 +64,24 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "failed to read request body")
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestMalformed, id.AgentID{}, http.StatusBadRequest, "invalid_request", "failed to read request body")
 		return
 	}
 
 	if len(body) == 0 {
-		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "request body cannot be empty")
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestMalformed, id.AgentID{}, http.StatusBadRequest, "invalid_request", "request body cannot be empty")
 		return
 	}
 
 	formData, err := url.ParseQuery(string(body))
 	if err != nil {
-		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "failed to parse form data")
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestMalformed, id.AgentID{}, http.StatusBadRequest, "invalid_request", "failed to parse form data")
 		return
 	}
 
 	grantType := formData.Get("grant_type")
 	if grantType == "" {
-		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "grant_type is required")
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestMalformed, id.AgentID{}, http.StatusBadRequest, "invalid_request", "grant_type is required")
 		return
 	}
 
@@ -100,7 +101,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	rawClientID := formData.Get("client_id")
 	if rawClientID == "" {
-		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "client_id is required")
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestMalformed, id.AgentID{}, http.StatusBadRequest, "invalid_request", "client_id is required")
 		return
 	}
 
@@ -108,7 +109,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.Logger != nil {
 			h.Logger.ErrorContext(r.Context(), "OAuth2 token handler invoked with nil OAuth2Service or GrantHandler — check builder wiring")
 		}
-		writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "OAuth2 authorization server not configured")
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestInternalFailure, id.AgentID{}, http.StatusInternalServerError, "server_error", "OAuth2 authorization server not configured")
 		return
 	}
 
@@ -117,13 +118,17 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var clientErr *ports.ClientIDError
 		if errors.As(resolveErr, &clientErr) {
 			status := tokenEndpointStatus(clientErr.Code)
-			writeOAuth2ErrorJSON(w, status, clientErr.Code, clientErr.Desc)
+			failure := ports.TokenRequestUnauthenticated
+			if clientErr.Code == "unauthorized_client" {
+				failure = ports.TokenRequestUnauthorized
+			}
+			writeRecordedTokenError(w, r, h.Outcomes, failure, id.AgentID{}, status, clientErr.Code, clientErr.Desc)
 		} else {
 			if h.Logger != nil {
 				h.Logger.ErrorContext(r.Context(), "unexpected error during client resolution",
 					"error", resolveErr, "client_id", rawClientID)
 			}
-			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "client resolution failed")
+			writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestInternalFailure, id.AgentID{}, http.StatusInternalServerError, "server_error", "client resolution failed")
 		}
 		return
 	}
@@ -152,12 +157,7 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 		if h.Logger != nil {
 			h.Logger.WarnContext(r.Context(), "token exchange not wired, returning unsupported_grant_type")
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":             "unsupported_grant_type",
-			"error_description": "token exchange is not available in this deployment mode",
-		})
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestMalformed, id.AgentID{}, http.StatusBadRequest, "unsupported_grant_type", "token exchange is not available in this deployment mode")
 		return
 	}
 
@@ -176,12 +176,7 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 		if h.Logger != nil {
 			h.Logger.WarnContext(r.Context(), "Resource parameter missing")
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":             "invalid_request",
-			"error_description": "resource parameter is required",
-		})
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestMalformed, id.AgentID{}, http.StatusBadRequest, "invalid_request", "resource parameter is required")
 		return
 	}
 
@@ -263,6 +258,10 @@ func (h *OAuth2TokenHandler) handleImpersonation(w http.ResponseWriter, r *http.
 		record := h.impersonationParseAudit(err)
 		record.TargetAgentID = target.Agent.ID.String()
 		h.logImpersonationDecision(ctx, record)
+		if h.Outcomes == nil || h.Outcomes.RecordFailure(ctx, ports.TokenRequestMalformed, target.Agent.ID) != nil {
+			h.handleTokenExchangeError(w, tokenexchange.NewServerError("failed to record impersonation request"))
+			return
+		}
 		h.handleTokenExchangeError(w, err)
 		return
 	}
@@ -437,4 +436,12 @@ func sanitizeResourceURI(resource string) string {
 	u.User = nil
 	u.RawQuery = ""
 	return u.String()
+}
+
+func writeRecordedTokenError(w http.ResponseWriter, r *http.Request, outcomes ports.TokenFailureRecorder, failure ports.TokenRequestFailure, agentID id.AgentID, status int, code, description string) {
+	if outcomes == nil || outcomes.RecordFailure(r.Context(), failure, agentID) != nil {
+		writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "failed to record token outcome")
+		return
+	}
+	writeOAuth2ErrorJSON(w, status, code, description)
 }

@@ -130,6 +130,9 @@ ginkgo -v --label-filter="!performance" --focus="pattern" ./tests/e2e/    # Focu
 Use `just test-e2e-extproc` for the ExtProc suite. Some agentgateway scenarios require Docker.
 `test-e2e-performance` runs the warmed local-mode, signed-subject 100-request SC-001 measurement with one Ginkgo worker. Its verbose `SC-001: <ok>/100 succeeded; p95=<duration> max=<duration> min=<duration>` line is recorded in PR #464.
 
+The `business-event-ledger` label selects Feature 048 scenarios. The default lane uses memory. `just test-e2e-ledger-postgres` uses the `integration` tag and runs shared scenarios on both backends plus PostgreSQL crash/retention/recovery scenarios.
+Run performance separately with `just test-e2e-performance 'performance && business-event-ledger' integration`. It uses one process, pinned baseline/feature binaries, and the documented reference workload. An unavailable approved deployment profile blocks release. Read `specs/048-business-event-ledger/quickstart.md` for evidence and profile requirements.
+
 ### Parallelism expectations
 
 - Backend E2E runs with `GINKGO_PROCS`. To make parallel execution safe, keep specs isolated.

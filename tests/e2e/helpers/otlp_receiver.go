@@ -29,6 +29,8 @@ type OTLPLogRecord struct {
 	Scope             *commonv1.InstrumentationScope
 	ScopeSchemaURL    string
 	Record            *logsv1.LogRecord
+	ExportStartedAt   time.Time
+	CapturedAt        time.Time
 }
 
 // OTLPReceiver captures real gRPC exports on an isolated loopback listener.
@@ -229,6 +231,7 @@ type otlpLogsService struct {
 }
 
 func (s *otlpLogsService) Export(ctx context.Context, request *collectorlogsv1.ExportLogsServiceRequest) (*collectorlogsv1.ExportLogsServiceResponse, error) {
+	exportStartedAt := time.Now().UTC()
 	// Bound a paused call even if its client supplied no deadline.
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -269,6 +272,7 @@ func (s *otlpLogsService) Export(ctx context.Context, request *collectorlogsv1.E
 	}
 	// Own the protobuf graph; snapshots clone it again before exposing it.
 	captured := proto.Clone(request).(*collectorlogsv1.ExportLogsServiceRequest)
+	capturedAt := time.Now().UTC()
 	for _, resource := range captured.GetResourceLogs() {
 		for _, scope := range resource.GetScopeLogs() {
 			for _, record := range scope.GetLogRecords() {
@@ -281,6 +285,8 @@ func (s *otlpLogsService) Export(ctx context.Context, request *collectorlogsv1.E
 					Scope:             scope.GetScope(),
 					ScopeSchemaURL:    scope.GetSchemaUrl(),
 					Record:            record,
+					ExportStartedAt:   exportStartedAt,
+					CapturedAt:        capturedAt,
 				})
 			}
 		}
