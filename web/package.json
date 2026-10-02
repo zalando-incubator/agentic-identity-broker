@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@headlessui/react": "^2.2.9",
-    "axios": "^1.18.0",
+    "axios": "^1.20.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
     "date-fns": "^4.1.0",
@@ -34,7 +34,7 @@
     "esbuild": "0.28.1"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@eslint/js": "^9.39.5",
     "@storybook/addon-a11y": "10.3.5",
     "@storybook/addon-docs": "10.3.5",
     "@storybook/addon-themes": "10.3.5",
