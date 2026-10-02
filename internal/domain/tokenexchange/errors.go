@@ -36,6 +36,30 @@ type TokenExchangeError struct {
 	// this is the re-authentication URL the user must visit (e.g. third-party authorize endpoint).
 	// May be empty when no re-authentication URL is available.
 	errorURI string
+
+	failureReason FailureReason
+	provider      ProviderRef
+}
+
+// FailureReason classifies why an exchange failed after its resource resolved to a provider.
+// Values are stable telemetry identifiers.
+type FailureReason string
+
+const (
+	FailureReasonNoGrant             FailureReason = "no_grant"
+	FailureReasonNoSession           FailureReason = "no_session"
+	FailureReasonAccessTokenExpired  FailureReason = "access_token_expired"
+	FailureReasonRefreshTokenExpired FailureReason = "refresh_token_expired"
+	FailureReasonInsufficientScope   FailureReason = "insufficient_scope"
+	FailureReasonProviderRejected    FailureReason = "provider_rejected"
+)
+
+func (e *TokenExchangeError) FailureReason() FailureReason {
+	return e.failureReason
+}
+
+func (e *TokenExchangeError) Provider() ProviderRef {
+	return e.provider
 }
 
 // Error implements the error interface, returning a formatted error message.
@@ -311,26 +335,16 @@ func IsTokenExchangeError(err error) bool {
 // The cause is available via errors.Unwrap() for logging and error chain inspection.
 // The cause is NOT included in the RFC 8693 error response to the client.
 func (e *TokenExchangeError) WithCause(cause error) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        e.code,
-		description: e.description,
-		httpStatus:  e.httpStatus,
-		cause:       cause,
-		details:     e.details,
-		errorURI:    e.errorURI,
-	}
+	clone := *e
+	clone.cause = cause
+	return &clone
 }
 
 // WithDetails returns a copy of the error with the given structured details for logging.
 func (e *TokenExchangeError) WithDetails(details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        e.code,
-		description: e.description,
-		httpStatus:  e.httpStatus,
-		cause:       e.cause,
-		details:     details,
-		errorURI:    e.errorURI,
-	}
+	clone := *e
+	clone.details = details
+	return &clone
 }
 
 // ErrorURI returns the RFC 6749 §5.2 error_uri, if set.
@@ -340,12 +354,19 @@ func (e *TokenExchangeError) ErrorURI() string {
 
 // WithErrorURI returns a copy of the error with the given error_uri attached.
 func (e *TokenExchangeError) WithErrorURI(uri string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        e.code,
-		description: e.description,
-		httpStatus:  e.httpStatus,
-		cause:       e.cause,
-		details:     e.details,
-		errorURI:    uri,
-	}
+	clone := *e
+	clone.errorURI = uri
+	return &clone
+}
+
+func (e *TokenExchangeError) WithFailureReason(reason FailureReason) *TokenExchangeError {
+	clone := *e
+	clone.failureReason = reason
+	return &clone
+}
+
+func (e *TokenExchangeError) WithProvider(provider ProviderRef) *TokenExchangeError {
+	clone := *e
+	clone.provider = provider
+	return &clone
 }

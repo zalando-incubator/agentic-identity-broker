@@ -369,6 +369,17 @@ func (m *MockSessionRepository) FindByPrincipalAndService(ctx context.Context, p
 	return m.session, m.err
 }
 
+func (m *MockSessionRepository) WithLockedSession(ctx context.Context, _ id.Principal, _ id.ServiceID, refresh func(context.Context, *storagedomain.UserSession) (bool, error)) (*storagedomain.UserSession, error) {
+	if m.session == nil {
+		return nil, nil
+	}
+	session := *m.session
+	if _, err := refresh(ctx, &session); err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
 func (m *MockSessionRepository) Create(ctx context.Context, session *storagedomain.UserSession) error {
 	return nil
 }

@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
@@ -205,6 +206,10 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 				attribute.String("token_exchange.error_code", tokenErrForSpan.Code()),
 				attribute.String("token_exchange.error_description", tokenErrForSpan.Description()),
 			)
+			if reason := tokenErrForSpan.FailureReason(); reason != "" {
+				span.SetAttributes(attribute.String("token_exchange.failure_reason", string(reason)))
+			}
+			setProviderSpanAttributes(span, tokenErrForSpan.Provider())
 		}
 		if h.Logger != nil {
 			logAttrs := []any{
@@ -226,6 +231,7 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 		h.handleTokenExchangeError(w, err)
 		return
 	}
+	setProviderSpanAttributes(span, response.Provider)
 
 	body, err := json.Marshal(response) // #nosec G117 -- OAuth2 token response is serialized for its direct HTTP response, not logging.
 	if err != nil {
@@ -404,6 +410,16 @@ func tokenEndpointStatus(code string) int {
 	default:
 		return http.StatusBadRequest
 	}
+}
+
+func setProviderSpanAttributes(span trace.Span, provider tokenexchange.ProviderRef) {
+	if provider.ID.IsZero() {
+		return
+	}
+	span.SetAttributes(
+		attribute.String("token_exchange.provider.id", provider.ID.String()),
+		attribute.String("token_exchange.provider.name", provider.Name),
+	)
 }
 
 // truncateSpanAttribute trims s to at most maxRunes runes and replaces newlines
