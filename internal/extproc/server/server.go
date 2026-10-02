@@ -30,6 +30,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -166,8 +167,31 @@ func (s *Server) extractTraceContext(ctx context.Context, headers *extprocv3.Htt
 	if !s.cfg.Telemetry.Enabled {
 		return ctx
 	}
+	if grpcCtx, ok := extractGRPCTraceContext(ctx); ok {
+		return grpcCtx
+	}
 	normalizeTraceparentHeaders(headers)
 	return otel.GetTextMapPropagator().Extract(ctx, (*headerCarrier)(headers))
+}
+
+// extractGRPCTraceContext extracts trace context from the ExtProc gRPC stream's
+// own incoming metadata. Agentgateway injects a "traceparent" entry directly
+// into this metadata when it opens the Process stream, representing
+// agentgateway's own ExtProc CLIENT span: the direct, immediate caller of this
+// server. That context takes precedence over any trace headers carried in the
+// proxied HTTP request, which may originate from an unrelated upstream hop
+// (e.g. skipper-ingress) and would otherwise orphan this span from
+// agentgateway's span tree.
+func extractGRPCTraceContext(ctx context.Context) (context.Context, bool) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok || len(md) == 0 {
+		return ctx, false
+	}
+	extracted := otel.GetTextMapPropagator().Extract(ctx, mdCarrier(md))
+	if !trace.SpanContextFromContext(extracted).IsValid() {
+		return ctx, false
+	}
+	return extracted, true
 }
 
 func normalizeTraceparentHeaders(headers *extprocv3.HttpHeaders) {
@@ -1206,6 +1230,32 @@ func (c *headerCarrier) Keys() []string {
 			seen[lower] = struct{}{}
 			keys = append(keys, h.Key)
 		}
+	}
+	return keys
+}
+
+// mdCarrier adapts gRPC metadata.MD to the OTel TextMapCarrier interface, so
+// trace context injected directly into an ExtProc gRPC call's own metadata
+// (as opposed to the proxied HTTP request's headers) can be extracted with
+// the same configured propagator.
+type mdCarrier metadata.MD
+
+func (c mdCarrier) Get(key string) string {
+	values := metadata.MD(c).Get(key)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func (c mdCarrier) Set(key string, value string) {
+	metadata.MD(c).Set(key, value)
+}
+
+func (c mdCarrier) Keys() []string {
+	keys := make([]string, 0, len(c))
+	for k := range c {
+		keys = append(keys, k)
 	}
 	return keys
 }
