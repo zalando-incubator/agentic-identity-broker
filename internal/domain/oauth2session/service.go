@@ -850,6 +850,18 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
+		var errorBody struct {
+			Error string `json:"error"`
+		}
+		// A body that is not an OAuth error object leaves OAuthError empty.
+		_ = json.NewDecoder(resp.Body).Decode(&errorBody)
+		return nil, &RefreshRejectedError{StatusCode: resp.StatusCode, OAuthError: errorBody.Error}
+	}
+
 	// Decode response
 	var tokenResp struct {
 		AccessToken  string `json:"access_token"`
@@ -863,14 +875,6 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
 		return nil, fmt.Errorf("failed to decode upstream token response: %w", err)
-	}
-
-	// Check for HTTP error status
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if isCIMDClient {
-			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-		}
-		return nil, fmt.Errorf("upstream token endpoint returned error status %d", resp.StatusCode)
 	}
 
 	// Validate required fields in response
@@ -1274,6 +1278,10 @@ func (s *OAuth2SessionService) refreshExpiredSession(ctx context.Context, princi
 			return false, nil
 		}
 		if !current.CanRefresh() {
+			// A stored refresh token that CanRefresh rejects has passed its recorded expiry.
+			if len(current.EncryptedRefreshToken) > 0 {
+				return false, fmt.Errorf("%w: %w: principal=%s, service=%s", ErrSessionExpired, ErrRefreshTokenExpired, principal, serviceID)
+			}
 			return false, fmt.Errorf("%w: principal=%s, service=%s", ErrSessionExpired, principal, serviceID)
 		}
 		if providerErr != nil {

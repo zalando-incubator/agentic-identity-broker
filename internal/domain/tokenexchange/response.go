@@ -4,7 +4,15 @@ package tokenexchange
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
+
+// ServiceRef identifies the third-party OAuth2 service a token exchange resolved to.
+type ServiceRef struct {
+	ID   id.ServiceID
+	Name string
+}
 
 // TokenExchangeResponse represents an RFC 8693 token exchange response.
 // It is an immutable value object that holds the result of a successful token exchange.
@@ -62,8 +70,9 @@ type TokenExchangeResponse struct {
 	// Keys are permission set UUID strings, values are arrays of service UUID strings.
 	GrantedPermissionSets map[string][]string `json:"granted_permission_sets,omitempty"`
 
-	Principal string `json:"principal,omitempty"`
-	AgentID   string `json:"agent_id,omitempty"`
+	Principal string     `json:"principal,omitempty"`
+	AgentID   string     `json:"agent_id,omitempty"`
+	Service   ServiceRef `json:"-"`
 }
 
 // NewTokenExchangeResponse creates a new token exchange response.
