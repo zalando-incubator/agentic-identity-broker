@@ -37,7 +37,10 @@ description: "Dependency-ordered implementation tasks for the Business Event Led
 **Purpose**: Project initialization and basic structure
 
 - [X] T006 Promote the existing pinned `github.com/google/jsonschema-go v0.4.2` dependency to direct in `go.mod` and update `go.sum` only if dependency tooling requires it; retain existing Go, UUID, sqlx, pgx, Fosite, and OTel versions without introducing a second validator.
+
 - [X] T007 Confirm migration number 035 remains free (the unmerged `origin/046-cimd-upstream-client` branch holds 033 and 034), reuse the T001 pre-feature revision as the performance comparison baseline, and record exact validation commands and the revision in `specs/048-business-event-ledger/quickstart.md`. Request the operator-approved deployment profile for US4-AS4 from the operations owner of the target deployment, with the fields listed in quickstart section 6, and record the approver, approval date/reference and profile location in its deployment-profile table; if no approved profile can be obtained, record it there as an open release blocker for T095. If 035 is occupied, choose the next number that is free on `main` and all open branches, and update migration paths in `specs/048-business-event-ledger/plan.md`, `specs/048-business-event-ledger/data-model.md`, `specs/048-business-event-ledger/research.md`, and this task list before implementation.
+
+**Migration allocation after rebase**: The 035 availability check in T007 was valid at initial review. Main now uses 035 for CIMD authentication; the completed ledger migration and the tasks below use 036.
 
 ## 🔒 Phase 2: Design Preconditions (Blocking Prerequisites) [MANDATORY]
 

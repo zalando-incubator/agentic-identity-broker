@@ -119,8 +119,8 @@ func TestExchangeLedgerInsufficientSessionScopesAreAuthorizationDenial(t *testin
 					permissionSetID: {ID: permissionSetID, ServiceScopes: []storagedomain.ServiceScope{{ServiceID: serviceID, Scopes: []string{"read", "write"}}}},
 				},
 			}, grantRepo, logger)
-			svc.oauth2SessionService = oauth2session.NewOAuth2SessionService(provider, &MockSessionRepository{session: session}, nil, nil,
-				&MockEncryption{}, http.DefaultClient, nil, oauth2session.Config{CallbackBaseURL: "https://broker.example"}, logger, recorder)
+			svc.oauth2SessionService = oauth2session.NewOAuth2SessionService(provider, &MockSessionRepository{session: session}, nil, nil, nil,
+				&MockEncryption{}, http.DefaultClient, nil, oauth2session.Config{CallbackBaseURL: "https://broker.example"}, logger, recorder, nil)
 			svc.ledger = recorder
 			response, err := svc.Exchange(context.Background(), NewTokenExchangeRequest(TokenExchangeGrantType, subjectToken, AccessTokenType, assertion, JWTBearerType, resource, ""))
 			require.Len(t, store.Events, 1, "only one final exchange fact, without a generic failure companion")
@@ -227,7 +227,7 @@ func TestExchangeLedgerDelegatedAutomaticRefreshActor(t *testing.T) {
 			}
 			sessionRepo := &MockSessionRepository{session: session}
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-			sessions := oauth2session.NewOAuth2SessionService(provider, sessionRepo, nil, nil, agentRepo, &MockEncryption{}, upstream.Client(), nil,
+			sessions := oauth2session.NewOAuth2SessionService(provider, sessionRepo, sessionRepo, nil, agentRepo, &MockEncryption{}, upstream.Client(), nil,
 				oauth2session.Config{CallbackBaseURL: "https://broker.example"}, logger, recorder, store)
 			svc := newServiceForStep9TestWithAuthz(t, keySet, agentRepo, `client_assertion.sub == "verified-gateway-client"`)
 			svc.providerService = provider

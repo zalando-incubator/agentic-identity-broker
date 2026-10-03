@@ -547,6 +547,7 @@ func TestAuthorizeEndpoint_PKCEPresent(t *testing.T) {
 func TestCallbackEndpoint_Success(t *testing.T) {
 	ctx := context.Background()
 	sessionRepo := newSessionTestRepository()
+	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository(memory.NewTransactionManager())
 	grantRepo := memory.NewUserGrantRepository(memory.NewTransactionManager())
 
 	// Create service
