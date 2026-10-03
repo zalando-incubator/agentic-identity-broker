@@ -78,8 +78,6 @@ func (s *TokenOutcomeService) CompleteProxy(ctx context.Context, response ports.
 func (s *TokenOutcomeService) RecordFailure(ctx context.Context, failure ports.TokenRequestFailure, agentID id.AgentID) error {
 	var reason string
 	switch failure {
-	case ports.TokenRequestMalformed:
-		reason = "invalid_request"
 	case ports.TokenRequestUnauthenticated:
 		reason = "authentication_failed"
 	case ports.TokenRequestUnauthorized:

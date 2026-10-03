@@ -1,7 +1,9 @@
 package tokenexchange
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,6 +24,32 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/require"
 )
+
+func TestExchangeLedgerSkipsInvalidRequestsBeforeAuthentication(t *testing.T) {
+	_, keySet := generateTestRSAKeySet(t)
+	for _, tc := range []struct {
+		name, subject, assertion, resource string
+	}{
+		{"missing subject", "", "assertion", "https://api.example.com/resource"},
+		{"missing assertion", "subject", "", "https://api.example.com/resource"},
+		{"missing resource", "subject", "assertion", ""},
+		{"malformed resource", "subject", "assertion", "not a URI"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &ledgerfixture.Store{AppendError: errors.New("ledger unavailable")}
+			svc := newServiceForStep9TestWithAuthz(t, keySet, &trackingAgentRepository{}, "false")
+			svc.ledger = store.Recorder(t)
+			response, err := svc.Exchange(context.Background(), NewTokenExchangeRequest(
+				TokenExchangeGrantType, tc.subject, AccessTokenType, tc.assertion, JWTBearerType, tc.resource, "",
+			))
+			require.Nil(t, response)
+			var exchangeErr *TokenExchangeError
+			require.ErrorAs(t, err, &exchangeErr)
+			require.Equal(t, "invalid_request", exchangeErr.Code(), "ledger unavailability must not change pre-authentication input errors")
+			require.Empty(t, store.Events)
+		})
+	}
+}
 
 func TestExchangeLedgerSpecificDenialHasPrecedenceOverGenericTokenFailure(t *testing.T) {
 	for _, refusal := range []string{"authentication", "authorization"} {
@@ -45,6 +73,15 @@ func TestExchangeLedgerSpecificDenialHasPrecedenceOverGenericTokenFailure(t *tes
 			require.Len(t, store.Events, 1, "one final specific refusal, without token-request-failed or token-issued duplicates")
 			require.Equal(t, model.BusinessEventTypePrefix+"token-exchange-denied", store.Events[0].Type)
 			require.Equal(t, model.BusinessEventDenied, store.Events[0].Outcome)
+			require.Equal(t, "gateway", store.Events[0].Actor.Kind)
+			if refusal == "authentication" {
+				require.Nil(t, store.Events[0].Actor.ID, "an unverified assertion does not identify the caller")
+				require.True(t, store.Events[0].GatewayClientID.IsZero())
+			} else {
+				require.Equal(t, "ledger-user", *store.Events[0].Actor.ID)
+				require.Equal(t, id.ClientID("ledger-user"), store.Events[0].GatewayClientID)
+			}
+			require.Nil(t, store.Events[0].Actor.OnBehalfOf, "a rejected policy establishes no delegation")
 			if refusal == "authentication" {
 				require.Nil(t, store.Events[0].Subject)
 			}
@@ -71,6 +108,7 @@ func TestExchangeLedgerInternalEvaluationErrorIsNotAPermissionDenial(t *testing.
 	require.Len(t, store.Events, 1)
 	require.Equal(t, model.BusinessEventTypePrefix+"token-request-failed", store.Events[0].Type)
 	require.Equal(t, "internal_failure", store.Events[0].Data["reason_code"])
+	require.Equal(t, "gateway", store.Events[0].Actor.Kind)
 	require.Nil(t, store.Events[0].Actor.OnBehalfOf, "an evaluation error establishes no delegation")
 }
 
@@ -119,8 +157,8 @@ func TestExchangeLedgerInsufficientSessionScopesAreAuthorizationDenial(t *testin
 					permissionSetID: {ID: permissionSetID, ServiceScopes: []storagedomain.ServiceScope{{ServiceID: serviceID, Scopes: []string{"read", "write"}}}},
 				},
 			}, grantRepo, logger)
-			svc.oauth2SessionService = oauth2session.NewOAuth2SessionService(provider, &MockSessionRepository{session: session}, nil, nil, nil,
-				&MockEncryption{}, http.DefaultClient, nil, oauth2session.Config{CallbackBaseURL: "https://broker.example"}, logger, recorder, nil)
+			svc.oauth2SessionService = oauth2session.NewOAuth2SessionService(provider, &MockSessionRepository{session: session}, nil, nil,
+				agentRepo, &MockEncryption{}, http.DefaultClient, nil, oauth2session.Config{CallbackBaseURL: "https://broker.example"}, logger, recorder, store)
 			svc.ledger = recorder
 			response, err := svc.Exchange(context.Background(), NewTokenExchangeRequest(TokenExchangeGrantType, subjectToken, AccessTokenType, assertion, JWTBearerType, resource, ""))
 			require.Len(t, store.Events, 1, "only one final exchange fact, without a generic failure companion")
@@ -140,7 +178,9 @@ func TestExchangeLedgerInsufficientSessionScopesAreAuthorizationDenial(t *testin
 				require.Equal(t, model.BusinessEventTypePrefix+"token-exchanged", event.Type)
 			}
 			require.Equal(t, grant.Principal, *event.Subject)
+			require.Equal(t, "gateway", event.Actor.Kind)
 			require.Equal(t, caller, *event.Actor.ID)
+			require.Equal(t, id.ClientID(caller), event.GatewayClientID)
 			require.Equal(t, grant.Principal, *event.Actor.OnBehalfOf)
 			require.Equal(t, agentID, event.AgentID)
 			require.Equal(t, grant.ID, event.GrantID)
@@ -159,6 +199,35 @@ func (r refreshExchangeProviderRepository) Get(_ context.Context, serviceID id.S
 		return nil, ports.ErrNotFound
 	}
 	return r.service, nil
+}
+
+type refreshExchangeSessionRepository struct{ *MockSessionRepository }
+
+func (r *refreshExchangeSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storagedomain.UserSession) (bool, error)) (*storagedomain.UserSession, error) {
+	session, err := r.FindByPrincipalAndService(ctx, principal, serviceID)
+	if err != nil || session == nil {
+		return session, err
+	}
+	current := *session
+	updated, err := refresh(ctx, &current)
+	if err != nil {
+		return nil, err
+	}
+	if updated {
+		r.session = &current
+	}
+	return &current, nil
+}
+
+func (r *refreshExchangeSessionRepository) UpdateRefreshedSession(_ context.Context, previous, current *storagedomain.UserSession) error {
+	if r.session == nil || r.session.ID != previous.ID || !r.session.UpdatedAt.Equal(previous.UpdatedAt) ||
+		!bytes.Equal(r.session.EncryptedAccessToken, previous.EncryptedAccessToken) ||
+		!bytes.Equal(r.session.EncryptedRefreshToken, previous.EncryptedRefreshToken) {
+		return storagedomain.NewStorageError("UpdateRefreshedSession", storagedomain.ErrorKindConflict, nil, "session changed during refresh")
+	}
+	copy := *current
+	r.session = &copy
+	return nil
 }
 
 func TestExchangeLedgerDelegatedAutomaticRefreshActor(t *testing.T) {
@@ -225,7 +294,11 @@ func TestExchangeLedgerDelegatedAutomaticRefreshActor(t *testing.T) {
 				EncryptedAccessToken: []byte("expired-access-canary"), EncryptedRefreshToken: []byte("refresh-canary"),
 				AccessTokenExpiresAt: &expired, TokenType: "Bearer", Scope: []string{"read"},
 			}
-			sessionRepo := &MockSessionRepository{session: session}
+			sessionRepo := &refreshExchangeSessionRepository{&MockSessionRepository{session: session}}
+			store.Snapshot = func() func() {
+				before := sessionRepo.session
+				return func() { sessionRepo.session = before }
+			}
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 			sessions := oauth2session.NewOAuth2SessionService(provider, sessionRepo, sessionRepo, nil, agentRepo, &MockEncryption{}, upstream.Client(), nil,
 				oauth2session.Config{CallbackBaseURL: "https://broker.example"}, logger, recorder, store)
@@ -243,10 +316,13 @@ func TestExchangeLedgerDelegatedAutomaticRefreshActor(t *testing.T) {
 			if failure {
 				require.Error(t, err)
 				require.Nil(t, response)
+				require.Equal(t, []byte("expired-access-canary"), sessionRepo.session.EncryptedAccessToken, "failed refresh cannot replace the stored token")
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, principal, response.Principal)
 				require.Equal(t, agentID.String(), response.AgentID)
+				require.Equal(t, "exchange-refresh-canary", response.AccessToken)
+				require.Equal(t, []byte("exchange-refresh-canary"), sessionRepo.session.EncryptedAccessToken, "successful refresh commits its new token")
 			}
 			require.EqualValues(t, 1, requests.Load(), "the upstream refresh endpoint must be used")
 			resolved, finalized := holder.Finalized()
@@ -267,11 +343,15 @@ func TestExchangeLedgerDelegatedAutomaticRefreshActor(t *testing.T) {
 			require.Equal(t, session.Principal, *refresh.Subject)
 			require.Equal(t, session.ID, refresh.SessionID)
 			require.Equal(t, serviceID, refresh.ServiceID)
-			require.Equal(t, "agent", refresh.Actor.Kind)
+			require.Equal(t, "gateway", refresh.Actor.Kind)
 			require.Equal(t, gatewayClient, *refresh.Actor.ID)
 			require.Equal(t, session.Principal, *refresh.Actor.OnBehalfOf)
 			require.Equal(t, id.ClientID(gatewayClient), refresh.GatewayClientID)
 			require.Equal(t, grant.ID, exchange.GrantID, "the exchange passed grant authorization before refresh")
+			require.Equal(t, "gateway", exchange.Actor.Kind)
+			require.Equal(t, gatewayClient, *exchange.Actor.ID)
+			require.Equal(t, session.Principal, *exchange.Actor.OnBehalfOf)
+			require.Equal(t, agentID, exchange.AgentID)
 			require.Equal(t, id.ClientID(gatewayClient), exchange.GatewayClientID)
 		})
 	}

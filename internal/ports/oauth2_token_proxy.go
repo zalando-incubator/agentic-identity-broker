@@ -40,8 +40,7 @@ type TokenProxyCompletion struct {
 type TokenRequestFailure uint8
 
 const (
-	TokenRequestMalformed TokenRequestFailure = iota
-	TokenRequestUnauthenticated
+	TokenRequestUnauthenticated TokenRequestFailure = iota
 	TokenRequestUnauthorized
 	TokenRequestUpstreamFailure
 	TokenRequestInternalFailure

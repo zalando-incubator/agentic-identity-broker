@@ -186,6 +186,7 @@ func TestMemoryBusinessEventQueryScopeRangeAndFilters(t *testing.T) {
 	updated.OccurredAt = start.Add(time.Hour)
 	memoryLedgerAppend(t, store, ctx, updated, false)
 	denied := memoryLedgerExample(t, "token-exchange-denied")
+	denied.Subject = &subject
 	denied.OccurredAt = start.Add(2 * time.Hour)
 	memoryLedgerAppend(t, store, ctx, denied, false)
 	atEnd := memoryLedgerExample(t, "grant-created")

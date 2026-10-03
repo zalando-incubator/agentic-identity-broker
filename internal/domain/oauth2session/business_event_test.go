@@ -93,6 +93,16 @@ func (r *ledgerSessionRecords) WithLockedSession(ctx context.Context, principal 
 	return session, nil
 }
 
+func (r *ledgerSessionRecords) UpdateRefreshedSession(_ context.Context, previous, current *storage.UserSession) error {
+	if r.session == nil || r.session.ID != previous.ID || !r.session.UpdatedAt.Equal(previous.UpdatedAt) ||
+		!bytes.Equal(r.session.EncryptedAccessToken, previous.EncryptedAccessToken) ||
+		!bytes.Equal(r.session.EncryptedRefreshToken, previous.EncryptedRefreshToken) {
+		return storage.NewStorageError("UpdateRefreshedSession", storage.ErrorKindConflict, nil, "session changed during refresh")
+	}
+	r.session = copyLedgerSession(current)
+	return nil
+}
+
 type ledgerSessionBranchKeys struct{ ports.BranchKeyManager }
 
 func newLedgerSession(t *testing.T) (*OAuth2SessionService, *ledgerSessionRecords, *ledgerfixture.Store, *HandleCallbackRequest, *atomic.Bool) {
@@ -267,7 +277,7 @@ func TestSessionLedgerAutomaticRefreshActor(t *testing.T) {
 						// The exchange workflow may supply these facts only after the grant
 						// and requested service have both been authorized.
 						ctx = ledger.WithWorkflowActor(ctx, model.BusinessEventActor{
-							Kind: "agent", ID: &peer, OnBehalfOf: &before.Principal,
+							Kind: "gateway", ID: &peer, OnBehalfOf: &before.Principal,
 						})
 					}
 
@@ -295,7 +305,7 @@ func TestSessionLedgerAutomaticRefreshActor(t *testing.T) {
 						require.Empty(t, event.Data)
 					}
 					if caller == "delegated" {
-						require.Equal(t, "agent", event.Actor.Kind)
+						require.Equal(t, "gateway", event.Actor.Kind)
 						require.Equal(t, peer, *event.Actor.ID)
 						require.Equal(t, before.Principal, *event.Actor.OnBehalfOf)
 						require.Equal(t, id.ClientID(peer), event.GatewayClientID)

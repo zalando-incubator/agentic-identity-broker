@@ -242,7 +242,7 @@ func TestJWXAccessTokenStrategy_ReusesCurrentSigner(t *testing.T) {
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
 	encryptor := newCountingDecryptor()
-	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -333,8 +333,8 @@ func TestJWXAccessTokenStrategy_RefreshesCachedSignerAcrossReplicas(t *testing.T
 		ctx := context.Background()
 		repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
 		encryptor := newCountingDecryptor()
-		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
-		otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
+		otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 		require.NoError(t, err)
 		strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -366,8 +366,8 @@ func TestJWXAccessTokenStrategy_RefreshesCachedSignerAcrossReplicas(t *testing.T
 func TestJWXAccessTokenStrategy_RemotePromotionStopsOldSignerImmediately(t *testing.T) {
 	ctx := context.Background()
 	repo := newStrategySigningKeyStore()
-	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
-	otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
+	otherReplica := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -401,7 +401,7 @@ func TestJWXAccessTokenStrategy_GenerationInvalidatesCachedSigner(t *testing.T) 
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
 	encryptor := newCountingDecryptor()
-	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -423,7 +423,7 @@ func TestJWXAccessTokenStrategy_InvalidatesCachedSignerOnMutation(t *testing.T) 
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
 	encryptor := newCountingDecryptor()
-	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	first, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	second, err := svc.GenerateAndStoreKey(ctx, "ES256", false)
@@ -449,7 +449,7 @@ func TestJWXAccessTokenStrategy_ConcurrentMintsShareSigner(t *testing.T) {
 	ctx := context.Background()
 	repo := &countingMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
 	encryptor := newCountingDecryptor()
-	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger())
+	svc := NewSigningKeyService(repo, repo, encryptor, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 	require.NoError(t, err)
 	strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -499,7 +499,7 @@ func TestJWXAccessTokenStrategy_ExpiredSignerFailsClosed(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.Background()
 		repo := &switchableMintSigningKeyStore{strategySigningKeyStore: newStrategySigningKeyStore()}
-		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+		svc := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 		key, err := svc.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Second))
 		require.NoError(t, err)
 		strategy, err := NewJWXAccessTokenStrategy(svc, "https://issuer.example.com", time.Hour, nil, testSlogger())
@@ -836,8 +836,8 @@ func TestNewJWXAccessTokenStrategy_Validation(t *testing.T) {
 func TestJWXAccessTokenStrategy_RejectsRemotelyRemovedKey(t *testing.T) {
 	ctx := context.Background()
 	repo := newStrategySigningKeyStore()
-	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
-	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger())
+	svcA := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
+	svcB := NewSigningKeyService(repo, repo, &testEncryptor{}, newNoopBranchKeyManager(), testSlogger(), ledgerfixture.NewRecorder())
 	old, err := svcA.generateAndStore(ctx, "ES256", true, time.Now().Add(-time.Minute))
 	require.NoError(t, err)
 	issuer := "https://issuer.example.com"

@@ -173,15 +173,14 @@ func NewTokenExchangeService(
 // - T077: Include service_id and re-auth hint in error_description
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
 func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (response *TokenExchangeResponse, err error) {
-	facts := model.BusinessEvent{Actor: model.BusinessEventActor{Kind: "agent"}}
+	// Structural errors precede authentication; they are not business outcomes.
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	facts := model.BusinessEvent{Actor: model.BusinessEventActor{Kind: "gateway"}}
 	denialReason := ""
 	failureReason := "internal_failure"
 	defer func() { s.completeExchange(ctx, facts, denialReason, failureReason, &response, &err) }()
-	// Step 1: Validate request structure
-	if err := req.Validate(); err != nil {
-		failureReason = "invalid_request"
-		return nil, err
-	}
 
 	// Step 2: Validate subject_token JWT
 	subjectTokenJWT, err := s.jwtValidator.ValidateSubjectToken(ctx, req.SubjectToken)

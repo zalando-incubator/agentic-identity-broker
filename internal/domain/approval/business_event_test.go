@@ -21,10 +21,10 @@ type ledgerApprovalExpirations struct {
 	markers map[id.ApprovalID]time.Time
 }
 
-func (e *ledgerApprovalExpirations) ListUnrecordedExpired(_ context.Context, at time.Time, limit int) ([]*storage.ToolApproval, error) {
+func (e *ledgerApprovalExpirations) ListUnrecordedExpiredForPrincipal(_ context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.ToolApproval, error) {
 	var candidates []*storage.ToolApproval
 	for _, approval := range e.repo.approvals {
-		if approval.Status == storage.ApprovalStatusPending && approval.IsExpired(at) && !e.markers[approval.ID].Equal(approval.ExpiresAt) {
+		if approval.Principal == principal && approval.Status == storage.ApprovalStatusPending && approval.IsExpired(at) && !e.markers[approval.ID].Equal(approval.ExpiresAt) {
 			copy := *approval
 			candidates = append(candidates, &copy)
 			if len(candidates) == limit {
@@ -97,6 +97,103 @@ func TestApprovalLedgerWinningTransitionsAndSilentRepeats(t *testing.T) {
 		require.Equal(t, principal, *event.Subject)
 		require.NotContains(t, event.Data, "arguments")
 	}
+}
+
+func TestApprovalLedgerConsumptionDoesNotReuseCreatorGatewayAsCaller(t *testing.T) {
+	svc, _, store, _, _ := newLedgerApproval(t)
+	principal := id.Principal("approval-owner")
+	created, err := svc.CreatePendingApproval(context.Background(), CreateApprovalRequest{
+		Principal: principal, AgentID: id.NewAgentID(), GatewayClientID: "creation-gateway",
+		ToolName: "read-file", Arguments: map[string]any{"path": "safe"},
+	})
+	require.NoError(t, err)
+	_, err = svc.ApproveApproval(context.Background(), created.Approval.ID, principal, ApproveRequest{Persistence: storage.ApprovalPersistenceOnce})
+	require.NoError(t, err)
+	_, err = svc.ConsumeApproval(context.Background(), created.Approval.ID, principal)
+	require.NoError(t, err)
+	require.Len(t, store.Events, 3)
+	consumed := store.Events[2]
+	require.Equal(t, model.BusinessEventTypePrefix+"approval-consumed", consumed.Type)
+	require.Equal(t, "gateway", consumed.Actor.Kind)
+	require.Nil(t, consumed.Actor.ID, "subject-token authentication does not establish a consuming gateway")
+	require.NotNil(t, consumed.Actor.OnBehalfOf)
+	require.Equal(t, principal, *consumed.Actor.OnBehalfOf)
+	require.NotNil(t, consumed.Subject)
+	require.Equal(t, principal, *consumed.Subject)
+	require.Equal(t, created.Approval.AgentID, consumed.AgentID)
+}
+
+func TestApprovalLedgerPollingLeavesExpiryDiscoveryToScopedOperations(t *testing.T) {
+	svc, repo, store, syncState, markers := newLedgerApproval(t)
+	principal := id.Principal("polling-owner")
+	expired := makePendingApproval(principal, id.NewAgentID())
+	expired.ExpiresAt = time.Now().UTC().Add(-time.Hour)
+	active := makePendingApproval(principal, id.NewAgentID())
+	repo.approvals[expired.ID], repo.approvals[active.ID] = expired, active
+	svc.queries = repo
+	syncState.version = 8
+	for _, filter := range []*id.Principal{nil, &principal} {
+		state, err := svc.GetSyncState(context.Background(), filter, nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(8), state.Version)
+		require.Len(t, state.Pairs, 1)
+		require.Equal(t, active.ID, state.Pairs[0].Approvals[0].ID)
+		require.Empty(t, markers.markers, "sync polling must not discover expired approvals")
+		require.Empty(t, store.Events)
+	}
+	_, err := svc.GetApproval(context.Background(), expired.ID, principal)
+	require.ErrorIs(t, err, ErrApprovalGone)
+	require.Equal(t, expired.ExpiresAt, markers.markers[expired.ID])
+	require.Len(t, store.Events, 1)
+	require.Equal(t, model.BusinessEventTypePrefix+"approval-expired", store.Events[0].Type)
+	_, err = svc.GetSyncState(context.Background(), nil, nil)
+	require.NoError(t, err)
+	require.Len(t, store.Events, 1)
+}
+
+func TestApprovalLedgerPendingListRecognizesOnlyBoundedPrincipalExpirations(t *testing.T) {
+	svc, repo, store, _, markers := newLedgerApproval(t)
+	principal := id.Principal("pending-list-owner")
+	for range 201 {
+		pending := makePendingApproval(principal, id.NewAgentID())
+		pending.ExpiresAt = time.Now().UTC().Add(-time.Hour)
+		repo.approvals[pending.ID] = pending
+	}
+	other := makePendingApproval("another-owner", id.NewAgentID())
+	other.ExpiresAt = time.Now().UTC().Add(-time.Hour)
+	repo.approvals[other.ID] = other
+	svc.queries = repo
+	pending, err := svc.ListPendingApprovals(context.Background(), principal)
+	require.NoError(t, err)
+	require.Empty(t, pending)
+	require.Len(t, markers.markers, 200, "one request recognizes at most one bounded batch")
+	require.Len(t, store.Events, 200)
+	require.NotContains(t, markers.markers, other.ID)
+	pending, err = svc.ListPendingApprovals(context.Background(), principal)
+	require.NoError(t, err)
+	require.Empty(t, pending)
+	require.Len(t, markers.markers, 201)
+	require.Len(t, store.Events, 201)
+	require.NotContains(t, markers.markers, other.ID)
+}
+
+func TestApprovalLedgerCreationDoesNotSweepOtherPrincipals(t *testing.T) {
+	svc, repo, store, _, markers := newLedgerApproval(t)
+	other := makePendingApproval("unrelated-owner", id.NewAgentID())
+	other.ExpiresAt = time.Now().UTC().Add(-time.Hour)
+	repo.approvals[other.ID] = other
+	created, err := svc.CreatePendingApproval(context.Background(), CreateApprovalRequest{
+		Principal: "request-owner", AgentID: id.NewAgentID(), ToolName: "read-file", Arguments: map[string]any{"path": "safe"},
+	})
+	require.NoError(t, err)
+	require.True(t, created.IsNew)
+	require.Len(t, store.Events, 1)
+	require.Equal(t, model.BusinessEventTypePrefix+"approval-requested", store.Events[0].Type)
+	require.NotContains(t, markers.markers, other.ID)
+	_, err = svc.GetApproval(context.Background(), other.ID, other.Principal)
+	require.ErrorIs(t, err, ErrApprovalGone)
+	require.Equal(t, other.ExpiresAt, markers.markers[other.ID])
+	require.Len(t, store.Events, 2)
 }
 
 func TestApprovalLedgerDenialAndRevocationAreDistinct(t *testing.T) {
@@ -250,28 +347,16 @@ func TestApprovalLedgerFailedExpiryRecordingDoesNotConsumeMarker(t *testing.T) {
 	require.Equal(t, model.BusinessEventTypePrefix+"approval-expired", store.Events[0].Type)
 }
 
-type deadlineCrossingExpirations struct {
-	ports.ToolApprovalExpirationRepository
-	pending *storage.ToolApproval
-	crossed bool
-}
-
-func (r *deadlineCrossingExpirations) ListUnrecordedExpired(ctx context.Context, at time.Time, limit int) ([]*storage.ToolApproval, error) {
-	candidates, err := r.ToolApprovalExpirationRepository.ListUnrecordedExpired(ctx, at, limit)
-	if err == nil && len(candidates) == 0 && !r.crossed {
-		r.pending.ExpiresAt = at.Add(-time.Second)
-		r.crossed = true
-	}
-	return candidates, err
-}
-
 func TestApprovalLedgerExpiryCrossingDuringCreateRecordsBeforeRetirement(t *testing.T) {
 	svc, repo, store, syncState, expirations := newLedgerApproval(t)
 	pending := makePendingApproval(id.Principal("deadline-crossing-user"), id.NewAgentID())
 	pending.Arguments = map[string]any{"path": "safe-fixture"}
 	pending.ArgumentsHash = storage.ComputeArgumentsHash(pending.Arguments)
 	repo.approvals[pending.ID] = pending
-	svc.expirations = &deadlineCrossingExpirations{ToolApprovalExpirationRepository: expirations, pending: pending}
+	svc.queries = &mockQueryRepo{listActiveByPairFunc: func(context.Context, id.Principal, id.AgentID) ([]*storage.ToolApproval, error) {
+		pending.ExpiresAt = time.Now().UTC().Add(-time.Second)
+		return nil, nil
+	}}
 	created, err := svc.CreatePendingApproval(context.Background(), CreateApprovalRequest{Principal: pending.Principal, AgentID: pending.AgentID, ToolName: pending.ToolName, Arguments: pending.Arguments})
 	require.NoError(t, err)
 	require.True(t, created.IsNew)

@@ -15,6 +15,13 @@
         "outcome": {
           "const": "success"
         },
+        "actor": {
+          "properties": {
+            "kind": { "const": "gateway" },
+            "id": { "type": "string" },
+            "on_behalf_of": { "type": "string" }
+          }
+        },
         "data": {
           "type": "object",
           "additionalProperties": false,

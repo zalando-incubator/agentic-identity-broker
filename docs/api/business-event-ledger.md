@@ -3,6 +3,7 @@
 The broker records credential-free business facts in an immutable ledger. Business mutations and their facts share one transaction. Recording failure rejects the operation before successful responses or credentials leave the broker.
 
 This feature adds no HTTP or CLI read, erase, export, or ingestion endpoint. The existing [end-user](../../api/enduser/openapi.yaml) and [admin](../../api/admin/openapi.yaml) contracts remain unchanged.
+Malformed token requests rejected before authentication are input errors, not durable business events. Ledger unavailability does not change their existing 4xx responses.
 
 ## Operational access
 
@@ -66,6 +67,12 @@ LIMIT 200;
 ```
 
 The internal repository equivalent is `BusinessEventSubject{NoSubject: true}`. An empty principal is invalid. A null subject differs from an unavailable actor ID. A system expiry event can still identify its affected subject.
+
+## Interpret the caller
+
+The subject is the affected principal, not the initiator. Client-assertion token exchange and impersonation identify the verified initiating client as a `gateway` actor. The `agent_id` identifies the receiving agent.
+
+Approval consumption uses subject-token-only authentication. Its `gateway` actor ID is null, not the user or the approval creator. The `on_behalf_of` field retains the established represented principal. Activity views and SSF initiating-entity mappings must use the actor. They must not fill unknown caller IDs from subject or resource references.
 
 ## Interpret identities and references
 

@@ -70,7 +70,7 @@ func TestBusinessEventExpirationMarkers_AtomicRecognitionAndRenewal(t *testing.T
 					require.NoError(t, err)
 				}
 				candidates = func() int {
-					rows, err := repo.ListUnrecordedExpired(ctx, time.Now().UTC(), 100)
+					rows, err := repo.ListUnrecordedExpiredForPrincipal(ctx, "expiry-approval-user", time.Now().UTC(), 100)
 					require.NoError(t, err)
 					n := 0
 					for _, row := range rows {

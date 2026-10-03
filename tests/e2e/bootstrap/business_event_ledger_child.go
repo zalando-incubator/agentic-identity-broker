@@ -102,6 +102,10 @@ func (c *LedgerChild) Send(command string) error {
 	return c.encoder.Encode(command)
 }
 
+func (c *LedgerChild) CloseInput() error {
+	return c.input.Close()
+}
+
 func (c *LedgerChild) Kill() error {
 	c.killOnce.Do(func() {
 		if err := c.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
@@ -163,6 +167,10 @@ func RunLedgerChild(input io.Reader, output io.Writer) error {
 	for {
 		var command string
 		if err = decoder.Decode(&command); errors.Is(err, io.EOF) {
+			// Closing stdin during a kill must not release the committed request.
+			if release != nil {
+				<-release
+			}
 			return nil
 		} else if err != nil {
 			return errors.New("invalid ledger child command")

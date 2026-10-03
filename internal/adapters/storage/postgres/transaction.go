@@ -19,6 +19,10 @@ const storageSubjectLockClass int32 = 1095320147
 
 type storageTransactionKey struct{}
 
+// refreshConnectionKey carries the connection-scoped per-session coordination
+// lock into the short, ledger-owned write transaction.
+type refreshConnectionKey struct{}
+
 type storageTransactionOwner struct {
 	mu               sync.Mutex
 	adapter          *Adapter
@@ -81,7 +85,13 @@ func (a *Adapter) BeginTX(ctx context.Context) (context.Context, error) {
 		return nil, storage.NewStorageError("StorageTransaction.BeginTX", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 	levels := [...]sql.IsolationLevel{sql.LevelReadCommitted, sql.LevelRepeatableRead, sql.LevelSerializable}
-	tx, err := a.db.BeginTxx(ctx, &sql.TxOptions{Isolation: levels[hints.Isolation]})
+	var tx *sqlx.Tx
+	var err error
+	if conn, ok := ctx.Value(refreshConnectionKey{}).(*sqlx.Conn); ok {
+		tx, err = conn.BeginTxx(ctx, &sql.TxOptions{Isolation: levels[hints.Isolation]})
+	} else {
+		tx, err = a.db.BeginTxx(ctx, &sql.TxOptions{Isolation: levels[hints.Isolation]})
+	}
 	if err != nil {
 		return nil, transactionStorageError("StorageTransaction.BeginTX", err, "failed to begin transaction")
 	}

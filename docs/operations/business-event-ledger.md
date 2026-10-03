@@ -159,6 +159,7 @@ Use the rendered CronJob name, which can be shortened for long release names. Th
 ## Verify outage recovery
 
 The copy worker uses the existing telemetry destination. It scans retained references at startup and every second, with at most 100 candidates. Collector work remains outside business commits. Failed initialization retries automatically. Failed exports retry after 30 seconds with the original ID.
+An exporter deadline is also a failed attempt. PostgreSQL keeps the deletion barriers through a bounded one-second retry-write cleanup, then releases them for erasure and maintenance. A hanging collector must not leave its reference immediately due on every one-second worker scan.
 
 For a disposable PostgreSQL dataset, stop the collector and complete a real broker workflow. Query the event and its payload-free pending reference with operational credentials. Restart the broker and collector. After the reference becomes due, verify the same event ID at the receiver and absence of its acknowledged reference.
 

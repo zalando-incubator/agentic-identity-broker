@@ -297,7 +297,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsPlaintextSecret(t *te
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_CIMDProviderRoundTrip(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	provider := testCIMDProvider(id.NewServiceID())
 
 	require.NoError(t, repo.Create(ctx, provider))
@@ -311,7 +311,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_CIMDProviderRoundTrip(t *tes
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateToCIMDProviderClearsSecret(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository(NewTransactionManager())
 	staticProvider := testProvider(id.NewServiceID())
 	require.NoError(t, repo.Create(ctx, staticProvider))
 

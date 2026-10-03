@@ -15,6 +15,11 @@
         "outcome": {
           "const": "denied"
         },
+        "actor": {
+          "properties": {
+            "kind": { "const": "gateway" }
+          }
+        },
         "data": {
           "type": "object",
           "additionalProperties": false,

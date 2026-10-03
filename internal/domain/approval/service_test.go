@@ -32,8 +32,8 @@ func newMockApprovalRepo() *mockApprovalRepo {
 	return &mockApprovalRepo{approvals: make(map[id.ApprovalID]*storage.ToolApproval), expirationRecordedFor: make(map[id.ApprovalID]time.Time)}
 }
 
-func (m *mockApprovalRepo) ListUnrecordedExpired(ctx context.Context, at time.Time, limit int) ([]*storage.ToolApproval, error) {
-	return (&ledgerApprovalExpirations{repo: m, markers: m.expirationRecordedFor}).ListUnrecordedExpired(ctx, at, limit)
+func (m *mockApprovalRepo) ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.ToolApproval, error) {
+	return (&ledgerApprovalExpirations{repo: m, markers: m.expirationRecordedFor}).ListUnrecordedExpiredForPrincipal(ctx, principal, at, limit)
 }
 
 func (m *mockApprovalRepo) RecordExpiration(ctx context.Context, approvalID id.ApprovalID, expiry time.Time) (bool, error) {
@@ -133,8 +133,10 @@ func (m *mockApprovalRepo) Consume(ctx context.Context, approvalID id.ApprovalID
 
 func (m *mockApprovalRepo) ListAllActive(_ context.Context, principalFilter *id.Principal, _ []string) ([]*storage.ToolApproval, error) {
 	var approvals []*storage.ToolApproval
+	now := time.Now()
 	for _, approval := range m.approvals {
-		if principalFilter == nil || approval.Principal == *principalFilter {
+		if (principalFilter == nil || approval.Principal == *principalFilter) && !approval.Consumed &&
+			(approval.Status != storage.ApprovalStatusPending || !approval.IsExpired(now)) {
 			approvals = append(approvals, approval)
 		}
 	}

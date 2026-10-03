@@ -9,10 +9,8 @@ import (
 	"testing"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
-	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,7 +58,7 @@ func TestTokenGrantProxyAndHybridUseOnlyCommittedStagedResponse(t *testing.T) {
 				body := []byte(`{"access_token":"committed-token","error":"invalid_grant"}`)
 				var strategy TokenGrantStrategy = NewProxyTokenGrantStrategy("https://upstream.example/token", stagedProxyOutcomes{response: response, body: body}, nil)
 				if mode == "hybrid" {
-					strategy = NewHybridTokenGrantStrategy(strategy, NewLocalGrantStrategy(fixedMinting(nil, errors.New("wrong route")), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil), nil)
+					strategy = NewHybridTokenGrantStrategy(strategy, NewLocalGrantStrategy(fixedMinting(nil, errors.New("wrong route")), nil), nil)
 				}
 				writer := httptest.NewRecorder()
 				request := httptest.NewRequest(http.MethodPost, "/oauth2/token", nil)

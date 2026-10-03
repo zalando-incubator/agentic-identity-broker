@@ -462,6 +462,10 @@ func TestPostgresApprovalExpirationRecognitionJoinsOwner(t *testing.T) {
 	repo := NewToolApprovalRepository(adapter)
 	_, err := createPatternedApproval(context.Background(), repo, approval)
 	require.NoError(t, err)
+	other := *approval
+	other.ID, other.Principal, other.ArgumentsHash = id.NewApprovalID(), "unrelated-expiration-user", "another-expiration"
+	_, err = createPatternedApproval(context.Background(), repo, &other)
+	require.NoError(t, err)
 	owner, err := adapter.BeginTX(context.Background())
 	require.NoError(t, err)
 	defer func() { _ = adapter.Rollback(owner) }()
@@ -469,8 +473,12 @@ func TestPostgresApprovalExpirationRecognitionJoinsOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, adapter.Rollback(owner))
 	require.True(t, won)
-	candidates, err := repo.ListUnrecordedExpired(context.Background(), time.Now().UTC(), 100)
+	candidates, err := repo.ListUnrecordedExpiredForPrincipal(context.Background(), approval.Principal, time.Now().UTC(), 100)
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	require.Equal(t, approval.ID, candidates[0].ID)
+	candidates, err = repo.ListUnrecordedExpiredForPrincipal(context.Background(), other.Principal, time.Now().UTC(), 1)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, other.ID, candidates[0].ID)
 }

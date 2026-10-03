@@ -43,6 +43,27 @@ See `../data-model.md` for every envelope field. The recorder checks these addit
 
 Validate an explicit serialization view containing the final wire types (UUID/time strings, nullable identities, primitive payload fields), not raw UUID arrays or credential-bearing domain structs. Reuse that view for one JSON serialization. Compile schemas once; do not allocate a generic request/response copy or marshal then unmarshal solely to validate.
 
+## Actor attribution
+
+`actor` identifies the initiator, not the affected principal or receiving agent. Select its kind from the authenticated workflow, never from an event name alone. Keep `subject` as the affected principal and `agent_id` as the receiving or affected agent. These rules also govern downstream activity views and SSF `initiating_entity`; neither may reinterpret the subject as the caller.
+
+| Workflow | Actor kind and identity | Represented principal |
+|---|---|---|
+| RFC 8693 exchange and impersonation using a client assertion | `gateway`; the independently verified initiating client ID, or null before verification | `on_behalf_of=subject` only after accepted delegation |
+| Approval creation using dual authentication | `gateway`; the verified client-assertion ID | The established user/agent context |
+| Approval consumption using subject-token-only authentication (ADR 018) | `gateway`; null because the bearer authenticates the represented principal, not a distinct consuming gateway | The authorized approval owner |
+| Browser approval decisions, consent, and direct user session actions | `user`; the authenticated acting principal | Null for direct actions |
+| Administrative mutations | `admin`; the authenticated administrator, or null if no administrator identity is supplied by the trusted boundary | Null unless delegation is explicitly established |
+| Background expiry and lifecycle work | `system`; the broker lifecycle identity | Null |
+
+Never recover the consuming caller from an approval's creation-time `gateway_client_id`. That reference identifies the creator and need not identify the later consumer. A verified actor-token identity in impersonation remains `data.delegating_actor_id`, distinct from the initiating client. Session refresh triggered by exchange inherits that exchange's caller and established delegation.
+
+## Token request boundary
+
+Requests rejected before credential authentication for input errors are not catalogued business outcomes. This boundary includes HTTP methods, media types, form syntax, and missing required parameters. These requests retain their existing OAuth2 error responses without durable ledger writes. Ledger errors must not turn these input errors into 500 responses.
+
+Authentication and authorization decisions remain catalogued. Authenticated terminal workflow failures remain catalogued and fail closed on recording errors. A resolved public client ID is not authentication.
+
 ## Per-type data
 
 Most successful events use an intentionally empty, closed `data` object because the envelope already contains the fact's identity and relationships. This is a selected minimal contract, not an unfinished payload.
@@ -63,7 +84,7 @@ Most successful events use an intentionally empty, closed `data` object because 
 | credential-generated, credential-rotated, credential-revoked | Required `credential_id`: broker credential record UUID, never secret or hash |
 | signing-key-promoted | Required `signing_key_id` UUID and `activates_at` UTC instant; the latter preserves existing JWKS eligibility grace |
 
-These codes are classified from typed outcomes; do not derive them by parsing or copying error strings. `token-exchange-denied` is the primary token failure for authentication/authorization refusal; parsing, transport and internal failures use `token-request-failed`. `impersonation-denied` may accompany the primary token failure as a separate permission fact. A permitted impersonation that fails during minting records `impersonation-granted` and `token-request-failed`, not a false denied decision. Unlisted observations do not acquire new event types implicitly.
+These codes are classified from typed outcomes; do not derive them by parsing or copying error strings. `token-exchange-denied` is the primary token failure for authentication/authorization refusal. Once a request enters an authenticated workflow, terminal parsing, transport and internal failures use `token-request-failed`; the pre-authentication input errors listed above do not. `impersonation-denied` may accompany the primary token failure as a separate permission fact. A permitted impersonation that fails during minting records `impersonation-granted` and `token-request-failed`, not a false denied decision. Unlisted observations do not acquire new event types implicitly.
 
 ## Flat OpenTelemetry encoding
 
@@ -88,7 +109,7 @@ Set explicit SDK provider limits to unlimited count and value length, overriding
 
 Recording and delivery are separate. Delivery references are created in the business transaction only when `telemetry.enabled && telemetry.logs.enabled && business_events.telemetry_copy_enabled`. A temporary exporter failure does not change that eligibility decision. The exporter uses the existing endpoint, protocol, headers, timeout, TLS/insecure and compression settings. It introduces no independent destination settings.
 
-A builder-owned background worker starts after storage and schema registry initialization. It scans at startup and at a fixed one-second cadence, at most 100 candidate IDs per scan, and dispatches each retained event under the storage delivery barrier. On export failure set next attempt 30 seconds later; attempts and transport retries are bounded by the existing exporter timeout and the storage operation deadline. These are internal work scheduling constants, not additional user configuration.
+A builder-owned background worker starts after storage and schema registry initialization. It scans at startup and at a fixed one-second cadence, at most 100 candidate IDs per scan, and dispatches each retained event under the storage delivery barrier. Export failure or cancellation, including an exporter deadline, sets the next attempt 30 seconds later. Export remains bounded by the existing exporter timeout and storage write budget; storage reserves at most one additional second to persist the retry schedule before releasing deletion barriers. These are internal work scheduling constants, not additional user configuration.
 
 A private synchronous SDK processor captures the actual export result per call; `Logger.Emit` returning is not sufficient evidence. Successful export plus acknowledgement commit removes the delivery reference. Export failure leaves it pending. A post-export crash may cause duplicates with the same ID. Disabling copying pauses pending work and omits new references; re-enabling resumes only retained pending work. Retention remains active regardless of any telemetry switch.
 

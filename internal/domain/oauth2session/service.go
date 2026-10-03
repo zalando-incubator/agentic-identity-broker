@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/singleflight"
 
@@ -1330,22 +1331,12 @@ func (s *OAuth2SessionService) refreshExpiredSession(ctx context.Context, princi
 }
 
 func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, provider *model.ThirdpartyOAuth2ProviderEntity, providerErr error, force bool) (*storage.UserSession, bool, error) {
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
-	txCtx, err := s.transactions.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
-	if err != nil {
-		return nil, false, err
+	if _, active := ports.StorageTransactionEffectsFromContext(ctx); active {
+		return nil, false, storage.NewStorageError("RefreshSession", storage.ErrorKindConflict, nil, "refresh must begin outside a business transaction")
 	}
-	completed := false
-	defer func() {
-		if !completed {
-			_ = s.transactions.Rollback(txCtx)
-		}
-	}()
-
 	var attempted *storage.UserSession
-	refreshed := false
-	current, err := s.refreshRepo.WithLockedSession(txCtx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
+	refreshed, indeterminate := false, false
+	current, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
 		if !force && current.HasValidAccessToken() {
 			return false, nil
 		}
@@ -1359,23 +1350,19 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 		if providerErr != nil {
 			return false, providerErr
 		}
+		previous := *current
 		if err := s.refreshSessionTokens(ctx, principal, current, provider); err != nil {
 			return false, err
 		}
-		refreshed = true
-		return true, nil
-	})
-	recordFailure := err != nil
-	if err == nil {
-		err = s.transactions.Commit(txCtx)
-		if err == nil {
-			completed = true
-			return current, refreshed, nil
+		var persistErr error
+		indeterminate, persistErr = s.persistRefreshedSession(ctx, principal, &previous, current)
+		if persistErr != nil {
+			return false, persistErr
 		}
-	}
-	_ = s.transactions.Rollback(txCtx)
-	completed = true
-	if attempted != nil && recordFailure {
+		refreshed = true
+		return false, nil // The domain committed tokens and event in its short owner transaction.
+	})
+	if err != nil && attempted != nil && !refreshed && !indeterminate {
 		reasonCode := "internal_failure"
 		var failure *refreshAttemptFailure
 		if errors.As(err, &failure) {
@@ -1385,7 +1372,39 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 			err = errors.Join(err, recordErr)
 		}
 	}
-	return nil, false, err
+	return current, refreshed, err
+}
+
+// persistRefreshedSession owns only the conditional token/event write. An
+// unsuccessful commit or rollback may be indeterminate: callers must not emit
+// a contradictory terminal failure fact in that case.
+func (s *OAuth2SessionService) persistRefreshedSession(ctx context.Context, principal id.Principal, previous, current *storage.UserSession) (indeterminate bool, err error) {
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	ctx, span := otel.Tracer("ledger").Start(ctx, "ledger.transaction")
+	defer span.End()
+	txCtx, err := s.transactions.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
+	if err != nil {
+		return false, err
+	}
+	if err := s.refreshRepo.UpdateRefreshedSession(txCtx, previous, current); err != nil {
+		return rollbackRefreshWrite(s.transactions, txCtx, err)
+	}
+	if err := s.recordSession(txCtx, "session-refreshed", current, ""); err != nil {
+		return rollbackRefreshWrite(s.transactions, txCtx, err)
+	}
+	if err := s.transactions.Commit(txCtx); err != nil {
+		_ = s.transactions.Rollback(txCtx)
+		return true, err
+	}
+	return false, nil
+}
+
+func rollbackRefreshWrite(transactions ports.StorageTransactionManager, txCtx context.Context, cause error) (bool, error) {
+	if err := transactions.Rollback(txCtx); err != nil {
+		return true, errors.Join(cause, err)
+	}
+	return false, cause
 }
 
 func (s *OAuth2SessionService) refreshOperationContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -1412,7 +1431,7 @@ func (s *OAuth2SessionService) getRefreshProvider(ctx context.Context, principal
 }
 
 // refreshSessionTokens exchanges the stored refresh token and encrypts the result.
-// The caller holds the session lock and persists the modified session atomically.
+// The caller holds per-session coordination and persists the prepared session atomically.
 // Precondition: session.CanRefresh() is true.
 func (s *OAuth2SessionService) refreshSessionTokens(
 	ctx context.Context,
@@ -1458,9 +1477,6 @@ func (s *OAuth2SessionService) refreshSessionTokens(
 			"service_id", serviceID,
 			"err", err)
 		return fmt.Errorf("failed to update session with refreshed tokens: %w", err)
-	}
-	if err := s.recordSession(ctx, "session-refreshed", session, ""); err != nil {
-		return fmt.Errorf("failed to record refreshed session: %w", err)
 	}
 
 	return nil

@@ -103,7 +103,7 @@ func (f *transactionFixture) approval(t *testing.T) *storage.ToolApproval {
 
 func (f *transactionFixture) signingKey(kid string, current bool) *storage.SigningKey {
 	return &storage.SigningKey{
-		ID: id.NewSigningKeyID(), KID: id.NewKeyID(kid), Algorithm: "ES256", PrivateKeyEncrypted: []byte("encrypted-private-key"),
+		ID: id.NewSigningKeyID(), KID: id.NewKeyID(kid), KeyDomain: storage.KeyDomainTokenSigning, Algorithm: "ES256", PrivateKeyEncrypted: []byte("encrypted-private-key"),
 		IsCurrent: current, ActivatesAt: f.now.Add(-time.Minute), CreatedAt: f.now,
 	}
 }
@@ -258,7 +258,7 @@ func TestMemoryTransactionRollbackRestoresRowsAndIndexes(t *testing.T) {
 		ctx := f.begin(t)
 		rotated := &storage.ClientCredential{ID: id.NewCredentialID(), AgentID: f.agent.ID, SecretHash: "rotated-hash", CreatedAt: f.now}
 		require.NoError(t, f.adapter.BrokerCredentials().Rotate(ctx, f.agent.ID, rotated))
-		_, err := f.adapter.SigningKeys().SetCurrent(ctx, standby.KID, f.now.Add(-time.Second))
+		_, err := f.adapter.SigningKeys().SetCurrentInDomain(ctx, storage.KeyDomainTokenSigning, standby.KID, f.now.Add(-time.Second))
 		require.NoError(t, err)
 		require.NoError(t, f.adapter.Rollback(ctx))
 
@@ -266,10 +266,10 @@ func TestMemoryTransactionRollbackRestoresRowsAndIndexes(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, credential.ID, stored.ID)
 		require.Equal(t, credential.SecretHash, stored.SecretHash)
-		selected, err := f.adapter.SigningKeys().GetCurrent(context.Background())
+		selected, err := f.adapter.SigningKeys().GetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning)
 		require.NoError(t, err)
 		require.Equal(t, current.KID, selected.KID)
-		unpromoted, err := f.adapter.SigningKeys().GetByKID(context.Background(), standby.KID)
+		unpromoted, err := f.adapter.SigningKeys().GetByKIDInDomain(context.Background(), storage.KeyDomainTokenSigning, standby.KID)
 		require.NoError(t, err)
 		require.False(t, unpromoted.IsCurrent)
 	})
@@ -385,7 +385,7 @@ func TestMemoryTransactionRollbackRemovesInsertedRowsAndIndexes(t *testing.T) {
 	require.True(t, ports.IsNotFoundErr(err), "rolled-back approval persisted: %v", err)
 	_, err = f.adapter.BrokerCredentials().GetByClientID(context.Background(), id.ClientID(agent.ID.String()))
 	require.True(t, ports.IsNotFoundErr(err), "rolled-back credential persisted: %v", err)
-	_, err = f.adapter.SigningKeys().GetByKID(context.Background(), key.KID)
+	_, err = f.adapter.SigningKeys().GetByKIDInDomain(context.Background(), storage.KeyDomainTokenSigning, key.KID)
 	require.True(t, ports.IsNotFoundErr(err), "rolled-back signing key persisted: %v", err)
 	_, err = f.adapter.AuthorizationCodes().FindByCodeHash(context.Background(), code.CodeHash)
 	require.True(t, ports.IsNotFoundErr(err), "rolled-back authorization code persisted: %v", err)
@@ -648,11 +648,11 @@ func TestMemoryStorageReturnsIndependentMutableValues(t *testing.T) {
 	key := f.signingKey("independent-key", true)
 	require.NoError(t, f.adapter.SigningKeys().Create(ctx, key))
 	key.PrivateKeyEncrypted[0] = 'X'
-	gotKey, err := f.adapter.SigningKeys().GetByKID(ctx, key.KID)
+	gotKey, err := f.adapter.SigningKeys().GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, key.KID)
 	require.NoError(t, err)
 	require.Equal(t, []byte("encrypted-private-key"), gotKey.PrivateKeyEncrypted)
 	gotKey.PrivateKeyEncrypted[0] = 'Y'
-	gotKey, err = f.adapter.SigningKeys().GetByKID(ctx, key.KID)
+	gotKey, err = f.adapter.SigningKeys().GetByKIDInDomain(ctx, storage.KeyDomainTokenSigning, key.KID)
 	require.NoError(t, err)
 	require.Equal(t, []byte("encrypted-private-key"), gotKey.PrivateKeyEncrypted)
 

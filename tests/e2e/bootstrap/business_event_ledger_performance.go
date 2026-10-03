@@ -38,19 +38,20 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const LedgerPerformanceBaselineRevision = "d500f36378dd914f8a516604a08525f737e8ddff"
+const LedgerPerformanceBaselineRevision = "e6902cf296e617ff02e315a069d5dfb73f44bb51"
 
 // LedgerPerformanceReference is the fixed, reproducible reference workload in
 // specs/048-business-event-ledger/quickstart.md, not a deployment-load claim.
 const (
-	LedgerPerformancePrincipals      = 10000
-	LedgerPerformanceAgents          = 100
-	LedgerPerformanceServices        = 20
-	LedgerPerformanceHistory         = 1000000
-	LedgerPerformanceConcurrency     = 32
-	LedgerPerformanceMeasuredActions = 100000
-	LedgerPerformanceWarmup          = 2 * time.Minute
-	LedgerPerformanceRepetitions     = 3
+	LedgerPerformancePrincipals        = 10000
+	LedgerPerformanceAgents            = 100
+	LedgerPerformanceServices          = 20
+	LedgerPerformanceHistory           = 1000000
+	LedgerPerformanceConcurrency       = 32
+	LedgerPerformanceMeasuredActions   = 100000
+	LedgerPerformanceWarmup            = 2 * time.Minute
+	LedgerPerformanceRepetitions       = 3
+	LedgerPerformanceReferencePoolSize = 40 // Identical test-only overlay in both versions, above concurrency 32.
 )
 
 type LedgerPerformanceByteBounds struct {
@@ -299,24 +300,26 @@ func CheckLedgerPerformancePostgres(ctx context.Context, db *sqlx.DB, profile *L
 	return nil
 }
 
-// LedgerPerformanceBinaries builds two actual broker executables, not two modes
-// of the feature binary. The feature checkout is the caller's existing worktree.
+// LedgerPerformanceBinaries builds separate brokers from pinned baseline and
+// feature code. A positive poolSize applies one identical test-only overlay to
+// both; zero builds both unmodified for an approved deployment workload.
 // Close removes only the detached baseline worktree created by this helper.
 type LedgerPerformanceBinaries struct {
 	Baseline      string
 	Feature       string
 	FeatureSource string
+	PoolSize      int // Zero for the unmodified deployment binaries.
 	root          string
 	checkout      string
 }
 
-func BuildLedgerPerformanceBinaries(ctx context.Context, root, temp string) (_ *LedgerPerformanceBinaries, err error) {
+func BuildLedgerPerformanceBinaries(ctx context.Context, root, temp string, poolSize int) (_ *LedgerPerformanceBinaries, err error) {
 	checkout := filepath.Join(temp, "baseline-worktree")
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "--detach", checkout, LedgerPerformanceBaselineRevision)
 	if output, runErr := cmd.CombinedOutput(); runErr != nil {
 		return nil, fmt.Errorf("checkout pinned pre-feature revision: %w (%s)", runErr, output)
 	}
-	result := &LedgerPerformanceBinaries{root: root, checkout: checkout, Baseline: filepath.Join(temp, "baseline-broker"), Feature: filepath.Join(temp, "feature-broker")}
+	result := &LedgerPerformanceBinaries{root: root, checkout: checkout, Baseline: filepath.Join(temp, "baseline-broker"), Feature: filepath.Join(temp, "feature-broker"), PoolSize: poolSize}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, result.Close())
@@ -337,13 +340,84 @@ func BuildLedgerPerformanceBinaries(ctx context.Context, root, temp string) (_ *
 		result.FeatureSource += "+working-tree"
 	}
 	for _, version := range []struct{ dir, output string }{{checkout, result.Baseline}, {root, result.Feature}} {
-		build := exec.CommandContext(ctx, "go", "build", "-o", version.output, "./cmd/agentic-identity-broker")
+		args := []string{"build", "-o", version.output, "./cmd/agentic-identity-broker"}
+		if poolSize > 0 {
+			overlay, overlayErr := ledgerPerformancePoolOverlay(version.dir, temp, poolSize)
+			if overlayErr != nil {
+				return nil, overlayErr
+			}
+			args = []string{"build", "-overlay", overlay, "-o", version.output, "./cmd/agentic-identity-broker"}
+		}
+		build := exec.CommandContext(ctx, "go", args...)
 		build.Dir = version.dir
 		if output, runErr := build.CombinedOutput(); runErr != nil {
-			return nil, fmt.Errorf("build production broker in %s: %w (%s)", version.dir, runErr, output)
+			return nil, fmt.Errorf("build broker in %s: %w (%s)", version.dir, runErr, output)
 		}
 	}
 	return result, nil
+}
+
+// ledgerPerformancePoolOverlay changes only benchmark binaries. The production
+// adapter retains its 25/5 pool; both reference binaries use the same 40/40 pool.
+func ledgerPerformancePoolOverlay(checkout, temp string, size int) (string, error) {
+	original := filepath.Join(checkout, "internal/adapters/storage/postgres/adapter.go")
+	raw, err := os.ReadFile(original)
+	if err != nil {
+		return "", err
+	}
+	text := string(raw)
+	for _, edit := range []struct{ from, to string }{
+		{"\t\"context\"", "\t\"context\"\n\t\"go.opentelemetry.io/otel\"\n\t\"go.opentelemetry.io/otel/metric\""},
+		{"db.SetMaxOpenConns(25)\n\tdb.SetMaxIdleConns(5)", fmt.Sprintf("db.SetMaxOpenConns(%d)\n\tdb.SetMaxIdleConns(%d)", size, size)},
+		{"\ta.db = db", fmt.Sprintf("\tif err := warmLedgerPerformancePool(ctx, db, %d); err != nil {\n\t\t_ = db.Close()\n\t\treturn fmt.Errorf(\"benchmark pool warmup: %%w\", err)\n\t}\n\ta.db = db", size)},
+	} {
+		if strings.Count(text, edit.from) != 1 {
+			return "", fmt.Errorf("benchmark overlay source changed at %q", edit.from)
+		}
+		text = strings.Replace(text, edit.from, edit.to, 1)
+	}
+	text += `
+// The benchmark holds every connection simultaneously before returning it to
+// the idle pool; initial actions therefore reuse initialized PG backends.
+func warmLedgerPerformancePool(ctx context.Context, db *sqlx.DB, size int) error {
+	var fill func(int) error
+	fill = func(remaining int) error {
+		if remaining == 0 { return nil }
+		conn, err := db.Conn(ctx)
+		if err != nil { return err }
+		defer conn.Close()
+		return fill(remaining - 1)
+	}
+	if err := fill(size); err != nil { return err }
+	meter := otel.Meter("ledger-performance.pool")
+	waits, err := meter.Int64ObservableGauge("ledger.performance.pool.wait_count")
+	if err != nil { return err }
+	waitNanos, err := meter.Int64ObservableGauge("ledger.performance.pool.wait_nanoseconds")
+	if err != nil { return err }
+	_, err = meter.RegisterCallback(func(_ context.Context, observer metric.Observer) error {
+		stats := db.Stats()
+		observer.ObserveInt64(waits, stats.WaitCount)
+		observer.ObserveInt64(waitNanos, int64(stats.WaitDuration))
+		return nil
+	}, waits, waitNanos)
+	return err
+}
+`
+	modified := filepath.Join(temp, filepath.Base(checkout)+"-pool-adapter.go")
+	if err := os.WriteFile(modified, []byte(text), 0600); err != nil {
+		return "", err
+	}
+	file := filepath.Join(temp, filepath.Base(checkout)+"-pool-overlay.json")
+	payload, err := json.Marshal(struct {
+		Replace map[string]string `json:"Replace"`
+	}{Replace: map[string]string{original: modified}})
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(file, payload, 0600); err != nil {
+		return "", err
+	}
+	return file, nil
 }
 
 func (b *LedgerPerformanceBinaries) BaselineCheckout() string { return b.checkout }
@@ -361,9 +435,9 @@ func (b *LedgerPerformanceBinaries) Close() error {
 	return nil
 }
 
-// LedgerPerformanceBroker starts a production executable with identical
-// PostgreSQL, HTTP, security, OTLP and pool settings for both versions.
-// Passwords travel only through the child environment, never command arguments.
+// LedgerPerformanceBroker starts the actual baseline or feature executable with
+// identical PostgreSQL, HTTP, security, OTLP and pool settings. Passwords travel
+// only through the child environment, never command arguments.
 type LedgerPerformanceBroker struct {
 	EndUserURL string
 	AdminURL   string
@@ -381,8 +455,8 @@ func freeLedgerPerformancePort() (int, error) {
 	return listener.Addr().(*net.TCPAddr).Port, nil
 }
 
-func StartLedgerPerformanceBrokerWithProfile(ctx context.Context, binary, temp, databaseURL, upstreamURL, collector string, profile *LedgerPerformanceProfile) (*LedgerPerformanceBroker, error) {
-	logsEnabled, ledgerCopy := true, true
+func StartLedgerPerformanceBrokerWithProfile(ctx context.Context, binary, temp, databaseURL, upstreamURL, collector string, profile *LedgerPerformanceProfile, deliveryDiagnostic bool) (*LedgerPerformanceBroker, error) {
+	logsEnabled, ledgerCopy := true, deliveryDiagnostic
 	if profile != nil {
 		logsEnabled, ledgerCopy = profile.Telemetry.Logs, profile.Telemetry.LedgerCopy
 	}
@@ -572,17 +646,18 @@ func (b *LedgerPerformanceBroker) Close() error {
 	}
 }
 
-// The collector acknowledges real OTLP exports. ledger.record spans must
-// cover validation, serialization, event/delivery-reference append and the
-// attributable transaction work; HTTP and SQL timing are not substitutes.
-// Missing or duplicate spans fail acceptance, never imply zero duration.
+// Validation and append are distinct measured stages. Their per-action sum
+// excludes pool checkout, advisory-gate waits, and physical commit. The full
+// owning-transaction span includes those costs. Missing or duplicate spans
+// fail measurement, never imply zero duration.
 type LedgerPerformanceCollector struct {
 	server   *grpc.Server
 	listener net.Listener
 	forward  *grpc.ClientConn
 	mu       sync.Mutex
-	traces   map[string][]time.Duration
+	traces   map[string]map[string][]time.Duration
 	alloc    []LedgerPerformanceAllocation
+	pool     []LedgerPerformancePoolSample
 }
 
 type ledgerPerformanceTraces struct {
@@ -603,6 +678,16 @@ type ledgerPerformanceLogs struct {
 type LedgerPerformanceAllocation struct {
 	Bytes, Objects uint64
 	At             time.Time
+}
+
+type LedgerPerformancePoolSample struct {
+	WaitCount    int64         `json:"wait_count"`
+	WaitDuration time.Duration `json:"wait_duration_nanoseconds"`
+	At           time.Time     `json:"-"`
+}
+
+type LedgerPerformanceRecordings struct {
+	Validation, Append, Total, Transaction []time.Duration
 }
 
 // The capture proxy preserves the external OTLP receiver's real response and
@@ -641,7 +726,7 @@ func newLedgerPerformanceCollector(forward *grpc.ClientConn) (*LedgerPerformance
 	if err != nil {
 		return nil, err
 	}
-	collector := &LedgerPerformanceCollector{server: grpc.NewServer(), listener: listener, traces: make(map[string][]time.Duration), forward: forward}
+	collector := &LedgerPerformanceCollector{server: grpc.NewServer(), listener: listener, traces: make(map[string]map[string][]time.Duration), forward: forward}
 	collecttraces.RegisterTraceServiceServer(collector.server, &ledgerPerformanceTraces{collector: collector})
 	collectmetrics.RegisterMetricsServiceServer(collector.server, &ledgerPerformanceMetrics{collector: collector})
 	collectlogs.RegisterLogsServiceServer(collector.server, &ledgerPerformanceLogs{collector: collector})
@@ -675,9 +760,12 @@ func (service *ledgerPerformanceTraces) Export(ctx context.Context, req *collect
 	for _, resource := range req.ResourceSpans {
 		for _, scope := range resource.ScopeSpans {
 			for _, span := range scope.Spans {
-				if span.Name == "ledger.record" && span.StartTimeUnixNano != 0 && span.EndTimeUnixNano > span.StartTimeUnixNano {
+				if (span.Name == "ledger.record.validate" || span.Name == "ledger.record" || span.Name == "ledger.transaction") && span.StartTimeUnixNano != 0 && span.EndTimeUnixNano > span.StartTimeUnixNano {
 					traceID := fmt.Sprintf("%x", span.TraceId)
-					c.traces[traceID] = append(c.traces[traceID], time.Duration(span.EndTimeUnixNano-span.StartTimeUnixNano))
+					if c.traces[traceID] == nil {
+						c.traces[traceID] = make(map[string][]time.Duration, 3)
+					}
+					c.traces[traceID][span.Name] = append(c.traces[traceID][span.Name], time.Duration(span.EndTimeUnixNano-span.StartTimeUnixNano))
 				}
 			}
 		}
@@ -704,9 +792,21 @@ func (service *ledgerPerformanceMetrics) Export(ctx context.Context, req *collec
 	defer c.mu.Unlock()
 	for _, resource := range req.ResourceMetrics {
 		var sample LedgerPerformanceAllocation
-		var bytesOK, objectsOK bool
+		var pool LedgerPerformancePoolSample
+		var bytesOK, objectsOK, waitCountOK, waitDurationOK bool
 		for _, scope := range resource.ScopeMetrics {
 			for _, metric := range scope.Metrics {
+				if gauge := metric.GetGauge(); gauge != nil {
+					for _, point := range gauge.DataPoints {
+						switch metric.Name {
+						case "ledger.performance.pool.wait_count":
+							pool.WaitCount, waitCountOK = point.GetAsInt(), true
+						case "ledger.performance.pool.wait_nanoseconds":
+							pool.WaitDuration, waitDurationOK = time.Duration(point.GetAsInt()), true
+						}
+					}
+					continue
+				}
 				var sum *metricsv1.Sum = metric.GetSum()
 				if sum == nil {
 					continue
@@ -726,6 +826,10 @@ func (service *ledgerPerformanceMetrics) Export(ctx context.Context, req *collec
 			sample.At = time.Now()
 			c.alloc = append(c.alloc, sample)
 		}
+		if waitCountOK && waitDurationOK {
+			pool.At = time.Now()
+			c.pool = append(c.pool, pool)
+		}
 	}
 	return response, nil
 }
@@ -744,16 +848,28 @@ func (service *ledgerPerformanceLogs) Export(ctx context.Context, req *collectlo
 	return response, nil
 }
 
-func (c *LedgerPerformanceCollector) RecordingTimes(traceIDs []string) ([]time.Duration, error) {
+func (c *LedgerPerformanceCollector) RecordingTimes(traceIDs []string) (LedgerPerformanceRecordings, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	result := make([]time.Duration, 0, len(traceIDs))
 	for _, traceID := range traceIDs {
 		spans := c.traces[traceID]
-		if len(spans) != 1 {
-			return nil, fmt.Errorf("recording trace %s had %d ledger.record spans, want exactly one", traceID, len(spans))
+		for _, name := range []string{"ledger.record.validate", "ledger.record", "ledger.transaction"} {
+			if len(spans[name]) != 1 {
+				return LedgerPerformanceRecordings{}, fmt.Errorf("recording trace %s had %d %s spans, want exactly one", traceID, len(spans[name]), name)
+			}
 		}
-		result = append(result, spans[0])
+	}
+	result := LedgerPerformanceRecordings{
+		Validation: make([]time.Duration, len(traceIDs)), Append: make([]time.Duration, len(traceIDs)),
+		Total: make([]time.Duration, len(traceIDs)), Transaction: make([]time.Duration, len(traceIDs)),
+	}
+	for index, traceID := range traceIDs {
+		spans := c.traces[traceID]
+		validation, appendTime := spans["ledger.record.validate"][0], spans["ledger.record"][0]
+		result.Validation[index] = validation
+		result.Append[index] = appendTime
+		result.Total[index] = validation + appendTime
+		result.Transaction[index] = spans["ledger.transaction"][0]
 	}
 	return result, nil
 }
@@ -776,6 +892,26 @@ func (c *LedgerPerformanceCollector) Allocations(start, end time.Time) (LedgerPe
 		return LedgerPerformanceAllocation{}, errors.New("missing cumulative allocation measurements bracketing the measured workload")
 	}
 	return LedgerPerformanceAllocation{Bytes: after.Bytes - before.Bytes, Objects: after.Objects - before.Objects}, nil
+}
+
+func (c *LedgerPerformanceCollector) PoolWaits(start, end time.Time) (LedgerPerformancePoolSample, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var before, after *LedgerPerformancePoolSample
+	for i := range c.pool {
+		item := &c.pool[i]
+		if !item.At.After(start) {
+			before = item
+		}
+		if !item.At.Before(end) {
+			after = item
+			break
+		}
+	}
+	if before == nil || after == nil || after.WaitCount < before.WaitCount || after.WaitDuration < before.WaitDuration {
+		return LedgerPerformancePoolSample{}, errors.New("missing pool wait counters bracketing measured workload")
+	}
+	return LedgerPerformancePoolSample{WaitCount: after.WaitCount - before.WaitCount, WaitDuration: after.WaitDuration - before.WaitDuration}, nil
 }
 
 // LedgerPerformanceStats keeps full observed samples until percentile extraction.

@@ -427,7 +427,7 @@ func TestMemoryBusinessEventRetentionPreservesApprovalRecognition(t *testing.T) 
 	f.clock = now
 	require.NoError(t, f.events.ApplyRetention(ctx))
 	f.assertDeleted(t, key)
-	candidates, err := approvals.ListUnrecordedExpired(ctx, now, 10)
+	candidates, err := approvals.ListUnrecordedExpiredForPrincipal(ctx, target, now, 10)
 	require.NoError(t, err)
 	require.Empty(t, candidates, "logical retention must not reset approval recognition")
 	won, err = approvals.RecordExpiration(ctx, approval.ID, expiry)

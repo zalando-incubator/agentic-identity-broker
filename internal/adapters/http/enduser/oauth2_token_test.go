@@ -248,7 +248,7 @@ func TestOAuth2TokenHandler_ServeHTTP_ContentTypeValidation(t *testing.T) {
 // TestOAuth2TokenHandler_PreFlightErrorsReturnJSON verifies that all pre-flight error
 // paths return application/json with a valid RFC 6749 error body, not text/plain.
 func TestOAuth2TokenHandler_PreFlightErrorsReturnJSON(t *testing.T) {
-	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil),
+	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), nil),
 		OAuth2Service: newLocalModeOAuth2Service()}
 
 	tests := []struct {
@@ -848,7 +848,7 @@ func TestHandleLocalMinting_ClientCredentials(t *testing.T) {
 					return successResp, nil
 				},
 			}
-			handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(minting, oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil), OAuth2Service: newLocalModeOAuth2Service()}
+			handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(minting, nil), OAuth2Service: newLocalModeOAuth2Service()}
 			req := httptest.NewRequest("POST", "/oauth2/token", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
@@ -930,7 +930,7 @@ func TestHandleLocalMinting_AuthorizationCode(t *testing.T) {
 					return successResp, nil
 				},
 			}
-			handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(minting, oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil), OAuth2Service: newLocalModeOAuth2Service()}
+			handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(minting, nil), OAuth2Service: newLocalModeOAuth2Service()}
 			req := httptest.NewRequest("POST", "/oauth2/token", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
@@ -997,7 +997,7 @@ func TestHandleLocalMinting_RefreshToken(t *testing.T) {
 					return successResp, nil
 				},
 			}
-			handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(minting, oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil), OAuth2Service: newLocalModeOAuth2Service()}
+			handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(minting, nil), OAuth2Service: newLocalModeOAuth2Service()}
 			req := httptest.NewRequest("POST", "/oauth2/token", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			w := httptest.NewRecorder()
@@ -1024,7 +1024,7 @@ func TestHandleLocalMinting_RefreshToken(t *testing.T) {
 // 400 unsupported_grant_type for any grant type other than client_credentials,
 // authorization_code, or refresh_token (e.g. password, implicit, device_code).
 func TestHandleLocalMinting_UnsupportedGrantType(t *testing.T) {
-	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil), OAuth2Service: newLocalModeOAuth2Service()}
+	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), nil), OAuth2Service: newLocalModeOAuth2Service()}
 	req := httptest.NewRequest("POST", "/oauth2/token",
 		strings.NewReader("grant_type=password&client_id=550e8400-e29b-41d4-a716-446655440000&username=user&password=secret"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1122,7 +1122,7 @@ func TestLocalGrantStrategy_MintingFailureLogCarriesRequestContext(t *testing.T)
 	logger := slog.New(telemetry.NewContextHandler(base))
 	strategy := NewLocalGrantStrategy(fixedMinting(nil,
 		oauth2server.NewRFC6749Error("invalid_client", "client authentication failed", http.StatusUnauthorized, oauth2server.ErrInvalidClient),
-	), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), logger)
+	), logger)
 	want := security.SecurityContext{
 		TraceID: "0123456789abcdef0123456789abcdef",
 		Actor:   "service-account@example.com",
@@ -1170,7 +1170,7 @@ func TestLocalGrantStrategy_RefreshTokenLogsCarryRequestContext(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			base := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
 			logger := slog.New(telemetry.NewContextHandler(base))
-			strategy := NewLocalGrantStrategy(fixedMinting(tt.response, tt.err), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), logger)
+			strategy := NewLocalGrantStrategy(fixedMinting(tt.response, tt.err), logger)
 			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", nil).WithContext(
 				security.WithSecurityContext(context.Background(), want),
 			)
@@ -1219,7 +1219,7 @@ func TestLocalGrantStrategy_AcceptsLocalClient(t *testing.T) {
 	agentID := id.MustParseAgentID("00000000-0000-0000-0000-000000000012")
 
 	expected := &ports.TokenResponse{AccessToken: "local-tok", TokenType: "Bearer", ExpiresIn: 3600}
-	strategy := NewLocalGrantStrategy(fixedMinting(expected, nil), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil)
+	strategy := NewLocalGrantStrategy(fixedMinting(expected, nil), nil)
 
 	body := strings.NewReader("grant_type=client_credentials&client_id=" + agentID.String() + "&client_secret=secret")
 	req := httptest.NewRequest("POST", "/oauth2/token", body)
@@ -1332,7 +1332,7 @@ func TestHandleTokenExchange_NilService(t *testing.T) {
 	var logs strings.Builder
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 
-	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil),
+	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), nil),
 		OAuth2Service: newLocalModeOAuth2Service(),
 		TokenExchange: nil,
 		Logger:        logger}
@@ -1354,7 +1354,7 @@ func TestHandleTokenExchange_NilService(t *testing.T) {
 // TestOAuth2TokenHandler_UnauthorizedClient_Returns400 verifies that an unauthorized_client
 // error code maps to HTTP 400, not 401 (RFC 6749 §5.2 + tokenEndpointStatus mapping).
 func TestOAuth2TokenHandler_UnauthorizedClient_Returns400(t *testing.T) {
-	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil),
+	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), nil),
 		OAuth2Service: newFailingOAuth2Service(
 			&ports.ClientIDError{Code: "unauthorized_client", Desc: "client mode not permitted"},
 		)}
@@ -1376,7 +1376,7 @@ func TestOAuth2TokenHandler_UnauthorizedClient_Returns400(t *testing.T) {
 // NOT 503 (ServiceUnavailable). RFC 6749 §5.2 constrains the token endpoint to
 // 400 / 401 / 500 status codes.
 func TestOAuth2TokenHandler_NilOAuth2Service_Returns500(t *testing.T) {
-	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil),
+	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), nil),
 		OAuth2Service: nil}
 	form := "grant_type=client_credentials&client_id=" + id.NewAgentID().String()
 	req := httptest.NewRequest("POST", "/oauth2/token", strings.NewReader(form))
@@ -1394,7 +1394,7 @@ func TestOAuth2TokenHandler_NilOAuth2Service_Returns500(t *testing.T) {
 // TestOAuth2TokenHandler_MissingGrantType verifies that an absent grant_type returns
 // 400 invalid_request without performing client resolution (RFC 6749 §5.2).
 func TestOAuth2TokenHandler_MissingGrantType(t *testing.T) {
-	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil),
+	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), nil),
 		OAuth2Service: newLocalModeOAuth2Service()}
 	form := "client_id=" + id.NewAgentID().String()
 	req := httptest.NewRequest("POST", "/oauth2/token", strings.NewReader(form))
@@ -1461,7 +1461,7 @@ func TestHybridTokenGrantStrategy_DefaultBranchLogsError(t *testing.T) {
 // TestOAuth2TokenHandler_BodyClosedOnReadError verifies that r.Body is closed even
 // when io.ReadAll returns an error (i.e. the defer fires on all exit paths).
 func TestOAuth2TokenHandler_BodyClosedOnReadError(t *testing.T) {
-	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), nil),
+	handler := &OAuth2TokenHandler{Outcomes: oauth2.NewTokenOutcomeService(nil, nil, ledgerfixture.NewRecorder()), GrantHandler: NewLocalGrantStrategy(fixedMinting(nil, nil), nil),
 		OAuth2Service: newLocalModeOAuth2Service()}
 
 	closed := false

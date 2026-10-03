@@ -27,12 +27,12 @@ func NewToolApprovalRepository(adapter *Adapter) *ToolApprovalRepository {
 	return &ToolApprovalRepository{adapter: adapter}
 }
 
-func (r *ToolApprovalRepository) ListUnrecordedExpired(ctx context.Context, at time.Time, limit int) ([]*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.ToolApproval, error) {
 	const operation = "ListExpiredToolApprovals"
 	if r.adapter == nil || r.adapter.db == nil {
 		return nil, storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")
 	}
-	if at.IsZero() || limit <= 0 || limit > 1000 {
+	if principal.IsZero() || at.IsZero() || limit <= 0 || limit > 1000 {
 		return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "invalid expiration query")
 	}
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
@@ -40,8 +40,8 @@ func (r *ToolApprovalRepository) ListUnrecordedExpired(ctx context.Context, at t
 	rows, err := r.adapter.storageExecutor(execCtx).QueryContext(execCtx, `SELECT id, principal, agent_id, gateway_client_id, tool_name,
 		arguments, arguments_hash, description, risk_level, mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		status, persistence, consumed, approval_url, created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
-		FROM public.tool_approvals WHERE status = 'pending' AND expires_at < $1
-		AND expiration_recorded_for IS DISTINCT FROM expires_at ORDER BY expires_at, id LIMIT $2`, at, limit)
+		FROM public.tool_approvals WHERE principal = $1 AND status = 'pending' AND expires_at < $2
+		AND expiration_recorded_for IS DISTINCT FROM expires_at ORDER BY expires_at, id LIMIT $3`, principal, at, limit)
 	if err != nil {
 		return nil, businessEventStorageError(operation, err)
 	}

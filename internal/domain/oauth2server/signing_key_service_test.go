@@ -2175,7 +2175,6 @@ func (r *mockFailingSigningKeyRepo) CreateAndSetCurrent(_ context.Context, _ *st
 	return r.createErr
 }
 
-
 type countActiveFailingRepo struct {
 	*testSigningKeyStore
 	countErr error

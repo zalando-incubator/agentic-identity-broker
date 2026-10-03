@@ -27,8 +27,8 @@ func NewToolApprovalRepository(transactions *TransactionManager) *ToolApprovalRe
 	}
 }
 
-func (r *ToolApprovalRepository) ListUnrecordedExpired(ctx context.Context, at time.Time, limit int) ([]*storage.ToolApproval, error) {
-	if at.IsZero() || limit <= 0 || limit > 1000 {
+func (r *ToolApprovalRepository) ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.ToolApproval, error) {
+	if principal.IsZero() || at.IsZero() || limit <= 0 || limit > 1000 {
 		return nil, storage.NewStorageError("ListExpiredToolApprovals", storage.ErrorKindValidation, nil, "invalid expiration query")
 	}
 	guard, err := r.transactions.lock(ctx, false)
@@ -40,7 +40,8 @@ func (r *ToolApprovalRepository) ListUnrecordedExpired(ctx context.Context, at t
 	defer r.mu.RUnlock()
 	var result []*storage.ToolApproval
 	for _, approval := range r.approvals {
-		if approval.Status == storage.ApprovalStatusPending && approval.IsExpired(at) && !r.expirationRecordedFor[approval.ID].Equal(approval.ExpiresAt) {
+		if approval.Principal == principal && approval.Status == storage.ApprovalStatusPending &&
+			approval.IsExpired(at) && !r.expirationRecordedFor[approval.ID].Equal(approval.ExpiresAt) {
 			result = append(result, copyApproval(approval))
 			if len(result) == limit {
 				break

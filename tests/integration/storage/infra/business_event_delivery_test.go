@@ -379,3 +379,49 @@ func TestBusinessEventDelivery_FailedExportDefersOnlyItsOwnReference(t *testing.
 	require.Equal(t, 1, controlEvents)
 	require.Equal(t, 1, controlRefs)
 }
+
+func TestBusinessEventDelivery_ExportDeadlineStillDefersRetryAndReleasesDeletionBarriers(t *testing.T) {
+	adapter, db := openLedgerFoundation(t)
+	ctx := context.Background()
+	subject := id.NewPrincipal("dispatch-deadline-subject")
+	event := ledgerExample(t, "token-issued", subject)
+	require.NoError(t, adapter.BusinessEvents().Append(ctx, event, true))
+	control := ledgerExample(t, "token-issued", id.NewPrincipal("dispatch-deadline-control"))
+	require.NoError(t, adapter.BusinessEvents().Append(ctx, control, true))
+
+	exportCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	var calls int
+	sent, err := adapter.BusinessEventDelivery().DispatchOne(exportCtx, ledgerKey(event), func(callbackCtx context.Context, retained *model.BusinessEvent) error {
+		calls++
+		require.Equal(t, event.ID, retained.ID)
+		<-callbackCtx.Done()
+		return callbackCtx.Err()
+	})
+	require.Error(t, err)
+	require.False(t, sent)
+	require.Equal(t, 1, calls)
+	var now, nextAttempt time.Time
+	require.NoError(t, db.GetContext(ctx, &now, `SELECT clock_timestamp()`))
+	require.NoError(t, db.GetContext(ctx, &nextAttempt, `SELECT next_attempt_at FROM public.business_event_delivery_pending
+		WHERE recorded_at=$1 AND event_id=$2`, event.RecordedAt, event.ID))
+	require.WithinDuration(t, now.Add(30*time.Second), nextAttempt, time.Second)
+	keys, err := adapter.BusinessEventDelivery().ListDue(ctx, 100)
+	require.NoError(t, err)
+	require.Equal(t, []model.BusinessEventKey{ledgerKey(control)}, keys)
+	sent, err = adapter.BusinessEventDelivery().DispatchOne(ctx, ledgerKey(event), func(context.Context, *model.BusinessEvent) error {
+		calls++
+		return nil
+	})
+	require.NoError(t, err)
+	require.False(t, sent)
+	require.Equal(t, 1, calls, "one-second worker scans must not re-export a deadline failure")
+
+	deletionCtx, stopDeletion := context.WithTimeout(ctx, 2*time.Second)
+	defer stopDeletion()
+	count, err := adapter.BusinessEventLifecycle().EraseSubject(deletionCtx, subject)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count)
+	_, err = db.ExecContext(deletionCtx, `SELECT public.business_event_maintain_partitions()`)
+	require.NoError(t, err, "failed export must release the lifecycle barrier for maintenance")
+}

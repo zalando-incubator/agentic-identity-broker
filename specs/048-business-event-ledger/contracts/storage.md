@@ -33,6 +33,7 @@ All repository interfaces live in `internal/ports/storage.go`; shared event/quer
 
 Grant delegation reads use `ListUnrecordedExpiredForPrincipal` on the grant expiration facet. Apply its exact-principal predicate before the bounded limit; another principal's expired rows must not hide candidates or cause unrelated recognition. This keeps the grant expiration facet at three methods and does not change public grant filtering or add an expiration scheduler.
 
+Approval pending-list reads use `ListUnrecordedExpiredForPrincipal(ctx, principal, at, limit)` with one bounded batch of 200 candidates. Apply exact principal and pending/unrecorded predicates before the limit, ordered by `(expires_at,id)` and supported by a matching partial index. Sync polling performs no expiration discovery; creation recognizes only a returned expired dedup candidate by ID. Cleanup and object reads retain marker/event atomicity. No caller performs an unbounded global approval-expiry sweep.
 
 Use existing `StorageError` categories for validation/conflict/not-found/connection/timeout. Do not wrap raw event values in error messages. Keep each repository under seven methods. Repository implementations cannot import each other or the telemetry adapter; the app worker passes a synchronous callback to delivery storage, and the callback invokes the already-wired telemetry adapter. This is a transaction-scoped operation callback, not a custom telemetry port.
 
@@ -72,7 +73,11 @@ The PostgreSQL lock hierarchy below is mandatory. Memory uses the equivalent, de
 
 Use transaction-scoped PostgreSQL advisory locks. Lifecycle and subject use separate two-int key classes, distinct from existing signing bootstrap locks. Subject key hashes may collide; this only reduces concurrency because predicates still use exact subject equality. A delivery candidate's subject may be looked up without a barrier only for lock selection: reload the event and delivery-reference row after acquiring the gates and skip if either disappeared. `FOR UPDATE SKIP LOCKED` on the delivery-reference row lets multiple workers compete without duplicate concurrent dispatch. No event payload survives release of its dispatch transaction.
 
+Dispatch separates export cancellation from its owning transaction lifetime. Export observes the caller's cancellation and the storage write budget. The transaction reserves one additional second for acknowledgement/rescheduling; an export deadline must not roll back the 30-second retry schedule. Retry writes use a one-second cleanup context while the same deletion barriers remain held. No cancelled export is acknowledged as successful.
+
 Signing bootstrap lock acquisition precedes the domain operation that selects the initial key; no other ledger operation attempts to acquire that bootstrap lock while holding lifecycle/subject gates. Preserve the existing bootstrap timeout recovery without treating a key row without its event as a successful ledger-aware bootstrap.
+
+Session refresh coordination precedes the ledger write transaction. Provider I/O and token encryption hold no ledger lifecycle, subject, or memory visibility gates. The short write transaction checks the pre-exchange session snapshot, updates tokens, and appends the fact atomically. Concurrent logout or reauthorization makes that conditional write fail closed. PostgreSQL reuses its coordinated connection for the write and discards it if coordination unlock fails. Other business paths do not acquire that coordination lock while holding ledger gates.
 
 ### Principal erasure
 

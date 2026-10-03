@@ -90,6 +90,7 @@ type StorageProvider interface {
 	UserGrants() UserGrantRepository
 	UserGrantExpirations() UserGrantExpirationRepository
 	UserSessions() UserSessionRepository
+	SessionRefresh() UserSessionRefreshRepository
 	ToolApprovals() ToolApprovalRepository
 	ToolApprovalExpirations() ToolApprovalExpirationRepository
 	ToolApprovalQueries() ToolApprovalQueryRepository
@@ -145,7 +146,7 @@ type UserGrantExpirationRepository interface {
 }
 
 type ToolApprovalExpirationRepository interface {
-	ListUnrecordedExpired(ctx context.Context, at time.Time, limit int) ([]*storage.ToolApproval, error)
+	ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.ToolApproval, error)
 	RecordExpiration(ctx context.Context, approvalID id.ApprovalID, effectiveExpiry time.Time) (bool, error)
 }
 
@@ -364,12 +365,18 @@ type UserSessionRepository interface {
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 
-// UserSessionRefreshRepository serializes a read-modify-write refresh for one session.
-// The callback sees the latest session under a lock; it returns true only when it
-// has replaced the encrypted tokens and the adapter must persist them atomically.
-// A nil session means the principal has no session for that service.
+// UserSessionRefreshRepository coordinates a single refresh per principal/service.
+// WithLockedSession reads the latest session before invoking the callback without
+// holding a ledger transaction across upstream work. Returning true persists raw
+// changes in a short adapter-owned transaction; returning false performs no
+// adapter write (the callback may already have committed). A nil session means
+// no session exists for the pair.
 type UserSessionRefreshRepository interface {
 	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
+	// UpdateRefreshedSession conditionally replaces tokens inside the caller's
+	// transaction. A deleted/re-authorized/changed session returns a conflict;
+	// the caller must roll back its event in the same transaction.
+	UpdateRefreshedSession(ctx context.Context, previous, current *storage.UserSession) error
 }
 
 // PermissionSetRepository defines storage operations for permission set entities.

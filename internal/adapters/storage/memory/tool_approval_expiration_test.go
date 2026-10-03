@@ -22,8 +22,10 @@ func TestMemoryApprovalExpirationCandidatesRespectExistingLifecycle(t *testing.T
 	permanent := *pending
 	persistence := storage.ApprovalPersistencePermanent
 	permanent.ID, permanent.Status, permanent.Persistence = id.NewApprovalID(), storage.ApprovalStatusApproved, &persistence
-	repo.approvals[pending.ID], repo.approvals[active.ID], repo.approvals[permanent.ID] = pending, &active, &permanent
-	candidates, err := repo.ListUnrecordedExpired(ctx, now, 10)
+	other := *pending
+	other.ID, other.Principal = id.NewApprovalID(), "another-owner"
+	repo.approvals[pending.ID], repo.approvals[active.ID], repo.approvals[permanent.ID], repo.approvals[other.ID] = pending, &active, &permanent, &other
+	candidates, err := repo.ListUnrecordedExpiredForPrincipal(ctx, pending.Principal, now, 1)
 	require.NoError(t, err)
 	require.Len(t, candidates, 1, "resolved permanent approvals do not expire with the pending TTL")
 	require.Equal(t, pending.ID, candidates[0].ID)
@@ -36,10 +38,17 @@ func TestMemoryApprovalExpirationCandidatesRespectExistingLifecycle(t *testing.T
 	winner, err = repo.RecordExpiration(ctx, pending.ID, expiry)
 	require.NoError(t, err)
 	require.False(t, winner)
-	candidates, err = repo.ListUnrecordedExpired(ctx, now, 10)
+	candidates, err = repo.ListUnrecordedExpiredForPrincipal(ctx, pending.Principal, now, 10)
 	require.NoError(t, err)
 	require.Empty(t, candidates)
+	candidates, err = repo.ListUnrecordedExpiredForPrincipal(ctx, other.Principal, now, 10)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1, "another principal's expiration is not consumed by this scan")
+	require.Equal(t, other.ID, candidates[0].ID)
 	pending.ExpiresAt = expiry.Add(time.Minute)
+	candidates, err = repo.ListUnrecordedExpiredForPrincipal(ctx, pending.Principal, now, 10)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1, "changing effective expiry makes a new recognition candidate")
 	winner, err = repo.RecordExpiration(ctx, pending.ID, expiry)
 	require.NoError(t, err)
 	require.False(t, winner)

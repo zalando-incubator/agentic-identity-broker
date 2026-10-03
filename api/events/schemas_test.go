@@ -85,6 +85,84 @@ func TestPublishedSchemaRejectsTypeOutcomeReferenceAndNestedPayloadMismatch(t *t
 	}
 }
 
+func TestPublishedExchangeActorContracts(t *testing.T) {
+	registry, err := ledger.NewRegistry(os.DirFS("v1"))
+	require.NoError(t, err)
+	_, examples := publishedExamples(t)
+	for _, original := range examples {
+		name := strings.TrimPrefix(original.Type, model.BusinessEventTypePrefix)
+		switch name {
+		case "token-exchanged", "impersonation-granted", "token-exchange-denied", "impersonation-denied":
+		default:
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			event := original
+			event.Actor = model.BusinessEventActor{Kind: "gateway"}
+			if name == "token-exchanged" || name == "impersonation-granted" {
+				client := "verified-initiating-client"
+				event.Actor.ID = &client
+				event.Actor.OnBehalfOf = event.Subject
+			}
+			_, err := registry.Validate(&event)
+			require.NoError(t, err)
+
+			wrongKind := event
+			wrongKind.Actor.Kind = "agent"
+			_, err = registry.Validate(&wrongKind)
+			require.Error(t, err, "receiving agents cannot be attributed as initiating callers")
+
+			if name == "token-exchanged" || name == "impersonation-granted" {
+				noVerifiedClient := event
+				noVerifiedClient.Actor.ID = nil
+				_, err = registry.Validate(&noVerifiedClient)
+				require.Error(t, err, "a completed exchange requires a verified initiating client")
+				noDelegation := event
+				noDelegation.Actor.OnBehalfOf = nil
+				_, err = registry.Validate(&noDelegation)
+				require.Error(t, err, "a completed exchange requires established delegation")
+			} else {
+				event.Subject = nil
+				_, err = registry.Validate(&event)
+				require.NoError(t, err, "a denial before validation must preserve null identities")
+			}
+		})
+	}
+}
+
+func TestPublishedApprovalConsumptionActorContract(t *testing.T) {
+	registry, err := ledger.NewRegistry(os.DirFS("v1"))
+	require.NoError(t, err)
+	_, examples := publishedExamples(t)
+	for _, event := range examples {
+		if event.Type != model.BusinessEventTypePrefix+"approval-consumed" {
+			continue
+		}
+		_, err := registry.Validate(&event)
+		require.NoError(t, err)
+		for _, tc := range []struct {
+			name   string
+			mutate func(*model.BusinessEvent)
+		}{
+			{"represented user is not consuming gateway", func(e *model.BusinessEvent) { e.Actor.Kind = "user" }},
+			{"creator client cannot become consuming caller", func(e *model.BusinessEvent) {
+				creator := "creation-time-gateway-client"
+				e.Actor.ID = &creator
+			}},
+			{"consumption represents the approved owner", func(e *model.BusinessEvent) { e.Actor.OnBehalfOf = nil }},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				candidate := event
+				tc.mutate(&candidate)
+				_, err := registry.Validate(&candidate)
+				require.Error(t, err)
+			})
+		}
+		return
+	}
+	t.Fatal("approval-consumed example missing from published catalogue")
+}
+
 func TestPublishedEnvelopeDecoderRejectsUnregisteredFieldsWithoutDroppingThem(t *testing.T) {
 	published, _ := publishedExamples(t)
 	for _, tc := range []struct {

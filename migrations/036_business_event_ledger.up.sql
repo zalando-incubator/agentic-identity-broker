@@ -48,6 +48,10 @@ INSERT INTO public.business_event_policy VALUES (true, 7776000000000);
 ALTER TABLE public.user_grants ADD COLUMN expiration_recorded_for timestamptz;
 ALTER TABLE public.tool_approvals ADD COLUMN expiration_recorded_for timestamptz;
 
+CREATE INDEX tool_approvals_unrecorded_expiry_by_principal
+    ON public.tool_approvals (principal, expires_at, id)
+    WHERE status = 'pending' AND expiration_recorded_for IS DISTINCT FROM expires_at;
+
 CREATE FUNCTION public.business_event_reject_update() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog AS $fn$
 BEGIN

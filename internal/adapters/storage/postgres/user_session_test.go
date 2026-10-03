@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -348,4 +350,187 @@ func TestUserSessionRefreshAllowsUpstreamWorkLongerThanStorageWriteTimeout(t *te
 	persisted, err := repo.FindByPrincipalAndService(ctx, principal, serviceID)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("new-refresh"), persisted.EncryptedRefreshToken)
+}
+
+type rejectingRefreshEvents struct {
+	ports.BusinessEventRepository
+	failure error
+}
+
+func (r rejectingRefreshEvents) Append(ctx context.Context, event *model.BusinessEvent, queue bool) error {
+	if event.Type == model.BusinessEventTypePrefix+"session-refreshed" {
+		return r.failure
+	}
+	return r.BusinessEventRepository.Append(ctx, event, queue)
+}
+
+func setupPGServiceRefresh(t *testing.T, adapter *Adapter, endpoint string, principal id.Principal, eventFailure error) (*oauth2session.OAuth2SessionService, *PostgresUserSessionRepository, *storage.UserSession, id.ServiceID) {
+	t.Helper()
+	ctx := context.Background()
+	provider := newTestEntity()
+	provider.ID = id.NewServiceID()
+	provider.Secret = model.NewAbsentSecret()
+	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	provider.ProtectedResources = nil
+	provider.Endpoints.TokenEndpoint = endpoint
+	providerRepo := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	require.NoError(t, providerRepo.Create(ctx, provider))
+	encryption := testutil.NewTestEncryptionAdapter(t)
+	encryptionContext := domainencryption.NewServiceBranchKeySubject(provider.ID).EncryptionContext()
+	access, err := encryption.Encrypt(ctx, []byte("old-access"), encryptionContext)
+	require.NoError(t, err)
+	refresh, err := encryption.Encrypt(ctx, []byte("old-refresh"), encryptionContext)
+	require.NoError(t, err)
+	expired, now := time.Now().Add(-time.Minute).UTC(), time.Now().UTC()
+	session := &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: provider.ID,
+		EncryptedAccessToken: access, EncryptedRefreshToken: refresh, TokenType: "Bearer",
+		AccessTokenExpiresAt: &expired, Scope: []string{"repo"}, EncryptionContext: storage.EncryptionContext{ServiceID: provider.ID},
+		InitiatedAt: now, CreatedAt: now, UpdatedAt: now}
+	sessions := NewUserSessionRepository(adapter)
+	require.NoError(t, sessions.Create(ctx, session))
+	registry, err := ledger.NewRegistry(eventschemas.Schemas)
+	require.NoError(t, err)
+	events := NewBusinessEventRepository(adapter, registry)
+	var eventStore ports.BusinessEventRepository = events
+	if eventFailure != nil {
+		eventStore = rejectingRefreshEvents{BusinessEventRepository: events, failure: eventFailure}
+	}
+	recorder := ledger.NewService(registry, eventStore, nil, adapter, false)
+	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(providerRepo, encryption, &noop.BranchKeyManager{}, nil, false, slog.Default())
+	service := oauth2session.NewOAuth2SessionService(providerService, sessions, sessions, nil, nil, encryption,
+		&http.Client{Timeout: 3 * time.Second}, nil, oauth2session.DefaultConfig(), slog.Default(), recorder, adapter)
+	return service, sessions, session, provider.ID
+}
+
+func TestPGServiceRefreshDoesNotHoldLedgerGatesDuringProviderWait(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	adapter.db.SetMaxOpenConns(2)
+	entered, release := make(chan struct{}), make(chan struct{})
+	releaseProvider := sync.OnceFunc(func() { close(release) })
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"new-access","token_type":"Bearer","expires_in":3600,"refresh_token":"new-refresh"}`)
+	}))
+	defer upstream.Close()
+	defer releaseProvider()
+	principal := id.Principal("pg-barrier-refresh@example.com")
+	service, sessions, _, serviceID := setupPGServiceRefresh(t, adapter, upstream.URL, principal, nil)
+	refreshDone := make(chan error, 1)
+	go func() {
+		_, _, err := service.GetValidAccessToken(context.Background(), principal, serviceID)
+		refreshDone <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("refresh never reached provider")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	hints := ports.StorageTransactionHints{Lifecycle: ports.StorageLifecycleExclusive,
+		Subjects: []ports.StorageSubjectGate{{Principal: principal, Exclusive: true}}}
+	txCtx, err := adapter.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
+	require.NoError(t, err, "maintenance and erasure gates must remain available while provider waits")
+	defer func() { _ = adapter.Rollback(txCtx) }()
+	_, err = sessions.FindByPrincipalAndService(txCtx, principal, serviceID)
+	require.NoError(t, err)
+	require.NoError(t, adapter.Commit(txCtx))
+	releaseProvider()
+	require.NoError(t, <-refreshDone)
+}
+
+func TestPGServiceRefreshRejectsLogoutAndReauthorizationDuringProviderWait(t *testing.T) {
+	for _, action := range []string{"logout", "reauthorize"} {
+		t.Run(action, func(t *testing.T) {
+			adapter, cleanup := setupUserSessionTestDB(t)
+			defer cleanup()
+			adapter.db.SetMaxOpenConns(2)
+			entered, release := make(chan struct{}), make(chan struct{})
+			releaseProvider := sync.OnceFunc(func() { close(release) })
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				close(entered)
+				<-release
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, `{"access_token":"obsolete-access","token_type":"Bearer","expires_in":3600,"refresh_token":"obsolete-refresh"}`)
+			}))
+			defer upstream.Close()
+			defer releaseProvider()
+			principal := id.Principal("pg-race-refresh@example.com")
+			service, sessions, before, serviceID := setupPGServiceRefresh(t, adapter, upstream.URL, principal, nil)
+			refreshDone := make(chan error, 1)
+			go func() {
+				_, _, err := service.GetValidAccessToken(context.Background(), principal, serviceID)
+				refreshDone <- err
+			}()
+			select {
+			case <-entered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("refresh never reached provider")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			hints := ports.StorageTransactionHints{Subjects: []ports.StorageSubjectGate{{Principal: principal}}}
+			txCtx, err := adapter.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
+			require.NoError(t, err)
+			defer func() { _ = adapter.Rollback(txCtx) }()
+			switch action {
+			case "logout":
+				err = sessions.DeleteByPrincipalAndService(txCtx, principal, serviceID)
+			case "reauthorize":
+				reauthorized := *before
+				reauthorized.EncryptedAccessToken = []byte("reauthorized-access")
+				reauthorized.EncryptedRefreshToken = []byte("reauthorized-refresh")
+				newExpiry := time.Now().Add(time.Hour)
+				reauthorized.AccessTokenExpiresAt = &newExpiry
+				err = sessions.Create(txCtx, &reauthorized)
+			}
+			require.NoError(t, err)
+			require.NoError(t, adapter.Commit(txCtx))
+			releaseProvider()
+			select {
+			case err := <-refreshDone:
+				require.Error(t, err, "stale result must not overwrite concurrent changes")
+			case <-time.After(3 * time.Second):
+				t.Fatal("refresh did not finish")
+			}
+			after, err := sessions.FindByPrincipalAndService(context.Background(), principal, serviceID)
+			require.NoError(t, err)
+			if action == "logout" {
+				require.Nil(t, after)
+			} else {
+				require.Equal(t, []byte("reauthorized-access"), after.EncryptedAccessToken)
+				require.Equal(t, []byte("reauthorized-refresh"), after.EncryptedRefreshToken)
+			}
+			var recorded int
+			require.NoError(t, adapter.db.GetContext(context.Background(), &recorded,
+				`SELECT count(*) FROM business_events WHERE subject = $1 AND type = $2`, principal, model.BusinessEventTypePrefix+"session-refreshed"))
+			require.Zero(t, recorded)
+		})
+	}
+}
+
+func TestPGServiceRefreshEventAppendFailureRollsBackTokens(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"new-access","token_type":"Bearer","expires_in":3600,"refresh_token":"new-refresh"}`)
+	}))
+	defer upstream.Close()
+	principal := id.Principal("pg-atomic-refresh@example.com")
+	failure := errors.New("refreshed event append failed")
+	service, sessions, before, serviceID := setupPGServiceRefresh(t, adapter, upstream.URL, principal, failure)
+	_, _, err := service.GetValidAccessToken(context.Background(), principal, serviceID)
+	require.ErrorIs(t, err, failure)
+	after, err := sessions.FindByPrincipalAndService(context.Background(), principal, serviceID)
+	require.NoError(t, err)
+	require.Equal(t, before.EncryptedAccessToken, after.EncryptedAccessToken)
+	require.Equal(t, before.EncryptedRefreshToken, after.EncryptedRefreshToken)
+	var recorded int
+	require.NoError(t, adapter.db.GetContext(context.Background(), &recorded,
+		`SELECT count(*) FROM business_events WHERE subject = $1 AND type = $2`, principal, model.BusinessEventTypePrefix+"session-refreshed"))
+	require.Zero(t, recorded)
 }

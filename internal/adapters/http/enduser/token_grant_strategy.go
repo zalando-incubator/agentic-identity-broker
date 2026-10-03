@@ -142,22 +142,17 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 
 // localGrantStrategy handles token grants locally using a TokenMintingStrategy.
 type localGrantStrategy struct {
-	minting  ports.TokenMintingStrategy
-	outcomes ports.TokenFailureRecorder
-	logger   *slog.Logger
+	minting ports.TokenMintingStrategy
+	logger  *slog.Logger
 }
 
 // NewLocalGrantStrategy returns a strategy that mints tokens locally.
-func NewLocalGrantStrategy(minting ports.TokenMintingStrategy, outcomes ports.TokenFailureRecorder, logger *slog.Logger) *localGrantStrategy {
-	return &localGrantStrategy{minting: minting, outcomes: outcomes, logger: logger}
+func NewLocalGrantStrategy(minting ports.TokenMintingStrategy, logger *slog.Logger) *localGrantStrategy {
+	return &localGrantStrategy{minting: minting, logger: logger}
 }
 
 // HandleTokenGrant dispatches client_credentials, authorization_code, and refresh_token grants to the local minting strategy.
-func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Request, grantType string, formData url.Values, resolution *ports.TokenGrantResolution) {
-	var agentID id.AgentID
-	if resolution != nil {
-		agentID = resolution.AgentID
-	}
+func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Request, grantType string, formData url.Values, _ *ports.TokenGrantResolution) {
 	switch grantType {
 	case "client_credentials":
 		rawClientID := formData.Get("client_id")
@@ -165,7 +160,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 		scope := formData.Get("scope")
 
 		if rawClientID == "" || clientSecret == "" {
-			writeRecordedTokenError(w, r, s.outcomes, ports.TokenRequestMalformed, agentID, http.StatusBadRequest, "invalid_request", "client_id and client_secret are required")
+			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "client_id and client_secret are required")
 			return
 		}
 
@@ -197,11 +192,11 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 		codeVerifier := formData.Get("code_verifier")
 
 		if rawClientID == "" {
-			writeRecordedTokenError(w, r, s.outcomes, ports.TokenRequestMalformed, agentID, http.StatusBadRequest, "invalid_request", "client_id is required")
+			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "client_id is required")
 			return
 		}
 		if code == "" {
-			writeRecordedTokenError(w, r, s.outcomes, ports.TokenRequestMalformed, agentID, http.StatusBadRequest, "invalid_request", "code is required")
+			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "code is required")
 			return
 		}
 
@@ -231,11 +226,11 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 		scope := formData.Get("scope")
 
 		if rawClientID == "" {
-			writeRecordedTokenError(w, r, s.outcomes, ports.TokenRequestMalformed, agentID, http.StatusBadRequest, "invalid_request", "client_id is required")
+			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "client_id is required")
 			return
 		}
 		if refreshToken == "" {
-			writeRecordedTokenError(w, r, s.outcomes, ports.TokenRequestMalformed, agentID, http.StatusBadRequest, "invalid_request", "refresh_token is required")
+			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "refresh_token is required")
 			return
 		}
 
@@ -260,7 +255,7 @@ func (s *localGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Req
 		s.writeTokenResponse(w, resp)
 
 	default:
-		writeRecordedTokenError(w, r, s.outcomes, ports.TokenRequestMalformed, agentID, http.StatusBadRequest, "unsupported_grant_type",
+		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "unsupported_grant_type",
 			"grant_type must be 'client_credentials', 'authorization_code', or 'refresh_token'")
 	}
 }

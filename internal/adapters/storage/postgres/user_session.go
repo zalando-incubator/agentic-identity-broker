@@ -1,8 +1,10 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"time"
 
@@ -137,13 +139,8 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	var rec userSessionRecord
 	query := `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2`
 	if _, ambient := storageTransaction(ctx); ambient {
-		if _, err := r.adapter.storageExecutor(ctx).ExecContext(ctx,
-			`SELECT pg_advisory_xact_lock($1, hashtext($2 || '/' || $3))`, int32(1095320150), principal.String(), serviceID.String()); err != nil {
-			return nil, businessEventStorageError("FindUserSession", err)
-		}
 		query += " FOR UPDATE"
 	}
-
 	err := r.adapter.storageExecutor(ctx).GetContext(ctx, &rec, query, principal, serviceID)
 	if err == sql.ErrNoRows {
 		return nil, nil // Not found is not an error
@@ -154,65 +151,122 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	return recordToSession(&rec), nil
 }
 
-// WithLockedSession re-reads and updates one session in a row-locked transaction.
-func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+// WithLockedSession coordinates refreshes across processes on a connection,
+// without holding ledger lifecycle/subject gates or a business row lock while
+// the provider responds. Only the short conditional write starts a transaction.
+func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (session *storage.UserSession, resultErr error) {
+	const operation = "WithLockedSession"
 	if principal.IsZero() || serviceID.IsZero() {
 		return nil, errors.New("principal and serviceID required")
 	}
-	hints := ports.StorageTransactionHintsFromContext(ctx)
-	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
-	txCtx, err := r.adapter.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
-	if err != nil {
-		return nil, r.wrapError(err, "WithLockedSession")
+	if _, ambient := storageTransaction(ctx); ambient {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "refresh coordination must precede the business transaction")
 	}
-	committed := false
+	if r.adapter == nil || r.adapter.db == nil {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")
+	}
+	conn, err := r.adapter.db.Connx(ctx)
+	if err != nil {
+		return nil, r.wrapError(err, operation)
+	}
+	locked, discard := false, false
 	defer func() {
-		if !committed {
-			_ = r.adapter.Rollback(txCtx)
+		if locked {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), r.adapter.timeouts.Write)
+			var unlocked bool
+			unlockErr := conn.GetContext(cleanupCtx, &unlocked,
+				`SELECT pg_advisory_unlock($1, hashtext($2 || '/' || $3))`, int32(1095320150), principal.String(), serviceID.String())
+			cancel()
+			if unlockErr != nil || !unlocked {
+				discard = true
+				resultErr = errors.Join(resultErr, storage.NewStorageError(operation, storage.ErrorKindConnection,
+					unlockErr, "failed to release session coordination lock"))
+			}
+		}
+		if discard {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+		if err := conn.Close(); err != nil {
+			resultErr = errors.Join(resultErr, r.wrapError(err, operation))
 		}
 	}()
-
-	if _, err := r.adapter.storageExecutor(txCtx).ExecContext(txCtx,
-		`SELECT pg_advisory_xact_lock($1, hashtext($2 || '/' || $3))`, int32(1095320150), principal.String(), serviceID.String()); err != nil {
-		return nil, r.wrapError(err, "WithLockedSession")
+	if _, err := conn.ExecContext(ctx,
+		`SELECT pg_advisory_lock($1, hashtext($2 || '/' || $3))`, int32(1095320150), principal.String(), serviceID.String()); err != nil {
+		discard = true // The server may have taken the lock just before cancellation.
+		return nil, r.wrapError(err, operation)
 	}
+	locked = true
+	readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	var rec userSessionRecord
-	readCtx, cancel := context.WithTimeout(txCtx, r.adapter.timeouts.Read)
-	err = r.adapter.storageExecutor(readCtx).GetContext(readCtx, &rec, `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2 FOR UPDATE`, principal, serviceID)
+	err = conn.GetContext(readCtx, &rec, `SELECT * FROM user_sessions WHERE principal = $1 AND service_id = $2`, principal, serviceID)
 	cancel()
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, r.wrapError(err, "WithLockedSession")
-	}
 	if errors.Is(err, sql.ErrNoRows) {
-		if err := r.adapter.Commit(txCtx); err != nil {
-			return nil, r.wrapError(err, "WithLockedSession")
-		}
-		committed = true
 		return nil, nil
 	}
-	session := recordToSession(&rec)
-	updated, err := refresh(txCtx, session)
+	if err != nil {
+		return nil, r.wrapError(err, operation)
+	}
+	previous := recordToSession(&rec)
+	prepared := *previous
+	prepared.EncryptedAccessToken = bytes.Clone(previous.EncryptedAccessToken)
+	prepared.EncryptedRefreshToken = bytes.Clone(previous.EncryptedRefreshToken)
+	session = &prepared
+	coordinationCtx := context.WithValue(ctx, refreshConnectionKey{}, conn)
+	updated, err := refresh(coordinationCtx, session)
 	if err != nil {
 		return nil, err
 	}
-	if updated {
-		if err := session.Validate(); err != nil {
-			return nil, err
-		}
-		writeCtx, cancel := context.WithTimeout(txCtx, r.adapter.timeouts.Write)
-		_, err = r.adapter.storageExecutor(writeCtx).ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
-			access_token_expires_at = $3, updated_at = $4 WHERE id = $5`,
-			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt, session.UpdatedAt, session.ID)
-		cancel()
-		if err != nil {
-			return nil, r.wrapError(err, "WithLockedSession")
-		}
+	if !updated {
+		return session, nil
+	}
+	hints := ports.StorageTransactionHintsFromContext(coordinationCtx)
+	hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+	txCtx, err := r.adapter.BeginTX(ports.WithStorageTransactionHints(coordinationCtx, hints))
+	if err != nil {
+		return nil, r.wrapError(err, operation)
+	}
+	defer func() { _ = r.adapter.Rollback(txCtx) }()
+	if err := r.UpdateRefreshedSession(txCtx, previous, session); err != nil {
+		return nil, err
 	}
 	if err := r.adapter.Commit(txCtx); err != nil {
-		return nil, r.wrapError(err, "WithLockedSession")
+		return nil, r.wrapError(err, operation)
 	}
-	committed = true
 	return session, nil
+}
+
+// UpdateRefreshedSession accepts only the exact pre-exchange session snapshot
+// and joins the ledger owner, so the refreshed fact and tokens commit together.
+func (r *PostgresUserSessionRepository) UpdateRefreshedSession(ctx context.Context, previous, current *storage.UserSession) error {
+	const operation = "UpdateRefreshedSession"
+	if previous == nil || current == nil || previous.ID != current.ID ||
+		previous.Principal != current.Principal || previous.ServiceID != current.ServiceID {
+		return storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "invalid refreshed session")
+	}
+	if err := current.Validate(); err != nil {
+		return err
+	}
+	if _, ambient := storageTransaction(ctx); !ambient {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "refresh requires an owning transaction")
+	}
+	writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+	result, err := r.adapter.storageExecutor(writeCtx).ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
+		access_token_expires_at = $3, updated_at = $4 WHERE id = $5 AND principal = $6 AND service_id = $7
+		AND encrypted_access_token IS NOT DISTINCT FROM $8 AND encrypted_refresh_token IS NOT DISTINCT FROM $9 AND updated_at = $10`,
+		current.EncryptedAccessToken, current.EncryptedRefreshToken, current.AccessTokenExpiresAt, current.UpdatedAt,
+		previous.ID, previous.Principal, previous.ServiceID, previous.EncryptedAccessToken, previous.EncryptedRefreshToken, previous.UpdatedAt)
+	if err != nil {
+		return r.wrapError(err, operation)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return r.wrapError(err, operation)
+	}
+	if count != 1 {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "session changed during refresh")
+	}
+	return nil
 }
 
 // ListByPrincipal retrieves all sessions for a principal, including expired ones.

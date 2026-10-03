@@ -7,4 +7,5 @@ DROP TABLE public.business_events;
 DROP FUNCTION public.business_event_reject_update();
 DROP TABLE public.business_event_policy;
 ALTER TABLE public.user_grants DROP COLUMN expiration_recorded_for;
+DROP INDEX public.tool_approvals_unrecorded_expiry_by_principal;
 ALTER TABLE public.tool_approvals DROP COLUMN expiration_recorded_for;

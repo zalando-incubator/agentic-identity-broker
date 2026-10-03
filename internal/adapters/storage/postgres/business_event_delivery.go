@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
@@ -65,7 +66,10 @@ func (r *BusinessEventRepository) DispatchOne(ctx context.Context, key model.Bus
 		return false, businessEventStorageError(operation, err)
 	}
 
-	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	// Keep the transaction alive briefly after export cancellation so its retry
+	// schedule can commit before the deletion barriers are released.
+	exportDeadline := time.Now().Add(r.adapter.timeouts.Write)
+	execCtx, cancel := context.WithDeadline(context.WithoutCancel(ctx), exportDeadline.Add(time.Second))
 	defer cancel()
 	hints := ports.StorageTransactionHintsFromContext(execCtx)
 	if subject.Valid {
@@ -102,17 +106,24 @@ func (r *BusinessEventRepository) DispatchOne(ctx context.Context, key model.Bus
 		return false, businessEventStorageError(operation, err)
 	}
 
-	exportErr := emit(txCtx, event)
-	if err := txCtx.Err(); err != nil {
-		return false, businessEventStorageError(operation, err)
+	exportCtx, stopExport := context.WithDeadline(ctx, exportDeadline)
+	exportErr := exportCtx.Err()
+	if exportErr == nil {
+		exportErr = emit(exportCtx, event)
 	}
+	if exportErr == nil {
+		exportErr = exportCtx.Err()
+	}
+	stopExport()
+	ackCtx, stopAck := context.WithTimeout(txCtx, time.Second)
+	defer stopAck()
 	var result sql.Result
 	if exportErr != nil {
-		result, err = tx.ExecContext(txCtx, `UPDATE public.business_event_delivery_pending
+		result, err = tx.ExecContext(ackCtx, `UPDATE public.business_event_delivery_pending
 			SET next_attempt_at=clock_timestamp() + interval '30 seconds'
 			WHERE recorded_at=$1 AND event_id=$2`, key.RecordedAt, key.ID)
 	} else {
-		result, err = tx.ExecContext(txCtx, `DELETE FROM public.business_event_delivery_pending
+		result, err = tx.ExecContext(ackCtx, `DELETE FROM public.business_event_delivery_pending
 			WHERE recorded_at=$1 AND event_id=$2`, key.RecordedAt, key.ID)
 	}
 	if err != nil {
@@ -125,10 +136,10 @@ func (r *BusinessEventRepository) DispatchOne(ctx context.Context, key model.Bus
 	if affected != 1 {
 		return false, storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "claimed reference was not updated")
 	}
-	if err := txCtx.Err(); err != nil {
+	if err := ackCtx.Err(); err != nil {
 		return false, businessEventStorageError(operation, err)
 	}
-	if err := r.adapter.Commit(txCtx); err != nil {
+	if err := r.adapter.Commit(ackCtx); err != nil {
 		return false, businessEventStorageError(operation, err)
 	}
 	if exportErr != nil {

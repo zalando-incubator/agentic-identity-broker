@@ -23,8 +23,8 @@ type LegacySlogWorkflow struct {
 	Records          []LegacySlogRecord
 }
 
-// BusinessEventLegacySlog captures all 28 catalogue facts before the ledger refactor.
-// Counts apply to the complete named journey, including repeated business actions.
+// BusinessEventLegacySlog retains pre-ledger fact logs, excluding the refresh
+// persistence line removed by main (#124). Counts cover the named journey.
 var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 	"agent-deleted": {
 		{
@@ -245,7 +245,6 @@ var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
 			Source:   "tests/e2e/thirdparty_public_client_test.go:457",
 			Records: []LegacySlogRecord{
 				{Event: "", Level: "INFO", Message: "access token refreshed", FieldKeys: []string{"level", "msg", "service_id", "time", "token_endpoint"}, Count: 2},
-				{Event: "", Level: "INFO", Message: "session tokens updated", FieldKeys: []string{"level", "msg", "principal", "service_id", "session_id", "time"}, Count: 2},
 				{Event: "session.oauth2.token_refreshed", Level: "INFO", Message: "oauth2_token_refreshed", FieldKeys: []string{"event", "level", "msg", "principal", "public_client", "reason", "service_id", "time", "timestamp"}, Count: 2},
 			},
 		},

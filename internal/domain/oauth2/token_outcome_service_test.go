@@ -93,3 +93,25 @@ func TestProxyLedgerTransportAndVerificationFailuresAreTerminalFacts(t *testing.
 		require.Equal(t, model.BusinessEventTypePrefix+"token-request-failed", store.Events[0].Type)
 	})
 }
+
+func TestProxyLedgerRecordingFailureOutranksTransportAndVerificationFailures(t *testing.T) {
+	t.Run("transport", func(t *testing.T) {
+		store := &ledgerfixture.Store{AppendError: errors.New("ledger unavailable")}
+		svc := NewTokenOutcomeService(outcomeProxy{failure: ports.TokenProxyTransportFailed, err: errors.New("transport unavailable")}, nil, store.Recorder(t))
+		clientID := id.ClientID("upstream-client")
+		response, failure, err := svc.Proxy(context.Background(), url.Values{"grant_type": {"client_credentials"}}, "application/x-www-form-urlencoded", &ports.TokenGrantResolution{AgentID: id.NewAgentID(), ClientID: &clientID})
+		require.Error(t, err)
+		require.Nil(t, response)
+		require.Equal(t, ports.TokenProxyRecordingFailed, failure)
+		require.Empty(t, store.Events)
+	})
+	t.Run("verification", func(t *testing.T) {
+		store := &ledgerfixture.Store{AppendError: errors.New("ledger unavailable")}
+		svc := NewTokenOutcomeService(nil, outcomeVerifier{err: errors.New("unverified token")}, store.Recorder(t))
+		completion, failure, err := svc.CompleteProxy(context.Background(), outcomeResponse{status: 200, body: []byte(`{"access_token":"credential-canary"}`)}, id.NewAgentID())
+		require.Error(t, err)
+		require.Empty(t, completion.Body)
+		require.Equal(t, ports.TokenProxyRecordingFailed, failure)
+		require.Empty(t, store.Events)
+	})
+}

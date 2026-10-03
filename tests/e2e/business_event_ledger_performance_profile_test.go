@@ -4,6 +4,7 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,8 +13,15 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
+	collectmetrics "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	collecttraces "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	metricsv1 "go.opentelemetry.io/proto/otlp/metrics/v1"
+	tracesv1 "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestLedgerDeploymentProfileHelpers(t *testing.T) {
@@ -214,4 +222,69 @@ func TestLedgerDeploymentProfileHelpers(t *testing.T) {
 			t.Fatalf("unapproved receiver accepted: %v", err)
 		}
 	})
+}
+
+func TestLedgerPerformanceCollectorStagesAndPoolWaits(t *testing.T) {
+	ctx := t.Context()
+	collector, err := bootstrap.NewLedgerPerformanceCollectorForProfile(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(collector.Close)
+	connection, err := grpc.DialContext(ctx, collector.Endpoint(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = connection.Close() })
+	client := collecttraces.NewTraceServiceClient(connection)
+	traceID := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	start := uint64(time.Now().UnixNano())
+	span := func(name string, offset, duration time.Duration) *tracesv1.Span {
+		return &tracesv1.Span{Name: name, TraceId: traceID, StartTimeUnixNano: start + uint64(offset), EndTimeUnixNano: start + uint64(offset+duration)}
+	}
+	export := func(spans ...*tracesv1.Span) {
+		t.Helper()
+		_, err := client.Export(ctx, &collecttraces.ExportTraceServiceRequest{ResourceSpans: []*tracesv1.ResourceSpans{{ScopeSpans: []*tracesv1.ScopeSpans{{Spans: spans}}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	export(span("ledger.record.validate", 0, 2*time.Millisecond), span("ledger.record", 20*time.Millisecond, 3*time.Millisecond), span("ledger.transaction", 3*time.Millisecond, 40*time.Millisecond))
+	got, err := collector.RecordingTimes([]string{hex.EncodeToString(traceID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Total) != 1 || got.Validation[0] != 2*time.Millisecond || got.Append[0] != 3*time.Millisecond || got.Total[0] != 5*time.Millisecond || got.Transaction[0] != 40*time.Millisecond {
+		t.Fatalf("recording stages included checkout or commit: %+v", got)
+	}
+	export(span("ledger.record", 50*time.Millisecond, time.Millisecond))
+	if _, err := collector.RecordingTimes([]string{hex.EncodeToString(traceID)}); err == nil {
+		t.Fatal("duplicate append span was accepted as one completed action")
+	}
+	metrics := collectmetrics.NewMetricsServiceClient(connection)
+	emitPool := func(count int64, wait time.Duration) {
+		t.Helper()
+		point := func(value int64) *metricsv1.NumberDataPoint {
+			return &metricsv1.NumberDataPoint{Value: &metricsv1.NumberDataPoint_AsInt{AsInt: value}}
+		}
+		gauge := func(name string, value int64) *metricsv1.Metric {
+			return &metricsv1.Metric{Name: name, Data: &metricsv1.Metric_Gauge{Gauge: &metricsv1.Gauge{DataPoints: []*metricsv1.NumberDataPoint{point(value)}}}}
+		}
+		_, err := metrics.Export(ctx, &collectmetrics.ExportMetricsServiceRequest{ResourceMetrics: []*metricsv1.ResourceMetrics{{ScopeMetrics: []*metricsv1.ScopeMetrics{{Metrics: []*metricsv1.Metric{
+			gauge("ledger.performance.pool.wait_count", count), gauge("ledger.performance.pool.wait_nanoseconds", int64(wait)),
+		}}}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	emitPool(2, time.Millisecond)
+	boundary := time.Now()
+	emitPool(5, 9*time.Millisecond)
+	pools, err := collector.PoolWaits(boundary, boundary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pools.WaitCount != 3 || pools.WaitDuration != 8*time.Millisecond {
+		t.Fatalf("wrong measured pool wait delta: %+v", pools)
+	}
 }

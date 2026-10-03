@@ -994,7 +994,7 @@ func (b *Builder) Build() (*App, error) {
 		}
 		impersonationIssuer = provider
 		tokenOutcomes = oauth2service.NewTokenOutcomeService(nil, nil, app.LedgerService)
-		grantHandler = enduser.NewLocalGrantStrategy(newLocalMintingStrategy(provider), tokenOutcomes, b.logger)
+		grantHandler = enduser.NewLocalGrantStrategy(newLocalMintingStrategy(provider), b.logger)
 		proceedHandler = enduser.NewLocalProceedStrategy(newLocalCodeIssuer(provider), b.logger)
 		b.logger.Info("OAuth2 server mode: local — local token minting enabled",
 			"issuer_uri", localIssuerURI,
@@ -1013,7 +1013,7 @@ func (b *Builder) Build() (*App, error) {
 			return nil, err
 		}
 		proxyGrant, proxyProceed := buildProxyStrategies(cfg.Proxy.UpstreamTokenEndpoint)
-		localGrant := enduser.NewLocalGrantStrategy(newLocalMintingStrategy(provider), tokenOutcomes, b.logger)
+		localGrant := enduser.NewLocalGrantStrategy(newLocalMintingStrategy(provider), b.logger)
 		localProceed := enduser.NewLocalProceedStrategy(newLocalCodeIssuer(provider), b.logger)
 
 		grantHandler = enduser.NewHybridTokenGrantStrategy(proxyGrant, localGrant, b.logger)

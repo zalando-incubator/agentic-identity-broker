@@ -534,7 +534,7 @@ func (j *ledgerJourney) action(eventName string) matchers.BusinessEventExpectati
 			return decodeJSON[map[string]any](response)
 		}
 		assertGenerated := func(created map[string]any) {
-			key, err := j.h.Storage.SigningKeys().GetByKID(ctx, id.NewKeyID(created["kid"].(string)))
+			key, err := j.h.Storage.SigningKeys().GetByKIDInDomain(ctx, domainstorage.KeyDomainTokenSigning, id.NewKeyID(created["kid"].(string)))
 			Expect(err).NotTo(HaveOccurred())
 			facts := j.actionEvents(matchers.BusinessEventExpectation{Type: expected.Type, Subject: &subject})
 			Expect(facts).To(HaveLen(1), "selection during generation is a separate fact")
@@ -548,7 +548,7 @@ func (j *ledgerJourney) action(eventName string) matchers.BusinessEventExpectati
 		second := addKey()
 		assertGenerated(second)
 		Expect(second["kid"]).NotTo(Equal(first["kid"]))
-		initial, err := j.h.Storage.SigningKeys().GetByKID(ctx, id.NewKeyID(first["kid"].(string)))
+		initial, err := j.h.Storage.SigningKeys().GetByKIDInDomain(ctx, domainstorage.KeyDomainTokenSigning, id.NewKeyID(first["kid"].(string)))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(initial.IsCurrent).To(BeFalse(), "the PUT target must not already be current")
 		j.markAction(subject)
@@ -560,7 +560,7 @@ func (j *ledgerJourney) action(eventName string) matchers.BusinessEventExpectati
 		}
 		selected := promote(first["kid"].(string))
 		Expect(selected["is_current"]).To(BeTrue())
-		storedKey, err := j.h.Storage.SigningKeys().GetByKID(ctx, id.NewKeyID(first["kid"].(string)))
+		storedKey, err := j.h.Storage.SigningKeys().GetByKIDInDomain(ctx, domainstorage.KeyDomainTokenSigning, id.NewKeyID(first["kid"].(string)))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(storedKey.IsCurrent).To(BeTrue())
 		expected.Data = map[string]any{"signing_key_id": storedKey.ID.String(), "activates_at": storedKey.ActivatesAt.UTC().Format(time.RFC3339Nano)}
@@ -580,7 +580,7 @@ func (j *ledgerJourney) action(eventName string) matchers.BusinessEventExpectati
 	case "token-exchanged", "token-exchange-denied":
 		caller := "approval-gateway-client"
 		gateway := id.NewClientID(caller)
-		expected.Actor = &model.BusinessEventActor{Kind: "agent", ID: &caller}
+		expected.Actor = &model.BusinessEventActor{Kind: "gateway", ID: &caller}
 		if eventName == "token-exchanged" {
 			expected.Actor.OnBehalfOf = &j.data.Principal
 		}
@@ -595,6 +595,8 @@ func (j *ledgerJourney) action(eventName string) matchers.BusinessEventExpectati
 	case "approval-requested":
 		caller := "approval-gateway-client"
 		expected.Actor = &model.BusinessEventActor{Kind: "gateway", ID: &caller, OnBehalfOf: &j.data.Principal}
+	case "approval-consumed":
+		expected.Actor = &model.BusinessEventActor{Kind: "gateway", OnBehalfOf: &j.data.Principal}
 	case "token-issued":
 		caller := j.data.Agent.ID.String()
 		expected.Actor = &model.BusinessEventActor{Kind: "agent", ID: &caller}
@@ -765,17 +767,17 @@ var _ = Describe("Business Event Ledger", Label("business-event-ledger"), func()
 						if eventName == "signing-key-promoted" {
 							currentKID = addKey()
 						}
-						current, err := journey.h.Storage.SigningKeys().GetByKID(ctx, id.NewKeyID(currentKID))
+						current, err := journey.h.Storage.SigningKeys().GetByKIDInDomain(ctx, domainstorage.KeyDomainTokenSigning, id.NewKeyID(currentKID))
 						Expect(err).NotTo(HaveOccurred())
 						Expect(current.KID.String()).To(Equal(currentKID))
 						Expect(current.IsCurrent).To(BeTrue())
-						eligible, err := journey.h.Storage.SigningKeys().GetCurrent(ctx)
+						eligible, err := journey.h.Storage.SigningKeys().GetCurrentInDomain(ctx, domainstorage.KeyDomainTokenSigning)
 						Expect(err).NotTo(HaveOccurred())
-						allKeys, err := journey.h.Storage.SigningKeys().ListActive(ctx)
+						allKeys, err := journey.h.Storage.SigningKeys().ListActiveInDomain(ctx, domainstorage.KeyDomainTokenSigning)
 						Expect(err).NotTo(HaveOccurred())
 						copy := *current
 						current = &copy
-						active, err := journey.h.Storage.SigningKeys().CountActive(ctx)
+						active, err := journey.h.Storage.SigningKeys().CountActiveInDomain(ctx, domainstorage.KeyDomainTokenSigning)
 						Expect(err).NotTo(HaveOccurred())
 						if eventName == "signing-key-promoted" {
 							request = func() (*http.Response, error) {
@@ -787,19 +789,19 @@ var _ = Describe("Business Event Ledger", Label("business-event-ledger"), func()
 							}
 						}
 						unchanged = func() {
-							after, err := journey.h.Storage.SigningKeys().GetByKID(ctx, id.NewKeyID(currentKID))
+							after, err := journey.h.Storage.SigningKeys().GetByKIDInDomain(ctx, domainstorage.KeyDomainTokenSigning, id.NewKeyID(currentKID))
 							Expect(err).NotTo(HaveOccurred())
 							Expect(after).To(Equal(current))
 							Expect(after.KID.String()).To(Equal(currentKID))
-							stillEligible, err := journey.h.Storage.SigningKeys().GetCurrent(ctx)
+							stillEligible, err := journey.h.Storage.SigningKeys().GetCurrentInDomain(ctx, domainstorage.KeyDomainTokenSigning)
 							Expect(err).NotTo(HaveOccurred())
 							Expect(stillEligible).To(Equal(eligible))
 							for _, before := range allKeys {
-								unchangedKey, err := journey.h.Storage.SigningKeys().GetByKID(ctx, before.KID)
+								unchangedKey, err := journey.h.Storage.SigningKeys().GetByKIDInDomain(ctx, domainstorage.KeyDomainTokenSigning, before.KID)
 								Expect(err).NotTo(HaveOccurred())
 								Expect(unchangedKey).To(Equal(before))
 							}
-							count, err := journey.h.Storage.SigningKeys().CountActive(ctx)
+							count, err := journey.h.Storage.SigningKeys().CountActiveInDomain(ctx, domainstorage.KeyDomainTokenSigning)
 							Expect(err).NotTo(HaveOccurred())
 							Expect(count).To(Equal(active))
 						}
@@ -941,7 +943,7 @@ var _ = Describe("Business Event Ledger", Label("business-event-ledger"), func()
 				principal := journey.data.Principal
 				expected := matchers.BusinessEventExpectation{
 					Type: "agentic-identity-broker.token-exchange-denied", Subject: &subject,
-					Actor:   &model.BusinessEventActor{Kind: "agent", ID: &caller, OnBehalfOf: &principal},
+					Actor:   &model.BusinessEventActor{Kind: "gateway", ID: &caller, OnBehalfOf: &principal},
 					Outcome: model.BusinessEventDenied, Data: map[string]any{"reason_code": "authorization_failed"},
 					AgentID: &journey.data.Agent.ID, GrantID: &grant.ID, ServiceID: &journey.data.Service.ID, SessionID: &session.ID,
 					PermissionSetIDs: []id.PermissionSetID{fixtures.PlaceholderPermissionSetID},
@@ -1170,7 +1172,7 @@ var _ = Describe("Business Event Ledger", Label("business-event-ledger"), func()
 				Expect(events).To(HaveLen(1))
 				caller := "approval-gateway-client"
 				gateway := id.NewClientID(caller)
-				Expect(events[0]).To(matchers.HaveBusinessEventEnvelope(matchers.BusinessEventExpectation{Type: "agentic-identity-broker.token-exchanged", Subject: &model.BusinessEventSubject{Principal: journey.data.Principal}, Actor: &model.BusinessEventActor{Kind: "agent", ID: &caller, OnBehalfOf: &journey.data.Principal}, AgentID: &journey.data.Agent.ID, GatewayClientID: &gateway, ServiceID: &journey.data.Service.ID, TraceID: &traceID, SpanID: &spanID, Client: &model.BusinessEventClient{IP: "127.0.0.1", UserAgent: "curl"}, Outcome: model.BusinessEventSuccess, Data: map[string]any{}}))
+				Expect(events[0]).To(matchers.HaveBusinessEventEnvelope(matchers.BusinessEventExpectation{Type: "agentic-identity-broker.token-exchanged", Subject: &model.BusinessEventSubject{Principal: journey.data.Principal}, Actor: &model.BusinessEventActor{Kind: "gateway", ID: &caller, OnBehalfOf: &journey.data.Principal}, AgentID: &journey.data.Agent.ID, GatewayClientID: &gateway, ServiceID: &journey.data.Service.ID, TraceID: &traceID, SpanID: &spanID, Client: &model.BusinessEventClient{IP: "127.0.0.1", UserAgent: "curl"}, Outcome: model.BusinessEventSuccess, Data: map[string]any{}}))
 				journey.assertCredentialFree(events)
 				Expect(journey.h.Close()).To(Succeed())
 
@@ -1278,8 +1280,10 @@ var _ = Describe("Business Event Ledger", Label("business-event-ledger"), func()
 				denials := forged.query("token-exchange-denied", model.BusinessEventSubject{NoSubject: true})
 				Expect(denials).To(HaveLen(1))
 				Expect(denials[0].Subject).To(BeNil())
+				Expect(denials[0].Actor.Kind).To(Equal("gateway"))
 				Expect(denials[0].Actor.ID).To(BeNil())
 				Expect(denials[0].Actor.OnBehalfOf).To(BeNil())
+				Expect(denials[0].GatewayClientID).To(BeZero(), "an unverified assertion cannot identify the gateway")
 				Expect(denials[0].Data).To(Equal(map[string]any{"reason_code": "authentication_failed"}))
 				Expect(denials[0].AgentID).To(BeZero(), "an unverified azp cannot identify the receiving agent")
 				Expect(forged.query("token-exchange-denied", model.BusinessEventSubject{Principal: forged.data.Principal})).To(BeEmpty())

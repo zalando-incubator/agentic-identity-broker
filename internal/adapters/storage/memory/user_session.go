@@ -1,12 +1,14 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 // InMemoryUserSessionRepository is an in-memory implementation for testing/development.
@@ -136,6 +138,7 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 		readGuard.release()
 		return nil, nil
 	}
+	previous := copyUserSession(current)
 	session := copyUserSession(current)
 	r.mu.RUnlock()
 	readGuard.release()
@@ -144,26 +147,64 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 		return nil, err
 	}
 	if updated {
-		if err := session.Validate(); err != nil {
-			return nil, err
+		if _, ambient := memoryTransaction(ctx); ambient {
+			if err := r.UpdateRefreshedSession(ctx, previous, session); err != nil {
+				return nil, err
+			}
+		} else {
+			hints := ports.StorageTransactionHintsFromContext(ctx)
+			hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: principal})
+			txCtx, err := r.transactions.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
+			if err != nil {
+				return nil, err
+			}
+			defer func() { _ = r.transactions.Rollback(txCtx) }()
+			if err := r.UpdateRefreshedSession(txCtx, previous, session); err != nil {
+				return nil, err
+			}
+			if err := r.transactions.Commit(txCtx); err != nil {
+				return nil, err
+			}
 		}
-		writeGuard, err := r.transactions.lock(ctx, true)
-		if err != nil {
-			return nil, err
-		}
-		defer writeGuard.release()
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		if r.index[key] != current {
-			return nil, storage.NewStorageError("WithLockedSession", storage.ErrorKindConflict, nil, "session changed during refresh")
-		}
-		stored := copyUserSession(session)
-		journalEntry(ctx, r.index, key)
-		r.index[key] = stored
-		journalEntry(ctx, r.sessions, session.ID)
-		r.sessions[session.ID] = stored
 	}
 	return session, nil
+}
+
+// UpdateRefreshedSession replaces tokens only if the row still matches the
+// snapshot obtained before the provider exchange. The surrounding owner also
+// journals the event, so both changes commit or roll back together.
+func (r *InMemoryUserSessionRepository) UpdateRefreshedSession(ctx context.Context, previous, current *storage.UserSession) error {
+	const operation = "UpdateRefreshedSession"
+	if previous == nil || current == nil || previous.ID != current.ID ||
+		previous.Principal != current.Principal || previous.ServiceID != current.ServiceID {
+		return storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "invalid refreshed session")
+	}
+	if err := current.Validate(); err != nil {
+		return err
+	}
+	if _, ambient := memoryTransaction(ctx); !ambient {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "refresh requires an owning transaction")
+	}
+	guard, err := r.transactions.lock(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer guard.release()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := principalServiceKey(previous.Principal, previous.ServiceID)
+	stored := r.index[key]
+	if stored == nil || stored.ID != previous.ID || !stored.UpdatedAt.Equal(previous.UpdatedAt) ||
+		!bytes.Equal(stored.EncryptedAccessToken, previous.EncryptedAccessToken) ||
+		!bytes.Equal(stored.EncryptedRefreshToken, previous.EncryptedRefreshToken) {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "session changed during refresh")
+	}
+	copy := copyUserSession(current)
+	journalEntry(ctx, r.index, key)
+	r.index[key] = copy
+	journalEntry(ctx, r.sessions, copy.ID)
+	r.sessions[copy.ID] = copy
+	return nil
 }
 
 // ListByPrincipal retrieves all sessions for a principal, including expired ones.

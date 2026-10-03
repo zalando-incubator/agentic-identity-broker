@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
@@ -19,15 +18,6 @@ type Service struct {
 	transactions ports.StorageTransactionManager
 	copyEnabled  bool
 }
-
-// recordingSpans are carried by the outer ledger transaction so joined Record
-// calls remain timed through the physical owner commit (or rollback).
-type recordingSpans struct {
-	first  trace.Span
-	others []trace.Span
-}
-
-type recordingSpansKey struct{}
 
 func NewService(registry *Registry, events ports.BusinessEventRepository, lifecycle ports.BusinessEventLifecycleRepository, transactions ports.StorageTransactionManager, copyEnabled bool) *Service {
 	return &Service{registry: registry, events: events, lifecycle: lifecycle, transactions: transactions, copyEnabled: copyEnabled}
@@ -53,17 +43,9 @@ func (s *Service) NewEvent(ctx context.Context, eventType string, facts model.Bu
 }
 
 func (s *Service) Record(ctx context.Context, event *model.BusinessEvent) error {
-	ctx, span := otel.Tracer("ledger").Start(ctx, "ledger.record")
-	if owner, ok := ctx.Value(recordingSpansKey{}).(*recordingSpans); ok {
-		if owner.first == nil {
-			owner.first = span
-		} else {
-			owner.others = append(owner.others, span)
-		}
-	} else {
-		defer span.End()
-	}
+	_, validation := otel.Tracer("ledger").Start(ctx, "ledger.record.validate")
 	if event == nil {
+		validation.End()
 		return errInvalidEvent
 	}
 	candidate := *event
@@ -71,29 +53,25 @@ func (s *Service) Record(ctx context.Context, event *model.BusinessEvent) error 
 		candidate.RecordedAt = candidate.OccurredAt
 	}
 	if err := s.Validate(&candidate); err != nil {
+		validation.End()
 		return err
 	}
+	validation.End()
 	hints := ports.StorageTransactionHintsFromContext(ctx)
 	if event.Subject != nil {
 		hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: *event.Subject})
 	}
 	return s.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		_, span := otel.Tracer("ledger").Start(txCtx, "ledger.record")
+		defer span.End()
 		return s.events.Append(txCtx, event, s.copyEnabled)
 	})
 }
 
 func (s *Service) WithTransaction(ctx context.Context, hints ports.StorageTransactionHints, work func(context.Context) error) error {
-	if _, ok := ctx.Value(recordingSpansKey{}).(*recordingSpans); !ok {
-		owner := &recordingSpans{}
-		ctx = context.WithValue(ctx, recordingSpansKey{}, owner)
-		defer func() {
-			if owner.first != nil {
-				owner.first.End()
-			}
-			for _, span := range owner.others {
-				span.End()
-			}
-		}()
+	if _, joined := ports.StorageTransactionEffectsFromContext(ctx); !joined {
+		_, span := otel.Tracer("ledger").Start(ctx, "ledger.transaction")
+		defer span.End()
 	}
 	txCtx, err := s.transactions.BeginTX(ports.WithStorageTransactionHints(ctx, hints))
 	if err != nil {

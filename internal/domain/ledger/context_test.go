@@ -67,7 +67,7 @@ func TestContextFactsKeepsDelegatedCallerAndAuthoritativeReferences(t *testing.T
 	session := id.MustParseSessionID("44444444-4444-4444-8444-444444444444")
 	permission := id.MustParsePermissionSetID("55555555-5555-4555-8555-555555555555")
 	facts := contextTestEvent(t, registry, "token-exchanged", model.BusinessEvent{
-		Subject: &subject, Actor: model.BusinessEventActor{Kind: "agent", OnBehalfOf: &subject},
+		Subject: &subject, Actor: model.BusinessEventActor{Kind: "gateway", OnBehalfOf: &subject},
 		AgentID: agent, GatewayClientID: gateway, ServiceID: service, GrantID: grant, SessionID: session,
 		PermissionSetIDs: []id.PermissionSetID{permission},
 	})
@@ -84,7 +84,7 @@ func TestContextFactsKeepsDelegatedCallerAndAuthoritativeReferences(t *testing.T
 	wire, encoded := validatedContextWire(t, registry, ctx, facts)
 	actor := wire["actor"].(map[string]any)
 	require.Equal(t, subject.String(), wire["subject"])
-	require.Equal(t, "agent", actor["kind"])
+	require.Equal(t, "gateway", actor["kind"])
 	require.Equal(t, caller, actor["id"], "the verified caller, not the represented principal, initiated the exchange")
 	require.Equal(t, subject.String(), actor["on_behalf_of"])
 	require.Equal(t, gateway.String(), wire["gateway_client_id"])
@@ -110,7 +110,7 @@ func TestContextFactsDoesNotInferDelegationOrGatewayFromPeerName(t *testing.T) {
 	subject := id.NewPrincipal("validated-subject")
 	const caller = "gateway-admin-client-name"
 	facts := contextTestEvent(t, registry, "token-exchange-denied", model.BusinessEvent{
-		Subject: &subject, Actor: model.BusinessEventActor{Kind: "agent"},
+		Subject: &subject, Actor: model.BusinessEventActor{Kind: "gateway"},
 		Data: map[string]any{"reason_code": "authorization_failed"},
 	})
 	ctx := security.WithSecurityContext(context.Background(), security.NewSecurityContext(
@@ -119,7 +119,7 @@ func TestContextFactsDoesNotInferDelegationOrGatewayFromPeerName(t *testing.T) {
 	wire, _ := validatedContextWire(t, registry, ctx, facts)
 	actor := wire["actor"].(map[string]any)
 	require.Equal(t, subject.String(), wire["subject"])
-	require.Equal(t, "agent", actor["kind"], "caller category belongs to the authenticated workflow")
+	require.Equal(t, "gateway", actor["kind"], "caller category belongs to the authenticated workflow")
 	require.Equal(t, caller, actor["id"])
 	require.Nil(t, actor["on_behalf_of"], "validated identities alone do not establish delegation")
 	require.NotContains(t, wire, "gateway_client_id", "the caller name is not a verified gateway association")
@@ -139,6 +139,26 @@ func TestContextFactsDoesNotInferDelegationOrGatewayFromPeerName(t *testing.T) {
 	require.Equal(t, caller, wire["gateway_client_id"], "the association came from verified domain facts")
 }
 
+func TestContextFactsKeepsEstablishedCallerOverDifferentRequestPeer(t *testing.T) {
+	registry := contextTestRegistry(t)
+	caller := "verified-initiating-client"
+	subject := id.NewPrincipal("represented-user")
+	facts := contextTestEvent(t, registry, "token-exchange-denied", model.BusinessEvent{
+		Subject: &subject, Actor: model.BusinessEventActor{Kind: "gateway", ID: &caller},
+		GatewayClientID: id.NewClientID(caller),
+		Data:            map[string]any{"reason_code": "authorization_failed"},
+	})
+	ctx := security.WithSecurityContext(context.Background(), security.NewSecurityContext(
+		security.TransportCapture{}, subject.String(), "different-peer-from-request-context",
+	))
+	wire, _ := validatedContextWire(t, registry, ctx, facts)
+	actor := wire["actor"].(map[string]any)
+	require.Equal(t, "gateway", actor["kind"])
+	require.Equal(t, caller, actor["id"], "request enrichment must not overwrite a verified domain caller")
+	require.Nil(t, actor["on_behalf_of"], "an authenticated assertion alone is not delegated")
+	require.Equal(t, caller, wire["gateway_client_id"])
+}
+
 func TestContextFactsPreservesPolicyEstablishedSubjectWithoutRecheckingJWT(t *testing.T) {
 	registry := contextTestRegistry(t)
 	accepted := id.NewPrincipal("policy-bound-chat-user")
@@ -149,7 +169,7 @@ func TestContextFactsPreservesPolicyEstablishedSubjectWithoutRecheckingJWT(t *te
 	))
 
 	granted := contextTestEvent(t, registry, "impersonation-granted", model.BusinessEvent{
-		Subject: &accepted, Actor: model.BusinessEventActor{Kind: "agent", ID: &caller, OnBehalfOf: &accepted},
+		Subject: &accepted, Actor: model.BusinessEventActor{Kind: "gateway", ID: &caller, OnBehalfOf: &accepted},
 	})
 	wire, encoded := validatedContextWire(t, registry, ctx, granted)
 	actor := wire["actor"].(map[string]any)
@@ -159,7 +179,7 @@ func TestContextFactsPreservesPolicyEstablishedSubjectWithoutRecheckingJWT(t *te
 	require.NotContains(t, encoded, "unverified-claim-other-user")
 
 	denied := contextTestEvent(t, registry, "impersonation-denied", model.BusinessEvent{
-		Actor: model.BusinessEventActor{Kind: "agent", ID: &caller},
+		Actor: model.BusinessEventActor{Kind: "gateway", ID: &caller},
 		Data:  map[string]any{"reason_code": "delegation_missing"},
 	})
 	wire, _ = validatedContextWire(t, registry, ctx, denied)

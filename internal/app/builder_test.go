@@ -1606,7 +1606,8 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 
 	newConfig := func(mode string) *ports.Config {
 		cfg := &ports.Config{
-			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			BusinessEvents: ports.DefaultBusinessEventsConfig(),
+			Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 			Server: ports.ServerConfig{
 				EndUser: ports.ServerInstanceConfig{
 					Port: 8000, Bind: "::1", PublicURL: "https://broker.example.com",

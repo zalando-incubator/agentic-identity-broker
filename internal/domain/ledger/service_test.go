@@ -12,6 +12,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type ledgerServiceEvents struct {
@@ -262,6 +265,43 @@ func TestServiceRecordReturnsOnlyAfterOwnerCommits(t *testing.T) {
 	}
 }
 
+func TestServiceRecordSpansExcludePoolCheckoutAndCommit(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		_ = provider.Shutdown(context.Background())
+	})
+
+	count := func(name string) int {
+		n := 0
+		for _, span := range recorder.Ended() {
+			if span.Name() == name {
+				n++
+			}
+		}
+		return n
+	}
+	service := NewService(ledgerServiceRegistry(t), ledgerServiceEvents{
+		appendFn: func(context.Context, *model.BusinessEvent, bool) error { return nil },
+	}, nil, ledgerServiceTransactions{
+		beginFn: func(ctx context.Context) (context.Context, error) {
+			require.Equal(t, 1, count("ledger.record.validate"), "preflight validation must complete before checkout")
+			require.Zero(t, count("ledger.record"), "checkout must not count toward append")
+			return ctx, nil
+		},
+		commitFn: func(context.Context) error {
+			require.Equal(t, 1, count("ledger.record"), "append must finish before physical commit")
+			require.Zero(t, count("ledger.transaction"), "transaction must include physical commit")
+			return nil
+		},
+	}, false)
+	require.NoError(t, service.Record(context.Background(), validLedgerEvent()))
+	require.Equal(t, 1, count("ledger.transaction"))
+}
+
 func TestServiceRecordCommitErrorCannotReportSuccess(t *testing.T) {
 	registry := ledgerServiceRegistry(t)
 	event := validLedgerEvent()
@@ -368,6 +408,10 @@ func TestServiceRecordIndependentOutcomesUseFreshOwnerAfterRollback(t *testing.T
 			event.AgentID, event.GrantID = id.AgentID{}, id.GrantID{}
 			event.Outcome, event.ReasonUser, event.ReasonAdmin = tc.outcome, tc.reason, tc.reason
 			event.Data = map[string]any{"reason_code": "authorization_failed"}
+			if tc.typeName == "token-exchange-denied" {
+				gateway := "verified-gateway-client"
+				event.Actor = model.BusinessEventActor{Kind: "gateway", ID: &gateway}
+			}
 			require.NoError(t, NewService(registry, nil, nil, nil, false).Validate(event))
 
 			root := context.Background()

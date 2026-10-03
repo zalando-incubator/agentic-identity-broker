@@ -22,7 +22,7 @@ func TestApprovalExpirationRepositoryStorageErrorMapping(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := NewToolApprovalRepository(tc.adapter)
 			expiry := time.Now().UTC().Add(-time.Hour)
-			_, err := repo.ListUnrecordedExpired(context.Background(), time.Now().UTC(), 10)
+			_, err := repo.ListUnrecordedExpiredForPrincipal(context.Background(), "approval-owner", time.Now().UTC(), 10)
 			assertSafeBusinessEventStorageError(t, err, tc.kind)
 			_, err = repo.RecordExpiration(context.Background(), id.NewApprovalID(), expiry)
 			assertSafeBusinessEventStorageError(t, err, tc.kind)

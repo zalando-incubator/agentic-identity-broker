@@ -91,6 +91,8 @@ var _ = Describe("Business Event Ledger PostgreSQL", Label("business-event-ledge
 				_, err = child.Await(ctx, "committed")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(responses).NotTo(Receive())
+				Expect(child.CloseInput()).To(Succeed())
+				Consistently(responses, 100*time.Millisecond, 5*time.Millisecond).ShouldNot(Receive(), "stdin EOF must not release a held post-commit response before the process is killed")
 				originalID := observed[0].ID
 				Expect(child.Kill()).To(Succeed())
 				var result requestResult

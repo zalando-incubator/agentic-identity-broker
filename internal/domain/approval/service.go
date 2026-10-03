@@ -458,9 +458,6 @@ func (s *Service) denyApproval(ctx context.Context, approvalID id.ApprovalID, ac
 // Enforces rate limiting per (principal, agent) pair.
 // Computes arguments hash for deduplication, constructs approval_url, sets TTL.
 func (s *Service) CreatePendingApproval(ctx context.Context, req CreateApprovalRequest) (*CreateApprovalResult, error) {
-	if err := s.recognizeApprovalExpirations(ctx); err != nil {
-		return nil, err
-	}
 	// Waiting creators must not occupy database transaction connections.
 	s.creationMu.Lock()
 	defer s.creationMu.Unlock()
@@ -652,9 +649,6 @@ type SyncState struct {
 func (s *Service) GetSyncState(ctx context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) (*SyncState, error) {
 	ctx, span := otel.Tracer("approval").Start(ctx, "approval.sync")
 	defer span.End()
-	if err := s.recognizeApprovalExpirations(ctx); err != nil {
-		return nil, err
-	}
 
 	version, err := s.syncState.GetVersion(ctx)
 	if err != nil {
@@ -912,7 +906,7 @@ func (s *Service) ListPendingApprovals(ctx context.Context, principal id.Princip
 		),
 	)
 	defer span.End()
-	if err := s.recognizeApprovalExpirations(ctx); err != nil {
+	if err := s.recognizePrincipalApprovalExpirations(ctx, principal); err != nil {
 		return nil, err
 	}
 
@@ -943,9 +937,6 @@ func (s *Service) ListPermanentApprovals(ctx context.Context, principal id.Princ
 		),
 	)
 	defer span.End()
-	if err := s.recognizeApprovalExpirations(ctx); err != nil {
-		return nil, err
-	}
 
 	approvals, err := s.queries.ListPermanentByPrincipal(ctx, principal)
 	if err != nil {
@@ -1050,6 +1041,9 @@ func (s *Service) recordApproval(ctx context.Context, eventType string, approval
 			facts.Actor.OnBehalfOf = facts.Subject
 		}
 	}
+	if eventType == "approval-consumed" {
+		facts.Actor = model.BusinessEventActor{Kind: "gateway", OnBehalfOf: facts.Subject}
+	}
 	if eventType == "approval-expired" {
 		systemID := "broker-lifecycle"
 		facts.Actor = model.BusinessEventActor{Kind: "system", ID: &systemID}
@@ -1130,22 +1124,18 @@ func (s *Service) recognizeApprovalByID(ctx context.Context, approvalID id.Appro
 	return s.recognizeApprovalExpiration(ctx, approval)
 }
 
-func (s *Service) recognizeApprovalExpirations(ctx context.Context) error {
+func (s *Service) recognizePrincipalApprovalExpirations(ctx context.Context, principal id.Principal) error {
 	if s.expirations == nil {
 		return errors.New("approval expiration repository is required")
 	}
-	for {
-		candidates, err := s.expirations.ListUnrecordedExpired(ctx, time.Now().UTC(), 200)
-		if err != nil {
+	candidates, err := s.expirations.ListUnrecordedExpiredForPrincipal(ctx, principal, time.Now().UTC(), 200)
+	if err != nil {
+		return err
+	}
+	for _, approval := range candidates {
+		if err := s.recognizeApprovalExpiration(ctx, approval); err != nil {
 			return err
 		}
-		if len(candidates) == 0 {
-			return nil
-		}
-		for _, approval := range candidates {
-			if err := s.recognizeApprovalExpiration(ctx, approval); err != nil {
-				return err
-			}
-		}
 	}
+	return nil
 }

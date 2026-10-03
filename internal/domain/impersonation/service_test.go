@@ -764,7 +764,7 @@ func TestImpersonate_VerificationReuseRespectsRuleTrust(t *testing.T) {
 					set = otherSet
 				}
 				return &configurableJWKSProvider{set: set}, nil
-			}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+			}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com", ledgerfixture.NewRecorder())
 			require.NoError(t, err)
 			outcome, err := svc.Impersonate(context.Background(), req, testTarget())
 			if tc.wantMinted {

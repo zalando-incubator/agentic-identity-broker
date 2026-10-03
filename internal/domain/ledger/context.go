@@ -36,7 +36,7 @@ func ContextFacts(ctx context.Context, facts model.BusinessEvent) model.Business
 		facts.Actor.ID = nil
 	}
 	resolved, authenticated := security.FromContext(ctx)
-	if authenticated {
+	if authenticated && facts.Actor.ID == nil {
 		switch facts.Actor.Kind {
 		case "agent", "gateway":
 			if resolved.CallingPeer != "" {
@@ -47,7 +47,7 @@ func ContextFacts(ctx context.Context, facts model.BusinessEvent) model.Business
 				facts.Actor.ID = &resolved.Actor
 			}
 		}
-	} else if facts.Actor.Kind == "user" || facts.Actor.Kind == "admin" {
+	} else if !authenticated && facts.Actor.ID == nil && (facts.Actor.Kind == "user" || facts.Actor.Kind == "admin") {
 		if actor, ok := principal.FromContext(ctx); ok && actor != "" {
 			facts.Actor.ID = &actor
 		}

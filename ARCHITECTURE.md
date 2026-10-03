@@ -703,7 +703,7 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 
 - **OAuth2SessionService**: Transparently encrypts tokens on CreateSession, decrypts on retrieval
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
-- **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Provider metadata is loaded before the session lock, then automatic and explicit refresh re-read the latest session under that lock. PostgreSQL holds a row lock through the provider exchange and commits rotated encrypted tokens before releasing it; database acquisition, reads, and writes have separate configured timeouts. The in-memory adapter serializes refresh, upsert, and deletion per session while holding its map mutex only for lookup and commit. Replicas therefore use the latest refresh token without racing on a stale one.
+- **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Provider metadata loads before per-session coordination. Refresh and encryption run without ledger lifecycle, subject, or memory visibility gates. A short subject-gated transaction conditionally updates the exact pre-exchange snapshot and appends `session-refreshed`. A logout or reauthorization that changes that snapshot causes a conflict, not token resurrection or a lost update. PostgreSQL uses connection-scoped advisory coordination and reuses that connection for the short transaction. It never acquires refresh coordination from a lifecycle-locked business read. Memory retains per-session coordination while unrelated sessions and admin reads remain available.
 - **Refresh cancellation and audit**: Automatic refresh has an operation deadline covering the configured upstream HTTP timeout and storage work. Caller cancellation stops that caller's wait without aborting a shared refresh that may already have rotated the provider token. Success audit events are emitted only after session persistence succeeds.
 - **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of confidential provider `client_secret` values via the `Secret` value object. Public services have no client secret. No other layer touches `EncryptionPort` for provider secrets.
 - Protected-resource resolution leaves confidential provider secrets encrypted and public-provider secrets absent. Token exchange uses only the provider ID and display name; a refresh retrieves credentials separately through `ThirdpartyOAuth2ProviderService.Get()`. Successful secret decryption is logged at Debug.
@@ -922,6 +922,7 @@ Existing business services determine whether each catalogued fact occurred.
 Shared immutable values belong in `internal/domain/model/`, and repository contracts belong in `internal/ports/storage.go`.
 The builder owns dependency composition and worker shutdown.
 Handlers parse requests and format responses. They do not append events directly.
+Pre-authentication token input errors preserve their existing HTTP responses without durable events; authenticated security decisions remain fail closed.
 
 **Atomicity**:
 
@@ -944,6 +945,7 @@ The event subject identifies the affected principal.
 Actor Context identifies the initiating caller and an established represented principal, when applicable.
 On delegated exchange, `SecurityContext.Actor` currently identifies the affected principal, not the initiating caller.
 The ledger therefore derives its actor separately from verified caller results.
+Client-assertion exchange and impersonation use the same `gateway` actor kind and verified caller ID. Approval consumption authenticates only the represented subject, so its gateway caller ID is null, never copied from the user or approval creator.
 Unavailable identities are null, not the anonymous sentinel or an invented agent-as-user identity.
 Trace and span values must belong to the authoritative request context.
 
@@ -957,6 +959,7 @@ Exact-subject erasure takes an exclusive subject barrier and removes matching ev
 Erasure leaves business expiry-recognition markers intact and creates neither identity tombstones nor replacement subject events.
 Retention and policy changes take the exclusive lifecycle barrier.
 Memory applies equivalent lifecycle guarantees with a coarser barrier.
+Gateway sync polling does not scan globally for unrecorded approval expiry. Lazy discovery is bounded and principal-scoped; mutation paths recognize the objects they affect.
 
 **Retention and operations**: Retention defaults to 90 days and accepts only positive durations, normalized upward to microseconds.
 The migration owner provisions the current window and seven future days.
@@ -976,6 +979,7 @@ A builder-owned worker reloads each retained event under lifecycle and subject b
 It exports through a separate, non-global, synchronous OpenTelemetry pipeline with the existing destination and Resource.
 The worker acknowledges only successful export and acknowledgement commit.
 Retries preserve the event ID and can produce duplicates.
+Failed or cancelled exports commit a 30-second backoff before releasing deletion barriers. PostgreSQL reserves one second beyond the export budget for this cleanup, avoiding retries on every worker scan after an exporter deadline.
 No event payload survives the deletion barrier in an SDK queue.
 Erasure cannot recall telemetry already delivered to external systems.
 Existing slog names, levels, messages, fields, and its batch pipeline remain unchanged.
@@ -988,6 +992,7 @@ Shutdown drains HTTP, stops the ledger workers, closes their provider, completes
 **Performance acceptance**: Added transaction p99 and attributable recording-duration p99 must each be at most 5 ms.
 Acceptance requires paired baseline/enabled measurements under the reference profile and an operator-approved deployment profile.
 The current absence of an approved deployment profile remains an explicit release blocker, not a measured pass.
+Recording instrumentation separates preflight validation and append from checkout and physical commit. Controlled recording measurements disable only ledger copying and use the same sufficiently sized benchmark pool in both binaries. Historical Docker-VM measurements with pool contention, commit-inclusive spans, and delivery load are not proof of either a pass or a failure.
 
 **Canonical contracts**: [Data model](specs/048-business-event-ledger/data-model.md), [events](specs/048-business-event-ledger/contracts/events.md), [storage](specs/048-business-event-ledger/contracts/storage.md), and [configuration](specs/048-business-event-ledger/contracts/configuration.md).
 

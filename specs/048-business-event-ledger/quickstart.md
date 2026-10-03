@@ -1758,22 +1758,26 @@ The fixed acceptance target is added recording transaction p99 <=5 ms. No curren
    | Profile location | Not supplied |
    | Release acceptance | **Blocked (T095)** until an operator approves a profile and its required measurements pass |
 2. Also use a deterministic reference profile: 10,000 principals, 100 agents, 20 services, 1,000,000 preseeded safe ledger events distributed across 90 days, concurrency 32, and a workflow mix of 50% exchanges, 20% approval transitions, 10% grant updates, 10% session refreshes, and 10% admin mutations. This is a reproducible reference, not a claim about production load. Compare equivalent business datasets; the baseline has no ledger table.
-3. Build the pre-feature revision and feature revision in separate worktrees without modifying the active checkout. Warm each for two minutes, then run at least 100,000 measured actions per profile, alternating baseline/enabled order over three repetitions. Use identical collector and backend settings. No production ledger-disable switch is added for benchmarking.
-4. Capture full transaction latency samples for each version plus feature recording-span duration (event validation, serialization, append, delivery-reference insert and attributable transaction work). Report p50/p95/p99, allocation data, throughput and error/rollback counts. Report both the difference of baseline/enabled transaction p99 and the recording-duration p99; do not call the former a paired per-request percentile.
+3. Build baseline main `e6902cf296e617ff02e315a069d5dfb73f44bb51` and the rebased feature separately. For the controlled reference only, apply the same test-only 40-open/40-idle pool overlay to both binaries and open all backends before warmup; production remains 25/5. Disable only ledger copying during recording measurement, retaining identical ordinary traces/logs/metrics. Warm each for two minutes, run at least 100,000 measured actions, and alternate baseline/feature, feature/baseline, baseline/feature. Measure delivery load in a separately labelled diagnostic. No production recording-disable switch is added.
+4. Capture HTTP action and full owning-transaction latency separately. Measure preflight validation with `ledger.record.validate` and append/final validation/serialization/SQL with `ledger.record`; sum these durations per action before calculating recording p99. The copy-disabled reference excludes the delivery-reference insert; copy-enabled runs include it. Exclude checkout and physical commit from recording time. Retain raw stage and transaction samples, pool wait counts/duration, p50/p95/p99, allocations, throughput, and error/rollback counts. Differences of independent transaction p99s are descriptive comparisons, not paired per-request percentiles; report baseline variability rather than attributing all tail differences to recording.
 5. Assert that the feature run retained exactly one event of the expected type for every completed catalogued action and contains no credential canary; before implementation this assertion fails, so the scenario is semantically red rather than trivially within budget.
-6. Fail acceptance if added transaction p99 or measured recording p99 exceeds 5 ms, or any atomicity/credential requirement is weakened. Repeat under the deployment profile; the synthetic reference alone is insufficient for the 'current load' claim.
+6. Keep the 5 ms target unchanged. The controlled laptop/Docker reference is diagnostic and reports **not proven**, never release acceptance from a difference of noisy independent percentiles. Actual acceptance requires the operations-owner-approved workload on its stated environment and unmodified production binaries, without pool contention or asymmetric delivery load confounding the attributable recording gate. Completeness, atomicity and credential checks remain mandatory in every run.
 
-Run the performance-labelled acceptance separately through the existing recipe, using the label-filter and build-tag parameters T016 adds:
+Run the controlled recording reference separately through the existing recipe:
 
 ```bash
-just test-e2e-performance 'performance && business-event-ledger' integration
+just test-e2e-performance 'performance && business-event-ledger && recording-reference' integration
 ```
 
 The benchmark harness/report is an implementation deliverable, not generated measurement evidence in this plan.
 
+Use `delivery-diagnostic` in place of `recording-reference` for the separate delivery-load diagnostic. Use `release-acceptance` for the approved deployment workload; it fails before measuring if the operator-approved profile is missing. See `performance-results.md` for raw-report locations and observed results.
+
+Each benchmark invocation uses run-scoped database templates and a unique subdirectory under `AIB_LEDGER_PERFORMANCE_RESULTS_DIR`. Multiple selected scenarios cannot reuse a previous invocation's seeded data or overwrite its reports.
+
 ### Deployment-profile input
 
-Set `AIB_LEDGER_PERFORMANCE_PROFILE` to the operations-owner-approved JSON file before the performance recipe. US4-AS4 validates the profile and environment before building binaries or creating benchmark databases. It runs deployment measurements before starting the reference container, then runs the unchanged fixed reference within the same acceptance scenario. Missing approval or unsupported conditions fail; they never fall back to the reference.
+Set `AIB_LEDGER_PERFORMANCE_PROFILE` to the operations-owner-approved JSON file before the `release-acceptance` recipe. US4-AS4 validates the profile and environment before building unmodified production binaries or creating benchmark databases. Missing approval or unsupported conditions fail; they never fall back to a controlled reference result. The reference and delivery diagnostics are separate scenarios and do not satisfy this approval gate.
 
 Every field below is required. Unknown fields, omitted booleans, and null values are rejected.
 
@@ -1800,7 +1804,7 @@ Also provide these environment inputs:
 - For `external-grpc`, `AIB_LEDGER_PERFORMANCE_OTLP_ENDPOINT` must match the approved receiver. TLS profiles are rejected explicitly rather than measured through a substituted plaintext broker connection.
 - Optionally, `AIB_LEDGER_PERFORMANCE_RESULTS_DIR` selects the directory for complete raw distributions and profile records.
 
-Both workloads retain two-minute warmups, three alternating baseline/feature repetitions, per-action facts and credential checks, and both 5 ms limits. Threshold violations are retained across repetitions and reject final acceptance. Approval metadata and helper smoke tests do not substitute for actual deployment measurements.
+All workloads retain two-minute warmups, three alternating baseline/feature repetitions, per-action facts and credential checks, and the unchanged 5 ms target. Approved deployment threshold violations are retained across repetitions and reject final acceptance. The controlled reference reports numeric comparisons and baseline variability without claiming deployment acceptance. Approval metadata and helper smoke tests do not substitute for actual deployment measurements.
 
 Reports distinguish the configured copy switch from effective copying, which also requires global and log telemetry and exists only in the feature binary. For example, `logs=false` with `ledger_copy=true` means effective copying is false, not a copying-enabled measurement.
 
@@ -1903,3 +1907,44 @@ All diagnostic transactions preserved recording and deletion safety. The cold/wa
 Temporary diagnostic sources were removed. Sanitized raw evidence remains under ignored `test-results/`.
 
 Release acceptance remains blocked by the performance limits, the missing approved deployment profile, and the observed final full-suite ExtProc EOF failure.
+
+## Review corrections (2026-10-03)
+
+The branch was rebased onto main `e6902cf296e617ff02e315a069d5dfb73f44bb51`. The duplicate prerequisite refactor and legacy-capture commits were dropped. The rebase preserves main's refresh coordination, verification caches, signing-key caches, and CIMD support. Ledger migration 036 follows main's CIMD migration 035.
+
+The PostgreSQL export-deadline regression failed before the fix. Its pending reference stayed immediately due instead of receiving the 30-second backoff. After the fix, all `TestBusinessEventDelivery_` tests passed against PostgreSQL. The deadline case also proved barrier release for erasure and maintenance.
+
+The token-input, approval polling, actor, and timing regressions failed before their respective fixes. The integrated package tests passed for the modified domain, HTTP, memory, schema, application-builder, and telemetry paths. The PostgreSQL session pool-one and ledger tests passed. `just check` completed with zero linter issues.
+
+An actual broker executable used an isolated memory configuration. `/health` returned 200. Invalid content type, an empty token form, and a missing grant type each returned the original 400 response. The broker shut down with exit code 0. Unit tests also covered an unavailable ledger at the input boundary.
+
+The first tagged ledger run passed 19 of 20 scenarios. The monitoring failure concerned two refresh log lines that main's #124 removed. Those obsolete expectations were removed, not restored in production. The second run passed monitoring but exposed a race in the crash harness: stdin EOF released a held post-commit response. A deterministic EOF regression failed before the harness correction. No durability or response-boundary assertion was weakened.
+
+The actor rules are in `contracts/events.md`. Published examples now distinguish gateways, represented principals, and lifecycle actors. Historical performance values remain diagnostic evidence. They do not prove either outcome of the 5 ms gate.
+
+### Final functional verification
+
+The refresh review found a global memory gate around provider I/O. A real-memory service regression reproduced the blocked unrelated reads. The corrected flow prepares tokens under per-session coordination, then conditionally writes tokens and the event in a short transaction. Real-memory isolation, atomic rollback, logout/reauthorization, and caller-cancellation tests passed. PostgreSQL refresh isolation, atomicity, and the one-connection-pool regression also passed.
+
+The deterministic child EOF regression passed after the crash-harness correction. The final tagged ledger executable then passed all 20 selected functional scenarios. Shared journeys covered memory and PostgreSQL. The other 646 scenarios were excluded by the label filter, not assessed in that run.
+
+```bash
+go test -c -tags=integration -o bin/ledger-review-20261003.test ./tests/e2e
+# From tests/e2e:
+../../bin/ledger-review-20261003.test \
+  -test.run='TestE2E|TestLedgerDeploymentProfileHelpers' -test.timeout=0 \
+  -ginkgo.fail-on-empty=true \
+  -ginkgo.label-filter='business-event-ledger && !performance'
+```
+
+The scoped PostgreSQL ledger and expiry suite passed. Helm lint and template rendering passed. These results do not establish full-repository release acceptance.
+
+The final structural quality delta at `0ed87362e+dirty` reported 28 major heuristic gates. These included test clones, recent edits, collector parsing, and the larger refresh-coordination method. No suppression was added. Review corrected the material isolation and timing defects. The structural tool did not report a clean gate.
+
+### Corrected recording measurement
+
+The isolated reference completed all three alternating pairs with 100,000 measured actions per version. Both pre-warmed 40/40 benchmark pools reported zero waits. Ledger copying stayed disabled. The feature verified every measured fact, approval preparation, warmup fact, and credential canary check.
+
+Append p99 was 1.546375, 3.745875, and 3.918250 ms. Validation+append p99 was 1.581375, 3.851458, and 4.017625 ms. Baseline action p99 varied by 7.853042 ms. The full attributable 5 ms gate remains **not proven**, not failed or passed. The [performance report](performance-results.md#corrected-recording-run-2026-10-03) records the six raw reports and the separate timing boundaries.
+
+The final `just check` completed with zero linter issues. No full-repository release pass is claimed. The approved deployment profile and the unnamed findings from the unavailable review document remain outside this verification.

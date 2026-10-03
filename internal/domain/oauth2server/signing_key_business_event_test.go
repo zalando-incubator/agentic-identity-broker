@@ -129,14 +129,14 @@ func TestSigningLedgerFailedSelectionRestoresKeys(t *testing.T) {
 
 func TestSigningLedgerCompetingBootstrapProducesOneSelection(t *testing.T) {
 	svc, repo, store := newLedgerSigningService(t)
-	second := *svc
+	second := NewSigningKeyService(repo, repo, svc.encryption, newNoopBranchKeyManager(), svc.logger, svc.ledger)
 	type outcome struct {
 		created bool
 		err     error
 	}
 	results := make(chan outcome, 2)
 	start := make(chan struct{})
-	for _, service := range []*SigningKeyService{svc, &second} {
+	for _, service := range []*SigningKeyService{svc, second} {
 		go func() {
 			<-start
 			_, created, err := service.EnsureInitialKey(context.Background(), "ES256")
