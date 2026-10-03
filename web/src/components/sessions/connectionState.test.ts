@@ -14,7 +14,16 @@ describe('connection state precedence', () => {
     expect(deriveConnectionState({ context: 'requirement', connectionStatus: 'not_connected', now })).toMatchObject({ status: 'no-connection', action: 'connect' });
     expect(deriveConnectionState({ context: 'sessions', now })).toMatchObject({ status: 'error', action: 'retry' });
     expect(deriveConnectionState({ context: 'requirement', connectionStatus: 'connected', now })).toMatchObject({ status: 'connected' });
-    expect(deriveConnectionState({ context: 'requirement', connectionStatus: 'not_connected', session, now })).toMatchObject({ status: 'no-connection' });
+    expect(deriveConnectionState({ context: 'requirement', connectionStatus: 'not_connected', session, now })).toMatchObject({ status: 'connected', action: 'refresh' });
+  });
+
+  it.each([
+    { fields: { is_expired: true }, status: 'expired', action: 'reconnect' },
+    { fields: { access_token_expired: true }, status: 'needs-reauthentication', action: 'refresh' },
+  ])('uses stored token state $status despite an unconnected requirement', ({ fields, status, action }) => {
+    expect(deriveConnectionState({
+      context: 'requirement', connectionStatus: 'not_connected', session: { ...session, ...fields }, now,
+    })).toMatchObject({ status, action, canDisconnect: true });
   });
 
   it.each([409, 502])('keeps authoritative refresh rejection %s until a successful refresh, despite later session reads', (status) => {

@@ -130,6 +130,27 @@ describe('ApprovalReviewPage', () => {
     expect(screen.getByRole('heading', { name: status === 'expired' ? 'Approval Expired' : status === 'approved' ? 'Approved' : 'Denied' })).toBeVisible();
   });
 
+  it.each(['approved', 'denied'] as const)('bounds unbroken names in the %s outcome and expands escaped text by keyboard', async (status) => {
+    const user = userEvent.setup();
+    const toolName = `${'t'.repeat(320)}<img src=x onerror=alert(1)>`;
+    const agentName = `${'a'.repeat(320)}<script>alert(2)</script>`;
+    render(<ApprovalReviewPage {...props({ ...approval, status, tool_name: toolName, agent_display_name: agentName })} />);
+    const outcome = screen.getByRole('status');
+    const expand = within(outcome).getByRole('button', { name: 'Show more' });
+    const context = document.getElementById(expand.getAttribute('aria-controls')!);
+    expect(context).toHaveClass('line-clamp-2');
+    expect(context).toHaveTextContent(`${toolName} for ${agentName}`);
+    expect(outcome.querySelector('img, script')).toBeNull();
+    await user.tab();
+    expect(expand).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(within(outcome).getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true');
+    expect(context).not.toHaveClass('line-clamp-2');
+    await user.keyboard(' ');
+    expect(expand).toHaveAttribute('aria-expanded', 'false');
+    expect(context).toHaveClass('line-clamp-2');
+  });
+
   it.each(['approved', 'denied'] as const)('keeps the conflict notice alongside the authoritative %s outcome without offering actions', async (status) => {
     const user = userEvent.setup();
     const callbacks = props();
@@ -139,7 +160,7 @@ describe('ApprovalReviewPage', () => {
     expect(within(screen.getByRole('alert')).getByRole('heading', { name: 'Already Resolved' })).toBeVisible();
     expect(within(screen.getByRole('status')).getByRole('heading', { name: status === 'approved' ? 'Approved' : 'Denied' })).toBeVisible();
     expect(screen.getByTestId('approval-outcome')).toHaveTextContent(status === 'approved' ? 'Approved' : 'Denied');
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /approve|deny/i })).not.toBeInTheDocument();
   });
 
   it('keeps network failure non-successful and leaves a deliberate decision available', async () => {

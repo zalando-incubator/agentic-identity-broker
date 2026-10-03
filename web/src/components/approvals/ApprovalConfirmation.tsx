@@ -1,5 +1,7 @@
 import { Card, CardContent } from '@design-system/components/data-display/Card';
+import { TruncatedText } from '@design-system/components/data-display/TruncatedText';
 import { Badge } from '@design-system/components/primitives/Badge';
+import { commonCopy } from '@copy';
 import { approvalCopy } from '@copy/approvals';
 import type { ApprovalPersistence } from '../../types/approval';
 
@@ -20,7 +22,7 @@ export function ApprovalConfirmation({ type, persistence, decidedAt, toolName, a
     <CardContent className="space-y-4 pt-6">
       <p className="text-sm text-muted-foreground">{approvalCopy.recorded}</p>
       <h2 className="font-display text-xl font-semibold">{outcome}</h2>
-      <p className="break-words text-sm">{approvalCopy.decisionContext(toolName, agentName)}</p>
+      <TruncatedText as="p" text={approvalCopy.decisionContext(toolName, agentName)} lines={2} expandLabel={commonCopy.showMore} collapseLabel={commonCopy.showLess} className="text-sm" />
       {persistence && <Badge variant="neutral">{approvalCopy.persistenceValue[persistence]}</Badge>}
       {decidedAt && <p className="text-xs text-muted-foreground" data-screenshot-dynamic>{approvalCopy.decidedAt(outcome, new Date(decidedAt).toLocaleString())}</p>}
       {approved && persistence === 'once' && <p className="text-sm">{consumed ? approvalCopy.consumed : approvalCopy.nextInvocation}</p>}

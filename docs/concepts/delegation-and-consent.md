@@ -109,6 +109,12 @@ Re-consent keeps previously granted access read-only. Changes to existing access
 The console detail shows Save changes only after an edit. Cancel restores the loaded selections.
 Appearance preferences never select a consent or tool decision. Settings has no approval-persistence default.
 
+A stored connection's token state takes precedence over an agent requirement's connection summary. No connection means that the required service has no stored session.
+
+Pending approval controls become unavailable when the request expires, including an open inline confirmation. Expiry does not submit a decision or wait for the next refresh.
+
+Confirmation views limit long tool and agent names to two lines. Show more reveals the escaped text and works by keyboard.
+
 
 ## Creating a delegation
 

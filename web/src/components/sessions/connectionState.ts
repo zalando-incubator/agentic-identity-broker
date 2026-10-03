@@ -32,7 +32,7 @@ export function deriveConnectionState(input: ConnectionStateInput): ConnectionSt
     status: 'error', action: 'retry', canDisconnect: Boolean(session),
     stale: readFailed, refetch: false, rejectedRefresh: false, refreshSupported,
   };
-  if (context === 'requirement' && connectionStatus === 'not_connected' && !readFailed) {
+  if (!session && context === 'requirement' && connectionStatus === 'not_connected' && !readFailed) {
     return { ...state, status: 'no-connection', action: 'connect', canDisconnect: false };
   }
   if (!session) {

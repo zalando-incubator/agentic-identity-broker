@@ -79,6 +79,25 @@ describe('agent grant management', () => {
     await screen.findByText('Agent list');
     expect(consentApi.deleteGrant).toHaveBeenCalledWith('agent');
   });
+  it.each([
+    { isExpired: true, accessExpired: true, label: 'Expired' },
+    { isExpired: false, accessExpired: true, label: 'Needs re-authentication' },
+    { isExpired: false, accessExpired: false, label: 'Connected' },
+  ])('shows the stored connection as $label when the agent requirement says not connected', async ({ isExpired, accessExpired, label }) => {
+    vi.mocked(consentApi.getAgentDetail).mockResolvedValue({ ...detail, services: [{ ...detail.services[0]!, connectionStatus: 'not_connected' }] });
+    vi.mocked(sessionsApi.listSessions).mockResolvedValue([{
+      id: 'mail-session', service_id: 'mail', service_display_name: 'Mail', token_type: 'Bearer', scope: ['read'],
+      initiated_at: '2026-09-01T00:00:00Z', is_expired: isExpired, access_token_expired: accessExpired,
+      has_refresh_token: true, dependent_agent_count: 1, is_encrypted: true,
+    }]);
+    renderAgentPage(<AgentConsolePage />);
+    await userEvent.click(await screen.findByRole('tab', { name: 'Connections' }));
+    const panel = screen.getByRole('tabpanel', { name: 'Connections' });
+    expect(await within(panel).findByText(label)).toBeVisible();
+    expect(within(panel).queryByText('No connection')).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Connect', exact: true })).not.toBeInTheDocument();
+    expect(within(panel).getByRole('link', { name: 'Manage connection' })).toHaveAttribute('href', '/sessions');
+  });
   it('posts a saved draft from the Connections tab instead of leaking it in a URL', async () => {
     vi.mocked(consentApi.getAgentDetail).mockResolvedValue({ ...detail, services: [{ ...detail.services[0]!, connectionStatus: 'not_connected' }] });
     const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {

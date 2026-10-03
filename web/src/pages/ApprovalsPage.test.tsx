@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { QueryClient } from '@tanstack/react-query';
 import { approvalApi } from '@services/api/approvals';
@@ -25,7 +26,7 @@ beforeEach(() => {
   vi.spyOn(approvalApi, 'listPermanentApprovals').mockResolvedValue([]);
   vi.spyOn(approvalApi, 'previewApprovalScope').mockResolvedValue({ tool_pattern: 'read_document', params_pattern: { path: '/docs/a' }, preview: 'read_document(path=/docs/a)' });
 });
-afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); client.clear(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 it('orders pending before standing allow and deny, with named non-accent row decisions', async () => {
   render(<ApprovalsPage />, { wrapper: Wrapper });
@@ -74,6 +75,40 @@ it('does not deny on opening review and refreshes only after the confirmed serve
   await screen.findByText('No pending approvals');
 });
 
+it.each([
+  ['Approve', 'Confirm approve'],
+  ['Deny', 'Deny this request'],
+] as const)('expires a pending row with an open %s confirmation at its deadline without a refresh', async (action, confirmation) => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+  vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+  const expiresAt = Date.now() + 4_000;
+  vi.mocked(approvalApi.listPendingApprovals).mockResolvedValue([{ ...pending, expires_at: new Date(expiresAt).toISOString() }]);
+  const approve = vi.spyOn(approvalApi, 'approveApproval');
+  const deny = vi.spyOn(approvalApi, 'denyApproval');
+  render(<ApprovalsPage />, { wrapper: Wrapper });
+  // Commit the identity boundary, then deliver the pending query.
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  const row = screen.getByRole('row', { name: /read_document/ });
+  const approveButton = within(row).getByRole('button', { name: 'Approve', exact: true });
+  const denyButton = within(row).getByRole('button', { name: 'Deny', exact: true });
+  fireEvent.click(action === 'Approve' ? approveButton : denyButton);
+  const confirmButton = within(row).getByRole('button', { name: confirmation });
+  expect(confirmButton).toBeEnabled();
+
+  await act(async () => { await vi.advanceTimersByTimeAsync(expiresAt - Date.now() - 1); });
+  expect(confirmButton).toBeEnabled();
+  expect(within(row).queryByRole('status')).not.toBeInTheDocument();
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(within(row).getByRole('status')).toHaveTextContent('This request has expired. No decision can be submitted.');
+  expect(approveButton).toBeDisabled();
+  expect(denyButton).toBeDisabled();
+  expect(confirmButton).toBeDisabled();
+  expect(approve).not.toHaveBeenCalled();
+  expect(deny).not.toHaveBeenCalled();
+  expect(approvalApi.listPendingApprovals).toHaveBeenCalledTimes(1);
+});
+
 it('revokes a standing deny only after confirmation', async () => {
   vi.mocked(approvalApi.listPermanentApprovals).mockResolvedValue([{ ...pending, id: 'denied', status: 'denied', persistence: 'permanent' }]);
   vi.mocked(approvalApi.listPendingApprovals).mockResolvedValue([]);
@@ -86,6 +121,36 @@ it('revokes a standing deny only after confirmation', async () => {
   fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke decision' }));
   await waitFor(() => expect(revoke).toHaveBeenCalledWith('denied'));
   await screen.findByText('No standing deny decisions');
+});
+
+it('bounds unbroken tool and agent names in revoke confirmation and expands escaped text by keyboard', async () => {
+  const user = userEvent.setup();
+  const toolName = `${'t'.repeat(320)}<img src=x onerror=alert(1)>`;
+  const agentName = `${'a'.repeat(320)}<script>alert(2)</script>`;
+  vi.mocked(approvalApi.listPendingApprovals).mockResolvedValue([]);
+  vi.mocked(approvalApi.listPermanentApprovals).mockResolvedValue([{
+    ...pending, id: 'denied', status: 'denied', persistence: 'permanent',
+    tool_name: toolName, agent_display_name: agentName,
+  }]);
+  render(<ApprovalsPage />, { wrapper: Wrapper });
+  await user.click(await screen.findByRole('button', { name: 'Revoke', exact: true }));
+  const dialog = await screen.findByRole('dialog', { name: 'Revoke standing decision?' });
+  const expand = within(dialog).getByRole('button', { name: 'Show more' });
+  const context = document.getElementById(expand.getAttribute('aria-controls')!);
+  expect(context).toHaveClass('line-clamp-2');
+  expect(context).toHaveTextContent(`${toolName} for ${agentName}`);
+  expect(dialog.querySelector('img, script')).toBeNull();
+  expect(within(dialog).getByText('Future matching requests will need a new decision.')).toBeVisible();
+
+  for (let i = 0; i < 5 && document.activeElement !== expand; i++) await user.tab();
+  expect(expand).toHaveFocus();
+  await user.keyboard('{Enter}');
+  expect(within(dialog).getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true');
+  expect(context).not.toHaveClass('line-clamp-2');
+  expect(within(dialog).getByText('Future matching requests will need a new decision.')).toBeVisible();
+  await user.keyboard(' ');
+  expect(expand).toHaveAttribute('aria-expanded', 'false');
+  expect(context).toHaveClass('line-clamp-2');
 });
 
 it('announces arrivals and completed decisions without moving focus or adding a live region', async () => {

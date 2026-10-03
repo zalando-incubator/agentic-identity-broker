@@ -1033,3 +1033,49 @@ The final post-fix `just check` passed with 0 lint issues, `just test-e2e-fronte
 ### Local merge commit authorization
 
 The stakeholder subsequently requested completion of the active merge and commitment of all necessary changes. This authorizes a local merge commit and supersedes the earlier instruction to leave changes uncommitted. It does not authorize a push, PR publication, dependency upgrade, scanner bypass, or automatic acceptance of visual baselines. The merge must include the upstream callback transport and its frontend consumers together to keep the integration consistent.
+
+## Convergence fixes — 2026-10-03
+
+T211, T214, and T218 are complete. The requirements checklist still has 16 checked items and no unchecked items. Its markers did not change.
+Project setup inspection found the existing Git, Docker, ESLint, Prettier, and Helm exclusions sufficient for this work. The SPA is not an npm publication. No ignore file, dependency, runtime API, backend, or persistence change was needed.
+
+### Test-first evidence
+
+| Task | Command before implementation | Observed failure |
+| --- | --- | --- |
+| T211 | `npm --prefix web test -- --run src/components/sessions/connectionState.test.ts src/pages/AgentConsolePage.test.tsx` | Six failures: stored sessions incorrectly returned No connection instead of Connected, Expired, or Needs re-authentication; the corresponding console labels were absent. |
+| T214 | `npm --prefix web test -- --run src/pages/ApprovalsPage.test.tsx` | Two failures: open Approve and Deny confirmations did not update at the request deadline. Neither row exposed the expired status after clock advancement. |
+| T218 | `npm --prefix web test -- --run src/components/approvals/ApprovalReviewPage.test.tsx src/pages/ApprovalsPage.test.tsx -t 'bounds unbroken'` | Three failures: approved and denied outcomes and the revoke dialog had no accessible Show more control for long names. Other tests were command-filtered, not marked skipped in source. |
+
+The first T211 green attempt exposed an incorrect label in the new test: Manage connections instead of the existing Manage connection. The new assertion now uses the actual action label. No existing acceptance assertion was weakened.
+After integration, `just web-test web-lint web-bundle-check` passed: 720 tests in 72 files, no lint errors, a production build, and both decision-graph budget/import-isolation tests.
+
+### Production-browser smoke
+
+A throwaway Ginkgo harness used the existing production bootstrap, real stored sessions, real approval records, and Chromium. Both Light and Dark runs passed at 320 px.
+
+- An agent requiring providers with expired and refreshable stored sessions displayed Expired and Needs re-authentication, never No connection.
+- A real pending approval expired with its inline confirmation open. The row announced expiry and disabled the decision and confirmation without another pending-list request or a mutation.
+- A resolved approval and a standing-decision revoke dialog displayed a long tool name and markup-containing agent name as text. Enter expanded the context. Neither the page nor the dialog overflowed, and the supplied script did not execute.
+- Cancelling the revoke dialog submitted no decision. The smoke did not grant, approve, or revoke access.
+
+The first smoke attempt rejected markup in the stored tool pattern before reaching the text checks. The corrected fixture used a valid long tool name and retained the adversarial agent name. This was a fixture error, not an application failure. The complete corrected smoke passed 2 of 2 selected cases; the temporary Go source was removed.
+
+### Quality and remaining release requirements
+
+The scoped quality delta reported two major findings: the expiry lifecycle increased InlineApprovalActions complexity from 14 to 16, and the bounded revoke context increased ApprovalsPage size from 57 to 63 lines. Both changes implement required behavior with existing components. No metric-driven abstraction or blanket acknowledgement was added. This is not a clean quality-delta claim.
+
+The remaining 27 tasks stay unchecked. Human-reviewed Linux component and route baselines and amd64 comparisons are still unavailable. README screenshot publication depends on those approvals. Manual keyboard, overlay-focus, and actual 200% browser-zoom evidence remains incomplete.
+Original historical red artifacts and source snapshots for T179, T180, T181, T186, and T187 remain unavailable. This session's new regression failures do not establish the earlier implementation's chronology.
+PR publication remains unauthorized, so endpoint-map attachments and acceptance references are not claimed published. Moderated SC-001 and SC-007 results remain unavailable.
+The recorded decision to keep gRPC unchanged still applies. T208 and T213 remain blocked by GO-2026-6443 / CVE-2026-84445. No scanner bypass, dependency change, baseline approval, or publication authorization was inferred. `just verify` was not rerun merely to confirm the known blocker.
+
+### Final regression results
+
+| Command | Observed result |
+| --- | --- |
+| `just check` | Passed formatting checks, vet, and lint with 0 issues. |
+| `just test-e2e-frontend` | All 77 journeys passed, with 0 failed, pending, or skipped cases. |
+| `just docs-build` | Generated the updated production documentation. Existing CSS-minifier and Node storage warnings did not stop the build. |
+
+These results follow removal of the temporary browser-smoke source. They do not replace the blocked reviewed-visual, historical, manual, PR, or final-security gates.

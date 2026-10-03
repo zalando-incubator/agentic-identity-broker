@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@design-system/components/primitives/Button';
 import { useApprovalActions } from '@hooks/useApprovalReview';
 import { accessCopy, commonCopy } from '@copy';
@@ -14,7 +14,14 @@ export function InlineApprovalActions({ approval }: { approval: ToolApprovalDeta
   const [persistence, setPersistence] = useState<ApprovalPersistence>('once');
   const [paramsPattern, setParamsPattern] = useState(approval.params_pattern);
   const [scopeValid, setScopeValid] = useState(true);
-  const expired = Date.parse(approval.expires_at) <= Date.now();
+  const [now, setNow] = useState(Date.now);
+  const expiresAt = Date.parse(approval.expires_at);
+  useEffect(() => {
+    if (approval.status !== 'pending' || expiresAt <= now || !Number.isFinite(expiresAt)) return;
+    const timer = window.setTimeout(() => setNow(Date.now()), Math.min(Math.max(0, expiresAt - Date.now()), 2_147_483_647));
+    return () => window.clearTimeout(timer);
+  }, [approval.status, expiresAt, now]);
+  const expired = expiresAt <= Math.max(now, Date.now());
   const resolved = Boolean(actions.approveResult || actions.denyResult) || approval.status !== 'pending' || actions.errorCode === 'EXPIRED' || actions.errorCode === 'ALREADY_ACTIONED';
   const disabled = actions.submitting || expired || resolved;
 
@@ -34,7 +41,7 @@ export function InlineApprovalActions({ approval }: { approval: ToolApprovalDeta
       <Button variant="secondary" size="sm" disabled={disabled} aria-expanded={decision === 'approve'} onClick={() => setDecision('approve')}>{copy.approve}</Button>
       <Button variant="outline" size="sm" disabled={disabled} aria-expanded={decision === 'deny'} onClick={() => setDecision('deny')}>{accessCopy.deny}</Button>
     </div>
-    {expired && <p className="text-sm text-muted-foreground">{copy.expired}</p>}
+    {expired && <p role="status" className="text-sm text-muted-foreground">{copy.expired}</p>}
     {(actions.approveResult || actions.denyResult) && <p className="text-sm">{actions.approveResult ? approvalCopy.approved : approvalCopy.denied}. {approvalCopy.readonly}</p>}
     {decision !== 'deny' && <>
       <PersistenceSelector value={persistence} onChange={changePersistence} disabled={disabled} />

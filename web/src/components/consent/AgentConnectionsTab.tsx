@@ -23,7 +23,7 @@ export function AgentConnectionsTab({ services, draft, currentUrl }: { services:
     <ul className="divide-y divide-border-soft">
       {services.map((service) => {
         const session = connections.sessions.find((entry) => entry.service_id === service.serviceId);
-        const state = service.connectionStatus === 'connected' && session ? connections.getState(service.serviceId)
+        const state = session ? connections.getState(service.serviceId)
           : deriveConnectionState({ context: 'requirement', connectionStatus: service.connectionStatus, session, readFailed: Boolean(connections.error) });
         return <li key={service.serviceId} data-testid="agent-connection-row" className="flex flex-wrap items-center gap-3 py-4">
           <Avatar label={service.serviceName} />

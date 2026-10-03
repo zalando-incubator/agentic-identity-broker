@@ -1,13 +1,14 @@
 import { useRef } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@design-system/components/primitives/Button';
+import { TruncatedText } from '@design-system/components/data-display/TruncatedText';
 import { PageHeader } from '@design-system/components/layout/PageHeader';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@design-system/components/overlays/Dialog';
 import { PendingApprovalsTable } from '@components/approvals/PendingApprovalsTable';
 import { StandingDecisionsTable } from '@components/approvals/StandingDecisionsTable';
 import { usePendingApprovals } from '@hooks/usePendingApprovals';
 import { useStandingApprovals } from '@hooks/useStandingApprovals';
-import { commonCopy, navigationCopy } from '@copy';
+import { approvalCopy, commonCopy, navigationCopy } from '@copy';
 import { approvalQueueCopy as copy } from '@copy/approvalQueue';
 import type { ToolApprovalDetail } from '../types/approval';
 
@@ -60,7 +61,13 @@ export default function ApprovalsPage() {
       }}>
         <DialogHeader>
           <DialogTitle>{copy.revokeTitle}</DialogTitle>
-          <DialogDescription>{copy.revokeDescription(standing.revoke.confirmation?.tool_name ?? '')}</DialogDescription>
+          <DialogDescription asChild>
+            <div className="min-w-0 space-y-2">
+              <p>{copy.revokeDescription}</p>
+              {standing.revoke.confirmation && <TruncatedText text={approvalCopy.decisionContext(standing.revoke.confirmation.tool_name, standing.revoke.confirmation.agent_display_name ?? standing.revoke.confirmation.agent_id)} lines={2} expandLabel={commonCopy.showMore} collapseLabel={commonCopy.showLess} />}
+              <p>{copy.revokeEffect}</p>
+            </div>
+          </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={standing.revoke.cancelRevoke}>{commonCopy.cancel}</Button>
