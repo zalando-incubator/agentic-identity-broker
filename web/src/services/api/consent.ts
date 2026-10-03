@@ -19,7 +19,7 @@ import type {
 export interface AgentDetailData {
   agent: AgentDetail;
   services: ServiceRequirement[];
-  cimd_metadata?: CIMDMetadata | null;
+  cimd_metadata?: CIMDMetadata;
 }
 
 /** Uncached transport; principal-scoped Query observers own read lifetimes. */

@@ -59,8 +59,8 @@ The Vite proxy adds it in development mode.
 ## Screenshots and Performance
 
 - Unless `E2E_CAPTURE_SCREENSHOTS=true`, `Page.TakeScreenshot()` does nothing.
-- The suite writes captured images to `coverage/screenshots/` relative to its working directory. The screenshot workflow copies maintained images to `tests/e2e/screenshots/`.
+- The suite writes candidates to `coverage/screenshots/`. The screenshot workflow uploads review artifacts; it never writes reviewed baselines automatically.
 - Normal verification does not capture screenshots.
-- `.github/workflows/screenshots.yml` captures tracked PNG files in serial mode.
+- `.github/workflows/screenshots.yml` captures candidates serially. Only human-approved images belong in `tests/e2e/screenshots/`.
 - Capture screenshots only for a maintained artifact or review aid.
 - Screenshot tests use the workflow's serial mode and stable, unique file names.

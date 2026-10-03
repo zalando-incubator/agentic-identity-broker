@@ -12,7 +12,7 @@ export interface ConsentDraftOptions {
   existingGrant?: UserGrant | null;
   context: 'decision' | 'console';
   sessionToken?: string;
-  consentState?: string | null;
+  restoredDraft?: ConsentDraftSnapshot;
 }
 export interface DraftService {
   id: string;
@@ -31,7 +31,7 @@ export interface DraftPermissionGroup {
   collapsed: boolean;
   services: DraftService[];
 }
-interface DraftSnapshot {
+export interface ConsentDraftSnapshot {
   selections: Record<string, string[]>;
   duration: GrantDuration;
   customDate: string;
@@ -88,28 +88,6 @@ function normalizeSelections(
   return result;
 }
 
-function decodeConsentState(encoded: string): DraftSnapshot | undefined {
-  try {
-    const padded = encoded.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - encoded.length % 4) % 4);
-    const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
-    const parsed: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
-    const state = parsed as Record<string, unknown>;
-    if (state.duration !== 'until-revoked' && state.duration !== '30-days' && state.duration !== 'custom') return undefined;
-    if (typeof state.customDate !== 'string') return undefined;
-    if (typeof state.selections !== 'object' || state.selections === null || Array.isArray(state.selections)) return undefined;
-    const entries = Object.entries(state.selections);
-    if (!entries.every(([, value]) => Array.isArray(value) && value.every((id) => typeof id === 'string'))) return undefined;
-    return {
-      selections: Object.fromEntries(entries) as Record<string, string[]>,
-      duration: state.duration,
-      customDate: state.customDate,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
 /** Immutable local editor state. No transition writes a grant or persists credentials. */
 export class ConsentDraft {
   readonly selections: Record<string, string[]>;
@@ -119,8 +97,8 @@ export class ConsentDraft {
 
   constructor(
     private readonly definition: DraftDefinition,
-    private readonly initial: DraftSnapshot,
-    private readonly state: DraftSnapshot = initial,
+    private readonly initial: ConsentDraftSnapshot,
+    private readonly state: ConsentDraftSnapshot = initial,
   ) {
     this.selections = state.selections;
     this.duration = state.duration;
@@ -201,40 +179,47 @@ export class ConsentDraft {
     const validUntil = unchangedValidity && this.definition.validUntil
       ? this.definition.validUntil
       : resolveValidUntil(this.duration, this.customDate, now);
+    if (unchangedValidity && validUntil && !(Date.parse(validUntil) > now.getTime())) throw new InvalidGrantDateError();
     const grantedPermissionSets = Object.fromEntries(Object.entries(this.selections).map(([id, services]) => [id, [...services]]));
     return validUntil === undefined
       ? { granted_permission_sets: grantedPermissionSets }
       : { granted_permission_sets: grantedPermissionSets, valid_until: validUntil };
   }
 
-  toConsentState(): string {
-    const bytes = new TextEncoder().encode(JSON.stringify(this.state));
-    let binary = '';
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  snapshot(): ConsentDraftSnapshot {
+    return {
+      selections: Object.fromEntries(Object.entries(this.selections).map(([id, services]) => [id, [...services]])),
+      duration: this.duration,
+      customDate: this.customDate,
+    };
   }
 }
 
 export function createConsentDraft(options: ConsentDraftOptions): ConsentDraft {
+  const existingGrant = options.existingGrant;
+  const activeGrant = existingGrant && (existingGrant.valid_until == null || Date.parse(existingGrant.valid_until) > Date.now())
+    ? existingGrant : null;
   const definition: DraftDefinition = {
     groups: [
       ...options.permissionSets.filter((entry) => entry.requirement_type === 'mandatory'),
       ...options.permissionSets.filter((entry) => entry.requirement_type === 'optional'),
     ],
     requirements: new Map(options.serviceRequirements?.map((entry) => [entry.service_id, entry.requirement_type])),
-    prior: options.existingGrant?.granted_permission_sets ?? {},
-    validUntil: options.existingGrant?.valid_until,
+    prior: activeGrant?.granted_permission_sets ?? {},
+    validUntil: activeGrant?.valid_until,
     context: options.context,
     sessionToken: options.sessionToken,
   };
-  const initial: DraftSnapshot = {
+  const initial: ConsentDraftSnapshot = {
     selections: normalizeSelections(definition, definition.prior),
     duration: definition.validUntil ? 'custom' : 'until-revoked',
     customDate: definition.validUntil?.slice(0, 10) ?? '',
   };
-  const restored = options.consentState ? decodeConsentState(options.consentState) : undefined;
+  const restored = options.restoredDraft;
   return new ConsentDraft(definition, initial, restored ? {
-    ...restored, selections: normalizeSelections(definition, restored.selections),
+    selections: normalizeSelections(definition, restored.selections),
+    duration: restored.duration,
+    customDate: restored.customDate,
   } : initial);
 }
 

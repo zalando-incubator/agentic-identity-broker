@@ -2,6 +2,7 @@ package impersonation
 
 import (
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v4/jwa"
@@ -128,6 +129,8 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 				issuerURI:         issuerCfg.IssuerURI,
 				allowedAlgorithms: allowed,
 				clockSkew:         clockSkew,
+				// Value providers have no stable instance identity for verification reuse.
+				cacheByProvider: reflect.TypeOf(provider).Kind() == reflect.Pointer,
 			},
 		})
 	}

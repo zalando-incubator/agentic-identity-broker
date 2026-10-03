@@ -4,6 +4,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
@@ -26,6 +28,9 @@ type OAuth2StateTokenClaims struct {
 	// Must be same-origin with the authorize request.
 	RedirectURI string `json:"redirect_uri"`
 
+	// ConsentStateID is the optional current-tab selection reference.
+	ConsentStateID string `json:"consent_state_id,omitempty"`
+
 	// IssuedAt is when the token was created.
 	IssuedAt time.Time `json:"iat"`
 
@@ -46,6 +51,11 @@ func (c *OAuth2StateTokenClaims) Validate() error {
 	}
 	if c.RedirectURI == "" {
 		return errors.New("redirect_uri is required")
+	}
+	if c.ConsentStateID != "" {
+		if _, err := uuid.Parse(c.ConsentStateID); err != nil {
+			return errors.New("consent_state_id must be a UUID")
+		}
 	}
 	if c.IssuedAt.IsZero() {
 		return errors.New("iat is required")

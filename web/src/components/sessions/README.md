@@ -28,6 +28,7 @@ Keep Table and Command out of decision-route imports.
 `ConnectionsTable` receives sessions, derived state, pending-state readers, and refresh, disconnect, and retry callbacks.
 `DisconnectDialog` receives the selected session, cancellation and confirmation callbacks, and an optional focus-return callback.
 It reads dependent agents before it enables confirmation.
+After the dialog closes, focus returns to the current session's Disconnect button, even if a table rerender replaced it. If that session was removed or its button is disabled, focus moves to the Connections page.
 
 The hook exposes the shared list and its operations:
 

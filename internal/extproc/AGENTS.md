@@ -17,9 +17,9 @@ internal/extproc/
 
   authorization/
     authorizer.go   `Authorizer` and `OPAAuthorizer`
-    input.go        OPAInput map alias, MCPInput, ContextInput types
-    input_builder.go Builds the OPA input document
-    parser.go        ParseMCPMessage, ParseMCPBatch — JSON-RPC 2.0 parsing
+    input.go        OPAInput map alias and ContextInput type
+    input_builder.go InputBuilder: converts headers once, builds body-bearing OPA inputs
+    parser.go        ParseMCPMessage: validates decoded JSON-RPC 2.0 messages
     decision.go      `OPADecision` and result extraction
     doc.go           Package documentation
 
@@ -96,13 +96,13 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | `OPAAuthorizer` struct | Production `Authorizer`. It has two backends: PreparedEvalQuery (path) or sdk.OPA (config_file) |
 | `NewOPAAuthorizer(cfg, logger)` | Path mode compiles Rego at startup. Config-file mode denies access until the bundle is ready. |
 | `OPAInput` map alias | OPA document from the opa-envoy-plugin-compatible base, with top-level `type`, `mcp`, and `context` keys |
-| `MCPInput` struct | MCP protocol fields plus agentgateway routing metadata: `JSONRPC`, `Method`, `ToolName`, `Arguments`, `SessionID`, `TargetServerName` |
+| `mcp` input object | Map of decoded MCP fields and agentgateway target-server metadata; omit fields irrelevant to the request type |
 | `ContextInput` struct | Authorization context fields, including `granted_permission_sets_available` and token-bound `granted_permission_sets` when present |
 | `OPADecision` struct | Policy output: `Action string` (`"allow"` or `"deny"`), `Reasons []string` |
 | `ParseDecision(any)` | Type-safe extraction of `action` and `reasons` from the OPA result map |
-| `BuildOPAInput(protocol, body, headers, targetServerName, grantedPermissionSets)` | Builds the OPA input document with protocol-specific parsing |
-| `ParseMCPMessage(body)` | Parses a JSON-RPC 2.0 single message → `*MCPMessage` |
-| `ParseMCPBatch(body)` | Finds and parses JSON-RPC 2.0 batch messages (FR-023) |
+| `NewInputBuilder(protocol, headers, targetServerName, contextInput)` | Converts Envoy-compatible headers once; `Build(body, parsed)` derives independent policy inputs for standalone and batch elements |
+| `ParseMCPMessage(value)` | Validates one decoded JSON-RPC 2.0 message → `*MCPMessage` |
+| `BuildOPAInputHeadersOnly(protocol, headers, targetServerName)` | Constructs the separate header-only policy input |
 
 ### `internal/extproc/server`
 
@@ -163,7 +163,7 @@ Body-bearing requests:
 RequestHeaders → validate subject metadata → validate resource metadata
                → protocol and transport checks → Exchanger.Exchange(subject, resource)
                → Authorization header mutation + BUFFERED body
-RequestBody    → BuildOPAInput(protocol, body, headers, targetServerName, grantedPermissionSets)
+RequestBody    → decode JSON once → InputBuilder.Build(raw body, decoded value)
                → OPAAuthorizer.Evaluate(ctx, opaInput) → allow: echo body
                                                       → deny: 403 ImmediateResponse {"error":"access_denied","error_description":"...reasons..."}
 
@@ -175,9 +175,9 @@ RequestHeaders(end_of_stream=true) → validate subject metadata → validate re
                                                                          → deny: 403 ImmediateResponse `{"error":"access_denied","error_description":"...reasons..."}`
 ```
 
-`authorization.BuildOPAInput` selects a parser by `protocol`:
+`authorization.InputBuilder.Build` selects a parser by `protocol`:
 
-- For `"mcp"`, `ParseMCPMessage` produces `type="mcp_tool_call"` for `tools/call`. It produces `type="mcp_method"` for other methods.
+- For `"mcp"`, `ParseMCPMessage` validates the decoded value and produces `type="mcp_tool_call"` for `tools/call` or `type="mcp_method"` for other methods.
 - For all other values, `type="unknown"` contains the raw body in `input.attributes.request.http.body`.
 
 `OPAAuthorizer` has two backends:
@@ -298,7 +298,7 @@ Use `examples/config/extproc-tool-approvals.yaml` for approval gating.
 
 ## Docker Compose
 
-Docker Compose mounts `config.extproc.docker.yaml` at `/app/config.yaml`.
+Docker Compose mounts `configs/config.extproc.docker.yaml` at `/app/config.yaml`.
 It sets `EXTPROC_CONFIG_PATH=/app/config.yaml`.
 `agentgateway` connects to `extproc-token-exchange:50051` on the internal Compose network.
 

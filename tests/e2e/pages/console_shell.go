@@ -136,7 +136,31 @@ func (s *ConsoleShell) CommandPaletteResults(ctx context.Context) ([]string, err
 }
 
 func (s *ConsoleShell) ChooseCommandResult(ctx context.Context, label string) error {
-	return s.locatorClick(ctx, s.commandPalette().GetByRole("option", playwright.LocatorGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "command result "+label)
+	timeout, err := s.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	target := s.commandPalette().GetByRole("option", playwright.LocatorGetByRoleOptions{Name: label, Exact: playwright.Bool(true)})
+	if err := target.WaitFor(playwright.LocatorWaitForOptions{State: playwright.WaitForSelectorStateVisible, Timeout: timeout}); err != nil {
+		return fmt.Errorf("wait for command result %q: %w", label, err)
+	}
+	results, err := s.CommandPaletteResults(ctx)
+	if err != nil {
+		return err
+	}
+	for range len(results) + 1 {
+		selected, err := target.GetAttribute("aria-selected", playwright.LocatorGetAttributeOptions{Timeout: timeout})
+		if err != nil {
+			return err
+		}
+		if selected == "true" {
+			return s.page.Keyboard().Press("Enter")
+		}
+		if err := s.page.Keyboard().Press("ArrowDown"); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("command result %q cannot be selected by keyboard", label)
 }
 
 func (s *ConsoleShell) WordmarkVariant(ctx context.Context) (string, error) {

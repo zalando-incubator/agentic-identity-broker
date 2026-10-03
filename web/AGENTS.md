@@ -22,6 +22,7 @@ Use the feature task list and cutover inventory for validation status; source mi
 | `../specs/047-redesign-consent-console/tasks.md` | Dependency order, implementation status, and acceptance requirements |
 | `../specs/047-redesign-consent-console/data-model.md` | ConsentDraft, ConnectionState precedence, and browser preferences |
 | `../adrs/037-design-system-rebuilt-on-shadcn-radix.md` | Accepted component, animation, and server-state decision |
+| `../adrs/037-consent-selection-oauth-redirect-state.md` | Accepted bounded form POST and tab-local callback-state transport |
 | `../adrs/035-root-mounted-spa.md` | Binding root-mounted route behavior |
 | `../api/enduser/openapi.yaml` | Canonical API contract |
 | `../ARCHITECTURE.md` | Architecture and domain glossary |
@@ -97,6 +98,7 @@ Read these files before you change their behavior:
 `src/services/api/` | Typed Axios clients and normalized errors
 `src/copy/index.ts` | Shared copy catalogue and view-specific exports
 `src/types/consent.ts`, `src/types/approval.ts` | Existing request and response contracts
+`src/services/storage/session.ts` | Ephemeral callback draft with ID, service, origin, path, and expiry binding; no API-response cache
 `src/utils/validation.ts` | Safe continuation URL checks
 
 | Route | Page |

@@ -41,7 +41,8 @@ These endpoints require no pre-authentication:
 | `GET /health` | Both |
 | `GET /oauth2/jwks.json` | End-user |
 | `GET /.well-known/oauth-authorization-server` | End-user |
-
+| `GET /.well-known/oauth-client/{service-id}` | End-user |
+| `GET /.well-known/oauth-client/{service-id}/jwks.json` | End-user |
 `GET /oauth2/authorize` and `POST /oauth2/token` do not use pre-authentication. They use
 OAuth2 parameters, such as agent client credentials or `client_assertion`. They do not use
 the principal header. See
@@ -55,6 +56,7 @@ Successful and error responses follow a small set of consistent shapes.
 | Shape | Used by | Example |
 |---|---|---|
 | `{"data": <resource-or-array>}` | Most resource responses | `{"data": {"principal": "…"}}` |
+| `{"message": "<text>"}` | Successful third-party session termination | `{"message": "session terminated successfully"}` |
 | Bare JSON array | Admin list endpoints `GET /api/agents`, `GET /api/services` | `[{"id": "…"}]` |
 | `{"items": [ … ]}` | `GET /api/oauth2-server/signing-keys` | `{"items": [{"kid": "…"}]}` |
 | `{"error": "<code>", "message": "<text>"}` | Standard errors (end-user and admin) | `{"error": "agent not found", "message": "…"}` |
@@ -71,6 +73,7 @@ human-readable strings. OAuth2 endpoints use RFC snake_case tokens.
 | Surface | Codes |
 |---|---|
 | End-user consent / session | `session_expired`, `invalid_permission_set`, `forbidden`, `invalid_state`, `service_id_mismatch`, `unauthorized`, `bad request`, `invalid request`, `invalid scopes`, `service not found` |
+| Approval decisions | `bad_request`, `conflict`, `gone`, `not_revocable`, `invalid_pattern` |
 | Admin | `invalid request body`, `validation failed`, `agent not found`, `service not found`, `conflict`, `last_key`, `current_key` |
 | OAuth2 (`/oauth2/token`) | `invalid_request`, `invalid_client`, `invalid_grant`, `invalid_target`, `access_denied`, `server_error` |
 | OAuth2 authorize | `invalid_client`, `invalid_redirect_uri` |
@@ -130,14 +133,34 @@ An empty `granted_permission_sets` object or array returns `400` on POST. Revoca
 |---|---|---|
 | GET | `/api/third-party/sessions` | List the current user's stored third-party sessions. |
 | GET | `/api/third-party/{serviceId}/oauth2/authorize` | Start an authorization-code + PKCE flow to the third party. |
-| GET | `/api/third-party/{serviceId}/oauth2/callback` | Handle the third-party OAuth2 callback. |
-| GET | `/api/third-party/{serviceId}/session` | Session detail and the agents that depend on it. |
-| DELETE | `/api/third-party/{serviceId}/session` | Terminate the session and delete its stored tokens. |
+| POST | `/api/third-party/{serviceId}/oauth2/authorize` | Start a PKCE flow with a tab-local `consent_state_id` and clean same-origin return path; the provider-facing state stays under 6,000 bytes. |
+| GET | `/api/third-party/{serviceId}/oauth2/callback` | Complete the third-party flow and, on success, return the sealed selection ID for same-tab restoration. |
+| GET | `/api/third-party/{serviceId}/session` | Raw stored session and agents that depend on it. |
+| DELETE | `/api/third-party/{serviceId}/session` | Delete the session's stored tokens at the broker. |
 | POST | `/api/third-party/{serviceId}/session/refresh` | Refresh the access token through the existing provider flow. |
-| GET | `/api/third-party/{serviceId}/session/affected-agents` | Agents that lose access when the session ends. |
 
 The session list returns `{"data": {"sessions": [<UserSessionSummary>]}}`, with an empty `sessions` array when no stored sessions exist.
 It includes expired stored sessions but excludes services without a stored session. Refresh returns the updated summary in `data`.
+
+The summary omits `refresh_token_expires_at` when no expiry is stored. It does not return `null`.
+`GET /api/third-party/{serviceId}/session` returns the stored session in `data.session`.
+This object has `id`, `principal`, `service_id`, `token_type`, `scope`, `encryption_context`, and timestamps.
+It omits unset token-expiry timestamps and never includes encrypted access or refresh tokens.
+`data.dependent_agents` contains `{id, display_name}` records. The sibling `data.dependent_agent_count` counts them.
+Read this detail before disconnecting. `DELETE /api/third-party/{serviceId}/session` returns
+`200` with `{"message": "session terminated successfully"}`, not an affected-agent count.
+Broker disconnection does not revoke provider-side tokens.
+
+### Approval decisions
+
+`POST /api/approvals/{id}/approve` and `/deny` return `409` with
+`{"error": "conflict", "message": "approval has already been resolved"}` for an already resolved approval.
+An expired pending approval returns `410` with `{"error": "gone", "message": "approval has expired"}`.
+
+`POST /api/approvals/{id}/revoke` returns `400` with `bad_request` for an invalid approval ID.
+It returns `422` with `not_revocable` when the approval is not permanent.
+On success, `data` contains `id`, `status` (`denied`), and `denied_at`.
+The response omits `persistence` after revocation.
 
 ### OAuth2 server
 
@@ -176,6 +199,26 @@ Each admin endpoint requires `X-Remote-User`. The proxy enforces administrator p
 | PUT | `/api/services/{service-id}` | Update a service. |
 | DELETE | `/api/services/{service-id}` | Delete a service (`409 conflict` if grants reference it). |
 
+### Outbound CIMD confidential services
+
+The broker uses **outbound CIMD client authentication** for a `private_key_jwt` third-party service. This is separate from inbound CIMD client resolution, where an agent presents a metadata URL to the broker authorization server.
+
+A service can use one of three token-endpoint authentication methods:
+
+| Method | Client ID | `client_secret` in read responses |
+|---|---|---|
+| `null` | Operator-provided | `REDACTED` |
+| `none` | Operator-provided | Omitted |
+| `private_key_jwt` | Broker-generated HTTPS metadata URL | Omitted |
+
+For `private_key_jwt`, omit `client_id` and `client_secret` in the create or replacement request.
+
+The broker generates the client ID after it allocates the service ID. The broker signs each token request with a fresh ES256 client assertion.
+
+The end-user server serves the public Client ID Metadata Document at the generated client ID. It serves the matching CIMD public JWK Set at `<client-id>/jwks.json`.
+
+Both routes return `Cache-Control: public, max-age=300`. They return JSON `404` responses for unavailable services.
+
 ### Permission sets
 
 | Method | Path | Purpose |
@@ -202,6 +245,23 @@ Each admin endpoint requires `X-Remote-User`. The proxy enforces administrator p
 | GET | `/api/oauth2-server/signing-keys` | List signing keys (`{items}`, newest first). |
 | PUT | `/api/oauth2-server/signing-keys/{kid}/current` | Promote a key to current. |
 | DELETE | `/api/oauth2-server/signing-keys/{kid}` | Soft-delete a key (`409 last_key` / `current_key`). |
+
+### CIMD client-authentication keys
+
+These routes manage the ES256 keys that sign outbound `private_key_jwt` assertions. They are available in proxy, local, and hybrid modes.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/cimd-client-keys` | Generate an ES256 CIMD key. |
+| GET | `/api/cimd-client-keys` | List active CIMD keys. |
+| PUT | `/api/cimd-client-keys/{kid}/current` | Promote a CIMD key immediately. |
+| DELETE | `/api/cimd-client-keys/{kid}` | Remove a non-signing CIMD key. |
+
+The first generated key is immediately usable. Later generated keys remain public during the activation grace period.
+
+The routes never return private key material, ciphertext, or client assertions. `/oauth2/jwks.json` does not contain CIMD key IDs.
+
+Token-signing key routes remain unavailable in proxy mode.
 
 ## Related
 

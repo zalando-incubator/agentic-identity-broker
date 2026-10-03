@@ -125,10 +125,14 @@ Third-party OAuth2 session management configuration. Demonstrates:
 - PKCE code verifier length configuration (32-128 bytes)
 - Security-focused comments explaining each setting
 - Environment variable substitution for sensitive keys
+- A stable public HTTPS `server.enduser.public_url` for CIMD confidential services
+
 
 This configuration is required when enabling OAuth2 session management with third-party
 services (GitHub, Google, Microsoft, etc.). It controls how the broker orchestrates
 OAuth2 authorization flows and stores encrypted tokens.
+See [`third-party-oauth2.yaml`](third-party-oauth2.yaml) for the HTTPS `server.enduser.public_url` example and CIMD confidential-service precondition.
+
 
 **Usage:**
 ```bash
@@ -266,6 +270,7 @@ EXTPROC_TELEMETRY_EXPORTER_ENDPOINT=collector.monitoring.svc:4317 \
 **Key Features:**
 - Reuses the same telemetry configuration schema as the identity broker for operational parity
 - Adds W3C Trace Context (`tracecontext`) to default propagators to handle agentgateway's traceparent headers
+- Valid trace context in the ExtProc gRPC stream metadata takes precedence over proxied HTTP trace headers. Missing or invalid metadata trace context falls back to HTTP headers, even when the stream context already contains a span.
 - End-to-end trace visibility: each token exchange request creates a child span linked to the upstream trace
 - Graceful degradation when collector is unavailable (FR-008 — service continues operating normally)
 
@@ -652,7 +657,7 @@ IDENTITY_BROKER_LOG_FORMAT=json
 ```
 
 ### `.env.production`
-Production-specific settings in version control (no secrets):
+Production-specific settings. Not in version control:
 ```
 IDENTITY_BROKER_LOG_LEVEL=info
 IDENTITY_BROKER_LOG_FORMAT=json

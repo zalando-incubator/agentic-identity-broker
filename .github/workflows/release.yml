@@ -4,11 +4,12 @@
 # Compared with the previous version it additionally:
 #   - attaches the binaries, Helm chart and checksums to the GitHub Release,
 #   - emits SLSA build provenance for every image (pushed to GHCR alongside
-#     the image) and for the release assets (attached as a Sigstore bundle,
-#     which Scorecard's Signed-Releases check recognises), and
+#     the image) and for the release assets (attached as a Sigstore bundle
+#     named `*.intoto.jsonl`, the only asset suffix that Scorecard's
+#     Signed-Releases check recognises as provenance), and
 #   - includes an SBOM and max-detail provenance in each image's attestations.
-# Verify with:  gh attestation verify oci://ghcr.io/<org>/<image>:vX.Y.Z --owner <org>
-#               gh attestation verify <asset> --owner <org>
+# Verify with the commands in docs/deployment/verify-releases.md. They pin the
+# repository, this workflow and the tag, which `--owner <org>` alone does not.
 
 name: Release
 
@@ -44,6 +45,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set source date epoch
+        id: source-date-epoch
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -57,7 +62,7 @@ jobs:
           package-manager-cache: false
 
       - name: Install just
-        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: just
 
@@ -162,9 +167,12 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          file: build/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            SOURCE_DATE_EPOCH=${{ steps.source-date-epoch.outputs.SOURCE_DATE_EPOCH }}
           tags: ${{ steps.broker-meta.outputs.tags }}
           labels: ${{ steps.broker-meta.outputs.labels }}
           annotations: ${{ steps.broker-meta.outputs.annotations }}
@@ -183,10 +191,12 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: Dockerfile.migrate
+          file: build/docker/Dockerfile.migrate
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            SOURCE_DATE_EPOCH=${{ steps.source-date-epoch.outputs.SOURCE_DATE_EPOCH }}
           tags: ${{ steps.migrate-meta.outputs.tags }}
           labels: ${{ steps.migrate-meta.outputs.labels }}
           annotations: ${{ steps.migrate-meta.outputs.annotations }}
@@ -205,10 +215,12 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: Dockerfile.extproc
+          file: build/docker/Dockerfile.extproc
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            SOURCE_DATE_EPOCH=${{ steps.source-date-epoch.outputs.SOURCE_DATE_EPOCH }}
           tags: ${{ steps.extproc-meta.outputs.tags }}
           labels: ${{ steps.extproc-meta.outputs.labels }}
           annotations: ${{ steps.extproc-meta.outputs.annotations }}
@@ -221,6 +233,33 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}-extproc
           subject-digest: ${{ steps.extproc.outputs.digest }}
           push-to-registry: true
+
+      - name: Verify release image creation timestamps
+        env:
+          REPO: ${{ github.repository }}
+          EXPECTED_EPOCH: ${{ steps.source-date-epoch.outputs.SOURCE_DATE_EPOCH }}
+          BROKER_DIGEST: ${{ steps.broker.outputs.digest }}
+          MIGRATE_DIGEST: ${{ steps.migrate.outputs.digest }}
+          EXTPROC_DIGEST: ${{ steps.extproc.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for image in "ghcr.io/${REPO}@${BROKER_DIGEST}" \
+                       "ghcr.io/${REPO}-migrate@${MIGRATE_DIGEST}" \
+                       "ghcr.io/${REPO}-extproc@${EXTPROC_DIGEST}"; do
+            index=$(docker buildx imagetools inspect --format '{{json .Manifest}}' "$image")
+            for arch in amd64 arm64; do
+              manifest=$(jq -er --arg arch "$arch" \
+                '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' <<< "$index")
+              created=$(docker buildx imagetools inspect --format '{{json .Image}}' \
+                "${image%@*}@${manifest}" | jq -er '.created')
+              actual_epoch=$(date -u -d "$created" +%s)
+              if [[ $actual_epoch != "$EXPECTED_EPOCH" ]]; then
+                echo "::error::${image} linux/${arch} created ${created}; expected epoch ${EXPECTED_EPOCH}" >&2
+                exit 1
+              fi
+              echo "Verified ${image} linux/${arch}: ${created}"
+            done
+          done
 
       # --- Helm chart ----------------------------------------------------
 
@@ -262,7 +301,7 @@ jobs:
       - name: Add provenance bundle to release assets
         env:
           BUNDLE: ${{ steps.attest-assets.outputs.bundle-path }}
-        run: cp "$BUNDLE" "dist/agentic-identity-broker_${TAG#v}_provenance.sigstore.json"
+        run: cp "$BUNDLE" "dist/agentic-identity-broker_${TAG#v}.intoto.jsonl"
 
       - name: Create GitHub Release
         env:
@@ -279,8 +318,9 @@ jobs:
           - ExtProc: \`ghcr.io/${REPO}-extproc:${TAG}\`
           - Helm chart: \`oci://ghcr.io/${OWNER}/agentic-identity-broker\`
 
-          All images and the attached assets carry SLSA build provenance:
-          \`gh attestation verify oci://ghcr.io/${REPO}:${TAG} --owner ${OWNER}\`
+          All images and attached assets carry SLSA build provenance. Follow the
+          [release verification guide](https://github.com/${REPO}/blob/${TAG}/docs/deployment/verify-releases.md)
+          to verify images and release assets.
           EOF
 
           if release_is_draft="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null)"; then

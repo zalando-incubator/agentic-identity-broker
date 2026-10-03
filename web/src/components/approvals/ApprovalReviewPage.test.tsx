@@ -75,7 +75,7 @@ describe('ApprovalReviewPage', () => {
 
   it('keeps rejected patterns editable and blocks confirmation until server validation succeeds', async () => {
     const user = userEvent.setup();
-    vi.mocked(approvalApi.previewApprovalScope).mockRejectedValue({ status: 422 });
+    vi.mocked(approvalApi.previewApprovalScope).mockRejectedValue({ status: 422, code: 'invalid_pattern', message: 'Invalid pattern' });
     render(<ApprovalReviewPage {...props()} errorCode="INVALID_PATTERN" />);
     await user.click(screen.getByRole('button', { name: 'Approve and remember' }));
     await user.click(await screen.findByRole('radio', { name: /for this session/i }));

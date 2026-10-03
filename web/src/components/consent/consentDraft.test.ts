@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ResolvedPermissionSetEntry, UserGrant } from '../../types/consent';
-import { createConsentDraft, resolveValidUntil } from './consentDraft';
+import { createConsentDraft, InvalidGrantDateError, resolveValidUntil } from './consentDraft';
 
 const permissionSets: ResolvedPermissionSetEntry[] = [
   { requirement_type: 'optional', permission_set: { id: 'extra', name: 'Extra access', description: 'Optional work', service_scopes: [{ service_id: 'mail', requirement_type: 'optional' }, { service_id: 'calendar', requirement_type: 'optional' }] } },
@@ -68,7 +68,7 @@ describe('consent draft', () => {
     expect(draft.toGrantRequest(now).valid_until).toBe('2030-08-19T14:35:00+02:00');
     expect(draft.setDuration('30-days').toGrantRequest(now).valid_until).toBe(new Date(now.getTime() + 30 * 86_400_000).toISOString());
     expect(draft.setDuration('until-revoked').toGrantRequest(now)).not.toHaveProperty('valid_until');
-    const indefinite = createConsentDraft({ permissionSets, existingGrant: { ...existingGrant, valid_until: null }, context: 'decision' });
+    const indefinite = createConsentDraft({ permissionSets, existingGrant: { ...existingGrant, valid_until: undefined }, context: 'decision' });
     expect(indefinite.duration).toBe('until-revoked');
     expect(indefinite.toGrantRequest(now)).not.toHaveProperty('valid_until');
   });
@@ -81,32 +81,97 @@ describe('consent draft', () => {
     expect(restored.toGrantRequest(now).valid_until).toBe(existingGrant.valid_until);
   });
 
-  it('roundtrips selections, custom duration, and the unchanged authorization reference through consent_state', () => {
+  it('roundtrips selections, custom duration, and the unchanged authorization reference through a typed snapshot', () => {
     const loaded = { permissionSets, serviceRequirements, existingGrant, context: 'decision' as const, sessionToken: 'session' };
     const draft = createConsentDraft(loaded).setPermissionSet('extra', true).setService('extra', 'calendar', false).setDuration('custom', '2031-02-04');
-    const restored = createConsentDraft({ ...loaded, consentState: draft.toConsentState() });
+    const restored = createConsentDraft({ ...loaded, restoredDraft: draft.snapshot() });
     expect(restored.toGrantRequest(now)).toEqual(draft.toGrantRequest(now));
     expect(restored.customDate).toBe('2031-02-04');
     expect(restored.sessionToken).toBe('session');
     expect(restored.reset().toGrantRequest(now).valid_until).toBe(existingGrant.valid_until);
   });
 
-  it('restores canonical callback selections and keeps explicit empty selections', () => {
-    const consentState = btoa(JSON.stringify({ selections: { extra: ['mail'] }, duration: 'until-revoked', customDate: '' }));
-    const restored = createConsentDraft({ permissionSets, serviceRequirements, context: 'console', consentState });
+  it('restores partial selections and keeps explicit empty selections', () => {
+    const restoredDraft = { selections: { extra: ['mail'] }, duration: 'until-revoked' as const, customDate: '' };
+    const restored = createConsentDraft({ permissionSets, serviceRequirements, context: 'console', restoredDraft });
     expect(restored.toGrantRequest(now).granted_permission_sets).toEqual({ base: ['profile', 'mail'], extra: ['mail'] });
     const optionalOnly = [permissionSets[0]!];
-    const draft = createConsentDraft({ permissionSets: optionalOnly, existingGrant: { ...existingGrant, granted_permission_sets: { extra: ['mail'] } }, context: 'console' }).setPermissionSet('extra', false);
-    expect(createConsentDraft({ permissionSets: optionalOnly, existingGrant: { ...existingGrant, granted_permission_sets: { extra: ['mail'] } }, context: 'console', consentState: draft.toConsentState() }).selections).toEqual({});
+    const loaded = { permissionSets: optionalOnly, existingGrant: { ...existingGrant, granted_permission_sets: { extra: ['mail'] } }, context: 'console' as const };
+    const draft = createConsentDraft(loaded).setPermissionSet('extra', false);
+    expect(createConsentDraft({ ...loaded, restoredDraft: draft.snapshot() }).selections).toEqual({});
   });
 
-  it('ignores malformed callback state and does not allow it to erase locked prior access', () => {
+  it('normalizes callback selections without allowing an unknown group to erase locked prior access', () => {
     const loaded = { permissionSets, serviceRequirements, existingGrant, context: 'decision' as const };
-    expect(createConsentDraft({ ...loaded, consentState: 'not-json' }).toGrantRequest(now)).toEqual(createConsentDraft(loaded).toGrantRequest(now));
-    const tampered = btoa(JSON.stringify({ selections: { base: [], malicious: ['anything'] }, duration: 'custom', customDate: '2030-08-19' }));
-    expect(createConsentDraft({ ...loaded, consentState: tampered }).toGrantRequest(now).granted_permission_sets).toEqual(existingGrant.granted_permission_sets);
-    const obsolete = btoa(JSON.stringify({ extra: ['mail'] }));
-    expect(createConsentDraft({ ...loaded, consentState: obsolete }).toGrantRequest(now)).toEqual(createConsentDraft(loaded).toGrantRequest(now));
+    const restoredDraft = { selections: { base: [], malicious: ['anything'] }, duration: 'custom' as const, customDate: '2030-08-19' };
+    const draft = createConsentDraft({ ...loaded, restoredDraft });
+    expect(draft.toGrantRequest(now).granted_permission_sets).toEqual(existingGrant.granted_permission_sets);
+    const snapshot = draft.snapshot();
+    snapshot.selections.base!.push('malicious');
+    expect(draft.toGrantRequest(now).granted_permission_sets).toEqual(existingGrant.granted_permission_sets);
+  });
+});
+
+describe('grant lookup expiry', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(now);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it.each(['decision', 'console'] as const)('starts %s consent without an expired grant’s prior optional access or expiry', (context) => {
+    const expiredGrant: UserGrant = {
+      ...existingGrant,
+      granted_permission_sets: { base: ['profile'], extra: ['calendar'], retired: ['legacy'] },
+      valid_until: new Date(now.getTime() - 1).toISOString(),
+    };
+    const draft = createConsentDraft({ permissionSets, serviceRequirements, existingGrant: expiredGrant, context });
+
+    expect(draft.groups.find(({ id }) => id === 'base')).toMatchObject({ required: true, selected: true, readOnly: true });
+    expect(draft.groups.find(({ id }) => id === 'extra')).toMatchObject({ selected: false, alreadyGranted: false, readOnly: false, collapsed: false });
+    expect(draft.duration).toBe('until-revoked');
+    expect(draft.customDate).toBe('');
+    expect(draft.dirty).toBe(false);
+    expect(draft.toGrantRequest()).toEqual({ granted_permission_sets: { base: ['profile', 'mail'] } });
+    expect(draft.setPermissionSet('extra', true).setService('extra', 'calendar', false).toGrantRequest()).toEqual({
+      granted_permission_sets: { base: ['profile', 'mail'], extra: ['mail'] },
+    });
+    expect(draft.toGrantRequest()).toEqual({ granted_permission_sets: { base: ['profile', 'mail'] } });
+  });
+
+  it('treats a grant expiring at the exact lookup instant as inactive', () => {
+    const draft = createConsentDraft({
+      permissionSets, serviceRequirements, existingGrant: { ...existingGrant, granted_permission_sets: { extra: ['calendar'] }, valid_until: now.toISOString() }, context: 'decision',
+    });
+    expect(draft.groups.find(({ id }) => id === 'extra')).toMatchObject({ selected: false, alreadyGranted: false, readOnly: false });
+    expect(draft.toGrantRequest()).toEqual({ granted_permission_sets: { base: ['profile', 'mail'] } });
+  });
+
+  it.each(['decision', 'console'] as const)('preserves %s grant selections and the precise validity while still future', (context) => {
+    const validUntil = new Date(now.getTime() + 1).toISOString();
+    const grant: UserGrant = { ...existingGrant, granted_permission_sets: { base: ['profile'], extra: ['calendar'] }, valid_until: validUntil };
+    const draft = createConsentDraft({ permissionSets, existingGrant: grant, context });
+    expect(draft.groups.find(({ id }) => id === 'extra')).toMatchObject({ selected: true, alreadyGranted: true, readOnly: context === 'decision' });
+    expect(draft.duration).toBe('custom');
+    expect(draft.toGrantRequest()).toEqual({ granted_permission_sets: { base: ['profile'], extra: ['calendar'] }, valid_until: validUntil });
+  });
+
+  it.each(['decision', 'console'] as const)('rejects %s submission when an unchanged validity expires during editing', (context) => {
+    const validUntil = new Date(now.getTime() + 1).toISOString();
+    const draft = createConsentDraft({ permissionSets, existingGrant: { ...existingGrant, valid_until: validUntil }, context }).setPermissionSet('extra', true);
+    vi.setSystemTime(new Date(now.getTime() + 1));
+    expect(() => draft.toGrantRequest()).toThrow(InvalidGrantDateError);
+    expect(draft.setDuration('30-days').toGrantRequest().valid_until).toBe(new Date(now.getTime() + 1 + 30 * 86_400_000).toISOString());
+  });
+
+  it('keeps an explicit restored callback selection after an expired lookup without reviving the old grant', () => {
+    const restoredDraft = { selections: { extra: ['calendar'], retired: ['legacy'] }, duration: 'custom' as const, customDate: '2031-02-04' };
+    const draft = createConsentDraft({
+      permissionSets, serviceRequirements, existingGrant: { ...existingGrant, granted_permission_sets: { extra: ['mail'], retired: ['legacy'] }, valid_until: now.toISOString() },
+      context: 'decision', restoredDraft,
+    });
+    expect(draft.toGrantRequest().granted_permission_sets).toEqual({ base: ['profile', 'mail'], extra: ['mail', 'calendar'] });
+    expect(draft.reset().toGrantRequest()).toEqual({ granted_permission_sets: { base: ['profile', 'mail'] } });
   });
 });
 

@@ -1,6 +1,6 @@
 /**
  * TypeScript types for consent management feature.
- * Maps to backend API responses from data-model.md.
+ * Maps to end-user API responses in api/enduser/openapi.yaml.
  */
 
 /**
@@ -32,22 +32,18 @@ export interface AgentDelegation {
   /** Agent's display name shown to users */
   displayName: string;
 
-  /** URL to agent's logo/avatar */
-  logoUrl?: string;
-
   /** Number of active service grants for this agent */
   activeGrantCount: number;
 
   /** ISO 8601 timestamp of last grant modification */
   lastModifiedAt: string;
 
-  /** Optional grant expiration (null = indefinite) */
-  expiresAt?: string | null;
+  /** Grant expiration, omitted for indefinite grants */
+  expiresAt?: string;
 }
 
 /**
- * Detailed agent information for grant management page.
- * Returned by GET /api/consent/agents/{id} (unified response)
+ * Agent information normalized from GET /api/consent/agents/{id}.
  */
 export interface AgentDetail {
   /** Unique agent identifier */
@@ -59,9 +55,6 @@ export interface AgentDetail {
   /** Agent description/purpose */
   description: string;
 
-  /** URL to agent's logo/avatar */
-  logoUrl?: string;
-
   /** Link to agent governance documentation */
   governanceUrl?: string;
 
@@ -72,13 +65,13 @@ export interface AgentDetail {
   agentInterfaceUrl?: string;
 
   /** Permission sets for this agent */
-  permission_sets?: ResolvedPermissionSetEntry[];
+  permission_sets: ResolvedPermissionSetEntry[];
 
   /** Service IDs with active OAuth2 sessions */
-  active_session_service_ids?: string[];
+  active_session_service_ids: string[];
 
   /** Agent's service requirements with mandatory/optional types */
-  service_requirements?: Array<{
+  service_requirements: Array<{
     service_id: string;
     requirement_type: 'mandatory' | 'optional';
   }>;
@@ -143,8 +136,8 @@ export interface UserGrant {
   /** Granted permission sets: map of PS ID → included service IDs (positive-inclusion model) */
   granted_permission_sets: Record<string, string[]>;
 
-  /** Optional expiration timestamp (null = indefinite) */
-  valid_until?: string | null;
+  /** Expiration timestamp, omitted for indefinite grants */
+  valid_until?: string;
 
   /** ISO 8601 timestamp of grant creation */
   created_at: string;
@@ -170,9 +163,8 @@ export interface GetAgentDelegationsResponse {
 }
 
 /**
- * CIMD metadata included in the agent detail response when the authorization
- * request originates from a Client ID Metadata Document URL (client_id).
- * Null/absent for opaque UUID-based client_id values.
+ * CIMD metadata included when the authorization request originates from a
+ * Client ID Metadata Document URL (client_id). Omitted for opaque client IDs.
  */
 export interface CIMDMetadata {
   /** The CIMD URL used as client_id */
@@ -205,13 +197,13 @@ export interface GetAgentDetailResponse {
       updated_at: string;
     };
     services: Array<Omit<ServiceRequirement, 'kind'>>;
-    permission_sets?: ResolvedPermissionSetEntry[];
-    active_session_service_ids?: string[];
-    service_requirements?: Array<{
+    permission_sets: ResolvedPermissionSetEntry[];
+    active_session_service_ids: string[];
+    service_requirements: Array<{
       service_id: string;
       requirement_type: 'mandatory' | 'optional';
     }>;
-    cimd_metadata?: CIMDMetadata | null;
+    cimd_metadata?: CIMDMetadata;
   };
 }
 
@@ -247,20 +239,17 @@ export type GrantResult =
   | { kind: 'redirect'; redirectUrl: string };
 
 /**
- * Standard error response from backend APIs.
+ * Error normalized by the API client from backend responses.
  */
 export interface ApiError {
   /** HTTP status code */
   status: number;
 
-  /** Error code (e.g., "INVALID_AGENT_ID") */
+  /** Machine-readable error code */
   code: string;
 
   /** Human-readable error message */
   message: string;
-
-  /** Optional field-level validation errors */
-  details?: Record<string, string[]>;
 }
 
 /**
@@ -281,6 +270,5 @@ export interface ServiceRequirement {
     description?: string;
   }>;
   connectionStatus: 'connected' | 'not_connected';
-  logoUrl?: string;
 }
 

@@ -36,7 +36,7 @@ info:
 
     ## Authentication
 
-    All API endpoints (except `/health` and `/.well-known/oauth-authorization-server`) require authentication via:
+    All API endpoints (except `/health`, `/.well-known/oauth-authorization-server`, and the public `/.well-known/oauth-client/{service-id}` documents) require authentication via:
     1. **Pre-authentication**: Reverse proxy (e.g., oauth2-proxy, nginx) validates the user
 
     2. **Principal Header**: Principal extracted from `X-Remote-User` header (configurable)
@@ -739,18 +739,26 @@ paths:
                       scope:
                         - repo
                         - user:email
-                      initiated_at: "2025-12-20T10:30:00Z"
+                      initiated_at: "2026-09-20T10:30:00Z"
                       is_expired: false
                       access_token_expired: false
-                      has_refresh_token: true
-                      refresh_token_expires_at: "2026-01-20T10:30:00Z"
-                      dependent_agent_count: 3
+                      has_refresh_token: false
+                      dependent_agent_count: 2
                       is_encrypted: true
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/third-party/{serviceId}/oauth2/authorize:
+    parameters:
+      - name: serviceId
+        in: path
+        required: true
+        description: UUID of the third-party OAuth2 service
+        schema:
+          type: string
+          format: uuid
+        example: 550e8400-e29b-41d4-a716-446655440000
     get:
       operationId: initiateOAuth2Flow
       summary: Initiate OAuth2 authorization flow
@@ -771,20 +779,13 @@ paths:
       security:
         - preAuth: []
       parameters:
-        - name: serviceId
-          in: path
-          required: true
-          description: UUID of the third-party OAuth2 service
-          schema:
-            type: string
-            format: uuid
-          example: 550e8400-e29b-41d4-a716-446655440000
         - name: redirect_uri
           in: query
           required: true
           description: |
             URI to redirect user after OAuth2 flow completes.
-            Must match the host of the incoming request (same-origin validation).
+            Must match the configured public origin. The resulting provider-facing state
+            must be shorter than 6,000 bytes; oversized requests receive a 400 response.
           schema:
             type: string
             format: uri
@@ -799,7 +800,7 @@ paths:
                 type: string
                 format: uri
         "400":
-          description: Invalid request (missing redirect_uri or origin mismatch)
+          description: Invalid request (missing redirect_uri, origin mismatch, or oversized state)
           content:
             application/json:
               schema:
@@ -818,6 +819,67 @@ paths:
               example:
                 error: not_found
                 message: Third-party service not found
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      operationId: initiateOAuth2FlowWithConsentState
+      summary: Initiate OAuth2 authorization flow with tab-local return state
+      description: |
+        Initiates an OAuth2 authorization code flow with PKCE when the consent page must
+        preserve selections or return-page query parameters in its current tab.
+
+        The same-origin form body supplies the bare UUID `consent_state_id`. The broker
+        seals it in the private JWE state claim of the provider-facing authorization
+        request. Only a validated success callback includes it in the browser return URL.
+        The redirect_uri field must match the configured public origin and carry only
+        the return path; the browser retains its original return URL in sessionStorage.
+        State tokens of 6,000 bytes or more are rejected before provider redirect.
+      tags:
+        - Third-Party Sessions
+      security:
+        - preAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - redirect_uri
+                - consent_state_id
+              properties:
+                redirect_uri:
+                  type: string
+                  format: uri
+                  description: Same-origin return page path without query or fragment. The original URL stays in the originating tab.
+                  example: https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000
+                consent_state_id:
+                  type: string
+                  format: uuid
+                  description: Bare UUID sealed in the JWE state claim and returned only on a successful callback, not a provider authorization parameter.
+      responses:
+        "302":
+          description: Redirect to third-party authorization endpoint
+          headers:
+            Location:
+              description: Third-party authorization URL with OAuth2 parameters
+              schema:
+                type: string
+                format: uri
+        "400":
+          description: Invalid request, consent-state UUID, redirect URI, or oversized state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/InternalError"
   /api/third-party/{serviceId}/oauth2/callback:
@@ -841,7 +903,9 @@ paths:
         - Exchanges authorization code for access/refresh tokens (with PKCE)
         - Encrypts tokens using EncryptionPort
         - Stores session in database
-        - Redirects user to original redirect_uri with success status
+        - Redirects to the original redirect_uri with success=true and service_id;
+          for form-initiated flows, also adds the validated consent_state_id so the
+          originating tab can recover its return-page data and remove that ID from the URL
 
         On error:
 
@@ -886,12 +950,13 @@ paths:
           example: The user denied the request
       responses:
         "302":
-          description: Redirect to sessions page with success or error status
+          description: Redirect to the initiating return URI on success or sessions page on error
           headers:
             Location:
               description: |
-                On success: Original redirect_uri with success=true query param
-                On error: Redirect_uri with error and message query params
+                On success: Validated redirect_uri with success=true, service_id, and
+                optional consent_state_id from the sealed state claim.
+                On error: Sessions page with error and error_description parameters.
               schema:
                 type: string
                 format: uri
@@ -959,34 +1024,67 @@ paths:
                     required:
                       - session
                       - dependent_agents
+                      - dependent_agent_count
                     properties:
                       session:
-                        $ref: "#/components/schemas/SessionStatus"
+                        $ref: "#/components/schemas/UserSession"
                       dependent_agents:
                         type: array
+                        description: Agents with this user's grants that reference the service.
                         items:
-                          $ref: "#/components/schemas/AffectedAgent"
+                          type: object
+                          required: [id, display_name]
+                          properties:
+                            id:
+                              type: string
+                              format: uuid
+                            display_name:
+                              type: string
+                      dependent_agent_count:
+                        type: integer
+                        minimum: 0
+                        description: Number of agents in dependent_agents.
               example:
                 data:
                   session:
-                    session_id: 660e8400-e29b-41d4-a716-446655440001
-                    initiated_at: "2025-12-20T10:30:00Z"
-                    access_token_expires_at: "2025-12-20T11:30:00Z"
-                    refresh_token_expires_at: "2026-01-20T10:30:00Z"
-                    is_expired: false
-                    has_refresh_token: true
+                    id: 660e8400-e29b-41d4-a716-446655440001
+                    principal: user@example.com
+                    service_id: 550e8400-e29b-41d4-a716-446655440000
+                    token_type: Bearer
                     scope:
                       - repo
                       - user:email
-                    dependent_agent_count: 2
-                    tokens_encrypted: true
+                    encryption_context:
+                      service_id: 550e8400-e29b-41d4-a716-446655440000
+                    initiated_at: "2026-09-20T10:30:00Z"
+                    created_at: "2026-09-20T10:30:00Z"
+                    updated_at: "2026-09-20T10:30:00Z"
                   dependent_agents:
-                    - agent_id: 770e8400-e29b-41d4-a716-446655440000
+                    - id: 770e8400-e29b-41d4-a716-446655440000
                       display_name: Code Assistant
-                    - agent_id: 770e8400-e29b-41d4-a716-446655440001
+                    - id: 770e8400-e29b-41d4-a716-446655440001
                       display_name: PR Reviewer
+                  dependent_agent_count: 2
+        "400":
+          description: Missing or invalid serviceId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: invalid_request
+                message: serviceId must be a valid UUID
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Session belongs to a different principal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: forbidden
+                message: you do not have access to this session
         "404":
           description: Session not found for this service
           content:
@@ -995,19 +1093,17 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: not_found
-                message: No session exists for this service
+                message: session not found
         "500":
           $ref: "#/components/responses/InternalError"
     delete:
       operationId: terminateSession
       summary: Terminate third-party session
       description: |
-        Terminates the user's session with a third-party service by deleting stored tokens. 
-        Returns information about affected agents for the confirmation dialog shown before this request.
-
-        Note: This does not revoke tokens at the third-party service.
-
-        Agents that were using this session will detect the missing session and request re-authentication.
+        Terminates the user's session with a third-party service by deleting stored tokens.
+        Read the dependent agents with GET /api/third-party/{serviceId}/session before termination.
+        This does not revoke tokens at the third-party service. Agents that depended on
+        the session must reconnect to regain access.
       tags:
         - Third-Party Sessions
       security:
@@ -1028,26 +1124,32 @@ paths:
               schema:
                 type: object
                 required:
-                  - data
+                  - message
                 properties:
-                  data:
-                    type: object
-                    required:
-                      - terminated
-                      - affected_agents
-                    properties:
-                      terminated:
-                        type: boolean
-                        description: Whether a session was terminated
-                      affected_agents:
-                        type: integer
-                        description: Number of agents that lost access
+                  message:
+                    type: string
               example:
-                data:
-                  terminated: true
-                  affected_agents: 3
+                message: session terminated successfully
+        "400":
+          description: Missing or invalid serviceId
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: invalid_request
+                message: serviceId must be a valid UUID
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Session belongs to a different principal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: forbidden
+                message: you do not have permission to terminate this session
         "404":
           description: Session not found for this service
           content:
@@ -1056,7 +1158,7 @@ paths:
                 $ref: "#/components/schemas/Error"
               example:
                 error: not_found
-                message: No session exists for this service
+                message: session not found
         "500":
           $ref: "#/components/responses/InternalError"
   /api/third-party/{serviceId}/session/refresh:
@@ -1122,61 +1224,6 @@ paths:
               example:
                 error: refresh_failed
                 message: failed to refresh token with the third-party provider
-        "500":
-          $ref: "#/components/responses/InternalError"
-  /api/third-party/{serviceId}/session/affected-agents:
-    get:
-      operationId: getAffectedAgents
-      summary: Get agents affected by session termination
-      description: |
-        Returns a list of agents that would lose access if the user terminates their session with this third-party service. 
-        Used to populate the termination warning dialog.
-      tags:
-        - Third-Party Sessions
-      security:
-        - preAuth: []
-      parameters:
-        - name: serviceId
-          in: path
-          required: true
-          description: UUID of the third-party OAuth2 service
-          schema:
-            type: string
-            format: uuid
-      responses:
-        "200":
-          description: List of affected agents
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - data
-                properties:
-                  data:
-                    type: object
-                    required:
-                      - affected_agents
-                    properties:
-                      affected_agents:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/AffectedAgent"
-              example:
-                data:
-                  affected_agents:
-                    - agent_id: 770e8400-e29b-41d4-a716-446655440000
-                      display_name: Code Assistant
-                    - agent_id: 770e8400-e29b-41d4-a716-446655440001
-                      display_name: PR Reviewer
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          description: Session not found for this service
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
         "500":
           $ref: "#/components/responses/InternalError"
   /oauth2/authorize:
@@ -1887,6 +1934,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
+        "409":
+          description: Approval has already been resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+              example:
+                error: conflict
+                message: approval has already been resolved
+        "410":
+          description: Pending approval has expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+              example:
+                error: gone
+                message: approval has expired
         "422":
           description: A supplied pattern is invalid for the selected persistence scope.
           content:
@@ -1898,12 +1963,6 @@ paths:
                   value:
                     error: "invalid_pattern"
                     message: "params_pattern is not allowed for once persistence"
-        "410":
-          description: Approval expired or already actioned
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApprovalError"
 
   /api/approvals/{id}/scope-preview:
     post:
@@ -2021,12 +2080,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
-        "410":
-          description: Approval expired or already actioned
+        "409":
+          description: Approval has already been resolved
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
+              example:
+                error: conflict
+                message: approval has already been resolved
+        "410":
+          description: Pending approval has expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+              example:
+                error: gone
+                message: approval has expired
 
   /api/approvals/{id}/consume:
     post:
@@ -2111,6 +2182,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DenyResponse"
+              example:
+                data:
+                  id: 770e8400-e29b-41d4-a716-446655440000
+                  status: denied
+                  denied_at: "2026-10-02T10:00:00Z"
+        "400":
+          description: Invalid approval ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+              example:
+                error: bad_request
+                message: invalid approval ID format
         "401":
           description: Missing principal header
           content:
@@ -2129,12 +2214,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
+        "422":
+          description: Only permanent approvals or denials can be revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+              example:
+                error: not_revocable
+                message: only permanent approvals can be revoked
 
   /oauth2/jwks.json:
     get:
       summary: JSON Web Key Set endpoint
       description: |
         Returns the broker's aggregated public signing keys in JWK Set format (RFC 7517).
+        It does not publish CIMD client-authentication keys.
 
         Clients use this single endpoint to verify any token the broker asks them to trust,
         regardless of operating mode. Only public key material is included — private keys
@@ -2150,12 +2245,15 @@ paths:
         503 if the upstream JWKS is unavailable (proxy/hybrid modes). Returns 500 if a
         duplicate `kid` is detected across local and upstream key sets (hybrid mode).
 
-        **Caching**: Responses include `Cache-Control: public, max-age=300` to allow
-        clients to cache the key set for 5 minutes. Clients should respect this header
-        and implement key rotation by periodically refreshing the JWKS.
+        **Caching**: Successful responses include `Cache-Control: public, max-age=300`.
+        After a signing-key removal commits, a direct request beginning on any broker
+        replica omits the key or returns an error if the key-set revision cannot be
+        checked. Requests already in flight may still return an earlier snapshot.
+        Previously fetched responses can remain in verifier or intermediary caches;
+        the broker cannot enforce a third-party verification deadline.
 
-        **Key Rotation**: When signing keys are rotated, the new key appears in the
-        JWKS immediately. Previous keys remain in the set until removed by an admin.
+        **Key Rotation**: Newly stored keys are available on the next direct JWKS
+        request. Previous keys remain in the broker's set until removed by an admin.
       operationId: getJWKS
       tags:
         - OAuth2 Discovery
@@ -2206,6 +2304,112 @@ paths:
                   error:
                     type: string
                     example: "JWKS configuration conflict requires operator action"
+  /.well-known/oauth-client/{service-id}:
+    get:
+      summary: Client ID Metadata Document
+      description: |
+        Returns the public Client ID Metadata Document for a CIMD-enabled service.
+        The returned `client_id` exactly equals this retrieval URL. The document uses
+        the end-user public URL as its base and contains no private key material or secrets.
+      operationId: getCIMDClientMetadata
+      tags:
+        - OAuth2 Discovery
+      security: []
+      parameters:
+        - name: service-id
+          in: path
+          description: Immutable service UUID.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Client ID Metadata Document
+          headers:
+            Cache-Control:
+              description: Cache directive for the metadata response
+              schema:
+                type: string
+                example: "public, max-age=300"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CIMDClientMetadataResponse"
+              example:
+                client_id: https://broker.example.com/.well-known/oauth-client/550e8400-e29b-41d4-a716-446655440000
+                redirect_uris:
+                  - https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/callback
+                grant_types:
+                  - authorization_code
+                  - refresh_token
+                response_types:
+                  - code
+                token_endpoint_auth_method: private_key_jwt
+                token_endpoint_auth_signing_alg: ES256
+                jwks_uri: https://broker.example.com/.well-known/oauth-client/550e8400-e29b-41d4-a716-446655440000/jwks.json
+        "404":
+          description: Client ID Metadata Document unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: not found
+                message: CIMD service unavailable
+  /.well-known/oauth-client/{service-id}/jwks.json:
+    get:
+      summary: CIMD client-authentication JSON Web Key Set
+      description: |
+        Returns the public ES256 client-authentication keys for a CIMD-enabled service.
+        Keys come only from the `cimd_client_authentication` domain. The set can include
+        a generated key during its activation grace period and retains non-current keys
+        until an operator removes them. It never includes token-signing keys, upstream
+        keys, private JWK members, encrypted key material, or secrets.
+      operationId: getCIMDClientAuthenticationJWKS
+      tags:
+        - OAuth2 Discovery
+      security: []
+      parameters:
+        - name: service-id
+          in: path
+          description: Immutable service UUID.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: CIMD client-authentication JWK Set
+          headers:
+            Cache-Control:
+              description: Cache directive for the JWK Set response
+              schema:
+                type: string
+                example: "public, max-age=300"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CIMDClientAuthenticationJWKSetResponse"
+              example:
+                keys:
+                  - kty: EC
+                    crv: P-256
+                    kid: cimd-client-authentication-key-2026-09-21-001
+                    use: sig
+                    alg: ES256
+                    x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU"
+                    y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+        "404":
+          description: CIMD client-authentication JWK Set unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: not found
+                message: CIMD service unavailable
+
   /.well-known/oauth-authorization-server:
     get:
       summary: RFC 8414 OAuth2 Authorization Server Metadata
@@ -3133,6 +3337,120 @@ components:
             Present and true when CIMD is enabled; absent when disabled.
           example: true
 
+    CIMDClientMetadataResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - client_id
+        - redirect_uris
+        - grant_types
+        - response_types
+        - token_endpoint_auth_method
+        - token_endpoint_auth_signing_alg
+        - jwks_uri
+      properties:
+        client_id:
+          type: string
+          format: uri
+          description: Retrieval URL for this Client ID Metadata Document.
+        redirect_uris:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: string
+            format: uri
+          description: OAuth2 callback URL for this service.
+        grant_types:
+          type: array
+          minItems: 2
+          maxItems: 2
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - authorization_code
+              - refresh_token
+          description: Supported OAuth2 grant types.
+        response_types:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: string
+            enum:
+              - code
+          description: Supported OAuth2 response types.
+        token_endpoint_auth_method:
+          type: string
+          enum:
+            - private_key_jwt
+          description: Client authentication method.
+        token_endpoint_auth_signing_alg:
+          type: string
+          enum:
+            - ES256
+          description: Client authentication signing algorithm.
+        jwks_uri:
+          type: string
+          format: uri
+          description: URL of the CIMD client-authentication JWK Set.
+
+    CIMDClientAuthenticationJWKSetResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          minItems: 1
+          description: Public ES256 keys from the CIMD client-authentication key domain.
+          items:
+            $ref: "#/components/schemas/CIMDClientAuthenticationJWK"
+
+    CIMDClientAuthenticationJWK:
+      type: object
+      additionalProperties: false
+      required:
+        - kty
+        - crv
+        - kid
+        - use
+        - alg
+        - x
+        - y
+      properties:
+        kty:
+          type: string
+          enum:
+            - EC
+          description: Elliptic curve key type.
+        crv:
+          type: string
+          enum:
+            - P-256
+          description: Elliptic curve name.
+        kid:
+          type: string
+          description: Globally unique key identifier.
+        use:
+          type: string
+          enum:
+            - sig
+          description: Key use for signing.
+        alg:
+          type: string
+          enum:
+            - ES256
+          description: Signature algorithm.
+        x:
+          type: string
+          description: Base64url-encoded public x coordinate.
+        y:
+          type: string
+          description: Base64url-encoded public y coordinate.
+
     JWKSetResponse:
       type: object
       required:
@@ -3249,7 +3567,7 @@ components:
         refresh_token_expires_at:
           type: string
           format: date-time
-          nullable: true
+          description: Omitted when no refresh-token expiry is stored.
         dependent_agent_count:
           type: integer
           minimum: 0
@@ -3257,68 +3575,61 @@ components:
         is_encrypted:
           type: boolean
           description: Indicates tokens are stored encrypted
-    SessionStatus:
+    UserSession:
       type: object
+      description: |
+        Stored session returned by GET /api/third-party/{serviceId}/session.
+        Encrypted access and refresh tokens are excluded from JSON.
       required:
-        - session_id
-        - initiated_at
-        - is_expired
-        - has_refresh_token
+        - id
+        - principal
+        - service_id
+        - token_type
         - scope
-        - dependent_agent_count
-        - tokens_encrypted
+        - encryption_context
+        - initiated_at
+        - created_at
+        - updated_at
       properties:
-        session_id:
+        id:
           type: string
           format: uuid
-          description: Session identifier
-        initiated_at:
+        principal:
           type: string
-          format: date-time
-          description: When the OAuth2 flow was completed
+        service_id:
+          type: string
+          format: uuid
+        token_type:
+          type: string
         access_token_expires_at:
           type: string
           format: date-time
-          nullable: true
-          description: When the access token expires (null if unknown)
+          description: Omitted when no access-token expiry is stored.
         refresh_token_expires_at:
           type: string
           format: date-time
-          nullable: true
-          description: When the refresh token expires (null if never or unknown)
-        is_expired:
-          type: boolean
-          description: |
-            True if the refresh token has expired. Session is only marked expired
-            when refresh token expires, not access token (access tokens can be refreshed).
-        has_refresh_token:
-          type: boolean
-          description: Whether a refresh token is stored for this session
+          description: Omitted when no refresh-token expiry is stored.
         scope:
           type: array
+          nullable: true
           items:
             type: string
-          description: OAuth2 scopes granted in this session
-        dependent_agent_count:
-          type: integer
-          minimum: 0
-          description: Number of distinct agents with grants owned by the authenticated session principal that reference this service
-        tokens_encrypted:
-          type: boolean
-          description: Indicates tokens are stored encrypted (always true)
-    AffectedAgent:
-      type: object
-      required:
-        - agent_id
-        - display_name
-      properties:
-        agent_id:
+        encryption_context:
+          type: object
+          required: [service_id]
+          properties:
+            service_id:
+              type: string
+              format: uuid
+        initiated_at:
           type: string
-          format: uuid
-          description: Agent identifier
-        display_name:
+          format: date-time
+        created_at:
           type: string
-          description: Human-readable agent name
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     Error:
       type: object
       required:
@@ -3563,6 +3874,7 @@ components:
       type: object
       required:
         - error
+        - message
       properties:
         error:
           type: string
@@ -3779,7 +4091,6 @@ components:
             persistence:
               type: string
               enum: [permanent]
-              nullable: true
             denied_at:
               type: string
               format: date-time

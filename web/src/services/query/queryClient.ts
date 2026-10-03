@@ -1,5 +1,6 @@
 import { focusManager, isCancelledError, MutationCache, QueryClient } from '@tanstack/react-query';
-import { isAxiosError, isCancel } from 'axios';
+import { isCancel } from 'axios';
+import { isApiError } from '@services/api/client';
 import { queryKeys } from './queryKeys';
 
 // Query v5's default visibility listener does not cover a visible window regaining focus.
@@ -26,9 +27,7 @@ export function createQueryClient(): QueryClient {
       queries: {
         retry: (failureCount, error) => {
           if (isCancelledError(error) || isCancel(error) || (error instanceof Error && error.name === 'AbortError')) return false;
-          const status = isAxiosError(error)
-            ? error.response?.status
-            : typeof error === 'object' && error !== null && 'status' in error ? error.status : undefined;
+          const status = isApiError(error) ? error.status : undefined;
           return failureCount < 2 && !(typeof status === 'number' && status >= 400 && status < 500);
         },
         retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),

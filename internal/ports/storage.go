@@ -36,8 +36,8 @@ type HealthChecker interface {
 	HealthCheck(ctx context.Context) error
 }
 
-// OAuth2TransactionManager supplies atomic storage operations for Fosite token flows.
-type OAuth2TransactionManager interface {
+// StorageTransactionManager supplies a context shared by participating repository operations.
+type StorageTransactionManager interface {
 	BeginTX(ctx context.Context) (context.Context, error)
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
@@ -252,6 +252,14 @@ type UserSessionRepository interface {
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 
+// UserSessionRefreshRepository serializes a read-modify-write refresh for one session.
+// The callback sees the latest session under a lock; it returns true only when it
+// has replaced the encrypted tokens and the adapter must persist them atomically.
+// A nil session means the principal has no session for that service.
+type UserSessionRefreshRepository interface {
+	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
+}
+
 // PermissionSetRepository defines storage operations for permission set entities.
 // Permission sets are admin-defined bundles of OAuth2 scopes spanning one or more third-party services.
 // Following Interface Segregation Principle: focused interface for permission set operations.
@@ -362,26 +370,31 @@ type SigningKeyRepository interface {
 	// current while demoting all other keys, in a single transaction.
 	CreateAndSetCurrent(ctx context.Context, key *storage.SigningKey) error
 
-	// GetByKID retrieves a signing key by its key ID (kid).
-	GetByKID(ctx context.Context, kid id.KeyID) (*storage.SigningKey, error)
+	// GetByKIDInDomain retrieves an active signing key from one key domain.
+	GetByKIDInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) (*storage.SigningKey, error)
 
-	// GetCurrent retrieves the current active signing key.
-	GetCurrent(ctx context.Context) (*storage.SigningKey, error)
+	// GetCurrentInDomain retrieves the current active signing key from one key domain.
+	GetCurrentInDomain(ctx context.Context, domain storage.KeyDomain) (*storage.SigningKey, error)
 
-	// ListActive returns all signing keys that have not been removed.
-	ListActive(ctx context.Context) ([]*storage.SigningKey, error)
+	// ListActiveInDomain returns active signing keys from one key domain.
+	ListActiveInDomain(ctx context.Context, domain storage.KeyDomain) ([]*storage.SigningKey, error)
 
-	// SetCurrent promotes a key to be the current signing key using the domain-supplied
-	// activation timestamp and returns the updated metadata.
-	SetCurrent(ctx context.Context, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error)
+	// KeySetVersion returns the database-backed revision of the signing-key set.
+	// It must change atomically with every committed key mutation.
+	KeySetVersion(ctx context.Context) (int64, error)
 
-	// Delete soft-deletes a signing key by setting removed_at.
-	// Implementations must enforce signing-key invariants atomically:
-	// the current key cannot be removed and at least one active key must remain.
-	Delete(ctx context.Context, kid id.KeyID) error
+	// SetCurrentInDomain promotes a signing key within one key domain.
+	SetCurrentInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID, activatesAt time.Time) (*storage.SigningKey, error)
 
-	// CountActive returns the number of non-removed signing keys.
-	CountActive(ctx context.Context) (int, error)
+	// SetPublicJWK backfills a legacy key without overwriting an existing value.
+	// It reports true only when this call writes the public trust anchor.
+	SetPublicJWK(ctx context.Context, kid id.KeyID, publicJWK []byte) (bool, error)
+
+	// DeleteInDomain soft-deletes a signing key from one key domain.
+	DeleteInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) error
+
+	// CountActiveInDomain counts non-removed signing keys from one key domain.
+	CountActiveInDomain(ctx context.Context, domain storage.KeyDomain) (int, error)
 }
 
 // AuthorizationCodeRepository manages ephemeral authorization codes.

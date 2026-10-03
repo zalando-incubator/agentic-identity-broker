@@ -56,6 +56,7 @@ func setupImplementedService(t *testing.T) (*oauth2session.OAuth2SessionService,
 	svc := oauth2session.NewOAuth2SessionService(
 		providerService,
 		sessionRepo,
+		sessionRepo,
 		grantRepo,
 		agentRepo,
 		encryption,

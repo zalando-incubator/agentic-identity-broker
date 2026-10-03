@@ -25,7 +25,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 **Execution status (2026-09-28)**: The new component system, data layer, routes, and application journeys are implemented. The full frontend unit run passed 661 tests. The first integrated browser run passed 64 of 75 journeys; reported fixture, readiness, focus-observation, callback, and conflict-feedback issues are being corrected without weakening acceptance assertions. Component accessibility and bundle-budget gates remain active. Linux screenshots, human review, performance measurements, and final release verification are not complete.
 
-**Resume status (2026-10-02)**: Recovered the missing `web/build/` plugins and regression gates and corrected source ignore rules. All 667 frontend unit tests, the production Storybook build, and both decision-bundle checks pass. All 432 light/dark component stories pass when generating macOS and native Linux arm64 review candidates. T066 remains open: human-reviewed Linux baselines and comparison on the amd64 CI renderer are still a foundation prerequisite. See the "Implementation resume" section of `cutover-inventory.md`; no later task is marked complete from this build-path verification.
+**Resume status (2026-10-03)**: The approved upstream callback and existing-response documentation integration is complete. All 710 frontend unit tests, 432 light/dark component stories, both decision-bundle checks, and the full E2E gate pass (641 backend, 112 ExtProc, 77 frontend). Production consent measured 4,737.7 ms under Slow 4G. Human-reviewed Linux baselines, PR/manual evidence, historical test-first verification, and the gRPC security dependency still block release. See the integrated-verification section of `cutover-inventory.md`.
 
 **Omitted optional sections**:
 - Phase 0 (Pre-implementation Refactoring): plan.md requires refactors to stay with their consumers. A separate refactoring PR would ship a partial presentation.
@@ -77,7 +77,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [X] T006 [P] Update the Glossary (§12) in `ARCHITECTURE.md`:
       - Rename "Connection State (feature 046 presentation)" to feature 047. List its states verbatim: "Connected", "Needs re-authentication", "Expired", "No connection". State that No connection appears only for a service an agent requires but the user has not connected. Add no Missing scopes state
       - Add **Delegation**: a principal's unexpired UserGrant to one agent, as listed on `/delegations` under the Agents navigation item
-      - Add **Consent Draft**: transient selections, existing grant, duration, custom expiry, and dirty state. It is never persisted beyond the existing `consent_state` URL parameter
+      - Add **Consent Draft**: transient selections, existing active grant, duration, custom expiry, and dirty state. A bounded current-tab callback record preserves the draft and original return URL under `consent_state_id`; no API responses are persisted
       - Add **Agent Origin Label**: "Verified domain: host" for validated CIMD metadata, "Registered by your administrator" when CIMD metadata is absent, or "Unverified" for a CIMD request without domain trust. It derives only from the authorization session and never claims legal publisher verification
       - Add **Delta Re-consent**: a decision on only the access that is not already in `granted_permission_sets`
       - Add **Appearance Preferences**: per-browser theme and sidebar choices that never affect a consent or tool decision
@@ -113,8 +113,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - `/api/approvals/pending`, and the permanent approval list and revoke
       - Approval get, approve, deny, and scope preview
 
-      Record the map in `specs/047-redesign-consent-console/cutover-inventory.md`. Confirm that each documented response matches its handler. The stakeholder approved documentation-only corrections for the existing session-list and consent responses on 2026-09-27 (spec Clarifications). Confirm that no browser code calls `GET /api/approvals`
-- [X] T011 [P] Record the stakeholder confirmations in `specs/047-redesign-consent-console/cutover-inventory.md`: API-005 prohibits runtime endpoint, response-field, persistence, and OAuth2/token changes. The 2026-09-27 decisions permit documentation-only corrections of existing session-list and consent responses to match current handlers. The admin API is unaffected
+      Record the map in `specs/047-redesign-consent-console/cutover-inventory.md`. Confirm each documented response against its handler. The stakeholder approved consent/session-list corrections on 2026-09-27 and existing session-detail/termination and approval-status corrections on 2026-10-02. Confirm no browser calls `GET /api/approvals`
+- [X] T011 [P] Record stakeholder confirmations in `cutover-inventory.md`: API-005 prohibits new runtime endpoint, response-field, persistence, and OAuth2/token changes. The approved documentation-only corrections cover existing consent, session, and approval responses/statuses. Current main's accepted callback-state transport is the integration baseline. The admin API is unaffected
 
 **Checkpoint**: No API change confirmed and recorded
 
@@ -519,12 +519,12 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - Required groups and required services are locked
       - Groups in `granted_permission_sets` are marked already granted (collapsed, checked, and read-only in decision context) and are excluded from new decisions
       - On re-consent, the initial duration is Until revoked for a null `valid_until` and Custom date at the existing `valid_until` otherwise. Unless the user changes the duration, `toGrantRequest()` sends the existing `valid_until` unchanged; a changed duration applies to the whole grant
-      - `consent_state` from the URL restores the selections
+      - A matching, unexpired `consent_state_id` callback record restores the canonical selections, duration, custom date, and original return URL; replacing history prevents reload replay
       - `toGrantRequest()` returns existing ∪ newly selected services. It never drops an existing selection and never adds an unselected one
       - Dirty detection works, and `reset()` restores the loaded state
       - `resolveValidUntil('until-revoked' | '30-days' | 'custom', date, now)` omits `valid_until` for Until revoked, uses now + 30 days for 30 days, and rejects a custom date that is not after today
       - Its output matches the `valid_until` format that `web/src/components/consent/GrantValidityControl.tsx` and `web/src/hooks/useUpdateValidity.ts` produce today
-- [X] T072 Implement `web/src/components/consent/consentDraft.ts` with the ConsentDraft transitions from data-model.md. It adds no persistence beyond the existing `consent_state` URL parameter
+- [X] T072 Implement `web/src/components/consent/consentDraft.ts` with the ConsentDraft transitions from data-model.md. Use the accepted bounded tab-local callback record; no URL-base64 transport, API-response persistence, or compatibility aliases
 - [X] T073 [P] Write `web/src/components/sessions/connectionState.test.ts`. It covers each row of the data-model.md precedence table, in order:
       - "No session for a service the agent requires" (`connectionStatus: not_connected`) → No connection, with Connect. Only the agent Connections tab and the consent service prompt use this row
       - "Known rejected refresh result": a `409` or `502` response to the refresh call in the current page → Needs re-authentication, with Reconnect
@@ -587,7 +587,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - `localhost`, `*.localhost`, `127.0.0.0/8`, and `[::1]`, with or without a port → "Unverified", plus the banner flag
       - No label ever mentions a publisher
       - The console context (no session) → no label
-- [X] T084 [P] [US1] Write `web/src/pages/AgentDecisionPage.test.tsx`. Port the preserved decision assertions from `web/src/pages/AgentGrantDetailPage.test.tsx` and `AgentGrantDetailPage.integration.test.tsx`: safe-redirect validation, the `consent_state` round trip, the service-login URL, and the CIMD advanced details. Then assert:
+- [X] T084 [P] [US1] Write `web/src/pages/AgentDecisionPage.test.tsx`. Preserve safe redirects, the accepted callback-state round trip, service authorization, and CIMD advanced details. Cover the canonical draft and full return URL through the form POST/storage flow. Then assert:
       - Layout and identity:
         - DecisionShell renders without `nav`
         - A logo from a third-party origin renders the local fallback and issues no image request
@@ -618,8 +618,8 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 - [X] T089 [P] [US1] Build these components in `web/src/components/consent/`:
       - `DurationChoice.tsx`: a RadioGroup with "Until revoked", "30 days", and "Custom date", plus a DatePicker. Its initial value and validation come from `consentDraft`
       - `ConsentActions.tsx`: a primary Allow, a secondary Deny, and the next-steps text
-      - `ServiceConnectPrompt.tsx`: connects a required service. It encodes the draft into `consent_state` and navigates to the existing `/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=…` URL
-- [X] T090 [US1] Implement `web/src/pages/AgentDecisionPage.tsx` in DecisionShell from T085–T089, and switch the decision branch of `web/src/components/layout/AgentRoute.tsx` to it. Move the session-token, `consent_state`, redirect, and service-login logic from `web/src/pages/AgentGrantDetailPage.tsx` (about lines 47–64 and 230–272) without changing its semantics
+      - `ServiceConnectPrompt.tsx`: connect through the existing same-origin form POST with a clean return path and opaque `consent_state_id`; keep the draft and full return URL tab-local, and do not navigate if storage fails
+- [X] T090 [US1] Implement `AgentDecisionPage` in DecisionShell and switch `AgentRoute` to it. Restore a valid callback record before selecting decision/console context or issuing context-sensitive reads. Preserve session-token validation, canonical draft, safe continuation, and provider callback semantics
 - [X] T091 [US1] Update decision-view selectors through `tests/e2e/pages/consent_page.go`, following T004. Migrate the `consent_state` fixtures and decoding in `selection_preservation_test.go` to the canonical envelope without weakening selection assertions. Keep security, authorization, storage, and callback behavior in `cimd_consent_test.go`, `cimd_flow_test.go`, `selection_preservation_test.go`, and `permission_sets_frontend_test.go`; replace only obsolete presentation assertions under the 2026-09-28 clarification
 - [X] T092 [US1] Run `ginkgo -v --focus "AS-0[1-3]" ./tests/e2e/frontend/` and the journeys from T091 until they pass, then run `just web-test`. Measure SC-002 once with T204's procedure and record it in the "Performance" section of `cutover-inventory.md`; fix a miss before continuing
 
@@ -812,7 +812,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 ### Implementation for User Story 7
 
 - [X] T132 [US7] Implement `web/src/components/layout/UserMenu.tsx` as a DropdownMenu that contains ThemeChoice, and mount it in the `userMenu` slot of `web/src/components/layout/ConsoleLayout.tsx`
-- [ ] T133 [US7] Audit and fix both shells and every page for AS-15, and record each fix by file in `specs/047-redesign-consent-console/cutover-inventory.md`:
+- [X] T133 [US7] Audit and fix both shells and every page for AS-15, and record each fix by file in `specs/047-redesign-consent-console/cutover-inventory.md`:
       - Every interactive primitive shows the `:focus-visible` ring token
       - No sticky element obscures focus
       - No page overflows at 320 px or 200% zoom
@@ -868,7 +868,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 ### Implementation for User Story 9
 
 - [X] T140 [US9] Implement `web/src/components/command/CommandPalette.tsx`, which uses `advanced/Command` inside a Dialog, and `web/src/hooks/useCommandShortcut.ts`. `web/src/components/layout/ConsoleLayout.tsx` lazy-loads the palette on first open and fills the `search` slot. Decision routes never import it
-- [ ] T141 [US9] Run `ginkgo -v --focus "AS-18" ./tests/e2e/frontend/` until it passes, then rerun `just web-bundle-check`
+- [X] T141 [US9] Run `ginkgo -v --focus "AS-18" ./tests/e2e/frontend/` until it passes, then rerun `just web-bundle-check`
 
 **Checkpoint (not a release)**: All 17 active scenarios pass on the branch
 
@@ -878,7 +878,7 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 **Purpose**: Remove the old presentation and every obsolete consumer in the same release. Publish the reviewed baselines and documentation (FR-028, FR-031; SC-008, SC-010)
 
-- [ ] T142 Delete the superseded application code. First confirm that a passing replacement test covers each preserved behavior. Delete:
+- [X] T142 Delete the superseded application code. First confirm that a passing replacement test covers each preserved behavior. Delete:
       - Pages: `web/src/pages/AgentGrantDetailPage.tsx` (with `.test.tsx` and `.integration.test.tsx`), `ConsentOverviewPage.tsx` (with its test), `ThirdPartySessionsPage.tsx`, and `ToolAuthorizationsPage.tsx`
       - Layout: `web/src/components/layout/AppLayout.tsx` and `Header.tsx` (with `Header.test.tsx`)
       - Everything in `web/src/components/ui/`
@@ -887,17 +887,17 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
       - Hooks, together with their tests: `useConsent`, `useAgentGrants`, `useSessions`, `useToggleGrant`, `useUpdateValidity`, and `useApproval`
 
       Then update `web/src/hooks/index.ts` and unmount `ToastProvider`
-- [ ] T143 [P] Delete the design-system components that T014(b) marks as replaced: `overlays/Modal`, `overlays/Dropdown`, `inputs/TextInput`, `inputs/Radio`, `primitives/Divider`, `layout/AppLayout`, `layout/PageTransition`, and `feedback/Toast`. Also delete any of these that have no consumer, and record the `rg` proof in `cutover-inventory.md`: `primitives/Spinner`, `layout/{Container,Stack,Grid}`, `navigation/{Breadcrumb,Pagination}`, `advanced/Progress`, and `data-display/{StatusIndicator,ScopeList}`. Update the category `index.ts` barrels in `web/src/design-system/components/`
-- [ ] T144 [P] Remove `@headlessui/react` and `framer-motion` from `web/package.json` and `web/package-lock.json`
-- [ ] T145 [P] Delete `web/src/services/api/cache.ts` and its re-exports from `web/src/services/api/index.ts`
-- [ ] T146 [P] Delete these token and configuration sources:
+- [X] T143 [P] Delete the design-system components that T014(b) marks as replaced: `overlays/Modal`, `overlays/Dropdown`, `inputs/TextInput`, `inputs/Radio`, `primitives/Divider`, `layout/AppLayout`, `layout/PageTransition`, and `feedback/Toast`. Also delete any of these that have no consumer, and record the `rg` proof in `cutover-inventory.md`: `primitives/Spinner`, `layout/{Container,Stack,Grid}`, `navigation/{Breadcrumb,Pagination}`, `advanced/Progress`, and `data-display/{StatusIndicator,ScopeList}`. Update the category `index.ts` barrels in `web/src/design-system/components/`
+- [X] T144 [P] Remove `@headlessui/react` and `framer-motion` from `web/package.json` and `web/package-lock.json`
+- [X] T145 [P] Delete `web/src/services/api/cache.ts` and its re-exports from `web/src/services/api/index.ts`
+- [X] T146 [P] Delete these token and configuration sources:
       - `web/tailwind.config.ts`, and its entry in `web/tsconfig.node.json`
       - `web/src/design-system/tokens/colors.css`
       - Any TypeScript token module that has no runtime consumer left: `colors.ts`, `shadows.ts`, `animation.ts`, `typography.ts`, `spacing.ts`, or `radius.ts`. Verify each one with `rg`
 
       Update `web/src/design-system/tokens/index.ts`. Update or delete `web/src/design-system/oauth2-semantic-tokens.md` so that no document describes removed tokens
-- [ ] T147 [P] Delete the Crimson Pro and Manrope WOFF2 files, `LICENSE-crimson-pro.txt`, and `LICENSE-manrope.txt` from `web/public/fonts/`. Also delete any JetBrains Mono subset that `web/src/styles/fonts.css` no longer references
-- [ ] T148 Verify the removal, and record the results in `specs/047-redesign-consent-console/cutover-inventory.md`:
+- [X] T147 [P] Delete the Crimson Pro and Manrope WOFF2 files, `LICENSE-crimson-pro.txt`, and `LICENSE-manrope.txt` from `web/public/fonts/`. Also delete any JetBrains Mono subset that `web/src/styles/fonts.css` no longer references
+- [X] T148 Verify the removal, and record the results in `specs/047-redesign-consent-console/cutover-inventory.md`:
       - Every T002 command returns zero hits
       - `just web-lint` reports zero raw-palette errors
       - `npm --prefix web ls @headlessui/react framer-motion` finds neither package
@@ -930,16 +930,16 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 
 **Constitution Reference**: PRECONDITIONS checklist. Verify that the Phase 2 tasks were completed correctly
 
-- [ ] T152 Verify that the Glossary (§12) in `ARCHITECTURE.md` contains Consent Draft, Agent Origin Label, Delta Re-consent, Appearance Preferences, Delegation, and the feature-047 Connection State entry (Principle V)
-- [ ] T153 Verify that no configuration example is needed: `examples/config/` is unchanged, and `cutover-inventory.md` records T008 (Principle VII)
-- [ ] T154 Verify that `examples/config/README.md` needs no new reference, because no configuration section was added (Principle VII)
-- [ ] T155 Verify that `git diff main -- api/enduser/openapi.yaml` contains only approved documentation corrections for existing session-list and consent responses, that `git diff main -- api/admin/openapi.yaml` is empty, and that T010's endpoint map is attached to the PR (Principles IV, X)
+- [X] T152 Verify that the Glossary (§12) in `ARCHITECTURE.md` contains Consent Draft, Agent Origin Label, Delta Re-consent, Appearance Preferences, Delegation, and the feature-047 Connection State entry (Principle V)
+- [X] T153 Verify that no configuration example is needed: `examples/config/` is unchanged, and `cutover-inventory.md` records T008 (Principle VII)
+- [X] T154 Verify that `examples/config/README.md` needs no new reference, because no configuration section was added (Principle VII)
+- [ ] T155 Verify `git diff main -- api/enduser/openapi.yaml` contains only approved documentation-only corrections for existing consent, session, and approval responses/statuses; `git diff main -- api/admin/openapi.yaml` is empty; and T010's endpoint map is attached to the PR (Principles IV, X)
 - [ ] T156 Verify that the PR description references the stakeholder confirmation recorded in `specs/047-redesign-consent-console/cutover-inventory.md` (T011) and the ADR 037 acceptance in `adrs/037-design-system-rebuilt-on-shadcn-radix.md` (T013) (Principle X)
-- [ ] T157 Verify that `git diff main -- migrations/ internal/ports/storage.go` is empty (Principle IX)
-- [ ] T158 [IF FRONTEND] Verify that the T014 review is recorded and that the universal components (Wordmark, TruncatedText, ThemeChoice, ConsoleShell, DecisionShell, and PageHeader) live in `web/src/design-system/` (Principle XI)
-- [ ] T159 Verify that `tests/e2e/frontend/consent_ui_v2_test.go` has one `It` for each of AS-01–AS-15, AS-17, and AS-18, and none for AS-16 (Principle XIII)
-- [ ] T160 Verify the T042 red-phase record in `cutover-inventory.md`: detailed expectations were written and failed, with no placeholder always-fail assertions, no `XIt`/`PIt`/`Skip()` markers, and no "red phase" comments in `tests/e2e/frontend/` (Principle XIII)
-- [ ] T161 [IF FRONTEND] Verify that the page objects in `tests/e2e/pages/` cover every new interaction and that the test files in `tests/e2e/frontend/` use no raw selectors (Principle XIII)
+- [X] T157 Verify that `git diff main -- migrations/ internal/ports/storage.go` is empty (Principle IX)
+- [X] T158 [IF FRONTEND] Verify that the T014 review is recorded and that the universal components (Wordmark, TruncatedText, ThemeChoice, ConsoleShell, DecisionShell, and PageHeader) live in `web/src/design-system/` (Principle XI)
+- [X] T159 Verify that `tests/e2e/frontend/consent_ui_v2_test.go` has one `It` for each of AS-01–AS-15, AS-17, and AS-18, and none for AS-16 (Principle XIII)
+- [X] T160 Verify the T042 red-phase record in `cutover-inventory.md`: detailed expectations were written and failed, with no placeholder always-fail assertions, no `XIt`/`PIt`/`Skip()` markers, and no "red phase" comments in `tests/e2e/frontend/` (Principle XIII)
+- [X] T161 [IF FRONTEND] Verify that the page objects in `tests/e2e/pages/` cover every new interaction and that the test files in `tests/e2e/frontend/` use no raw selectors (Principle XIII)
 - [ ] T162 [IF FRONTEND] Verify that `tests/e2e/screenshots/` contains the 14 route, context, and theme images, using the stems from quickstart.md (Principle XIII)
 
 #### Implementation Phase Verification [MANDATORY]
@@ -947,73 +947,73 @@ The `Phase 2` and `Phase N` headings are kept verbatim because the constitution'
 **Constitution Reference**: Implementation Phase checklist. Verify that all principles were followed during implementation
 
 **API & Documentation** (Principles IV, X):
-- [ ] T163 [P] Verify that `api/enduser/openapi.yaml` needed no update beyond approved existing-response documentation corrections, because every implemented call in the T010 map exists unchanged at runtime
-- [ ] T164 [P] Verify that the request and response types in `web/src/services/api/*.ts` and `web/src/types/*.ts` match `api/enduser/openapi.yaml` exactly
-- [ ] T165 Verify that API documentation matches the existing session-list and consent responses, with no runtime API change. End-user UI documentation lives in `README.md` and `docs/` (T150, T151)
+- [X] T163 [P] Verify that `api/enduser/openapi.yaml` needed no update beyond approved existing-response documentation corrections, because every implemented call in the T010 map exists unchanged at runtime
+- [X] T164 [P] Verify that the request and response types in `web/src/services/api/*.ts` and `web/src/types/*.ts` match `api/enduser/openapi.yaml` exactly
+- [ ] T165 Verify API documentation matches existing consent, session, and approval responses/statuses without runtime API changes. End-user UI documentation lives in README and docs (T150, T151)
 
 **Architecture & Documentation** (Principle II):
 - [X] T166 Update the frontend section of `ARCHITECTURE.md` (about lines 135–160) to the delivered stack. Remove the "proposed" framing and the pre-migration inventory (Headless UI, React Router 6, and "no external state library")
-- [ ] T167 Verify that the Glossary in `ARCHITECTURE.md` matches the terms used in code and in `web/src/copy/index.ts`
-- [ ] T168 [P] Verify that `adrs/037-design-system-rebuilt-on-shadcn-radix.md` is Accepted and cross-referenced from ADRs 006 and 035. Write a further ADR only if the implementation deviated from ADR 037
+- [X] T167 Verify that the Glossary in `ARCHITECTURE.md` matches the terms used in code and in `web/src/copy/index.ts`
+- [X] T168 [P] Verify that `adrs/037-design-system-rebuilt-on-shadcn-radix.md` is Accepted and cross-referenced from ADRs 006 and 035. Write a further ADR only if the implementation deviated from ADR 037
 
 **Configuration** (Principle VII):
-- [ ] T169 [P] Verify that `internal/ports/config.go` has no new keys and no environment variable or CLI option was added. The SPA handler reads only static build artifacts: the CSP hash, Vite asset manifest, and compressed asset companions.
-- [ ] T170 [IF CONFIG CHANGED] Not applicable: verify that `git diff main -- charts/` is empty and that T009 is recorded (Principle VII)
+- [X] T169 [P] Verify that `internal/ports/config.go` has no new keys and no environment variable or CLI option was added. The SPA handler reads only static build artifacts: the CSP hash, Vite asset manifest, and compressed asset companions.
+- [X] T170 [IF CONFIG CHANGED] Not applicable: verify that `git diff main -- charts/` is empty and that T009 is recorded (Principle VII)
 
 **Database & Persistence** (Principle IX):
-- [ ] T171 [P] Not applicable: verify that `migrations/` has no new files
-- [ ] T172 [P] Not applicable: verify that `just test-integration` passes with `tests/integration/` unchanged, which covers migrations
-- [ ] T173 [P] Not applicable: verify that no PostgreSQL repository in `internal/adapters/storage/postgres/` changed
-- [ ] T174 Verify that persistence stays within its boundary. The browser stores only `aib.theme` and `aib.sidebar-collapsed` in `localStorage`, and never persists API data (`web/src/services/query/QueryProvider.tsx`)
+- [X] T171 [P] Not applicable: verify that `migrations/` has no new files
+- [X] T172 [P] Not applicable: verify that `just test-integration` passes with `tests/integration/` unchanged, which covers migrations
+- [X] T173 [P] Not applicable: verify that no PostgreSQL repository in `internal/adapters/storage/postgres/` changed
+- [X] T174 Verify that persistence stays within its boundary. The browser stores only `aib.theme` and `aib.sidebar-collapsed` in `localStorage`, and never persists API data (`web/src/services/query/QueryProvider.tsx`)
 
 **Security** (Principles I, III):
-- [ ] T175 Verify that security features are on by default, with no bypass:
+- [X] T175 Verify that security features are on by default, with no bypass:
       - The CSP is always on and fails closed (`internal/adapters/http/handlers/spa.go`)
       - No flag exists
       - `session_token` validation, `isSafeRedirectUrl`, and callback handling are unchanged
       - Nothing grants or approves optimistically, and Deny does not mutate
       - The cross-principal assertions in AS-09, AS-13, and AS-18 pass
-- [ ] T176 [P] Verify that no custom cryptography exists. The CSP hash uses Node `crypto.createHash('sha256')` in `web/build/themeInitPlugin.ts`, and Go only validates the hash string
-- [ ] T177 [P] Verify structured logging. `SPAHandler` logs a missing or invalid `csp-hashes.json` at error level with its path. The existing audit logging for grant, approval, and session mutations is unchanged
+- [X] T176 [P] Verify that no custom cryptography exists. The CSP hash uses Node `crypto.createHash('sha256')` in `web/build/themeInitPlugin.ts`, and Go only validates the hash string
+- [X] T177 [P] Verify structured logging. `SPAHandler` logs a missing or invalid `csp-hashes.json` at error level with its path. The existing audit logging for grant, approval, and session mutations is unchanged
 
 **Architecture Patterns** (Principle VI):
-- [ ] T178 Verify that `git diff main --stat -- internal/ cmd/` touches only `internal/adapters/http/handlers/spa.go` and `spa_test.go`, with no domain, port, or builder change
+- [X] T178 Verify that `git diff main --stat -- internal/ cmd/` touches only `internal/adapters/http/handlers/spa.go` and `spa_test.go`, with no domain, port, or builder change
 
 **Testing** (Principle VIII - Unit & Integration Tests):
 - [ ] T179 Verify that the unit tests in `web/src/`, `web/build/`, `web/eslint-rules/`, and `internal/adapters/http/handlers/spa_test.go` were written first and failed before implementation. Check each test task (T045, T047, T049, T051, T053, T056, T067, T071, T073, T075, T077, T079, T081, and every story test task) and each test-first substep (T040, T058–T064, and T068) against its implementation commit
 - [ ] T180 Verify that the tests drove the design, so that the implementation in `web/src/` and `internal/adapters/http/handlers/spa.go` emerged from their requirements
 - [ ] T181 Verify that the tests in `web/src/**/*.test.ts(x)` and `internal/adapters/http/handlers/spa_test.go` changed minimally during implementation
 - [ ] T182 Verify with the `justfile` recipes that `just web-test`, `just web-storybook-test`, `just web-bundle-check`, and `just test` pass
-- [ ] T183 Verify that no Bash script validates code correctness. The visual gate lives in Go (`tools/imgdiff`), the bundle check in Vitest (`web/build/decisionBundle.test.ts`), and the palette check in ESLint (`web/eslint-rules/no-raw-palette.js`)
+- [X] T183 Verify that no Bash script validates code correctness. The visual gate lives in Go (`tools/imgdiff`), the bundle check in Vitest (`web/build/decisionBundle.test.ts`), and the palette check in ESLint (`web/eslint-rules/no-raw-palette.js`)
 
 **E2E Acceptance Testing** (Principle XIII):
-- [ ] T184 Verify that `tests/e2e/frontend/consent_ui_v2_test.go` has tests for all 17 active acceptance scenarios from spec.md
-- [ ] T185 Verify that each `It()` block in `tests/e2e/frontend/consent_ui_v2_test.go` maps to exactly one acceptance scenario, with theme parameterization inside the scenario
+- [X] T184 Verify that `tests/e2e/frontend/consent_ui_v2_test.go` has tests for all 17 active acceptance scenarios from spec.md
+- [X] T185 Verify that each `It()` block in `tests/e2e/frontend/consent_ui_v2_test.go` maps to exactly one acceptance scenario, with theme parameterization inside the scenario
 - [ ] T186 Verify that the E2E tests in `tests/e2e/frontend/consent_ui_v2_test.go` were written before implementation and failed initially (T042)
 - [ ] T187 Verify that the E2E tests changed minimally during implementation, with only adjustments in `tests/e2e/fixtures/` and `tests/e2e/pages/`
-- [ ] T188 Verify that the E2E tests in `tests/e2e/frontend/consent_ui_v2_test.go` turned green as the implementation satisfied the acceptance criteria
-- [ ] T189 Verify that the E2E tests use Ginkgo/Gomega and follow the patterns in `tests/e2e/README.md`
-- [ ] T190 Verify that `tests/e2e/frontend/consent_ui_v2_test.go` uses a Describe → Context → It hierarchy
-- [ ] T191 Verify that `tests/e2e/frontend/consent_ui_v2_test.go` includes comments that reference spec scenarios
-- [ ] T192 Run the full E2E suite in `tests/e2e/` with `just test-e2e` (backend, ExtProc, and frontend). All tests must pass
-- [ ] T193 [IF FRONTEND] Verify that preserved Playwright journeys pass with their security, authorization, storage, and callback assertions intact, and approved presentation changes have replacement coverage (SC-009)
+- [X] T188 Verify that the E2E tests in `tests/e2e/frontend/consent_ui_v2_test.go` turned green as the implementation satisfied the acceptance criteria
+- [X] T189 Verify that the E2E tests use Ginkgo/Gomega and follow the patterns in `tests/e2e/README.md`
+- [X] T190 Verify that `tests/e2e/frontend/consent_ui_v2_test.go` uses a Describe → Context → It hierarchy
+- [X] T191 Verify that `tests/e2e/frontend/consent_ui_v2_test.go` includes comments that reference spec scenarios
+- [X] T192 Run the full E2E suite in `tests/e2e/` with `just test-e2e` (backend, ExtProc, and frontend). All tests must pass
+- [X] T193 [IF FRONTEND] Verify that preserved Playwright journeys pass with their security, authorization, storage, and callback assertions intact, and approved presentation changes have replacement coverage (SC-009)
 - [ ] T194 [IF FRONTEND] Verify that the screenshots in `tests/e2e/screenshots/` have descriptive file names
 - [ ] T195 [IF FRONTEND] Run the frontend E2E suite with `ginkgo -v ./tests/e2e/frontend/`, then run `just test-e2e-frontend-visual`. Both must pass
 
 **Frontend** (Principle XI - if applicable):
-- [ ] T196 [IF FRONTEND] Verify that the components in `web/src/components/` and `web/src/pages/` use design-system primitives and semantic tokens
+- [X] T196 [IF FRONTEND] Verify that the components in `web/src/components/` and `web/src/pages/` use design-system primitives and semantic tokens
 - [ ] T197 [IF FRONTEND] Verify that the universal components are in `web/src/design-system/components/` with Storybook stories and reviewed visual-regression baselines in `web/.storybook/__screenshots__/`
-- [ ] T198 [IF FRONTEND] Verify that no custom CSS bypasses the design tokens: `just web-lint` passes, and `web/src/styles/` contains only fonts and token mapping
-- [ ] T199 [IF FRONTEND] Verify WCAG 2.1 AA compliance (4.5:1 text contrast, 3:1 UI contrast) and the feature's WCAG 2.2 AA target, using `web/src/design-system/tokens/contrast.test.ts` and the Storybook a11y results
+- [X] T198 [IF FRONTEND] Verify that no custom CSS bypasses the design tokens: `just web-lint` passes, and `web/src/styles/` contains only fonts and token mapping
+- [X] T199 [IF FRONTEND] Verify WCAG 2.1 AA compliance (4.5:1 text contrast, 3:1 UI contrast) and the feature's WCAG 2.2 AA target, using `web/src/design-system/tokens/contrast.test.ts` and the Storybook a11y results
 - [ ] T200 [IF FRONTEND] Verify that every component story in `web/src/design-system/components/` renders, passes the accessibility addon, and matches its reviewed screenshot baseline in light and dark themes (`just web-storybook-test`)
-- [ ] T201 [IF FRONTEND] Verify that all visual decisions use the centralized semantic tokens in `web/src/design-system/tokens/theme.css`, without raw palette utilities
-- [ ] T202 [IF FRONTEND] Verify that brand assets are self-hosted in `web/public/brand/` and `web/public/fonts/`, and that the frontend loads no third-party fonts, scripts, or images (SC-006, the AS-15 request recorder, and CSP `font-src 'self'`)
-- [ ] T203 [IF FRONTEND] Verify that the visual direction matches `web/src/design-system/docs/DESIGN_PRINCIPLES.md` and ADR 037, and that no current guide describes two active visual systems (SC-010)
+- [X] T201 [IF FRONTEND] Verify that all visual decisions use the centralized semantic tokens in `web/src/design-system/tokens/theme.css`, without raw palette utilities
+- [X] T202 [IF FRONTEND] Verify that brand assets are self-hosted in `web/public/brand/` and `web/public/fonts/`, and that the frontend loads no third-party fonts, scripts, or images (SC-006, the AS-15 request recorder, and CSP `font-src 'self'`)
+- [X] T203 [IF FRONTEND] Verify that the visual direction matches `web/src/design-system/docs/DESIGN_PRINCIPLES.md` and ADR 037, and that no current guide describes two active visual systems (SC-010)
 
 ### Additional Polish [CUSTOMIZABLE]
 
-- [ ] T204 Implement the approved compressed public-static delivery and decision-code preload hints, without API, authorization, or persistence changes. Measure SC-002 on a production-served build (`just build-all`, then run the broker): cold consent main content must appear within 5 s under Chrome “Slow 4G”, and each decision graph must remain below 170 kB gzip. Record the actual encodings, timing, and `just web-bundle-check` result in the inventory.
-- [ ] T205 [P] Run a runtime smoke test on the production-served build. Visit all six routes and both agent contexts in both themes, and observe console errors, CSP violations, cross-origin requests, the provider callback, preference persistence, and reduced motion. Record the results in `cutover-inventory.md`
+- [X] T204 Implement the approved compressed public-static delivery and decision-code preload hints, without API, authorization, or persistence changes. Measure SC-002 on a production-served build (`just build-all`, then run the broker): cold consent main content must appear within 5 s under Chrome “Slow 4G”, and each decision graph must remain below 170 kB gzip. Record the actual encodings, timing, and `just web-bundle-check` result in the inventory.
+- [X] T205 [P] Run a runtime smoke test on the production-served build. Visit all six routes and both agent contexts in both themes, and observe console errors, CSP violations, cross-origin requests, the provider callback, preference persistence, and reduced motion. Record the results in `cutover-inventory.md`
 - [ ] T206 [P] Run moderated consent and tool-review sessions for SC-001 and SC-007: decision time, service comprehension, and primary-action recognition. Record the results in `cutover-inventory.md`, or list them explicitly as unavailable in the PR
 - [ ] T207 Run every step in `specs/047-redesign-consent-console/quickstart.md` and attach the evidence it lists
 - [ ] T208 Run `just verify` (defined in `justfile`) as the final merge gate

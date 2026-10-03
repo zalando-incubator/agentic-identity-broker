@@ -33,15 +33,18 @@ function initialAssets(route: string): Set<string> {
 describe('initial decision bundles', () => {
   it.each(['AgentDecisionPage', 'ApprovalPage'])('%s stays below 170 kB gzip without console-only modules', (page) => {
     const assets = initialAssets(`src/pages/${page}.tsx`);
+    const includedModules = new Set<string>();
     let compressedBytes = 0;
     for (const asset of assets) {
       compressedBytes += gzipSync(readFileSync(path.join(dist, asset))).byteLength;
       if (!asset.endsWith('.js')) continue;
       expect(modules[asset], `Missing module inventory: ${asset}`).toBeDefined();
       for (const module of modules[asset]) {
+        includedModules.add(module);
         expect(module).not.toMatch(/(?:@tanstack\/react-table|\/cmdk\/|data-display\/Table\/|advanced\/Command\/)/);
       }
     }
+    expect(includedModules.has(`src/pages/${page}.tsx`), 'The route must be present in its module inventory').toBe(true);
     console.info(`${page}: ${compressedBytes} bytes gzip`);
     expect(compressedBytes).toBeLessThan(170_000);
   });

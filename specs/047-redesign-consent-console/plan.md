@@ -12,7 +12,7 @@ Replace the design-system layer while preserving the application stack and all e
 
 Keep React 19, TypeScript, Vite 7, Tailwind 4, React Router 7, Axios, CVA, `tailwind-merge`, Vitest, Testing Library, Storybook 10, and Ginkgo/Playwright. Add TanStack Query, TanStack Table, Lucide, and cmdk. Use Sonner for notifications and CSS-only motion.
 
-Deliver all six routes, both agent contexts, settings, and command search in one cutover. The feature adds no API, persistence, or migration. Correct verified documentation mismatches in the existing session-list and consent responses to match their handlers, as approved on 2026-09-27. Keep decision and console bundles separate.
+Deliver all six routes, both agent contexts, settings, and command search in one cutover. The feature adds no backend API, persistence, or migration. Integrate current main's accepted form POST and tab-local callback-state flow. Apply the approved documentation-only corrections for existing consent, session, and approval responses and statuses. Keep decision and console bundles separate.
 
 **Security resolution**: ADR 014's gateway long-poll is not a browser source. Refresh the existing acting-user pending list every 10 seconds. This follows ADR 018 and spec API-004 despite the user's long-poll shorthand.
 
@@ -57,7 +57,7 @@ Research resolved the accent, body face, brand format, browser synchronization, 
 | I Security-first | Principal-scoped reads, escaped metadata, no automatic external resources, preserved authorization and audit logging | Cross-user, unsafe redirect, expiry, callback, and no-external-request scenarios pass |
 | II Architecture/ADRs | ADR 037 accepted on 2026-09-27, architecture includes its design section and glossary entries | Follow the accepted replacement of ADR 006 and extension of ADR 035 |
 | III Library-first security | No custom crypto or new token format. Fixed script hash uses standard build tooling | Preserve existing cryptographic validation |
-| IV/X API-first | No runtime API contract change. Approved documentation-only corrections align existing session-list and consent responses with their handlers | Any runtime API change requires a separate, approved specification |
+| IV/X API-first | No runtime API contract change. Approved documentation-only corrections align existing consent, session, and approval responses/statuses with their handlers | Any runtime API change requires a separate, approved specification |
 | V Domain model | ConsentDraft, ConnectionState, and preferences defined in data-model.md as UI state | Keep glossary and model synchronized |
 | VI Hexagonal boundaries | No domain, port, or storage change. The HTTP adapter gains the theme-script CSP hash, negotiated precompressed public assets, and build-manifest code hints | No handler-to-repository bypass, private bootstrap data, or adapter cross-import |
 | VII Configuration | No redesign flag, environment variable, CLI option, HTML flag bootstrap, or configuration endpoint | No redesign-specific configuration or Helm change |
@@ -142,7 +142,7 @@ Migrate every existing route and both agent contexts directly to the new design 
 Consent uses DecisionShell whenever `session_token` is present, including re-consent with an existing grant.
 Expired authorization context remains a decision error.
 
-Preserve authorization-session validation, `consent_state`, provider callbacks, safe continuation, required selection locks, duration validation, and scope preview.
+Preserve authorization-session validation, provider callbacks, safe continuation, required selection locks, duration validation, and scope preview. Use the current `consent_state_id` form POST with a bounded tab-local draft and original return URL; never put selections or nested authorization context in provider-facing state.
 Implement delta consent from existing grant data. Deny remains local and non-mutating.
 Approval review shows the agent, acting user, tool, risk, expandable arguments, and exact persistence scope.
 Approve once is the sole accent action. Resolved or expired approvals show an outcome without actions.

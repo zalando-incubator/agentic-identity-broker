@@ -278,3 +278,41 @@ func assertGateArtifacts(t *testing.T, out string, changed bool) {
 		t.Errorf("artifacts = %v, want %v", got, want)
 	}
 }
+
+func TestGateRejectsEscapingSymlinks(t *testing.T) {
+	actual, baseline, manifest, out := gateFixture(t)
+	link := filepath.Join(t.TempDir(), "states.txt")
+	if err := os.Symlink(manifest, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gateStems("route", link); err == nil {
+		t.Fatal("manifest symlink outside its directory was accepted")
+	}
+	if err := os.MkdirAll(out, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(baseline, "route_light.png")
+	before, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(out, "route_light_actual.png")
+	if err := os.Symlink(target, artifact); err != nil {
+		t.Fatal(err)
+	}
+	writeGatePNG(t, filepath.Join(actual, "route_light.png"), color.RGBA{B: 255, A: 255})
+	img, err := loadPNG(filepath.Join(actual, "route_light.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveGatePNG(artifact, img); err == nil {
+		t.Fatal("artifact symlink outside its directory was followed")
+	}
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("reviewed baseline was overwritten through the artifact symlink")
+	}
+}

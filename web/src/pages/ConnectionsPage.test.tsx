@@ -12,6 +12,14 @@ import { ConnectionsPage } from './ConnectionsPage';
 vi.mock('@services/api/consent', () => ({ consentApi: { getUserInfo: vi.fn() } }));
 vi.mock('@services/api/sessions', () => ({ sessionsApi: { listSessions: vi.fn(), getSessionDetails: vi.fn(), refreshSession: vi.fn(), terminateSession: vi.fn() } }));
 const base: SessionSummary = { id: 'mail-session', service_id: 'mail', service_display_name: 'Mail', token_type: 'Bearer', scope: ['read', 'send'], initiated_at: '2026-01-01T00:00:00Z', is_expired: false, access_token_expired: false, has_refresh_token: true, dependent_agent_count: 1, is_encrypted: true };
+const details: SessionDetail = {
+  session: {
+    id: base.id, principal: 'alice', service_id: base.service_id, token_type: base.token_type,
+    scope: base.scope, encryption_context: { service_id: base.service_id }, initiated_at: base.initiated_at,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+  },
+  dependent_agents: [{ id: 'helper', display_name: 'Mail Helper' }], dependent_agent_count: 1,
+};
 const clients: QueryClient[] = [];
 function Location() {
   const location = useLocation();
@@ -27,7 +35,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(consentApi.getUserInfo).mockResolvedValue({ principal: 'alice', displayName: 'Alice' });
   vi.mocked(sessionsApi.listSessions).mockResolvedValue([base]);
-  vi.mocked(sessionsApi.getSessionDetails).mockResolvedValue({ session: base, dependent_agents: [{ id: 'helper', display_name: 'Mail Helper' }] });
+  vi.mocked(sessionsApi.getSessionDetails).mockResolvedValue(details);
 });
 afterEach(() => clients.splice(0).forEach(client => client.clear()));
 
@@ -64,7 +72,9 @@ describe('stored connections management', () => {
 
   it('reads dependencies before confirmation and never disconnects on cancel', async () => {
     setup();
-    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
+    const trigger = await screen.findByRole('button', { name: 'Disconnect' });
+    trigger.focus();
+    fireEvent.click(trigger);
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('Mail Helper')).toBeVisible();
     expect(within(dialog).getByText(/does not revoke.*provider/i)).toBeVisible();
@@ -73,6 +83,7 @@ describe('stored connections management', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(sessionsApi.terminateSession).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Disconnect' })).toHaveFocus());
   });
 
   it('requires loaded dependencies and a confirmation before server-side disconnect', async () => {
@@ -80,16 +91,19 @@ describe('stored connections management', () => {
     vi.mocked(sessionsApi.getSessionDetails).mockReturnValue(new Promise<SessionDetail>(yes => { resolve = yes; }));
     vi.mocked(sessionsApi.terminateSession).mockResolvedValue();
     setup();
-    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
+    const trigger = await screen.findByRole('button', { name: 'Disconnect' });
+    trigger.focus();
+    fireEvent.click(trigger);
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('button', { name: 'Disconnect' })).toBeDisabled();
-    await act(async () => resolve({ session: base, dependent_agents: [{ id: 'helper', display_name: 'Mail Helper' }] }));
+    await act(async () => resolve(details));
     await within(dialog).findByText('Mail Helper');
     vi.mocked(sessionsApi.listSessions).mockResolvedValue([]);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
     await waitFor(() => expect(sessionsApi.terminateSession).toHaveBeenCalledWith('mail'));
     await waitFor(() => expect(screen.queryByText('Mail')).not.toBeInTheDocument());
     expect(await screen.findByRole('status')).toHaveTextContent('Session terminated successfully.');
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Connections' }).closest('[tabindex="-1"]')).toHaveFocus());
   });
 
   it('blocks disconnect when dependencies cannot be read and permits an explicit retry', async () => {

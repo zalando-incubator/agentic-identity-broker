@@ -1,9 +1,11 @@
 import { createElement, type ReactNode } from 'react';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AxiosError } from 'axios';
 import { approvalApi } from '@services/api/approvals';
 import type { QueryClient } from '@tanstack/react-query';
 import { consentApi } from '@services/api/consent';
+import { advanceAuthGeneration, apiClient, getAuthGeneration } from '@services/api/client';
 import { QueryProvider } from '@services/query/QueryProvider';
 import { createQueryClient } from '@services/query/queryClient';
 import { queryKeys } from '@services/query/queryKeys';
@@ -12,6 +14,7 @@ import { useApprovalReview } from './useApprovalReview';
 
 const approval: ToolApprovalDetail = { id: 'one', principal: 'alice', agent_id: 'agent', tool_name: 'read', arguments: {}, tool_pattern: 'read', params_pattern: {}, pattern_preview: 'read()', status: 'pending', approval_url: '/approvals/one', created_at: '2026-01-01T00:00:00Z', expires_at: '2099-01-01T00:00:00Z' };
 let client: QueryClient;
+const adapter = apiClient.defaults.adapter;
 const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryProvider, { client }, children);
 beforeEach(() => {
   client = createQueryClient();
@@ -19,7 +22,7 @@ beforeEach(() => {
   vi.spyOn(consentApi, 'getUserInfo').mockResolvedValue({ principal: 'alice', displayName: 'Alice' });
   vi.spyOn(approvalApi, 'getApproval').mockResolvedValue(approval);
 });
-afterEach(() => { cleanup(); client.clear(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); client.clear(); apiClient.defaults.adapter = adapter; vi.restoreAllMocks(); });
 
 describe('approval review server ownership', () => {
   it('isolates cached details by the authenticated principal and route ID', async () => {
@@ -58,13 +61,20 @@ describe('approval review server ownership', () => {
   });
 
   it.each([409, 410])('refreshes authoritative state after HTTP %s without retrying the decision', async (status) => {
-    const deny = vi.spyOn(approvalApi, 'denyApproval').mockRejectedValue({ status, message: 'Decision is no longer available' });
+    apiClient.defaults.adapter = async config => {
+      throw new AxiosError('Decision unavailable', 'ERR_BAD_REQUEST', config, undefined, {
+        config, data: { error: status === 409 ? 'conflict' : 'gone', message: 'Decision is no longer available' },
+        status, statusText: String(status), headers: {},
+      });
+    };
+    const deny = vi.spyOn(approvalApi, 'denyApproval');
     const { result } = renderHook(() => useApprovalReview('one'), { wrapper });
     await waitFor(() => expect(result.current?.approval?.status).toBe('pending'));
     vi.mocked(approvalApi.getApproval).mockResolvedValue({ ...approval, status: 'approved', persistence: 'session' });
     await act(async () => { await result.current.deny(); });
     await waitFor(() => expect(result.current.approval?.status).toBe('approved'));
     expect(deny).toHaveBeenCalledTimes(1);
+    expect(result.current.errorCode).toBe(status === 409 ? 'ALREADY_ACTIONED' : 'EXPIRED');
     expect(result.current.denyResult).toBeNull();
   });
 
@@ -102,7 +112,7 @@ describe('approval review server ownership', () => {
       .mockResolvedValue({ ...approval, status: 'approved', persistence: 'session' });
     act(() => { void result.current.refetch(); });
     await waitFor(() => expect(approvalApi.getApproval).toHaveBeenCalledTimes(2));
-    const deny = vi.spyOn(approvalApi, 'denyApproval').mockRejectedValue({ status, message: 'Decision is no longer available' });
+    const deny = vi.spyOn(approvalApi, 'denyApproval').mockRejectedValue({ status, code: status === 409 ? 'CONFLICT' : 'GONE', message: 'Decision is no longer available' });
     let decision!: Promise<void>;
     act(() => { decision = result.current.deny(); });
     try {
@@ -118,7 +128,7 @@ describe('approval review server ownership', () => {
   });
 
   it('retains the pending decision after failure and never automatically retries it', async () => {
-    const approve = vi.spyOn(approvalApi, 'approveApproval').mockRejectedValue({ status: 503, message: 'Unavailable' });
+    const approve = vi.spyOn(approvalApi, 'approveApproval').mockRejectedValue({ status: 503, code: 'SERVER_ERROR', message: 'Unavailable' });
     const { result } = renderHook(() => useApprovalReview('one'), { wrapper });
     await waitFor(() => expect(result.current?.approval).toEqual(approval));
     await act(async () => { await result.current.approve({ persistence: 'once' }); });
@@ -126,5 +136,42 @@ describe('approval review server ownership', () => {
     expect(result.current.approval?.status).toBe('pending');
     expect(result.current.approveResult).toBeNull();
     expect(approve).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces a rejected approval pattern without recording or retrying the decision', async () => {
+    let requests = 0;
+    apiClient.defaults.adapter = async config => {
+      requests += 1;
+      throw new AxiosError('Invalid pattern', 'ERR_BAD_REQUEST', config, undefined, {
+        config, data: { error: 'invalid_pattern', message: 'params_pattern is not allowed for once persistence' },
+        status: 422, statusText: 'Unprocessable Entity', headers: {},
+      });
+    };
+    client.setQueryData(queryKeys.pending('alice'), [approval]);
+    const { result } = renderHook(() => useApprovalReview('one'), { wrapper });
+    await waitFor(() => expect(result.current.approval?.status).toBe('pending'));
+    await act(async () => { await result.current.approve({ persistence: 'once', params_pattern: {} }); });
+    await waitFor(() => expect(result.current.errorCode).toBe('INVALID_PATTERN'));
+    expect(result.current.errorMessage).toBe('params_pattern is not allowed for once persistence');
+    expect(result.current.approval?.status).toBe('pending');
+    expect(result.current.approveResult).toBeNull();
+    expect(client.getQueryState(queryKeys.pending('alice'))?.isInvalidated).toBe(true);
+    expect(requests).toBe(1);
+  });
+
+  it('does not publish a delayed approval after the authentication generation changes', async () => {
+    const approved = Promise.withResolvers<ApproveResponseData>();
+    vi.spyOn(approvalApi, 'approveApproval').mockReturnValue(approved.promise);
+    const { result } = renderHook(() => useApprovalReview('one'), { wrapper });
+    await waitFor(() => expect(result.current.approval?.status).toBe('pending'));
+    act(() => { void result.current.approve({ persistence: 'once' }); });
+    await waitFor(() => expect(result.current.submitting).toBe(true));
+    const generation = getAuthGeneration();
+    advanceAuthGeneration();
+    await act(async () => { approved.resolve({ id: 'one', status: 'approved', persistence: 'once', approved_at: '2026-01-01T00:01:00Z' }); });
+    expect(getAuthGeneration()).toBe(generation + 1);
+    expect(result.current.approval?.status).toBe('pending');
+    expect(result.current.approveResult).toBeNull();
+    expect(client.getQueryData<ToolApprovalDetail>(queryKeys.approval('alice', 'one'))?.status).toBe('pending');
   });
 });

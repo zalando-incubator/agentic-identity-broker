@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | Agent | Typed AgentID, display name, CIMD metadata, service requirements with `connectionStatus`, permission sets, governance and documentation links | The Agent Origin Label derives only from the authorization session and never claims legal publisher verification. No existing response carries a publisher |
 | UserGrant | Principal, AgentID, `granted_permission_sets`, selected services, validity | One grant per principal/agent pair. Consent preserves existing selected access |
-| Delegation (list projection of an unexpired UserGrant) | `agentId`, `displayName`, `logoUrl`, `activeGrantCount`, `lastModifiedAt`, `expiresAt` | The existing list excludes expired grants and names no services. `activeGrantCount` counts grants, not permission sets, and is not displayed. The UI shows the agent and expiry, with no count column or per-agent count requests. It removes a row once its `expiresAt` passes |
+| Delegation (list projection of an unexpired UserGrant) | `agentId`, `displayName`, `activeGrantCount`, `lastModifiedAt`, `expiresAt` | The existing list excludes expired grants and names no services. `activeGrantCount` counts grants, not permission sets, and is not displayed. The UI shows the agent and expiry, with no count column or per-agent count requests. It removes a row once its `expiresAt` passes |
 | Permission Set | Identity, name, description, required/optional assignment, services | Required groups remain locked. The UI presents the name and description, never raw scope strings |
 | UserSession | Principal, ServiceID, encrypted tokens, granted scope, expiry, refresh capacity | One principal/service session. Connection does not imply delegation. The session list returns stored sessions only and carries no provider account identifier |
 | ToolApproval | ID, owner, agent, tool, arguments, status, persistence, scope, expiry | Only the owner resolves a pending request. Resolved/expired requests cannot be resubmitted |
@@ -20,7 +20,7 @@ No existing entity receives new token semantics. No credential enters browser pr
 
 Fields: requested permission-set/service selections, existing granted selections, selected duration, custom expiry, dirty state, and the existing authorization-session reference.
 
-The decision flow preserves `consent_state` across the existing provider authorization callback. It does not introduce a new persisted consent model.
+The decision flow uses the existing `consent_state_id` provider callback. A tab-local record stores the canonical selections, duration, custom date, and original same-origin return URL for at most 15 minutes. The form POST sends only the opaque UUID and clean return path. Restoration requires matching ID, service, origin, path, and expiry, then removes the ID from browser history. Backend authorization-session validation remains authoritative.
 
 Transitions:
 
@@ -32,7 +32,7 @@ Transitions:
 
 Re-consent computes a selection delta from the existing grants read response. Previously granted permission sets and services remain selected and read-only in the decision view when the user allows new access; only the console detail view changes or removes them. The UI never silently widens the grant.
 
-A grant has one validity. On re-consent the duration choice starts from the existing grant: Until revoked for a null `valid_until`, otherwise Custom date. Unless the user changes the duration, submission sends the existing `valid_until` unchanged. A changed duration applies to the whole grant.
+A grant has one validity. Re-consent starts from an unexpired grant: Until revoked when `valid_until` is absent, otherwise Custom date. An expired lookup result is not prior active access. Unless the user changes the duration, submission preserves a still-future `valid_until` exactly. A changed duration applies to the whole grant.
 
 ## ConnectionState: derived presentation
 
@@ -68,4 +68,4 @@ Preferences never contain authorization context or credentials. They never affec
 
 ## Contract boundary
 
-This feature adds or changes no API contract, response field, persistence, or migration. Every screen uses existing end-user responses from `api/enduser/openapi.yaml`.
+This feature adds no backend API contract, response field, persistence, or migration. It uses current main's accepted ephemeral callback-state transport and existing end-user responses from `api/enduser/openapi.yaml`.

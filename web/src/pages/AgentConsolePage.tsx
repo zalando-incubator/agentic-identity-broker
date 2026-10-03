@@ -16,24 +16,24 @@ import { GrantEditBar } from '@components/consent/GrantEditBar';
 import { AgentOverflowMenu } from '@components/consent/AgentOverflowMenu';
 import { AgentConnectionsTab } from '@components/consent/AgentConnectionsTab';
 import { ServiceConnectPrompt } from '@components/consent/ServiceConnectPrompt';
-import { createConsentDraft, InvalidGrantDateError } from '@components/consent/consentDraft';
+import { createConsentDraft, InvalidGrantDateError, type ConsentDraftSnapshot } from '@components/consent/consentDraft';
 import { consentErrorMessage, validateDraftSelection } from '@components/consent/consentValidation';
 import type { UserGrant } from '../types/consent';
 
-export function AgentConsolePage() {
+export function AgentConsolePage({ currentUrl, restoredDraft }: { currentUrl?: string; restoredDraft?: ConsentDraftSnapshot }) {
   const { agentId = '' } = useParams<{ agentId: string }>();
   const location = useLocation();
   const query = useAgentDetail(agentId);
-  if (query.data && query.grant.data !== undefined) return <GrantEditor key={agentId} data={query.data} initialGrant={query.grant.data} consentState={new URLSearchParams(location.search).get('consent_state')} currentUrl={new URL(location.pathname + location.search, window.location.origin).toString()} />;
+  if (query.data && query.grant.data !== undefined) return <GrantEditor key={`${agentId}:${location.key}`} data={query.data} initialGrant={query.grant.data} restoredDraft={restoredDraft} currentUrl={currentUrl ?? new URL(location.pathname + location.search + location.hash, window.location.origin).toString()} />;
   if (query.error || !agentId) return <Alert variant="error" action={{ label: commonCopy.retry, onClick: () => { void query.refetch(); void query.grant.refetch(); } }}>{consentCopy.loadError}</Alert>;
   return <p role="status">{commonCopy.loading}</p>;
 }
 
-function GrantEditor({ data, initialGrant, consentState, currentUrl }: { data: AgentDetailData; initialGrant: UserGrant | null; consentState: string | null; currentUrl: string }) {
+function GrantEditor({ data, initialGrant, restoredDraft, currentUrl }: { data: AgentDetailData; initialGrant: UserGrant | null; restoredDraft?: ConsentDraftSnapshot; currentUrl: string }) {
   const { agent, services } = data;
   const [savedGrant, setSavedGrant] = useState(initialGrant);
   const observedGrant = useRef(initialGrant);
-  const [draft, setDraft] = useState(() => createConsentDraft({ permissionSets: agent.permission_sets ?? [], serviceRequirements: agent.service_requirements, existingGrant: initialGrant, context: 'console', consentState }));
+  const [draft, setDraft] = useState(() => createConsentDraft({ permissionSets: agent.permission_sets, serviceRequirements: agent.service_requirements, existingGrant: initialGrant, context: 'console', restoredDraft }));
   const [error, setError] = useState<string>();
   const [dateError, setDateError] = useState<string>();
   const [status, setStatus] = useState<string>();
@@ -43,7 +43,7 @@ function GrantEditor({ data, initialGrant, consentState, currentUrl }: { data: A
   const submitting = useRef(false);
   const save = useSaveGrant(agent.agentId);
   const selectedServices = new Set(Object.values(draft.selections).flat());
-  const missingServices = services.filter((service) => (draft.groups.length === 0 || selectedServices.has(service.serviceId)) && !agent.active_session_service_ids?.includes(service.serviceId));
+  const missingServices = services.filter((service) => (draft.groups.length === 0 || selectedServices.has(service.serviceId)) && !agent.active_session_service_ids.includes(service.serviceId));
   const blocked = draft.groups.length > 0 && missingServices.length > 0;
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
   useEffect(() => {
@@ -52,7 +52,7 @@ function GrantEditor({ data, initialGrant, consentState, currentUrl }: { data: A
     observedGrant.current = initialGrant;
     setSavedGrant(initialGrant);
     if (!draft.dirty && !save.isPending) {
-      setDraft(createConsentDraft({ permissionSets: agent.permission_sets ?? [], serviceRequirements: agent.service_requirements, existingGrant: initialGrant, context: 'console' }));
+      setDraft(createConsentDraft({ permissionSets: agent.permission_sets, serviceRequirements: agent.service_requirements, existingGrant: initialGrant, context: 'console' }));
     }
   }, [initialGrant, agent.permission_sets, agent.service_requirements, draft.dirty, save.isPending]);
 
@@ -71,7 +71,7 @@ function GrantEditor({ data, initialGrant, consentState, currentUrl }: { data: A
         window.location.href = result.redirectUrl;
       } else {
         setSavedGrant(result.grant);
-        setDraft(createConsentDraft({ permissionSets: agent.permission_sets ?? [], serviceRequirements: agent.service_requirements, existingGrant: result.grant, context: 'console' }));
+        setDraft(createConsentDraft({ permissionSets: agent.permission_sets, serviceRequirements: agent.service_requirements, existingGrant: result.grant, context: 'console' }));
         setStatus(consentCopy.grantSaved);
         headingRef.current?.focus();
       }
@@ -99,7 +99,7 @@ function GrantEditor({ data, initialGrant, consentState, currentUrl }: { data: A
       </TabsContent>
       <TabsContent value="connections"><AgentConnectionsTab services={services} draft={draft} currentUrl={currentUrl} /></TabsContent>
     </Tabs>
-    {draft.dirty && <GrantEditBar pending={save.isPending} blocked={blocked} onCancel={() => { setDraft(createConsentDraft({ permissionSets: agent.permission_sets ?? [], serviceRequirements: agent.service_requirements, existingGrant: savedGrant, context: 'console' })); setError(undefined); setDateError(undefined); setStatus(undefined); headingRef.current?.focus(); }} />}
+    {draft.dirty && <GrantEditBar pending={save.isPending} blocked={blocked} onCancel={() => { setDraft(createConsentDraft({ permissionSets: agent.permission_sets, serviceRequirements: agent.service_requirements, existingGrant: savedGrant, context: 'console' })); setError(undefined); setDateError(undefined); setStatus(undefined); headingRef.current?.focus(); }} />}
   </form>;
 }
 

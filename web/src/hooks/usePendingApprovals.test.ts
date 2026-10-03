@@ -81,8 +81,8 @@ describe('shared pending approvals', () => {
   });
 
   it('keeps newest-first rows stable across refreshes with equivalent timestamps', async () => {
-    const tiedFirst = { ...approval, id: 'first' };
-    const tiedSecond = { ...approval, id: 'second', created_at: '2025-12-31T19:00:00-05:00' };
+    const tiedFirst = { ...approval, id: 'first', created_at: '2025-12-31T19:00:00-05:00' };
+    const tiedSecond = { ...approval, id: 'second' };
     const newest = { ...approval, id: 'newest', created_at: '2026-01-02T00:00:00Z' };
     vi.spyOn(approvalApi, 'listPendingApprovals')
       .mockResolvedValueOnce([newest, tiedSecond, tiedFirst])

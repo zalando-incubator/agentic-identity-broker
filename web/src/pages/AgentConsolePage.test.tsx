@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { consentApi } from '@services/api/consent';
@@ -6,6 +6,7 @@ import { sessionsApi } from '@services/api/sessions';
 import { queryKeys } from '@services/query/queryKeys';
 import { AgentConsolePage } from './AgentConsolePage';
 import { detail, grant as decisionGrant, renderAgentPage } from './agentConsentTestSupport';
+import { loadConsentDraft } from '@services/storage/session';
 import type { GrantResult } from '../types/consent';
 const grant = { ...decisionGrant, granted_permission_sets: { read: ['mail'], prior: ['drive', 'mail'] } };
 
@@ -13,11 +14,13 @@ vi.mock('@services/api/consent', () => ({ consentApi: { getUserInfo: vi.fn(), ge
 vi.mock('@services/api/sessions', () => ({ sessionsApi: { listSessions: vi.fn(), refreshSession: vi.fn() } }));
 beforeEach(() => {
   vi.resetAllMocks();
+  sessionStorage.clear();
   vi.mocked(consentApi.getUserInfo).mockResolvedValue({ principal: 'alice', displayName: 'Alice' });
   vi.mocked(consentApi.getAgentDetail).mockResolvedValue(detail);
   vi.mocked(consentApi.getAgentGrants).mockResolvedValue(grant);
   vi.mocked(sessionsApi.listSessions).mockResolvedValue([]);
 });
+afterEach(() => { vi.restoreAllMocks(); sessionStorage.clear(); });
 
 describe('agent grant management', () => {
   it('edits optional existing groups only in the console and discards changes on cancel', async () => {
@@ -54,11 +57,11 @@ describe('agent grant management', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Grant updated successfully');
   });
   it('keeps unsaved edits visible after a rejected save', async () => {
-    vi.mocked(consentApi.createOrUpdateGrant).mockRejectedValue({ status: 403, message: 'Permission denied' });
+    vi.mocked(consentApi.createOrUpdateGrant).mockRejectedValue({ status: 403, code: 'FORBIDDEN', message: "You don't have permission to access this resource." });
     renderAgentPage(<AgentConsolePage />);
     await userEvent.click(await screen.findByRole('radio', { name: 'Until revoked' }));
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Permission denied');
+    expect(await screen.findByRole('alert')).toHaveTextContent("You don't have permission to access this resource.");
     expect(screen.getByTestId('grant-save-bar')).toBeVisible();
     expect(screen.getByRole('radio', { name: 'Until revoked' })).toBeChecked();
   });
@@ -76,15 +79,36 @@ describe('agent grant management', () => {
     await screen.findByText('Agent list');
     expect(consentApi.deleteGrant).toHaveBeenCalledWith('agent');
   });
-  it('shows the missing requirement connection with a callback-preserving Connect link', async () => {
+  it('posts a saved draft from the Connections tab instead of leaking it in a URL', async () => {
     vi.mocked(consentApi.getAgentDetail).mockResolvedValue({ ...detail, services: [{ ...detail.services[0]!, connectionStatus: 'not_connected' }] });
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
+      expect(new URL(this.action).pathname).toBe('/api/third-party/mail/oauth2/authorize');
+      expect(new URL(this.action).search).toBe('');
+      const form = new FormData(this);
+      expect(form.get('redirect_uri')).toBe(`${window.location.origin}/agents/agent`);
+      expect(loadConsentDraft(String(form.get('consent_state_id')), 'mail', '/agents/agent')).toMatchObject({
+        selections: grant.granted_permission_sets,
+        duration: 'custom', customDate: '2099-06-10',
+      });
+      this.remove();
+    });
     renderAgentPage(<AgentConsolePage />);
     await userEvent.click(await screen.findByRole('tab', { name: 'Connections' }));
     const panel = screen.getByRole('tabpanel', { name: 'Connections' });
     expect(await within(panel).findByText('No connection')).toBeVisible();
-    const link = within(panel).getByRole('link', { name: 'Connect' });
-    expect(link.getAttribute('href')).toContain('/api/third-party/mail/oauth2/authorize?redirect_uri=');
-    expect(link.getAttribute('href')).toContain('consent_state');
+    await userEvent.click(within(panel).getByRole('button', { name: 'Connect' }));
+    expect(submit).toHaveBeenCalledOnce();
+    expect(consentApi.createOrUpdateGrant).not.toHaveBeenCalled();
+  });
+  it('stays on the agent and explains how to retry when tab storage refuses a connection', async () => {
+    vi.mocked(consentApi.getAgentDetail).mockResolvedValue({ ...detail, services: [{ ...detail.services[0]!, connectionStatus: 'not_connected' }] });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('storage unavailable'); });
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+    renderAgentPage(<AgentConsolePage />);
+    await userEvent.click(await screen.findByRole('tab', { name: 'Connections' }));
+    await userEvent.click(within(screen.getByRole('tabpanel', { name: 'Connections' })).getByRole('button', { name: 'Connect' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Enable browser storage and try connecting again');
+    expect(submit).not.toHaveBeenCalled();
     expect(consentApi.createOrUpdateGrant).not.toHaveBeenCalled();
   });
   it('preserves an edited date across an equivalent grant refresh and cancels to the saved date', async () => {
@@ -99,10 +123,13 @@ describe('agent grant management', () => {
     expect(screen.getByLabelText('Custom date', { selector: 'input' })).toHaveValue('2099-06-10');
     expect(consentApi.createOrUpdateGrant).not.toHaveBeenCalled();
   });
-  it.each(['2099-09-14T16:45:12.345Z', null])('rehydrates a clean editor when saved validity changes to %s', async (validUntil) => {
+  it.each(['2099-09-14T16:45:12.345Z', undefined])('rehydrates a clean editor when saved validity changes to %s', async (validUntil) => {
     const { client } = renderAgentPage(<AgentConsolePage />);
     expect(await screen.findByLabelText('Custom date', { selector: 'input' })).toHaveValue('2099-06-10');
-    vi.mocked(consentApi.getAgentGrants).mockResolvedValue({ ...grant, valid_until: validUntil });
+    const refreshedGrant = { ...grant };
+    if (validUntil) refreshedGrant.valid_until = validUntil;
+    else delete refreshedGrant.valid_until;
+    vi.mocked(consentApi.getAgentGrants).mockResolvedValue(refreshedGrant);
     await act(async () => { await client.invalidateQueries({ queryKey: queryKeys.grant('alice', 'agent') }); });
     if (validUntil) {
       await waitFor(() => expect(screen.getByLabelText('Custom date', { selector: 'input' })).toHaveValue('2099-09-14'));
@@ -113,23 +140,6 @@ describe('agent grant management', () => {
     expect(screen.queryByTestId('grant-save-bar')).not.toBeInTheDocument();
     expect(consentApi.createOrUpdateGrant).not.toHaveBeenCalled();
   });
-  it('shows server field validation details and keeps rejected changes available to correct', async () => {
-    vi.mocked(consentApi.createOrUpdateGrant).mockRejectedValue({
-      status: 422, code: 'INVALID_GRANT', message: 'Validation failed',
-      details: { granted_permission_sets: ['This permission group is no longer available.'], valid_until: ['Choose an allowed expiration date.'] },
-    });
-    renderAgentPage(<AgentConsolePage />);
-    await userEvent.click(await screen.findByRole('radio', { name: 'Until revoked' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('granted_permission_sets');
-    expect(alert).toHaveTextContent('This permission group is no longer available.');
-    expect(alert).toHaveTextContent('valid_until');
-    expect(alert).toHaveTextContent('Choose an allowed expiration date.');
-    expect(screen.getByTestId('grant-save-bar')).toBeVisible();
-    expect(screen.getByRole('radio', { name: 'Until revoked' })).toBeChecked();
-    expect(consentApi.createOrUpdateGrant).toHaveBeenCalledTimes(1);
-  });
   it('keeps an accepted save authoritative when the follow-up grant read fails', async () => {
     renderAgentPage(<AgentConsolePage />);
     const date = await screen.findByLabelText('Custom date', { selector: 'input' });
@@ -137,7 +147,7 @@ describe('agent grant management', () => {
     vi.mocked(consentApi.createOrUpdateGrant).mockResolvedValue({
       kind: 'created', grant: { ...grant, valid_until: '2099-08-12T00:00:00.000Z' },
     });
-    vi.mocked(consentApi.getAgentGrants).mockRejectedValue({ status: 503, message: 'Read unavailable' });
+    vi.mocked(consentApi.getAgentGrants).mockRejectedValue({ status: 503, code: 'SERVER_ERROR', message: 'Service temporarily unavailable. Please try again later.' });
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await screen.findByText('Grant updated successfully.');
     expect(screen.getByLabelText('Custom date', { selector: 'input' })).toHaveValue('2099-08-12');

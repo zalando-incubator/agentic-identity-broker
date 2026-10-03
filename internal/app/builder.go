@@ -40,6 +40,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	agentsservice "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/cimdclient"
 	consentservice "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
@@ -78,6 +79,12 @@ type App struct {
 	ApprovalService        *domainapproval.Service
 	ApprovalSyncSubscriber *postgresstorage.ApprovalSyncSubscriber // nil when storage is not postgres
 	SessionTokenService    *sessiontoken.Service
+
+	// CIMD compile-time contracts are wired once the outbound key domain is implemented.
+	CIMDKeyService       ports.CIMDClientKeyService
+	CIMDKeyReadiness     ports.CIMDClientKeyReadiness
+	CIMDAssertionSigner  ports.CIMDClientAssertionSigner
+	CIMDMetadataProvider ports.CIMDClientMetadataProvider
 
 	// JWT pre-authentication (optional, nil when not configured)
 	JWTAuthenticator             domjwtauth.JWTAuthenticator
@@ -421,7 +428,39 @@ func (b *Builder) Build() (*App, error) {
 			b.storage.PermissionSets(),
 			b.config.Security.SkipThirdpartyHTTPSValidation,
 			b.logger,
-		)
+		).WithCIMDPublicURL(b.config.Server.EndUser.PublicURL)
+	}
+
+	// Construct outbound CIMD key dependencies before the OAuth server-mode split.
+	// They are mode-independent because the broker uses them to authenticate to third-party services.
+	cimdKeyService := cimdclient.NewKeyService(
+		b.storage.SigningKeys(),
+		b.storage.SigningKeyBootstrapCoordinator(),
+		encryptor,
+		app.BranchKeyManager,
+		b.logger,
+	)
+	app.CIMDKeyService = cimdKeyService
+	app.CIMDKeyReadiness = cimdKeyService
+	app.CIMDAssertionSigner = cimdclient.NewAssertionSigner(cimdKeyService)
+	app.CIMDMetadataProvider = cimdclient.NewMetadataService(app.ProviderService, cimdKeyService, cimdKeyService, b.config.Server.EndUser.PublicURL)
+	if app.ProviderService != nil {
+		app.ProviderService.WithCIMDKeyReadiness(cimdKeyService)
+	}
+
+	if app.ProviderService != nil {
+		hasCIMDServices, err := app.ProviderService.HasCompatibleCIMDServices(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("validate persisted CIMD service identities: %w", err)
+		}
+		if hasCIMDServices {
+			if _, _, err := cimdKeyService.EnsureInitialKey(context.Background()); err != nil {
+				return nil, fmt.Errorf("initialize CIMD client-authentication key: %w", err)
+			}
+			if err := cimdKeyService.RequireUsablePublishedKey(context.Background()); err != nil {
+				return nil, fmt.Errorf("verify CIMD client-authentication key publication: %w", err)
+			}
+		}
 	}
 
 	// Create consent service if repositories available.
@@ -553,6 +592,15 @@ func (b *Builder) Build() (*App, error) {
 	// Build service configuration from application config
 	// Constitution Principle VII: Configuration-Driven Design
 	cfg := oauth2session.NewConfigFromPorts(b.config.ThirdPartyOAuth2, b.config.Server.EndUser.PublicURL)
+	readTimeout := b.config.Storage.Timeouts.Read
+	if readTimeout <= 0 {
+		readTimeout = 5 * time.Second
+	}
+	writeTimeout := b.config.Storage.Timeouts.Write
+	if writeTimeout <= 0 {
+		writeTimeout = 10 * time.Second
+	}
+	cfg.RefreshStorageTimeout = 2*readTimeout + 2*writeTimeout
 
 	upstreamClient := &http.Client{
 		Timeout: ov.upstreamTimeout,
@@ -573,6 +621,7 @@ func (b *Builder) Build() (*App, error) {
 	app.OAuth2SessionService = oauth2session.NewOAuth2SessionService(
 		app.ProviderService,
 		b.storage.UserSessions(),
+		b.storage.SessionRefresh(),
 		b.storage.UserGrants(),
 		b.storage.Agents(),
 		encryptor,
@@ -580,7 +629,7 @@ func (b *Builder) Build() (*App, error) {
 		jweTokenService,
 		cfg,
 		b.logger,
-	)
+	).WithCIMDAssertionSigner(app.CIMDAssertionSigner)
 
 	// Create agent domain service (used by admin handlers and CEL resolver)
 	agentService := agentsservice.NewService(
@@ -787,6 +836,7 @@ func (b *Builder) Build() (*App, error) {
 		Services:           admin.NewServicesHandler(app.ProviderService, b.config, b.logger),
 		ProtectedResources: admin.NewProtectedResourcesHandler(app.ProviderService, b.logger),
 		PermissionSets:     admin.NewPermissionSetsHandler(app.PermissionSetService, app.ProviderService, b.logger),
+		CIMDClientKeys:     admin.NewCIMDClientKeysHandler(app.CIMDKeyService, b.logger),
 	}
 
 	agentDetailHandler := consent.NewAgentDetailHandler(app.ConsentService, b.logger, app.SessionTokenService)
@@ -869,7 +919,8 @@ func (b *Builder) Build() (*App, error) {
 	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
 		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
 		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
-		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(b.storage.BrokerCredentials(), agentService, clientAuthService, b.logger)
+		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), clientAuthService, b.logger)
+		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
 		return signingKeyService
 	}
@@ -877,12 +928,9 @@ func (b *Builder) Build() (*App, error) {
 	// buildProxyStrategies constructs the proxy path strategies.
 	// Used in both "proxy" and "hybrid" modes.
 	buildProxyStrategies := func(upstreamTokenEndpoint string) (enduser.TokenGrantStrategy, enduser.AuthorizationProceedStrategy) {
-		grant := enduser.NewProxyTokenGrantStrategy(
-			upstreamTokenEndpoint,
-			upstreamClient,
-			multiAgentVerifier,
-			b.logger,
-		)
+		transport := enduser.NewOAuth2TokenProxy(upstreamTokenEndpoint, upstreamClient)
+		outcomes := oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier)
+		grant := enduser.NewProxyTokenGrantStrategy(upstreamTokenEndpoint, outcomes, b.logger)
 		proceed := enduser.NewProxyProceedStrategy()
 		return grant, proceed
 	}
@@ -1128,6 +1176,7 @@ func (b *Builder) Build() (*App, error) {
 		ApprovalSync:         approval.NewSyncHandler(app.ApprovalService),
 		ApprovalPermanent:    approval.NewPermanentHandler(app.ApprovalService),
 		ApprovalPending:      approval.NewPendingHandler(app.ApprovalService),
+		CIMDMetadata:         enduserHandlers.NewCIMDMetadataHandler(app.CIMDMetadataProvider, b.logger),
 		JWKS:                 jwksHandler,
 		SPA:                  handlers.NewSPAHandler(b.staticWebResourcesPath, b.logger),
 	}
@@ -1206,10 +1255,24 @@ func newTokenExchangeAgentIDResolver(agentService *agentsservice.Service, timeou
 // jwks_uri is not set explicitly.
 const impersonationDiscoveryTimeout = 30 * time.Second
 
-// newImpersonationJWKSFactory returns a factory that builds a cached JWKS provider per trusted
-// impersonation issuer, discovering the JWKS URI from issuer metadata when it is not configured.
+// newImpersonationJWKSFactory shares a cached JWKS provider across rules with the same
+// issuer and JWKS settings, discovering the JWKS URI when it is not configured.
 func (b *Builder) newImpersonationJWKSFactory(httpClient *http.Client) impersonation.JWKSProviderFactory {
+	type source struct {
+		issuerURI, jwksURI     string
+		minRefresh, maxRefresh time.Duration
+	}
+	providers := make(map[source]tokenexchange.JWKSProvider)
 	return func(issuer ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
+		key := source{
+			issuerURI:  issuer.IssuerURI,
+			jwksURI:    issuer.JWKSURI,
+			minRefresh: issuer.JWKSMinRefresh,
+			maxRefresh: issuer.JWKSMaxRefresh,
+		}
+		if provider, ok := providers[key]; ok {
+			return provider, nil
+		}
 		jwksURI := issuer.JWKSURI
 		if jwksURI == "" {
 			discoveryCtx, cancel := context.WithTimeout(context.Background(), impersonationDiscoveryTimeout)
@@ -1236,6 +1299,7 @@ func (b *Builder) newImpersonationJWKSFactory(httpClient *http.Client) impersona
 		if err != nil {
 			return nil, err
 		}
+		providers[key] = adapter
 		return adapter, nil
 	}
 }

@@ -21,7 +21,7 @@ export function DelegationsTable({ delegations, search, isPending, onRevoke }: D
     {
       id: 'agent', accessorKey: 'displayName', header: delegationsCopy.agent,
       cell: ({ row }) => <div className="flex min-w-0 items-center gap-2">
-        <Avatar label={row.original.displayName} src={row.original.logoUrl} size="sm" aria-hidden="true" />
+        <Avatar label={row.original.displayName} size="sm" aria-hidden="true" />
         <TruncatedText text={row.original.displayName} lines={1} expandLabel={commonCopy.showMore} collapseLabel={commonCopy.showLess} className="flex min-w-0 flex-1 items-center gap-2 [&>span]:min-w-0 [&>span]:flex-1 [&>button]:mt-0 [&>button]:shrink-0" />
       </div>,
     },

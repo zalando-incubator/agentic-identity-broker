@@ -70,8 +70,8 @@ it('keeps failed rows without restoring an unrelated successful revoke', async (
 });
 
 it('keeps standing rows stable across refreshes with tied creation times', async () => {
-  const first = { ...record, id: 'first' };
-  const second = { ...record, id: 'second', created_at: '2025-12-31T19:00:00-05:00' };
+  const first = { ...record, id: 'first', created_at: '2025-12-31T19:00:00-05:00' };
+  const second = { ...record, id: 'second' };
   const newest = { ...record, id: 'newest', created_at: '2026-01-02T00:00:00Z' };
   vi.spyOn(approvalApi, 'listPermanentApprovals')
     .mockResolvedValueOnce([newest, second, first])

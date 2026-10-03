@@ -33,7 +33,7 @@ function approvalErrorCode(error: ApiError): ApprovalErrorCode {
   if (error.code === 'CONFLICT' || error.status === 409) return 'ALREADY_ACTIONED';
   if (error.status === 403) return 'FORBIDDEN';
   if (error.status === 404) return 'NOT_FOUND';
-  if (error.code === 'invalid_pattern' || error.status === 422) return 'INVALID_PATTERN';
+  if (error.code === 'invalid_pattern') return 'INVALID_PATTERN';
   if (!error.status) return 'NETWORK_ERROR';
   return 'SERVER_ERROR';
 }

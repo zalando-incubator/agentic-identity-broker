@@ -135,7 +135,12 @@ func (h *SPAHandler) serveStaticFile(w http.ResponseWriter, r *http.Request, pat
 		contentType := mime.TypeByExtension(filepath.Ext(path))
 		if contentType == "" {
 			// Preserve ServeFile's original-byte sniffing for extensions unknown to mime.
-			original, err := os.Open(path) // #nosec G703 -- original path passed traversal checks.
+			relativePath, err := filepath.Rel(h.staticPath, path)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			original, err := os.OpenInRoot(h.staticPath, relativePath)
 			if err != nil {
 				http.NotFound(w, r)
 				return
@@ -241,7 +246,12 @@ type spaManifestChunk struct {
 }
 
 func readSPAPreloads(staticPath string) (agentDecision, approval string) {
-	data, err := os.ReadFile(filepath.Join(staticPath, ".vite", "manifest.json"))
+	root, err := os.OpenRoot(staticPath)
+	if err != nil {
+		return "", ""
+	}
+	defer func() { _ = root.Close() }()
+	data, err := root.ReadFile(".vite/manifest.json")
 	if err != nil {
 		return "", ""
 	}
@@ -336,7 +346,12 @@ func (h *SPAHandler) decisionPreloads(r *http.Request) string {
 }
 
 func readSPAScriptHash(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = root.Close() }()
+	data, err := root.ReadFile(filepath.Base(path))
 	if err != nil {
 		return "", err
 	}

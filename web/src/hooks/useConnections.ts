@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
-import { isAxiosError } from 'axios';
+import { isApiError } from '@services/api/client';
 import { sessionsApi, type SessionSummary } from '@services/api/sessions';
 import { usePrincipal } from '@services/query/QueryProvider';
 import { queryKeys } from '@services/query/queryKeys';
@@ -77,8 +77,7 @@ export function useConnections(options: ConnectionsOptions = {}) {
     },
     onError: (error, request) => {
       if (!ownsRequest(request)) return;
-      const status = isAxiosError(error) ? error.response?.status
-        : typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number' ? error.status : undefined;
+      const status = isApiError(error) ? error.status : undefined;
       setRefreshError(error);
       setEvidence(previous => ({ ...previous, [request.serviceId]: {
         event: { type: 'refresh-failed', status }, readAt: client.getQueryState(listKey)?.dataUpdatedAt ?? 0,

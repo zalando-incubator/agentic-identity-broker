@@ -13,7 +13,7 @@ import type { AgentDelegation } from '../types/consent';
 import { DelegationsPage } from './DelegationsPage';
 
 vi.mock('@services/api/consent', () => ({ consentApi: { getUserInfo: vi.fn(), getAgentDelegations: vi.fn(), deleteGrant: vi.fn() } }));
-const rows: AgentDelegation[] = [{ agentId: 'alpha', displayName: '<img src=x onerror=alert(1)> Alpha', activeGrantCount: 4, lastModifiedAt: '2026-01-01T00:00:00Z', expiresAt: null }, { agentId: 'beta', displayName: 'Beta', activeGrantCount: 1, lastModifiedAt: '2026-01-01T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z' }];
+const rows: AgentDelegation[] = [{ agentId: 'alpha', displayName: '<img src=x onerror=alert(1)> Alpha', activeGrantCount: 4, lastModifiedAt: '2026-01-01T00:00:00Z' }, { agentId: 'beta', displayName: 'Beta', activeGrantCount: 1, lastModifiedAt: '2026-01-01T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z' }];
 const clients: QueryClient[] = [];
 function setup() {
   const client = createQueryClient();

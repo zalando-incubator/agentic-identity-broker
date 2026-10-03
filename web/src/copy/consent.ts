@@ -26,6 +26,7 @@ export const consentCopy = {
   selectPermission: 'Select at least one permission group.',
   selectService: 'Select at least one service in each permission group.',
   connectFirst: 'Connect the selected services before you allow access.',
+  connectionStorageError: 'Cannot save your choices in this tab. Enable browser storage and try connecting again.',
   nextSteps: 'After you allow access, the agent can use your selected services. Review or revoke access at /delegations.',
   denied: 'Access denied. No access was added or revoked. You can close this page.',
   allowed: 'Access allowed. You can manage or revoke access at /delegations.',

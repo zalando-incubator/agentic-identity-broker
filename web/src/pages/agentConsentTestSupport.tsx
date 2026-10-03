@@ -9,7 +9,7 @@ import type { UserGrant } from '../types/consent';
 export const detail: AgentDetailData = {
   agent: {
     agentId: 'agent', displayName: 'Research Agent', description: 'Find documents for your work.',
-    logoUrl: 'https://external.example/agent.png', governanceUrl: 'https://example.com/governance',
+    governanceUrl: 'https://example.com/governance',
     userDocumentationUrl: 'https://example.com/docs', active_session_service_ids: ['mail', 'drive'],
     service_requirements: [{ service_id: 'mail', requirement_type: 'mandatory' }, { service_id: 'drive', requirement_type: 'optional' }],
     permission_sets: [
@@ -22,7 +22,7 @@ export const detail: AgentDetailData = {
     { kind: 'requirement', serviceId: 'mail', serviceName: 'Mail', requirementType: 'mandatory', connectionStatus: 'connected', requiredScopes: [{ name: 'mail:read', description: 'Read mail' }] },
     { kind: 'requirement', serviceId: 'drive', serviceName: 'Drive', requirementType: 'optional', connectionStatus: 'connected', requiredScopes: [{ name: 'drive:write', description: 'Write drive' }] },
   ],
-  cimd_metadata: { client_id_url: 'https://trusted.example/client.json', redirect_uri: 'http://localhost:3001/callback', verified_domain: 'trusted.example', requested_scopes: ['mail:read'] },
+  cimd_metadata: { client_id_url: 'https://trusted.example/client.json', redirect_uri: 'http://localhost:3001/callback', verified_domain: 'trusted.example', requested_scopes: ['mail:read'], logo_uri: 'https://external.example/agent.png' },
 };
 export const grant: UserGrant = { id: 'grant', agent_id: 'agent', principal: 'alice', granted_permission_sets: { read: ['mail'], prior: ['drive'] }, valid_until: '2099-06-10T15:24:31.123Z', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
 export function renderAgentPage(page: ReactNode, query = '') {

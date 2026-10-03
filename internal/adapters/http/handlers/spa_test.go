@@ -81,6 +81,24 @@ func TestSPAHandlerSetsSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestSPAHandlerRejectsEscapingHashManifest(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	staticPath := filepath.Join(root, "dist")
+	require.NoError(t, os.Mkdir(staticPath, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(staticPath, "index.html"), []byte("index"), 0o600))
+	digest := sha256.Sum256([]byte("theme script"))
+	hash := "'sha256-" + base64.StdEncoding.EncodeToString(digest[:]) + "'"
+	manifest := filepath.Join(root, "outside.json")
+	require.NoError(t, os.WriteFile(manifest, []byte(`{"script-src":"`+hash+`"}`), 0o600))
+	require.NoError(t, os.Symlink(manifest, filepath.Join(staticPath, "csp-hashes.json")))
+	handler := NewSPAHandler(staticPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NotContains(t, recorder.Header().Get("Content-Security-Policy"), hash)
+}
+
 func TestSPAHandlerThemeCSP(t *testing.T) {
 	t.Parallel()
 	digest := sha256.Sum256([]byte("document.documentElement.dataset.theme = 'dark'"))

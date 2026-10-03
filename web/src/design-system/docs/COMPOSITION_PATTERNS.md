@@ -131,7 +131,7 @@ Use RadioGroup for Until revoked, 30 days, and Custom date, with DatePicker for 
 Start re-consent from the existing validity and preserve it unless the user changes the duration.
 A changed duration applies to the whole grant.
 
-Keep the draft through the existing `consent_state` provider callback flow.
+Preserve the canonical draft through the accepted tab-local `consent_state_id` form POST and provider callback. Keep the full return URL out of provider-facing state; restore only a matching, unexpired record and replace history without its ID.
 Allow is the sole `primary` action. Deny uses `secondary` and leaves the grant unchanged.
 Deny shows a local outcome without constructing a redirect.
 Invalid custom dates use linked inline errors before submission.

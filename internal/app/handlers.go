@@ -31,6 +31,9 @@ type AdminHandlers struct {
 
 	// SigningKeys handler for admin API - manages signing key lifecycle
 	SigningKeys *admin.SigningKeysHandler
+
+	// CIMDClientKeys manages the dedicated outbound CIMD key lifecycle.
+	CIMDClientKeys *admin.CIMDClientKeysHandler
 }
 
 // EnduserHandlers groups all handler instances needed by the enduser server.
@@ -66,6 +69,9 @@ type EnduserHandlers struct {
 
 	// JWKS handler (all OAuth2 modes — serves aggregated signing key public material)
 	JWKS *enduserHandlers.JWKSHandler
+
+	// CIMDMetadata serves the public broker-hosted metadata and JWK documents.
+	CIMDMetadata *enduserHandlers.CIMDMetadataHandler
 
 	// SPA handler for serving static files (must be last)
 	SPA *handlers.SPAHandler

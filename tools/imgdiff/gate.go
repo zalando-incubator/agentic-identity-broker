@@ -54,7 +54,7 @@ func runGate(args []string) int {
 			return 2
 		}
 	}
-	if err := os.MkdirAll(*outDir, 0o755); err != nil {
+	if err := os.MkdirAll(*outDir, 0o750); err != nil {
 		fmt.Fprintf(os.Stderr, "gate output directory %s: %v\n", *outDir, err)
 		return 2
 	}
@@ -123,7 +123,7 @@ func gateStems(required, manifestPath string) ([]string, error) {
 		}
 		stems[stem] = struct{}{}
 	}
-	file, err := os.Open(manifestPath)
+	file, err := os.OpenInRoot(filepath.Dir(manifestPath), filepath.Base(manifestPath))
 	if err != nil {
 		return nil, fmt.Errorf("manifest %s: %w", manifestPath, err)
 	}
@@ -183,7 +183,12 @@ func gateDiff(expected, actual *image.NRGBA) *image.NRGBA {
 }
 
 func saveGatePNG(path string, img image.Image) error {
-	file, err := os.Create(path)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.OpenFile(filepath.Base(path), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}

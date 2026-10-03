@@ -5,8 +5,6 @@ package pages
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -749,32 +747,23 @@ func (cp *ConsentPage) WaitForGrantSuccess(ctx context.Context) error {
 	return nil
 }
 
-// NavigateToAgentWithSelections navigates to the consent page with pre-selected
-// permission set selections encoded in the consent_state query parameter.
-// This simulates the state preserved across third-party OAuth2 login redirects.
-func (cp *ConsentPage) NavigateToAgentWithSelections(ctx context.Context, agentID string, selections map[string][]string) error {
-	if agentID == "" {
-		return fmt.Errorf("agentID cannot be empty")
+// WaitForConnectError reads the inline connection failure alert.
+func (cp *ConsentPage) WaitForConnectError(ctx context.Context) (string, error) {
+	alert := cp.page().GetByRole("alert")
+	err := alert.WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
+	})
+	if err != nil {
+		return "", fmt.Errorf("no connection error appeared: %w", err)
 	}
 
-	path := fmt.Sprintf(agentDetailPath, agentID)
-	if len(selections) > 0 {
-		encoded, err := encodeSelections(selections)
-		if err != nil {
-			return fmt.Errorf("failed to encode selections: %w", err)
-		}
-		path += "?consent_state=" + url.QueryEscape(encoded)
+	text, err := alert.First().TextContent()
+	if err != nil {
+		return "", fmt.Errorf("failed to read connection error: %w", err)
 	}
 
-	if err := cp.Navigate(ctx, path); err != nil {
-		return fmt.Errorf("failed to navigate to agent consent page with selections: %w", err)
-	}
-
-	if err := cp.waitForAgentNameHeading(ctx); err != nil {
-		return fmt.Errorf("agent name heading not found after navigation with selections: %w", err)
-	}
-
-	return nil
+	return strings.TrimSpace(text), nil
 }
 
 // GetURLQueryParam returns the value of a query parameter from the current page URL.
@@ -785,20 +774,6 @@ func (cp *ConsentPage) GetURLQueryParam(param string) (string, error) {
 		return "", fmt.Errorf("failed to parse current URL %q: %w", currentURL, err)
 	}
 	return parsed.Query().Get(param), nil
-}
-
-// encodeSelections encodes the canonical consent draft envelope to base64url JSON.
-func encodeSelections(selections map[string][]string) (string, error) {
-	jsonBytes, err := json.Marshal(struct {
-		Selections map[string][]string `json:"selections"`
-		Duration   string              `json:"duration"`
-		CustomDate string              `json:"customDate"`
-	}{Selections: selections, Duration: "until-revoked", CustomDate: ""})
-	if err != nil {
-		return "", err
-	}
-	encoded := base64.RawURLEncoding.EncodeToString(jsonBytes)
-	return encoded, nil
 }
 
 // PermissionGroup is the displayed selection state, in the order shown to the user.

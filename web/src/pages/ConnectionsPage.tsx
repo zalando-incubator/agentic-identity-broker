@@ -20,7 +20,7 @@ export function ConnectionsPage() {
   const navigate = useNavigate();
   const [notice, setNotice] = useState<ConnectionNotice | null>(null);
   const callbackRef = useRef<string | null>(null);
-  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const returnFocusRef = useRef<string | null>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const connections = useConnections({ onRefreshSuccess: () => setNotice({ type: 'success', message: connectionsCopy.refreshSuccess }) });
   const disconnect = useDisconnectConnection({
@@ -71,14 +71,14 @@ export function ConnectionsPage() {
       isDisconnecting={disconnect.isPending}
       onRefresh={serviceId => { setNotice(null); void connections.refresh(serviceId); }}
       onDisconnect={session => {
-        returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        returnFocusRef.current = `disconnect-session-${session.id}`;
         disconnect.requestRevoke(session);
       }}
       onRetry={() => void connections.refetch()}
     /> : !connections.error && <p className="text-sm text-muted-foreground">{connectionsCopy.empty}</p>}
     <DisconnectDialog session={disconnect.confirmation} onCancel={disconnect.cancelRevoke} onConfirm={() => void disconnect.confirmRevoke()} onReturnFocus={() => {
-      const target = returnFocusRef.current;
-      if (target?.isConnected && !target.matches(':disabled')) target.focus();
+      const target = returnFocusRef.current ? document.getElementById(returnFocusRef.current) : null;
+      if (target && !target.matches(':disabled')) target.focus();
       else pageRef.current?.focus();
     }} />
   </div>;

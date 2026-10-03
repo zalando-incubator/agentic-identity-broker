@@ -84,11 +84,11 @@ func TestConcurrentLocalModeBootstrapUsesSingleSigningKeyAcrossReplicas(t *testi
 	defer shutdownApp(t, apps[1])
 
 	ctx := context.Background()
-	count, err := storage1.SigningKeys().CountActive(ctx)
+	count, err := storage1.SigningKeys().CountActiveInDomain(ctx, domstorage.KeyDomainTokenSigning)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	current, err := storage1.SigningKeys().GetCurrent(ctx)
+	current, err := storage1.SigningKeys().GetCurrentInDomain(ctx, domstorage.KeyDomainTokenSigning)
 	require.NoError(t, err)
 
 	agent := createLocalIntegrationAgent(t, storage1)
@@ -122,6 +122,95 @@ func TestConcurrentLocalModeBootstrapUsesSingleSigningKeyAcrossReplicas(t *testi
 	assert.True(t, ok)
 	_, ok = jwks2.LookupKeyID(string(current.KID))
 	assert.True(t, ok)
+}
+
+func TestLocalModeBootstrapIsolatedToTokenSigningDomain(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	if !containerRuntimeAvailable() {
+		t.Skip("Skipping test: No container runtime available")
+	}
+
+	connStr, cleanupDatabase := setupMigratedPostgresDatabase(t)
+	defer cleanupDatabase()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, cleanupStorage := newPostgresStorageAdapter(t, connStr)
+	defer cleanupStorage()
+
+	brokerApp, err := e2ebootstrap.NewServerFactory(newLocalModePostgresConfig(connStr), logger).BuildApp(store)
+	require.NoError(t, err)
+	defer shutdownApp(t, brokerApp)
+
+	ctx := context.Background()
+	tokenSigningCount, err := store.SigningKeys().CountActiveInDomain(ctx, domstorage.KeyDomainTokenSigning)
+	require.NoError(t, err)
+	assert.Equal(t, 1, tokenSigningCount, "local bootstrap must create one token-signing key")
+
+	cimdCount, err := store.SigningKeys().CountActiveInDomain(ctx, domstorage.KeyDomainCIMDClientAuthentication)
+	require.NoError(t, err)
+	assert.Zero(t, cimdCount, "local token-signing bootstrap must not create a CIMD client-authentication key")
+
+	tokenSigningKey, err := store.SigningKeys().GetCurrentInDomain(ctx, domstorage.KeyDomainTokenSigning)
+	require.NoError(t, err)
+	assert.Equal(t, domstorage.KeyDomainTokenSigning, tokenSigningKey.KeyDomain)
+
+	_, err = store.SigningKeys().GetCurrentInDomain(ctx, domstorage.KeyDomainCIMDClientAuthentication)
+	require.Error(t, err, "CIMD has no current key until its distinct lifecycle provisions one")
+}
+
+func TestPostgresCIMDBootstrapRequiresPersistedCIMDService(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	t.Run("does not provision a CIMD key for an existing static service", func(t *testing.T) {
+		connStr, cleanupDatabase := setupMigratedPostgresDatabase(t)
+		defer cleanupDatabase()
+
+		store, cleanupStorage := newPostgresStorageAdapter(t, connStr)
+		defer cleanupStorage()
+		createStaticIntegrationService(t, store)
+
+		brokerApp, err := e2ebootstrap.NewServerFactory(newLocalModePostgresConfig(connStr), logger).BuildApp(store)
+		require.NoError(t, err)
+		defer shutdownApp(t, brokerApp)
+
+		ctx := context.Background()
+		tokenSigningCount, err := store.SigningKeys().CountActiveInDomain(ctx, domstorage.KeyDomainTokenSigning)
+		require.NoError(t, err)
+		assert.Equal(t, 1, tokenSigningCount)
+
+		cimdCount, err := store.SigningKeys().CountActiveInDomain(ctx, domstorage.KeyDomainCIMDClientAuthentication)
+		require.NoError(t, err)
+		assert.Zero(t, cimdCount, "only persisted CIMD services may trigger CIMD bootstrap")
+	})
+
+	t.Run("provisions an immediately usable CIMD key for a persisted CIMD service", func(t *testing.T) {
+		connStr, cleanupDatabase := setupMigratedPostgresDatabase(t)
+		defer cleanupDatabase()
+
+		store, cleanupStorage := newPostgresStorageAdapter(t, connStr)
+		defer cleanupStorage()
+		createCIMDIntegrationService(t, store)
+
+		cfg := newLocalModePostgresConfig(connStr)
+		cfg.Server.EndUser.PublicURL = "https://broker.integration.example.com"
+		brokerApp, err := e2ebootstrap.NewServerFactory(cfg, logger).BuildApp(store)
+		require.NoError(t, err)
+		defer shutdownApp(t, brokerApp)
+
+		ctx := context.Background()
+		cimdCount, err := store.SigningKeys().CountActiveInDomain(ctx, domstorage.KeyDomainCIMDClientAuthentication)
+		require.NoError(t, err)
+		assert.Equal(t, 1, cimdCount)
+
+		key, err := store.SigningKeys().GetCurrentInDomain(ctx, domstorage.KeyDomainCIMDClientAuthentication)
+		require.NoError(t, err)
+		assert.Equal(t, domstorage.KeyDomainCIMDClientAuthentication, key.KeyDomain)
+		assert.Equal(t, "ES256", key.Algorithm)
+		assert.True(t, key.IsCurrent)
+		assert.False(t, key.ActivatesAt.After(time.Now().UTC()), "the first CIMD key must not wait through the rotation grace period")
+	})
 }
 
 type buildResult struct {
@@ -225,6 +314,48 @@ func newLocalModePostgresConfig(connStr string) *ports.Config {
 			},
 		},
 	}
+}
+
+func createStaticIntegrationService(t *testing.T, store *storageadapter.Adapter) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	require.NoError(t, store.Services().Create(context.Background(), &model.ThirdpartyOAuth2ProviderEntity{
+		ID:          id.NewServiceID(),
+		DisplayName: "Static integration service",
+		ClientID:    id.ClientID("static-integration-client"),
+		Secret:      model.NewEncryptedSecret([]byte("static-integration-ciphertext")),
+		IssuerURI:   "https://static.integration.example.com",
+		Endpoints: model.OAuth2Endpoints{
+			AuthorizeEndpoint: "https://static.integration.example.com/authorize",
+			TokenEndpoint:     "https://static.integration.example.com/token",
+		},
+		Scopes:    []model.OAuthScope{{ScopeValue: "read", Description: "Read access"}},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}))
+}
+
+func createCIMDIntegrationService(t *testing.T, store *storageadapter.Adapter) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	serviceID := id.NewServiceID()
+	require.NoError(t, store.Services().Create(context.Background(), &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                      serviceID,
+		DisplayName:             "CIMD integration service",
+		ClientID:                id.ClientID("https://broker.integration.example.com/.well-known/oauth-client/" + serviceID.String()),
+		Secret:                  model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodPrivateKeyJWT,
+		IssuerURI:               "https://cimd.integration.example.com",
+		Endpoints: model.OAuth2Endpoints{
+			AuthorizeEndpoint: "https://cimd.integration.example.com/authorize",
+			TokenEndpoint:     "https://cimd.integration.example.com/token",
+		},
+		Scopes:    []model.OAuthScope{{ScopeValue: "read", Description: "Read access"}},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}))
 }
 
 func newLocalIntegrationAgent() *domstorage.Agent {

@@ -2,15 +2,15 @@
 
 ## Status
 
-This is a validation guide for the planned implementation. The planning change does not implement components, themes, or new command recipes.
+This guide covers the implemented Consent UI v2 and its release-validation gates. See `tasks.md` and `cutover-inventory.md` for completed checks and remaining requirements.
 
-Existing commands are identified below. Proposed commands become available during implementation. This guide is not a passing runtime report.
+The commands below are implemented. This guide is not a passing runtime report: visual baselines require human review, and the final merge gate must pass separately.
 
 ## Prerequisites
 
 Use Node 24 or later, the repository Go toolchain, npm, just, Ginkgo, and the existing Playwright browser setup.
 
-Before implementation, obtain acceptance for ADR 037. The feature adds no API contract, persistence, or migration.
+ADR 037 is accepted. The feature adds no runtime API contract, server configuration, or database migration. Browser preferences and tab-local callback drafts remain within the documented UI-state boundary.
 
 Run commands from the repository root unless specified otherwise.
 
@@ -23,7 +23,7 @@ just --list
 just web-ci
 ```
 
-`web-ci` uses the lockfile and strict engine checking. It does not install the planned component dependencies until implementation updates the manifest.
+`web-ci` installs the committed lockfile with strict engine checking.
 
 ## Storybook: light and dark
 
@@ -33,7 +33,7 @@ This command exists today:
 npm --prefix web run storybook
 ```
 
-Open `http://localhost:6006`. After implementation, select **Light** and **Dark** in the themes toolbar. The decorator sets `data-theme`, including portal content.
+Open `http://localhost:6006` and select **Light** and **Dark** in the themes toolbar. The decorator sets `data-theme`, including portal content.
 
 1. Open each primitive and shell story.
 2. Switch between Light and Dark.
@@ -43,7 +43,7 @@ Open `http://localhost:6006`. After implementation, select **Light** and **Dark*
 
 Expected result: readable controls, visible focus, theme-matched overlays, no automatic third-party requests, and no a11y violations.
 
-The toolbar alone does not prove CI coverage. Implementation adds these recipes:
+The toolbar alone does not prove CI coverage. Use these recipes:
 
 ```bash
 just web-storybook-build
@@ -135,7 +135,7 @@ E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend
 
 Current captures go to `tests/e2e/frontend/coverage/screenshots/`. Reviewed baselines live in `tests/e2e/screenshots/`. Current capture is not a blocking comparison gate.
 
-Implementation adds the planned gate recipe:
+Run the comparison gate after human-approved baselines are published:
 
 ```bash
 just test-e2e-frontend-visual

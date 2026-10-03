@@ -52,7 +52,7 @@ function createApiClient(): AxiosInstance {
       // Success response - return as-is
       return response;
     },
-    (error: AxiosError<ApiError>) => {
+    (error: AxiosError<{ error?: string; message?: string }>) => {
       if (axios.isCancel(error)) return Promise.reject(error);
 
       // Handle error responses
@@ -131,9 +131,13 @@ function createApiClient(): AxiosInstance {
           } as ApiError & { retryable: boolean });
         }
 
-        // Return structured error from backend
-        if (data && typeof data === 'object') {
-          return Promise.reject({ ...data, status } as ApiError);
+        // The end-user API returns { error, message }; consumers receive ApiError.
+        if (data && typeof data === 'object' && typeof data.error === 'string' && data.error) {
+          return Promise.reject({
+            status,
+            code: data.error,
+            message: typeof data.message === 'string' && data.message ? data.message : error.message || 'An unexpected error occurred',
+          } as ApiError);
         }
       }
 

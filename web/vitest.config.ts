@@ -60,6 +60,12 @@ export default defineConfig({
     },
   },
   test: {
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['**/*.stories.*'],
+      reporter: ['text', 'html', 'clover', 'json', ['lcovonly', { projectRoot: '..' }]],
+    },
     projects: [
       defineProject({
         extends: true,

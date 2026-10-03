@@ -73,7 +73,7 @@ describe('console command palette', () => {
     await user.click(await screen.findByRole('button', { name: 'Search', exact: true }));
     await screen.findByRole('option', { name, exact: true });
     await user.type(screen.getByRole('combobox'), name === unsafeName ? 'Agent' : name);
-    await user.click(screen.getByRole('option', { name, exact: true }));
+    await user.keyboard('{Enter}');
     expect(screen.getByLabelText('Current route')).toHaveTextContent(route);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -81,7 +81,8 @@ describe('console command palette', () => {
   it('applies theme without navigating or changing authorization data', async () => {
     const user = userEvent.setup(); setup();
     await user.click(await screen.findByRole('button', { name: 'Search', exact: true }));
-    await user.click(await screen.findByRole('option', { name: 'Dark', exact: true }));
+    await user.type(screen.getByRole('combobox'), 'Dark');
+    await user.keyboard('{Enter}');
     expect(screen.getByLabelText('Theme preference')).toHaveTextContent('dark');
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
     expect(screen.getByLabelText('Current route')).toHaveTextContent('/delegations');

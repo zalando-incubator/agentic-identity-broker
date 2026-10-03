@@ -15,20 +15,19 @@ import { PermissionGroupList } from '@components/consent/PermissionGroupList';
 import { DurationChoice } from '@components/consent/DurationChoice';
 import { ConsentActions } from '@components/consent/ConsentActions';
 import { ServiceConnectPrompt } from '@components/consent/ServiceConnectPrompt';
-import { createConsentDraft, InvalidGrantDateError } from '@components/consent/consentDraft';
+import { createConsentDraft, InvalidGrantDateError, type ConsentDraftSnapshot } from '@components/consent/consentDraft';
 import { consentErrorMessage, validateDraftSelection } from '@components/consent/consentValidation';
 import { getAgentOrigin } from '@components/consent/origin';
 import type { UserGrant } from '../types/consent';
 
-export function AgentDecisionPage() {
+export function AgentDecisionPage({ currentUrl, restoredDraft, sessionToken: restoredSessionToken }: { currentUrl?: string; restoredDraft?: ConsentDraftSnapshot; sessionToken?: string }) {
   const { agentId = '' } = useParams<{ agentId: string }>();
   const location = useLocation();
-  const params = new URLSearchParams(location.search);
-  const sessionToken = params.get('session_token') ?? '';
+  const sessionToken = restoredSessionToken ?? new URLSearchParams(location.search).get('session_token') ?? '';
   const query = useAgentDecision(agentId, sessionToken);
   const retry = () => { void query.refetch(); void query.grant.refetch(); };
   if (!sessionToken || !agentId) return <Alert variant="error" data-testid="consent-error">{consentCopy.invalidSession}</Alert>;
-  if (query.data && query.grant.data !== undefined) return <DecisionForm key={`${agentId}:${sessionToken}`} data={query.data} initialGrant={query.grant.data} sessionToken={sessionToken} consentState={params.get('consent_state')} currentUrl={new URL(location.pathname + location.search, window.location.origin).toString()} authorizationError={query.error} onRetry={retry} />;
+  if (query.data && query.grant.data !== undefined) return <DecisionForm key={`${agentId}:${sessionToken}:${location.key}`} data={query.data} initialGrant={query.grant.data} sessionToken={sessionToken} restoredDraft={restoredDraft} currentUrl={currentUrl ?? new URL(location.pathname + location.search + location.hash, window.location.origin).toString()} authorizationError={query.error} onRetry={retry} />;
   if (query.error) return <DecisionLoadError error={query.error} onRetry={retry} />;
   return <p role="status">{commonCopy.loading}</p>;
 }
@@ -40,9 +39,9 @@ function DecisionLoadError({ error, onRetry }: { error: unknown; onRetry: () => 
   </Alert>;
 }
 
-function DecisionForm({ data, initialGrant, sessionToken, consentState, currentUrl, authorizationError, onRetry }: { data: AgentDetailData; initialGrant: UserGrant | null; sessionToken: string; consentState: string | null; currentUrl: string; authorizationError: unknown; onRetry: () => void }) {
+function DecisionForm({ data, initialGrant, sessionToken, restoredDraft, currentUrl, authorizationError, onRetry }: { data: AgentDetailData; initialGrant: UserGrant | null; sessionToken: string; restoredDraft?: ConsentDraftSnapshot; currentUrl: string; authorizationError: unknown; onRetry: () => void }) {
   const { agent, services, cimd_metadata: metadata } = data;
-  const [draft, setDraft] = useState(() => createConsentDraft({ permissionSets: agent.permission_sets ?? [], serviceRequirements: agent.service_requirements, existingGrant: initialGrant, context: 'decision', sessionToken, consentState }));
+  const [draft, setDraft] = useState(() => createConsentDraft({ permissionSets: agent.permission_sets, serviceRequirements: agent.service_requirements, existingGrant: initialGrant, context: 'decision', sessionToken, restoredDraft }));
   const [outcome, setOutcome] = useState<'allowed' | 'denied' | null>(null);
   const [error, setError] = useState<string>();
   const [dateError, setDateError] = useState<string>();
@@ -51,7 +50,7 @@ function DecisionForm({ data, initialGrant, sessionToken, consentState, currentU
   const save = useSaveGrant(agent.agentId, { sessionToken });
   const origin = getAgentOrigin('decision', metadata);
   const selectedServices = new Set(Object.values(draft.selections).flat());
-  const missingServices = services.filter((service) => (draft.groups.length === 0 || selectedServices.has(service.serviceId)) && !agent.active_session_service_ids?.includes(service.serviceId));
+  const missingServices = services.filter((service) => (draft.groups.length === 0 || selectedServices.has(service.serviceId)) && !agent.active_session_service_ids.includes(service.serviceId));
   const blocked = draft.groups.length > 0 && missingServices.length > 0;
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
 

@@ -44,7 +44,7 @@ export function ConnectionsTable({ sessions, getState, isRefreshing, isDisconnec
         </Button>}
         {state.action === 'refresh' && <Button data-testid="connection-action" variant="outline" size="sm" disabled={pending} isLoading={refreshing} onClick={() => onRefresh(session.service_id)}>{accessCopy.refresh}</Button>}
         {state.action === 'retry' && <Button data-testid="connection-action" variant="outline" size="sm" disabled={pending} onClick={onRetry}>{commonCopy.retry}</Button>}
-        <Button variant="ghost" size="sm" disabled={pending} isLoading={disconnecting} onClick={() => onDisconnect(session)}>{accessCopy.disconnect}</Button>
+        <Button id={`disconnect-session-${session.id}`} variant="ghost" size="sm" disabled={pending} isLoading={disconnecting} onClick={() => onDisconnect(session)}>{accessCopy.disconnect}</Button>
       </div>;
     } },
   ];

@@ -77,13 +77,13 @@
 
 **Decision**: The presence of `session_token` selects decision context on `/agents/:id`. Backend validation determines whether that context is valid. Existing grants do not change shell selection. Approval review always uses DecisionShell.
 
-**Rationale**: `AgentGrantDetailPage.tsx` reads `session_token` and preserves selections through `consent_state` during service authorization. Delta consent still needs a focused decision even with an existing grant.
+**Rationale**: `AgentRoute` restores a matching tab-local callback draft before choosing decision or console context. The current form POST sends only a bounded UUID and clean return path. Delta consent remains focused even with an existing active grant.
 
 **Deny**: No consent-deny backend endpoint exists. Deny shows a local terminal result and performs no grant mutation or constructed redirect. Preserve existing validated continuation for Allow.
 
 **Alternatives considered**: Choosing a shell from grant existence breaks re-consent. A new OAuth2 denial callback or telemetry write endpoint exceeds the authorized API scope.
 
-**Evidence**: `web/src/App.tsx:38-75`, `web/src/pages/AgentGrantDetailPage.tsx:47-64,255-264`, `internal/domain/oauth2/service.go:479-481`, `tests/e2e/frontend/selection_preservation_test.go`.
+**Evidence**: `web/src/components/layout/AgentRoute.tsx`, `web/src/services/storage/session.ts`, `web/src/components/consent/ServiceConnectPrompt.tsx`, and `tests/e2e/frontend/selection_preservation_test.go`; accepted transport ADR 037 and Feature 008 amendment.
 
 ## 8. Single cutover
 
@@ -125,4 +125,4 @@ Do not add broker configuration, environment or CLI bindings, Helm values, or HT
 
 ## Resolved unknowns and remaining approvals
 
-No technical choice remains marked NEEDS CLARIFICATION. ADR 037 records stakeholder acceptance on 2026-09-27. The feature adds no runtime API contract. The Agents count column is removed, and documentation-only corrections of existing session-list and consent responses are approved. Runtime completion still requires the planned validation.
+No technical choice remains marked NEEDS CLARIFICATION. Both the design-system decision and current main's callback-state transport have explicit stakeholder acceptance. The feature adds no runtime API contract. Documentation-only corrections of existing consent, session, and approval responses/statuses are approved. Runtime completion still requires the planned validation and human visual review.

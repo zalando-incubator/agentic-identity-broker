@@ -147,6 +147,7 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
 | 037 | `adrs/037-design-system-rebuilt-on-shadcn-radix.md` | Accepted redesign: owned shadcn/Radix components, TanStack Query, CSS motion, and `/settings`. Runtime migration remains incomplete |
+| 037 | `adrs/037-consent-selection-oauth-redirect-state.md` | Accepted form POST and bounded tab-local callback draft; provider state carries only an opaque UUID and clean return path |
 
 ## Domain Glossary
 

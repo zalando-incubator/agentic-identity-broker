@@ -47,6 +47,7 @@ const sidebars = {
         'guides/configure-encryption',
         'guides/deploy-on-kubernetes',
         'deployment/kubernetes-irsa',
+        'deployment/verify-releases',
         'operations/deployment-checklist',
       ],
     },
@@ -75,6 +76,7 @@ const sidebars = {
       label: 'Resources',
       items: [
         'resources/security',
+        'resources/assurance-case',
         'resources/contributing',
         'resources/public-relations',
       ],

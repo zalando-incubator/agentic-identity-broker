@@ -14,7 +14,7 @@ export function AgentIdentityHeader({ agent, logoUrl, originLabel, actions }: { 
   ];
   return <header data-testid="agent-identity" className="space-y-4">
     <div className="flex items-start gap-3">
-      <Avatar size="lg" label={agent.displayName} src={logoUrl ?? agent.logoUrl} fallback={agent.displayName.slice(0, 1).toUpperCase()} />
+      <Avatar size="lg" label={agent.displayName} src={logoUrl} fallback={agent.displayName.slice(0, 1).toUpperCase()} />
       <div className="min-w-0 flex-1 space-y-2">
         <TruncatedText as="h1" text={agent.displayName} lines={2} data-testid="agent-name-heading" expandLabel={consentCopy.expandAgentName} collapseLabel={consentCopy.collapseAgentName} className="font-display text-2xl font-semibold" />
         {originLabel && <Badge variant="outline" data-testid="agent-origin-label" className="max-w-full whitespace-normal break-words">{originLabel}</Badge>}

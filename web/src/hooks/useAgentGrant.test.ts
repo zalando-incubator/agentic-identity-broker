@@ -2,15 +2,15 @@ import { createElement, type ReactNode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { isCancelledError, type QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { consentApi } from '@services/api/consent';
+import { consentApi, type AgentDetailData } from '@services/api/consent';
 import { QueryProvider } from '@services/query/QueryProvider';
 import { createQueryClient } from '@services/query/queryClient';
 import { queryKeys } from '@services/query/queryKeys';
-import type { GrantResult, UserGrant } from '../types/consent';
+import type { AgentDelegation, GrantResult, UserGrant } from '../types/consent';
 import { useAgentGrant, useSaveGrant } from './useAgentGrant';
 
 vi.mock('@services/api/consent', () => ({ consentApi: { getUserInfo: vi.fn(), getAgentGrants: vi.fn(), createOrUpdateGrant: vi.fn() } }));
-const grant: UserGrant = { id: 'grant-a', agent_id: 'agent-a', principal: 'alice', granted_permission_sets: { read: ['mail'] }, valid_until: null, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
+const grant: UserGrant = { id: 'grant-a', agent_id: 'agent-a', principal: 'alice', granted_permission_sets: { read: ['mail'] }, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
 const clients: QueryClient[] = [];
 function setup() {
   const client = createQueryClient();
@@ -44,8 +44,11 @@ describe('principal-scoped agent grants', () => {
 
   it('keeps server grant authoritative during save and invalidates its dependent views after success', async () => {
     const { client, wrapper } = setup();
-    client.setQueryData(queryKeys.delegations('alice'), [{ agentId: 'agent-a', displayName: 'Agent A' }]);
-    client.setQueryData(queryKeys.agent('alice', 'agent-a'), { agent: { agentId: 'agent-a' } });
+    client.setQueryData(queryKeys.delegations('alice'), [{ agentId: 'agent-a', displayName: 'Agent A', activeGrantCount: 1, lastModifiedAt: '2026-01-01T00:00:00Z' } satisfies AgentDelegation]);
+    client.setQueryData(queryKeys.agent('alice', 'agent-a'), {
+      agent: { agentId: 'agent-a', displayName: 'Agent A', description: 'Agent A', permission_sets: [], active_session_service_ids: [], service_requirements: [] },
+      services: [],
+    } satisfies AgentDetailData);
     const response = deferred<GrantResult>();
     vi.mocked(consentApi.createOrUpdateGrant).mockReturnValue(response.promise);
     const { result } = renderHook(() => ({ read: useAgentGrant('agent-a'), save: useSaveGrant('agent-a', { sessionToken: 'authorization' }) }), { wrapper });

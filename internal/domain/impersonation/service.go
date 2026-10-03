@@ -124,8 +124,9 @@ func (s *Service) Impersonate(ctx context.Context, req *Request, target *Target)
 	}
 
 	results := make([]*ruleResult, 0, len(s.rules))
+	validationCache := verifiedCredentialCache{}
 	for _, rule := range s.rules {
-		res := s.evaluateRule(ctx, rule, req, request, target.Agent)
+		res := s.evaluateRule(ctx, rule, req, request, target.Agent, &validationCache)
 		if res.matched {
 			return &Outcome{Response: res.response, Audit: successAudit(s.audiencePrefix, target.Agent.ID.String(), res)}, nil
 		}
@@ -164,17 +165,17 @@ func (r *ruleResult) recordIssuer(issuer *compiledIssuer, role ports.CredentialR
 	r.issuerRoles = append(r.issuerRoles, string(role))
 }
 
-func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Request, request requestContext, targetAgent *storage.Agent) *ruleResult {
+func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Request, request requestContext, targetAgent *storage.Agent, validationCache *verifiedCredentialCache) *ruleResult {
 	res := &ruleResult{ruleName: rule.name}
 
-	clientClaims, clientIssuer, err := s.validateCredential(ctx, rule, ports.CredentialRoleClientAssertion, req.ClientAssertion)
+	clientClaims, clientIssuer, err := s.validateCredential(ctx, rule, ports.CredentialRoleClientAssertion, req.ClientAssertion, validationCache)
 	if err != nil {
 		res.failure = invalidClient("client assertion validation failed", "client_assertion_invalid")
 		return res
 	}
 	res.recordIssuer(clientIssuer, ports.CredentialRoleClientAssertion)
 
-	actorClaims, actorIssuer, err := s.validateCredential(ctx, rule, ports.CredentialRoleActor, req.ActorToken)
+	actorClaims, actorIssuer, err := s.validateCredential(ctx, rule, ports.CredentialRoleActor, req.ActorToken, validationCache)
 	if err != nil {
 		res.failure = invalidRequest("actor token validation failed", "actor_token_invalid")
 		return res
@@ -200,7 +201,7 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		}
 		subjectClaims = claims
 	} else {
-		claims, subjectIssuer, err := s.validateCredential(ctx, rule, ports.CredentialRoleSubject, req.SubjectToken)
+		claims, subjectIssuer, err := s.validateCredential(ctx, rule, ports.CredentialRoleSubject, req.SubjectToken, validationCache)
 		if err != nil {
 			res.failure = invalidRequest("subject token validation failed", "subject_token_invalid")
 			return res
@@ -302,6 +303,7 @@ func (s *Service) validateCredential(
 	rule *compiledRule,
 	role ports.CredentialRole,
 	token string,
+	validationCache *verifiedCredentialCache,
 ) (map[string]interface{}, *compiledIssuer, error) {
 	iss, err := unverifiedIssuer(token)
 	if err != nil {
@@ -311,15 +313,16 @@ func (s *Service) validateCredential(
 	if issuer == nil {
 		return nil, nil, fmt.Errorf("no trusted issuer authorized to sign role %q for iss", role)
 	}
-	credentialRole := rule.roles[role]
-	if credentialRole.requireAbsentAudience {
-		claims, err := issuer.validator.validateWithoutAudience(ctx, token)
-		if err != nil {
-			return nil, nil, err
-		}
-		return claims, issuer, nil
+	if err := issuer.validator.validateAlgorithm(token); err != nil {
+		return nil, nil, err
 	}
-	claims, err := issuer.validator.validate(ctx, token, credentialRole.expectedAudience)
+	verified, err := validationCache.verify(ctx, role, token, issuer)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	credentialRole := rule.roles[role]
+	claims, err := issuer.validator.validateClaims(verified, credentialRole.expectedAudience, credentialRole.requireAbsentAudience)
 	if err != nil {
 		return nil, nil, err
 	}

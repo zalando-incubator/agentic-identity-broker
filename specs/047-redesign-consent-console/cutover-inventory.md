@@ -4,7 +4,7 @@
 
 The first T001 attempt stopped on 2026-09-27 because frontend dependency installation failed.
 The dependency mismatch is resolved. The unit baseline, production build, and browser baseline pass.
-No redesign runtime implementation task started.
+The redesign, legacy-journey migration, and approved upstream callback integration are implemented. Automated checks and production-browser evidence are recorded below. Human-approved baselines and the final security gate still block release.
 
 ## Baseline
 
@@ -790,7 +790,7 @@ No compliance or runtime-completion claim follows from these edits.
 | Identity bootstrap, user menu, Settings identity | `GET /api/me` |
 | Agents list | `GET /api/consent/agents`; confirmed `DELETE /api/consent/agents/{agent-id}/grants` |
 | Agent decision and console detail | `GET /api/consent/agents/{agent-id}` (decision includes `session_token`); `GET` and `POST /api/consent/agents/{agent-id}/grants`; confirmed `DELETE` of that grant |
-| Required-service connection | `GET /api/third-party/{serviceId}/oauth2/authorize`, followed by the existing provider callback |
+| Required-service connection | Existing `GET` or `POST /api/third-party/{serviceId}/oauth2/authorize`, followed by the existing provider callback; POST carries the bounded tab-local consent-state reference |
 | Connections | `GET /api/third-party/sessions`; `GET` and `DELETE /api/third-party/{serviceId}/session`; `POST /api/third-party/{serviceId}/session/refresh` |
 | Console sidebar and pending queue | `GET /api/approvals/pending` |
 | Standing decisions | `GET /api/approvals/permanent`; `POST /api/approvals/{id}/revoke` |
@@ -960,4 +960,76 @@ The HTML response used Brotli and public module-preload hints. The browser obser
 
 The user approved integrating current `main` and migrating to its existing consent-state form POST and tab-local storage flow. The user also approved documentation-only corrections for existing session-detail/termination responses and approval error statuses. Neither approval permits new API behavior or compatibility fallbacks.
 
-The contract audit also identified an expired-grant draft defect and misleading optional fields/error mocks. These reachable frontend corrections remain part of the implementation, and the affected gates will run after integration. The earlier implementation's test-first chronology cannot be reconstructed from its combined implementation commit; historical assertions remain unverified rather than inferred from task checkmarks.
+The expired-grant draft defect and optional-field/error-contract mismatches are corrected. The six initially failing expired-grant assertions now pass; all 24 draft tests and the 16 integrated route/error regressions pass. The earlier implementation's test-first chronology cannot be reconstructed from its combined implementation commit; historical assertions remain unverified rather than inferred from task checkmarks.
+
+## Integrated verification — 2026-10-03
+
+### Automated gates
+
+| Check | Observed result |
+| --- | --- |
+| `just check` | Passed: vet and lint, 0 issues |
+| `just web-test` and `just web-lint` | 710 tests in 72 files passed; lint passed |
+| `just test` | Fast Go suite passed with race detection |
+| `just test-integration` | Self-contained suites passed; integration sources unchanged |
+| `just cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-infra` | All four recipes passed, including real PostgreSQL and AWS-emulator coverage |
+| `just test-e2e` | Backend: 641 passed, 2 performance-labelled cases excluded; ExtProc: 112 passed; frontend: 77 passed, 0 pending or skipped |
+| `just web-storybook-build` | Production component documentation built |
+| `just web-storybook-visual-candidates` | 432 light/dark stories in 68 project files passed accessibility and generated separate macOS review candidates |
+| Production decision-bundle gate | Both final route cases passed; consent 165,993 bytes gzip across 16 assets; approval 157,556 bytes across 14, each below 170,000 bytes |
+| End-user OpenAPI structural check | OpenAPI 3.0.3 parsed; 154 internal references, none unresolved |
+
+The full frontend capture run also passed all 77 journeys serially and produced all 14 required route/context/theme images. Captures remain candidates under `tests/e2e/frontend/coverage/screenshots/`; no image was accepted automatically.
+
+The integrated native Ubuntu Noble arm64 capture, using the pinned Playwright 1.62.1 browser image and the compiled Go suite, passed **77/77 journeys** serially and produced Linux candidates under `tests/e2e/frontend/coverage/screenshots/linux-arm64/`. It generated all 14 required route/context/theme images plus retained-journey captures. The first invocation failed before running any tests because the test binary does not accept the CLI-only `ginkgo.procs` option; the corrected serial invocation passed. These are not reviewed baselines and do not establish amd64 renderer compatibility.
+
+### Removal and boundary proof
+
+Searches over `web/src/` and `web/index.html` returned no Headless UI, Framer Motion, separate API-cache, old UI-component, PageTransition, TypeScript token-import, retired-font, gradient, or raw Tailwind-palette references. The surviving stylesheet import is the intended semantic `tokens/theme.css`. `npm --prefix web ls @headlessui/react framer-motion` returned an empty dependency tree; its exit 1 means neither requested package is installed.
+
+The optional obsolete component search (`primitives/Spinner|layout/(Container|Stack|Grid)|navigation/(Breadcrumb|Pagination)|advanced/Progress|data-display/(StatusIndicator|ScopeList)`) returned zero consumers. Those components, the named superseded pages/layout/consent/session/hooks, retired token modules, and unused font files are absent. Every remaining JetBrains Mono subset is referenced by `fonts.css`.
+
+No `ui.v2` or feature-flag match remains in runtime source. Required `git diff main` boundary checks are empty for configuration examples, charts, migrations, storage ports, configuration ports, integration tests, and PostgreSQL adapters. The only backend runtime changes against main are the SPA handler and its tests. API operations, authorization, server configuration, and persistence are unchanged. The six glossary entries, ADR 037 acceptance/cross-references, component locations, 17-scenario hierarchy, page-object selector boundary, and existing-response wire types were checked.
+
+### Production-browser evidence
+
+The integrated production broker served all seven route/context surfaces in Light and Dark. Chromium observed the expected decision versus console shells, matching native color schemes, no page errors or console errors, no CSP violations, and no automatic cross-origin requests. Reduced-motion emulation showed no active movement. Changing theme and collapsing the sidebar survived reload; localStorage contained only `aib.theme` and `aib.sidebar-collapsed`.
+
+A real provider authorization used exactly the POST fields `redirect_uri` and `consent_state_id`, with a clean return path and an opaque UUID. Its existing callback returned HTTP 302. The browser restored the optional calendar selection, custom date `2099-11-06`, authorization-session token, original query and fragment, and decision context; it removed the state ID from the URL. No grant or approval was submitted by this smoke.
+
+Cold consent main content appeared at **4,737.7 ms** with cache disabled under the same documented Slow 4G constants. HTML used Brotli and public module-preload hints; there were no CSP violations or automatic cross-origin requests. Production GET and HEAD with the same identity encoding returned matching representation/security headers and an empty HEAD body.
+
+### Final-gate repairs and unresolved security dependency
+
+The first `just verify` stopped on five G304 filesystem accesses and the image gate's directory permissions. Root-scoped Go filesystem APIs now reject escaping manifest/artifact symlinks; output directories use 0750 and new artifacts use 0600. Both new regressions failed before implementation and pass afterward. The full image-gate and SPA-handler packages pass. `gosec` subsequently reported **0 issues** without a new suppression.
+
+The upstream root-routing acceptance test pinned the old whole CSP and compared representations negotiated differently by Go's automatic GET gzip handling. It now checks required CSP restrictions and GET/HEAD parity with matching `Accept-Encoding`, and includes `/settings`. The focused routing cases and complete E2E suite pass without weakening authorization assertions.
+
+The next `just verify` stopped at `govulncheck`: **GO-2026-6443 / CVE-2026-84445**, missing-authority/Host panic in gRPC's xDS routing. The repository requires `google.golang.org/grpc v1.84.0`; the version proxy also reports v1.84.0 as latest stable. The advisory identifies `v1.85.0-dev.0.20260825072537-93e31b48545e` as the fixed version for this release line. No dependency upgrade, scanner exclusion, or security bypass was applied. T208 remains unchecked pending an explicitly approved dependency change and a complete final-gate run.
+
+The stakeholder selected **Keep the dependency unchanged** in the security-scope decision on 2026-10-03. gRPC remains at v1.84.0; T208 and release stay blocked. No dependency change or scanner bypass is authorized.
+
+The final feature-scoped quality delta reported 20 gating clone findings, including unrelated browser/JWK and snapshot/storage pairs, straightforward typed API transports, and minor complexity/verbosity changes. No blanket acknowledgement or metric-driven abstraction was added. This is not recorded as a clean quality-delta result.
+
+### Remaining release evidence
+
+- T066/T149 and their dependent visual/documentation gates require human-reviewed Linux route and component baselines, comparison on the amd64 CI renderer, and publication of README screenshots. Existing macOS and Linux arm64 images are candidates only.
+- T155/T156 require the endpoint map and stakeholder/ADR references in an actual PR. No feature-047 PR was found among the repository's open PRs.
+- Moderated SC-001/SC-007 studies are unavailable. Decision time, service comprehension, and primary-action recognition must be listed explicitly as unavailable in the PR; automated timing/accessibility results do not establish them.
+- T179/T180/T181/T186/T187 remain unverified: available history contains a combined implementation commit, not per-task chronological evidence. The written T042 red record is preserved and reviewed, but its original run artifact and red-time source snapshot are unavailable.
+- T182/T195/T197/T200/T207 are not claimed complete while reviewed visual comparisons and manual acceptance evidence are missing.
+
+
+### Final disconnect focus regression
+
+The disconnect coverage audit found that cancellation focused the page instead of the remaining row action: a table rerender detached the saved DOM element. The regression failed before the fix. `ConnectionsTable.tsx` now gives each Disconnect control a stable session identity, and `ConnectionsPage.tsx` resolves the current control when returning focus. A missing or disabled control still falls back to the page. Permanent tests cover both cancellation and successful row removal.
+
+All 15 ConnectionsPage cases pass; the full frontend gate still passes 710 tests, lint passes, and both final bundle cases pass. A throwaway production-bootstrap Chromium smoke exercised Escape cancellation and confirmed removal in both Light and Dark, observing restored Disconnect focus, retained session on cancellation, visible page focus after removal, and actual server-side deletion on confirmation. Both browser cases passed. The temporary smoke source, broker harness, compiled capture binaries, and other owned scaffolds were removed; review images were retained.
+
+The production timing and route/callback measurements above preceded this console-only focus fix. The final compressed decision graphs remain below the limit. No new cold-timing result is inferred from their sizes.
+
+The final post-fix `just check` passed with 0 lint issues, `just test-e2e-frontend` passed all 77 preserved journeys, and `just docs-build` built the corrected end-user documentation. The stakeholder initially selected **Keep local** for publication, leaving changes uncommitted and unpublished. The subsequent merge-commit authorization below supersedes only the uncommitted status; PR-specific tasks remain open. The endpoint map and acceptance references above are ready for a future PR, which must also state the unavailable moderated-study and historical test-first evidence.
+
+### Local merge commit authorization
+
+The stakeholder subsequently requested completion of the active merge and commitment of all necessary changes. This authorizes a local merge commit and supersedes the earlier instruction to leave changes uncommitted. It does not authorize a push, PR publication, dependency upgrade, scanner bypass, or automatic acceptance of visual baselines. The merge must include the upstream callback transport and its frontend consumers together to keep the integration consistent.

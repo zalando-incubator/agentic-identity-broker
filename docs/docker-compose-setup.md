@@ -18,7 +18,7 @@ just dev-docker
 
 This command does the following:
 
-1. Creates `.env.compose` from the `.env` template when required.
+1. Creates `.env.compose` from `.env.compose.example` when required.
 2. Builds Docker images for all services.
 3. Starts all services with hot reload.
 4. Runs seed-data scripts.
@@ -95,7 +95,7 @@ oauth2_authorization_server:
 Use this mode for native debugging or profiling. You can use it when you do not require the
 complete stack.
 
-### `config.docker.yaml` (Docker Compose)
+### `configs/config.docker.yaml` (Docker Compose)
 
 Docker Compose uses this file for container-to-container communication. It uses internal
 container DNS names:
@@ -108,7 +108,7 @@ oauth2_authorization_server:
 ```
 
 Use it with `just dev-docker` or `just compose-up`. `docker-compose.yml` sets
-`IDENTITY_BROKER_CONFIG_PATH=config.docker.yaml`.
+`IDENTITY_BROKER_CONFIG_PATH=configs/config.docker.yaml`.
 
 ### Why the files differ
 
@@ -162,7 +162,7 @@ just compose-restart-frontend
 
 ### Configuration Changes
 
-If you change `.air.toml` or `vite.config.ts`, restart the affected service:
+If you change `build/air/.air.docker.toml` or `vite.config.ts`, restart the affected service:
 
 ```bash
 just compose-restart-backend    # For Air config changes
@@ -337,7 +337,7 @@ Air uses polling for changes in bind-mounted files.
 
 **Make sure that polling is enabled:**
 ```bash
-grep "poll = " .air.toml
+grep "poll = " build/air/.air.docker.toml
 # Should show: poll = true
 ```
 
@@ -450,6 +450,14 @@ For production deployment (not for development):
 just build-all           # Build Go backend + React frontend
 just docker-build-prod   # Create production Docker image
 ```
+
+The `just` broker and ExtProc build recipes use `-trimpath` and strip debug
+symbols by default. To keep DWARF, run `LDFLAGS="" just build` (or set the
+same variable for an architecture-specific or ExtProc recipe). The CIMD,
+mock-service, and ExtProc development Docker builds support
+`--build-arg LDFLAGS=""`. The release workflow passes the tagged commit's
+`SOURCE_DATE_EPOCH` to Buildx and checks each image's amd64 and arm64 OCI config
+creation timestamp against that commit.
 
 ### Run Production Image
 

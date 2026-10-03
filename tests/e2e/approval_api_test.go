@@ -223,6 +223,7 @@ var _ = Describe("Tool Approval API", func() {
 				"AgentSessionID":   PointTo(Equal("sess-xyz")),
 				"ToolInvocationID": PointTo(Equal("inv-abc")),
 				"ToolName":         Equal("create_pull_request"),
+				"PatternPreview":   Equal("create_pull_request(repo=acme/app,title=Fix bug)"),
 			}))
 			Expect(detail.Data.Arguments).To(HaveKeyWithValue("repo", "acme/app"))
 			Expect(detail.Data.Arguments).To(HaveKeyWithValue("title", "Fix bug"))
@@ -373,7 +374,8 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			denyResp := decodeJSON[helpers.DenyResponse](resp)
 			Expect(denyResp.Data.Status).To(Equal("denied"))
-			Expect(denyResp.Data.DeniedAt).NotTo(BeEmpty())
+			_, err = time.Parse(time.RFC3339, denyResp.Data.DeniedAt)
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		// Scenario US2-S2: OTel trace context (verified at service level)

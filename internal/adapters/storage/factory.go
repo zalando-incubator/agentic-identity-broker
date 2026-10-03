@@ -14,16 +14,16 @@ import (
 )
 
 // Compile-time interface check
-var _ ports.OAuth2TransactionManager = (*Adapter)(nil)
+var _ ports.StorageTransactionManager = (*Adapter)(nil)
 
-type noOpOAuth2TransactionManager struct{}
+type noOpStorageTransactionManager struct{}
 
-func (noOpOAuth2TransactionManager) BeginTX(ctx context.Context) (context.Context, error) {
+func (noOpStorageTransactionManager) BeginTX(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
 
-func (noOpOAuth2TransactionManager) Commit(context.Context) error   { return nil }
-func (noOpOAuth2TransactionManager) Rollback(context.Context) error { return nil }
+func (noOpStorageTransactionManager) Commit(context.Context) error   { return nil }
+func (noOpStorageTransactionManager) Rollback(context.Context) error { return nil }
 
 // lifecycleAdapter defines the lifecycle operations expected on storage adapters.
 type lifecycleAdapter interface {
@@ -47,6 +47,7 @@ type Adapter struct {
 	providers            ports.ThirdpartyOAuth2ProviderRepository
 	userGrants           ports.UserGrantRepository
 	userSessions         ports.UserSessionRepository
+	sessionRefresh       ports.UserSessionRefreshRepository
 	toolApprovals        ports.ToolApprovalRepository
 	toolApprovalQueries  ports.ToolApprovalQueryRepository
 	toolApprovalMetrics  ports.ToolApprovalMetricsRepository
@@ -55,7 +56,7 @@ type Adapter struct {
 	brokerCredentials    ports.ClientCredentialRepository
 	signingKeys          signingKeyAdapter
 	refreshTokenSessions ports.RefreshTokenSessionRepository
-	oauth2Transactions   ports.OAuth2TransactionManager
+	transactions         ports.StorageTransactionManager
 	authorizationCodes   ports.AuthorizationCodeRepository
 	pkceSessions         ports.PKCESessionRepository
 }
@@ -93,13 +94,15 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	userGrants := memory.NewUserGrantRepository().WithPermissionSetRepository(permissionSets)
 	toolApprovalRepo := memory.NewToolApprovalRepository()
 	signingKeys := memory.NewSigningKeyStore()
+	sessions := memory.NewInMemoryUserSessionRepository()
 	return &Adapter{
 		lifecycle:            memAdapter,
 		users:                memAdapter,
 		agents:               agentRepo,
 		providers:            memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
 		userGrants:           userGrants,
-		userSessions:         memory.NewInMemoryUserSessionRepository(),
+		userSessions:         sessions,
+		sessionRefresh:       sessions,
 		toolApprovals:        toolApprovalRepo,
 		toolApprovalQueries:  toolApprovalRepo,
 		toolApprovalMetrics:  toolApprovalRepo,
@@ -109,7 +112,7 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		signingKeys:          signingKeys,
 		authorizationCodes:   memory.NewAuthorizationCodeStore(),
 		refreshTokenSessions: memory.NewRefreshTokenSessionStore(),
-		oauth2Transactions:   noOpOAuth2TransactionManager{},
+		transactions:         noOpStorageTransactionManager{},
 		pkceSessions:         memory.NewPKCESessionStore(),
 	}, nil
 }
@@ -126,6 +129,7 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 
 	toolApprovalRepo := postgres.NewToolApprovalRepository(pgAdapter)
 	signingKeys := postgres.NewSigningKeyRepo(pgAdapter)
+	sessions := postgres.NewUserSessionRepository(pgAdapter)
 
 	return &Adapter{
 		lifecycle:            pgAdapter,
@@ -133,7 +137,8 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		agents:               postgres.NewAgentRepository(pgAdapter),
 		providers:            postgres.NewPostgresThirdpartyOAuth2ProviderRepository(pgAdapter),
 		userGrants:           postgres.NewUserGrantRepository(pgAdapter),
-		userSessions:         postgres.NewUserSessionRepository(pgAdapter),
+		userSessions:         sessions,
+		sessionRefresh:       sessions,
 		toolApprovals:        toolApprovalRepo,
 		toolApprovalQueries:  toolApprovalRepo,
 		toolApprovalMetrics:  toolApprovalRepo,
@@ -143,7 +148,7 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		signingKeys:          signingKeys,
 		authorizationCodes:   postgres.NewAuthorizationCodeRepo(pgAdapter),
 		refreshTokenSessions: postgres.NewRefreshTokenSessionRepo(pgAdapter),
-		oauth2Transactions:   pgAdapter,
+		transactions:         pgAdapter,
 		pkceSessions:         postgres.NewPKCESessionRepo(pgAdapter),
 	}, nil
 }
@@ -218,6 +223,11 @@ func (a *Adapter) UserSessions() ports.UserSessionRepository {
 	return a.userSessions
 }
 
+// SessionRefresh returns the refresh transaction interface for user sessions.
+func (a *Adapter) SessionRefresh() ports.UserSessionRefreshRepository {
+	return a.sessionRefresh
+}
+
 // ToolApprovals returns the ToolApprovalRepository interface implementation.
 func (a *Adapter) ToolApprovals() ports.ToolApprovalRepository {
 	return a.toolApprovals
@@ -269,19 +279,19 @@ func (a *Adapter) RefreshTokenSessions() ports.RefreshTokenSessionRepository {
 	return a.refreshTokenSessions
 }
 
-// BeginTX begins a transaction for a Fosite token flow.
+// BeginTX starts the configured backend's transaction scope.
 func (a *Adapter) BeginTX(ctx context.Context) (context.Context, error) {
-	return a.oauth2Transactions.BeginTX(ctx)
+	return a.transactions.BeginTX(ctx)
 }
 
-// Commit commits a Fosite token-flow transaction.
+// Commit commits the configured backend's transaction scope.
 func (a *Adapter) Commit(ctx context.Context) error {
-	return a.oauth2Transactions.Commit(ctx)
+	return a.transactions.Commit(ctx)
 }
 
-// Rollback rolls back a Fosite token-flow transaction.
+// Rollback rolls back the configured backend's transaction scope.
 func (a *Adapter) Rollback(ctx context.Context) error {
-	return a.oauth2Transactions.Rollback(ctx)
+	return a.transactions.Rollback(ctx)
 }
 
 // PKCESessions returns the PKCESessionRepository interface implementation.

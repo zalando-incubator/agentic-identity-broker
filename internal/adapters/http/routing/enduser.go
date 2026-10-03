@@ -48,6 +48,7 @@ type EnduserRouteConfig struct {
 //	OAuth2 Session Routes (authenticated, optional):
 //	GET    /api/third-party/sessions                  - List sessions
 //	GET    /api/third-party/{serviceId}/oauth2/authorize - Initiate auth
+//	POST   /api/third-party/{serviceId}/oauth2/authorize - Initiate auth with consent selection
 //	GET    /api/third-party/{serviceId}/oauth2/callback  - Handle callback
 //	GET    /api/third-party/{serviceId}/session       - Get session details
 //	DELETE /api/third-party/{serviceId}/session       - Terminate session
@@ -165,6 +166,13 @@ func SetupEnduserRoutes(r chi.Router, h *app.EnduserHandlers, cfg EnduserRouteCo
 			oauth2Router.Get("/jwks.json", h.JWKS.ServeJWKS)
 		}
 	})
+
+	if h.CIMDMetadata != nil {
+		r.Route("/.well-known/oauth-client", func(cimdRouter chi.Router) {
+			cimdRouter.Get("/{service-id}/jwks.json", h.CIMDMetadata.JWKS)
+			cimdRouter.Get("/{service-id}", h.CIMDMetadata.Metadata)
+		})
+	}
 
 	// RFC 8414 discovery endpoint — single handler serves both modes.
 	// The OAuth2Service.GenerateMetadata() includes JWKS URI in local mode.

@@ -74,8 +74,21 @@ export interface AgentInfo {
  * Returned by GET /api/third-party/:service-id/session
  */
 export interface SessionDetail {
-  session: SessionSummary;
+  session: {
+    id: string;
+    principal: string;
+    service_id: string;
+    token_type: string;
+    access_token_expires_at?: string;
+    refresh_token_expires_at?: string;
+    scope: string[] | null;
+    encryption_context: { service_id: string };
+    initiated_at: string;
+    created_at: string;
+    updated_at: string;
+  };
   dependent_agents: AgentInfo[];
+  dependent_agent_count: number;
 }
 
 /**
@@ -95,7 +108,7 @@ export class SessionsApiService {
       '/third-party/sessions',
       { signal: options?.signal },
     );
-    return response.data.data.sessions || [];
+    return response.data.data.sessions;
   }
 
   /** Read a session and its dependent agents. */

@@ -2,13 +2,19 @@ import { CanceledError, type AxiosAdapter } from 'axios';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ConsentApiService } from './consent';
 import { apiClient } from './client';
-import type { CreateOrUpdateGrantRequest, UserGrant } from '../../types/consent';
+import type { AgentDelegation, CreateOrUpdateGrantRequest, GetAgentDetailResponse, UserGrant } from '../../types/consent';
 
 const adapter = apiClient.defaults.adapter;
 const service = new ConsentApiService();
-const grant: UserGrant = { id: 'grant', agent_id: 'agent', principal: 'alice', delegated_oauth2_tokens: [{ thirdparty_oauth2_service_id: 'service', scopes: ['read'] }], valid_until: null, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
-const request: CreateOrUpdateGrantRequest = { delegated_oauth2_tokens: grant.delegated_oauth2_tokens };
-const detail = { agent: { agentId: 'agent', display_name: 'Agent', description: 'Description', created_at: '', updated_at: '' }, services: [{ serviceId: 'service', serviceName: 'Service', requirementType: 'mandatory', requiredScopes: [{ name: 'read' }], connectionStatus: 'connected' }] };
+const grant: UserGrant = { id: 'grant', agent_id: 'agent', principal: 'alice', granted_permission_sets: { read: ['service'] }, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
+const request: CreateOrUpdateGrantRequest = { granted_permission_sets: grant.granted_permission_sets };
+const detail: GetAgentDetailResponse['data'] = {
+  agent: { agentId: 'agent', display_name: 'Agent', description: 'Description', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+  services: [{ serviceId: 'service', serviceName: 'Service', requirementType: 'mandatory', requiredScopes: [{ name: 'read' }], connectionStatus: 'connected' }],
+  permission_sets: [],
+  active_session_service_ids: ['service'],
+  service_requirements: [{ service_id: 'service', requirement_type: 'mandatory' }],
+};
 afterEach(() => { apiClient.defaults.adapter = adapter; });
 
 function respond(data: unknown, status = 200): AxiosAdapter {
@@ -29,10 +35,10 @@ describe('consent wire contract', () => {
   });
 
   it('reads updated delegation, agent and grant data without a second cache', async () => {
-    apiClient.defaults.adapter = respond({ data: [{ agentId: 'old' }] });
+    apiClient.defaults.adapter = respond({ data: [{ agentId: 'old', displayName: 'Old', activeGrantCount: 1, lastModifiedAt: '2026-01-01T00:00:00Z' } satisfies AgentDelegation] });
     await service.getAgentDelegations();
-    apiClient.defaults.adapter = respond({ data: [{ agentId: 'new' }] });
-    expect(await service.getAgentDelegations()).toEqual([{ agentId: 'new' }]);
+    apiClient.defaults.adapter = respond({ data: [{ agentId: 'new', displayName: 'New', activeGrantCount: 1, lastModifiedAt: '2026-01-02T00:00:00Z' } satisfies AgentDelegation] });
+    expect(await service.getAgentDelegations()).toEqual([{ agentId: 'new', displayName: 'New', activeGrantCount: 1, lastModifiedAt: '2026-01-02T00:00:00Z' }]);
     apiClient.defaults.adapter = respond({ data: detail });
     await service.getAgentDetail('agent');
     apiClient.defaults.adapter = respond({ data: { ...detail, agent: { ...detail.agent, display_name: 'Renamed' } } });

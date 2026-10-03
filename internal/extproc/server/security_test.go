@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
@@ -110,6 +111,60 @@ func TestExtractTraceContext_SelectsFirstValidDuplicateTraceparent(t *testing.T)
 	spanContext := trace.SpanContextFromContext(ctx)
 	require.True(t, spanContext.IsValid())
 	assert.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", spanContext.TraceID().String())
+}
+
+func TestExtractTraceContext_GRPCMetadataWithExistingSpan(t *testing.T) {
+	previousPropagator := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTextMapPropagator(previousPropagator) })
+
+	const existingTraceparent = "00-11111111111111111111111111111111-2222222222222222-01"
+	const httpTraceparent = "00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01"
+	const grpcTraceparent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+	s := &Server{cfg: &extprocconfig.Config{Telemetry: extprocconfig.TelemetryConfig{Enabled: true}}}
+	tests := []struct {
+		name            string
+		md              metadata.MD
+		wantTraceparent string
+	}{
+		{
+			name:            "missing metadata traceparent falls back to HTTP",
+			md:              metadata.Pairs("user-agent", "test-client"),
+			wantTraceparent: httpTraceparent,
+		},
+		{
+			name:            "invalid metadata traceparent falls back to HTTP",
+			md:              metadata.Pairs("traceparent", "invalid"),
+			wantTraceparent: httpTraceparent,
+		},
+		{
+			name:            "valid metadata traceparent takes precedence",
+			md:              metadata.Pairs("traceparent", grpcTraceparent),
+			wantTraceparent: grpcTraceparent,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parentCtx := propagation.TraceContext{}.Extract(context.Background(), propagation.MapCarrier{
+				"traceparent": existingTraceparent,
+			})
+			ctx, cancel := context.WithCancel(context.WithValue(parentCtx, requestTraceIDKey{}, "request-trace"))
+			defer cancel()
+			ctx = metadata.NewIncomingContext(ctx, tt.md)
+			headers := &extprocv3.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+				{Key: "traceparent", RawValue: []byte(httpTraceparent)},
+			}}}
+
+			extracted := s.extractTraceContext(ctx, headers)
+			want := propagation.TraceContext{}.Extract(context.Background(), propagation.MapCarrier{
+				"traceparent": tt.wantTraceparent,
+			})
+			assert.Equal(t, trace.SpanContextFromContext(want), trace.SpanContextFromContext(extracted))
+			assert.Equal(t, "request-trace", extracted.Value(requestTraceIDKey{}))
+			cancel()
+			assert.ErrorIs(t, extracted.Err(), context.Canceled)
+		})
+	}
 }
 
 func TestHeaderCarrier_Get_DuplicateTraceparent_ReturnsFirst(t *testing.T) {

@@ -120,7 +120,7 @@ it('keeps stale rows on refresh failure and does not turn an initial failure int
 });
 
 it('keeps confirmation disabled when a remembered scope cannot be previewed', async () => {
-  vi.mocked(approvalApi.previewApprovalScope).mockRejectedValue({ status: 400, code: 'INVALID_PATTERN', message: 'Invalid pattern' });
+  vi.mocked(approvalApi.previewApprovalScope).mockRejectedValue({ status: 422, code: 'invalid_pattern', message: 'Invalid pattern' });
   const approve = vi.spyOn(approvalApi, 'approveApproval');
   render(<ApprovalsPage />, { wrapper: Wrapper });
   fireEvent.click(await screen.findByRole('button', { name: 'Approve', exact: true }));

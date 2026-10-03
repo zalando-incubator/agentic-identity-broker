@@ -42,6 +42,12 @@
 - Q: How should legacy journeys handle raw scope badges and an initially enabled Save button, which conflict with the approved redesign? → A: Use the redesigned behavior. Replace obsolete presentation assertions with permission-group and dirty-only-Save coverage. Make an explicit edit before saving in the CSRF journey, while preserving its security and storage assertions. Move embedded selectors into page objects and migrate consent-state fixtures to the canonical draft envelope.
 - Q: Cold production measurement found 7.30 seconds with uncompressed assets, and the retained-stack decision graphs measured 164.3/155.9 kB gzip. Which performance contract should the UI-only cutover use? → A: Use measured-stack limits: 170 kB gzip and 5 seconds on cold Slow 4G. Add compressed static delivery and reduce code-loading delays without changing API, authorization, or persistence behavior.
 
+### Session 2026-10-02
+
+- Q: Must the redesign integrate current main's consent-state transport? → A: Integrate main and migrate every connection entry point to its existing form POST and tab-local `sessionStorage` flow. Preserve selections, duration, custom date, and the original return URL. Keep one path without legacy URL-state support or compatibility shims.
+- Q: May documentation-only corrections cover existing session-detail/termination responses and approval error statuses? → A: Correct the documentation to current runtime. Do not change endpoints, responses, persistence, or authorization behavior.
+
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Decide on an Agent Request (Priority: P1)
@@ -234,7 +240,7 @@ A connection state summarizes token usability from existing session fields, refr
 
 ### API Requirements *(if applicable - design before database)*
 
-- **API-001**: Keep existing end-user runtime contracts and the consent-grants read response unchanged. Preserve authorization sessions, third-party authorization/callback/refresh, scope preview, and approval decisions. Documentation-only corrections may align the existing session-list and consent responses with their current handlers (Clarifications, 2026-09-27). They must not introduce runtime changes.
+- **API-001**: Keep existing end-user runtime contracts and the consent-grants read response unchanged. Preserve authorization sessions, third-party authorization/callback/refresh, scope preview, and approval decisions. Use current main's accepted consent-state transport. Approved documentation-only corrections align existing consent, session, and approval responses and statuses with their handlers (Clarifications, 2026-09-27 and 2026-10-02). They introduce no runtime changes.
 - **API-004**: The gateway-only approval long-poll is not a browser data source. Refresh the existing acting-user pending-list response regularly for live browser updates.
 - **API-005**: This feature adds or changes no backend endpoint, response field, runtime response, persistence, or OAuth2/token contract. Every screen uses existing end-user responses. Correcting documentation to match an existing response is not a contract change.
 

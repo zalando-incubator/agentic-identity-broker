@@ -1,0 +1,27 @@
+# Development Dockerfile for frontend (React + Vite)
+# Enables Hot Module Replacement (HMR) during development
+# Built for use with docker-compose volume mounts
+
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4
+
+WORKDIR /app
+
+# Install curl for health checks
+RUN apk add --no-cache curl
+
+# Copy package files for dependency caching
+COPY web/package.json web/package-lock.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy entire web directory (excluding node_modules which npm ci already installed)
+# NOTE: In development, docker-compose.yml mounts ./web:/app to override this for hot reload
+# This COPY includes all config files: vite, tailwind, vitest, tsconfig, storybook, etc.
+COPY web/ ./
+
+# Expose port 3000 for Vite dev server
+EXPOSE 3000
+
+# Run Vite dev server with host binding (required for container)
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

@@ -11,7 +11,7 @@ import { useDelegations } from './useDelegations';
 import { useRevokeGrant } from './useRevokeGrant';
 
 vi.mock('@services/api/consent', () => ({ consentApi: { getUserInfo: vi.fn(), getAgentDelegations: vi.fn(), getAgentDetail: vi.fn(), getAgentGrants: vi.fn(), deleteGrant: vi.fn() } }));
-const rows: AgentDelegation[] = ['a', 'b'].map((id) => ({ agentId: id, displayName: `Agent ${id}`, activeGrantCount: 1, lastModifiedAt: '2026-01-01T00:00:00Z', expiresAt: null }));
+const rows: AgentDelegation[] = ['a', 'b'].map((id) => ({ agentId: id, displayName: `Agent ${id}`, activeGrantCount: 1, lastModifiedAt: '2026-01-01T00:00:00Z' }));
 const clients: QueryClient[] = [];
 function setup() {
   const client = createQueryClient();
