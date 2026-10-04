@@ -87,6 +87,16 @@ On pull requests, the required `CI gate` status includes dependency review, whic
 
 The scheduled fuzz workflow exercises parsers. Code-change CI runs E2E suites. Run `just security` for the focused scanners and `just verify` for the full verification gate.
 
+### Temporary dependency exceptions
+
+`just security` applies the root `osv-scanner.toml` to all manifests. Per-directory scanner configurations do not override it.
+The braces ignore expires on January 4, 2027. It covers only documentation tooling that expands repository-controlled glob patterns.
+After expiry, the scan reports the advisory again and requires a new review.
+
+grpc uses version 1.83.2 because [GO-2026-6443 incorrectly flags 1.84.0](https://github.com/golang/vulndb/issues/6659).
+The [upstream advisory](https://github.com/grpc/grpc-go/security/advisories/GHSA-2v4p-qf9q-27wj) lists both versions as patched.
+When vulndb corrects the affected range, remove the grpc ignore from `.github/dependabot.yml`. Then upgrade grpc again.
+
 ## Reporting a vulnerability
 
 Please disclose security issues responsibly rather than opening a public issue.

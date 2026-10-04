@@ -27,6 +27,8 @@
     "redocusaurus": "2.5.2"
   },
 	"overrides": {
+		"dompurify": "3.4.16",
+		"http-cache-semantics": "4.3.0",
 		"qs": "6.16.0",
 		"serialize-javascript": "7.0.5",
 		"smol-toml": "1.7.1",

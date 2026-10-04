@@ -24,6 +24,10 @@ updates:
           - "*"
     allow:
       - dependency-type: "direct"
+    ignore:
+      # GO-2026-6443 wrongly lists grpc 1.84.x as affected; 1.84.0 contains the fix (golang/vulndb#6659).
+      - dependency-name: "google.golang.org/grpc"
+        versions: [">= 1.84.0, < 1.85.0"]
     open-pull-requests-limit: 5
     pull-request-branch-name:
       separator: "/"
