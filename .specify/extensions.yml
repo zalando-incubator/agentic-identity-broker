@@ -1,6 +1,8 @@
 installed:
 - agent-context
+- bug
 - git
+- refine
 settings:
   auto_execute_hooks: true
 hooks:
@@ -21,6 +23,14 @@ hooks:
     prompt: Commit specification changes?
     description: Auto-commit after specification
     condition: null
+  - extension: refine
+    command: speckit.refine.status
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Check artifact sync status after specification?
+    description: Show sync status after spec generation
+    condition: null
   after_plan:
   - extension: agent-context
     command: speckit.agent-context.update
@@ -37,6 +47,14 @@ hooks:
     priority: 10
     prompt: Commit plan changes?
     description: Auto-commit after implementation planning
+    condition: null
+  - extension: refine
+    command: speckit.refine.status
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Check artifact sync status after planning?
+    description: Show sync status after plan generation
     condition: null
   before_constitution:
   - extension: git
