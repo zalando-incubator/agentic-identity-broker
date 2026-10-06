@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	xoauth2 "golang.org/x/oauth2"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
@@ -557,6 +558,50 @@ func TestOAuth2TokenHandler_ProxyToUpstream_MultiAgentVerifier(t *testing.T) {
 			assert.Equal(t, tt.wantStatusCode, w.Code)
 			respBody, _ := io.ReadAll(w.Body)
 			assert.Contains(t, string(respBody), tt.wantBodyContains)
+		})
+	}
+}
+
+func TestOAuth2TokenHandler_ProxyToUpstream_OversizedResponse(t *testing.T) {
+	agentID := id.NewAgentID()
+	agentRepo := newStubAgentRepo(agentID, "test-upstream-client")
+	upstreamBody := `{"access_token":"upstream-secret","token_type":"Bearer"}` + strings.Repeat(" ", 1<<20)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, upstreamBody)
+	}))
+	defer upstream.Close()
+
+	for _, tt := range []struct {
+		name       string
+		verifier   ports.MultiAgentVerifier
+		wantStatus int
+	}{
+		{"verified response fails closed", &mockMultiAgentVerifier{verifyFn: func(_ context.Context, _ []byte, _ id.AgentID) error { return nil }}, http.StatusInternalServerError},
+		{"unverified response streams unchanged", nil, http.StatusOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := &OAuth2TokenHandler{
+				GrantHandler:  newProxyTokenGrantStrategyForTest(upstream.URL, tt.verifier),
+				OAuth2Service: newResolvingOAuth2Service(agentRepo.agent),
+			}
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader("grant_type=authorization_code&code=abc123&client_id="+agentID.String()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			if tt.verifier == nil {
+				assert.Equal(t, upstreamBody, w.Body.String())
+				return
+			}
+			var failure struct {
+				Error string `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &failure))
+			assert.Equal(t, "server_error", failure.Error)
+			assert.NotContains(t, w.Body.String(), "upstream-secret")
 		})
 	}
 }
@@ -1731,8 +1776,9 @@ func (m *oauth2TokenNoopBranchKeyManager) Create(_ context.Context, _ domainencr
 }
 
 type oauth2TokenProviderRepo struct {
-	seenSC security.SecurityContext
-	seenOK bool
+	seenSC  security.SecurityContext
+	seenOK  bool
+	findErr error
 }
 
 func (r *oauth2TokenProviderRepo) Create(context.Context, *model.ThirdpartyOAuth2ProviderEntity) error {
@@ -1757,6 +1803,9 @@ func (r *oauth2TokenProviderRepo) List(context.Context) ([]*model.ThirdpartyOAut
 
 func (r *oauth2TokenProviderRepo) FindByProtectedResource(ctx context.Context, _ string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	r.seenSC, r.seenOK = security.FromContext(ctx)
+	if r.findErr != nil {
+		return nil, r.findErr
+	}
 	return nil, tokenexchange.NewInvalidTargetError("no service configured for the requested resource")
 }
 
@@ -1809,7 +1858,7 @@ func signOAuth2TokenExchangeJWT(t *testing.T, privateKey *rsa.PrivateKey, claims
 	return string(signed)
 }
 
-func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.Set, repo ports.ThirdpartyOAuth2ProviderRepository) *tokenexchange.TokenExchangeService {
+func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.Set, repo ports.ThirdpartyOAuth2ProviderRepository, agentRepo ports.AgentRepository) *tokenexchange.TokenExchangeService {
 	t.Helper()
 
 	validator, err := tokenexchange.NewJWTValidator(
@@ -1846,7 +1895,7 @@ func newTokenExchangeServiceForContextPropagationTest(t *testing.T, keySet jwk.S
 		&oauth2session.OAuth2SessionService{},
 		&consent.Service{},
 		permissionSetService,
-		newStubAgentRepo(id.NewAgentID(), "upstream-client-id"),
+		agentRepo,
 		&ports.TokenExchangeConfig{
 			ClaimExtraction: ports.ClaimExtractionConfig{
 				PrincipalExpression: "subject_token.sub",
@@ -1870,7 +1919,7 @@ func TestOAuth2TokenHandler_TokenExchangeErrorLogCarriesFinalSecurityContext(t *
 	logCapture := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
 	logger := slog.New(telemetry.NewContextHandler(logCapture))
 	handler := &OAuth2TokenHandler{
-		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, providerRepo),
+		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, providerRepo, newStubAgentRepo(id.NewAgentID(), "upstream-client-id")),
 		Logger:        logger,
 	}
 
@@ -2018,7 +2067,7 @@ func TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan(t *testi
 	logCapture := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
 	logger := slog.New(telemetry.NewContextHandler(logCapture))
 	handler := &OAuth2TokenHandler{
-		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, providerRepo),
+		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, providerRepo, newStubAgentRepo(id.NewAgentID(), "upstream-client-id")),
 		Logger:        logger,
 	}
 
@@ -2057,6 +2106,9 @@ func TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan(t *testi
 	require.True(t, ok, "token-exchange failures must be logged")
 	assert.Equal(t, sanitized, record.attrs["resource"], "error log resource must be sanitized")
 	assert.NotContains(t, fmt.Sprintf("%v", record.attrs["resource"]), "SUPERSECRET")
+	assert.NotContains(t, record.attrs, "service_id")
+	assert.NotContains(t, record.attrs, "service_name")
+	assert.NotContains(t, record.attrs, "failure_reason")
 
 	spans := spanRecorder.Ended()
 	var resourceAttr string
@@ -2075,4 +2127,173 @@ func TestOAuth2TokenHandler_TokenExchangeResourceSanitizedInLogsAndSpan(t *testi
 	require.True(t, sawSpan, "tokenexchange.exchange span must be recorded")
 	assert.Equal(t, sanitized, resourceAttr, "span resource attribute must be sanitized")
 	assert.NotContains(t, resourceAttr, "SUPERSECRET")
+}
+
+type resolvedServiceRepo struct {
+	oauth2TokenProviderRepo
+	service *model.ThirdpartyOAuth2ProviderEntity
+}
+
+func (r *resolvedServiceRepo) FindByProtectedResource(context.Context, string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	return r.service, nil
+}
+
+func TestOAuth2TokenHandler_TokenExchangeSpanRecordsFailureReasonAndService(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prevTP)
+		require.NoError(t, tp.Shutdown(context.Background()))
+	})
+
+	privateKey, keySet := generateOAuth2TokenExchangeKeySet(t)
+	svcID := id.NewServiceID()
+	serviceRepo := &resolvedServiceRepo{service: &model.ThirdpartyOAuth2ProviderEntity{
+		ID: svcID, DisplayName: "Example Service",
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone, Secret: model.NewAbsentSecret(),
+	}}
+	logCapture := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	handler := &OAuth2TokenHandler{
+		TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, serviceRepo, &stubAgentRepo{err: ports.ErrNotFound}),
+		Logger:        slog.New(telemetry.NewContextHandler(logCapture)),
+	}
+	now := time.Now()
+	subjectToken := signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
+		"iss": "https://auth.example.com", "aud": "agentic-identity-broker",
+		"sub": "user@example.com", "azp": id.NewAgentID().String(),
+		"exp": now.Add(time.Hour).Unix(), "iat": now.Unix(),
+	})
+	clientAssertion := signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
+		"iss": "https://auth.example.com", "aud": "agentic-identity-broker",
+		"sub": "privileged-client-1", "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(),
+	})
+	form := url.Values{
+		"grant_type": {tokenexchange.TokenExchangeGrantType}, "subject_token": {subjectToken},
+		"subject_token_type": {tokenexchange.AccessTokenType}, "client_assertion": {clientAssertion},
+		"client_assertion_type": {tokenexchange.JWTBearerType}, "resource": {"https://api.example.com/resource"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	assert.Equal(t, http.StatusForbidden, recorder.Code)
+	logRecord, ok := findTokenEndpointLogRecord(*logCapture.records, "Token exchange failed")
+	require.True(t, ok, "token-exchange failures must be logged")
+	assert.Equal(t, slog.LevelError, logRecord.level)
+	assert.Equal(t, "no_grant", logRecord.attrs["failure_reason"])
+	assert.NotContains(t, logRecord.attrs, "service_id")
+	assert.NotContains(t, logRecord.attrs, "service_name")
+	assert.Equal(t, "https://api.example.com/resource", logRecord.attrs["resource"])
+
+	attrs := map[string]string{}
+	sawSpan := false
+	for _, span := range spanRecorder.Ended() {
+		if span.Name() != "tokenexchange.exchange" {
+			continue
+		}
+		sawSpan = true
+		for _, kv := range span.Attributes() {
+			attrs[string(kv.Key)] = kv.Value.AsString()
+		}
+	}
+	require.True(t, sawSpan, "tokenexchange.exchange span must be recorded")
+	assert.Equal(t, "no_grant", attrs["token_exchange.failure_reason"])
+	assert.Equal(t, svcID.String(), attrs["token_exchange.service.id"])
+	assert.Equal(t, "Example Service", attrs["token_exchange.service.name"])
+	assert.Equal(t, "access_denied", attrs["token_exchange.error_code"])
+}
+
+// Third-party attribution comes from the wrapped sanitized RetrieveError, not from a child HTTP
+// span, so singleflight waiters and non-refresh paths are attributed identically.
+func TestOAuth2TokenHandler_TokenExchangeFailureAttributesThirdpartyRejection(t *testing.T) {
+	thirdpartyRejection := func(status int, code string) error {
+		return fmt.Errorf("%w: %w", oauth2session.ErrRefreshFailed, fmt.Errorf("third-party token endpoint returned error status %d: %w", status, &xoauth2.RetrieveError{
+			Response:  &http.Response{StatusCode: status, Status: fmt.Sprintf("%d %s", status, http.StatusText(status))},
+			ErrorCode: code,
+		}))
+	}
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int64
+		wantCode   string
+		wantAttrs  bool
+	}{
+		{name: "allowlisted code", err: thirdpartyRejection(http.StatusUnauthorized, "invalid_client"), wantStatus: http.StatusUnauthorized, wantCode: "invalid_client", wantAttrs: true},
+		{name: "absent code", err: thirdpartyRejection(http.StatusBadGateway, ""), wantStatus: http.StatusBadGateway, wantCode: "unknown", wantAttrs: true},
+		{name: "non-allowlisted code", err: thirdpartyRejection(http.StatusBadRequest, "sentinel-provider-code"), wantStatus: http.StatusBadRequest, wantCode: "unknown", wantAttrs: true},
+		{name: "no third-party response", err: errors.New("database unavailable")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spanRecorder := tracetest.NewSpanRecorder()
+			tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+			prevTP := otel.GetTracerProvider()
+			otel.SetTracerProvider(tp)
+			t.Cleanup(func() { otel.SetTracerProvider(prevTP) })
+
+			privateKey, keySet := generateOAuth2TokenExchangeKeySet(t)
+			providerRepo := &oauth2TokenProviderRepo{findErr: tt.err}
+			logCapture := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+			handler := &OAuth2TokenHandler{
+				TokenExchange: newTokenExchangeServiceForContextPropagationTest(t, keySet, providerRepo, newStubAgentRepo(id.NewAgentID(), "upstream-client-id")),
+				Logger:        slog.New(telemetry.NewContextHandler(logCapture)),
+			}
+			now := time.Now()
+			form := url.Values{
+				"grant_type": {tokenexchange.TokenExchangeGrantType},
+				"subject_token": {signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
+					"iss": "https://auth.example.com", "aud": "agentic-identity-broker", "sub": "user@example.com",
+					"azp": id.NewAgentID().String(), "exp": now.Add(time.Hour).Unix(), "iat": now.Unix(),
+				})},
+				"subject_token_type": {tokenexchange.AccessTokenType},
+				"client_assertion": {signOAuth2TokenExchangeJWT(t, privateKey, map[string]any{
+					"iss": "https://auth.example.com", "aud": "agentic-identity-broker", "sub": "privileged-client-1",
+					"exp": now.Add(time.Hour).Unix(), "iat": now.Unix(),
+				})},
+				"client_assertion_type": {tokenexchange.JWTBearerType},
+				"resource":              {"https://api.example.com/resource"},
+			}
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			res := httptest.NewRecorder()
+
+			handler.ServeHTTP(res, req)
+
+			require.Equal(t, http.StatusInternalServerError, res.Code)
+			assert.NotContains(t, res.Body.String(), "sentinel-provider-code")
+			var body map[string]string
+			require.NoError(t, json.NewDecoder(res.Body).Decode(&body))
+			assert.Equal(t, "server_error", body["error"])
+
+			var span sdktrace.ReadOnlySpan
+			for _, s := range spanRecorder.Ended() {
+				if s.Name() == "tokenexchange.exchange" {
+					span = s
+				}
+			}
+			require.NotNil(t, span, "tokenexchange.exchange span must be recorded")
+			spanAttrs := make(map[string]any, len(span.Attributes()))
+			for _, kv := range span.Attributes() {
+				spanAttrs[string(kv.Key)] = kv.Value.AsInterface()
+			}
+			assert.Equal(t, "server_error", spanAttrs["token_exchange.error_code"])
+
+			record, ok := findTokenEndpointLogRecord(*logCapture.records, "Token exchange failed")
+			require.True(t, ok, "token-exchange failures must be logged")
+			if !tt.wantAttrs {
+				assert.NotContains(t, spanAttrs, "token_exchange.thirdparty_status_code")
+				assert.NotContains(t, spanAttrs, "token_exchange.thirdparty_error_code")
+				assert.NotContains(t, record.attrs, "thirdparty_status_code")
+				assert.NotContains(t, record.attrs, "thirdparty_error_code")
+				return
+			}
+			assert.Equal(t, tt.wantStatus, spanAttrs["token_exchange.thirdparty_status_code"])
+			assert.Equal(t, tt.wantCode, spanAttrs["token_exchange.thirdparty_error_code"])
+			assert.EqualValues(t, tt.wantStatus, record.attrs["thirdparty_status_code"])
+			assert.Equal(t, tt.wantCode, record.attrs["thirdparty_error_code"])
+		})
+	}
 }

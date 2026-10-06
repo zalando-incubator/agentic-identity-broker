@@ -1,6 +1,9 @@
 package oauth2session
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	// ErrStateTokenExpired is returned when a state token has expired.
@@ -39,13 +42,38 @@ var (
 	// ErrInvalidConfiguration is returned when OAuth2 service configuration is invalid.
 	ErrInvalidConfiguration = errors.New("invalid OAuth2 service configuration")
 
-	// ErrSessionExpired indicates both access token and refresh token are expired.
-	// Corresponds to RFC 8693 T076: invalid_grant error with re-auth hint.
+	// ErrSessionExpired indicates the access token expired and no usable refresh token remains;
+	// ErrRefreshTokenExpired is also wrapped when a stored refresh token has expired.
 	ErrSessionExpired = errors.New("session expired: both access and refresh tokens expired")
 
 	// ErrRefreshFailed indicates token refresh operation failed with upstream provider.
 	ErrRefreshFailed = errors.New("failed to refresh access token with upstream provider")
 
+	// ErrRefreshTokenExpired indicates the stored refresh token can no longer be used: its recorded
+	// expiry has passed, or the third-party service answered the refresh with invalid_grant (RFC 6749 §5.2).
+	ErrRefreshTokenExpired = errors.New("refresh token expired")
+
 	// ErrRefreshNotAvailable indicates the session has no refresh token or the refresh token has expired.
 	ErrRefreshNotAvailable = errors.New("no valid refresh token available for session")
 )
+
+// RefreshRejectedError reports that the third-party service's token endpoint answered a refresh request
+// with a non-2xx status. The message omits the response body, which may echo credentials.
+type RefreshRejectedError struct {
+	StatusCode int
+	// OAuthError is the RFC 6749 §5.2 "error" code from a JSON error body; empty otherwise.
+	OAuthError string
+}
+
+func (e *RefreshRejectedError) Error() string {
+	return fmt.Sprintf("third-party token endpoint returned error status %d", e.StatusCode)
+}
+
+// Unwrap exposes ErrRefreshTokenExpired when the third-party service answered invalid_grant, which
+// RFC 6749 §5.2 defines as an invalid, expired, or revoked refresh token.
+func (e *RefreshRejectedError) Unwrap() error {
+	if e.OAuthError == "invalid_grant" {
+		return ErrRefreshTokenExpired
+	}
+	return nil
+}

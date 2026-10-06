@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -53,13 +54,15 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		principal      string
 		agent          *storagedomain.Agent
 		tokenFixtures  *TokenFixtures
+		logBuf         *syncBuffer
 	)
 
 	// Setup: Initialize fresh test infrastructure for each test
 	BeforeEach(func() {
 		// Initialize logger with GinkgoWriter for test visibility
 		// This allows us to see slog output in test failures for debugging
-		logger = slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{
+		logBuf = &syncBuffer{}
+		logger = slog.New(slog.NewTextHandler(io.MultiWriter(GinkgoWriter, logBuf), &slog.HandlerOptions{
 			Level: slog.LevelDebug,
 		}))
 
@@ -597,6 +600,46 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(errorResponse["error"]).To(Equal("access_denied"))
 		})
 
+		// Spec Reference: US3-S5 from specs/013-token-exchange/spec.md
+		It("[US3-S5] should deny a grant that excludes the service before token-vault access and supply the consent URI", func() {
+			// Given: The user's only grant for the agent covers a different service, and the
+			// stored GitHub session would need a refresh if it were ever read.
+			ctx := context.Background()
+			activeGrants, err := testStorage.UserGrants().ListByPrincipalAndAgent(ctx, id.Principal(principal), agent.ID)
+			Expect(err).NotTo(HaveOccurred())
+			for _, g := range activeGrants {
+				Expect(testStorage.UserGrants().Delete(ctx, g.ID)).To(Succeed())
+			}
+			otherServiceGrant := fixtures.ActiveGrant(principal, agent.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"})
+			Expect(testStorage.UserGrants().Create(ctx, otherServiceGrant)).To(Succeed())
+			Expect(testStorage.UserSessions().Create(ctx, fixtures.ExpiredGitHubSessionForPrincipal(principal))).To(Succeed())
+			mockUpstream.WithSuccessfulTokenResponse().WithAccessToken("must-not-be-issued")
+
+			data := url.Values{
+				"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
+				"subject_token":         {tokenFixtures.SubjectToken},
+				"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
+				"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+				"client_assertion":      {tokenFixtures.ClientAssertion},
+				"resource":              {"https://api.github.com"},
+			}
+
+			// When: Token exchange is requested for the excluded service
+			resp, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = resp.Body.Close() }()
+
+			// Then: 400 invalid_grant with the agent consent-management URI; no token is issued
+			// and the provider token endpoint is never contacted.
+			Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
+			var errorResponse map[string]interface{}
+			Expect(json.NewDecoder(resp.Body).Decode(&errorResponse)).To(Succeed())
+			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
+			Expect(errorResponse["error_uri"]).To(Equal(strings.TrimRight(config.Server.EndUser.PublicURL, "/") + "/agents/" + agent.ID.String()))
+			Expect(errorResponse).NotTo(HaveKey("access_token"))
+			Expect(mockUpstream.GetTokenRequests()).To(BeEmpty())
+		})
+
 		// Spec Reference: US3-S4 from specs/013-token-exchange/spec.md
 		It("[US3-S4] should return 403 access_denied when grant expired", func() {
 			// Given: User with expired grant
@@ -937,6 +980,104 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
 			Expect(errorResponse).To(HaveKey("error_description"))
 			Expect(errorResponse["error_description"]).NotTo(BeEmpty())
+		})
+
+		// Spec Reference: US5-S4 from specs/013-token-exchange/spec.md
+		It("[US5-S4] should return re-authentication when the provider rejects the refresh token and preserve the session", func() {
+			// Given: The stored access token has expired and the provider rejects the refresh
+			// token with invalid_grant and a secret-bearing description.
+			ctx := context.Background()
+			const providerDescription = "refresh token revoked; client_secret=sentinel-provider-secret"
+			Expect(testStorage.UserSessions().Create(ctx, fixtures.ExpiredGitHubSessionForPrincipal(principal))).To(Succeed())
+			githubServiceID := fixtures.GitHubService().ID
+			before, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubServiceID)
+			Expect(err).NotTo(HaveOccurred())
+			mockUpstream.WithErrorResponseAndDescription("invalid_grant", providerDescription)
+
+			data := url.Values{
+				"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
+				"subject_token":         {tokenFixtures.SubjectToken},
+				"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
+				"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+				"client_assertion":      {tokenFixtures.ClientAssertion},
+				"resource":              {"https://api.github.com"},
+			}
+
+			// When: Token exchange is requested
+			resp, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = resp.Body.Close() }()
+			rawBody, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Then: 400 invalid_grant with the broker-generated re-authentication URI and no
+			// provider text or token.
+			Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
+			var errorResponse map[string]interface{}
+			Expect(json.Unmarshal(rawBody, &errorResponse)).To(Succeed())
+			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
+			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/api/third-party/" + githubServiceID.String() + "/oauth2/authorize"))
+			Expect(errorResponse).NotTo(HaveKey("access_token"))
+			Expect(string(rawBody)).NotTo(ContainSubstring("sentinel-provider-secret"))
+			Expect(logBuf.String()).NotTo(ContainSubstring("sentinel-provider-secret"))
+			Expect(logBuf.String()).To(ContainSubstring("thirdparty_status_code=400"))
+			Expect(logBuf.String()).To(ContainSubstring("thirdparty_error_code=invalid_grant"))
+
+			// And: The stored session is unchanged.
+			after, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubServiceID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after.EncryptedAccessToken).To(Equal(before.EncryptedAccessToken))
+			Expect(after.EncryptedRefreshToken).To(Equal(before.EncryptedRefreshToken))
+			Expect(after.AccessTokenExpiresAt).To(Equal(before.AccessTokenExpiresAt))
+
+			// When: The provider accepts the preserved refresh token again
+			mockUpstream.WithSuccessfulTokenResponse().WithAccessToken("recovered-token")
+			retry, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = retry.Body.Close() }()
+
+			// Then: The exchange succeeds with the refreshed token.
+			Expect(retry).To(matchers.HaveStatusCode(http.StatusOK))
+			var tokenResponse map[string]interface{}
+			Expect(json.NewDecoder(retry.Body).Decode(&tokenResponse)).To(Succeed())
+			Expect(tokenResponse["access_token"]).To(Equal("recovered-token"))
+		})
+
+		// Spec Reference: US5-S5 from specs/013-token-exchange/spec.md
+		It("[US5-S5] should return server_error without a recovery URI when the provider rejects the client", func() {
+			// Given: The stored access token has expired and the provider rejects the refresh
+			// request with invalid_client.
+			ctx := context.Background()
+			Expect(testStorage.UserSessions().Create(ctx, fixtures.ExpiredGitHubSessionForPrincipal(principal))).To(Succeed())
+			mockUpstream.WithErrorResponseAndDescription("invalid_client", "client_secret=sentinel-provider-secret is wrong")
+
+			data := url.Values{
+				"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
+				"subject_token":         {tokenFixtures.SubjectToken},
+				"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
+				"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+				"client_assertion":      {tokenFixtures.ClientAssertion},
+				"resource":              {"https://api.github.com"},
+			}
+
+			// When: Token exchange is requested
+			resp, err := enduserServer.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = resp.Body.Close() }()
+			rawBody, err := io.ReadAll(resp.Body)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Then: 500 server_error without error_uri; telemetry safely classifies the
+			// third-party response without exposing the provider description.
+			Expect(resp).To(matchers.HaveStatusCode(http.StatusInternalServerError))
+			var errorResponse map[string]interface{}
+			Expect(json.Unmarshal(rawBody, &errorResponse)).To(Succeed())
+			Expect(errorResponse["error"]).To(Equal("server_error"))
+			Expect(errorResponse).NotTo(HaveKey("error_uri"))
+			Expect(string(rawBody)).NotTo(ContainSubstring("sentinel-provider-secret"))
+			Expect(logBuf.String()).To(ContainSubstring("thirdparty_status_code=400"))
+			Expect(logBuf.String()).To(ContainSubstring("thirdparty_error_code=invalid_client"))
+			Expect(logBuf.String()).NotTo(ContainSubstring("sentinel-provider-secret"))
 		})
 	})
 

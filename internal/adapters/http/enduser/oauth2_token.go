@@ -15,11 +15,14 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/oauth2"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -205,12 +208,26 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 				attribute.String("token_exchange.error_code", tokenErrForSpan.Code()),
 				attribute.String("token_exchange.error_description", tokenErrForSpan.Description()),
 			)
+			if reason := tokenErrForSpan.FailureReason(); reason != "" {
+				span.SetAttributes(attribute.String("token_exchange.failure_reason", string(reason)))
+			}
+			setServiceSpanAttributes(span, tokenErrForSpan.Service())
+		}
+		thirdpartyStatus, thirdpartyCode, hasThirdparty := thirdpartyRejection(err)
+		if hasThirdparty {
+			span.SetAttributes(
+				attribute.Int("token_exchange.thirdparty_status_code", thirdpartyStatus),
+				attribute.String("token_exchange.thirdparty_error_code", thirdpartyCode),
+			)
 		}
 		if h.Logger != nil {
 			logAttrs := []any{
 				"error", err.Error(),
 				"error_type", fmt.Sprintf("%T", err),
 				"resource", sanitizedResource,
+			}
+			if hasThirdparty {
+				logAttrs = append(logAttrs, "thirdparty_status_code", thirdpartyStatus, "thirdparty_error_code", thirdpartyCode)
 			}
 			var tokenErrForLog *tokenexchange.TokenExchangeError
 			if errors.As(err, &tokenErrForLog) {
@@ -220,12 +237,16 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 				if details := tokenErrForLog.Details(); details != "" {
 					logAttrs = append(logAttrs, "details", details)
 				}
+				if reason := tokenErrForLog.FailureReason(); reason != "" {
+					logAttrs = append(logAttrs, "failure_reason", string(reason))
+				}
 			}
 			h.Logger.ErrorContext(ctx, "Token exchange failed", logAttrs...)
 		}
 		h.handleTokenExchangeError(w, err)
 		return
 	}
+	setServiceSpanAttributes(span, response.Service)
 
 	body, err := json.Marshal(response) // #nosec G117 -- OAuth2 token response is serialized for its direct HTTP response, not logging.
 	if err != nil {
@@ -393,6 +414,21 @@ func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err
 	_, _ = w.Write(body)
 }
 
+// thirdpartyRejection extracts the provider HTTP status and an allowlisted OAuth error code from a
+// wrapped RetrieveError. Any non-allowlisted code becomes "unknown" so diagnostics never carry
+// provider-controlled text.
+func thirdpartyRejection(err error) (status int, code string, ok bool) {
+	var retrieveErr *oauth2.RetrieveError
+	if !errors.As(err, &retrieveErr) || retrieveErr.Response == nil {
+		return 0, "", false
+	}
+	code = "unknown"
+	if oauth2session.IsSafeOAuthErrorCode(retrieveErr.ErrorCode) {
+		code = retrieveErr.ErrorCode
+	}
+	return retrieveErr.Response.StatusCode, code, true
+}
+
 // tokenEndpointStatus maps an OAuth2 error code to the appropriate HTTP status for the token endpoint.
 // RFC 6749 §5.2: invalid_client → 401, server_error → 500, all other codes → 400.
 func tokenEndpointStatus(code string) int {
@@ -404,6 +440,16 @@ func tokenEndpointStatus(code string) int {
 	default:
 		return http.StatusBadRequest
 	}
+}
+
+func setServiceSpanAttributes(span trace.Span, service tokenexchange.ServiceRef) {
+	if service.ID.IsZero() {
+		return
+	}
+	span.SetAttributes(
+		attribute.String("token_exchange.service.id", service.ID.String()),
+		attribute.String("token_exchange.service.name", service.Name),
+	)
 }
 
 // truncateSpanAttribute trims s to at most maxRunes runes and replaces newlines

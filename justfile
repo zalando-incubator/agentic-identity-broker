@@ -107,7 +107,7 @@ test-e2e-performance:
 test-e2e-backend-coverage: web-build
     @echo "Running backend E2E suite with coverage..."
     @mkdir -p coverage
-    @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" --cover --coverprofile=e2e-backend.out --output-dir=coverage ./tests/e2e/; go tool cover -html=coverage/e2e-backend.out -o coverage/e2e-backend.html; echo "Backend E2E coverage report generated at coverage/e2e-backend.html"; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" --cover --covermode=atomic --coverpkg=./internal/... --coverprofile=e2e-backend.out --output-dir=coverage ./tests/e2e/ && go tool cover -html=coverage/e2e-backend.out -o coverage/e2e-backend.html && echo "Backend E2E coverage report generated at coverage/e2e-backend.html"; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
 # Watch the backend E2E acceptance suite during development
 test-e2e-backend-watch: web-build
@@ -129,8 +129,8 @@ test-e2e-extproc-coverage:
     @echo "Running ExtProc E2E suite with coverage..."
     @mkdir -p coverage
     @if command -v ginkgo > /dev/null; then \
-        ginkgo -v --procs={{GINKGO_EXTPROC_PROCS}} --cover --coverprofile=e2e-extproc.out --output-dir=coverage ./tests/e2e/extproc/; \
-        go tool cover -html=coverage/e2e-extproc.out -o coverage/e2e-extproc.html; \
+        ginkgo -v --procs={{GINKGO_EXTPROC_PROCS}} --cover --covermode=atomic --coverpkg=./internal/... --coverprofile=e2e-extproc.out --output-dir=coverage ./tests/e2e/extproc/ && \
+        go tool cover -html=coverage/e2e-extproc.out -o coverage/e2e-extproc.html && \
         echo "ExtProc E2E coverage report generated at coverage/e2e-extproc.html"; \
     else \
         echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; \
@@ -155,7 +155,7 @@ test-e2e-frontend-coverage: web-build
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p coverage
-    E2E_FRONTEND_MODE=built E2E_CAPTURE_SCREENSHOTS={{E2E_CAPTURE_SCREENSHOTS}} ginkgo -v --procs={{GINKGO_FRONTEND_PROCS}} --output-interceptor-mode=none --cover --coverprofile=e2e-frontend.out --output-dir=coverage ./tests/e2e/frontend/
+    E2E_FRONTEND_MODE=built E2E_CAPTURE_SCREENSHOTS={{E2E_CAPTURE_SCREENSHOTS}} ginkgo -v --procs={{GINKGO_FRONTEND_PROCS}} --output-interceptor-mode=none --cover --covermode=atomic --coverpkg=./internal/... --coverprofile=e2e-frontend.out --output-dir=coverage ./tests/e2e/frontend/
     go tool cover -html=coverage/e2e-frontend.out -o coverage/e2e-frontend.html
     echo "Frontend E2E coverage report generated at coverage/e2e-frontend.html"
 
@@ -236,7 +236,7 @@ install-tools:
     @command -v air          > /dev/null || go install github.com/air-verse/air@v1.63.6
     @golangci-lint --version 2>/dev/null | grep -q "version 2.13.2" || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
     @go install github.com/jstemmer/go-junit-report/v2@v2.1.0
-    @go install github.com/onsi/ginkgo/v2/ginkgo@v2.32.2
+    @go install github.com/onsi/ginkgo/v2/ginkgo@v2.33.0
     @if [ -d "$HOME/.cache/ms-playwright" ] && [ -n "$(ls -A "$HOME/.cache/ms-playwright" 2>/dev/null)" ] && [ -f "$HOME/.cache/ms-playwright-go/1.62.1/package/cli.js" ]; then \
         echo "Playwright driver and browsers already installed, skipping download"; \
     else \

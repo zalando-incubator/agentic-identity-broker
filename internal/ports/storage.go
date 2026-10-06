@@ -146,9 +146,9 @@ type UserGrantRepository interface {
 	// It is safe to delete non-existent grants (idempotent).
 	Delete(ctx context.Context, id id.GrantID) error
 
-	// ListByPrincipalAndAgent retrieves all active grants for a principal and specific agent.
-	// Filters expired grants (valid_until < NOW()).
-	// Returns empty slice if no active grants exist (not an error).
+	// ListByPrincipalAndAgent retrieves all grants for a principal and specific agent.
+	// Includes expired grants; callers filter active grants when needed.
+	// Returns an empty slice if no grants exist (not an error).
 	// Returns StorageError for connection/timeout issues.
 	ListByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.UserGrant, error)
 

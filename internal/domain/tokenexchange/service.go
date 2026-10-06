@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtclaims"
@@ -167,7 +169,15 @@ func NewTokenExchangeService(
 // - T076: Return invalid_grant when both access_token and refresh_token expired
 // - T077: Include service_id and re-auth hint in error_description
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
-func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (*TokenExchangeResponse, error) {
+func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (_ *TokenExchangeResponse, err error) {
+	var serviceRef ServiceRef
+	defer func() {
+		var tokenErr *TokenExchangeError
+		if !serviceRef.ID.IsZero() && errors.As(err, &tokenErr) {
+			err = tokenErr.WithService(serviceRef)
+		}
+	}()
+
 	// Step 1: Validate request structure
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -235,6 +245,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		}
 		return nil, NewServerErrorWithCause("failed to lookup service by resource URI", err)
 	}
+	serviceRef = ServiceRef{ID: service.ID, Name: service.DisplayName}
 
 	// Step 9: Verify user has granted agent access to service (T059-T065)
 	// CRITICAL (T078): Grant verification MUST occur BEFORE session check
@@ -256,7 +267,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 			return nil, NewAccessDeniedErrorWithDetails(
 				"user has not granted permission for this agent to access the requested service",
 				fmt.Sprintf("agent with id %q not found", agentID),
-			)
+			).WithFailureReason(FailureReasonNoGrant)
 		}
 		return nil, NewServerErrorWithCause("failed to lookup agent by agent_id", err)
 	}
@@ -275,14 +286,14 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 			return nil, NewAccessDeniedErrorWithDetails(
 				"user has not granted permission for this agent to access the requested service",
 				err.Error(),
-			)
+			).WithFailureReason(FailureReasonNoGrant)
 		}
 		if errors.Is(err, consent.ErrGrantExpired) {
 			// T065: User grant has expired
 			return nil, NewAccessDeniedErrorWithDetails(
 				"user grant has expired",
 				err.Error(),
-			)
+			).WithFailureReason(FailureReasonNoGrant)
 		}
 		// System/repository error
 		return nil, NewServerErrorWithCause("failed to verify user grant", err)
@@ -293,7 +304,8 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// session lookup or credential decryption. Agents that declare neither PermissionSets
 	// nor ServiceRequirements are not exempt.
 	if len(grant.GrantedPermissionSets) == 0 {
-		return nil, NewInvalidGrantError("grant has no permission set entries; re-consent required")
+		return nil, NewInvalidGrantError("grant has no permission set entries; re-consent required").
+			WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
 	}
 	effectiveScopes, err := s.resolveEffectiveScopes(ctx, grant, agent)
 	if err != nil {
@@ -304,7 +316,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, NewInvalidGrantError(fmt.Sprintf(
 			"service %s is not authorized by any permission set in the grant; re-consent required",
 			service.ID,
-		))
+		)).WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
 	}
 
 	// Step 10: Get valid access token with session metadata (with transparent refresh if needed)
@@ -328,7 +340,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 				service.DisplayName,
 			)
 			reAuthURL := s.oauth2SessionService.ServiceAuthorizeURL(service.ID)
-			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL)
+			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL).WithFailureReason(FailureReasonNoSession)
 		}
 		if errors.Is(err, oauth2session.ErrSessionExpired) {
 			// T076: Both access and refresh tokens are expired
@@ -339,10 +351,33 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 				service.DisplayName,
 			)
 			reAuthURL := s.oauth2SessionService.ServiceAuthorizeURL(service.ID)
-			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL)
+			reason := FailureReasonAccessTokenExpired
+			if errors.Is(err, oauth2session.ErrRefreshTokenExpired) {
+				reason = FailureReasonRefreshTokenExpired
+			}
+			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL).WithFailureReason(reason)
 		}
-		// Other errors (refresh failed, decryption failed, etc)
-		return nil, NewServerErrorWithCause("failed to get valid access token", err)
+		if refreshRejectedWithInvalidGrant(err) {
+			description := fmt.Sprintf(
+				"User session refresh was rejected by the requested service. Service: %s. Please re-authenticate to %s.",
+				service.ID,
+				service.DisplayName,
+			)
+			return nil, NewInvalidGrantError(description).
+				WithErrorURI(s.oauth2SessionService.ServiceAuthorizeURL(service.ID)).
+				WithCause(err).WithFailureReason(FailureReasonRefreshTokenExpired)
+		}
+		// Other errors (other refresh failures, decryption failed, etc)
+		serverErr := NewServerErrorWithCause("failed to get valid access token", err)
+		var rejected *oauth2session.RefreshRejectedError
+		if errors.As(err, &rejected) {
+			reason := FailureReasonServiceRejected
+			if errors.Is(err, oauth2session.ErrRefreshTokenExpired) {
+				reason = FailureReasonRefreshTokenExpired
+			}
+			return nil, serverErr.WithFailureReason(reason)
+		}
+		return nil, serverErr
 	}
 
 	// Step 11: Validate the session's scopes cover the effective scopes for the requested
@@ -365,7 +400,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 				strings.Join(missingScopes, ", "),
 			)
 			reAuthURL := s.oauth2SessionService.ServiceAuthorizeURL(service.ID)
-			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL)
+			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL).WithFailureReason(FailureReasonInsufficientScope)
 		}
 	}
 
@@ -400,8 +435,24 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	}
 	response.Principal = principal
 	response.AgentID = agent.ID.String()
+	response.Service = serviceRef
 
 	return response, nil
+}
+
+// refreshRejectedWithInvalidGrant reports whether the provider explicitly rejected the stored
+// refresh token (RFC 6749 §5.2 HTTP 400 invalid_grant), which only user re-authentication fixes.
+func refreshRejectedWithInvalidGrant(err error) bool {
+	var retrieveErr *oauth2.RetrieveError
+	return errors.Is(err, oauth2session.ErrRefreshFailed) &&
+		errors.As(err, &retrieveErr) &&
+		retrieveErr.Response != nil &&
+		retrieveErr.Response.StatusCode == 400 &&
+		retrieveErr.ErrorCode == "invalid_grant"
+}
+
+func (s *TokenExchangeService) agentConsentURL(agentID id.AgentID) string {
+	return strings.TrimRight(s.oauth2SessionService.GetCallbackBaseURL(), "/") + "/agents/" + agentID.String()
 }
 
 // resolveEffectiveScopes resolves permission sets from the grant and computes
@@ -427,7 +478,7 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 			return nil, NewInvalidGrantError(fmt.Sprintf(
 				"permission set %s referenced in grant is not declared by the agent; re-consent required",
 				entry.PermissionSetID,
-			)).WithErrorURI(strings.TrimRight(s.oauth2SessionService.GetCallbackBaseURL(), "/") + "/agents/" + agent.ID.String())
+			)).WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
 		}
 		psIDs[i] = entry.PermissionSetID
 	}
@@ -465,7 +516,7 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 			return nil, NewInvalidGrantError(fmt.Sprintf(
 				"permission set %s referenced in grant no longer exists; re-consent required",
 				entry.PermissionSetID,
-			))
+			)).WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
 		}
 		included := grantIndex[entry.PermissionSetID]
 		for _, ss := range ps.ServiceScopes {
