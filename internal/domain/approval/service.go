@@ -555,6 +555,9 @@ func (s *Service) findExistingPendingApproval(ctx context.Context, principal id.
 	if err != nil {
 		return nil, fmt.Errorf("find pending approval: %w", err)
 	}
+	if approval != nil && approval.IsExpired(time.Now()) {
+		return nil, nil
+	}
 	return approval, nil
 }
 

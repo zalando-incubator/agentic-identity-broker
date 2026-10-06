@@ -464,7 +464,7 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 
 **Rate Limiting**: Per (principal, agent) pair using `golang.org/x/time/rate` token bucket. Configured via `approvals.rate_limit.max_pending_per_pair` and `approvals.rate_limit.max_requests_per_minute`.
 
-**Approval creation reads**: A narrow lookup by `(principal, agent_id, tool_name, arguments_hash)` lets existing pending approvals bypass rate limits before insertion. The partial unique index and repository upsert remain the final concurrent deduplication guard. The separate pair-wide pending count enforces `max_pending_per_pair`; the index cannot replace it.
+**Approval creation reads**: A narrow lookup by `(principal, agent_id, tool_name, arguments_hash)` lets existing pending approvals bypass rate limits before insertion. The service rechecks expiry after retrieval so an approval that expires during the lookup is not reused. The partial unique index and repository upsert remain the final concurrent deduplication guard. The separate pair-wide pending count enforces `max_pending_per_pair`; the index cannot replace it.
 
 **Trace Context**: `POST /api/approvals` accepts an optional W3C `traceparent` header. The broker persists the validated remote context so later browser lifecycle spans can link to the originating tool call.
 

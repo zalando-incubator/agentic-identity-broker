@@ -3,6 +3,7 @@ package approval
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"reflect"
@@ -668,6 +669,42 @@ func TestService_CreatePendingApproval(t *testing.T) {
 		}
 		if result2.IsNew {
 			t.Fatal("expected IsNew to be false for idempotent hit")
+		}
+	})
+
+	t.Run("does not reuse a pending approval expired during lookup", func(t *testing.T) {
+		for _, rateLimited := range []bool{false, true} {
+			t.Run(fmt.Sprintf("rate_limited=%t", rateLimited), func(t *testing.T) {
+				repo := newMockApprovalRepo()
+				req := makeRequest()
+				expired := makePendingApproval(principal, agentID)
+				expired.ToolName = req.ToolName
+				expired.ArgumentsHash = storage.ComputeArgumentsHash(req.Arguments)
+				expired.ExpiresAt = time.Now().Add(-time.Minute)
+				queries := &mockQueryRepo{
+					findPendingFunc: func(context.Context, id.Principal, id.AgentID, string, string) (*storage.ToolApproval, error) {
+						return expired, nil
+					},
+				}
+				svc := newTestServiceWithQueries(repo, queries, &mockSyncStateRepo{})
+				svc.rateLimiter = NewApprovalRateLimiter(10, 1)
+				if rateLimited {
+					require.True(t, svc.rateLimiter.AllowCreation(string(principal), agentID.String()))
+				}
+
+				result, err := svc.CreatePendingApproval(context.Background(), req)
+				if rateLimited {
+					assert.ErrorIs(t, err, ErrApprovalRateLimit)
+					assert.Nil(t, result)
+					return
+				}
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				assert.True(t, result.IsNew)
+				assert.NotEqual(t, expired.ID, result.Approval.ID)
+				assert.False(t, result.Approval.IsExpired(time.Now()))
+				assert.Contains(t, repo.approvals, result.Approval.ID)
+			})
 		}
 	})
 
