@@ -168,6 +168,12 @@ The Phase 0 PR must update the "New Domain Packages" paragraph in the CIMD Subsy
 
 The production outbound client uses the dial-time `Control` callback to block resolved private IPs. The client layer validates public HTTPS URLs, rejects redirects, bounds metadata responses at 256 KiB, and applies one attempt deadline. E2E tests inject a fake-host HTTP client through the discovery port and a separate discovery-backed token-client option. The injected client replaces the guarded dialer only for those tests; no runtime configuration selects it.
 
+Main already builds one shared `upstreamClient` for session tokens, proxy grants, and JWKS. It has no dial-time IP guard and follows redirects. Builder must keep that client unchanged for existing flows. It creates one separate guarded transport for discovery, DCR, and discovery-backed token calls. The new transport follows the same TLS and optional OTel wiring pattern. Builder closes both transports' idle connections at shutdown. Do not mutate the shared client's transport or redirect policy.
+
+Set `Proxy` to nil on the guarded transport so its dial-time guard sees the actual target IP. Do not inherit `http.ProxyFromEnvironment` from the shared transport. Leave proxy behavior on the existing shared client unchanged.
+
+Discovery and DCR use one 15-second attempt deadline and 256-KiB response bounds. Code exchange and refresh use the configured upstream timeout and their existing token-response limits. The guarded transport can serve clients with different per-operation deadlines. CIMD keeps its separate fetch timeout and body cap while reusing the dial-time guard code.
+
 ### 2. Add a narrow discovery port
 
 Add one port in `internal/ports/oauth_discovery.go`. It provides only these operations:
@@ -209,7 +215,7 @@ Update `Copy` and `RedactedCopy` so that a discovery-backed response never conta
 
 ### 5. Send exact OAuth requests
 
-For discovery-backed services, `OAuth2SessionService` uses the guarded token HTTP client for code exchange and refresh. It passes that client to `golang.org/x/oauth2` through the request context.
+`OAuth2SessionService` already receives the shared `upstreamClient` from Builder. Code exchange injects it through `oauth2.HTTPClient`, and refresh calls it directly. For a discovery-backed service, both paths select the separate guarded token client. Manual services keep the shared client and current wire behavior.
 
 Implement each method exactly:
 
@@ -392,8 +398,8 @@ Write `thirdparty_protected_resource_performance_test.go` in Phase 2f and record
 | `internal/domain/netpolicy` | Existing blocked ranges and operator CIDR behavior after the move. |
 | `internal/domain/model` | Field combinations, explicit resource validation, token endpoint query rule, DCR methods, copying, and redaction. |
 | `internal/domain/thirdparty` | Probe order, `404` fallback, `401` challenge cardinality, identity checks, issuer selection, method preference, no fallback, status transitions, audit safety, and issuer-change session rule. DCR response tests include missing refresh grants and rejection of non-zero secret expiry. |
-| `internal/domain/oauth2session` | Exact basic/post/public/CIMD wire forms, one resource value, guarded client injection, `invalid_target`, no stored token after rejection, and terminal renewal when the provider withholds a refresh token or rejects the stored credential. |
-| `internal/adapters/outboundhttp` | Dial-time blocking, redirect rejection, HTTPS validation, size limit, deadline, challenge extraction, 404 sentinel, and no body leakage. |
+| `internal/domain/oauth2session` | Exact basic/post/public/CIMD wire forms, one resource value, per-service guarded-client selection for code exchange and refresh, unchanged shared-client use for manual services, `invalid_target`, no stored token after rejection, and terminal renewal when the provider withholds a refresh token or rejects the stored credential. |
+| `internal/adapters/outboundhttp` | Dial-time blocking, redirect rejection, HTTPS validation, size limit, deadline, challenge extraction, 404 sentinel, and no body leakage. Builder tests confirm separate shared and guarded transports, OTel wrapping, and idle-connection cleanup. |
 | HTTP handlers | Request validation, error mapping, status responses, canonical ID resolution, and absent DCR secrets. |
 | Memory adapter | Field persistence, success transaction semantics, stale failure writes, and DCR uniqueness. |
 
