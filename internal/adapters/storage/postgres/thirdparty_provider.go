@@ -206,6 +206,17 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	return nil
 }
 
+const activeProviderGrantReferenceQuery = `
+	SELECT EXISTS(
+		SELECT 1
+		FROM user_grants
+		WHERE granted_permission_sets @> jsonb_build_array(
+			jsonb_build_object('included_service_ids', jsonb_build_array($1::text))
+		)
+		  AND (valid_until IS NULL OR valid_until > NOW())
+	)
+`
+
 func (r *PostgresThirdpartyOAuth2ProviderRepository) Delete(ctx context.Context, serviceID id.ServiceID) error {
 	if err := r.requireDB("DeleteThirdpartyOAuth2Provider"); err != nil {
 		return err
@@ -237,15 +248,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Delete(ctx context.Context,
 		return storage.NewStorageError("DeleteThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "cannot delete provider: agent service requirements reference it")
 	}
 	var grantReferenced bool
-	if err := tx.QueryRowContext(execCtx, `
-		SELECT EXISTS(
-			SELECT 1
-			FROM user_grants ug,
-			     jsonb_array_elements(ug.granted_permission_sets) AS entry
-			WHERE entry->'included_service_ids' @> to_jsonb($1::text)
-			  AND (ug.valid_until IS NULL OR ug.valid_until > NOW())
-		)
-	`, serviceID.String()).Scan(&grantReferenced); err != nil {
+	if err := tx.QueryRowContext(execCtx, activeProviderGrantReferenceQuery, serviceID.String()).Scan(&grantReferenced); err != nil {
 		return providerStorageError("DeleteThirdpartyOAuth2Provider", err, "failed to check active user grant references")
 	}
 	if grantReferenced {

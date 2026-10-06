@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sync"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -32,6 +35,7 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	httpv3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"github.com/mark3labs/mcp-go/mcp"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -2072,12 +2076,16 @@ func TestServer_OPA_BodyPhase_RequestTooLarge_DeniesWithoutAuthorizerCall(t *tes
 
 // Spec: A batch where every element is allowed must evaluate each element and echo the full body.
 func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
-	var seenToolNames []string
+	var seenToolNames, seenElementBodies []string
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "batch element must expose parsed MCP input")
-			seenToolNames = append(seenToolNames, mcp.ToolName)
+			seenToolNames = append(seenToolNames, mcp["tool_name"].(string))
+			attributes := input["attributes"].(map[string]any)
+			request := attributes["request"].(map[string]any)
+			http := request["http"].(map[string]any)
+			seenElementBodies = append(seenElementBodies, http["body"].(string))
 			return &authorization.OPADecision{Action: "allow"}, nil
 		},
 	}
@@ -2089,7 +2097,9 @@ func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
 	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
 	defer cleanup()
 
-	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}},{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"read_config","arguments":{}}}]`)
+	first := `{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}}`
+	second := `{ "jsonrpc": "2.0", "method": "tools/call", "id": 9007199254740993, "params": {"name":"read_config","arguments":{}} }`
+	batch := []byte("[ " + first + ", " + second + " ]")
 	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
 		":method": "POST",
 	}, batch)
@@ -2101,6 +2111,7 @@ func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
 	require.True(t, ok, "allowed batch must use streamed body echo")
 	assert.Equal(t, batch, streamed.StreamedResponse.Body)
 	assert.Equal(t, []string{"list_files", "read_config"}, seenToolNames)
+	assert.Equal(t, []string{first, second}, seenElementBodies)
 }
 
 // Spec: A denied batch must aggregate reasons from every denying element into one 403.
@@ -2109,9 +2120,9 @@ func TestServer_OPA_BatchBodyPhase_Deny_AggregatesReasons(t *testing.T) {
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
 			evaluateCalls++
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "batch element must expose parsed MCP input")
-			return &authorization.OPADecision{Action: "deny", Reasons: []string{"denied tool: " + mcp.ToolName}}, nil
+			return &authorization.OPADecision{Action: "deny", Reasons: []string{"denied tool: " + mcp["tool_name"].(string)}}, nil
 		},
 	}
 	exchanger := &mockExchanger{
@@ -2136,14 +2147,136 @@ func TestServer_OPA_BatchBodyPhase_Deny_AggregatesReasons(t *testing.T) {
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "denied tool: drop_db")
 }
 
+func TestServer_OPA_BatchBodyPhase_MalformedEnvelopeDeniesBeforeEvaluation(t *testing.T) {
+	var evaluateCalls int
+	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+		evaluateCalls++
+		return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
+	}}
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "batch-token"}, nil
+	}}
+	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+	defer cleanup()
+
+	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","params":{"name":"read"}},`)
+	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, batch)
+	require.NotNil(t, bodyResp)
+	immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+	require.True(t, ok)
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+	assert.Contains(t, string(immediate.ImmediateResponse.Body), "failed to parse batch request")
+	assert.Zero(t, evaluateCalls)
+}
+
+func TestServer_OPA_AmbiguousMCPMembers_DeniedBeforePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		body                []byte
+		downstreamArguments map[string]any
+	}{
+		{name: "standalone case-folded method", body: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}`)},
+		{name: "batch case-folded method", body: []byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}]`)},
+		{name: "standalone repeated params", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}`), downstreamArguments: map[string]any{"env": "prod"}},
+		{name: "batch repeated params", body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}]`)},
+		{name: "case-folded tool name", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"read","Name":"delete"}}`)},
+		{name: "standalone case-folded arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`), downstreamArguments: map[string]any{"env": "prod"}},
+		{name: "repeated arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"arguments":{"env":"prod"}}}`)},
+		{name: "batch case-folded arguments", body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}]`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.downstreamArguments != nil {
+				var downstream mcp.CallToolRequest
+				require.NoError(t, json.Unmarshal(tc.body, &downstream))
+				assert.Equal(t, tc.downstreamArguments, downstream.GetArguments(), "downstream would execute these arguments")
+			}
+			var policyCalls int
+			auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+				policyCalls++
+				return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
+			}}
+			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{Token: "batch-token"}, nil
+			}}
+			client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+			defer cleanup()
+
+			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, tc.body)
+			require.NotNil(t, bodyResp)
+			immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+			require.True(t, ok, "ambiguous MCP request must be denied")
+			assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+			assert.Zero(t, policyCalls, "ambiguous MCP request must not reach policy")
+		})
+	}
+}
+
+func TestServer_OPA_BatchBodyPhase_LargeIDsHonorPolicy(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "authz.rego")
+	require.NoError(t, os.WriteFile(policyPath, []byte(`package aib.extproc.authz
+import rego.v1
+
+result := {"action": "allow"} if {
+	input.parsed_body.id == 9007199254740993
+} else := {"action": "deny", "reasons": ["request ID is not authorized"]}`), 0o600))
+	cfg := testConfig()
+	cfg.Authorization = extprocconfig.AuthorizationConfig{
+		Enabled:           true,
+		Policy:            extprocconfig.PolicyConfig{Path: policyPath, Package: "aib.extproc.authz", Decision: "result"},
+		DefaultDecision:   "deny",
+		EvaluationTimeout: 5 * time.Second,
+		MaxBodySize:       1048576,
+	}
+	auth, err := authorization.NewOPAAuthorizer(&cfg.Authorization, testLogger())
+	require.NoError(t, err)
+	defer auth.Stop(context.Background())
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "batch-token"}, nil
+	}}
+	client, cleanup := startTestServerWithAuthorizerConfig(t, cfg, exchanger, auth)
+	defer cleanup()
+
+	for _, tc := range []struct {
+		name      string
+		body      []byte
+		wantAllow bool
+	}{
+		{name: "allowed exact ID", body: []byte(`[{"jsonrpc":"2.0","method":"initialize","id":9007199254740993}]`), wantAllow: true},
+		{name: "denied adjacent ID", body: []byte(`[{"jsonrpc":"2.0","method":"initialize","id":9007199254740993},{"jsonrpc":"2.0","method":"initialize","id":9007199254740992}]`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, tc.body)
+			require.NotNil(t, bodyResp)
+			if tc.wantAllow {
+				response, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
+				require.True(t, ok, "policy must allow the exact large ID")
+				streamed, ok := response.RequestBody.Response.BodyMutation.Mutation.(*extprocv3.BodyMutation_StreamedResponse)
+				require.True(t, ok)
+				assert.Equal(t, tc.body, streamed.StreamedResponse.Body)
+				return
+			}
+			immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+			require.True(t, ok, "policy must deny a batch containing the adjacent ID")
+			assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+			assert.Contains(t, string(immediate.ImmediateResponse.Body), "request ID is not authorized")
+		})
+	}
+}
+
 func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
+		idKey        string
 		id           json.RawMessage
+		params       string
 		invocationID string
 	}{
-		{name: "numeric id", id: json.RawMessage(`42`), invocationID: "42"},
-		{name: "string id", id: json.RawMessage(`"call-42"`), invocationID: "call-42"},
+		{name: "numeric id", idKey: "id", id: json.RawMessage(`42`), invocationID: "42"},
+		{name: "case-insensitive numeric id", idKey: "ID", id: json.RawMessage(`42`), invocationID: "42"},
+		{name: "case-insensitive tool params", idKey: "ID", id: json.RawMessage(`42`), params: `{"Name":"deploy","Arguments":{"environment":"production"}}`, invocationID: "42"},
+		{name: "string id", idKey: "id", id: json.RawMessage(`"call-42"`), invocationID: "call-42"},
+		{name: "large numeric id", idKey: "id", id: json.RawMessage(`9007199254740993`), invocationID: "9007199254740993"},
+		{name: "exponent id", idKey: "id", id: json.RawMessage(`1e+3`), invocationID: "1e+3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -2176,9 +2309,12 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 					if contextInput, ok := input["context"].(authorization.ContextInput); ok {
 						gotAgentSession = contextInput.AgentSessionID
 					}
-					if mcpInput, ok := input["mcp"].(*authorization.MCPInput); ok {
-						gotMCPSession = mcpInput.SessionID
+					if mcpInput, ok := input["mcp"].(map[string]any); ok {
+						gotMCPSession, _ = mcpInput["session_id"].(string)
+						assert.Equal(t, tc.invocationID, fmt.Sprint(mcpInput["id"]))
 					}
+					parsedBody := input["parsed_body"].(map[string]any)
+					assert.Equal(t, tc.invocationID, fmt.Sprint(parsedBody["id"]))
 					mu.Unlock()
 					return &authorization.OPADecision{Action: authorization.ActionApprovalRequired, ApprovalContext: &authorization.ApprovalContext{Description: "Review deployment", RiskLevel: "medium"}}, nil
 				},
@@ -2195,7 +2331,11 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, cfg, exchanger, auth, gate)
 			defer cleanup()
 
-			body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":` + string(tc.id) + `,"params":{"name":"deploy","arguments":{"environment":"production"}}}`)
+			params := tc.params
+			if params == "" {
+				params = `{"name":"deploy","arguments":{"environment":"production"}}`
+			}
+			body := []byte(`{"jsonrpc":"2.0","method":"tools/call","` + tc.idKey + `":` + string(tc.id) + `,"params":` + params + `}`)
 			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
 				":method":         "POST",
 				":path":           "http://mcp-server:9003/mcp",
@@ -2311,6 +2451,51 @@ func TestServer_OPA_ApprovalRequired_UsesBrokerAuthoritativeIdentityForCacheKey(
 	assert.Zero(t, brokerCalls)
 }
 
+func TestServer_OPA_AmbiguousArgumentsCannotUseCachedApproval(t *testing.T) {
+	permanent := "permanent"
+	approvedAt := time.Now()
+	cache := approval.NewCache(time.Minute, time.Minute)
+	cache.Replace([]approval.Pair{{
+		Identity: approval.Identity{Principal: "verified@example.com", AgentID: "canonical-agent-id"},
+		Approvals: []approval.Record{{
+			ID: "dev-approval", ToolPattern: "deploy", ParamsPattern: map[string]string{"env": "dev"},
+			Status: "approved", Persistence: &permanent, ApprovedAt: &approvedAt,
+		}},
+	}}, "etag-1")
+	var policyCalls int
+	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+		policyCalls++
+		return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
+	}}
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id"}, nil
+	}}
+	broker := &mockApprovalBroker{
+		readFunc: func(context.Context, string, []string) ([]approval.Pair, string, error) {
+			return nil, "", errors.New("ambiguous request must not reach approval broker")
+		},
+		createFunc: func(context.Context, string, approval.CreateRequest) (string, error) {
+			return "", errors.New("ambiguous request must not create approval")
+		},
+		consumeFunc: func(context.Context, string, string) error {
+			return errors.New("ambiguous request must not consume approval")
+		},
+	}
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker))
+	defer cleanup()
+
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`)
+	var downstream mcp.CallToolRequest
+	require.NoError(t, json.Unmarshal(body, &downstream))
+	assert.Equal(t, "prod", downstream.GetString("env", ""))
+	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, body)
+	require.NotNil(t, bodyResp)
+	immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+	require.True(t, ok, "a dev approval must not allow a prod tool invocation")
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.ImmediateResponse.Status.Code))
+	assert.Zero(t, policyCalls, "ambiguous arguments must not reach policy or approval")
+}
+
 func TestServer_OPA_ApprovalRequired_WithoutGateDenies(t *testing.T) {
 	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
 		return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
@@ -2407,6 +2592,7 @@ func TestServer_OPA_ApprovalGateOnlyHandlesStandaloneMCPToolCalls(t *testing.T) 
 		body     []byte
 	}{
 		{name: "MCP method", protocol: "mcp", body: []byte(`{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}`)},
+		{name: "malformed tool arguments", protocol: "mcp", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":[]}}`)},
 		{name: "non MCP tool call", protocol: "a2a", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{}}}`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2794,6 +2980,59 @@ func TestServer_ProcessRequestHeaders_SpanOutcomeOnSuccess(t *testing.T) {
 		}
 	}
 	assert.Equal(t, "success", outcomeAttr, "span outcome must be 'success' on successful exchange")
+}
+
+// Agentgateway injects a fresh "traceparent" entry directly into the gRPC
+// call metadata of the Process stream it opens (its own ExtProc CLIENT span,
+// the direct and immediate caller of this server). The proxied HTTP request's
+// headers may carry an unrelated traceparent from an earlier hop (e.g.
+// skipper-ingress). The gRPC metadata value must win so the resulting span
+// nests under agentgateway's ExtProc span rather than an unrelated ancestor.
+func TestServer_ProcessRequestHeaders_PrefersGRPCMetadataTraceparentOverHTTPHeader(t *testing.T) {
+	prevProp := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	t.Cleanup(func() { otel.SetTextMapPropagator(prevProp) })
+
+	const grpcTraceparent = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+	const grpcTraceID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const httpTraceparent = "00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01"
+
+	var seenTraceID string
+	var seenBaggage string
+	exchanger := &mockExchanger{
+		exchangeFunc: func(ctx context.Context, _, _ string) (server.ExchangeResult, error) {
+			seenTraceID = trace.SpanContextFromContext(ctx).TraceID().String()
+			seenBaggage = baggage.FromContext(ctx).Member("tenant").Value()
+			return server.ExchangeResult{Token: "exchanged-token"}, nil
+		},
+	}
+	client, cleanup := startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
+	defer cleanup()
+
+	outgoingCtx := metadata.AppendToOutgoingContext(context.Background(), "traceparent", grpcTraceparent)
+	stream, err := client.Process(outgoingCtx)
+	require.NoError(t, err)
+
+	req := &extprocv3.ProcessingRequest{
+		MetadataContext: validTokenExchangeMetadata(""),
+		Request: &extprocv3.ProcessingRequest_RequestHeaders{
+			RequestHeaders: &extprocv3.HttpHeaders{
+				Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{
+					{Key: "traceparent", RawValue: []byte(httpTraceparent)},
+					{Key: "baggage", RawValue: []byte("tenant=acme")},
+				}},
+			},
+		},
+	}
+	require.NoError(t, stream.Send(req))
+	require.NoError(t, stream.CloseSend())
+	_, err = stream.Recv()
+	require.NoError(t, err)
+
+	assert.Equal(t, grpcTraceID, seenTraceID,
+		"trace context must come from agentgateway's own gRPC call metadata, not the proxied HTTP request header")
+	assert.Equal(t, "acme", seenBaggage,
+		"HTTP baggage must survive when the preferred gRPC trace context has no baggage")
 }
 
 // Spec: US1 S2 — Span outcome attribute must be set on exchange_failure
@@ -3601,10 +3840,10 @@ func TestServer_OPA_BodyPhase_MCPServerMetadata_PropagatedToOPAInput(t *testing.
 	var sawMCPInput bool
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "body-phase input must expose parsed MCP input")
 			sawMCPInput = true
-			seenTargetServerName = mcp.TargetServerName
+			seenTargetServerName, _ = mcp["target_server_name"].(string)
 			return &authorization.OPADecision{Action: "allow"}, nil
 		},
 	}
@@ -3684,9 +3923,9 @@ func TestServer_OPA_HeadersOnly_MCPServerMetadata_PropagatedToOPAInput(t *testin
 	var seenTargetServerName string
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "header-only input must expose parsed MCP input")
-			seenTargetServerName = mcp.TargetServerName
+			seenTargetServerName, _ = mcp["target_server_name"].(string)
 			return &authorization.OPADecision{Action: "allow"}, nil
 		},
 	}
@@ -3715,9 +3954,9 @@ func TestServer_OPA_BatchBodyPhase_SameTargetServerNameAcrossElements(t *testing
 	var seenServers []string
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
-			mcp, ok := input["mcp"].(*authorization.MCPInput)
+			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "batch element must expose parsed MCP input")
-			seenServers = append(seenServers, mcp.TargetServerName)
+			seenServers = append(seenServers, mcp["target_server_name"].(string))
 			return &authorization.OPADecision{Action: "allow"}, nil
 		},
 	}

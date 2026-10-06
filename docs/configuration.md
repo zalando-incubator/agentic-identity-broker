@@ -1376,6 +1376,8 @@ telemetry:
 | `telemetry.exporter.compression` | string | `"none"` | `IDENTITY_BROKER_TELEMETRY_EXPORTER_COMPRESSION` | Payload compression for all OTLP exporters. Accepted values: `none`, `gzip`. |
 | `telemetry.exporter.insecure` | bool | `false` | `IDENTITY_BROKER_TELEMETRY_EXPORTER_INSECURE` | Disable TLS for the OTLP exporter. **Do not use in production** — a startup warning is emitted when this is true. Only meaningful for gRPC; for HTTP the URL scheme controls TLS. |
 
+For HTTP/HTTPS, configure the collector URL without a signal path. AIB sends traces to `/v1/traces`, metrics to `/v1/metrics`, and logs to `/v1/logs` on that collector. Do not append a signal path to the shared endpoint. All three exporters use the same endpoint configuration.
+
 ### Environment Variable Mapping
 
 All OTel settings can be overridden via environment variables using the `IDENTITY_BROKER_TELEMETRY_` prefix, following the same Viper binding rules as other settings. For example:
