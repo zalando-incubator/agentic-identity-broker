@@ -864,6 +864,8 @@ Authorization-code exchange after PKCE, or token refresh
 
 The assertion has `iss` and `sub` equal to the broker-hosted client ID URL. Its sole `aud` equals the configured token endpoint. It expires within five minutes and has a new `jti` for every attempt. Authorization-code exchange uses `AuthStyleInParams`, an empty client secret, and a fresh assertion pair inside the existing retry loop. Refresh uses the manual form-post path and adds a fresh assertion pair. No CIMD request sends a shared secret or HTTP Basic credential. A metadata, key, assertion, or provider-validation error fails the affected operation closed without an authentication downgrade.
 
+CIMD token refresh emits a credential-free token-acquisition audit record with the service ID, operation `refresh`, and outcome `rejected` on failure, including response-drain read errors and responses over the 1 MiB limit. Other client modes do not emit CIMD token-acquisition events.
+
 **Public documents**: The anonymous metadata route returns the broker-hosted Client ID Metadata Document only for an existing CIMD confidential service with a usable published key. Its JWK route publishes public CIMD verification keys only. Both routes use `Cache-Control: public, max-age=300`. All unavailable service states return the existing JSON `404` response without a redirect, partial document, or key material.
 
 An advertised CIMD key can remain pending during its activation grace period. Metadata and JWK routes require an effective signing key whose `kid` appears in the public JWK set. The set still includes pending and retained prior keys. A pending-only set produces JSON `404` responses.

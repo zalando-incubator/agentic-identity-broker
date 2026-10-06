@@ -885,9 +885,15 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		return nil, fmt.Errorf("failed to decode upstream token response: %w", err)
 	}
 	if _, err := io.Copy(io.Discard, limited); err != nil {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
 		return nil, fmt.Errorf("failed to read upstream token response: %w", err)
 	}
 	if limited.N == 0 {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
 		return nil, fmt.Errorf("upstream token response exceeds %d byte limit", maxTokenResponseBytes)
 	}
 
