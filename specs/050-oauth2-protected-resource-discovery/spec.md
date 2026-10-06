@@ -38,6 +38,122 @@ An administrator enters the URL of a protected third-party service. The broker d
 9. **Given** a path-qualified resource without a challenge, **When** an administrator registers, **Then** path-specific Protected Resource Metadata takes priority over root metadata.
 10. **Given** a discovered service without an override, **When** an administrator reads it, **Then** `authorization_params.resource` equals its verified resource URL.
 
+**Example — hosted CIMD wins over DCR (US1-S1, S2, S3, S5, S10).** The Admin API and browser requests pass through authenticated reverse proxies. The proxies supply principal headers. In HTTP transcripts, `#` marks context and is not sent. Token-like values are illustrative, not real credentials.
+
+The broker uses `server.enduser.public_url` as the public CIMD document base. `third_party_oauth2.jwe_signing_key` protects OAuth2 state, not CIMD assertions. An administrator generates the CIMD signing key through the Admin API.
+
+```yaml
+# broker.yaml (relevant entries)
+server:
+  enduser:
+    public_url: "https://broker.example.com"
+third_party_oauth2:
+  jwe_signing_key: "${IDENTITY_BROKER_JWE_SIGNING_KEY}"
+```
+
+Given no usable CIMD key, the administrator generates the first one before service creation. The broker stores the private key. The API receives no key bytes and returns metadata only. An existing usable key needs no new request.
+
+```http
+# Administrator -> broker Admin API; only when no usable CIMD key exists
+POST /api/cimd-client-keys HTTP/1.1
+Host: broker-admin.example.com
+Content-Type: application/json
+
+{}
+
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{"kid":"cimd-key-2026-10-06-001","algorithm":"ES256","is_current":true,"activates_at":"2026-10-06T09:55:00Z","created_at":"2026-10-06T09:55:00Z"}
+```
+
+When the administrator creates the service, the broker follows the resource's challenge and the issuer's metadata. The two JSON responses are the provider's published metadata documents.
+
+```http
+# Administrator -> broker Admin API
+POST /api/services HTTP/1.1
+Host: broker-admin.example.com
+Content-Type: application/json
+
+{"display_name":"Example MCP","discovery":{"enable_discovery":true,"resource_url":"https://mcp.example.com/mcp"}}
+
+# Broker -> protected resource, without credentials
+GET /mcp HTTP/1.1
+Host: mcp.example.com
+
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+
+# Broker -> protected-resource metadata
+GET /.well-known/oauth-protected-resource/mcp HTTP/1.1
+Host: mcp.example.com
+Accept: application/json
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"resource":"https://mcp.example.com/mcp","authorization_servers":["https://auth.example.com/tenant"]}
+
+# Broker -> authorization-server metadata
+GET /.well-known/oauth-authorization-server/tenant HTTP/1.1
+Host: auth.example.com
+Accept: application/json
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"issuer":"https://auth.example.com/tenant","authorization_endpoint":"https://auth.example.com/tenant/authorize","token_endpoint":"https://auth.example.com/tenant/token","client_id_metadata_document_supported":true,"token_endpoint_auth_methods_supported":["private_key_jwt","client_secret_basic"],"token_endpoint_auth_signing_alg_values_supported":["ES256"],"registration_endpoint":"https://auth.example.com/tenant/register"}
+
+# Broker -> administrator; no DCR POST occurs
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{"id":"6c84fb90-12c4-11e1-840d-7b25c5ee775a","display_name":"Example MCP","client_id":"https://broker.example.com/.well-known/oauth-client/6c84fb90-12c4-11e1-840d-7b25c5ee775a","token_endpoint_auth_method":"private_key_jwt","oauth2_flavor":"standard","issuer_uri":"https://auth.example.com/tenant","discovery":{"enable_discovery":true,"resource_url":"https://mcp.example.com/mcp","client_method":"cimd"},"endpoints":{"authorize_endpoint":"https://auth.example.com/tenant/authorize","token_endpoint":"https://auth.example.com/tenant/token"},"authorization_params":{"resource":"https://mcp.example.com/mcp"},"created_at":"2026-10-06T10:00:00Z","updated_at":"2026-10-06T10:00:00Z"}
+```
+
+Then the authorization server can retrieve the broker's public client document. The user's authorization and code exchange each contain one `resource` value. The RFC 7636 verifier and challenge shown here form a matching PKCE pair.
+The broker generates a fresh pair for each real connection.
+
+```http
+# Authorization server -> broker's hosted client document
+GET /.well-known/oauth-client/6c84fb90-12c4-11e1-840d-7b25c5ee775a HTTP/1.1
+Host: broker.example.com
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: public, max-age=300
+
+{"client_id":"https://broker.example.com/.well-known/oauth-client/6c84fb90-12c4-11e1-840d-7b25c5ee775a","redirect_uris":["https://broker.example.com/api/third-party/6c84fb90-12c4-11e1-840d-7b25c5ee775a/oauth2/callback"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"private_key_jwt","token_endpoint_auth_signing_alg":"ES256","jwks_uri":"https://broker.example.com/.well-known/oauth-client/6c84fb90-12c4-11e1-840d-7b25c5ee775a/jwks.json"}
+
+# User's browser -> broker End-user API
+GET /api/third-party/6c84fb90-12c4-11e1-840d-7b25c5ee775a/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions HTTP/1.1
+Host: broker.example.com
+
+HTTP/1.1 302 Found
+Location: https://auth.example.com/tenant/authorize?response_type=code&client_id=https%3A%2F%2Fbroker.example.com%2F.well-known%2Foauth-client%2F6c84fb90-12c4-11e1-840d-7b25c5ee775a&redirect_uri=https%3A%2F%2Fbroker.example.com%2Fapi%2Fthird-party%2F6c84fb90-12c4-11e1-840d-7b25c5ee775a%2Foauth2%2Fcallback&state=SEALED_JWE&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&resource=https%3A%2F%2Fmcp.example.com%2Fmcp
+
+# Browser -> broker after provider grants access
+GET /api/third-party/6c84fb90-12c4-11e1-840d-7b25c5ee775a/oauth2/callback?code=CODE_1&state=SEALED_JWE HTTP/1.1
+Host: broker.example.com
+
+# Broker -> provider; signed assertion is generated for this token request
+POST /tenant/token HTTP/1.1
+Host: auth.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code=CODE_1&redirect_uri=https%3A%2F%2Fbroker.example.com%2Fapi%2Fthird-party%2F6c84fb90-12c4-11e1-840d-7b25c5ee775a%2Foauth2%2Fcallback&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk&client_id=https%3A%2F%2Fbroker.example.com%2F.well-known%2Foauth-client%2F6c84fb90-12c4-11e1-840d-7b25c5ee775a&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer&client_assertion=SIGNED_ES256_JWT&resource=https%3A%2F%2Fmcp.example.com%2Fmcp
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"access_token":"ACCESS_CIMD","token_type":"Bearer","expires_in":3600}
+
+# Broker -> user's browser
+HTTP/1.1 302 Found
+Location: https://broker.example.com/sessions?success=true&service_id=6c84fb90-12c4-11e1-840d-7b25c5ee775a
+
+```
+
 ---
 
 ### User Story 2 - Connect a service through dynamic registration (Priority: P1)
@@ -60,6 +176,114 @@ An administrator enters a protected resource URL whose authorization server does
 8. **Given** an authorization server offers only public DCR, **When** an administrator registers its resource, **Then** the broker selects a public client with PKCE.
 9. **Given** two authorization servers issue the same DCR client ID, **When** an administrator registers both services, **Then** both remain usable under their distinct issuers.
 
+**Example — confidential DCR, explicit audience, and renewal (US2-S1, S3, S5, S7).** This is a separate provider from the CIMD example. It uses the same broker configuration and requires no new discovery setting.
+
+Given a provider with no compatible CIMD and both confidential and public registration, the administrator supplies a distinct token audience. The broker tries path-specific metadata first and uses root metadata only after `404`.
+The administrator's `display_name` (`Files MCP`) supplies the DCR `client_name`. The protected resource does not supply that name.
+
+```http
+# Administrator -> broker Admin API
+POST /api/services HTTP/1.1
+Host: broker-admin.example.com
+Content-Type: application/json
+
+{"display_name":"Files MCP","discovery":{"enable_discovery":true,"resource_url":"https://files.example.com/mcp"},"authorization_params":{"resource":"https://files.example.com/api"}}
+
+# Broker -> protected resource, without credentials
+GET /mcp HTTP/1.1
+Host: files.example.com
+
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer realm="files"
+
+GET /.well-known/oauth-protected-resource/mcp HTTP/1.1
+Host: files.example.com
+Accept: application/json
+
+HTTP/1.1 404 Not Found
+
+GET /.well-known/oauth-protected-resource HTTP/1.1
+Host: files.example.com
+Accept: application/json
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"resource":"https://files.example.com/mcp","authorization_servers":["https://login.example.com"]}
+
+GET /.well-known/oauth-authorization-server HTTP/1.1
+Host: login.example.com
+Accept: application/json
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"issuer":"https://login.example.com","authorization_endpoint":"https://login.example.com/authorize","token_endpoint":"https://login.example.com/token","registration_endpoint":"https://login.example.com/register","token_endpoint_auth_methods_supported":["client_secret_basic","none"],"code_challenge_methods_supported":["S256"]}
+
+# Broker -> provider DCR endpoint; no initial access token
+POST /register HTTP/1.1
+Host: login.example.com
+Content-Type: application/json
+
+{"redirect_uris":["https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440003/oauth2/callback"],"client_name":"Files MCP","application_type":"web","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"client_secret_basic"}
+
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{"client_id":"dcr-client-123","client_secret":"PROVIDER_ISSUED_SECRET","client_secret_expires_at":0,"token_endpoint_auth_method":"client_secret_basic","redirect_uris":["https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440003/oauth2/callback"]}
+
+# Broker -> administrator; the provider-issued secret is absent
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{"id":"880e8400-e29b-41d4-a716-446655440003","display_name":"Files MCP","client_id":"dcr-client-123","token_endpoint_auth_method":"client_secret_basic","oauth2_flavor":"standard","issuer_uri":"https://login.example.com","discovery":{"enable_discovery":true,"resource_url":"https://files.example.com/mcp","client_method":"dcr"},"endpoints":{"authorize_endpoint":"https://login.example.com/authorize","token_endpoint":"https://login.example.com/token"},"authorization_params":{"resource":"https://files.example.com/api"},"created_at":"2026-10-06T10:00:00Z","updated_at":"2026-10-06T10:00:00Z"}
+```
+
+When a user connects, the authorization redirect and code exchange use the explicit audience. After a broker restart, renewal uses the same issuer-scoped client and secret. Basic authentication carries the secret only to the provider, not to the browser or Admin API.
+
+```http
+# User's browser -> broker End-user API
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440003/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions HTTP/1.1
+Host: broker.example.com
+
+HTTP/1.1 302 Found
+Location: https://login.example.com/authorize?response_type=code&client_id=dcr-client-123&redirect_uri=https%3A%2F%2Fbroker.example.com%2Fapi%2Fthird-party%2F880e8400-e29b-41d4-a716-446655440003%2Foauth2%2Fcallback&state=SEALED_JWE&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&resource=https%3A%2F%2Ffiles.example.com%2Fapi
+
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440003/oauth2/callback?code=CODE_2&state=SEALED_JWE HTTP/1.1
+Host: broker.example.com
+
+# Broker -> provider; Basic value is the encoded DCR client ID and secret
+POST /token HTTP/1.1
+Host: login.example.com
+Authorization: Basic ENCODED_DCR_CREDENTIAL
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code=CODE_2&redirect_uri=https%3A%2F%2Fbroker.example.com%2Fapi%2Fthird-party%2F880e8400-e29b-41d4-a716-446655440003%2Foauth2%2Fcallback&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk&resource=https%3A%2F%2Ffiles.example.com%2Fapi
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"access_token":"ACCESS_1","token_type":"Bearer","expires_in":3600,"refresh_token":"REFRESH_1"}
+
+# After restart: user -> broker
+POST /api/third-party/880e8400-e29b-41d4-a716-446655440003/session/refresh HTTP/1.1
+Host: broker.example.com
+
+# Broker -> same provider and client; no DCR request occurs
+POST /token HTTP/1.1
+Host: login.example.com
+Authorization: Basic ENCODED_DCR_CREDENTIAL
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token&refresh_token=REFRESH_1&resource=https%3A%2F%2Ffiles.example.com%2Fapi
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"access_token":"ACCESS_2","token_type":"Bearer","expires_in":3600,"refresh_token":"REFRESH_2"}
+
+```
+
 ---
 
 ### User Story 3 - Reject unsuitable or unsafe discovery (Priority: P1)
@@ -77,13 +301,120 @@ If the URL does not identify a valid protected resource or safe client identity,
 3. **Given** a discovered URL resolves to an internal address, **When** an administrator registers, **Then** no connection to that address occurs and registration fails.
 4. **Given** no compatible CIMD or DCR, **When** an administrator registers, **Then** registration fails without a static client fallback.
 5. **Given** a selected CIMD identity is unavailable, **When** an administrator registers, **Then** registration fails without trying DCR.
-6. **Given** two advertised issuers without a selection, **When** an administrator registers, **Then** registration fails without choosing an issuer.
+6. **Given** two advertised issuers without a selection, **When** an administrator registers, **Then** the broker rejects the request and returns the validated issuers in `authorization_servers` without contacting either authorization server.
 7. **Given** the first metadata document reports another issuer, **When** an administrator registers the resource, **Then** registration fails without trying lower-priority metadata locations.
 8. **Given** an authorization server rejects a discovery-backed service's `resource`, **When** a user connects, **Then** the broker fails without a broader token request.
 9. **Given** an invalid explicit `authorization_params.resource`, **When** an administrator creates a discovery-backed service, **Then** registration fails without storing a service.
 10. **Given** both `discovery.resource_url` and `discovery.metadata_url`, **When** an administrator registers a service, **Then** the broker rejects conflicting discovery sources.
 11. **Given** an advertised confidential DCR registration rejects the broker, **When** an administrator creates the service, **Then** creation fails without a public retry.
 12. **Given** a DCR client ID already belongs to a service at the same issuer, **When** another service registers it, **Then** creation fails without changing either credential.
+
+**Example — select one advertised issuer (US3-S6, US1-S4).** Given two issuers and no `issuer_uri`, the first create fails. Neither issuer receives a metadata or registration request.
+The Admin API repeats the validated issuer URLs from the protected resource in its error response. The administrator can select one without tracing the broker's upstream requests.
+
+```http
+# Administrator -> broker Admin API
+POST /api/services HTTP/1.1
+Host: broker-admin.example.com
+Content-Type: application/json
+
+{"display_name":"Shared MCP","discovery":{"enable_discovery":true,"resource_url":"https://shared.example.com/mcp"}}
+
+# Broker -> protected resource, without credentials
+GET /mcp HTTP/1.1
+Host: shared.example.com
+
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://shared.example.com/.well-known/oauth-protected-resource/mcp"
+
+GET /.well-known/oauth-protected-resource/mcp HTTP/1.1
+Host: shared.example.com
+Accept: application/json
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"resource":"https://shared.example.com/mcp","authorization_servers":["https://login-a.example.com","https://login-b.example.com"]}
+
+# Broker -> administrator; no service or status resource exists
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error":"discovery failed","message":"issuer_selection_required","authorization_servers":["https://login-a.example.com","https://login-b.example.com"]}
+```
+
+The administrator selects the second issuer from the error's `authorization_servers`. On retry, the broker validates resource metadata again and contacts only that issuer. This broker already has the CIMD key generated in the first example.
+
+```http
+# Administrator -> broker Admin API
+POST /api/services HTTP/1.1
+Host: broker-admin.example.com
+Content-Type: application/json
+
+{"display_name":"Shared MCP","issuer_uri":"https://login-b.example.com","discovery":{"enable_discovery":true,"resource_url":"https://shared.example.com/mcp"}}
+
+# Broker -> resource; the same challenge and metadata must still match
+GET /mcp HTTP/1.1
+Host: shared.example.com
+
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://shared.example.com/.well-known/oauth-protected-resource/mcp"
+
+GET /.well-known/oauth-protected-resource/mcp HTTP/1.1
+Host: shared.example.com
+Accept: application/json
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"resource":"https://shared.example.com/mcp","authorization_servers":["https://login-a.example.com","https://login-b.example.com"]}
+
+# Broker -> selected issuer; no request goes to login-a.example.com
+GET /.well-known/oauth-authorization-server HTTP/1.1
+Host: login-b.example.com
+Accept: application/json
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"issuer":"https://login-b.example.com","authorization_endpoint":"https://login-b.example.com/authorize","token_endpoint":"https://login-b.example.com/token","client_id_metadata_document_supported":true,"token_endpoint_auth_methods_supported":["private_key_jwt"],"token_endpoint_auth_signing_alg_values_supported":["ES256"]}
+
+# Broker -> administrator; the selected issuer owns this service
+HTTP/1.1 201 Created
+Content-Type: application/json
+
+{"id":"991e8400-e29b-41d4-a716-446655440004","display_name":"Shared MCP","client_id":"https://broker.example.com/.well-known/oauth-client/991e8400-e29b-41d4-a716-446655440004","token_endpoint_auth_method":"private_key_jwt","oauth2_flavor":"standard","issuer_uri":"https://login-b.example.com","discovery":{"enable_discovery":true,"resource_url":"https://shared.example.com/mcp","client_method":"cimd"},"endpoints":{"authorize_endpoint":"https://login-b.example.com/authorize","token_endpoint":"https://login-b.example.com/token"},"authorization_params":{"resource":"https://shared.example.com/mcp"},"created_at":"2026-10-06T10:10:00Z","updated_at":"2026-10-06T10:10:00Z"}
+```
+
+**Example — an authorization server rejects the requested audience (US3-S8).** Given the Files MCP DCR service, a new connection fails when the provider rejects `resource`. The broker does not repeat the request without it.
+
+```http
+# User's browser -> broker, then provider authorization as in the DCR example
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440003/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions HTTP/1.1
+Host: broker.example.com
+
+HTTP/1.1 302 Found
+Location: https://login.example.com/authorize?response_type=code&client_id=dcr-client-123&redirect_uri=https%3A%2F%2Fbroker.example.com%2Fapi%2Fthird-party%2F880e8400-e29b-41d4-a716-446655440003%2Foauth2%2Fcallback&state=SEALED_JWE&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&resource=https%3A%2F%2Ffiles.example.com%2Fapi
+
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440003/oauth2/callback?code=CODE_REJECTED&state=SEALED_JWE HTTP/1.1
+Host: broker.example.com
+
+# Broker -> provider; one token request
+POST /token HTTP/1.1
+Host: login.example.com
+Authorization: Basic ENCODED_DCR_CREDENTIAL
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code=CODE_REJECTED&redirect_uri=https%3A%2F%2Fbroker.example.com%2Fapi%2Fthird-party%2F880e8400-e29b-41d4-a716-446655440003%2Foauth2%2Fcallback&code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk&resource=https%3A%2F%2Ffiles.example.com%2Fapi
+
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error":"invalid_target"}
+```
+
+The failed connection stores no replacement token and makes no second token request. Existing sessions keep their previous tokens.
+The rejected token request does not change discovery status; the service still reports `ready`.
 
 ---
 
@@ -106,11 +437,106 @@ An administrator reads a service's discovery status through the Admin API. The s
 7. **Given** an explicit resource override, **When** an administrator refreshes discovery without changing the override, **Then** `authorization_params.resource` remains administrator-selected.
 8. **Given** an explicit override, **When** an administrator updates `authorization_params` without `resource`, **Then** the returned value becomes the verified discovery URL.
 
+**Example — failed discovery refresh leaves the active service usable (US4-S2, S5, S7).** Given the Files MCP service and its `REFRESH_2` session after the DCR example's renewal, the status initially reports success. The administrator omits `authorization_params` on update, so the explicit audience remains in force.
+
+```http
+# Administrator -> broker Admin API
+GET /api/services/880e8400-e29b-41d4-a716-446655440003/discovery-status HTTP/1.1
+Host: broker-admin.example.com
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"status":"ready","resource_url":"https://files.example.com/mcp","issuer_uri":"https://login.example.com","client_method":"dcr","last_attempt_at":"2026-10-06T10:00:00Z","last_success_at":"2026-10-06T10:00:00Z","failure_reason":null}
+
+PUT /api/services/880e8400-e29b-41d4-a716-446655440003 HTTP/1.1
+Host: broker-admin.example.com
+Content-Type: application/json
+
+{"display_name":"Files MCP","discovery":{"enable_discovery":true,"resource_url":"https://files.example.com/mcp"}}
+
+# The resource still advertises the same issuer. Its path-specific location returns 404.
+GET /mcp HTTP/1.1
+Host: files.example.com
+
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer realm="files"
+
+GET /.well-known/oauth-protected-resource/mcp HTTP/1.1
+Host: files.example.com
+Accept: application/json
+
+HTTP/1.1 404 Not Found
+
+GET /.well-known/oauth-protected-resource HTTP/1.1
+Host: files.example.com
+Accept: application/json
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"resource":"https://files.example.com/mcp","authorization_servers":["https://login.example.com"]}
+
+# Issuer document is now invalid: token_endpoint is missing
+GET /.well-known/oauth-authorization-server HTTP/1.1
+Host: login.example.com
+Accept: application/json
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"issuer":"https://login.example.com","authorization_endpoint":"https://login.example.com/authorize"}
+
+# Broker -> administrator; no active service fields change
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error":"discovery failed","message":"authorization_server_metadata_invalid"}
+```
+
+Then the broker restarts. The status records the failed attempt but still describes the active issuer and client method. The service response keeps its client ID, endpoints, and explicit resource. The provider's token endpoint remains available for the existing session.
+
+```http
+GET /api/services/880e8400-e29b-41d4-a716-446655440003/discovery-status HTTP/1.1
+Host: broker-admin.example.com
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"status":"failed","resource_url":"https://files.example.com/mcp","issuer_uri":"https://login.example.com","client_method":"dcr","last_attempt_at":"2026-10-06T11:00:00Z","last_success_at":"2026-10-06T10:00:00Z","failure_reason":"authorization_server_metadata_invalid"}
+
+GET /api/services/880e8400-e29b-41d4-a716-446655440003 HTTP/1.1
+Host: broker-admin.example.com
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"id":"880e8400-e29b-41d4-a716-446655440003","display_name":"Files MCP","client_id":"dcr-client-123","token_endpoint_auth_method":"client_secret_basic","oauth2_flavor":"standard","issuer_uri":"https://login.example.com","discovery":{"enable_discovery":true,"resource_url":"https://files.example.com/mcp","client_method":"dcr"},"endpoints":{"authorize_endpoint":"https://login.example.com/authorize","token_endpoint":"https://login.example.com/token"},"authorization_params":{"resource":"https://files.example.com/api"},"created_at":"2026-10-06T10:00:00Z","updated_at":"2026-10-06T10:00:00Z"}
+
+# User -> broker End-user API, with the existing session
+POST /api/third-party/880e8400-e29b-41d4-a716-446655440003/session/refresh HTTP/1.1
+Host: broker.example.com
+
+# Broker -> provider; prior client identity and resource still apply
+POST /token HTTP/1.1
+Host: login.example.com
+Authorization: Basic ENCODED_DCR_CREDENTIAL
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token&refresh_token=REFRESH_2&resource=https%3A%2F%2Ffiles.example.com%2Fapi
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"access_token":"ACCESS_3","token_type":"Bearer","expires_in":3600,"refresh_token":"REFRESH_3"}
+```
+
 ### Edge Cases
 
 - If resource metadata is missing, malformed, too large, or unavailable within the discovery time limit, the broker rejects new discovery-backed registrations.
 - If resource metadata omits authorization servers, the broker rejects the registration. The URL alone cannot establish a trusted issuer.
 - If metadata advertises multiple authorization servers and the administrator selects none, the broker rejects the request instead of choosing one arbitrarily.
+- If the resource changes its issuer list after a selection error, the broker validates fresh metadata on retry. If the chosen issuer is absent, it returns `issuer_not_advertised` and creates no service.
 - If all applicable OAuth2 and OpenID Connect metadata locations are absent, the broker rejects registration. A returned document with an invalid issuer or endpoints fails without fallback.
 - If the authorization server does not accept RFC 8707 `resource`, account connection or renewal fails. Successful metadata discovery does not guarantee token issuance.
 - If DCR requires an initial access token or returns an unsupported client authentication method, the broker rejects automatic registration.
@@ -128,12 +554,12 @@ An administrator reads a service's discovery status through the Admin API. The s
 - **FR-001**: Administrators MUST select either existing direct authorization-server configuration or a protected resource URL in `discovery.resource_url` with `discovery.enable_discovery: true`. Existing `discovery.metadata_url` MUST continue to identify authorization-server metadata only.
 - **FR-002**: A request with `discovery.resource_url` MUST reject `discovery.metadata_url`, manual OAuth2 endpoints, and caller-supplied client credentials as fallbacks. An optional `issuer_uri` MUST match one issuer advertised by that resource.
 - **FR-003**: The broker MUST probe the protected resource without credentials. It MUST use `resource_metadata` only from a `401` Bearer or DPoP `WWW-Authenticate` challenge with exactly one occurrence. Duplicate values MUST fail, even when identical. Malformed or unsupported challenges with `resource_metadata` MUST fail. A value on any other response status MUST fail. None of these failures may trigger a well-known fallback. If no `resource_metadata` is present, a resource with a path MUST try its path-specific RFC 9728 location before the root location. For `https://mcp.example.com/mcp`, those locations are `https://mcp.example.com/.well-known/oauth-protected-resource/mcp` and `https://mcp.example.com/.well-known/oauth-protected-resource`, in that order. It MUST try the root only after a path-specific `404 Not Found`. A root resource uses the root location. Creation MUST fail if no valid Protected Resource Metadata exists.
-- **FR-004**: The broker MUST require an exact match between the configured resource identifier and the identifier in its metadata. The metadata MUST name at least one authorization server. If it names one, the broker MUST select that issuer without requiring `issuer_uri`. If it names several, the administrator MUST select one of them.
+- **FR-004**: The broker MUST require an exact match between the configured resource identifier and the identifier in its metadata. The metadata MUST name at least one authorization server. Issuer candidates MUST be distinct public HTTPS URIs without user information, query, or fragment before the broker returns them to an administrator. If the metadata names one, the broker MUST select that issuer without requiring `issuer_uri`. If it names several, the administrator MUST select one of them. The broker MUST revalidate that choice against fresh metadata on retry.
 - **FR-005**: For issuer `https://auth.example.com/tenant`, the broker MUST try `https://auth.example.com/.well-known/oauth-authorization-server/tenant`, then `https://auth.example.com/.well-known/openid-configuration/tenant`, then `https://auth.example.com/tenant/.well-known/openid-configuration`. For root issuer `https://auth.example.com`, it MUST try `https://auth.example.com/.well-known/oauth-authorization-server`, then `https://auth.example.com/.well-known/openid-configuration`. The broker MUST continue only after a candidate returns `404 Not Found`. A returned document MUST exactly match the selected issuer and provide usable authorization and token endpoints. Invalid documents and other errors MUST fail creation without trying another candidate.
 - **FR-006**: A successful discovery MUST save the configured resource, selected issuer, discovered authorization and token endpoints, selected client identity, and chosen bootstrap method. These values MUST remain available after a restart.
 - **FR-007**: The broker MUST prefer its existing hosted CIMD confidential client when the chosen authorization server advertises CIMD and supports the broker's authentication method. It MUST NOT invoke DCR when compatible CIMD succeeds.
 - **FR-008**: If no compatible CIMD option exists, the broker MUST prefer DCR with a compatible confidential client method. It MUST use public DCR with PKCE only when confidential DCR is not offered or has no compatible method. If neither DCR option is usable, creation MUST fail. A failed selected confidential registration MUST NOT trigger a public retry.
-- **FR-009**: DCR MUST register the broker's actual callback and obtain a client identity usable with its authorization-code flow. It MUST reject an empty client identifier, incompatible callback, a returned authentication mode that differs from the selected mode, or any non-zero `client_secret_expires_at`. A failed selected registration MUST NOT trigger another client method.
+- **FR-009**: DCR MUST register the broker's actual callback and obtain a client identity usable with its authorization-code flow. Its `client_name` MUST equal the administrator-supplied service `display_name`. It MUST reject an empty client identifier, incompatible callback, a returned authentication mode that differs from the selected mode, or any non-zero `client_secret_expires_at`. A failed selected registration MUST NOT trigger another client method.
 - **FR-010**: A DCR-created client MUST retain its returned identifier and required credential for subsequent connections. If the provider issues a refresh token and accepts the credential, renewal MUST use the same registered identity. If it issues no refresh token or rejects the credential, renewal MUST fail without re-registration, an authentication downgrade, or a broader retry. Ordinary account connections MUST NOT create a new registration.
 - **FR-011**: Discovery-backed connections MUST keep authorization-code and PKCE safeguards. Every authorization request and token request, including code exchange and refresh, MUST contain exactly one RFC 8707 `resource` parameter. Its value MUST equal the persisted `authorization_params.resource`. If the authorization server rejects it, connection or renewal MUST fail. The broker MUST NOT retry without `resource` or store a replacement token from that failed request.
 - **FR-012**: A failed create MUST leave no usable service or stored client credential. A failed update MUST preserve the previous active issuer, endpoints, client identity, and user sessions.
@@ -159,8 +585,8 @@ An administrator reads a service's discovery status through the Admin API. The s
 - **API-002**: Administrative service create, read, list, and update representations MUST expose `discovery.resource_url` and the effective `authorization_params.resource` for discovery-backed services. They MUST show the selected `issuer_uri`, `client_id`, bootstrap method, and public or confidential mode without disclosing credentials. For DCR, consumers MUST identify the client by issuer and client ID together.
 - **API-003**: The Admin API MUST expose authenticated `GET /api/services/{service-id}/discovery-status` for existing services. Its response MUST include `status`, `resource_url`, `issuer_uri`, and `client_method`. It MUST also include `last_attempt_at`, `last_success_at`, and `failure_reason`. A missing value MUST be null. Status values are `ready`, `failed`, and `not_applicable`. Client methods are `cimd` and `dcr`. Failure reasons MUST omit sensitive data.
 - **API-004**: This resource MUST return the latest recorded status without contacting the provider. A failed refresh MUST report `failed` while its issuer and method still describe the active configuration. Its `resource_url` identifies the discovery source. The effective token audience appears in the service's `authorization_params.resource`.
-- **API-005**: Administrative error responses MUST identify why metadata discovery or client registration failed without returning remote response bodies, secrets, or other sensitive material.
-- **API-006**: The stakeholder confirmed `discovery.resource_url`, the effective `authorization_params.resource`, and the authenticated status path and fields during the 2026-10-01 clarification session. The administrative OpenAPI contract MUST document their validation, success and error responses, and examples before implementation.
+- **API-005**: Administrative error responses MUST identify why metadata discovery or client registration failed without returning remote response bodies, secrets, or other sensitive material. On `issuer_selection_required`, the authenticated error MUST keep that code in `message` and include `authorization_servers` with all validated issuer choices from the matching resource metadata. Other errors MUST omit `authorization_servers`.
+- **API-006**: The stakeholder confirmed `discovery.resource_url`, the effective `authorization_params.resource`, and the authenticated status path and fields during the 2026-10-01 clarification session. The 2026-10-06 feedback confirms `authorization_servers` on `issuer_selection_required`. The administrative OpenAPI contract MUST document their validation, success and error responses, and examples before implementation.
 - **API-007**: Reading status for an existing service, including a manual service, MUST return success. Reading status for an unknown or deleted service MUST return not found.
 
 ### Database Requirements

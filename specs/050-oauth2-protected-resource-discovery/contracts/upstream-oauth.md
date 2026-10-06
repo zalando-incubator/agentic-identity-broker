@@ -50,9 +50,11 @@ The broker requests the root URL only after the path-specific URL returns `404`.
 ```
 
 - `resource` must be identical to the configured `resource_url`.
-- `authorization_servers` must be a non-empty array of distinct HTTPS issuer identifiers.
+- `authorization_servers` must be a non-empty array of distinct public HTTPS issuer identifiers without user information, query, or fragment.
 - A single issuer is selected automatically.
 - More than one issuer requires an identical administrator-supplied `issuer_uri`.
+- If the administrator supplies no issuer for a multi-issuer resource, the Admin API error returns the validated `authorization_servers` values. It does not fetch metadata from either authorization server.
+- On retry, the broker re-fetches resource metadata. A selected `issuer_uri` must still be advertised before the broker contacts that issuer.
 
 ## 3. Authorization-server metadata
 
@@ -110,6 +112,7 @@ The broker sends one `POST` with `Content-Type: application/json` to `registrati
 ```
 
 `token_endpoint_auth_method` is the one selected method from section 3.2.
+`client_name` is the administrator-supplied service `display_name`, not a name from the protected resource or authorization server.
 
 ### 4.2 Response validation
 
