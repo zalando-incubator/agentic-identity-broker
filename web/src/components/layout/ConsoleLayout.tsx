@@ -65,7 +65,7 @@ function ConsoleFrame({ children }: { children?: ReactNode }) {
         pendingStale: navigationCopy.pendingStale,
       }}
     >
-      {children ?? <Outlet />}
+      {children ?? <Suspense fallback={<Skeleton label={commonCopy.loading} count={3} />}><Outlet /></Suspense>}
       {commandMounted && <Suspense fallback={<Skeleton label={commonCopy.loading} />}>
         <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} onNavigate={() => setMobileNavigationOpen(false)} />
       </Suspense>}

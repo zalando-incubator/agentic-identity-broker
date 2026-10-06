@@ -15,13 +15,13 @@ const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const ErrorPage = lazy(() => import('./pages/ErrorPage'));
 
-function LoadingFallback() {
+export function AppLoading() {
   return <div className="mx-auto w-full max-w-2xl p-6"><Skeleton label={commonCopy.loading} count={3} /></div>;
 }
 
 export default function App() {
   const [router] = useState(() => createBrowserRouter(createRoutesFromElements(
-    <Route element={<Suspense fallback={<LoadingFallback />}><Outlet /></Suspense>}>
+    <Route element={<Suspense fallback={<AppLoading />}><Outlet /></Suspense>}>
       <Route path="/" element={<Navigate to="/agents" replace />} />
       <Route element={<ConsoleLayout />}>
         <Route path="/agents" element={<DelegationsPage />} />

@@ -62,6 +62,8 @@ Do not add transition delays or stagger decision controls.
 | New pending request | Count bumps once on ID addition, not initial load, unchanged polling, or removal |
 | Route or full-page content | No unrelated page-entry or staggered-row animation |
 
+Identity bootstrap and lazy route loading share a neutral placeholder; do not briefly show a decision frame on a console route. Once ConsoleShell mounts, lazy page loading stays inside its content area so navigation does not disappear.
+
 Source the console icons from lucide-animated as owned components, not runtime remote assets.
 The decision check can draw with `stroke-dashoffset`; the risk callout can use a small transform. Neither delays focus or submission.
 Empty-state icons play once on entry and on hover. Keep animation in meaningful state feedback and illustration locations, not every icon.

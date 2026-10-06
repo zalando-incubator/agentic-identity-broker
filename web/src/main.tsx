@@ -2,11 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ThemeProvider } from '@design-system/theme/ThemeProvider';
 import { QueryProvider } from '@services/query/QueryProvider';
-import { Skeleton } from '@design-system/components/feedback/Skeleton/Skeleton';
 import { InlineError } from '@design-system/components/feedback/InlineError/InlineError';
 import { DecisionShell } from '@design-system/components/layout/DecisionShell/DecisionShell';
 import { commonCopy, navigationCopy } from '@copy';
-import App from './App';
+import App, { AppLoading } from './App';
 import './styles/index.css';
 
 const rootElement = document.getElementById('root');
@@ -16,7 +15,7 @@ ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <ThemeProvider>
       <QueryProvider
-        fallback={<DecisionShell wordmarkLabel={commonCopy.brand} skipToMainLabel={navigationCopy.skipToContent}><Skeleton label={commonCopy.loading} count={3} /></DecisionShell>}
+        fallback={<AppLoading />}
         errorFallback={(error) => {
           const unauthorized = typeof error === 'object' && error !== null && 'status' in error && error.status === 401;
           return (
