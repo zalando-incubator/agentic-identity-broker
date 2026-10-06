@@ -338,6 +338,35 @@ HTTP servers drain → tp.Shutdown(ctx) → mp.Shutdown(ctx) → lp.Shutdown(ctx
 
 The composite shutdown function is stored as `App.ShutdownTelemetry func(context.Context) error` and called after HTTP servers have drained all in-flight requests.
 
+**Token exchange span attributes and logs**:
+
+The `tokenexchange.exchange` span records `token_exchange.service.id` (service UUID) and `token_exchange.service.name` (`DisplayName`) after resource resolution.
+These attributes accompany successful exchanges and every subsequent failure, including failures without a classified reason.
+Failures before provider resolution omit both attributes.
+
+Classified `Token exchange failed` logs include `failure_reason`, with the same values as the span attribute.
+The existing `resource` field identifies the target. Logs do not add service ID or name fields.
+Successes and unclassified failures omit `failure_reason`.
+Log messages, levels, and existing fields remain unchanged.
+
+The optional `token_exchange.failure_reason` attribute uses these stable values:
+
+| Value | Meaning |
+|---|---|
+| `no_grant` | The grant does not authorize this agent for the third-party service, including missing agents and stale permission sets. |
+| `no_session` | The user has no session for the third-party service. |
+| `access_token_expired` | The access token expired and no refresh token exists. |
+| `refresh_token_expired` | The stored refresh-token expiry passed, or the third-party service returned OAuth `invalid_grant` during refresh. |
+| `insufficient_scope` | The session lacks scopes required by the grant. |
+| `service_rejected` | The refresh endpoint returned a non-2xx status without OAuth `invalid_grant`. |
+
+Transport, decode, decrypt, storage, CIMD, and cancellation errors have no failure reason.
+Refresh rejection classification checks the HTTP status before decoding the body.
+The broker does not populate stored refresh-token expiry, so the third-party service's `invalid_grant` identifies refresh expiry in production.
+An `invalid_grant` response from that service retains the existing client-visible `server_error` response.
+Service metadata stays outside response JSON and contains no client secrets.
+HTTP statuses, error codes, descriptions, `error_uri`, existing log fields, and other span attributes remain unchanged.
+
 #### 3.1.4. End-to-End Testing Architecture
 
 **Purpose**: Comprehensive E2E acceptance tests that validate the complete OAuth2 Authorization Server functionality through real HTTP requests and production code paths.
@@ -1471,6 +1500,10 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **TokenExchangeRequest**: RFC 8693 token exchange request containing grant_type, subject_token, client_assertion, and resource parameters. Parsed from form-urlencoded POST body to /oauth2/token endpoint. Immutable value object after parsing.
 
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
+
+**ServiceRef**: Third-party service identity for token exchange, with the service ID and display name only. It contains no credentials and is excluded from response JSON.
+
+**FailureReason**: Stable classification of a token exchange failure after third-party service resolution. It adds telemetry context without changing the RFC 8693 error response.
 
 **ClientAssertion**: JWT authenticating the privileged client (API gateway or reverse proxy) making the token exchange request. Contains privileged client identifier in the `sub` claim. Validated against the external client-assertion trust anchor's JWKS, not against broker-minted credentials. Represents the privileged client's identity and authorization to perform token exchange.
 

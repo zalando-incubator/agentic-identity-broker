@@ -94,7 +94,7 @@ func (m *Manager) Start(ctx context.Context) error {
 2. Manager calls `Start(ctx)` which begins concurrent startup
 3. Both servers attempt to bind (`Listen()`) to their ports
 4. If both succeed, servers begin serving (`Serve()`)
-5. If either fails, context is cancelled and both stop
+5. If either bind fails, close the successfully bound listener before returning the error.
 
 ### Shutdown Sequence
 

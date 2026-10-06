@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
@@ -205,6 +206,10 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 				attribute.String("token_exchange.error_code", tokenErrForSpan.Code()),
 				attribute.String("token_exchange.error_description", tokenErrForSpan.Description()),
 			)
+			if reason := tokenErrForSpan.FailureReason(); reason != "" {
+				span.SetAttributes(attribute.String("token_exchange.failure_reason", string(reason)))
+			}
+			setServiceSpanAttributes(span, tokenErrForSpan.Service())
 		}
 		if h.Logger != nil {
 			logAttrs := []any{
@@ -220,12 +225,16 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 				if details := tokenErrForLog.Details(); details != "" {
 					logAttrs = append(logAttrs, "details", details)
 				}
+				if reason := tokenErrForLog.FailureReason(); reason != "" {
+					logAttrs = append(logAttrs, "failure_reason", string(reason))
+				}
 			}
 			h.Logger.ErrorContext(ctx, "Token exchange failed", logAttrs...)
 		}
 		h.handleTokenExchangeError(w, err)
 		return
 	}
+	setServiceSpanAttributes(span, response.Service)
 
 	body, err := json.Marshal(response) // #nosec G117 -- OAuth2 token response is serialized for its direct HTTP response, not logging.
 	if err != nil {
@@ -404,6 +413,16 @@ func tokenEndpointStatus(code string) int {
 	default:
 		return http.StatusBadRequest
 	}
+}
+
+func setServiceSpanAttributes(span trace.Span, service tokenexchange.ServiceRef) {
+	if service.ID.IsZero() {
+		return
+	}
+	span.SetAttributes(
+		attribute.String("token_exchange.service.id", service.ID.String()),
+		attribute.String("token_exchange.service.name", service.Name),
+	)
 }
 
 // truncateSpanAttribute trims s to at most maxRunes runes and replaces newlines
