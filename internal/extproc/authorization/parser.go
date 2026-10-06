@@ -1,9 +1,8 @@
 package authorization
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // MCPMessage represents a parsed JSON-RPC 2.0 message from the MCP protocol.
@@ -15,56 +14,52 @@ type MCPMessage struct {
 	Params  map[string]any `json:"params"`
 }
 
-// ParseMCPMessage parses a single JSON-RPC 2.0 message from body bytes.
-// Returns an error for empty body, malformed JSON, non-object JSON values,
-// missing/invalid jsonrpc version, or empty method.
-// Batch messages (JSON arrays) are handled by ParseMCPBatch.
-func ParseMCPMessage(body []byte) (*MCPMessage, error) {
-	if len(body) == 0 {
-		return nil, fmt.Errorf("mcp parser: empty body")
+// ParseMCPMessage validates a decoded JSON-RPC 2.0 message.
+// Batch elements use the same validation as standalone messages.
+func ParseMCPMessage(value any) (*MCPMessage, error) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: expected object")
 	}
-
-	var msg MCPMessage
-	if err := json.Unmarshal(body, &msg); err != nil {
-		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: %w", err)
+	if field := duplicateEnvelopeField(object); field != "" {
+		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: duplicate %s field", field)
 	}
-
-	// Validate required JSON-RPC 2.0 fields to prevent misclassification of
-	// arbitrary JSON as MCP messages (e.g. when protocol="mcp" is set by the proxy
-	// but the body is not valid JSON-RPC 2.0).
+	msg := &MCPMessage{ID: object["id"]}
+	if version, ok := object["jsonrpc"].(string); ok {
+		msg.JSONRPC = version
+	} else if object["jsonrpc"] != nil {
+		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: jsonrpc must be a string")
+	}
+	if method, ok := object["method"].(string); ok {
+		msg.Method = method
+	} else if object["method"] != nil {
+		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: method must be a string")
+	}
+	if params, ok := object["params"].(map[string]any); ok {
+		msg.Params = params
+	} else if object["params"] != nil {
+		return nil, fmt.Errorf("mcp parser: invalid JSON-RPC: params must be an object")
+	}
 	if msg.JSONRPC != "2.0" {
 		return nil, fmt.Errorf("mcp parser: missing or invalid jsonrpc field (expected \"2.0\", got %q)", msg.JSONRPC)
 	}
 	if msg.Method == "" {
 		return nil, fmt.Errorf("mcp parser: missing or empty method field")
 	}
-
-	return &msg, nil
+	return msg, nil
 }
 
-// ParseMCPBatch detects and parses JSON-RPC 2.0 batch requests (FR-023).
-// If body begins with '[', it is parsed as a batch and each element is parsed
-// individually. Returns an error if any element is malformed.
-// Returns nil, nil if body is not a JSON array (caller should use ParseMCPMessage).
-func ParseMCPBatch(body []byte) ([]*MCPMessage, error) {
-	trimmed := bytes.TrimLeft(body, " \t\r\n")
-	if len(trimmed) == 0 || trimmed[0] != '[' {
-		return nil, nil // not a batch
-	}
-
-	var rawMessages []json.RawMessage
-	if err := json.Unmarshal(body, &rawMessages); err != nil {
-		return nil, fmt.Errorf("mcp parser: invalid batch JSON: %w", err)
-	}
-
-	messages := make([]*MCPMessage, 0, len(rawMessages))
-	for i, raw := range rawMessages {
-		msg, err := ParseMCPMessage(raw)
-		if err != nil {
-			return nil, fmt.Errorf("mcp parser: batch element %d: %w", i, err)
+func duplicateEnvelopeField(object map[string]any) string {
+	for _, field := range [...]string{"jsonrpc", "id", "method", "params"} {
+		matches := 0
+		for key := range object {
+			if strings.EqualFold(key, field) {
+				matches++
+			}
 		}
-		messages = append(messages, msg)
+		if matches > 1 {
+			return field
+		}
 	}
-
-	return messages, nil
+	return ""
 }

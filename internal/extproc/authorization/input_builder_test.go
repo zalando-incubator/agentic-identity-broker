@@ -1,6 +1,7 @@
 package authorization_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -23,13 +24,14 @@ func TestBuildOPAInput_ToolsCall_ValidName(t *testing.T) {
 		},
 	})
 
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
+	input, err := buildOPAInput(t, "mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
 	require.NoError(t, err)
 	assert.Equal(t, "mcp_tool_call", input["type"])
 
-	mcp, ok := input["mcp"].(*authorization.MCPInput)
+	mcp, ok := input["mcp"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "list_files", mcp.ToolName)
+	assert.Equal(t, "list_files", mcp["tool_name"])
+	assert.Equal(t, map[string]any{"path": "/tmp"}, mcp["arguments"])
 }
 
 // TestBuildOPAInput_ToolsCall_MissingParams verifies that tools/call with absent
@@ -41,7 +43,7 @@ func TestBuildOPAInput_ToolsCall_MissingParams(t *testing.T) {
 		"id":      1,
 	})
 
-	_, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
+	_, err := buildOPAInput(t, "mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tools/call missing params")
 }
@@ -56,7 +58,7 @@ func TestBuildOPAInput_ToolsCall_EmptyName(t *testing.T) {
 		"params":  map[string]any{"name": ""},
 	})
 
-	_, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
+	_, err := buildOPAInput(t, "mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tools/call missing or invalid params.name")
 }
@@ -71,7 +73,7 @@ func TestBuildOPAInput_ToolsCall_NonStringName(t *testing.T) {
 		"params":  map[string]any{"name": 42},
 	})
 
-	_, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
+	_, err := buildOPAInput(t, "mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tools/call missing or invalid params.name")
 }
@@ -92,15 +94,36 @@ func TestBuildOPAInput_Initialize_MethodShape(t *testing.T) {
 		},
 	})
 
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
+	input, err := buildOPAInput(t, "mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
 	require.NoError(t, err)
 	assert.Equal(t, "mcp_method", input["type"])
 
-	mcp, ok := input["mcp"].(*authorization.MCPInput)
+	mcp, ok := input["mcp"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "initialize", mcp.Method)
-	require.NotNil(t, mcp.Params)
-	assert.Equal(t, "2025-03-26", mcp.Params["protocolVersion"])
+	assert.Equal(t, "initialize", mcp["method"])
+	params, ok := mcp["params"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "2025-03-26", params["protocolVersion"])
+}
+
+func TestBuildOPAInput_RejectsCaseFoldedEnvelopeKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		duplicate string
+		value     any
+	}{
+		{name: "jsonrpc", duplicate: "JSONRPC", value: "2.0"},
+		{name: "method", duplicate: "Method", value: "tools/call"},
+		{name: "id", duplicate: "ID", value: 2},
+		{name: "params", duplicate: "Params", value: map[string]any{"name": "delete_repository"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			message := map[string]any{"jsonrpc": "2.0", "method": "initialize", "id": 1, "params": map[string]any{}}
+			message[tc.duplicate] = tc.value
+			_, err := buildOPAInput(t, "mcp", mustMarshal(t, message), nil, testTargetServerName, authorization.ContextInput{})
+			require.ErrorContains(t, err, "duplicate "+tc.name+" field")
+		})
+	}
 }
 
 // TestBuildOPAInput_UnknownProtocol_PreservesRawBody verifies that unrecognized
@@ -114,7 +137,7 @@ func TestBuildOPAInput_UnknownProtocol_PreservesRawBody(t *testing.T) {
 		":authority": "example.com",
 	}
 
-	input, err := authorization.BuildOPAInput("some-unknown-protocol", body, headers, "", authorization.ContextInput{})
+	input, err := buildOPAInput(t, "some-unknown-protocol", body, headers, "", authorization.ContextInput{})
 	require.NoError(t, err)
 	assert.Equal(t, "unknown", input["type"])
 
@@ -146,16 +169,9 @@ func TestBuildOPAInputHeadersOnly_MCPShape_SessionIDOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "mcp_headers_only", input["type"])
 
-	mcp, ok := input["mcp"].(*authorization.MCPInput)
-	require.True(t, ok, "mcp field must be *MCPInput")
-	assert.Equal(t, "sess-abc123", mcp.SessionID)
-
-	// Serialize to JSON and verify no empty jsonrpc/method/id fields are emitted.
-	raw, err := json.Marshal(mcp)
-	require.NoError(t, err)
-	var mcpMap map[string]any
-	require.NoError(t, json.Unmarshal(raw, &mcpMap))
-	assert.Equal(t, map[string]any{"session_id": "sess-abc123", "target_server_name": testTargetServerName}, mcpMap,
+	mcp, ok := input["mcp"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{"session_id": "sess-abc123", "target_server_name": testTargetServerName}, mcp,
 		"mcp_headers_only mcp object must contain only session_id and target_server_name")
 }
 
@@ -173,14 +189,9 @@ func TestBuildOPAInputHeadersOnly_MCPShape_NoSessionID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "mcp_headers_only", input["type"])
 
-	mcp, ok := input["mcp"].(*authorization.MCPInput)
+	mcp, ok := input["mcp"].(map[string]any)
 	require.True(t, ok)
-
-	raw, err := json.Marshal(mcp)
-	require.NoError(t, err)
-	var mcpMap map[string]any
-	require.NoError(t, json.Unmarshal(raw, &mcpMap))
-	assert.Equal(t, map[string]any{"target_server_name": testTargetServerName}, mcpMap,
+	assert.Equal(t, map[string]any{"target_server_name": testTargetServerName}, mcp,
 		"mcp object must contain only target_server_name when no session_id is present")
 }
 
@@ -202,7 +213,7 @@ func TestBuildOPAInput_GrantedPermissionSets_Propagated(t *testing.T) {
 		"perm-set-uuid-2": {"svc-c"},
 	}
 
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{GrantedPermissionSets: gps, GrantedPermissionSetsAvailable: gps != nil})
+	input, err := buildOPAInput(t, "mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{GrantedPermissionSets: gps, GrantedPermissionSetsAvailable: gps != nil})
 	require.NoError(t, err)
 
 	ctx, ok := input["context"].(authorization.ContextInput)
@@ -230,7 +241,7 @@ func TestBuildOPAInput_GrantedPermissionSets_EmptySnapshotStillAvailable(t *test
 		"params":  map[string]any{"name": "list_files", "arguments": map[string]any{}},
 	})
 
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{GrantedPermissionSets: map[string][]string{}, GrantedPermissionSetsAvailable: map[string][]string{} != nil})
+	input, err := buildOPAInput(t, "mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{GrantedPermissionSets: map[string][]string{}, GrantedPermissionSetsAvailable: map[string][]string{} != nil})
 	require.NoError(t, err)
 
 	ctx, ok := input["context"].(authorization.ContextInput)
@@ -258,7 +269,7 @@ func TestBuildOPAInput_GrantedPermissionSets_NilUnavailable(t *testing.T) {
 		"params":  map[string]any{"name": "list_files", "arguments": map[string]any{}},
 	})
 
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
+	input, err := buildOPAInput(t, "mcp", body, map[string]string{}, testTargetServerName, authorization.ContextInput{})
 	require.NoError(t, err)
 
 	ctx, ok := input["context"].(authorization.ContextInput)
@@ -306,14 +317,14 @@ func TestBuildOPAInputHeadersOnly_GrantedPermissionSetsUnavailable(t *testing.T)
 
 func TestBuildOPAInput_PreservesAgentSessionContext(t *testing.T) {
 	body := mustMarshal(t, map[string]any{"jsonrpc": "2.0", "method": "tools/call", "id": 1, "params": map[string]any{"name": "list_files", "arguments": map[string]any{}}})
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{"Mcp-Session-Id": "mcp-session"}, testTargetServerName, authorization.ContextInput{AgentSessionID: "agent-session"})
+	input, err := buildOPAInput(t, "mcp", body, map[string]string{"Mcp-Session-Id": "mcp-session"}, testTargetServerName, authorization.ContextInput{AgentSessionID: "agent-session"})
 	require.NoError(t, err)
 	contextInput, ok := input["context"].(authorization.ContextInput)
 	require.True(t, ok)
 	assert.Equal(t, "agent-session", contextInput.AgentSessionID)
-	mcpInput, ok := input["mcp"].(*authorization.MCPInput)
+	mcpInput, ok := input["mcp"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "mcp-session", mcpInput.SessionID)
+	assert.Equal(t, "mcp-session", mcpInput["session_id"])
 }
 
 func mustMarshal(t *testing.T, v any) []byte {
@@ -323,8 +334,22 @@ func mustMarshal(t *testing.T, v any) []byte {
 	return b
 }
 
-// noTargetServerName documents the one call site (AbsentOmitted) testing
-// BuildOPAInput's fallback for an empty target_server_name.
+func buildOPAInput(t *testing.T, protocol string, body []byte, headers map[string]string, targetServerName string, contextInput authorization.ContextInput) (authorization.OPAInput, error) {
+	t.Helper()
+	builder, err := authorization.NewInputBuilder(protocol, headers, targetServerName, contextInput)
+	if err != nil {
+		return nil, err
+	}
+	var parsed any
+	if len(body) != 0 {
+		decoder := json.NewDecoder(bytes.NewReader(body))
+		decoder.UseNumber()
+		require.NoError(t, decoder.Decode(&parsed))
+	}
+	return builder.Build(body, parsed)
+}
+
+// noTargetServerName covers the empty target_server_name path in the input builder.
 const noTargetServerName = ""
 
 // testTargetServerName is a realistic value for tests unrelated to
@@ -341,17 +366,16 @@ func TestBuildOPAInput_TargetServerName_Propagated(t *testing.T) {
 		"params":  map[string]any{"name": "list_files", "arguments": map[string]any{}},
 	})
 
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, "github-mcp", authorization.ContextInput{})
+	input, err := buildOPAInput(t, "mcp", body, map[string]string{}, "github-mcp", authorization.ContextInput{})
 	require.NoError(t, err)
 
-	mcp, ok := input["mcp"].(*authorization.MCPInput)
+	mcp, ok := input["mcp"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "github-mcp", mcp.TargetServerName)
+	assert.Equal(t, "github-mcp", mcp["target_server_name"])
 }
 
-// TestBuildOPAInput_TargetServerName_AbsentOmitted verifies BuildOPAInput's fallback
-// for an empty targetServerName (unreachable in production once server.go enforces
-// FR-004 before ever calling this function).
+// TestBuildOPAInput_TargetServerName_AbsentOmitted verifies the builder omits an
+// empty targetServerName. Production rejects absent MCP metadata before building input.
 func TestBuildOPAInput_TargetServerName_AbsentOmitted(t *testing.T) {
 	body := mustMarshal(t, map[string]any{
 		"jsonrpc": "2.0",
@@ -360,18 +384,12 @@ func TestBuildOPAInput_TargetServerName_AbsentOmitted(t *testing.T) {
 		"params":  map[string]any{},
 	})
 
-	input, err := authorization.BuildOPAInput("mcp", body, map[string]string{}, noTargetServerName, authorization.ContextInput{})
+	input, err := buildOPAInput(t, "mcp", body, map[string]string{}, noTargetServerName, authorization.ContextInput{})
 	require.NoError(t, err)
 
-	mcp, ok := input["mcp"].(*authorization.MCPInput)
+	mcp, ok := input["mcp"].(map[string]any)
 	require.True(t, ok)
-	assert.Empty(t, mcp.TargetServerName)
-
-	raw, err := json.Marshal(mcp)
-	require.NoError(t, err)
-	var mcpMap map[string]any
-	require.NoError(t, json.Unmarshal(raw, &mcpMap))
-	assert.NotContains(t, mcpMap, "target_server_name")
+	assert.NotContains(t, mcp, "target_server_name")
 }
 
 // TestBuildOPAInput_TargetServerName_NotSetForNonMCPProtocol verifies that
@@ -380,7 +398,7 @@ func TestBuildOPAInput_TargetServerName_AbsentOmitted(t *testing.T) {
 func TestBuildOPAInput_TargetServerName_NotSetForNonMCPProtocol(t *testing.T) {
 	body := []byte(`{"action":"run"}`)
 
-	input, err := authorization.BuildOPAInput("a2a", body, map[string]string{}, "github-mcp", authorization.ContextInput{})
+	input, err := buildOPAInput(t, "a2a", body, map[string]string{}, "github-mcp", authorization.ContextInput{})
 	require.NoError(t, err)
 
 	assert.Equal(t, "unknown", input["type"])
@@ -402,8 +420,8 @@ func TestBuildOPAInputHeadersOnly_TargetServerName_Propagated(t *testing.T) {
 	input, err := authorization.BuildOPAInputHeadersOnly("mcp", headers, "github-mcp")
 	require.NoError(t, err)
 
-	mcp, ok := input["mcp"].(*authorization.MCPInput)
+	mcp, ok := input["mcp"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "sess-abc123", mcp.SessionID)
-	assert.Equal(t, "github-mcp", mcp.TargetServerName)
+	assert.Equal(t, "sess-abc123", mcp["session_id"])
+	assert.Equal(t, "github-mcp", mcp["target_server_name"])
 }

@@ -56,17 +56,18 @@ func addProviderAuthorizationParams(values url.Values, params map[string]string)
 // services intentionally retain an absent Secret, so their OAuth2 configurations omit a client
 // secret.
 type OAuth2SessionService struct {
-	providerService *thirdparty.ThirdpartyOAuth2ProviderService // Domain service that handles encryption/decryption
-	sessionRepo     ports.UserSessionRepository
-	refreshRepo     ports.UserSessionRefreshRepository
-	refreshGroup    singleflight.Group
-	grantRepo       ports.UserGrantRepository // For dependent agents
-	agentRepo       ports.AgentRepository     // For agent display names
-	encryption      ports.EncryptionPort
-	httpClient      *http.Client // For upstream OAuth2 token endpoint calls
-	jweTokenService *domjwe.TokenService
-	config          Config
-	logger          *slog.Logger
+	providerService     *thirdparty.ThirdpartyOAuth2ProviderService // Domain service that handles encryption/decryption
+	sessionRepo         ports.UserSessionRepository
+	refreshRepo         ports.UserSessionRefreshRepository
+	refreshGroup        singleflight.Group
+	grantRepo           ports.UserGrantRepository // For dependent agents
+	agentRepo           ports.AgentRepository     // For agent display names
+	encryption          ports.EncryptionPort
+	httpClient          *http.Client // For upstream OAuth2 token endpoint calls
+	jweTokenService     *domjwe.TokenService
+	cimdAssertionSigner ports.CIMDClientAssertionSigner
+	config              Config
+	logger              *slog.Logger
 }
 
 // Config holds configuration for the OAuth2 session service.
@@ -94,7 +95,7 @@ func DefaultConfig() Config {
 // Constitution Principle VII (Configuration-Driven Design) compliance.
 func NewConfigFromPorts(portsCfg ports.ThirdPartyOAuth2Config, callbackBaseURL string) Config {
 	cfg := Config{
-		CallbackBaseURL: callbackBaseURL,
+		CallbackBaseURL: strings.TrimRight(callbackBaseURL, "/"),
 		MaxRetries:      3,           // Not yet in ports config, use default
 		RetryBaseDelay:  time.Second, // Not yet in ports config, use default
 	}
@@ -155,6 +156,16 @@ func NewOAuth2SessionService(
 		config:          config,
 		logger:          logger,
 	}
+}
+
+// WithCIMDAssertionSigner injects the narrow signer used only by CIMD confidential services.
+func (s *OAuth2SessionService) WithCIMDAssertionSigner(signer ports.CIMDClientAssertionSigner) *OAuth2SessionService {
+	s.cimdAssertionSigner = signer
+	return s
+}
+
+func (s *OAuth2SessionService) auditCIMDTokenAcquisition(serviceID id.ServiceID, operation, outcome string) {
+	s.logger.Info("CIMD client token acquisition", "service_id", serviceID, "operation", operation, "outcome", outcome)
 }
 
 // GetCallbackBaseURL returns the configured callback base URL.
@@ -299,6 +310,10 @@ func (s *OAuth2SessionService) buildOAuth2Config(
 	entity *model.ThirdpartyOAuth2ProviderEntity,
 	callbackURL string,
 ) (*oauth2.Config, error) {
+	if err := entity.ValidateOutboundCredentials(); err != nil {
+		return nil, fmt.Errorf("invalid outbound client authentication: %w", err)
+	}
+
 	// Extract scopes from entity
 	scopes := make([]string, 0, len(entity.Scopes))
 	for _, scope := range entity.Scopes {
@@ -315,7 +330,7 @@ func (s *OAuth2SessionService) buildOAuth2Config(
 			TokenURL: entity.Endpoints.TokenEndpoint,
 		},
 	}
-	if entity.IsPublicClient() {
+	if entity.IsPublicClient() || entity.IsCIMDConfidentialClient() {
 		config.Endpoint.AuthStyle = oauth2.AuthStyleInParams
 		return config, nil
 	}
@@ -350,30 +365,60 @@ func safeTokenExchangeError(err error) error {
 	return fmt.Errorf("%w: upstream token request failed", ErrTokenExchange)
 }
 
+func tokenExchangeErrorIsPermanent(err error) bool {
+	var retrieveErr *oauth2.RetrieveError
+	if !errors.As(err, &retrieveErr) {
+		return false
+	}
+	switch retrieveErr.ErrorCode {
+	case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope":
+		return true
+	default:
+		return false
+	}
+}
+
 // exchangeCodeWithRetry exchanges authorization code for tokens with exponential backoff retry.
 func (s *OAuth2SessionService) exchangeCodeWithRetry(
 	ctx context.Context,
 	config *oauth2.Config,
+	service *model.ThirdpartyOAuth2ProviderEntity,
 	code string,
 	verifier string,
 	authorizationParams map[string]string,
 ) (*oauth2.Token, error) {
 	lastErr := ErrTokenExchange
 
-	for attempt := 0; attempt < s.config.MaxRetries; attempt++ {
+	for attempt := range s.config.MaxRetries {
 		// Try to exchange code for token
 		params := url.Values{}
 		addProviderAuthorizationParams(params, authorizationParams)
-		opts := make([]oauth2.AuthCodeOption, 0, len(params)+1)
+		opts := make([]oauth2.AuthCodeOption, 0, len(params)+3)
 		opts = append(opts, oauth2.VerifierOption(verifier))
 		for name, values := range params {
 			opts = append(opts, oauth2.SetAuthURLParam(name, values[0]))
+		}
+		if service.IsCIMDConfidentialClient() {
+			if s.cimdAssertionSigner == nil {
+				return nil, ports.ErrCIMDKeyUnavailable
+			}
+			assertion, err := s.cimdAssertionSigner.SignClientAssertion(ctx, service.ClientID, service.Endpoints.TokenEndpoint)
+			if err != nil {
+				return nil, fmt.Errorf("sign CIMD client assertion: %w", ports.ErrCIMDKeyUnavailable)
+			}
+			opts = append(opts,
+				oauth2.SetAuthURLParam("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
+				oauth2.SetAuthURLParam("client_assertion", assertion),
+			)
 		}
 		token, err := config.Exchange(ctx, code, opts...)
 		if err == nil {
 			return token, nil
 		}
 		lastErr = safeTokenExchangeError(err)
+		if service.IsCIMDConfidentialClient() && tokenExchangeErrorIsPermanent(err) {
+			return nil, lastErr
+		}
 
 		// If this was the last attempt, break
 		if attempt == s.config.MaxRetries-1 {
@@ -647,8 +692,11 @@ func (s *OAuth2SessionService) HandleCallback(
 		"callback_url", callbackURL,
 		"token_endpoint", cfg.Endpoint.TokenURL,
 		"client_id", cfg.ClientID)
-	token, err := s.exchangeCodeWithRetry(ctx, cfg, req.Code, claims.PKCEVerifier, service.AuthorizationParams)
+	token, err := s.exchangeCodeWithRetry(ctx, cfg, service, req.Code, claims.PKCEVerifier, service.AuthorizationParams)
 	if err != nil {
+		if service.IsCIMDConfidentialClient() {
+			s.auditCIMDTokenAcquisition(service.ID, "code_exchange", "rejected")
+		}
 		// Audit log: PKCE validation failure (token exchange failure typically indicates PKCE error)
 		s.logger.Error("oauth2_pkce_validation_failed",
 			"event", "session.oauth2.pkce_validation_failed",
@@ -659,6 +707,9 @@ func (s *OAuth2SessionService) HandleCallback(
 			"error", err,
 			"timestamp", time.Now().Unix())
 		return nil, fmt.Errorf("failed to exchange authorization code: %w", err)
+	}
+	if service.IsCIMDConfidentialClient() {
+		s.auditCIMDTokenAcquisition(service.ID, "code_exchange", "success")
 	}
 
 	// Extract scopes from token response or fall back to service scopes.
@@ -730,14 +781,23 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		return nil, fmt.Errorf("service entity cannot be nil")
 	}
 
+	isCIMDClient := entity.IsCIMDConfidentialClient()
+	if err := entity.ValidateOutboundCredentials(); err != nil {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
+		return nil, fmt.Errorf("invalid outbound client authentication: %w", err)
+	}
 	if refreshToken == "" {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
 		return nil, fmt.Errorf("refresh token cannot be empty")
 	}
 
 	isPublicClient := entity.IsPublicClient()
 	var clientSecret string
-	if !isPublicClient {
-		// Get plaintext secret (already decrypted by ThirdpartyOAuth2ProviderService).
+	if !isPublicClient && !isCIMDClient {
 		var err error
 		clientSecret, err = entity.Secret.GetPlaintext()
 		if err != nil {
@@ -745,19 +805,34 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		}
 	}
 
-	// Prepare refresh token request per RFC 6749 Section 6.
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
 	data.Set("client_id", entity.ClientID.String())
-	if !isPublicClient {
+	if !isPublicClient && !isCIMDClient {
 		data.Set("client_secret", clientSecret)
 	}
 	addProviderAuthorizationParams(data, entity.AuthorizationParams)
+	if isCIMDClient {
+		if s.cimdAssertionSigner == nil {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+			return nil, ports.ErrCIMDKeyUnavailable
+		}
+		assertion, err := s.cimdAssertionSigner.SignClientAssertion(ctx, entity.ClientID, entity.Endpoints.TokenEndpoint)
+		if err != nil {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+			return nil, fmt.Errorf("sign CIMD client assertion: %w", ports.ErrCIMDKeyUnavailable)
+		}
+		data.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+		data.Set("client_assertion", assertion)
+	}
 
 	// Create POST request to token endpoint
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, entity.Endpoints.TokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
 		return nil, fmt.Errorf("failed to create refresh token request: %w", err)
 	}
 
@@ -768,6 +843,9 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	// Execute the request
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
 		return nil, fmt.Errorf("failed to call upstream token endpoint for refresh: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -781,16 +859,25 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		Scope        string `json:"scope,omitempty"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
 		return nil, fmt.Errorf("failed to decode upstream token response: %w", err)
 	}
 
 	// Check for HTTP error status
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
 		return nil, fmt.Errorf("upstream token endpoint returned error status %d", resp.StatusCode)
 	}
 
 	// Validate required fields in response
 	if tokenResp.AccessToken == "" {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
 		return nil, fmt.Errorf("upstream token response missing access_token")
 	}
 
@@ -806,6 +893,9 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		TokenType:    tokenResp.TokenType,
 		RefreshToken: tokenResp.RefreshToken,
 		Expiry:       expiry,
+	}
+	if isCIMDClient {
+		s.auditCIMDTokenAcquisition(entity.ID, "refresh", "success")
 	}
 
 	s.logger.Info("access token refreshed",

@@ -280,7 +280,7 @@ func TestOPAAuthorizer_Evaluate_CreatesTraceSpanWithDecisionAttributes(t *testin
 
 	input := authorization.OPAInput{
 		"type": "mcp_tool_call",
-		"mcp":  &authorization.MCPInput{ToolName: "list_files"},
+		"mcp":  map[string]any{"tool_name": "list_files"},
 	}
 	decision, err := auth.Evaluate(ctx, input)
 	require.NoError(t, err)
@@ -327,7 +327,7 @@ func TestOPAAuthorizer_Evaluate_TraceSpanIncludesTargetServerName(t *testing.T) 
 
 	input := authorization.OPAInput{
 		"type": "mcp_tool_call",
-		"mcp":  &authorization.MCPInput{ToolName: "list_files", TargetServerName: "github-mcp"},
+		"mcp":  map[string]any{"tool_name": "list_files", "target_server_name": "github-mcp"},
 	}
 	decision, err := auth.Evaluate(context.Background(), input)
 	require.NoError(t, err)
@@ -369,7 +369,7 @@ func TestOPAAuthorizer_Evaluate_TraceSpanOmitsTargetServerNameWhenAbsent(t *test
 
 	input := authorization.OPAInput{
 		"type": "mcp_tool_call",
-		"mcp":  &authorization.MCPInput{ToolName: "list_files"},
+		"mcp":  map[string]any{"tool_name": "list_files"},
 	}
 	decision, err := auth.Evaluate(context.Background(), input)
 	require.NoError(t, err)
@@ -405,6 +405,24 @@ func TestOPAAuthorizer_Allow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "allow", decision.Action)
 	assert.Empty(t, decision.Reasons)
+}
+
+func TestOPAAuthorizer_LargeJSONRPCIDRemainsExact(t *testing.T) {
+	path := writePolicy(t, `package aib.extproc.authz
+import rego.v1
+result := {"action": "allow"} if {
+	input.parsed_body.id == 9007199254740993
+} else := {"action": "deny"}`)
+	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), nil)
+	require.NoError(t, err)
+	defer auth.Stop(context.Background())
+
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":9007199254740993,"params":{"name":"read"}}`)
+	input, err := buildOPAInput(t, "mcp", body, nil, testTargetServerName, authorization.ContextInput{})
+	require.NoError(t, err)
+	decision, err := auth.Evaluate(context.Background(), input)
+	require.NoError(t, err)
+	assert.Equal(t, authorization.ActionAllow, decision.Action)
 }
 
 func TestOPAAuthorizer_Deny(t *testing.T) {
@@ -467,7 +485,7 @@ func TestOPAAuthorizer_PermissionSetContextAvailability(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			decision, err := auth.Evaluate(context.Background(), authorization.OPAInput{
 				"type":    "mcp_tool_call",
-				"mcp":     &authorization.MCPInput{ToolName: "permissioned_read"},
+				"mcp":     map[string]any{"tool_name": "permissioned_read"},
 				"context": tt.context,
 			})
 			require.NoError(t, err)
@@ -613,7 +631,7 @@ func TestOPAAuthorizer_AuditLog_UsesRequestContext(t *testing.T) {
 
 	decision, err := auth.Evaluate(ctx, authorization.OPAInput{
 		"type": "mcp_tool_call",
-		"mcp":  &authorization.MCPInput{ToolName: "list_files"},
+		"mcp":  map[string]any{"tool_name": "list_files"},
 	})
 	parentSpan.End()
 	require.NoError(t, err)

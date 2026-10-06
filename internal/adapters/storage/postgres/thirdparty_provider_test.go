@@ -7,14 +7,30 @@ import (
 	"context"
 	"errors"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"strings"
 	"testing"
 	"time"
 )
+
+const (
+	cimdPrivateKeyJWTAuthMethod model.TokenEndpointAuthMethod = "private_key_jwt"
+	cimdClientIDPrefix                                        = "https://broker.example.test/.well-known/oauth-client/"
+)
+
+func testCIMDProvider(providerID id.ServiceID) *model.ThirdpartyOAuth2ProviderEntity {
+	provider := newTestEntity()
+	provider.ID = providerID
+	provider.ClientID = id.ClientID(cimdClientIDPrefix + providerID.String())
+	provider.Secret = model.NewAbsentSecret()
+	provider.TokenEndpointAuthMethod = cimdPrivateKeyJWTAuthMethod
+	return provider
+}
 
 func TestPostgresThirdpartyOAuth2ProviderRepository_ProtectedResources(t *testing.T) {
 	adapter, cleanup := setupMigratedAdapter(t)
@@ -222,7 +238,7 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_DeleteProviderReferencedByAc
 	grant := newUserGrant(
 		id.Principal("grant-user@example.com"),
 		agent.ID,
-		newGrantedPermissionSetEntry(t, adapter, provider.ID),
+		newGrantedPermissionSetEntry(t, adapter, id.NewServiceID(), provider.ID),
 	)
 	require.NoError(t, NewUserGrantRepository(adapter).Create(ctx, grant))
 
@@ -233,6 +249,24 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_DeleteProviderReferencedByAc
 	assert.Contains(t, storageErr.Error(), "user grant")
 	_, err = repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
+
+	tx, err := adapter.db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `SET LOCAL enable_seqscan = off`)
+	require.NoError(t, err)
+	rows, err := tx.QueryContext(ctx, `EXPLAIN `+activeProviderGrantReferenceQuery, provider.ID.String())
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var plan strings.Builder
+	for rows.Next() {
+		var step string
+		require.NoError(t, rows.Scan(&step))
+		plan.WriteString(step)
+		plan.WriteByte('\n')
+	}
+	require.NoError(t, rows.Err())
+	assert.Contains(t, plan.String(), "idx_grants_permission_sets")
 }
 
 func TestPostgresThirdpartyOAuth2ProviderRepository_DeleteProviderWithSessionReturnsConflict(t *testing.T) {
@@ -337,4 +371,40 @@ func TestPostgresThirdpartyOAuth2ProviderRepository_DeleteProviderReferencedByAg
 	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
 	_, err = repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
+}
+
+func TestPostgresThirdpartyOAuth2ProviderRepository_CIMDProviderRoundTrip(t *testing.T) {
+	adapter, cleanup := setupMigratedAdapter(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	provider := testCIMDProvider(id.NewServiceID())
+	require.NoError(t, repo.Create(ctx, provider))
+
+	stored, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, id.ClientID(cimdClientIDPrefix+provider.ID.String()), stored.ClientID)
+	assert.True(t, stored.Secret.IsAbsent())
+}
+
+func TestPostgresThirdpartyOAuth2ProviderRepository_UpdateToCIMDProviderClearsSecret(t *testing.T) {
+	adapter, cleanup := setupMigratedAdapter(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	staticProvider := newTestEntity()
+	staticProvider.ID = id.NewServiceID()
+	require.NoError(t, repo.Create(ctx, staticProvider))
+
+	cimdProvider := testCIMDProvider(staticProvider.ID)
+	require.NoError(t, repo.Update(ctx, cimdProvider, nil))
+
+	stored, err := repo.Get(ctx, staticProvider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
+	assert.Equal(t, id.ClientID(cimdClientIDPrefix+staticProvider.ID.String()), stored.ClientID)
+	assert.True(t, stored.Secret.IsAbsent())
 }

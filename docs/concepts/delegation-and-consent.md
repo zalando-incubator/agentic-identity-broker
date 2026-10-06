@@ -37,7 +37,7 @@ permission sets. Each requirement is **mandatory** or **optional**.
 An agent can identify itself with an HTTPS URL that points to a **Client ID Metadata
 Document (CIMD)**. The broker fetches and validates this document. The consent interface
 shows the resulting metadata. See
-[OAuth2 server modes](/docs/concepts/oauth2-server-modes#client-identity-and-cimd).
+[OAuth2 server modes](/docs/concepts/oauth2-server-modes#inbound-cimd-client-resolution).
 
 ### Third-party service
 

@@ -40,7 +40,7 @@ var reservedAuthorizationParamNames = map[string]struct{}{
 	"nonce": {}, "request": {}, "request_uri": {}, "refresh_token": {},
 }
 
-func isPublicClientCredentialParameter(name string) bool {
+func isClientCredentialParameter(name string) bool {
 	switch strings.ToLower(name) {
 	case "client_assertion", "client_assertion_type", "client_secret":
 		return true
@@ -48,10 +48,14 @@ func isPublicClientCredentialParameter(name string) bool {
 	return false
 }
 
-func validatePublicClientOutboundConfiguration(params map[string]string, tokenEndpoint string) error {
+func validateSecretlessClientOutboundConfiguration(params map[string]string, tokenEndpoint string, method TokenEndpointAuthMethod) error {
+	clientType := "public clients"
+	if method.IsCIMDConfidential() {
+		clientType = "CIMD confidential clients"
+	}
 	for name := range params {
-		if isPublicClientCredentialParameter(name) {
-			return fmt.Errorf("authorization parameter is not allowed for public clients: %s", name)
+		if isClientCredentialParameter(name) {
+			return fmt.Errorf("authorization parameter is not allowed for %s: %s", clientType, name)
 		}
 	}
 
@@ -63,15 +67,15 @@ func validatePublicClientOutboundConfiguration(params map[string]string, tokenEn
 		return fmt.Errorf("token_endpoint is invalid: %w", err)
 	}
 	if endpoint.User != nil {
-		return errors.New("token_endpoint must not include userinfo for public clients")
+		return fmt.Errorf("token_endpoint must not include userinfo for %s", clientType)
 	}
 	query, err := url.ParseQuery(endpoint.RawQuery)
 	if err != nil {
 		return errors.New("token_endpoint query parameters are invalid")
 	}
 	for name := range query {
-		if isPublicClientCredentialParameter(name) {
-			return fmt.Errorf("token_endpoint must not include client authentication parameter for public clients: %s", name)
+		if isClientCredentialParameter(name) {
+			return fmt.Errorf("token_endpoint must not include client authentication parameter for %s: %s", clientType, name)
 		}
 	}
 	return nil
@@ -135,6 +139,31 @@ func (e *ThirdpartyOAuth2ProviderEntity) IsPublicClient() bool {
 	return e.TokenEndpointAuthMethod == TokenEndpointAuthMethodNone
 }
 
+// IsCIMDConfidentialClient reports whether the provider uses broker-managed private_key_jwt authentication.
+func (e *ThirdpartyOAuth2ProviderEntity) IsCIMDConfidentialClient() bool {
+	return e.TokenEndpointAuthMethod.IsCIMDConfidential()
+}
+
+// ValidateOutboundCredentials rejects alternate credentials for clients without a shared secret.
+func (e *ThirdpartyOAuth2ProviderEntity) ValidateOutboundCredentials() error {
+	if !e.IsPublicClient() && !e.IsCIMDConfidentialClient() {
+		return nil
+	}
+	return validateSecretlessClientOutboundConfiguration(e.AuthorizationParams, e.Endpoints.TokenEndpoint, e.TokenEndpointAuthMethod)
+}
+
+// CIMDClientID derives the fixed broker-hosted identifier for a CIMD client.
+func CIMDClientID(publicURL string, serviceID id.ServiceID) (id.ClientID, error) {
+	if serviceID.IsZero() {
+		return "", errors.New("service ID is required for CIMD client identity")
+	}
+	parsed, err := url.Parse(publicURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return "", errors.New("server.enduser.public_url must be a public HTTPS URL for CIMD confidential services")
+	}
+	return id.ClientID(strings.TrimRight(parsed.String(), "/") + "/.well-known/oauth-client/" + serviceID.String()), nil
+}
+
 // Validate performs basic validation on the entity.
 // It checks that required fields are present and the secret is in a valid state.
 func (e *ThirdpartyOAuth2ProviderEntity) Validate() error {
@@ -183,6 +212,19 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateClientAuthentication(flavor OAu
 		return false, err
 	}
 
+	if e.IsCIMDConfidentialClient() {
+		if flavor == OAuth2FlavorGoogle {
+			return false, errors.New(`token_endpoint_auth_method "private_key_jwt" is not supported for the google flavor: the client identifier is derived from the credential document`)
+		}
+		if !e.Secret.IsAbsent() {
+			return false, errors.New(`client_secret must be absent when token_endpoint_auth_method is "private_key_jwt"`)
+		}
+		if !e.ClientID.IsZero() {
+			return false, errors.New(`client_id must be absent when token_endpoint_auth_method is "private_key_jwt"`)
+		}
+		return false, nil
+	}
+
 	isPublicClient := e.IsPublicClient()
 	if isPublicClient {
 		if flavor == OAuth2FlavorGoogle {
@@ -223,6 +265,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 		flavor = DefaultOAuth2Flavor
 	}
 	isPublicClient, err := e.validateClientAuthentication(flavor)
+	isCIMDClient := e.IsCIMDConfidentialClient()
 	if err != nil {
 		return err
 	}
@@ -231,7 +274,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 	}
 
 	credential := ""
-	if !isPublicClient {
+	if !isPublicClient && !isCIMDClient {
 		if !e.Secret.IsPlaintext() {
 			return errors.New("client_secret is required for create")
 		}
@@ -244,10 +287,10 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 	switch flavor {
 	case OAuth2FlavorStandard, OAuth2FlavorGitHub:
 		// Standard/GitHub flavor: client_id and issuer_uri are required; confidential clients require a credential.
-		if e.ClientID == "" {
+		if e.ClientID == "" && !isCIMDClient {
 			return errors.New("client_id is required")
 		}
-		if !isPublicClient && credential == "" {
+		if !isPublicClient && !isCIMDClient && credential == "" {
 			return errors.New("client_secret is required")
 		}
 		if e.IssuerURI == "" {
@@ -298,10 +341,8 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 	if err := validateAuthorizationParams(e.AuthorizationParams); err != nil {
 		return err
 	}
-	if isPublicClient {
-		if err := validatePublicClientOutboundConfiguration(e.AuthorizationParams, e.Endpoints.TokenEndpoint); err != nil {
-			return err
-		}
+	if err := e.ValidateOutboundCredentials(); err != nil {
+		return err
 	}
 
 	return nil
@@ -330,6 +371,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 		flavor = DefaultOAuth2Flavor
 	}
 	isPublicClient, err := e.validateClientAuthentication(flavor)
+	isCIMDClient := e.IsCIMDConfidentialClient()
 	if err != nil {
 		return err
 	}
@@ -338,7 +380,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 	}
 
 	credential := ""
-	if !isPublicClient {
+	if !isPublicClient && !isCIMDClient {
 		if !e.Secret.IsPlaintext() {
 			return errors.New("client_secret is required for update")
 		}
@@ -351,10 +393,10 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 	switch flavor {
 	case OAuth2FlavorStandard, OAuth2FlavorGitHub:
 		// Standard/GitHub flavor: client_id and issuer_uri are required; confidential clients require a credential.
-		if e.ClientID == "" {
+		if e.ClientID == "" && !isCIMDClient {
 			return errors.New("client_id is required")
 		}
-		if !isPublicClient && credential == "" {
+		if !isPublicClient && !isCIMDClient && credential == "" {
 			return errors.New("client_secret is required")
 		}
 		if e.IssuerURI == "" {
@@ -405,10 +447,8 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 	if err := validateAuthorizationParams(e.AuthorizationParams); err != nil {
 		return err
 	}
-	if isPublicClient {
-		if err := validatePublicClientOutboundConfiguration(e.AuthorizationParams, e.Endpoints.TokenEndpoint); err != nil {
-			return err
-		}
+	if err := e.ValidateOutboundCredentials(); err != nil {
+		return err
 	}
 
 	return nil

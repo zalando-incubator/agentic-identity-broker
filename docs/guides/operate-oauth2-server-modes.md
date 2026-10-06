@@ -209,6 +209,37 @@ cached a pre-deletion response may continue accepting the key until its own cach
 intermediary and noncompliant verifier caches are outside the broker's control. Do not use
 the broker's removal targets as a deadline for third-party token rejection.
 
+
+## Manage CIMD client-authentication keys
+
+CIMD confidential third-party services use a separate ES256 key domain. These keys sign outbound `private_key_jwt` assertions.
+
+They do not sign broker access tokens. The CIMD key routes work in proxy, local, and hybrid modes.
+
+Token-signing key routes remain unavailable in proxy mode.
+
+Create the first key before you register a CIMD confidential service:
+
+```bash
+curl -X POST https://broker.internal:14000/api/cimd-client-keys \
+  -H "X-Remote-User: admin@example.com" \
+  -H "Content-Type: application/json" \
+  -d '{"algorithm":"ES256"}'
+```
+
+The first key is immediately usable. Later generated keys remain public during the activation grace period. Promote a key to make it usable immediately:
+
+```bash
+curl -X PUT https://broker.internal:14000/api/cimd-client-keys/{kid}/current \
+  -H "X-Remote-User: admin@example.com"
+```
+
+List active keys with `GET /api/cimd-client-keys`. Remove only a non-current key with `DELETE /api/cimd-client-keys/{kid}`.
+
+The broker rejects removal of the last, current, or effective-current key. The public CIMD JWK Set is at `<client-id>/jwks.json`.
+
+`/oauth2/jwks.json` does not publish CIMD keys.
+
 ## Custom token claims with CEL
 
 In local and hybrid modes, `local.token_claims_expression` can add claims to broker-issued
