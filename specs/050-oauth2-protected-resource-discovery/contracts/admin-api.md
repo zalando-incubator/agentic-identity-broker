@@ -4,7 +4,7 @@
 **Canonical source**: [`api/admin/openapi.yaml`](../../../api/admin/openapi.yaml)
 **Status**: Confirmed core fields and route; representation details require review in the canonical OpenAPI file before implementation.
 
-This document is the delta for `api/admin/openapi.yaml`. The root OpenAPI file remains the administrative contract. The `PreAuthProxy` security scheme, `ServiceId` parameter, `ErrorResponse`, ETag behavior, and service resource names remain unchanged.
+This document is the delta for `api/admin/openapi.yaml`. The root OpenAPI file remains the administrative contract. The `PreAuthProxy` security scheme, `ServiceId` parameter, ETag behavior, and service resource names remain unchanged.
 
 The 2026-10-01 clarification confirms these items:
 
@@ -14,6 +14,7 @@ The 2026-10-01 clarification confirms these items:
 - Status fields `status`, `resource_url`, `issuer_uri`, `client_method`, `last_attempt_at`, `last_success_at`, and `failure_reason`.
 
 The new `token_endpoint_auth_method` response values, the `discovery.client_method` response field, and failure codes follow from API-002, API-003, and API-005. Record stakeholder review of these details in the PR before implementation.
+The 2026-10-06 stakeholder feedback confirms returning validated `authorization_servers` when issuer selection is required.
 
 ## Summary of the delta
 
@@ -24,7 +25,7 @@ The new `token_endpoint_auth_method` response values, the `discovery.client_meth
 | `ServiceUpdateRequest` | Re-run discovery with full-replacement rules. Preserve unchanged issuer and client identity. |
 | `Service` | Return the discovery source, broker-selected client method, effective resource, and explicit DCR authentication method. Do not return a DCR secret. |
 | `/api/services/{service-id}/discovery-status` | Add an authenticated, read-only status resource. |
-| `ErrorResponse` | Unchanged schema. Add safe error values and failure-code messages. |
+| `ErrorResponse` | Keep `error` and `message`. Add optional `authorization_servers` only for `issuer_selection_required`. Add safe failure-code messages. |
 
 ## 1. Request representation
 
@@ -245,7 +246,7 @@ On failure, `resource_url`, `issuer_uri`, and `client_method` describe the activ
 
 ## 4. Errors
 
-Reuse `ErrorResponse`. `error` remains required. `message` remains optional.
+Extend `ErrorResponse` with optional `authorization_servers`. `error` remains required and `message` remains optional. Its error categories remain unchanged.
 
 | Condition | Status | `error` | `message` |
 |---|---|---|---|
@@ -258,6 +259,25 @@ Reuse `ErrorResponse`. `error` remains required. `message` remains optional.
 | Existing ETag or version precondition failure | `409`, `412`, or `428` | Existing value | Existing text. |
 | Local storage or encryption failure | `500` | `internal server error` | Omitted. |
 
+On `issuer_selection_required`, `message` remains the safe failure code. The authenticated error includes every validated `authorization_servers` URI from matching Protected Resource Metadata, in published order. Other errors omit the property. The broker never returns raw metadata, issuer URLs with queries, secrets, or provider response bodies.
+
+```yaml
+authorization_servers:
+  type: array
+  minItems: 2
+  uniqueItems: true
+  items:
+    type: string
+    format: uri
+  description: Validated issuer candidates from the matching protected resource, returned only with issuer_selection_required.
+```
+
+```json
+{"error":"discovery failed","message":"issuer_selection_required","authorization_servers":["https://login-a.example.com","https://login-b.example.com"]}
+```
+
+These are candidates, not proof that an authorization server accepts the broker's client method. On retry, the broker fetches fresh resource metadata and rejects a selected issuer that is no longer advertised. It contacts only the selected authorization server after that check.
+
 ### 4.1 Failure codes
 
 Discovery error messages, `failure_reason` values, and audit records use only these failure codes:
@@ -269,7 +289,7 @@ Discovery error messages, `failure_reason` values, and audit records use only th
 | `resource_metadata_invalid` | A resource challenge or metadata document is malformed or unsupported. |
 | `resource_mismatch` | The metadata resource is not identical to `resource_url`. |
 | `authorization_server_missing` | Resource metadata lists no authorization server. |
-| `issuer_selection_required` | Resource metadata lists more than one issuer and no `issuer_uri` was supplied. |
+| `issuer_selection_required` | Resource metadata lists more than one valid issuer and no `issuer_uri` was supplied. The error includes the candidates in `authorization_servers`. |
 | `issuer_not_advertised` | The supplied or active issuer is not in resource metadata. |
 | `authorization_server_metadata_not_found` | All applicable issuer metadata locations returned `404`. |
 | `authorization_server_metadata_unavailable` | Issuer metadata failed or returned an unexpected status. |
@@ -291,4 +311,4 @@ No response includes a provider response body, URL query, secret, assertion, cod
 
 Update `api/admin/openapi.yaml` before implementation. Then update `docs/reference/api.md` and `docs/guides/manage-agents-and-services.md` from that root contract. Correct the stale reference that says `ErrorResponse.message` is always required.
 
-The stakeholder confirmation in [spec.md](../spec.md) covers the request field, effective resource, and status route and fields. The PR must record review of the new response values in sections 2 and 4.
+The stakeholder confirmation in [spec.md](../spec.md) covers the request field, effective resource, status route and fields, and the `authorization_servers` error field confirmed on 2026-10-06. The PR must record review of the remaining new response values in sections 2 and 4.
