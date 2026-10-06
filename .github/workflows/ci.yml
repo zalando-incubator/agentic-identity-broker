@@ -121,7 +121,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: just
       - name: Install development tools
@@ -232,7 +232,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: just
       - name: Install development tools
@@ -280,7 +280,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: just
       - name: Install development tools
@@ -326,7 +326,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: just
       - name: Install development tools
@@ -379,7 +379,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
         with:
           tool: just
       - name: Install development tools
