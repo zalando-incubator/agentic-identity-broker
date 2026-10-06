@@ -64,6 +64,7 @@ type OAuth2Config struct {
 type AuthorizationService struct {
 	grantRepo           ports.UserGrantRepository
 	sessionRepo         ports.UserSessionRepository
+	clock               ports.AuthorizationClock
 	clientResolver      ports.ClientResolver
 	sessionTokenService *sessiontoken.Service
 	config              *OAuth2Config
@@ -71,7 +72,7 @@ type AuthorizationService struct {
 }
 
 // NewAuthorizationService creates an AuthorizationService.
-// Panics if sessionTokenService, sessionRepo, or config.ModeStrategy is nil.
+// Panics if the session token service, session repository, authorization clock, or mode strategy is nil.
 func NewAuthorizationService(
 	grantRepo ports.UserGrantRepository,
 	sessionRepo ports.UserSessionRepository,
@@ -79,6 +80,7 @@ func NewAuthorizationService(
 	config *OAuth2Config,
 	logger *slog.Logger,
 	sessionTokenService *sessiontoken.Service,
+	clock ports.AuthorizationClock,
 ) *AuthorizationService {
 	if sessionTokenService == nil {
 		panic("oauth2.NewAuthorizationService: sessionTokenService must not be nil")
@@ -89,10 +91,14 @@ func NewAuthorizationService(
 	if config == nil || config.ModeStrategy == nil {
 		panic("oauth2.NewAuthorizationService: config.ModeStrategy must not be nil")
 	}
+	if clock == nil {
+		panic("oauth2.NewAuthorizationService: authorization clock must not be nil")
+	}
 	return &AuthorizationService{
 		grantRepo:           grantRepo,
 		sessionRepo:         sessionRepo,
 		clientResolver:      clientResolver,
+		clock:               clock,
 		config:              config,
 		logger:              logger,
 		sessionTokenService: sessionTokenService,
@@ -223,9 +229,14 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		}
 	}
 
-	// Step 2: Check if user has active grant for this agent
-	grant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agent.ID)
-	if err != nil && !errors.Is(err, ports.ErrNotFound) {
+	// Step 2: Check if user has an active grant for this agent at the shared decision time.
+	decisionTime, clockErr := s.clock.Now(ctx)
+	var grant *storage.UserGrant
+	var err error
+	if clockErr == nil {
+		grant, err = s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agent.ID)
+	}
+	if clockErr != nil || (err != nil && !errors.Is(err, ports.ErrNotFound)) {
 		// redirect_uri is validated above so a redirect-with-error is safe here.
 		errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
 		if buildURLErr != nil && s.logger != nil {
@@ -240,7 +251,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	}
 
 	// Step 3: Determine action based on grant status
-	needsConsent := grant == nil || !grant.IsActive()
+	needsConsent := grant == nil || !grant.IsActive(decisionTime)
 	if !needsConsent {
 		for _, entry := range grant.GrantedPermissionSets {
 			if !slices.ContainsFunc(agent.PermissionSets, func(declared storage.AgentPermissionSetEntry) bool {

@@ -61,6 +61,7 @@ type TokenExchangeService struct {
 
 	// agentRepository resolves agent client_id to internal UUID
 	agentRepository ports.AgentRepository
+	clock           ports.AuthorizationClock
 
 	// config provides token exchange configuration
 	config *ports.TokenExchangeConfig
@@ -77,6 +78,7 @@ type TokenExchangeService struct {
 //   - consentService: Verifies user grants and agent access
 //   - permissionSetService: Resolves permission sets with caching (Phase 6 - US4)
 //   - config: Token exchange configuration
+//   - clock: Shared authorization clock for grant decisions
 //
 // Returns error if any dependency is nil.
 func NewTokenExchangeService(
@@ -88,6 +90,7 @@ func NewTokenExchangeService(
 	permissionSetService *permissionset.Service,
 	agentRepository ports.AgentRepository,
 	config *ports.TokenExchangeConfig,
+	clock ports.AuthorizationClock,
 ) (*TokenExchangeService, error) {
 	if jwtValidator == nil {
 		return nil, fmt.Errorf("jwtValidator cannot be nil")
@@ -113,6 +116,9 @@ func NewTokenExchangeService(
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
+	if clock == nil {
+		return nil, fmt.Errorf("authorization clock cannot be nil")
+	}
 
 	return &TokenExchangeService{
 		jwtValidator:         jwtValidator,
@@ -122,6 +128,7 @@ func NewTokenExchangeService(
 		consentService:       consentService,
 		permissionSetService: permissionSetService,
 		agentRepository:      agentRepository,
+		clock:                clock,
 		config:               config,
 	}, nil
 }
@@ -278,7 +285,11 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// - T063: Return error for missing grant
 	// - T064: Return error for revoked grant
 	// - T065: Return error for expired grant
-	grant, err := s.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
+	decisionTime, err := s.clock.Now(ctx)
+	if err != nil {
+		return nil, NewServerErrorWithCause("failed to verify user grant", err)
+	}
+	grant, err := s.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID, decisionTime)
 	if err != nil {
 		// Map ConsentService errors to TokenExchange errors
 		if errors.Is(err, consent.ErrAgentAccessDenied) {

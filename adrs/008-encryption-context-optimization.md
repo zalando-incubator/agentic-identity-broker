@@ -4,6 +4,8 @@
 **Date**: 2026-01-16
 **Feature**: 012-aws-encryption-vault
 
+**Partial supersession**: Accepted [ADR 038](038-consent-bound-refresh-sessions.md) adds `refresh_session_id` to the approved subject list on 2026-10-01. The original namespaces and exactly-one-subject rule remain unchanged. This approval does not claim runtime support before feature 049 implementation.
+
 ## Context
 
 The AWS Encryption Vault feature requires encrypting OAuth tokens with envelope encryption using AWS KMS. Context binding is a critical security feature that prevents token reuse across different services or purposes.
@@ -138,8 +140,9 @@ This amendment extends ADR 008 to cover encrypted assets that are not naturally 
 
 - `{"service_id": "<service-id>"}` for OAuth2 user-session tokens and other service-scoped secrets
 - `{"kid": "<key-id>"}` for broker signing key private material
+- `{"refresh_session_id": "<session UUID>"}` for persisted refresh-session retry results, authorized by accepted ADR 038
 
-These subject keys are mutually exclusive. A context MUST NOT contain both `service_id` and `kid`, and decryption/branch-key routing MUST fail closed if zero or multiple subject keys are present.
+These subject keys are mutually exclusive. A context MUST contain exactly one approved subject key. Decryption and branch-key routing MUST fail closed if zero or multiple subject keys are present.
 
 A typed branch-key subject model is allowed to represent this invariant in code, provided it preserves the one-subject-only rule.
 
@@ -148,7 +151,7 @@ A typed branch-key subject model is allowed to represent this invariant in code,
 1. **Preserves ADR 008's performance goal**: each encryption/decryption operation still carries a single-key AAD map. This is an alternative subject, not an additive second field on the same ciphertext.
 2. **Maintains semantic correctness**: broker signing keys are global broker assets, not third-party OAuth2 services. Reusing `service_id` for them would misrepresent the protected resource.
 3. **Keeps existing service behavior stable**: service-backed secrets retain the original `service_id` subject and therefore keep their existing branch-key identity and isolation semantics.
-4. **Keeps governance explicit**: any future subject key beyond `service_id` and `kid` requires its own ADR amendment or superseding ADR before implementation.
+4. **Keeps governance explicit**: accepted ADR 038 authorizes `refresh_session_id`. Every further subject key requires its own ADR amendment or superseding ADR before implementation.
 
 ### Impact
 
@@ -158,7 +161,7 @@ A typed branch-key subject model is allowed to represent this invariant in code,
 
 ## Related ADRs
 
-- None
+- [ADR 038: Refresh-Session Encryption and Transaction Ownership](038-consent-bound-refresh-sessions.md) — supersedes only the approved subject list.
 
 ## Follow-Up Tasks
 

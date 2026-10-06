@@ -135,7 +135,9 @@ func createKeyStore(ctx context.Context, ksCfg KeyStoreConfig, awsCfg *ports.AWS
 		},
 	}
 
-	keystoreClient, err := keystore.NewClient(keystoreConfig)
+	keystoreClient, err := callSDK(ctx, func() (*keystore.Client, error) {
+		return keystore.NewClient(keystoreConfig)
+	})
 	if err != nil {
 		return nil, encryption.NewKEKUnavailableError(
 			fmt.Sprintf("failed to create KeyStore client: %v", err),
@@ -190,8 +192,8 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 	}
 	var getErr error
 	if getActiveBranchKey != nil {
-		_, getErr = getActiveBranchKey(ctx, keystoretypes.GetActiveBranchKeyInput{
-			BranchKeyIdentifier: branchKeyID,
+		_, getErr = callSDK(ctx, func() (*keystoretypes.GetActiveBranchKeyOutput, error) {
+			return getActiveBranchKey(ctx, keystoretypes.GetActiveBranchKeyInput{BranchKeyIdentifier: branchKeyID})
 		})
 		if getErr == nil {
 			return branchKeyID, nil
@@ -213,20 +215,26 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 				getErr,
 			)
 		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", encryption.NewKEKUnavailableError(
+				fmt.Sprintf("getting active branch key %s cancelled: %v", branchKeyID, ctxErr), ctxErr,
+			)
+		}
 	}
-	// getErr is non-nil: either the key does not exist yet (expected migration path) or
-	// DynamoDB/KMS is temporarily unavailable. We cannot reliably distinguish the two cases
-	// from a KeyStoreException, so we attempt CreateKey regardless. If the infrastructure
-	// is unavailable, CreateKey will also fail and return a clear error to the caller.
+	// getErr is non-nil and the operation is still live: either the key does not
+	// exist yet (expected migration path) or DynamoDB/KMS is unavailable. We
+	// attempt CreateKey in either case so the caller receives a clear error.
 
 	createKey := ks.createKeyFn
 	if createKey == nil {
 		createKey = ks.client.CreateKey
 	}
 
-	branchKey, err := createKey(ctx, keystoretypes.CreateKeyInput{
-		BranchKeyIdentifier: &branchKeyID,
-		EncryptionContext:   encryptionCtx,
+	branchKey, err := callSDK(ctx, func() (*keystoretypes.CreateKeyOutput, error) {
+		return createKey(ctx, keystoretypes.CreateKeyInput{
+			BranchKeyIdentifier: &branchKeyID,
+			EncryptionContext:   encryptionCtx,
+		})
 	})
 	if err != nil {
 		if errors.Is(context.Cause(ctx), errDynamoDBTimeout) {

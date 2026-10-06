@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY idx_refresh_token_sessions_rootless_expiry;

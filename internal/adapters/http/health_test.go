@@ -46,6 +46,52 @@ func TestHandleHealth_IncludesComponentHealth(t *testing.T) {
 	assert.Equal(t, "degraded", response.Components["upstream_jwks"])
 }
 
+func TestHandleHealth_NativeMaintenanceLossAndRecovery(t *testing.T) {
+	maintenanceState := "healthy"
+	server := &Server{
+		config: ServerConfig{
+			HealthComponents: func() map[string]string {
+				return map[string]string{
+					"refresh_sessions": maintenanceState,
+					"upstream_jwks":    "degraded",
+				}
+			},
+		},
+		healthState: int32(HealthStateHealthy),
+		startTime:   time.Now(),
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	router := chi.NewRouter()
+	router.Get("/health", server.handleHealth())
+	healthServer := httptest.NewServer(router)
+	defer healthServer.Close()
+
+	check := func(wantCode int, wantStatus string) {
+		t.Helper()
+		responseHTTP, err := healthServer.Client().Get(healthServer.URL + "/health")
+		require.NoError(t, err)
+		defer func() { _ = responseHTTP.Body.Close() }()
+		require.Equal(t, wantCode, responseHTTP.StatusCode)
+		var response HealthResponse
+		require.NoError(t, json.NewDecoder(responseHTTP.Body).Decode(&response))
+		assert.Equal(t, wantStatus, response.Status)
+		assert.Equal(t, maintenanceState, response.Components["refresh_sessions"])
+		assert.Equal(t, "degraded", response.Components["upstream_jwks"])
+	}
+
+	check(http.StatusOK, "healthy")
+	maintenanceState = "unhealthy"
+	check(http.StatusServiceUnavailable, "unhealthy")
+	server.healthState = int32(HealthStateStarting)
+	check(http.StatusServiceUnavailable, "starting")
+	server.healthState = int32(HealthStateShuttingDown)
+	check(http.StatusServiceUnavailable, "shutting_down")
+	server.healthState = int32(HealthStateHealthy)
+	maintenanceState = "healthy"
+	check(http.StatusOK, "healthy")
+}
+
 func TestHandleHealth_UsesCurrentServerStartTime(t *testing.T) {
 	server := &Server{
 		healthState: int32(HealthStateHealthy),

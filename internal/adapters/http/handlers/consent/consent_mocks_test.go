@@ -13,7 +13,6 @@ var _ ConsentService = (*mockConsentService)(nil)
 type mockConsentService struct {
 	getAgentConsentDetailFunc     func(ctx context.Context, agentID id.AgentID, principal id.Principal) (*consent.AgentConsentDetail, error)
 	grantConsentFunc              func(ctx context.Context, req *consent.GrantRequest) (*storage.UserGrant, error)
-	revokeConsentFunc             func(ctx context.Context, principal id.Principal, agentID id.AgentID) error
 	revokeConsentForPrincipalFunc func(ctx context.Context, principal id.Principal, agentID id.AgentID) error
 	getAgentDelegationsFunc       func(ctx context.Context, principal id.Principal) ([]consent.AgentDelegation, error)
 	getUserGrantsFunc             func(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.UserGrant, error)
@@ -31,13 +30,6 @@ func (m *mockConsentService) GrantConsent(ctx context.Context, req *consent.Gran
 		return m.grantConsentFunc(ctx, req)
 	}
 	return nil, nil
-}
-
-func (m *mockConsentService) RevokeConsent(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	if m.revokeConsentFunc != nil {
-		return m.revokeConsentFunc(ctx, principal, agentID)
-	}
-	return nil
 }
 
 func (m *mockConsentService) RevokeConsentForPrincipal(ctx context.Context, principal id.Principal, agentID id.AgentID) error {

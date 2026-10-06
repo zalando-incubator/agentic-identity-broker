@@ -23,11 +23,12 @@ type Service struct {
 	canonicalAgents    ports.AgentCanonicalIDRepository
 	issuer             ports.ImpersonationTokenIssuer
 	delegationVerifier ports.UserDelegationVerifier
+	clock              ports.AuthorizationClock
 	consentBaseURL     string
 	logger             *slog.Logger
 }
 
-// NewService compiles the impersonation rules at startup and validates direct construction.
+// NewService compiles impersonation rules and requires a shared authorization clock.
 func NewService(
 	cfg *ports.ImpersonationConfig,
 	factory JWKSProviderFactory,
@@ -37,6 +38,7 @@ func NewService(
 	logger *slog.Logger,
 	delegationVerifier ports.UserDelegationVerifier,
 	consentBaseURL string,
+	clock ports.AuthorizationClock,
 ) (*Service, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("impersonation config is nil")
@@ -53,6 +55,9 @@ func NewService(
 	}
 	if delegationVerifier == nil {
 		return nil, fmt.Errorf("impersonation user delegation verifier is nil")
+	}
+	if clock == nil {
+		return nil, fmt.Errorf("impersonation authorization clock is nil")
 	}
 	if consentBaseURL == "" {
 		return nil, fmt.Errorf("impersonation consent base URL is required")
@@ -79,7 +84,7 @@ func NewService(
 		}
 		rules = append(rules, rule)
 	}
-	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, delegationVerifier: delegationVerifier, consentBaseURL: consentBaseURL, logger: logger}, nil
+	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, delegationVerifier: delegationVerifier, clock: clock, consentBaseURL: consentBaseURL, logger: logger}, nil
 }
 
 // AudiencePrefix returns the configured routing prefix for audit fallback only.
@@ -258,13 +263,22 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		return res
 	}
 
-	delegationStatus, err := s.delegationVerifier.VerifyUserDelegation(ctx, id.Principal(subjectID), targetAgent.ID)
+	decisionTime, err := s.clock.Now(ctx)
 	if err != nil {
 		res.abort = serverError("user delegation verification failed", "user_grant_lookup_failed")
 		return res
 	}
-	switch delegationStatus {
+	delegation, err := s.delegationVerifier.VerifyUserDelegation(ctx, id.Principal(subjectID), targetAgent.ID, decisionTime)
+	if err != nil {
+		res.abort = serverError("user delegation verification failed", "user_grant_lookup_failed")
+		return res
+	}
+	switch delegation.Status {
 	case ports.UserDelegationActive:
+		if delegation.GrantID.IsZero() || (delegation.ValidUntil != nil && !decisionTime.Before(*delegation.ValidUntil)) {
+			res.abort = serverError("user delegation verification returned invalid grant evidence", "user_grant_lookup_failed")
+			return res
+		}
 	case ports.UserDelegationMissing:
 		res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/")+"/agents/"+targetAgent.ID.String(), "user_grant_missing")
 		return res

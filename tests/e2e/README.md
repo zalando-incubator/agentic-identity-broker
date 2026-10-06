@@ -144,11 +144,14 @@ Expect(resp.StatusCode).To(Equal(http.StatusFound))
 ### Quick Start
 
 ```bash
-# Run the functional backend E2E suite (excludes performance-labelled specs)
+# Run ordinary and PostgreSQL-backed refresh journeys (excludes performance-labelled specs)
 just test-e2e-backend
 
-# Run the functional backend suite with coverage report
+# Run both backend journeys with separate default/tagged coverage reports
 just test-e2e-backend-coverage
+
+# Run both backend journeys and publish combined and leaf JUnit reports
+just verify-e2e-backend-junit
 
 # Watch the functional backend suite during development (auto-rerun on changes)
 just test-e2e-backend-watch
@@ -164,6 +167,32 @@ ginkgo -v --label-filter="!performance" ./tests/e2e/oauth2_authorize_test.go
 
 # Run functional tests matching pattern
 ginkgo -v --label-filter="!performance" --focus="should redirect to consent" ./tests/e2e/
+
+```
+
+The normal backend gate runs the ordinary suite, then compiles and runs all seven
+`integration`-tagged refresh E2E files under `--focus="Consent-Bound Refresh Sessions"`.
+That focus includes US5. It builds the historical issuer at
+`b4bdd1cf4dce2c23fb65223a0b31a46d29d40008` from an isolated git worktree
+before US6-S4, US6-S6, and US6-S7. The build writes the binary and JSON
+revision/toolchain/build-command/SHA-256 manifest to `bin/refresh-prefeature/`.
+Those tests verify the artifact's embedded source revision and checksum; do not
+substitute an unverified old binary. The backend JUnit gate publishes separate
+ordinary/tagged reports and a merged `e2e-backend-junit.xml`. The coverage gate
+writes `coverage/e2e-backend{,-integration}.html` separately.
+
+`just test-integration-infra` and `just verify-integration-junit` include the
+tagged root refresh integration tests, including maintenance and the offline
+restore command. Both tagged layers require PostgreSQL containers. `just verify` and
+CI run these same acceptance layers; a focused command without `--tags` does
+not exercise the PostgreSQL journeys. A passing gate needs executed cases,
+not only a successful compilation.
+
+For feature 049, use the existing package, integration, backend, and browser recipes
+listed in the [quickstart](../../specs/049-fix-refresh-consent/quickstart.md#1-run-the-implementation-gates).
+The backend recipe builds the pinned issuer automatically and runs all 46 tagged
+backend journeys. The browser recipe includes US1-S2. Repository-wide dependency
+scans remain separate from feature acceptance.
 
 ### Ginkgo Command Reference
 

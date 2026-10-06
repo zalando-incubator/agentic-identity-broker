@@ -500,6 +500,61 @@ spec:
         property: password
 ```
 
+## Local Refresh Sessions: Rollout and Restore
+
+These rules apply to broker-issued refresh sessions in local mode and the local path of hybrid mode. Upstream sessions remain unchanged.
+
+### Policy and Readiness
+
+The Helm values are `broker.oauth2AuthorizationServer.local.refreshTokenReuseInterval`, `absoluteSessionLifetime`, and `refreshTokenTtl`. Their defaults are `30s`, `0s`, and `720h`.
+
+Only fresh successful rotation renews inactivity. A policy increase affects the next fresh successor, not an issued token or its current interval.
+
+Startup persists shorter effective deadlines and clears overdue retry results before readiness. Reuse `0s` clears every cached retry result before admission.
+
+With reachable storage, maintenance erases expired live retry ciphertext within one second. Unavailable storage or missed cleanup blocks readiness until recovery.
+
+Encrypted backups can retain ciphertext after live erasure. Existing access JWTs also retain their issued expiry, up to `token_ttl`.
+
+The memory backend supports one instance and loses refresh history on restart. Durable replicas require shared PostgreSQL, encryption keys, and policy.
+
+### Upgrade and Binary-Only Rollback
+
+Every pre-feature unanchored session requires fresh authorization. Only complete anchored new-issuer families can continue under current consent.
+
+1. Retain migrations 036 and 037 and the legacy `refresh_token_sessions` table during mixed-version rollout.
+2. Before binary-only rollback, stop token traffic and all old writers.
+3. Start the outgoing broker image with its outgoing policy and no token traffic.
+4. Wait for successful startup reconciliation and ready health.
+5. Stop the outgoing instance before you admit the old binary.
+
+If reconciliation fails, keep token traffic stopped. Neither schema-preserving rollback nor later grants can restore terminal sessions.
+
+Migration 037 verifies complete ancestry once and maintains the indexed lineage proof for later refreshes.
+Its down migration invalidates anchored legacy authority before removing that proof. Reapplication does not restore those sessions.
+
+### Restore Admission
+
+Record `SELECT database_id FROM refresh_maintenance WHERE singleton` independently with each backup. Use this recorded UUID for admission, not a value queried from a potentially incorrect restore target.
+
+1. Stop token traffic and all writers before restoration.
+2. Restore the database or refresh-state snapshot with the supported schema.
+3. Run the offline command with the deployment configuration and restored database access:
+
+```bash
+agentic-identity-broker --config <broker-config.yaml> refresh-sessions invalidate-restored --database-id <backup-database-uuid>
+```
+
+4. If the command fails or its commit is indeterminate, keep brokers offline.
+5. Rerun the idempotent command until it exits successfully.
+6. Admit token traffic only after acknowledged invalidation and the final empty-authority scan.
+
+The command starts no HTTP server. It requires PostgreSQL and a matching backup database UUID before writes. It invalidates active roots, retry ciphertext, and unused legacy rows, including rootless unanchored rows.
+
+Existing terminal reasons, grants, agents, credentials, signing keys, and third-party sessions remain unchanged. Fresh authorization can create a new local session.
+
+See [the refresh policy reference](../configuration.md#local-refresh-session-policy) for duration relations and detailed backup limits.
+
 ## Troubleshooting
 
 ### Migration Job Failed

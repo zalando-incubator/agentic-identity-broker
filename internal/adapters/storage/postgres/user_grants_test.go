@@ -250,6 +250,59 @@ func TestUserGrantRepository(t *testing.T) {
 		})
 	})
 
+	t.Run("ListByPrincipal uses the caller's decision time", func(t *testing.T) {
+		principal := id.Principal("decision-time@example.com")
+		finiteAgent := createUserGrantTestAgent(t, agentRepo, "decision-finite")
+		indefiniteAgent := createUserGrantTestAgent(t, agentRepo, "decision-indefinite")
+		expiresAt := time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)
+		finiteID, indefiniteID, otherID := id.NewGrantID(), id.NewGrantID(), id.NewGrantID()
+		insert := func(grantID id.GrantID, owner id.Principal, agentID id.AgentID, validUntil any) {
+			t.Helper()
+			_, err := adapter.db.ExecContext(ctx,
+				`INSERT INTO user_grants (id, principal, agent_id, valid_until, granted_permission_sets, created_at, updated_at)
+				 VALUES ($1, $2, $3, $4, '[]'::jsonb, $5, $5)`,
+				grantID, owner, agentID, validUntil, expiresAt.Add(-time.Hour),
+			)
+			require.NoError(t, err)
+		}
+		insert(finiteID, principal, finiteAgent.ID, expiresAt)
+		insert(indefiniteID, principal, indefiniteAgent.ID, nil)
+		insert(otherID, id.Principal("other-decision-time@example.com"), finiteAgent.ID, nil)
+
+		for _, tt := range []struct {
+			name string
+			at   time.Time
+			want []id.GrantID
+		}{
+			{name: "historical time before expiry", at: expiresAt.Add(-time.Second), want: []id.GrantID{finiteID, indefiniteID}},
+			{name: "exact expiry", at: expiresAt, want: []id.GrantID{indefiniteID}},
+			{name: "after expiry", at: expiresAt.Add(time.Second), want: []id.GrantID{indefiniteID}},
+			{name: "far future", at: time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC), want: []id.GrantID{indefiniteID}},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				grants, err := grantRepo.ListByPrincipal(ctx, principal, tt.at)
+				require.NoError(t, err)
+				actual := make([]id.GrantID, 0, len(grants))
+				for _, grant := range grants {
+					actual = append(actual, grant.ID)
+				}
+				assert.ElementsMatch(t, tt.want, actual)
+			})
+		}
+
+		require.NoError(t, NewAuthorizationSessionCoordinator(adapter).Run(ctx, finiteAgent.ID, func(scope context.Context, _ time.Time) error {
+			grants, err := grantRepo.ListByPrincipal(scope, principal, expiresAt.Add(-time.Second))
+			require.NoError(t, err)
+			require.Len(t, grants, 1)
+			assert.Equal(t, finiteID, grants[0].ID)
+
+			grants, err = grantRepo.ListByPrincipal(scope, principal, expiresAt)
+			require.NoError(t, err)
+			assert.Empty(t, grants)
+			return nil
+		}))
+	})
+
 	t.Run("FindByPrincipalAndAgent", func(t *testing.T) {
 		t.Run("find when no grant exists", func(t *testing.T) {
 			agent := createUserGrantTestAgent(t, agentRepo, "find-empty")

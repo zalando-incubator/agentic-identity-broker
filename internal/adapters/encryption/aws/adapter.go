@@ -36,6 +36,39 @@ const (
 // deadline that coincidentally expires as context.DeadlineExceeded at the same time.
 var errDynamoDBTimeout = errors.New("adapter dynamodb_timeout")
 
+// The generated MPL/ESDK Go code writes to dafny.EmptySeq.SetString() during
+// SDK calls (including signed-message Base64 encoding). EmptySeq is shared by
+// every client and keyring, so an adapter-local mutex cannot protect it.
+// All Dafny-backed SDK entry points in this package share this gate.
+var sdkGate = make(chan struct{}, 1)
+
+func lockSDK(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case sdkGate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			unlockSDK()
+			return err
+		}
+		return nil
+	}
+}
+
+func unlockSDK() { <-sdkGate }
+
+func callSDK[T any](ctx context.Context, operation func() (T, error)) (T, error) {
+	if err := lockSDK(ctx); err != nil {
+		var zero T
+		return zero, err
+	}
+	defer unlockSDK()
+	return operation()
+}
+
 // encryptionSDKClient is the minimal subset of the AWS Encryption SDK client used by AWSAdapter,
 // enabling mock injection in tests without requiring real AWS infrastructure.
 type encryptionSDKClient interface {
@@ -151,8 +184,8 @@ func newAdapterWithKMSARNAndKeyStore(kmsARN, dynamoDBTableName string, branchKey
 
 	// Create Encryption SDK client with commitment policy for key commitment
 	policy := mpltypes.ESDKCommitmentPolicyRequireEncryptRequireDecrypt
-	encryptionClient, err := client.NewClient(esdktypes.AwsEncryptionSdkConfig{
-		CommitmentPolicy: &policy,
+	encryptionClient, err := callSDK(ctx, func() (*client.Client, error) {
+		return client.NewClient(esdktypes.AwsEncryptionSdkConfig{CommitmentPolicy: &policy})
 	})
 	if err != nil {
 		return nil, nil, encryption.NewKEKUnavailableError(
@@ -197,6 +230,9 @@ func newAdapterWithBase64KEK(keyMaterial string) (*AWSAdapter, error) {
 		)
 	}
 
+	// This factory has no caller context; protect all Dafny-backed construction.
+	sdkGate <- struct{}{}
+	defer unlockSDK()
 	// Create Material Providers client
 	matProvider, err := mpl.NewClient(mpltypes.MaterialProvidersConfig{})
 	if err != nil {
@@ -255,6 +291,11 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		)
 		return nil, encryption.NewKEKUnavailableError("encryption adapter not properly initialized", nil)
 	}
+	if _, refresh := encryptionContext[encryption.ContextKeyRefreshSessionID]; refresh {
+		if _, err := encryption.BranchKeySubjectFromEncryptionContext(encryptionContext); err != nil {
+			return nil, encryption.NewContextMismatchError("invalid refresh-session encryption context", err)
+		}
+	}
 
 	// Extract service_id from context for logging (sanitized)
 	serviceID := encryptionContext["service_id"]
@@ -298,7 +339,9 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		Keyring:           a.keyring,
 	}
 
-	result, err := a.encryptionClient.Encrypt(ctx, encryptInput)
+	result, err := callSDK(ctx, func() (*esdktypes.EncryptOutput, error) {
+		return a.encryptionClient.Encrypt(ctx, encryptInput)
+	})
 
 	if err != nil {
 		// Classify context errors that materialised DURING the SDK call (e.g. KMS
@@ -443,6 +486,11 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 		)
 		return nil, encryption.NewDecryptionFailedError("ciphertext cannot be empty", nil)
 	}
+	if _, refresh := encryptionContext[encryption.ContextKeyRefreshSessionID]; refresh {
+		if _, err := encryption.BranchKeySubjectFromEncryptionContext(encryptionContext); err != nil {
+			return nil, encryption.NewContextMismatchError("invalid refresh-session encryption context", err)
+		}
+	}
 
 	// Apply a per-operation timeout when configured. This deadline is shared by
 	// all downstream calls within the operation (DynamoDB branch key fetches and
@@ -483,7 +531,9 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 		Keyring:           a.keyring,
 	}
 
-	result, err := a.encryptionClient.Decrypt(ctx, decryptInput)
+	result, err := callSDK(ctx, func() (*esdktypes.DecryptOutput, error) {
+		return a.encryptionClient.Decrypt(ctx, decryptInput)
+	})
 	if err != nil {
 		// Classify context errors that materialised DURING the SDK call (e.g. KMS
 		// network timeout).  context.DeadlineExceeded → "context deadline exceeded"
@@ -572,6 +622,16 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 			"reason", "nil_result",
 		)
 		return nil, encryption.NewDecryptionFailedError("decryption returned nil result", nil)
+	}
+	expectedRoot, expectsRefresh := encryptionContext[encryption.ContextKeyRefreshSessionID]
+	actualRoot, authenticatedRefresh := result.EncryptionContext[encryption.ContextKeyRefreshSessionID]
+	if expectsRefresh || authenticatedRefresh {
+		if !expectsRefresh || !authenticatedRefresh || actualRoot != expectedRoot {
+			return nil, encryption.NewContextMismatchError("authenticated refresh-session subject does not match the expected root", nil)
+		}
+		if _, err := encryption.BranchKeySubjectFromEncryptionContext(result.EncryptionContext); err != nil {
+			return nil, encryption.NewContextMismatchError("invalid authenticated refresh-session subject", err)
+		}
 	}
 
 	// Ensure plaintext is not empty

@@ -115,11 +115,13 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 				AuthorizationExpression: "true", EvaluationTimeout: 100 * time.Millisecond,
 			})
 			require.NoError(t, err)
+			clock := testAuthorizationClock{now: time.Now()}
 			svc := &TokenExchangeService{
 				jwtValidator: jwtValidator, celEvaluator: celEvaluator, providerService: thirdpartyService,
 				oauth2SessionService: sessionService, agentRepository: agentRepo,
-				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, slog.Default()),
+				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, slog.Default(), clock, clock, unexpectedRefreshRevocations{}),
 				permissionSetService: permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default()),
+				clock:                clock,
 			}
 			claims := map[string]interface{}{
 				"iss": "https://auth.example.com", "aud": "agentic-identity-broker", "sub": "user@example.com",

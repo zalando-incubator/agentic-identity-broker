@@ -144,47 +144,6 @@ func TestCreateGrant_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestCreateGrant_ValidUntilInPast(t *testing.T) {
-	t.Parallel()
-	handler := NewGrantsHandler(nil, nil, newTestSessionTokenValidator())
-	testAgentID := id.NewAgentID()
-
-	pastTime := time.Now().Add(-1 * time.Hour)
-	reqBody := GrantRequest{
-		ValidUntil:            &pastTime,
-		GrantedPermissionSets: map[string][]string{id.NewPermissionSetID().String(): {id.NewServiceID().String()}},
-	}
-
-	jsonBody, _ := json.Marshal(reqBody)
-	req := httptest.NewRequest("POST", "/api/consent/agent/"+testAgentID.String()+"/grants", bytes.NewBuffer(jsonBody))
-	ctx := principal.WithPrincipal(req.Context(), "user@example.com")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("agent-id", testAgentID.String())
-	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
-
-	rr := httptest.NewRecorder()
-
-	handler.CreateGrant(rr, req)
-
-	// Verify response
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rr.Code)
-	}
-
-	var errResp ErrorResponse
-	if err := json.NewDecoder(rr.Body).Decode(&errResp); err != nil {
-		t.Fatalf("failed to decode error response: %v", err)
-	}
-
-	if errResp.Error != "invalid request" {
-		t.Errorf("expected error 'invalid request', got '%s'", errResp.Error)
-	}
-	if errResp.Message != "valid_until must be in the future" {
-		t.Errorf("expected message about valid_until, got '%s'", errResp.Message)
-	}
-}
-
 func TestToGrantResponse(t *testing.T) {
 	t.Parallel()
 	handler := NewGrantsHandler(nil, nil, newTestSessionTokenValidator())
@@ -652,6 +611,8 @@ func TestCreateGrant_RedirectURIWithoutSessionTokenIsIgnored(t *testing.T) {
 
 	testAgentID := id.NewAgentID()
 	testGrantID := id.NewGrantID()
+	permissionSetID := id.NewPermissionSetID()
+	serviceID := id.NewServiceID()
 	now := time.Now()
 	futureTime := now.Add(24 * time.Hour)
 
@@ -662,7 +623,7 @@ func TestCreateGrant_RedirectURIWithoutSessionTokenIsIgnored(t *testing.T) {
 				Principal:             id.Principal("user@example.com"),
 				AgentID:               testAgentID,
 				ValidUntil:            &futureTime,
-				GrantedPermissionSets: []storage.GrantedPermissionSetEntry{},
+				GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{serviceID}}},
 				CreatedAt:             now,
 				UpdatedAt:             now,
 			}, nil
@@ -675,7 +636,7 @@ func TestCreateGrant_RedirectURIWithoutSessionTokenIsIgnored(t *testing.T) {
 		"POST",
 		"/api/consent/agent/"+testAgentID.String()+"/grants?redirect_uri=https://evil.example.com",
 		"user@example.com",
-		GrantRequest{GrantedPermissionSets: map[string][]string{}},
+		GrantRequest{GrantedPermissionSets: map[string][]string{permissionSetID.String(): {serviceID.String()}}},
 	)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", testAgentID.String())

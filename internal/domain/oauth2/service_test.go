@@ -21,6 +21,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testAuthorizationClock struct {
+	now time.Time
+	err error
+}
+
+func (c testAuthorizationClock) Now(context.Context) (time.Time, error) {
+	return c.now, c.err
+}
+
 // newServiceTestJWETokenService returns a JWE token service backed by a deterministic test key.
 func newServiceTestJWETokenService() *domjwe.TokenService {
 	keyBytes, err := base64.StdEncoding.DecodeString("ASNFZ4mrze/+3LqYdlQyEAEjRWeJq83v/ty6mHZUMhA=")
@@ -39,11 +48,11 @@ func newTestSessionTokenService() *sessiontoken.Service {
 }
 
 func newTestAuthorizationService(agentRepo ports.AgentRepository, grantRepo ports.UserGrantRepository, cfg *OAuth2Config) ports.OAuth2Service {
-	return NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), cfg, nil, newTestSessionTokenService())
+	return NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), cfg, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 }
 
 func newTestAuthorizationServiceWithSessions(agentRepo ports.AgentRepository, grantRepo ports.UserGrantRepository, sessionRepo ports.UserSessionRepository, cfg *OAuth2Config) ports.OAuth2Service {
-	return NewAuthorizationService(grantRepo, sessionRepo, NewAgentClientResolver(agentRepo, nil), cfg, nil, newTestSessionTokenService())
+	return NewAuthorizationService(grantRepo, sessionRepo, NewAgentClientResolver(agentRepo, nil), cfg, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 }
 
 type MockAgentRepository struct {
@@ -160,7 +169,7 @@ func (m *MockGrantRepository) Delete(ctx context.Context, grantID id.GrantID) er
 func (m *MockGrantRepository) ListByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.UserGrant, error) {
 	var grants []*storage.UserGrant
 	for _, grant := range m.grants {
-		if grant.Principal == principal && grant.AgentID == agentID && grant.IsActive() {
+		if grant.Principal == principal && grant.AgentID == agentID {
 			grants = append(grants, grant)
 		}
 	}
@@ -185,10 +194,10 @@ func (m *MockGrantRepository) DeleteByAgent(ctx context.Context, agentID id.Agen
 	return nil
 }
 
-func (m *MockGrantRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]storage.UserGrant, error) {
+func (m *MockGrantRepository) ListByPrincipal(ctx context.Context, principal id.Principal, decisionTime time.Time) ([]storage.UserGrant, error) {
 	var grants []storage.UserGrant
 	for _, grant := range m.grants {
-		if grant.Principal == principal && grant.IsActive() {
+		if grant.Principal == principal && grant.IsActive(decisionTime) {
 			grants = append(grants, *grant)
 		}
 	}
@@ -681,7 +690,7 @@ func TestService_HandleAuthorization_PreservesParameters(t *testing.T) {
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	authReq := &ports.AuthorizationRequest{
 		ClientID:            id.ClientID(agentID.String()),
@@ -788,7 +797,7 @@ func TestService_HandleAuthorization_UUIDResolution(t *testing.T) {
 				PublicURL:                 "https://broker.example.com",
 				ModeStrategy:              NewProxyModeStrategy(),
 				SupportedResponseTypes:    []string{"code"},
-			}, nil, newTestSessionTokenService())
+			}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 			req := &ports.AuthorizationRequest{
 				ClientID:     tt.clientID,
@@ -844,7 +853,7 @@ func TestService_HandleAuthorization_UUIDResolution_UpstreamClientID(t *testing.
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	req := &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -879,7 +888,7 @@ func TestService_GenerateMetadata(t *testing.T) {
 		SupportedGrantTypes:       []string{"authorization_code", "refresh_token"},
 	}
 
-	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), config, nil, newTestSessionTokenService())
+	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), config, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	tests := []struct {
 		name string
@@ -966,7 +975,7 @@ func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 				AgentIDParamName: "x_agent_id",
 				AgentIDClaimName: "x_agent_id",
 			},
-		}, nil, newTestSessionTokenService())
+		}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 		decision, err := svc.HandleAuthorization(context.Background(), req, id.NewPrincipal("user@example.com"))
 		require.NoError(t, err)
@@ -982,7 +991,7 @@ func TestService_HandleAuthorization_MultiAgentParamInjection(t *testing.T) {
 			PublicURL:                 "https://broker.example.com",
 			ModeStrategy:              NewProxyModeStrategy(),
 			MultiAgentClient:          ports.MultiAgentClientConfig{Enabled: false},
-		}, nil, newTestSessionTokenService())
+		}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 		decision, err := svc.HandleAuthorization(context.Background(), req, id.NewPrincipal("user@example.com"))
 		require.NoError(t, err)
@@ -1210,7 +1219,7 @@ func TestService_GenerateMetadata_RFC8414Compliance(t *testing.T) {
 		SupportedGrantTypes:       []string{"authorization_code"},
 	}
 
-	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), config, nil, newTestSessionTokenService())
+	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), config, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 	metadata, err := svc.GenerateMetadata(context.Background())
 
 	require.NoError(t, err)
@@ -1240,6 +1249,49 @@ func (r *errorGrantRepository) FindByPrincipalAndAgent(_ context.Context, _ id.P
 	return nil, r.findErr
 }
 
+func TestService_HandleAuthorization_SharedGrantDecisionTime(t *testing.T) {
+	decisionTime := time.Date(2032, 6, 3, 14, 0, 0, 0, time.UTC)
+	clock := testAuthorizationClock{now: decisionTime.Add(-time.Nanosecond)}
+	agentID := id.NewAgentID()
+	permissionSetID := id.NewPermissionSetID()
+	principal := id.NewPrincipal("user@example.com")
+	agentRepo := NewMockAgentRepository()
+	require.NoError(t, agentRepo.Create(context.Background(), &storage.Agent{
+		ID: agentID, ClientID: ptr.To(id.ClientID("upstream-client")),
+		RedirectURIs:   []string{"https://client.example.com/callback"},
+		PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: permissionSetID}},
+	}))
+	grantRepo := NewMockGrantRepository()
+	require.NoError(t, grantRepo.Create(context.Background(), &storage.UserGrant{
+		ID: id.NewGrantID(), Principal: principal, AgentID: agentID, ValidUntil: &decisionTime,
+		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: permissionSetID, IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
+	}))
+	newService := func() *AuthorizationService {
+		return NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
+			UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize", PublicURL: "https://broker.example.com", ModeStrategy: NewProxyModeStrategy(),
+		}, nil, newTestSessionTokenService(), clock)
+	}
+	req := &ports.AuthorizationRequest{
+		ClientID: id.ClientID(agentID.String()), RedirectURI: "https://client.example.com/callback",
+		State: "state", ResponseType: "code", OriginalURL: "https://broker.example.com/oauth2/authorize?state=state",
+	}
+	decision, err := newService().HandleAuthorization(context.Background(), req, principal)
+	require.NoError(t, err)
+	assert.Equal(t, "proceed", decision.Action)
+
+	clock.now = decisionTime
+	decision, err = newService().HandleAuthorization(context.Background(), req, principal)
+	require.NoError(t, err)
+	assert.Equal(t, "redirect_to_consent", decision.Action)
+
+	clock.err = errors.New("clock unavailable")
+	decision, err = newService().HandleAuthorization(context.Background(), req, principal)
+	require.NoError(t, err)
+	assert.Equal(t, "error", decision.Action)
+	assert.Equal(t, "server_error", decision.ErrorCode)
+	assert.Contains(t, decision.RedirectURL, "error=server_error")
+}
+
 // TestService_HandleAuthorization_GrantLookupError verifies that when the grant repository
 // returns a non-not-found error (e.g., connection failure) after redirect_uri is validated,
 // the service returns a server_error decision with a redirect URL (safe to redirect because
@@ -1264,7 +1316,7 @@ func TestService_HandleAuthorization_GrantLookupError(t *testing.T) {
 	svc := NewAuthorizationService(grantRepo, NewMockSessionRepository(), NewAgentClientResolver(agentRepo, nil), &OAuth2Config{
 		PublicURL:    "https://broker.example.com",
 		ModeStrategy: NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	req := &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -1483,7 +1535,7 @@ func TestService_HandleAuthorization_InvalidUpstreamAuthorizeURL(t *testing.T) {
 		UpstreamAuthorizeEndpoint: "%",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewProxyModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -1528,7 +1580,7 @@ func TestService_HandleAuthorization_LocalClientInHybridMode(t *testing.T) {
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewHybridModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),
@@ -1578,7 +1630,7 @@ func TestService_HandleAuthorization_CIMDClientInHybridMode(t *testing.T) {
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
 		ModeStrategy:              NewHybridModeStrategy(),
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	decision, err := svc.HandleAuthorization(context.Background(), &ports.AuthorizationRequest{
 		ClientID:     id.ClientID("https://cimd.example.com/agent.json"),
@@ -1848,14 +1900,7 @@ func TestService_HandleAuthorization_ModeBoundary(t *testing.T) {
 func TestBuildConsentURL_AlwaysProducesSessionToken(t *testing.T) {
 	agentID := id.NewAgentID()
 
-	svc := NewAuthorizationService(
-		NewMockGrantRepository(),
-		NewMockSessionRepository(),
-		NewAgentClientResolver(NewMockAgentRepository(), nil),
-		&OAuth2Config{PublicURL: "https://broker.example.com", ModeStrategy: NewProxyModeStrategy()},
-		nil,
-		newTestSessionTokenService(),
-	)
+	svc := NewAuthorizationService(NewMockGrantRepository(), NewMockSessionRepository(), NewAgentClientResolver(NewMockAgentRepository(), nil), &OAuth2Config{PublicURL: "https://broker.example.com", ModeStrategy: NewProxyModeStrategy()}, nil, newTestSessionTokenService(), testAuthorizationClock{now: time.Now()})
 
 	req := &ports.AuthorizationRequest{
 		ClientID:     id.ClientID(agentID.String()),

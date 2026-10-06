@@ -3,15 +3,20 @@ package aws
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	mpltypes "github.com/aws/aws-cryptographic-material-providers-library/releases/go/mpl/awscryptographymaterialproviderssmithygeneratedtypes"
 	esdktypes "github.com/aws/aws-encryption-sdk/releases/go/encryption-sdk/awscryptographyencryptionsdksmithygeneratedtypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/branchkey"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 )
 
@@ -173,6 +178,53 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 	}
 }
 
+// Both adapters use the same Dafny runtime globals, including the empty sequence
+// modified while the signed ESDK messages are built.
+func TestConcurrentTwoAdapterRoundTrips(t *testing.T) {
+	const testKEK = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
+	first, _, err := NewAWSEncryption(testKEK, "", 0)
+	require.NoError(t, err)
+	second, _, err := NewAWSEncryption(testKEK, "", 0)
+	require.NoError(t, err)
+
+	const workers = 12
+	start := make(chan struct{})
+	failures := make(chan error, workers)
+	var workersDone sync.WaitGroup
+	for i := range workers {
+		workersDone.Add(1)
+		go func(i int) {
+			defer workersDone.Done()
+			<-start
+			encryptor, decryptor := first, second
+			if i%2 == 1 {
+				encryptor, decryptor = second, first
+			}
+			plaintext := []byte(fmt.Sprintf("refresh-secret-%d", i))
+			aad := map[string]string{"service_id": fmt.Sprintf("service-%d", i)}
+			ciphertext, err := encryptor.Encrypt(context.Background(), plaintext, aad)
+			if err != nil {
+				failures <- fmt.Errorf("worker %d encrypt: %w", i, err)
+				return
+			}
+			recovered, err := decryptor.Decrypt(context.Background(), ciphertext, aad)
+			if err != nil {
+				failures <- fmt.Errorf("worker %d decrypt: %w", i, err)
+				return
+			}
+			if string(recovered) != string(plaintext) {
+				failures <- fmt.Errorf("worker %d decrypted %q instead of %q", i, recovered, plaintext)
+			}
+		}(i)
+	}
+	close(start)
+	workersDone.Wait()
+	close(failures)
+	for err := range failures {
+		t.Error(err)
+	}
+}
+
 // TestContextMismatchDetection tests that wrong context fails decryption
 func TestContextMismatchDetection(t *testing.T) {
 	// Setup: Create adapter with env var KEK
@@ -219,6 +271,73 @@ func TestContextMismatchDetection(t *testing.T) {
 	if len(decrypted) > 0 {
 		t.Fatal("decrypted should be empty/nil on context mismatch")
 	}
+}
+
+func TestRefreshSessionAADWithRawAWSKeyring(t *testing.T) {
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	plaintext := []byte("refresh-result-fixture")
+	root := map[string]string{encryption.ContextKeyRefreshSessionID: "550e8400-e29b-41d4-a716-446655440001"}
+	ciphertext, err := adapter.Encrypt(ctx, plaintext, root)
+	require.NoError(t, err)
+
+	recovered, err := adapter.Decrypt(ctx, ciphertext, root)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, recovered)
+
+	t.Run("SDK-returned public key metadata does not change routing", func(t *testing.T) {
+		require.NoError(t, lockSDK(ctx))
+		result, err := adapter.encryptionClient.Decrypt(ctx, esdktypes.DecryptInput{
+			Ciphertext:        ciphertext,
+			EncryptionContext: root,
+			Keyring:           adapter.keyring,
+		})
+		unlockSDK()
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		if _, ok := result.EncryptionContext["aws-crypto-public-key"]; !ok {
+			t.Fatal("SDK did not return signing public key metadata")
+		}
+		supplier := NewBranchKeyIdSupplier(branchkey.NewDefaultProvider())
+		output, err := supplier.GetBranchKeyId(mpltypes.GetBranchKeyIdInput{EncryptionContext: result.EncryptionContext})
+		require.NoError(t, err)
+		require.NotNil(t, output)
+		assert.Equal(t, "refresh_550e8400-e29b-41d4-a716-446655440001_branch_key", output.BranchKeyId)
+	})
+
+	for _, tt := range []struct {
+		name    string
+		context map[string]string
+	}{
+		{"another refresh session", map[string]string{encryption.ContextKeyRefreshSessionID: "550e8400-e29b-41d4-a716-446655440002"}},
+		{"another subject namespace", map[string]string{encryption.ContextKeyServiceID: "550e8400-e29b-41d4-a716-446655440001"}},
+		{"missing root subject", map[string]string{}},
+		{"mixed root subjects", map[string]string{
+			encryption.ContextKeyRefreshSessionID: "550e8400-e29b-41d4-a716-446655440001",
+			encryption.ContextKeyKID:              "kid-123",
+		}},
+		{"malformed root subject", map[string]string{encryption.ContextKeyRefreshSessionID: "not-a-uuid"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			decrypted, err := adapter.Decrypt(ctx, ciphertext, tt.context)
+			require.Error(t, err)
+			if len(decrypted) != 0 {
+				t.Fatal("rejected decryption returned plaintext")
+			}
+		})
+	}
+
+	t.Run("tampered ciphertext", func(t *testing.T) {
+		tampered := append([]byte(nil), ciphertext...)
+		tampered[len(tampered)-1] ^= 1
+		decrypted, err := adapter.Decrypt(ctx, tampered, root)
+		require.Error(t, err)
+		if len(decrypted) != 0 {
+			t.Fatal("tampered ciphertext returned plaintext")
+		}
+	})
 }
 
 // TestCancelledContextClassifiedAsKEKUnavailable verifies that a cancelled or
@@ -287,6 +406,110 @@ func TestCancelledContextClassifiedAsKEKUnavailable(t *testing.T) {
 			if !isKEKUnavailableError(decErr) {
 				t.Errorf("expected ErrorKindKEKUnavailable, got: %v (type %T)", decErr, decErr)
 			}
+		})
+	}
+}
+
+// waitingSDKContext reports when a request has reached the cancellable gate wait.
+type waitingSDKContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (c *waitingSDKContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}
+
+func TestQueuedSDKCallsRespectContext(t *testing.T) {
+	plaintext := []byte("secret")
+	aad := map[string]string{"service_id": "oauth2"}
+	for _, operation := range []struct {
+		name string
+		call func(context.Context, *AWSAdapter) error
+	}{
+		{"Encrypt", func(ctx context.Context, adapter *AWSAdapter) error {
+			_, err := adapter.Encrypt(ctx, plaintext, aad)
+			return err
+		}},
+		{"Decrypt", func(ctx context.Context, adapter *AWSAdapter) error {
+			_, err := adapter.Decrypt(ctx, []byte("non-empty ciphertext"), aad)
+			return err
+		}},
+	} {
+		t.Run(operation.name+"/caller_cancel", func(t *testing.T) {
+			require.NoError(t, lockSDK(context.Background()))
+			held := true
+			defer func() {
+				if held {
+					unlockSDK()
+				}
+			}()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			watched := &waitingSDKContext{Context: ctx, waiting: make(chan struct{})}
+			var sdkCalled atomic.Bool
+			adapter := &AWSAdapter{encryptionClient: &testMockEncryptionSDKClient{
+				onCall: func(context.Context) error {
+					sdkCalled.Store(true)
+					return errors.New("SDK entered while gate held")
+				},
+			}}
+			finished := make(chan error, 1)
+			go func() { finished <- operation.call(watched, adapter) }()
+			select {
+			case <-watched.waiting:
+			case <-time.After(2 * time.Second):
+				t.Fatal("queued operation did not reach the SDK gate")
+			}
+			cancel()
+			select {
+			case err := <-finished:
+				require.ErrorIs(t, err, context.Canceled)
+				assert.True(t, isKEKUnavailableError(err))
+				assert.False(t, sdkCalled.Load(), "cancelled call entered the SDK")
+			case <-time.After(2 * time.Second):
+				t.Fatal("queued operation did not return before the gate was released")
+			}
+			unlockSDK()
+			held = false
+		})
+
+		t.Run(operation.name+"/internal_timeout", func(t *testing.T) {
+			require.NoError(t, lockSDK(context.Background()))
+			held := true
+			defer func() {
+				if held {
+					unlockSDK()
+				}
+			}()
+
+			const timeout = 100 * time.Millisecond
+			var sdkCalled atomic.Bool
+			adapter := &AWSAdapter{
+				dynamoDBTimeout: timeout,
+				encryptionClient: &testMockEncryptionSDKClient{
+					onCall: func(context.Context) error {
+						sdkCalled.Store(true)
+						return errors.New("SDK entered while gate held")
+					},
+				},
+			}
+			finished := make(chan error, 1)
+			go func() { finished <- operation.call(context.Background(), adapter) }()
+			select {
+			case err := <-finished:
+				require.Error(t, err)
+				assert.True(t, isKEKUnavailableError(err))
+				assert.Contains(t, err.Error(), "dynamodb_timeout="+timeout.String())
+				assert.False(t, sdkCalled.Load(), "timed-out call entered the SDK")
+			case <-time.After(2 * time.Second):
+				t.Fatal("queued operation did not respect dynamodb_timeout")
+			}
+			unlockSDK()
+			held = false
 		})
 	}
 }
@@ -1053,4 +1276,28 @@ func TestPlaintextKEKNeverLogged(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSDKAbortDoesNotPreventSubsequentEncryption(t *testing.T) {
+	base, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	require.NoError(t, err)
+	defer func() {
+		select {
+		case <-sdkGate:
+		default:
+		}
+	}()
+	broken := &AWSAdapter{encryptionClient: &testMockEncryptionSDKClient{onCall: func(context.Context) error {
+		panic("SDK aborted the request")
+	}}, keyring: base.keyring}
+	aad := map[string]string{"service_id": "recovered-request"}
+	require.Panics(t, func() { _, _ = broken.Encrypt(t.Context(), []byte("discarded"), aad) })
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	plaintext := []byte("subsequent valid request")
+	ciphertext, err := base.Encrypt(ctx, plaintext, aad)
+	require.NoError(t, err, "a recovered request abort must not strand the process-wide SDK gate")
+	recovered, err := base.Decrypt(ctx, ciphertext, aad)
+	require.NoError(t, err)
+	require.Equal(t, plaintext, recovered)
 }

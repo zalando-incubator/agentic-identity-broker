@@ -131,7 +131,7 @@ func TestUserGrant_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.grant.Validate()
+			err := tt.grant.Validate(time.Now())
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
@@ -143,40 +143,24 @@ func TestUserGrant_Validate(t *testing.T) {
 }
 
 func TestUserGrant_IsActive(t *testing.T) {
-	future := time.Now().Add(24 * time.Hour)
-	past := time.Now().Add(-24 * time.Hour)
-
+	expiresAt := time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name   string
-		grant  *UserGrant
-		active bool
+		name         string
+		validUntil   *time.Time
+		decisionTime time.Time
+		active       bool
 	}{
-		{
-			name: "indefinite grant is active",
-			grant: &UserGrant{
-				ValidUntil: nil,
-			},
-			active: true,
-		},
-		{
-			name: "future expiration is active",
-			grant: &UserGrant{
-				ValidUntil: &future,
-			},
-			active: true,
-		},
-		{
-			name: "past expiration is not active",
-			grant: &UserGrant{
-				ValidUntil: &past,
-			},
-			active: false,
-		},
+		{name: "finite before expiry", validUntil: &expiresAt, decisionTime: expiresAt.Add(-time.Nanosecond), active: true},
+		{name: "finite at expiry", validUntil: &expiresAt, decisionTime: expiresAt, active: false},
+		{name: "finite after expiry", validUntil: &expiresAt, decisionTime: expiresAt.Add(time.Nanosecond), active: false},
+		{name: "finite historical decision is independent of wall clock", validUntil: &expiresAt, decisionTime: time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC), active: true},
+		{name: "indefinite at distant future decision", decisionTime: time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC), active: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.active, tt.grant.IsActive())
+			grant := &UserGrant{ValidUntil: tt.validUntil}
+			assert.Equal(t, tt.active, grant.IsActive(tt.decisionTime))
 		})
 	}
 }
@@ -258,7 +242,7 @@ func TestUserGrant_ValidateForCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.grant.ValidateForCreate()
+			err := tt.grant.ValidateForCreate(time.Now())
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)

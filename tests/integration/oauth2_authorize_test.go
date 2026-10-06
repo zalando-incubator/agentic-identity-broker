@@ -29,6 +29,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testAuthorizationClock struct{ now time.Time }
+
+func (c testAuthorizationClock) Now(context.Context) (time.Time, error) { return c.now, nil }
+
 func newIntegrationJWETokenService() *domjwe.TokenService {
 	keyBytes, err := base64.StdEncoding.DecodeString("ASNFZ4mrze/+3LqYdlQyEAEjRWeJq83v/ty6mHZUMhA=")
 	if err != nil {
@@ -57,7 +61,7 @@ func TestOAuth2AuthorizeEndpoint_NonUUIDClientIDError(t *testing.T) {
 		PublicURL:                 "https://broker.example.com",
 		SupportedResponseTypes:    []string{"code"},
 		SupportedGrantTypes:       []string{"authorization_code"},
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 	handler := &enduser.OAuth2AuthorizeHandler{Service: svc}
 
 	req := httptest.NewRequest(
@@ -87,7 +91,7 @@ func TestOAuth2AuthorizeEndpoint_UnknownAgentUUIDDirectError(t *testing.T) {
 		PublicURL:                 "https://broker.example.com",
 		SupportedResponseTypes:    []string{"code"},
 		SupportedGrantTypes:       []string{"authorization_code"},
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 	handler := &enduser.OAuth2AuthorizeHandler{Service: svc}
 
 	unknownUUID := id.NewAgentID().String()
@@ -118,7 +122,7 @@ func TestOAuth2AuthorizeEndpoint_MissingParameterError(t *testing.T) {
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service: svc,
@@ -173,7 +177,7 @@ func TestOAuth2AuthorizeEndpoint_NoGrantRedirectsToConsent(t *testing.T) {
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, sessiontoken.NewService(newIntegrationJWETokenService()))
+	}, nil, sessiontoken.NewService(newIntegrationJWETokenService()), testAuthorizationClock{now: time.Now()})
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service: svc,
@@ -227,7 +231,7 @@ func TestOAuth2AuthorizeEndpoint_ActiveGrantRedirectsToUpstream(t *testing.T) {
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -290,7 +294,7 @@ func TestOAuth2AuthorizeEndpoint_ExpiredGrantRedirectsToConsent(t *testing.T) {
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, sessiontoken.NewService(newIntegrationJWETokenService()))
+	}, nil, sessiontoken.NewService(newIntegrationJWETokenService()), testAuthorizationClock{now: time.Now()})
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service: svc,
@@ -346,7 +350,7 @@ func TestOAuth2AuthorizeEndpoint_WithMiddleware(t *testing.T) {
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -405,7 +409,7 @@ func TestOAuth2AuthorizeEndpoint_PKCEParametersPreserved(t *testing.T) {
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc(), testAuthorizationClock{now: time.Now()})
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -545,7 +549,7 @@ func (r *inMemoryGrantRepo) Delete(ctx context.Context, grantID id.GrantID) erro
 func (r *inMemoryGrantRepo) ListByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.UserGrant, error) {
 	var grants []*storage.UserGrant
 	for _, grant := range r.grants {
-		if grant.Principal == principal && grant.AgentID == agentID && grant.IsActive() {
+		if grant.Principal == principal && grant.AgentID == agentID {
 			grants = append(grants, grant)
 		}
 	}
@@ -570,10 +574,10 @@ func (r *inMemoryGrantRepo) DeleteByAgent(ctx context.Context, agentID id.AgentI
 	return nil
 }
 
-func (r *inMemoryGrantRepo) ListByPrincipal(ctx context.Context, principal id.Principal) ([]storage.UserGrant, error) {
+func (r *inMemoryGrantRepo) ListByPrincipal(ctx context.Context, principal id.Principal, decisionTime time.Time) ([]storage.UserGrant, error) {
 	var grants []storage.UserGrant
 	for _, grant := range r.grants {
-		if grant.Principal == principal && grant.IsActive() {
+		if grant.Principal == principal && grant.IsActive(decisionTime) {
 			grants = append(grants, *grant)
 		}
 	}

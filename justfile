@@ -14,7 +14,7 @@ LDFLAGS := env_var_or_default("LDFLAGS", "-s -w")
 # internally-mirrored/allowed base image (see delivery.yaml).
 BASE_IMAGE := env_var_or_default("BASE_IMAGE", "alpine:3@sha256:5b02b42e375f7426f8d65c3af331ca05d9878f9989230354504e0b9dfd431f60")
 GO_FAST_TEST_PACKAGES := `go list -e ./... | grep -Ev '(/assets/docusaurus/build/|/specs/|/web/node_modules/|/tests/e2e$|/tests/e2e/frontend$|/tests/e2e/extproc$|/tests/integration($|/))' | tr '\n' ' '`
-INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/infra/... ./tests/integration/migrations/... ./tests/integration/storage/infra/... ./internal/adapters/storage/postgres/..."
+INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration ./tests/integration/infra/... ./tests/integration/migrations/... ./tests/integration/storage/infra/... ./internal/adapters/storage/postgres/..."
 INTEGRATION_INFRA_PACKAGE_PROCS := env_var_or_default("INTEGRATION_INFRA_PACKAGE_PROCS", "2")
 GINKGO_FRONTEND_PROCS := env_var_or_default("GINKGO_FRONTEND_PROCS", "2")
 E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false")
@@ -93,21 +93,43 @@ test-coverage-summary:
     go test -race -coverprofile=coverage/coverage.out -covermode=atomic {{GO_FAST_TEST_PACKAGES}}
     go tool cover -func=coverage/coverage.out
 
-# Run the backend E2E acceptance suite with Ginkgo
+# Run ordinary and PostgreSQL-backed refresh acceptance journeys (including the pinned old issuer)
 test-e2e-backend: web-build
-    @echo "Running backend E2E suite..."
-    @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running backend E2E suite..."
+    failed=0
+    ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" ./tests/e2e/ || failed=1
+    bash scripts/build-refresh-prefeature-issuer.sh
+    AIB_REFRESH_PREFEATURE_BINARY="$PWD/bin/refresh-prefeature/{{NAME}}" \
+        ginkgo -v --tags=integration --procs={{GINKGO_BACKEND_PROCS}} \
+        --label-filter="!performance" --focus="Consent-Bound Refresh Sessions" ./tests/e2e/ || failed=1
+    exit "$failed"
 
 # Run the SC-001 backend performance measurement separately from functional E2E tests
 test-e2e-performance:
     @echo "Running backend E2E performance measurement..."
     @if command -v ginkgo > /dev/null; then ginkgo -v --procs=1 --label-filter="performance" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
-# Run the backend E2E acceptance suite with coverage report
+# Run both ordinary and tagged refresh acceptance journeys with coverage
 test-e2e-backend-coverage: web-build
-    @echo "Running backend E2E suite with coverage..."
-    @mkdir -p coverage
-    @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" --cover --covermode=atomic --coverpkg=./internal/... --coverprofile=e2e-backend.out --output-dir=coverage ./tests/e2e/ && go tool cover -html=coverage/e2e-backend.out -o coverage/e2e-backend.html && echo "Backend E2E coverage report generated at coverage/e2e-backend.html"; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p coverage
+    failed=0
+    ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" \
+        --cover --covermode=atomic --coverpkg=./internal/... \
+        --coverprofile=e2e-backend.out --output-dir=coverage ./tests/e2e/ || failed=1
+    bash scripts/build-refresh-prefeature-issuer.sh
+    AIB_REFRESH_PREFEATURE_BINARY="$PWD/bin/refresh-prefeature/{{NAME}}" \
+        ginkgo -v --tags=integration --procs={{GINKGO_BACKEND_PROCS}} \
+        --label-filter="!performance" --focus="Consent-Bound Refresh Sessions" \
+        --cover --covermode=atomic --coverpkg=./internal/... \
+        --coverprofile=e2e-backend-integration.out --output-dir=coverage ./tests/e2e/ || failed=1
+    if [ "$failed" -ne 0 ]; then exit "$failed"; fi
+    go tool cover -html=coverage/e2e-backend.out -o coverage/e2e-backend.html
+    go tool cover -html=coverage/e2e-backend-integration.out -o coverage/e2e-backend-integration.html
+    echo "Backend E2E coverage reports generated in coverage/"
 
 # Watch the backend E2E acceptance suite during development
 test-e2e-backend-watch: web-build
@@ -258,7 +280,7 @@ test-integration:
 
 # Run infra-backed integration tests that require build tags and external infrastructure
 test-integration-infra:
-    @echo "Running infra-backed integration suites..."
+    @echo "Running infra-backed integration suites (including tagged root refresh/restore tests)..."
     go test -count=1 -tags=integration -p {{INTEGRATION_INFRA_PACKAGE_PROCS}} -v {{INTEGRATION_INFRA_TEST_PACKAGES}}
 
 # Run both self-contained and infra-backed integration suites
@@ -421,23 +443,35 @@ verify-integration-junit:
     fi
     echo "Integration JUnit report generated at test-results/integration-junit.xml"
 
-# Run the backend E2E acceptance suite and publish its reports
+# Run ordinary and tagged PostgreSQL refresh E2E journeys and publish both reports
 verify-e2e-backend-junit:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p test-results
-    rm -f test-results/{e2e-backend-junit.xml,e2e-backend.json,e2e-backend.log,e2e-backend-web-build.log}
+    rm -f test-results/{e2e-backend-junit.xml,e2e-backend-default-junit.xml,e2e-backend-integration-junit.xml,e2e-backend.json,e2e-backend-integration.json,e2e-backend.log,e2e-backend-integration.log,e2e-backend-web-build.log}
     just web-build 2>&1 | tee test-results/e2e-backend-web-build.log
+    failed=0
     ginkgo run --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance" \
         --timeout=20m --poll-progress-after=30s --show-node-events \
-        --junit-report=test-results/e2e-backend-junit.xml --json-report=test-results/e2e-backend.json \
-        ./tests/e2e/ 2>&1 | tee test-results/e2e-backend.log
-    for report in test-results/e2e-backend-junit.xml test-results/e2e-backend.json; do
+        --junit-report=test-results/e2e-backend-default-junit.xml --json-report=test-results/e2e-backend.json \
+        ./tests/e2e/ 2>&1 | tee test-results/e2e-backend.log || failed=1
+    bash scripts/build-refresh-prefeature-issuer.sh
+    AIB_REFRESH_PREFEATURE_BINARY="$PWD/bin/refresh-prefeature/{{NAME}}" \
+        ginkgo run --tags=integration --procs={{GINKGO_BACKEND_PROCS}} \
+        --label-filter="!performance" --focus="Consent-Bound Refresh Sessions" \
+        --timeout=20m --poll-progress-after=30s --show-node-events \
+        --junit-report=test-results/e2e-backend-integration-junit.xml --json-report=test-results/e2e-backend-integration.json \
+        ./tests/e2e/ 2>&1 | tee test-results/e2e-backend-integration.log || failed=1
+    for report in test-results/{e2e-backend-default-junit.xml,e2e-backend-integration-junit.xml,e2e-backend.json,e2e-backend-integration.json}; do
         if [ ! -s "$report" ]; then
             echo "Missing E2E report: $report" >&2
             exit 1
         fi
     done
+    npx -y junit-report-merger@9.0.3 test-results/e2e-backend-junit.xml \
+        test-results/e2e-backend-default-junit.xml test-results/e2e-backend-integration-junit.xml
+    test -s test-results/e2e-backend-junit.xml
+    exit "$failed"
 
 # Run the ExtProc E2E acceptance suite and publish its reports
 verify-e2e-extproc-junit:
@@ -486,7 +520,8 @@ verify-merge-junit:
         test-results/fast-junit.xml
         test-results/integration-self-contained-junit.xml
         test-results/integration-infra-junit.xml
-        test-results/e2e-backend-junit.xml
+        test-results/e2e-backend-default-junit.xml
+        test-results/e2e-backend-integration-junit.xml
         test-results/e2e-extproc-junit.xml
         test-results/e2e-frontend-junit.xml
         test-results/web-unit-junit.xml

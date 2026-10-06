@@ -17,6 +17,7 @@ var _ ports.AuthorizationCodeRepository = (*AuthorizationCodeStore)(nil)
 // AuthorizationCodeStore is an in-memory implementation of AuthorizationCodeRepository.
 type AuthorizationCodeStore struct {
 	mu         sync.RWMutex
+	refresh    *RefreshSessionStore
 	byID       map[id.AuthorizationCodeID]*storage.AuthorizationCode
 	byCodeHash map[string]*storage.AuthorizationCode
 }
@@ -30,6 +31,20 @@ func NewAuthorizationCodeStore() *AuthorizationCodeStore {
 }
 
 func (s *AuthorizationCodeStore) Create(ctx context.Context, code *storage.AuthorizationCode) error {
+	if scopeFor(ctx, s.refresh) != nil {
+		return s.scopedCreate(ctx, code)
+	}
+	// /authorize creates code and PKCE records outside a refresh owner scope.
+	// Wait for that agent's ongoing refresh/lifecycle transaction before publishing.
+	if s.refresh != nil {
+		gate, err := s.refresh.lockAgent(ctx, code.AgentID)
+		if err != nil {
+			return err
+		}
+		defer func() { gate <- struct{}{} }()
+	}
+	unlock := s.refresh.lockWrite()
+	defer unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -38,13 +53,21 @@ func (s *AuthorizationCodeStore) Create(ctx context.Context, code *storage.Autho
 			fmt.Sprintf("authorization code with hash %s already exists", code.CodeHash))
 	}
 
-	c := *code
-	s.byID[c.ID] = &c
-	s.byCodeHash[c.CodeHash] = &c
+	c := copyAuthorizationCode(code)
+	s.byID[c.ID] = c
+	s.byCodeHash[c.CodeHash] = c
+	if s.refresh != nil {
+		s.refresh.versions[code.AgentID]++
+	}
 	return nil
 }
 
 func (s *AuthorizationCodeStore) FindByCodeHash(ctx context.Context, codeHash string) (*storage.AuthorizationCode, error) {
+	if scopeFor(ctx, s.refresh) != nil {
+		return s.scopedFind(ctx, codeHash)
+	}
+	unlock := s.refresh.lockRead()
+	defer unlock()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -53,11 +76,15 @@ func (s *AuthorizationCodeStore) FindByCodeHash(ctx context.Context, codeHash st
 		return nil, storage.NewStorageError("AuthorizationCodeStore.FindByCodeHash", storage.ErrorKindNotFound, nil,
 			fmt.Sprintf("authorization code with hash %s not found", codeHash))
 	}
-	result := *code
-	return &result, nil
+	return copyAuthorizationCode(code), nil
 }
 
 func (s *AuthorizationCodeStore) MarkUsed(ctx context.Context, codeID id.AuthorizationCodeID) error {
+	if scopeFor(ctx, s.refresh) != nil {
+		return s.scopedMarkUsed(ctx, codeID)
+	}
+	unlock := s.refresh.lockWrite()
+	defer unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -69,10 +96,18 @@ func (s *AuthorizationCodeStore) MarkUsed(ctx context.Context, codeID id.Authori
 
 	now := time.Now()
 	code.UsedAt = &now
+	if s.refresh != nil {
+		s.refresh.versions[code.AgentID]++
+	}
 	return nil
 }
 
 func (s *AuthorizationCodeStore) DeleteExpired(ctx context.Context) (int, error) {
+	if scopeFor(ctx, s.refresh) != nil {
+		return s.scopedDeleteExpired(ctx)
+	}
+	unlock := s.refresh.lockWrite()
+	defer unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -82,6 +117,9 @@ func (s *AuthorizationCodeStore) DeleteExpired(ctx context.Context) (int, error)
 		if code.ExpiresAt.Before(now) {
 			delete(s.byID, code.ID)
 			delete(s.byCodeHash, hash)
+			if s.refresh != nil {
+				s.refresh.versions[code.AgentID]++
+			}
 			count++
 		}
 	}

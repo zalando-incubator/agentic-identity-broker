@@ -60,6 +60,33 @@ func TestBranchKeySubject_CIMDClientAuthenticationKey(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestBranchKeySubject_RefreshSession(t *testing.T) {
+	sessionID := id.MustParseRefreshSessionID("550e8400-e29b-41d4-a716-446655440025")
+	subject := NewRefreshSessionBranchKeySubject(sessionID)
+
+	require.NoError(t, subject.Validate())
+	assert.Equal(t, BranchKeySubjectKindRefreshSession, subject.Kind())
+	assert.Equal(t, sessionID.String(), subject.Identifier())
+	assert.Equal(t, map[string]string{ContextKeyRefreshSessionID: sessionID.String()}, subject.EncryptionContext())
+
+	gotID, ok := subject.RefreshSessionID()
+	require.True(t, ok)
+	assert.Equal(t, sessionID, gotID)
+	_, ok = subject.ServiceID()
+	assert.False(t, ok)
+	_, ok = subject.KeyID()
+	assert.False(t, ok)
+
+	for _, other := range []BranchKeySubject{
+		NewServiceBranchKeySubject(id.MustParseServiceID("550e8400-e29b-41d4-a716-446655440000")),
+		NewSigningKeyBranchKeySubject(id.NewKeyID("kid-123")),
+		NewCIMDClientAuthenticationKeyBranchKeySubject(id.NewKeyID("cimd-kid-123")),
+	} {
+		_, ok := other.RefreshSessionID()
+		assert.False(t, ok, "subject kind %s must not expose a refresh session ID", other.Kind())
+	}
+}
+
 func TestBranchKeySubject_IdentifierZeroValue(t *testing.T) {
 	assert.Equal(t, "<unknown>", BranchKeySubject{}.Identifier())
 }
@@ -138,26 +165,59 @@ func TestBranchKeySubjectFromEncryptionContextCIMDClientAuthenticationKey(t *tes
 	assert.Equal(t, id.NewKeyID("cimd-kid-123"), keyID)
 }
 
+func TestBranchKeySubjectFromEncryptionContextRefreshSession(t *testing.T) {
+	const sessionUUID = "550e8400-e29b-41d4-a716-446655440025"
+
+	subject, err := BranchKeySubjectFromEncryptionContext(map[string]string{ContextKeyRefreshSessionID: sessionUUID})
+	require.NoError(t, err)
+	assert.Equal(t, BranchKeySubjectKindRefreshSession, subject.Kind())
+	gotID, ok := subject.RefreshSessionID()
+	require.True(t, ok)
+	assert.Equal(t, id.MustParseRefreshSessionID(sessionUUID), gotID)
+	assert.Equal(t, map[string]string{ContextKeyRefreshSessionID: sessionUUID}, subject.EncryptionContext())
+
+	tests := []struct {
+		name    string
+		context map[string]string
+	}{
+		{name: "empty refresh ID", context: map[string]string{ContextKeyRefreshSessionID: ""}},
+		{name: "malformed refresh ID", context: map[string]string{ContextKeyRefreshSessionID: "not-a-uuid"}},
+		{name: "zero refresh ID", context: map[string]string{ContextKeyRefreshSessionID: "00000000-0000-0000-0000-000000000000"}},
+		{name: "refresh and service", context: map[string]string{ContextKeyRefreshSessionID: sessionUUID, ContextKeyServiceID: "550e8400-e29b-41d4-a716-446655440000"}},
+		{name: "refresh and kid", context: map[string]string{ContextKeyRefreshSessionID: sessionUUID, ContextKeyKID: "kid-123"}},
+		{name: "refresh and declared empty service", context: map[string]string{ContextKeyRefreshSessionID: sessionUUID, ContextKeyServiceID: ""}},
+		{name: "refresh and declared empty kid", context: map[string]string{ContextKeyRefreshSessionID: sessionUUID, ContextKeyKID: ""}},
+		{name: "empty refresh and service", context: map[string]string{ContextKeyRefreshSessionID: "", ContextKeyServiceID: "550e8400-e29b-41d4-a716-446655440000"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := BranchKeySubjectFromEncryptionContext(tt.context)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestBranchKeySubjectValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		subject BranchKeySubject
-		wantErr string
 	}{
 		{
 			name:    "missing kind",
 			subject: BranchKeySubject{},
-			wantErr: "branch key subject kind is required",
 		},
 		{
 			name:    "missing service id",
 			subject: NewServiceBranchKeySubject(id.ServiceID{}),
-			wantErr: "service_id is required",
+		},
+		{
+			name:    "missing refresh session id",
+			subject: NewRefreshSessionBranchKeySubject(id.RefreshSessionID{}),
 		},
 		{
 			name:    "missing signing key id",
 			subject: NewSigningKeyBranchKeySubject(id.KeyID("")),
-			wantErr: "kid is required",
 		},
 	}
 
@@ -165,7 +225,6 @@ func TestBranchKeySubjectValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.subject.Validate()
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
 }

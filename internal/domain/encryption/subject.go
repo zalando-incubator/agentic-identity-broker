@@ -14,8 +14,10 @@ const (
 	BranchKeySubjectKindService                     BranchKeySubjectKind = "service"
 	BranchKeySubjectKindSigningKey                  BranchKeySubjectKind = "signing_key"
 	BranchKeySubjectKindCIMDClientAuthenticationKey BranchKeySubjectKind = "cimd_client_authentication_key"
+	BranchKeySubjectKindRefreshSession              BranchKeySubjectKind = "refresh_session"
 	ContextKeyServiceID                                                  = "service_id"
 	ContextKeyKID                                                        = "kid"
+	ContextKeyRefreshSessionID                                           = "refresh_session_id"
 )
 
 // CIMDClientAuthenticationKeyIDPrefix distinguishes CIMD key AAD values without adding a second AAD key.
@@ -31,6 +33,7 @@ type BranchKeySubject struct {
 	serviceID                     id.ServiceID
 	signingKeyID                  id.KeyID
 	cimdClientAuthenticationKeyID id.KeyID
+	refreshSessionID              id.RefreshSessionID
 }
 
 func NewServiceBranchKeySubject(serviceID id.ServiceID) BranchKeySubject {
@@ -55,9 +58,35 @@ func NewCIMDClientAuthenticationKeyBranchKeySubject(keyID id.KeyID) BranchKeySub
 	}
 }
 
+func NewRefreshSessionBranchKeySubject(sessionID id.RefreshSessionID) BranchKeySubject {
+	return BranchKeySubject{kind: BranchKeySubjectKindRefreshSession, refreshSessionID: sessionID}
+}
+
+func (s BranchKeySubject) RefreshSessionID() (id.RefreshSessionID, bool) {
+	if s.kind != BranchKeySubjectKindRefreshSession {
+		return id.RefreshSessionID{}, false
+	}
+	return s.refreshSessionID, true
+}
+
 func BranchKeySubjectFromEncryptionContext(encryptionContext map[string]string) (BranchKeySubject, error) {
 	serviceID, hasServiceID := encryptionContext[ContextKeyServiceID]
 	signingKeyID, hasSigningKeyID := encryptionContext[ContextKeyKID]
+	refreshSessionID, hasRefreshSessionID := encryptionContext[ContextKeyRefreshSessionID]
+	if hasRefreshSessionID {
+		if hasServiceID || hasSigningKeyID {
+			return BranchKeySubject{}, fmt.Errorf("encryption context must include exactly one branch key subject")
+		}
+		parsed, err := id.ParseRefreshSessionID(refreshSessionID)
+		if err != nil {
+			return BranchKeySubject{}, fmt.Errorf("invalid refresh_session_id: %w", err)
+		}
+		subject := NewRefreshSessionBranchKeySubject(parsed)
+		if err := subject.Validate(); err != nil {
+			return BranchKeySubject{}, err
+		}
+		return subject, nil
+	}
 
 	hasServiceID = hasServiceID && serviceID != ""
 	hasSigningKeyID = hasSigningKeyID && signingKeyID != ""
@@ -112,6 +141,8 @@ func (s BranchKeySubject) Identifier() string {
 		return s.signingKeyID.String()
 	case BranchKeySubjectKindCIMDClientAuthenticationKey:
 		return s.cimdClientAuthenticationKeyID.String()
+	case BranchKeySubjectKindRefreshSession:
+		return s.refreshSessionID.String()
 	default:
 		return "<unknown>"
 	}
@@ -125,6 +156,8 @@ func (s BranchKeySubject) EncryptionContext() map[string]string {
 		return map[string]string{ContextKeyKID: s.signingKeyID.String()}
 	case BranchKeySubjectKindCIMDClientAuthenticationKey:
 		return map[string]string{ContextKeyKID: s.cimdClientAuthenticationKeyID.String()}
+	case BranchKeySubjectKindRefreshSession:
+		return map[string]string{ContextKeyRefreshSessionID: s.refreshSessionID.String()}
 	default:
 		return map[string]string{}
 	}
@@ -146,6 +179,10 @@ func (s BranchKeySubject) Validate() error {
 		}
 		if !strings.HasPrefix(s.cimdClientAuthenticationKeyID.String(), CIMDClientAuthenticationKeyIDPrefix) {
 			return fmt.Errorf("CIMD client-authentication kid must use %q prefix", CIMDClientAuthenticationKeyIDPrefix)
+		}
+	case BranchKeySubjectKindRefreshSession:
+		if s.refreshSessionID.IsZero() {
+			return fmt.Errorf("refresh_session_id is required")
 		}
 	default:
 		return fmt.Errorf("branch key subject kind is required")

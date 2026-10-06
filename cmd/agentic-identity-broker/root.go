@@ -432,6 +432,7 @@ func emitAuditLog(loader *config.Loader) {
 }
 
 func init() {
+	rootCmd.AddCommand(newRefreshSessionsCommand())
 	// Configuration file path flag
 	rootCmd.PersistentFlags().StringP("config", "c", "", "config file path (overrides IDENTITY_BROKER_CONFIG_PATH)")
 
@@ -445,6 +446,11 @@ func init() {
 	rootCmd.PersistentFlags().Int("server.admin.port", 0, "admin server port (default: 14000)")
 	rootCmd.PersistentFlags().String("server.admin.bind", "", "admin server bind address (default: ::)")
 	rootCmd.PersistentFlags().Duration("server.shutdown.timeout", 0, "graceful shutdown timeout (default: 30s)")
+
+	// String flags defer duration parsing to the shared configuration validator.
+	rootCmd.PersistentFlags().String("oauth2_authorization_server.local.refresh_token_reuse_interval", "", "local refresh retry interval (default: 30s; 0s disables retry)")
+	rootCmd.PersistentFlags().String("oauth2_authorization_server.local.absolute_session_lifetime", "", "local refresh absolute lifetime (default: 0s; unlimited)")
+	rootCmd.PersistentFlags().String("oauth2_authorization_server.local.refresh_token_ttl", "", "local refresh inactivity lifetime (default: 720h; 0s uses default)")
 
 	// Request security-context configuration flags
 	rootCmd.PersistentFlags().Bool("request_context.trusted_proxy.enabled", false, "trust configured forwarded header for client IP derivation")

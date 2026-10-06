@@ -107,14 +107,7 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 			}
 			psService := permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default())
 			t.Cleanup(psService.Close)
-			consentSvc := consent.NewService(
-				agentRepo,
-				newTestProviderService(&MockServiceRepository{}),
-				grantRepo,
-				nil,
-				nil,
-				slog.Default(),
-			)
+			consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, slog.Default(), testAuthorizationClock{now: time.Now()}, testAuthorizationClock{now: time.Now()}, unexpectedRefreshRevocations{})
 			sessionRepo := &MockSessionRepository{
 				session: &storagedomain.UserSession{
 					ID:                   id.NewSessionID(),
@@ -168,6 +161,7 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 				consentService:       consentSvc,
 				permissionSetService: psService,
 				agentRepository:      agentRepo,
+				clock:                testAuthorizationClock{now: time.Now()},
 				config: &ports.TokenExchangeConfig{
 					ClaimExtraction: ports.ClaimExtractionConfig{PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.azp"},
 					Authorization:   ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},

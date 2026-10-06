@@ -1,0 +1,212 @@
+# Data Model: Consent-Bound Refresh Sessions for Local Token Minting
+
+**Specification**: [spec.md](spec.md)  
+**Decisions**: [research.md](research.md)  
+**Storage contract**: [contracts/storage.md](contracts/storage.md)
+
+## 1. RefreshSession aggregate root
+
+One root represents the first refresh-token issuance from one successful authorization-code exchange. Its UUID is the authorization-code UUID already used as Fosite's request ID, not a foreign key to the expiring code row. Generate `id.RefreshSessionID` through `internal/domain/id/gen_ids.go`. Rotations keep this root and its original authorization evidence.
+
+| Field | Domain type | Constraint / purpose |
+|-------|-------------|----------------------|
+| ID | `id.RefreshSessionID` | Nonzero UUID primary key, equal to the original authorization-code request UUID. Immutable. |
+| OriginalGrantID | `id.GrantID` | Nonzero ID from the active `UserDelegationDecision` at first issuance. Immutable origin binding; later refresh requires the same currently active grant ID. |
+| OriginalTokenSignature | `string` | Lowercase 64-character SHA-256 hex digest of the first issued refresh token. Must identify a persisted token in this root with `IssuedAt == StartedAt`. Immutable. |
+| AgentID | `id.AgentID` | Nonzero original registered agent. SQL foreign key with delete cascade. Immutable. |
+| Principal | `id.Principal` | Nonempty original user identity. Immutable, byte-for-byte. |
+| ClientID | `id.ClientID` | Nonempty original OAuth client identifier, including CIMD URL identifiers. Immutable. |
+| Scope | `string` | Immutable, space-delimited, sorted, duplicate-free set of originally granted scopes. A later narrower request limits only its returned access token. |
+| Email | `*string` | Nullable profile email from original authorization; a refresh does not fetch a replacement upstream profile. |
+| DisplayName | `string` | Original authorization display name; empty is permitted, and refresh keeps that value. |
+| StartedAt | UTC `time.Time` | Exact first refresh-token issuance time from the shared clock. Must equal the first token's `IssuedAt`. Immutable. |
+| LastFreshAt | UTC `time.Time` | Initially `StartedAt`; advances only on a fresh successful rotation to the successor's `IssuedAt`. |
+| AbsoluteExpiresAt | Nullable UTC `time.Time` | Persisted effective absolute deadline. Null means no absolute deadline. |
+| InactivityExpiresAt | UTC `time.Time` | Persisted effective inactivity deadline, initially `StartedAt + InactivityLifetime`. |
+| RetainUntil | UTC `time.Time` | Maximum finite `ExpiresAt` of all recorded root tokens, including matching legacy descendants discovered during revocation. Initialized from the first token, greater than `StartedAt`, and never decreases. Terminal state stays through this bound. |
+| BranchKeyID | `string` | Nonempty immutable deterministic ID `refresh_<UUID>_branch_key`, where UUID is `ID`. This is the refresh-session encryption namespace, not `service_id` or `kid`. |
+| CurrentSignature | `string` | Lowercase 64-character SHA-256 hex digest of exactly one unconsumed token in this root. |
+| PreviousSignature | Nullable `string` | Digest of the immediately preceding consumed token; differs from `CurrentSignature`. Retain classification metadata after ciphertext erasure. |
+| PreviousConsumedAt | Nullable UTC `time.Time` | First successful use of `PreviousSignature`; never changes on retry. |
+| ReuseUntil | Nullable UTC `time.Time` | `PreviousConsumedAt + ReuseInterval` at consumption. Fixed; never moves on retry. |
+| OriginalRequestedScope | Nullable `string` | Canonical requested scope of the refresh that consumed `PreviousSignature`. Non-null when a predecessor exists, including the empty request scope. Changes only on a fresh rotation. |
+| OriginalRequestContextFingerprint | Nullable `string` | Lowercase 64-character SHA-256 hex digest of the canonical, redacted client-host/user-agent pair on first consumption. Non-null with a predecessor; compare with retry context for audit only. |
+| RetryCiphertext | Nullable opaque `[]byte` | Original response encrypted through `EncryptionPort` with authenticated refresh-session AAD. Never store plaintext credentials. |
+| RetryAccessExpiresAt | Nullable UTC `time.Time` | Actual signed expiry of the original access token; set with predecessor metadata, retained after ciphertext erasure. |
+| RetryExpiresAt | Nullable UTC `time.Time` | Persisted effective retry deadline, initially the earliest reuse, original access-token, or session deadline. Can only decrease for the same predecessor. |
+| RetryCount | `int` | Integer `0..3`, initialized/reset to 0 on initial issuance/fresh rotation. Increments once per committed stored-result authorization, even if its response or commit acknowledgement is lost. Confirmed rollback leaves it unchanged. |
+| RevokedAt | Nullable UTC `time.Time` | Terminal revocation; never cleared. |
+| ExpiredAt | Nullable UTC `time.Time` | Terminal lifetime expiry committed by startup/maintenance, not a denied request. Never cleared. |
+| TerminalReason | Nullable bounded enum | Null iff active. Terminal value is one of `grant_deleted`, `expired_grant_renewal`, `agent_deleted`, `credential_revoked`, `code_replay`, `prohibited_reuse`, `absolute_expiry`, `inactivity_expiry`, or `restore_invalidation`; never credential replacement. |
+
+The root lives in `internal/domain/storage/refresh_session.go`. Policy stays in `internal/domain/oauth2server/refresh_policy.go`. Storage sees opaque retry ciphertext only.
+
+### Invariants
+
+- A root exists only after the first token, original code identity, and an active `UserDelegationDecision` are recorded atomically. Store the decision's `GrantID` as `OriginalGrantID` and `StartedAt` from the first token's shared-clock issuance. Never reconstruct these from a later rotation.
+- Original ownership, `Scope`, `BranchKeyID`, and `StartedAt` never change. `LastFreshAt >= StartedAt`, and `RetainUntil` never decreases.
+- `CurrentSignature` identifies one unconsumed child token. `PreviousSignature` identifies its consumed immediate predecessor. Every child has the same `SessionID`.
+- The previous signature, consumption time, fixed reuse deadline, normalized requested scope, request-context fingerprint, and retry expiries are all present together or all absent. `RetryCiphertext` can be null after its expiry, successor rotation, or terminal revocation.
+- At zero reuse, `ReuseUntil == PreviousConsumedAt` and no ciphertext is persisted. The consumed signature remains for prohibited-reuse detection.
+- A fresh rotation stores an original response and resets `RetryCount` to 0. Each committed retry authorization increases only `RetryCount` and audit records. It changes no lifetime, consumption, or reuse clock. A lost response or commit acknowledgement does not refund the count. A fourth otherwise-eligible presentation is prohibited reuse.
+- At most one of `RevokedAt` or `ExpiredAt` can be non-null. `TerminalReason` is null iff both are null. A terminal transition clears live ciphertext in the same transaction; no policy or later grant/credential restores it.
+- Save rejects changed immutable fields, invalid signatures, retry count outside `0..3`, inconsistent recovery fields, and terminal-state reversal. For the same predecessor, effective `RetryExpiresAt` cannot increase.
+- Lifecycle changes and session mutation use one agent-scoped unit of work. During refresh-token processing, only bound-client prohibited reuse commits an authorization rejection. FR-040 separately preserves authorization-code replay revocation. Pre-commit errors and confirmed rollback preserve state. An indeterminate commit follows section 5.
+
+The request-context fingerprint hashes a length-prefixed UTF-8 pair: the resolved client host without a port and the truncated user agent. Use the existing trusted-proxy/security-context rules; an untrusted forwarded header never changes the host. Represent an unavailable member as an empty string. Exclude request IDs, timestamps, tokens, and credentials so independent retries have comparable context.
+
+## 2. RefreshToken
+
+| Field | Domain type | Constraint / purpose |
+|-------|-------------|----------------------|
+| Signature | `string` | Lowercase 64-character SHA-256 hex digest of the opaque token, unique primary key. Never store the raw refresh value. |
+| SessionID | `id.RefreshSessionID` | Required nonzero parent root UUID. Immutable. |
+| IssuedAt | UTC `time.Time` | Issuance time from the shared clock; first token equals root `StartedAt`. Immutable. |
+| ExpiresAt | UTC `time.Time` | Finite issued refresh-token expiry, strictly later than `IssuedAt`, derived from the shared issuance time and inactivity lifetime. Immutable. |
+| UsedAt | Nullable UTC `time.Time` | First successful consumption from the shared clock. A retry never overwrites it. |
+
+`internal/domain/storage/refresh_token.go` replaces the source-level `RefreshTokenSession` model. `ExpiresAt` limits fresh consumption of an unused current token. Consumed tokens remain replay evidence after their individual expiry. Their eligibility follows predecessor metadata and FR-015, not a pre-classification token-expiry denial. No raw token or root ownership is duplicated per child.
+
+A token is current only if its signature equals `CurrentSignature`, `UsedAt` is null, and its `ExpiresAt` is in the future. For an anchored PostgreSQL token, first lock and re-read its matching legacy current row before trusting this new-table state. A consumed token qualifies for retry only through the root's previous-token metadata. Older signatures remain replay evidence while the root is active.
+
+Keep every child and consumed signature through the active root's entire life. After terminal state, keep root, token signatures, and revocation state through `RetainUntil` (the greatest recorded child expiry), except an agent deletion after durable revocation audit. A purge never creates a root or makes a token usable again.
+
+## 3. RefreshSessionPolicy value object
+
+| Field | Resolved type | Default |
+|-------|---------------|---------|
+| ReuseInterval | `time.Duration` | 30 seconds if access `token_ttl > 30s`, else 0 on omission |
+| AbsoluteLifetime | `time.Duration` | Zero, meaning no absolute deadline |
+| InactivityLifetime | `time.Duration` | 720 hours |
+
+The resolved policy receives the same values from configuration files, environment variables, three CLI flags, and the deployment chart. The existing `local.refresh_token_ttl` remains the inactivity lifetime; omitted or zero keeps its 720-hour default. An explicit zero reuse interval disables retries, while a zero absolute lifetime has no absolute deadline.
+
+Place `RefreshSessionPolicy` in `internal/domain/storage/refresh_session.go`. It does not import Fosite or infrastructure. Policy validation and every deadline decision receive an explicit shared-clock `time.Time`.
+
+For decision time T, supplied by `AuthorizationSessionCoordinator.Run` after the agent gate:
+
+- A finite absolute candidate is `StartedAt + AbsoluteLifetime`. The effective inactivity deadline for the current activity interval is `min(InactivityExpiresAt, LastFreshAt + InactivityLifetime, current token ExpiresAt)`. Check elapsed stored deadlines before applying any policy increase.
+- An applicable grant, session, refresh-token, access-token, or reuse deadline is expired at T equal to its deadline. When omitted with access `token_ttl > 30s`, reuse is exactly 30 seconds: first consumption at T permits retries only strictly before T + 30 seconds. Omitted reuse with shorter or equal access TTL is `0s` strict single use.
+- A fresh successful rotation sets `LastFreshAt` and its successor's `IssuedAt` to T. It sets both the successor's `ExpiresAt` and the new `InactivityExpiresAt` from T plus the current configured inactivity lifetime. A retry changes none of these times.
+- Retry eligibility requires shared time before `ReuseUntil`, `RetryAccessExpiresAt`, persisted effective `RetryExpiresAt`, and the current-policy retry deadline. It also requires an unused current successor, matching requested scope, bound client, active consent, and valid lifetimes. At `RetryCount == 3`, another otherwise eligible presentation is prohibited reuse.
+- A narrower requested scope restricts **only the returned access token**. The session's immutable `Scope` stays the ceiling for all later refreshes. An empty requested scope stays distinct from an explicit scope set; normalize nonempty scope sets by splitting, deduplicating, and sorting scope tokens before comparison.
+
+The same rules apply to public and confidential clients. Refresh access-token JWT expiry retains its existing `token_ttl` contract.
+
+### Policy changes and terminal expiry
+
+Startup scans active roots in bounded pages, acquiring an agent gate only when a persisted deadline needs reconciliation. Runtime maintenance queries due roots rather than re-locking every active session. A renewable shared-database lease selects one writer; each instance observes overdue work for readiness.
+
+For an active root, persist the shorter effective `InactivityExpiresAt` bounded by current policy and current token `ExpiresAt`. A later increase cannot extend that activity interval. Recompute a nonterminal absolute deadline from `StartedAt` only after ruling out elapsed stored deadlines. If a stored or newly effective deadline elapsed, commit terminal expiry with legacy invalidation. Startup also reconciles each predecessor's effective `RetryExpiresAt` and erases overdue ciphertext before readiness.
+
+Runtime requests use the effective inactivity deadline and current absolute policy under the gate, then recheck before commit. They deny expired sessions **without marking them terminal**. Startup and maintenance own terminal expiry and live retry cleanup. Schedule cleanup from effective `RetryExpiresAt`, with DB-006's 1-second erasure bound while storage is reachable. A missed bound or unavailable cleanup storage blocks readiness until overdue results are cleared. Denial at the effective deadline remains unconditional and does not depend on cleanup.
+
+`ReuseUntil` remains the fixed first-consumption deadline. For the same predecessor, persist `RetryExpiresAt = min(stored RetryExpiresAt, PreviousConsumedAt + current ReuseInterval, RetryAccessExpiresAt, effective session deadlines)`. Ignore absent absolute deadlines. A policy increase cannot extend this bound. At zero reuse, startup erases all existing retry ciphertext before readiness. Later rotations use the new interval. All comparisons use `AuthorizationClock.Now(ctx)`, not instance-local `time.Now()`.
+
+## 4. RefreshRetryPayload and encryption
+
+This issuer-internal payload is authenticated ciphertext through the existing `ports.EncryptionPort`. It is not a JWE, new network token type, or public endpoint. Serialization has exact `purpose = refresh_retry` and supported `version = 1`.
+
+| Payload field | Constraint |
+|---------------|------------|
+| `session_id`, `original_grant_id`, `original_token_signature`, `started_at` | Exactly match the immutable root identity and origin evidence. |
+| `principal`, `agent_id`, `client_id` | Exactly match immutable root ownership and the authenticated, bound client. |
+| `predecessor_signature`, `successor_signature` | Match `PreviousSignature`, `CurrentSignature`, submitted digest, and the digest of the plaintext successor refresh token. |
+| `original_requested_scope`, `scope` | Match the normalized request scope and exact original response scope. Do not reduce root `Scope`. |
+| `original_request_context_fingerprint` | Match stored canonical redacted audit-context fingerprint. It does not authorize a retry. |
+| `access_token`, `refresh_token`, `token_type` | Exact original successful response values; never minted or recalculated on retry. |
+| `access_expires_at` | Matches `RetryAccessExpiresAt` and is strictly later than the authorization decision for success. |
+| `retry_expires_at` | Matches the original `min(ReuseUntil, RetryAccessExpiresAt)`. Effective `RetryExpiresAt` cannot exceed it. Both must be strictly later than the authorization decision. |
+
+`BranchKeySubjectKindRefreshSession` uses one and only one AAD key: `{"refresh_session_id":"<session UUID>"}`. Its branch key ID is `refresh_<UUID>_branch_key`, recorded as root `BranchKeyID`. Extend the typed subject parser, validation, deterministic ID supplier, branch-key repository, and keyring routes. Do not encode this subject as `service_id` or `kid`. Accepted ADR 038 extends ADR 008's approved subject list. This model remains an implementation design, not implemented runtime support.
+
+The issuer provisions a branch key through the existing `BranchKeyManager` when its configured adapter needs one. It prepares provisioning and request-local signing material outside the SQL lock when possible. Encryption and decryption use the existing vetted raw-key or KMS `EncryptionPort` adapter; no new crypto primitive, JWE key, or plaintext fallback exists. All subject-bound lookups inside the transaction use the ambient executor.
+
+Decrypt only after authentication, client binding, revocation, grant, lifetime, current agent refresh-grant capability, and token-classification checks. Check response-scope eligibility only for a fresh or otherwise eligible retry success. Never decrypt a prohibited retry to inspect scope. Compare every payload field to authoritative root/token state after authenticated decryption. An invalid payload, missing key, failed decryption, or mismatched binding returns `server_error`, no tokens, and no request-state mutation.
+
+Use the access-token strategy's existing mint timestamp for `RetryAccessExpiresAt`. Do not parse the JWT to reconstruct expiry. The payload's original retry expiry stays fixed when policy shortens effective `RetryExpiresAt`. Validate both deadlines without rewriting the encrypted token result. Erase live ciphertext under DB-006's timing rules. Keep predecessor metadata so expired original access alone cannot revoke a valid successor.
+
+Never include plaintext credentials in logs or backups. Encrypted backup copies are permitted, without a promise of physical backup erasure. A restored copy alone cannot authorize a return. A database or refresh-state snapshot cannot prove post-snapshot authorization history. This feature therefore invalidates all restored local refresh authority before admission, rather than trying to reconstruct that history.
+
+### Restore invalidation
+
+The supported command is `agentic-identity-broker --config <file> refresh-sessions invalidate-restored --database-id <backup-database-uuid>`. Record `SELECT database_id FROM refresh_maintenance WHERE singleton` independently with the backup. The command requires PostgreSQL and a matching persisted database UUID before invalidation; a memory backend or wrong target exits nonzero. It uses the broker loader and builder, starts no HTTP server, and returns no credentials.
+
+Operators stop token traffic and all writers before restoration. They apply the supported schema, then run the command before starting broker instances. The command scans agent IDs from roots and legacy rows in bounded batches. Under each agent guard, it revokes active roots with `restore_invalidation`, erases ciphertext, and marks every unconsumed legacy row used. This includes unanchored rows without a root. Existing terminal roots retain their reason and remain unusable. No root or lineage is fabricated.
+
+Each agent's invalidation commits with its receipt and legacy updates. A failed or indeterminate commit returns a nonzero exit status. Completed agents stay invalidated, but operators keep every broker offline until an idempotent rerun succeeds. Exit status zero requires acknowledged commits and a final scan with no active roots, retry ciphertext, or unused legacy rows. The command preserves grants, agents, credentials, signing keys, and third-party sessions. Fresh authorization creates new local sessions after admission.
+
+Restore detection is an operator responsibility. Normal startup cannot infer a restore from snapshot-local rows or receipts. The deployment procedure gates admission on this command, not on an unproven automatic restore detector.
+
+
+## 5. State transitions and decision order
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active: first authorization-code exchange
+    Active --> Active: fresh rotation changes inactivity
+    Active --> Active: accepted retry increments RetryCount only
+    Active --> Revoked: lifecycle action, code replay, or prohibited reuse
+    Active --> Expired: startup or maintenance reaches lifetime deadline
+    Revoked --> Purged: retained until all token expiries
+    Expired --> Purged: retained until all token expiries
+    Purged --> [*]
+```
+
+A replacement credential or active-grant edit does not revoke the root. An expired-grant renewal revokes all older roots for that principal and agent. A new grant or credential cannot restore a revoked root; new authorization creates a new root. Authorization-code replay revokes the root created by that code.
+
+For each refresh, apply this order inside the agent scope:
+
+1. Authenticate the client and bind it to the token's immutable `ClientID`. Missing/invalid authentication, client mismatch, and unknown token have no mutation.
+2. Check the root's terminal revocation state, then call `UserDelegationVerifier` at the supplied decision time. Require its `UserDelegationDecision` to be active with `GrantID == OriginalGrantID` and `ValidUntil` absent or later than decision time. Missing/expired grant or different grant ID is `invalid_grant`; unavailable grant state is `server_error`.
+3. Check stored and effective session deadlines, including the current token's immutable expiry. Deny an expired session without changing the root or tokens.
+4. Check the agent's current refresh-grant capability. A missing capability returns the existing `unauthorized_client` outcome without mutation. Consent and lifetime failures take precedence over this check.
+5. Classify the signature as current, immediately previous, or prohibited reuse. Before treating an anchored current token as unused, lock and re-read its legacy mirror; hold that lock through rotation. If an older writer consumed the mirror without matching new-token/history evidence, return `invalid_grant` for the unsupported lineage without mutation or another successor. For predecessor recovery, enforce matching normalized requested scope, the fixed window, an unused successor, retry count, and access expiry. An older, out-of-window, scope-mismatched, or fourth otherwise-eligible presentation is prohibited reuse and commits revocation, even if the old response scope was withdrawn. An unused current token must remain individually unexpired before fresh consumption; individual expiry of a consumed signature cannot bypass prohibited-reuse revocation.
+6. On the fresh-current path, use Fosite validation to prepare one successor and its candidate response. On an otherwise eligible retry, decrypt and compare all stored-result bindings. Never decrypt prohibited reuse just to inspect scope.
+7. Only for a fresh or otherwise eligible retry result, check its response scope against current agent permissions. Keep the existing `invalid_scope`/`scope_not_granted` conventions and do not mutate on failure. For retry, check the exact original response scope, not a newly narrowed request.
+8. On an allowed fresh path, atomically store the successor, updated root clocks, encrypted recovery result, and anchored legacy mirror. On an allowed retry, increment only `RetryCount`, audit the request-context fingerprint comparison, and return the original result with remaining `expires_in`.
+9. During this refresh-token decision, only bound-client prohibited reuse commits revocation and erases ciphertext. Other refresh authorization denials, pre-commit errors, and confirmed rollback preserve state. Code replay separately follows FR-040. Startup and maintenance commit terminal expiry separately.
+10. Obtain `AuthorizationClock.Now(ctx)` again before a successful commit. Recheck all applicable FR-029 authorization and eligibility conditions at that shared time. Include client binding, revocation, consent, effective lifetimes, capability, token eligibility, and candidate response scope. Validate the staged outcome without treating this request's own consumption as replay or counting its retry increment twice. On failure, roll back request changes and return no tokens. Return success only after an acknowledged commit. An indeterminate commit returns token-free `server_error`, not a rollback claim.
+
+Lifecycle updates, including grant DELETE when no grant exists (which returns 404 after revoking leftover sessions), commit with revocation as one outcome. Empty grant POST is invalid and does not mutate grant or refresh sessions. A callback error rolls back grant/agent/credential changes. A prohibited-reuse denial commits revocation before returning `invalid_grant`; a rollback or commit failure returns `server_error` instead. A denial for unavailable consent does not consume a token.
+
+An indeterminate commit can represent either committed or rolled-back work. A later request acquires the agent guard and reads authoritative durable state, including the locked legacy current row before treating an anchored new-table token as unused. An unused current token can rotate normally only if its mirror remains consistent. Old-writer consumption without matching new-token/history evidence makes that lineage unsupported; return `invalid_grant` without a new result. Committed consumption follows the ordinary predecessor and prohibited-reuse rules. An eligible predecessor returns only the committed original pair within its unchanged deadlines and retry limit. At zero reuse, committed consumption is prohibited reuse and requires fresh authorization. If durable state remains unavailable or inconsistent, return token-free `server_error`. Never mint a second successor, refund a committed retry count, or introduce an error-recovery bypass.
+
+Test lost acknowledgements for rotation and retry-count commits with a test-owned PostgreSQL connection fault. Verify actual durable outcomes separately from confirmed rollback. For US2-S10, first prove identical-result predecessor recovery. Then another client authenticates as itself and replays the code. Both tokens must fail, while an unrelated session remains usable. This tests FR-040's exception to refresh-token binding protections. Complete the scenario only after US3/T050/T072.
+
+### Revocation receipt
+
+DB-008 uses a small immutable revocation-audit projection, not a new public audit endpoint. Each receipt stores SessionID, AgentID, Principal, ClientID, terminal Reason, shared At timestamp, and redacted request-context identifiers. Its key is `(session_id, reason)`. It has no foreign key that deletes it with the agent or root.
+
+The revocation repository inserts the receipt in the same transaction before deleting an agent or its roots. A failed receipt write rolls back the lifecycle action. Post-commit logs report success from that receipt. Memory stages the same projection. This avoids treating a pre-commit success log as a durable audit record.
+
+
+## 6. PostgreSQL schema, legacy bridge, and indexes
+
+Migration `036_consent_bound_refresh_sessions.{up,down}.sql` adds:
+
+- `refresh_sessions`: UUID root, immutable origin/ownership, clocks, `retain_until`, `branch_key_id`, signatures, request-context/scope metadata, `retry_count` with `CHECK (retry_count BETWEEN 0 AND 3)`, encrypted bytes, and terminal state.
+- `refresh_tokens`: unique signature, required root UUID with `ON DELETE CASCADE`, `issued_at`, finite `expires_at`, and nullable `used_at`.
+- Additive nullable `session_id UUID REFERENCES refresh_sessions(id) ON DELETE CASCADE` and `predecessor_signature TEXT` columns on the existing `refresh_token_sessions` table. A non-null predecessor signature is lowercase 64-character SHA-256 hex. An initial anchored row has a null predecessor; later anchored rows name the previous signature. Older binaries can insert both fields as null. New writes populate `session_id` and token ancestry atomically with root/token writes, so old binaries can read mirrors while rolling forward. The new issuer never creates an unanchored row.
+- Indexes on root `(agent_id, principal)`, child `session_id`, legacy `session_id`/`request_id`, due deadlines and `retain_until`; one unconsumed child per root via a partial unique index. A legacy mirror of a current token also keeps the existing schema and predicates that older binaries require.
+- `refresh_revocation_receipts`: immutable, non-credential audit projection keyed by `(session_id, reason)`, inserted transactionally before root/agent cascade deletion and retained independently.
+
+New code uses only the root/token domain models and ports. Legacy rows are a schema-level interoperability bridge, not a source-code model alias or a fallback authorization path. No circular root-current-signature foreign key is needed; the guarded transaction enforces the relationship.
+
+FR-025 evidence comes only from anchored root/token records written by new issuers. Require the first issued token, original active grant ID and issuance time, principal, agent, client, complete ancestry, last fresh rotation, and revocation history. Verify every link. Never infer origin from `request_id`, surviving `created_at`, token expiry, or deployment time. Every pre-feature unanchored row and unsupported old-writer descendant requires fresh authorization. Continuation applies to evidenced anchored families created during rollout or before a restart, not guessed pre-feature lineage.
+
+Migration `037_refresh_lineage_proof` retains the additive 036 bridge and adds a sticky `lineage_valid` root proof. Upgrade checks every existing anchored family once against its first token, all native/mirror links, ownership, issuance and consumption continuity, and disconnected evidence. Invalid families remain unsupported, even if a later write restores the missing row or field. Deferred PostgreSQL triggers observe every native child, anchored mirror, and root transition. A valid staged rotation consumes the current native/mirror pair, inserts exactly one matching successor pair, then advances the root; the triggers verify only that newly touched edge at commit. A historical edit, deletion, detached insertion, unsupported old-writer consumption, or root origin/pointer change permanently invalidates the proof. Terminal invalidation retains the existing legacy-row fence. Downgrading 037 marks anchored mirrors and matching old-writer descendants unusable before removing the proof; reapplying cannot recreate their authority.
+
+Fresh and retry eligibility locks the legacy current row before locking and reading this proof, then checks the original native/mirror evidence and current pair with indexed key lookups. No eligibility, consumption, or ordinary rotation traverses the complete family; lifecycle and retention operations still touch all affected rows to fence old binaries. Retaining each historical token and mirror lets a trigger detect an older mutation rather than treating an unchecked cached assertion as current evidence. The cost is fixed write-time integrity work per changed row and one full-history verification at upgrade, instead of repeated eligibility work proportional to every past rotation.
+
+Lifecycle, code-replay revocation, and terminal lifetime expiry update the root **and matching unconsumed legacy mirror/current and descendant rows in the same scoped transaction**, including rows reachable by the original request ID. Terminal expiry commits `ExpiredAt`, its absolute/inactivity reason, and ciphertext erasure with those legacy invalidations. Include matched legacy token expiries in `RetainUntil` conservatively without trusting them for authorization. An older `MarkUsed` with `WHERE used_at IS NULL` cannot succeed after committed revocation or expiry. A failed mirror update rolls back the entire terminal maintenance transition; startup reconciliation must block readiness. Lock and recheck legacy current rows after concurrent old-writer transactions so a successor does not escape revocation or expiry.
+
+Before fresh consumption, lock and re-read the corresponding anchored legacy current row while holding the agent scope; hold that row lock through rotation. If an older writer consumed the mirror without matching new-token/history evidence, reject the original and its unsupported descendant as unsupported lineage: `invalid_grant`, no result, no new successor, and no request mutation. Recheck any old-writer descendants during revocation. The old-first interleaving exposes the consumed mirror; the new-first interleaving blocks the older writer's `MarkUsed` until the new transaction completes. Never invent a descendant start, consumption timestamp, or retry result.
+
+Keep `refresh_token_sessions` throughout mixed-version rollout and rollback. Do not drop it on upgrade. A down migration must not reactivate a revoked/expired lineage; mark legacy rows unusable before removing new state, and require fresh authorization after rollback where origin cannot be proved. Binary-only rollback cannot restore sessions terminalized by expiry. Run outgoing-policy expiry reconciliation with token traffic and old writers quiesced before admitting old binaries, even without a down migration. Down/reapply remains protected. Preserve unrelated agents, grants, credentials, and third-party sessions.
+
+## 7. Memory and retention
+
+Memory uses the same root/token invariants, typed encryption subject, and shared coordinator clock. Its agent-scoped write-set contains only touched agent, grant, credential, code/PKCE, refresh, and legacy-bridge records. It validates before one non-failing publish; callback error discards all staged changes. A new memory-backed process loses its session history and rejects old tokens. Only shared PostgreSQL supports restart/replica recovery.
+
+Deadline-driven maintenance erases live ciphertext under DB-006's 1-second bound while storage is reachable. Startup persists shorter effective retry deadlines and clears overdue results, including all results at zero reuse, before readiness. Cleanup failure or a missed bound blocks readiness until recovery. Maintenance preserves live-family signatures and uses the agent guard and shared clock. It persists shortened inactivity deadlines and atomically records terminal expiry, ciphertext erasure, and legacy invalidation. A failed legacy update rolls back that transition. Purge terminal root/token/legacy history only at or after `RetainUntil`. Agent deletion requires a prior revocation receipt. Unknown or purged signatures cannot recreate roots.

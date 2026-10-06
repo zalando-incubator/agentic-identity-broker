@@ -107,6 +107,7 @@ data:
     {{- end }}
 
     {{- $oauth2Mode := .Values.broker.oauth2AuthorizationServer.mode }}
+    {{- $localRefreshMode := or (eq $oauth2Mode "local") (eq $oauth2Mode "hybrid") }}
     {{- $proxyVals := .Values.broker.oauth2AuthorizationServer.proxy }}
     {{- $localVals := .Values.broker.oauth2AuthorizationServer.local }}
     {{- $macVals := .Values.broker.oauth2AuthorizationServer.multiAgentClient }}
@@ -151,10 +152,20 @@ data:
       {{- end }}
       {{- end }}
       {{- with .Values.broker.oauth2AuthorizationServer.local }}
-      {{- if or .tokenTtl .tokenClaimsExpression .signingKeys.bootstrapTimeout }}
+      {{- if and (eq $oauth2Mode "proxy") (or .refreshTokenReuseInterval (ne .absoluteSessionLifetime "0s") (ne .refreshTokenTtl "720h")) }}
+      {{- fail "broker.oauth2AuthorizationServer.local refresh policy requires local or hybrid mode" }}
+      {{- end }}
+      {{- if or .tokenTtl .tokenClaimsExpression .signingKeys.bootstrapTimeout $localRefreshMode }}
       local:
         {{- if .tokenTtl }}
         token_ttl: {{ .tokenTtl | quote }}
+        {{- end }}
+        {{- if $localRefreshMode }}
+        {{- if .refreshTokenReuseInterval }}
+        refresh_token_reuse_interval: {{ .refreshTokenReuseInterval | quote }}
+        {{- end }}
+        absolute_session_lifetime: {{ .absoluteSessionLifetime | quote }}
+        refresh_token_ttl: {{ .refreshTokenTtl | quote }}
         {{- end }}
         {{- if .tokenClaimsExpression }}
         token_claims_expression: {{ .tokenClaimsExpression | quote }}

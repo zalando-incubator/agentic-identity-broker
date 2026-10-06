@@ -141,9 +141,11 @@ paths:
         - `healthy`: Server is operational and processing requests normally
         - `starting`: Server is initializing (binding to port, setting up routes)
         - `shutting_down`: Graceful shutdown in progress, completing in-flight requests
-        - `unhealthy`: Server encountered an error and requires restart
+        - `unhealthy`: Server or a required component is unavailable; readiness recovers after successful reconciliation
 
         In proxy and hybrid OAuth2 modes, the response may also include component-level health in `components`. The `upstream_jwks` component reports `healthy` or `degraded` without changing the top-level server lifecycle status.
+
+        In local and hybrid modes, `refresh_sessions` reports `healthy` only after shared-time startup reconciliation and timely retry-result erasure. It reports `unhealthy` and the endpoint returns 503 while required cleanup is unavailable or overdue. Proxy mode has no local refresh-session maintenance component. An upstream `degraded` report alone still does not change the top-level status.
       operationId: getHealth
       tags:
         - Health
@@ -481,12 +483,22 @@ paths:
         - Must be a future date if specified
         - Expired grants are automatically filtered out
 
-        **Revocation (Special Case)**:
+        **Revocation**:
 
-        - Submit empty `granted_permission_sets` object to revoke
+        - Empty or omitted `granted_permission_sets` is invalid and returns `400 Bad Request`.
+        - Use `DELETE /api/consent/agents/{agent-id}/grants` to revoke the grant.
 
-        - Returns `204 No Content` on successful revocation
-        - Deletes the grant entirely
+        **Local refresh-session effects** (`local` and local-minting `hybrid` only):
+        - DELETE revokes every local refresh session for this principal and agent,
+          including retry results. A missing grant still revokes leftover sessions,
+          but DELETE returns 404. Connected third-party sessions are not ended.
+        - A nonempty submission after the old grant expired revokes its earlier local
+          refresh sessions. Fresh authorization is required to create a new session.
+        - An update to an active grant, including its permissions or an extension
+          before expiry, keeps its sessions. Each later refresh checks current consent.
+        - Grant changes and affected session changes commit together. A confirmed
+          rollback preserves both; an indeterminate commit reports failure without
+          claiming rollback. No success leaves an affected refresh token usable.
 
         **Session-Based Consent (FR-029)**:
 
@@ -515,7 +527,6 @@ paths:
 
         - User grants initial access to an agent
         - User updates existing grant (adds/removes services or scopes)
-        - User revokes all access to an agent
         - Redirect to authorization flow continuation URL after consent approval
 
       operationId: createOrUpdateGrant
@@ -559,10 +570,6 @@ paths:
                   granted_permission_sets:
                     770e8400-e29b-41d4-a716-446655440002:
                       - 880e8400-e29b-41d4-a716-446655440012
-              revokeGrant:
-                summary: Revoke grant (empty permission sets)
-                value:
-                  granted_permission_sets: {}
       responses:
         "201":
           description: Grant created or updated. When session_token was provided, response includes redirect_url containing the original authorization URL for flow resumption.
@@ -601,8 +608,6 @@ paths:
                       created_at: "2025-12-19T10:00:00Z"
                       updated_at: "2025-12-19T10:00:00Z"
                     redirect_url: /oauth2/authorize?client_id=550e8400-e29b-41d4-a716-446655440000&redirect_uri=https%3A%2F%2Fagent.example.com%2Fcb&response_type=code&state=abc123
-        "204":
-          description: Grant revoked successfully (empty granted_permission_sets)
         "400":
           description: Bad Request - Expired or invalid session token, or invalid grant data.
           content:
@@ -620,6 +625,11 @@ paths:
                   value:
                     error: invalid request
                     message: "grant validation failed: permission set <permission_set_id> is not declared by the agent"
+                emptyGrant:
+                  summary: Empty permission sets cannot revoke a grant
+                  value:
+                    error: missing mandatory permission set
+                    message: "missing mandatory permission set: at least one permission set must be granted for agents that use permission sets"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -643,16 +653,16 @@ paths:
       summary: Revoke all agent permissions
       description: |
         Permanently deletes the authenticated user's grant for the specified agent.
-        After revocation, the agent can no longer perform token exchanges on behalf of
-        the user.
+        This also revokes every local refresh session for that principal and agent,
+        including retry-eligible predecessors and concurrent replacements, in the
+        same committed outcome. Regranting cannot restore the old sessions. Existing
+        broker access tokens retain their issued expiry at signature-only resource servers.
 
-        **Important**: This action only removes the delegation grant. Connected OAuth2
-        sessions (e.g., GitHub, Google) remain active and are NOT terminated by this
-        action. Users may manage OAuth2 sessions separately.
+        Connected third-party OAuth2 sessions (for example, GitHub or Google) remain
+        active. Users manage these sessions separately.
 
-        **Idempotency**: Non-idempotent — returns 404 if no grant exists. To silently
-        revoke if a grant exists, use `POST /api/consent/agents/{agent-id}/grants` with
-        an empty `granted_permission_sets` object.
+        **Idempotency**: Returns 404 if no grant exists, but still revokes any
+        leftover local refresh sessions for this principal and agent.
 
         **Security**: Only the grant owner may revoke. The principal is derived from the
         `X-Remote-User` authentication header. Cross-user revocation is not possible —
@@ -665,7 +675,7 @@ paths:
         - $ref: "#/components/parameters/AgentIdParam"
       responses:
         "204":
-          description: Grant revoked successfully. The agent no longer has any active permissions for the authenticated user.
+          description: Grant and all matching local refresh sessions revoked successfully. The agent no longer has any active permissions for the authenticated user.
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1377,10 +1387,10 @@ paths:
                 $ref: "#/components/schemas/OAuth2Error"
   /oauth2/token:
     post:
-      summary: Token Exchange (RFC 8693), Authorization Code Exchange, or Client Credentials
+      summary: Token Exchange (RFC 8693), Authorization Code, Refresh Token, or Client Credentials
       description: |
         Exchange a token for another token, or obtain a token directly. This endpoint
-        supports three grant types:
+        supports four grant types:
 
         ### Client Credentials Grant (RFC 6749 §4.4 - Issue Token Mode)
         Authenticate the agent directly using broker-issued client credentials and obtain
@@ -1398,6 +1408,68 @@ paths:
         - `code`: Authorization code from /oauth2/authorize
         - `redirect_uri`: Must match the URI used in the authorization request
         - `code_verifier`: (optional) PKCE code verifier (RFC 7636)
+
+        ### Refresh Token Grant (RFC 6749 - Local Issue Token Mode)
+        Broker-issued user refresh sessions from authorization-code exchanges use this
+        existing token endpoint in `local` mode and the local path of `hybrid` mode.
+        Upstream refresh in `proxy` mode or the upstream path of `hybrid` mode retains
+        its upstream behavior. Client-credentials grants and vaulted third-party tokens
+        are not local user refresh sessions.
+        - `grant_type`: `refresh_token`
+        - `client_id`: The client ID bound to the original session
+        - `refresh_token`: The current token, or the immediately previous token for a permitted retry
+        - `client_secret`: Current secret for a confidential client. A previously public
+          client must authenticate after credentials are created for its agent.
+        - `scope`: Optional space-delimited requested access scope. A fresh narrower
+          request narrows only the new access token, never the session's immutable
+          original scope ceiling. Omission requests that ceiling. The session keeps
+          its original principal, agent, client, grant origin, and start time.
+
+        Fresh success rotates the current refresh token and advances inactivity.
+        The default reuse interval is 30 seconds from the first consumption.
+        Only the immediate predecessor can return the identical original access and
+        refresh token strings while its successor remains current and unused, the
+        original access token remains valid, and fewer than three stored results
+        have been authorized for that predecessor. The request must match the
+        original normalized requested scope. A permitted retry does not advance
+        session, inactivity, or reuse deadlines; `expires_in` is the remaining
+        access-token lifetime. Explicit `0s` reuse enforces strict single use.
+
+        Every fresh result and retry requires the bound client's current authentication,
+        an unrevoked session, the original currently active grant, valid absolute
+        and inactivity lifetimes, and current agent refresh-grant capability. The
+        current agent permissions must permit the candidate response scope. A retry
+        returns the exact original response scope or original omission, never a new
+        narrowed result. Grant, lifetime, and retry deadlines expire at equality.
+        A retry cannot bypass revoked consent or session expiry.
+
+        After client binding, the first failed check determines the error: session
+        revocation, consent, session lifetimes, refresh capability, token classification,
+        then candidate response scope. Missing or expired consent, terminal or expired
+        sessions, unsupported lineage, and prohibited reuse return generic token-free
+        `400 invalid_grant` without `error_uri`. Missing refresh capability retains
+        token-free `400 unauthorized_client`. A disallowed candidate scope retains
+        `400 invalid_scope` or `403 scope_not_granted` without request mutation.
+        Bound-client prohibited reuse revokes the remaining session tokens, even if
+        its original response scope is no longer permitted. Other refresh denials
+        leave request state unchanged. A separate authorization-code replay revokes
+        the session created by that code, even if another client replays it.
+
+        Unavailable consent or session data, failed decryption, and failed commit
+        return token-free `500 server_error`. A confirmed pre-commit failure or
+        rollback does not consume the presented token or advance its deadlines.
+        For an indeterminate commit, `server_error` makes no rollback guarantee.
+        A later request resolves durable state under normal authorization rules:
+        rollback permits ordinary rotation; committed rotation permits only its
+        existing eligible stored result. At zero reuse, committed consumption is
+        prohibited reuse and requires fresh authorization. Unresolved state returns
+        `server_error`. Recovery never creates a second successor, extends deadlines,
+        or refunds a committed retry count.
+
+        Expired or revoked sessions cannot be restored by regrant, policy increase,
+        or replacement credentials. Fresh authorization creates a new session.
+        Existing access JWTs retain their issued expiry at signature-only resource
+        servers. Authorization-server metadata does not add revocation or introspection.
 
         ### Authorization Code Grant (RFC 6749 - Proxy Mode)
         Exchange an authorization code for an access token via the upstream OAuth2 server.
@@ -1519,6 +1591,14 @@ paths:
                   code: "SplxlOBeZQQYbYS6WxSbIA"
                   redirect_uri: "https://agent.example.com/callback"
                   code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+              refresh_token_local:
+                summary: Refresh Token Grant (local issuance)
+                value:
+                  grant_type: "refresh_token"
+                  client_id: "550e8400-e29b-41d4-a716-446655440000"
+                  client_secret: "brk_sec_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
+                  refresh_token: "original-refresh-token"
+                  scope: "read"
               token_exchange:
                 summary: Token Exchange Request (RFC 8693)
                 value:
@@ -1573,11 +1653,18 @@ paths:
                   client_secret: "secret-xyz"
       responses:
         "200":
-          description: Successful token exchange or authorization code exchange
+          description: Successful token exchange, authorization code exchange, or local refresh. An eligible refresh retry returns the identical original token pair with remaining expires_in.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TokenExchangeResponse"
+                description: >-
+                  RFC 8693 token exchange (including impersonation) requires
+                  issued_token_type. OAuth2 grants (authorization_code,
+                  client_credentials, refresh_token) use the OAuth2GrantResponse
+                  shape and do not require that RFC 8693 response field.
+                anyOf:
+                  - $ref: "#/components/schemas/TokenExchangeResponse"
+                  - $ref: "#/components/schemas/OAuth2GrantResponse"
               examples:
                 success:
                   summary: Successful Token Exchange Response
@@ -1593,9 +1680,16 @@ paths:
                     token_type: "Bearer"
                     issued_token_type: "urn:ietf:params:oauth:token-type:access_token"
                     expires_in: 3600
+                refresh_success:
+                  summary: Local refresh-token rotation or eligible identical-result retry
+                  value:
+                    access_token: "example-access-token"
+                    refresh_token: "example-replacement-refresh-token"
+                    token_type: "Bearer"
+                    expires_in: 3600
                     scope: "read"
         "400":
-          description: Bad Request - Invalid parameters, invalid tokens, or no valid session
+          description: Bad Request - Invalid parameters, invalid tokens, no valid session, or local refresh denied (generic invalid_grant has no error_uri).
           content:
             application/json:
               schema:
@@ -1629,6 +1723,14 @@ paths:
                     error: "invalid_grant"
                     error_description: "service 11111111-1111-1111-1111-111111111111 is not authorized by any permission set in the grant; re-consent required"
                     error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
+                refresh_invalid_grant:
+                  summary: Local refresh denied (consent, session, lifetime, or prohibited reuse)
+                  value:
+                    error: "invalid_grant"
+                refresh_unauthorized_client:
+                  summary: Current agent no longer permits refresh
+                  value:
+                    error: "unauthorized_client"
                 missing_upstream_client_id:
                   summary: Agent has no upstream client_id (proxy mode)
                   value:
@@ -1667,7 +1769,7 @@ paths:
                     error: "invalid_client"
                     error_description: "client assertion is not trusted for impersonation"
         "403":
-          description: Forbidden - User has not granted access or CEL authorization failed
+          description: Forbidden - User has not granted access, CEL authorization failed, or a local refresh candidate has a scope_not_granted error.
           content:
             application/json:
               schema:
@@ -1678,6 +1780,10 @@ paths:
                   value:
                     error: "access_denied"
                     error_description: "User has not granted this agent access to the requested service"
+                refresh_scope_not_granted:
+                  summary: Candidate local refresh scope is no longer granted
+                  value:
+                    error: "scope_not_granted"
                 impersonation_access_denied:
                   summary: Impersonation - no rule permits the request
                   value:
@@ -1690,7 +1796,7 @@ paths:
                     error_description: "user delegation is required before impersonation"
                     error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
         "500":
-          description: Internal Server Error
+          description: Internal Server Error - Local refresh cannot determine authorization or session state, decrypt a result, or complete a commit. The server_error response returns no tokens or error_uri. An indeterminate commit does not guarantee rollback.
           content:
             application/json:
               schema:
@@ -1701,6 +1807,10 @@ paths:
                   value:
                     error: "server_error"
                     error_description: "An unexpected error occurred"
+                refresh_state_unavailable:
+                  summary: Local refresh state unavailable or commit outcome indeterminate
+                  value:
+                    error: "server_error"
 
   # ---- Tool Approval Endpoints ----
 
@@ -2579,6 +2689,8 @@ components:
 
             - `healthy`: Upstream key material is reachable and fresh
             - `degraded`: Upstream refresh has failed or become stale
+
+            In local and hybrid modes, `refresh_sessions` reports `healthy` or `unhealthy`. `unhealthy` gates readiness with HTTP 503 until native retry-result maintenance recovers. Startup does not admit token traffic before successful reconciliation.
           additionalProperties:
             type: string
           example:
@@ -3108,6 +3220,7 @@ components:
       properties:
         granted_permission_sets:
           type: object
+          minProperties: 1
           additionalProperties:
             type: array
             items:
@@ -3117,12 +3230,8 @@ components:
             "Map of permission sets to grant to the agent. Keys are permission
             set UUIDs, values are arrays of service UUIDs included in each permission set grant.
 
-
-            **Special Case**: Empty object `{}` revokes the grant entirely
-
-            and returns `204 No Content`.
-
-            **Special Case**: Empty array `[]` revokes the grant entirely and returns `204 No Content`.
+            At least one permission set is required. An empty object `{}` or
+            array `[]` is rejected with `400 Bad Request`; revocation uses DELETE.
 
             **Validation**:
 
@@ -3747,6 +3856,9 @@ components:
         **authorization_code** (proxy): requires client_id, client_secret, code, redirect_uri.
         **token-exchange** (RFC 8693): requires subject_token, subject_token_type, resource, client_assertion_type, client_assertion.
         **token-exchange (user impersonation)** (RFC 8693, local mode only): activated only by one `audience` equal to `<audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>`, which must resolve to a registered target. Both forms retain the target UUID as issued `agent_id`; that target supplies local-policy `agent.*`, and optional scope policy through `allowed_scopes`; an empty allow-list is unrestricted, while the reserved refresh-token scopes `offline` and `offline_access` are always permitted. Required credentials are client assertion, actor token, and subject token. `resource` MUST be absent; a target-disallowed non-reserved optional scope is `invalid_scope`.
+        **refresh_token** (local/hybrid local minting): requires the original client_id and
+        refresh_token. The current client_secret is required for confidential clients;
+        scope is optional and narrows only the response access token.
       required:
         - grant_type
       properties:
@@ -3756,11 +3868,13 @@ components:
             - "urn:ietf:params:oauth:grant-type:token-exchange"
             - "authorization_code"
             - "client_credentials"
+            - "refresh_token"
           description: |
             The OAuth2 grant type:
             - `urn:ietf:params:oauth:grant-type:token-exchange` for RFC 8693 token exchange
             - `authorization_code` for standard OAuth2 authorization code flow (proxied or local/hybrid)
             - `client_credentials` for broker-issued client credentials (local/hybrid mode)
+            - `refresh_token` for broker-issued local user refresh or upstream refresh
           example: "urn:ietf:params:oauth:grant-type:token-exchange"
         client_id:
           type: string
@@ -3775,6 +3889,8 @@ components:
             Broker-issued client secret (for client_credentials in local/hybrid mode, and
             for confidential-client authorization_code exchanges) or upstream OAuth2 client
             secret (proxy mode). Optional for public authorization_code clients in local/hybrid mode.
+            A confidential client's current secret is also required for refresh.
+            A formerly public client requires authentication after credential creation.
           example: "brk_sec_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
         code:
           type: string
@@ -3796,6 +3912,13 @@ components:
             PKCE code verifier (RFC 7636). Required if code_challenge was
             provided in the authorization request.
           example: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        refresh_token:
+          type: string
+          description: |
+            Refresh token from the original session. A current token rotates on
+            successful local refresh. Only an eligible immediately previous token
+            returns its original result; older tokens are replay evidence.
+          example: "original-refresh-token"
         subject_token:
           type: string
           description: |
@@ -3864,7 +3987,15 @@ components:
           example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
         scope:
           type: string
-          description: Optional literal-space-separated scope request. For user impersonation, every non-reserved value must be permitted by the resolved target agent's `allowed_scopes`; an empty allow-list is unrestricted. The reserved refresh-token scopes `offline` and `offline_access` are always permitted. A denied non-reserved value returns `invalid_scope`.
+          description: |
+            Optional literal-space-separated scope request. During local refresh,
+            a narrower requested scope limits only the new access token, not the
+            immutable session scope ceiling. An eligible retry must repeat the
+            original normalized requested scope. For user impersonation, every
+            non-reserved value must be permitted by the target agent's `allowed_scopes`;
+            an empty allow-list is unrestricted. Reserved refresh-token scopes
+            `offline` and `offline_access` remain permitted. A denied non-reserved
+            impersonation value returns `invalid_scope`.
           example: "read:user repo"
         audience:
           type: string
@@ -3893,30 +4024,28 @@ components:
           example: "ghu_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         token_type:
           type: string
-          description: |
-            For third-party token exchange, the type passed through from the stored provider
-            token. For user impersonation, always `Bearer` for the locally issued broker JWT.
+          description: For third-party exchange, the stored provider token type; for user impersonation, `Bearer`.
           example: "Bearer"
         issued_token_type:
           type: string
-          description: URI indicating the type of issued token.
+          description: URI indicating the issued token type, required by RFC 8693 for every token-exchange response.
           example: "urn:ietf:params:oauth:token-type:access_token"
         expires_in:
           type: integer
           format: int64
-          description: |
-            Remaining lifetime in seconds. For third-party token exchange it reflects the
-            stored token; for user impersonation it reflects the configured local token TTL.
+          description: Access-token lifetime in seconds, when provided by the exchange. For impersonation, the configured local token TTL.
           example: 3600
         scope:
           type: string
-          description: For user impersonation, the non-empty granted scope, including target-allowed values and any requested reserved refresh-token scopes (`offline`, `offline_access`); omitted when no scope was requested.
+          description: |
+            Optional granted scope for a token exchange. For user impersonation,
+            a non-empty scope includes target-allowed values and requested
+            reserved refresh-token scopes (`offline`, `offline_access`);
+            omitted when no scope was requested.
           example: "read:user repo"
         refresh_token:
           type: string
-          description: |
-            Refresh token (typically not returned in token exchange as
-            tokens are managed by the broker).
+          description: Optional refresh token for an RFC 8693 exchange; third-party exchange typically omits it because the broker vaults provider tokens.
         granted_permission_sets:
           type: object
           additionalProperties:
@@ -3937,6 +4066,34 @@ components:
           format: uuid
           description: Resolved canonical agent ID from the verified subject token; omitted when unresolved.
           example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+    OAuth2GrantResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+      properties:
+        access_token:
+          type: string
+          description: Access token issued or proxied by an OAuth2 grant.
+        token_type:
+          type: string
+          description: OAuth2 token type; locally issued tokens use `Bearer`.
+        expires_in:
+          type: integer
+          format: int64
+          description: |
+            Remaining access-token lifetime in seconds. For an eligible local
+            refresh retry this decreases from the original access-token expiry.
+            A retry never extends that expiry.
+        refresh_token:
+          type: string
+          description: Replacement refresh token on local refresh; an eligible retry returns the same token string.
+        scope:
+          type: string
+          description: |
+            Optional granted scope. Fresh local refresh narrowing affects only
+            this access token, never the session ceiling. A retry returns the
+            original response scope or its original omission.
     OAuth2Error:
       type: object
       required:
@@ -3948,10 +4105,13 @@ components:
             - invalid_request
             - invalid_client
             - invalid_grant
+            - unauthorized_client
+            - invalid_scope
+            - scope_not_granted
             - invalid_target
             - access_denied
             - server_error
-          description: RFC 8693 error code.
+          description: RFC 6749 or RFC 8693 error code for the applicable token grant.
           example: "access_denied"
         error_description:
           type: string
@@ -3960,7 +4120,9 @@ components:
         error_uri:
           type: string
           format: uri
-          description: URI directing a user to required broker action, such as re-authentication or the target-agent consent-management page for an impersonation request.
+          description: |
+            Optional URI for applicable errors, including the impersonation consent
+            page. Local refresh `invalid_grant` and `server_error` omit `error_uri`.
           example: "https://docs.example.com/errors/access_denied"
 
     # ---- Tool Approval Schemas ----

@@ -226,8 +226,8 @@ All new validation failures return **400** with `error: "validation failed"` and
 | A client that requires `client_secret` in read responses | Still satisfied for every confidential service; only public services — which cannot exist before this change — omit it |
 
 Relaxing `client_secret` from unconditionally required is additive: no request that is valid today
-becomes invalid. Record the read-schema `required` relaxation in
-[`docs/changelog.md`](../../../docs/changelog.md).
+becomes invalid. The canonical [`api/admin/openapi.yaml`](../../../api/admin/openapi.yaml)
+documents the read-schema `required` relaxation.
 
 ---
 

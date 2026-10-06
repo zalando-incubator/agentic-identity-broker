@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
+	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	dstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 )
 
 // newTestProvider creates a Provider with in-memory storage and test encryption
@@ -29,22 +29,24 @@ func newTestProvider(t *testing.T) (*Provider, *memory.AgentRepository, *Signing
 	agentRepo := memory.NewAgentRepository()
 	signingKeyRepo := memory.NewSigningKeyStore()
 	enc := &testEncryptor{}
+	pkceRepo := memory.NewPKCESessionStore()
+	refreshDeps, refreshStore := newNativeTestRefresh(agentRepo, credRepo, codeRepo, pkceRepo, enc)
 	logger := testSlogger()
 
 	signingKeySvc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
 
 	provider, err := NewProvider(
 		codeRepo,
-		memory.NewRefreshTokenSessionStore(),
-		memory.NewPKCESessionStore(),
+		refreshDeps,
+		pkceRepo,
 		credRepo,
 		&testClientResolver{agentRepo: agentRepo},
 		signingKeySvc,
 		"https://broker.example.com",
 		time.Hour, // 1h TTL
-		time.Hour,
-		"", // no CEL expression
+		"",        // no CEL expression
 		logger,
+		refreshStore,
 	)
 	require.NoError(t, err)
 
@@ -52,6 +54,58 @@ func newTestProvider(t *testing.T) (*Provider, *memory.AgentRepository, *Signing
 	require.NoError(t, err)
 
 	return provider, agentRepo, signingKeySvc
+}
+
+type testGrantVerifier struct{ grants ports.UserGrantRepository }
+
+func (v testGrantVerifier) VerifyUserDelegation(ctx context.Context, principal id.Principal, agentID id.AgentID, at time.Time) (ports.UserDelegationDecision, error) {
+	grant, err := v.grants.FindByPrincipalAndAgent(ctx, principal, agentID)
+	if ports.IsNotFoundErr(err) || (err == nil && grant == nil) {
+		return ports.UserDelegationDecision{Status: ports.UserDelegationMissing}, nil
+	}
+	if err != nil {
+		return ports.UserDelegationDecision{}, err
+	}
+	if !grant.IsActive(at) {
+		return ports.UserDelegationDecision{Status: ports.UserDelegationExpired}, nil
+	}
+	return ports.UserDelegationDecision{Status: ports.UserDelegationActive, GrantID: grant.ID, ValidUntil: grant.ValidUntil}, nil
+}
+
+type testRefreshBranchKeyManager struct{}
+
+func (testRefreshBranchKeyManager) Create(_ context.Context, subject domainencryption.BranchKeySubject) (string, error) {
+	if err := subject.Validate(); err != nil {
+		return "", err
+	}
+	return "refresh_" + subject.Identifier() + "_branch_key", nil
+}
+
+func newNativeTestRefresh(agentRepo *memory.AgentRepository, credRepo *memory.ClientCredentialStore, codeRepo *memory.AuthorizationCodeStore, pkceRepo *memory.PKCESessionStore, encryption ports.EncryptionPort) (RefreshSessionDependencies, *memory.RefreshSessionStore) {
+	grants := memory.NewUserGrantRepository()
+	refreshStore := memory.NewRefreshSessionStore(agentRepo, grants, credRepo, codeRepo, pkceRepo)
+	return RefreshSessionDependencies{
+		Agents:      agentRepo,
+		Sessions:    refreshStore,
+		Tokens:      memory.NewRefreshTokenStore(refreshStore),
+		Revocations: refreshStore,
+		Coordinator: refreshStore,
+		Clock:       refreshStore,
+		Verifier:    testGrantVerifier{grants: grants},
+		Encryption:  encryption,
+		BranchKeys:  testRefreshBranchKeyManager{},
+		Policy: dstorage.RefreshSessionPolicy{
+			InactivityLifetime: time.Hour,
+		},
+	}, refreshStore
+}
+
+func seedProviderTestGrant(t *testing.T, provider *Provider, agentID id.AgentID) {
+	t.Helper()
+	verifier := provider.refreshDeps.Verifier.(testGrantVerifier)
+	require.NoError(t, verifier.grants.Create(context.Background(), &dstorage.UserGrant{
+		ID: id.NewGrantID(), Principal: id.NewPrincipal("user@example.com"), AgentID: agentID,
+	}))
 }
 
 // setupTestCredentials creates an agent with broker credentials and returns the agent, credential, and plaintext secret.
@@ -62,7 +116,6 @@ func setupTestCredentials(t *testing.T, provider *Provider, agentRepo ports.Agen
 	// Create agent
 	agent := &dstorage.Agent{
 		ID:             id.NewAgentID(),
-		ClientID:       ptr.To(id.ClientID("test-oauth2-client")),
 		DisplayName:    "Test OAuth2 Agent",
 		Description:    "Agent for provider test",
 		PermissionSets: testAgentPermissionSets(),
@@ -77,7 +130,38 @@ func setupTestCredentials(t *testing.T, provider *Provider, agentRepo ports.Agen
 	err = provider.fositeStorage.credRepo.Create(ctx, cred)
 	require.NoError(t, err)
 
+	seedProviderTestGrant(t, provider, agent.ID)
 	return agent, cred, plaintext
+}
+
+func TestNewProvider_RequiresNativeRefreshDependencies(t *testing.T) {
+	provider, _, signer := newTestProvider(t)
+	newWith := func(deps RefreshSessionDependencies, tx ports.StorageTransactionManager) error {
+		_, err := NewProvider(provider.fositeStorage.codeRepo, deps, provider.fositeStorage.pkceRepo,
+			provider.fositeStorage.credRepo, provider.fositeStorage.clientResolver,
+			signer, "https://broker.example.com", time.Hour, "", testSlogger(), tx)
+		return err
+	}
+	transactions := provider.fositeStorage.transactions
+	for _, missing := range []struct {
+		name string
+		drop func(*RefreshSessionDependencies)
+	}{
+		{name: "agent", drop: func(d *RefreshSessionDependencies) { d.Agents = nil }},
+		{name: "clock", drop: func(d *RefreshSessionDependencies) { d.Clock = nil }},
+		{name: "verifier", drop: func(d *RefreshSessionDependencies) { d.Verifier = nil }},
+		{name: "encryption", drop: func(d *RefreshSessionDependencies) { d.Encryption = nil }},
+	} {
+		t.Run(missing.name, func(t *testing.T) {
+			deps := provider.refreshDeps
+			missing.drop(&deps)
+			require.Error(t, newWith(deps, transactions))
+		})
+	}
+	require.Error(t, newWith(provider.refreshDeps, nil))
+	deps := provider.refreshDeps
+	deps.Policy.InactivityLifetime = 0
+	require.Error(t, newWith(deps, transactions))
 }
 
 func TestProvider_HandleClientCredentials(t *testing.T) {
@@ -418,6 +502,16 @@ func TestProvider_RefreshTokens(t *testing.T) {
 
 		_, err = provider.HandleRefreshToken(context.Background(), agent.ID.String(), plaintext, resp.RefreshToken, "")
 		assert.ErrorIs(t, err, ErrInvalidGrant)
+		_, err = provider.HandleRefreshToken(context.Background(), agent.ID.String(), plaintext, refreshed.RefreshToken, "")
+		assert.ErrorIs(t, err, ErrInvalidGrant)
+		codeRecord, err := provider.fositeStorage.codeRepo.FindByCodeHash(context.Background(), sha256Hex(code))
+		require.NoError(t, err)
+		rootID, err := id.ParseRefreshSessionID(codeRecord.ID.String())
+		require.NoError(t, err)
+		root, err := provider.refreshDeps.Sessions.FindByID(context.Background(), rootID)
+		require.NoError(t, err)
+		require.NotNil(t, root.TerminalReason)
+		assert.Equal(t, dstorage.RefreshReasonProhibitedReuse, *root.TerminalReason)
 	})
 
 	t.Run("missing offline_access omits refresh token", func(t *testing.T) {
@@ -456,21 +550,32 @@ func TestProvider_RefreshTokens(t *testing.T) {
 
 	t.Run("cimd client without refresh_token grant gets no refresh token", func(t *testing.T) {
 		codeRepo := memory.NewAuthorizationCodeStore()
-		refreshRepo := memory.NewRefreshTokenSessionStore()
+		agentRepo := memory.NewAgentRepository()
 		credRepo := memory.NewClientCredentialStore()
 		signingKeyRepo := memory.NewSigningKeyStore()
 		enc := &testEncryptor{}
 		logger := testSlogger()
+		pkceRepo := memory.NewPKCESessionStore()
+		refreshDeps, refreshStore := newNativeTestRefresh(agentRepo, credRepo, codeRepo, pkceRepo, enc)
 		agent := &dstorage.Agent{
 			ID:             id.NewAgentID(),
 			ClientID:       nil,
+			ClientURIs:     []string{"https://client.example.com/metadata.json"},
 			DisplayName:    "CIMD Agent",
 			Description:    "CIMD agent without refresh grant",
 			PermissionSets: testAgentPermissionSets(),
 		}
-		resolver := &mockClientResolver{resolveFunc: func(_ context.Context, clientID id.ClientID) (*ports.ClientResolution, error) {
+		require.NoError(t, agentRepo.Create(context.Background(), agent))
+		require.NoError(t, refreshDeps.Verifier.(testGrantVerifier).grants.Create(context.Background(), &dstorage.UserGrant{
+			ID: id.NewGrantID(), Principal: id.NewPrincipal("user@example.com"), AgentID: agent.ID,
+		}))
+		resolver := &mockClientResolver{resolveFunc: func(ctx context.Context, clientID id.ClientID) (*ports.ClientResolution, error) {
+			currentAgent, err := agentRepo.Get(ctx, agent.ID)
+			if err != nil {
+				return nil, err
+			}
 			return &ports.ClientResolution{
-				Agent: agent,
+				Agent: currentAgent,
 				CIMDMetadata: &ports.CIMDMetadataDTO{
 					ClientID:     string(clientID),
 					RedirectURIs: []string{"https://client.example.com/callback"},
@@ -482,16 +587,16 @@ func TestProvider_RefreshTokens(t *testing.T) {
 		signingKeySvc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
 		provider, err := NewProvider(
 			codeRepo,
-			refreshRepo,
-			memory.NewPKCESessionStore(),
+			refreshDeps,
+			pkceRepo,
 			credRepo,
 			resolver,
 			signingKeySvc,
 			"https://broker.example.com",
 			time.Hour,
-			time.Hour,
 			"",
 			logger,
+			refreshStore,
 		)
 		require.NoError(t, err)
 		_, err = signingKeySvc.generateAndStore(context.Background(), "ES256", true, time.Now())
@@ -525,6 +630,74 @@ func TestProvider_RefreshTokens(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, resp.RefreshToken)
 	})
+}
+
+func TestProvider_AuthenticatedReplayBoundaries(t *testing.T) {
+	ctx := context.Background()
+	provider, agents, _ := newTestProvider(t)
+	owner, _, ownerSecret := setupTestCredentials(t, provider, agents)
+	other, _, otherSecret := setupTestCredentials(t, provider, agents)
+	owner.RedirectURIs = []string{"http://localhost:8080/callback"}
+	require.NoError(t, agents.Update(ctx, owner))
+
+	verifier := "refresh-replay-boundary-verifier-1234567890123456"
+	code, err := provider.HandleAuthorize(ctx, owner.ID.String(), owner.RedirectURIs[0], "code", "offline_access read", "state", generateS256Challenge(verifier), "S256", id.NewPrincipal("user@example.com"))
+	require.NoError(t, err)
+	issued, err := provider.HandleAuthorizationCodeExchange(ctx, owner.ID.String(), ownerSecret, code, owner.RedirectURIs[0], verifier)
+	require.NoError(t, err)
+	require.NotEmpty(t, issued.RefreshToken)
+	rotated, err := provider.HandleRefreshToken(ctx, owner.ID.String(), ownerSecret, issued.RefreshToken, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, rotated.RefreshToken)
+
+	// An authenticated stranger cannot revoke the owner's root, even with a
+	// consumed predecessor. The owner's current successor must still rotate.
+	_, err = provider.HandleRefreshToken(ctx, other.ID.String(), otherSecret, issued.RefreshToken, "")
+	require.ErrorIs(t, err, ErrInvalidGrant)
+	current, err := provider.HandleRefreshToken(ctx, owner.ID.String(), ownerSecret, rotated.RefreshToken, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, current.RefreshToken)
+
+	// Replaying a used authorization code is deliberately different: Fosite
+	// revokes the root belonging to the original code, not the replaying client.
+	_, err = provider.HandleAuthorizationCodeExchange(ctx, other.ID.String(), otherSecret, code, owner.RedirectURIs[0], verifier)
+	require.ErrorIs(t, err, ErrInvalidGrant)
+	codeRecord, err := provider.fositeStorage.codeRepo.FindByCodeHash(ctx, sha256Hex(code))
+	require.NoError(t, err)
+	rootID, err := id.ParseRefreshSessionID(codeRecord.ID.String())
+	require.NoError(t, err)
+	root, err := provider.refreshDeps.Sessions.FindByID(ctx, rootID)
+	require.NoError(t, err)
+	require.NotNil(t, root.TerminalReason)
+	assert.Equal(t, dstorage.RefreshReasonCodeReplay, *root.TerminalReason)
+	_, err = provider.HandleRefreshToken(ctx, owner.ID.String(), ownerSecret, current.RefreshToken, "")
+	require.ErrorIs(t, err, ErrInvalidGrant)
+}
+
+func TestProvider_CodeExchangeRequiresActiveOriginalGrant(t *testing.T) {
+	ctx := context.Background()
+	provider, agents, _ := newTestProvider(t)
+	agent, _, secret := setupTestCredentials(t, provider, agents)
+	agent.RedirectURIs = []string{"http://localhost:8080/callback"}
+	require.NoError(t, agents.Update(ctx, agent))
+	verifier := "original-grant-verifier-1234567890123456789012"
+	code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access read", "state", generateS256Challenge(verifier), "S256", id.NewPrincipal("user@example.com"))
+	require.NoError(t, err)
+	grants := provider.refreshDeps.Verifier.(testGrantVerifier).grants
+	grant, err := grants.FindByPrincipalAndAgent(ctx, id.NewPrincipal("user@example.com"), agent.ID)
+	require.NoError(t, err)
+	require.NoError(t, grants.Delete(ctx, grant.ID))
+
+	response, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+	require.ErrorIs(t, err, ErrInvalidGrant)
+	assert.Nil(t, response)
+	recorded, err := provider.fositeStorage.codeRepo.FindByCodeHash(ctx, sha256Hex(code))
+	require.NoError(t, err)
+	assert.Nil(t, recorded.UsedAt)
+	rootID, err := id.ParseRefreshSessionID(recorded.ID.String())
+	require.NoError(t, err)
+	_, err = provider.refreshDeps.Sessions.FindByID(ctx, rootID)
+	assert.True(t, ports.IsNotFoundErr(err))
 }
 
 func TestProvider_HandleAuthorizationCodeExchange(t *testing.T) {
@@ -955,10 +1128,12 @@ func TestProvider_CEL_RequestGrantType(t *testing.T) {
 		agentRepo := memory.NewAgentRepository()
 		signingKeyRepo := memory.NewSigningKeyStore()
 		enc := &testEncryptor{}
+		pkceRepo := memory.NewPKCESessionStore()
+		refreshDeps, refreshStore := newNativeTestRefresh(agentRepo, credRepo, codeRepo, pkceRepo, enc)
 		logger := testSlogger()
 
 		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
-		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, logger)
+		p, err := NewProvider(codeRepo, refreshDeps, pkceRepo, credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, expr, logger, refreshStore)
 		require.NoError(t, err)
 
 		_, err = svc.generateAndStore(context.Background(), "ES256", true, time.Now())
@@ -1019,10 +1194,12 @@ func TestProvider_CEL_AudienceListClaimFailsAuthorizationCodeExchange(t *testing
 		agentRepo := memory.NewAgentRepository()
 		signingKeyRepo := memory.NewSigningKeyStore()
 		enc := &testEncryptor{}
+		pkceRepo := memory.NewPKCESessionStore()
+		refreshDeps, refreshStore := newNativeTestRefresh(agentRepo, credRepo, codeRepo, pkceRepo, enc)
 		logger := testSlogger()
 
 		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
-		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, logger)
+		p, err := NewProvider(codeRepo, refreshDeps, pkceRepo, credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, expr, logger, refreshStore)
 		require.NoError(t, err)
 
 		_, err = svc.generateAndStore(context.Background(), "ES256", true, time.Now())

@@ -97,7 +97,8 @@ type App struct {
 	// Logger
 	Logger *slog.Logger
 
-	jwksPublisherHealth ports.JWKSPublisherHealthPort
+	jwksPublisherHealth      ports.JWKSPublisherHealthPort
+	refreshMaintenanceHealth ports.HealthChecker
 
 	// Shutdown must be called on graceful shutdown to release background resources
 	// (e.g. permission-set eviction and OAuth2 expired-record cleanup).
@@ -106,10 +107,21 @@ type App struct {
 
 // EnduserHealthComponents returns optional component-level health for the public /health endpoint.
 func (a *App) EnduserHealthComponents() map[string]string {
-	if a == nil || a.jwksPublisherHealth == nil {
+	if a == nil || (a.jwksPublisherHealth == nil && a.refreshMaintenanceHealth == nil) {
 		return nil
 	}
-	return map[string]string{"upstream_jwks": string(a.jwksPublisherHealth.HealthState())}
+	components := make(map[string]string, 2)
+	if a.jwksPublisherHealth != nil {
+		components["upstream_jwks"] = string(a.jwksPublisherHealth.HealthState())
+	}
+	if a.refreshMaintenanceHealth != nil {
+		if a.refreshMaintenanceHealth.HealthCheck(context.Background()) != nil {
+			components["refresh_sessions"] = "unhealthy"
+		} else {
+			components["refresh_sessions"] = "healthy"
+		}
+	}
+	return components
 }
 
 // Builder is a chainable builder for constructing App instances.
@@ -200,6 +212,8 @@ type oauthResolved struct {
 	localIssuerURI            string
 	localTokenTTL             time.Duration
 	localRefreshTokenTTL      time.Duration
+	localAbsoluteLifetime     time.Duration
+	localReuseInterval        time.Duration
 	localClaimsExpression     string
 	responseTypes             []string
 	grantTypes                []string
@@ -231,6 +245,8 @@ func extractOAuthValues(cfg ports.OAuth2ModeConfig, publicURL string) oauthResol
 		}
 		r.localTokenTTL = c.TokenTTL
 		r.localRefreshTokenTTL = c.RefreshTokenTTL
+		r.localAbsoluteLifetime = c.AbsoluteSessionLifetime
+		r.localReuseInterval = c.RefreshTokenReuseInterval
 		r.localClaimsExpression = c.TokenClaimsExpression
 		r.responseTypes = c.SupportedResponseTypes
 		r.grantTypes = c.SupportedGrantTypes
@@ -253,6 +269,8 @@ func extractOAuthValues(cfg ports.OAuth2ModeConfig, publicURL string) oauthResol
 		}
 		r.localTokenTTL = c.Local.TokenTTL
 		r.localRefreshTokenTTL = c.Local.RefreshTokenTTL
+		r.localAbsoluteLifetime = c.Local.AbsoluteSessionLifetime
+		r.localReuseInterval = c.Local.RefreshTokenReuseInterval
 		r.localClaimsExpression = c.Local.TokenClaimsExpression
 		r.cimdConfig = c.Local.CIMD
 		r.cimdEnabled = c.Local.CIMD.Enabled
@@ -279,6 +297,41 @@ var newSigningKeyStartupContext = func(timeout time.Duration) (context.Context, 
 	return context.WithTimeout(context.Background(), timeout)
 }
 
+// BuildRefreshSessionMaintenance wires only the dependencies needed by the
+// offline restore command. It does not initialize token issuers or workers.
+func (b *Builder) BuildRefreshSessionMaintenance() (*oauth2server.SessionCleanup, error) {
+	if b.config == nil {
+		return nil, errors.New("configuration is required")
+	}
+	if b.storage == nil {
+		return nil, errors.New("storage adapter is required")
+	}
+	if b.logger == nil {
+		return nil, errors.New("logger is required")
+	}
+	resolved, err := b.config.OAuth2AuthServer.Resolve()
+	if err != nil {
+		return nil, fmt.Errorf("oauth2_authorization_server configuration invalid: %w", err)
+	}
+	ov := extractOAuthValues(resolved, b.config.Server.EndUser.PublicURL)
+	refresh := oauth2server.RefreshSessionDependencies{
+		Sessions: b.storage.RefreshSessions(), Tokens: b.storage.RefreshTokens(),
+		Revocations: b.storage.RefreshRevocations(), Coordinator: b.storage.AuthorizationCoordinator(),
+		Clock: b.storage.AuthorizationClock(),
+		Policy: domstorage.RefreshSessionPolicy{
+			ReuseInterval: ov.localReuseInterval, AbsoluteLifetime: ov.localAbsoluteLifetime,
+			InactivityLifetime: ov.localRefreshTokenTTL,
+		},
+	}
+	maintenance := b.storage.RefreshMaintenance()
+	codes, pkce := b.storage.AuthorizationCodes(), b.storage.PKCESessions()
+	if refresh.Sessions == nil || refresh.Tokens == nil || refresh.Revocations == nil ||
+		refresh.Coordinator == nil || refresh.Clock == nil || maintenance == nil || codes == nil || pkce == nil {
+		return nil, errors.New("refresh session maintenance dependencies are required")
+	}
+	return oauth2server.NewSessionCleanup(codes, pkce, refresh, maintenance, b.storage.RefreshMaintenanceControl(), b.logger), nil
+}
+
 // Build constructs the App with all wired dependencies.
 // Returns error if required dependencies are missing or initialization fails.
 //
@@ -287,7 +340,7 @@ var newSigningKeyStartupContext = func(timeout time.Duration) (context.Context, 
 // 2. Create domain services (ConsentService, OAuth2Service, OAuth2SessionService)
 // 3. Create handler instances (AdminHandlers, EnduserHandlers)
 // 4. Return fully-wired App
-func (b *Builder) Build() (*App, error) {
+func (b *Builder) Build() (_ *App, buildErr error) {
 	// Validate required dependencies
 	if b.config == nil {
 		return nil, fmt.Errorf("configuration is required")
@@ -304,6 +357,12 @@ func (b *Builder) Build() (*App, error) {
 		return nil, fmt.Errorf("oauth2_authorization_server configuration invalid: %w", err)
 	}
 	ov := extractOAuthValues(oauthCfg, b.config.Server.EndUser.PublicURL)
+	if ov.localAbsoluteLifetime > 0 && ov.localAbsoluteLifetime < ov.localRefreshTokenTTL {
+		b.logger.Warn("absolute refresh-session lifetime is shorter than inactivity lifetime",
+			"absolute_session_lifetime", ov.localAbsoluteLifetime,
+			"refresh_token_ttl", ov.localRefreshTokenTTL,
+		)
+	}
 
 	app := &App{
 		Config:  b.config,
@@ -342,6 +401,18 @@ func (b *Builder) Build() (*App, error) {
 		}
 		app.Shutdown = shutdownTelemetry
 	}
+
+	// A failed build must stop any workers already started by earlier dependencies.
+	defer func() {
+		if buildErr == nil {
+			return
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := app.Shutdown(shutdownCtx); err != nil {
+			buildErr = errors.Join(buildErr, fmt.Errorf("failed to release app resources after unsuccessful build: %w", err))
+		}
+	}()
 
 	baseHandler := b.logger.Handler()
 	if b.config.Telemetry.Enabled && b.config.Telemetry.Logs.Enabled {
@@ -480,6 +551,9 @@ func (b *Builder) Build() (*App, error) {
 			b.storage.UserSessions(),
 			app.PermissionSetService,
 			b.logger,
+			b.storage.AuthorizationClock(),
+			b.storage.AuthorizationCoordinator(),
+			b.storage.RefreshRevocations(),
 		)
 	}
 
@@ -573,6 +647,7 @@ func (b *Builder) Build() (*App, error) {
 			oauth2Config,
 			b.logger,
 			sessionTokenSvc,
+			b.storage.AuthorizationClock(),
 		)
 		app.OAuth2Service = authService
 	}
@@ -633,6 +708,8 @@ func (b *Builder) Build() (*App, error) {
 		app.ProviderService,
 		b.logger,
 		ov.multiAgentClient.Enabled,
+		b.storage.AuthorizationCoordinator(),
+		b.storage.RefreshRevocations(),
 	)
 
 	// Shared upstream JWKS adapter is required when token exchange, approval authentication,
@@ -864,20 +941,41 @@ func (b *Builder) Build() (*App, error) {
 	}
 
 	localIssuerURI := ov.localIssuerURI
+	var refreshDeps oauth2server.RefreshSessionDependencies
 
 	// buildLocalProvider constructs the local token issuance infrastructure.
 	// Used in both "local" and "hybrid" modes.
 	buildLocalProvider := func(signingKeyService *oauth2server.SigningKeyService, tokenTTL time.Duration, claimsExpr string, bootstrapTimeout time.Duration) (*oauth2server.Provider, error) {
+		if app.ConsentService == nil {
+			return nil, fmt.Errorf("local OAuth2 issuance requires a consent service for original-grant verification")
+		}
+
+		refreshDeps = oauth2server.RefreshSessionDependencies{
+			Agents:      b.storage.Agents(),
+			Sessions:    b.storage.RefreshSessions(),
+			Tokens:      b.storage.RefreshTokens(),
+			Revocations: b.storage.RefreshRevocations(),
+			Coordinator: b.storage.AuthorizationCoordinator(),
+			Clock:       b.storage.AuthorizationClock(),
+			Verifier:    newUserDelegationVerifier(app.ConsentService),
+			Encryption:  encryptor,
+			BranchKeys:  app.BranchKeyManager,
+			Policy: domstorage.RefreshSessionPolicy{
+				ReuseInterval:      ov.localReuseInterval,
+				AbsoluteLifetime:   ov.localAbsoluteLifetime,
+				InactivityLifetime: ov.localRefreshTokenTTL,
+			},
+		}
+
 		provider, err := oauth2server.NewProvider(
 			b.storage.AuthorizationCodes(),
-			b.storage.RefreshTokenSessions(),
+			refreshDeps,
 			b.storage.PKCESessions(),
 			b.storage.BrokerCredentials(),
 			clientResolver,
 			signingKeyService,
 			localIssuerURI,
 			tokenTTL,
-			ov.localRefreshTokenTTL,
 			claimsExpr,
 			b.logger,
 			b.storage,
@@ -915,7 +1013,7 @@ func (b *Builder) Build() (*App, error) {
 	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
 		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
 		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
-		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), clientAuthService, b.logger)
+		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), clientAuthService, b.logger, b.storage.AuthorizationCoordinator(), b.storage.RefreshRevocations())
 		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
 		return signingKeyService
@@ -1042,7 +1140,17 @@ func (b *Builder) Build() (*App, error) {
 			}
 		}
 
-		svc, err := impersonation.NewService(impCfg, b.newImpersonationJWKSFactory(upstreamClient), b.storage.Agents(), impersonationIssuer, 0, b.logger, newUserDelegationVerifier(app.ConsentService), consentBaseURL)
+		svc, err := impersonation.NewService(
+			impCfg,
+			b.newImpersonationJWKSFactory(upstreamClient),
+			b.storage.Agents(),
+			impersonationIssuer,
+			0,
+			b.logger,
+			newUserDelegationVerifier(app.ConsentService),
+			consentBaseURL,
+			b.storage.AuthorizationClock(),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build impersonation service: %w", err)
 		}
@@ -1130,6 +1238,7 @@ func (b *Builder) Build() (*App, error) {
 			app.PermissionSetService,
 			b.storage.Agents(),
 			&b.config.TokenExchange,
+			b.storage.AuthorizationClock(),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create token exchange service: %w", err)
@@ -1177,15 +1286,25 @@ func (b *Builder) Build() (*App, error) {
 		SPA:                  handlers.NewSPAHandler(b.staticWebResourcesPath, b.logger),
 	}
 
-	// Start maintenance only after all fallible construction has completed.
+	// Reconcile native refresh authority before admitting local or hybrid traffic.
 	switch oauthCfg.(type) {
 	case *ports.LocalOAuth2Config, *ports.HybridOAuth2Config:
+		maintenance := b.storage.RefreshMaintenance()
+		if maintenance == nil {
+			return nil, fmt.Errorf("refresh session maintenance repository is required")
+		}
 		cleanup := oauth2server.NewSessionCleanup(
 			b.storage.AuthorizationCodes(),
 			b.storage.PKCESessions(),
-			b.storage.RefreshTokenSessions(),
+			refreshDeps,
+			maintenance,
+			b.storage.RefreshMaintenanceControl(),
 			b.logger,
 		)
+		if err := cleanup.Reconcile(context.Background()); err != nil {
+			return nil, fmt.Errorf("failed to reconcile refresh sessions at startup: %w", err)
+		}
+		app.refreshMaintenanceHealth = cleanup
 		cleanupCtx, cancelCleanup := context.WithCancel(context.Background())
 		cleanupDone := make(chan struct{})
 		go func() {

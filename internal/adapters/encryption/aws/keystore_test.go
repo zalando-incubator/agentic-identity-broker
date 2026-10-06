@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -172,4 +173,59 @@ func TestCreateBranchKeyGetActiveBranchKeyTimeoutDoesNotFallThroughToCreateKey(t
 	assert.True(t, isKEKUnavailableError(err), "expected KEKUnavailable, got %v (type %T)", err, err)
 	assert.Contains(t, err.Error(), "getting active branch key")
 	assert.Contains(t, err.Error(), "dynamodb_timeout=1ms")
+}
+
+func TestCreateBranchKeyQueuedCancellationSkipsSDK(t *testing.T) {
+	subject := encryption.NewServiceBranchKeySubject(id.MustParseServiceID("550e8400-e29b-41d4-a716-446655440000"))
+	for _, withLookup := range []bool{true, false} {
+		name := "create_key"
+		if withLookup {
+			name = "get_active_branch_key"
+		}
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, lockSDK(context.Background()))
+			held := true
+			defer func() {
+				if held {
+					unlockSDK()
+				}
+			}()
+
+			var sdkCalled atomic.Bool
+			ks := &KeyStore{createKeyFn: func(context.Context, keystoretypes.CreateKeyInput) (*keystoretypes.CreateKeyOutput, error) {
+				sdkCalled.Store(true)
+				return nil, errors.New("CreateKey entered while gate held")
+			}}
+			if withLookup {
+				ks.getActiveBranchKeyFn = func(context.Context, keystoretypes.GetActiveBranchKeyInput) (*keystoretypes.GetActiveBranchKeyOutput, error) {
+					sdkCalled.Store(true)
+					return nil, errors.New("GetActiveBranchKey entered while gate held")
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			watched := &waitingSDKContext{Context: ctx, waiting: make(chan struct{})}
+			finished := make(chan error, 1)
+			go func() {
+				_, err := ks.CreateBranchKey(watched, subject)
+				finished <- err
+			}()
+			select {
+			case <-watched.waiting:
+			case <-time.After(2 * time.Second):
+				t.Fatal("branch-key operation did not reach the SDK gate")
+			}
+			cancel()
+			select {
+			case err := <-finished:
+				require.ErrorIs(t, err, context.Canceled)
+				assert.True(t, isKEKUnavailableError(err))
+				assert.False(t, sdkCalled.Load(), "cancelled call entered the SDK")
+			case <-time.After(2 * time.Second):
+				t.Fatal("queued branch-key operation did not return before gate release")
+			}
+			unlockSDK()
+			held = false
+		})
+	}
 }

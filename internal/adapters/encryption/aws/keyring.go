@@ -37,6 +37,13 @@ func createHierarchicalKeyring(ctx context.Context, ks *KeyStore, supplier mplty
 		ks.config.BranchKeyTTL = DefaultBranchKeyTTL
 	}
 
+	if err := lockSDK(ctx); err != nil {
+		return nil, encryption.NewKEKUnavailableError(
+			fmt.Sprintf("failed to create Material Providers client: %v", err), err,
+		)
+	}
+	defer unlockSDK()
+
 	// Create Material Providers client
 	matProvider, err := mpl.NewClient(mpltypes.MaterialProvidersConfig{})
 	if err != nil {
