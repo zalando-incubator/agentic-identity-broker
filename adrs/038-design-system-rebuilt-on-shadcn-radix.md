@@ -107,6 +107,12 @@ The stakeholder requested a simpler agent editor: one group checkbox, informatio
 
 The stakeholder also removed the duplicate Details action from already-linked agent cards. This replaces the earlier explicit Details-link requirement without changing card navigation or confirmed Revoke. Connection states update locally at known refresh-token expiry deadlines. Single-letter approval decisions require focus within the inbox/review surface, not merely a selected request. These corrections change no API, authorization, principal, or callback contract.
 
+### Approved consent action correction: 2026-10-06
+
+The stakeholder replaces the 2026-10-04 changing primary-action requirement. Keep the consent footer label as Allow. While any selected service needs connecting, disable Allow and explain the requirement above the footer actions. Inline Connect buttons remain available and use the existing provider flow. Enable Allow only after all selected services are connected. This correction changes no authorization, API, principal, callback, or draft-preservation contract.
+
+The stakeholder also moves Granted into a neutral check badge beside already granted permission names on agent details. Keep the badge separate from the checkbox label and allow wrapping. Consent retains its muted Granted hint. This replaces only the earlier no-Granted-badge presentation rule for agent details; selection and saved-grant semantics stay unchanged.
+
 
 ## Consequences
 

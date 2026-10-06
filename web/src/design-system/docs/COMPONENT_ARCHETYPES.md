@@ -35,7 +35,7 @@ Expose variant through `data-variant`. Keep a pending spinner and `aria-busy` wi
 
 | Variant | Use |
 | --- | --- |
-| `primary` | One decision-context action; Allow or Connect to continue on consent |
+| `primary` | One decision-context action; Allow on consent, disabled while selected connections are missing |
 | `secondary` | Neutral supporting action |
 | `outline` | Visible row action, Deny, or other supporting action |
 | `ghost` | Tooltip-labeled icon button only |
@@ -44,7 +44,7 @@ Expose variant through `data-variant`. Keep a pending spinner and `aria-busy` wi
 | `destructive` | Filled destructive confirmation inside Dialog |
 
 Primary and destructive hover adjust lightness by 0.04. A press scales to 0.98 unless reduced motion removes movement.
-Row actions are 32 px tall. Consent Deny and Allow/Connect are 40 px tall and share the footer width.
+Row actions are 32 px tall. Consent Deny and Allow are 40 px tall and share the footer width.
 Do not add another primary action inside an entity card or disable Allow without showing the Connect path.
 
 ## Card, EntityCard, and EntityRow
@@ -73,7 +73,7 @@ Agents and Connections support grid and list views: page choice wins, then an ex
 Input uses a semantic surface, `--border-control`, and a focus ring. A placeholder never replaces a visible label.
 Connect errors to their controls with `aria-invalid` and `aria-describedby`. Provide an inline one-line hint where useful.
 Use Checkbox for independent permission and service choices. Required and already granted decision groups stay checked and locked.
-Required uses a Lock icon and the word beside the group name. Optional and Granted are not badges.
+Required uses a Lock icon and the word beside the group name. Optional is not a badge. Granted stays muted inline text in consent; agent detail uses a neutral check badge beside the permission name.
 In decision mode, show the service-list chevron only for multiple selectable services. Console mode also preserves independent optional single-service choices.
 
 DurationSelect uses one Select: Until I revoke it, 30 days, Custom date. Custom date opens a DatePicker in Popover.

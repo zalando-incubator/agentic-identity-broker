@@ -59,14 +59,14 @@ This snippet illustrates tokens, not a second Card implementation or observed ru
 
 | Variant | Role |
 | --- | --- |
-| `primary` | The view's one accent action, including Connect to continue when consent is blocked |
+| `primary` | The view's one accent action; consent Allow stays visible but disabled while selected connections are missing |
 | `secondary` | Supporting action on a neutral surface |
 | `outline` | Visible supporting action, including row actions and consent Deny |
 | `ghost` | Tooltip-labeled icon control, never an invisible row action |
 | `destructive-outline` | Resting Revoke or Disconnect, with confirmation before mutation |
 | `destructive` | Filled destructive confirmation inside Dialog |
 
-Consent uses Allow when ready, or “Connect {Service} to continue” when a selected service needs connection.
+Consent keeps the Allow label. Disable it while selected services need connecting, show an explanation, and keep inline outline Connect actions available.
 Tool review uses Approve once. Approval inbox decisions appear in the detail panel, not on expanding rows.
 Use 32 px outline row actions and 40 px consent actions. Primary and destructive hover shift lightness by 0.04 and press scales to 0.98.
 Do not underline a button on hover. Use semantic Button variants rather than per-page restyling.

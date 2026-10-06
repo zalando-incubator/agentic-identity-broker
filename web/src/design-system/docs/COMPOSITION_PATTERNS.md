@@ -81,6 +81,7 @@ ConsoleShell
   Dirty draft only: top-sticky Cancel / Save changes bar, immediately below the header
   Main 8 columns: headed PermissionPanel card + DurationSelect with saved-versus-pending expiry
   Side 4 columns: Connections with status tooltips, About content, Technical details
+  Permission name line: neutral Granted check badge beside already granted names, separate from the checkbox label
 ```
 
 Registered client URIs appear as exact technical values in the Technical details panel, not as header origin clutter. The panel shows the supplied agent ID, optional client ID and registered client URIs, and available grant ID and record timestamps. Omit absent optional values. These records make no domain-verification or legal-publisher claim. About keeps the description and configured human-facing links separate.
@@ -101,7 +102,7 @@ Keep a localhost or unverified-origin risk signal visible in a soft callout. A d
 Put documentation, governance, and agent-interface links in an About popover. Put client ID, redirect URI, and available raw scopes in a technical-details Dialog.
 
 PermissionPanel places required groups first. Each row has a checkbox, name, description, and service icons.
-Show Lock and “Required” after a required name. Do not give Optional or Granted a badge.
+Show Lock and “Required” after a required name. In consent, do not give Optional or Granted a badge.
 Already-granted groups remain checked, locked, and unchanged in decision mode. Show Granted in muted inline text.
 Only groups with multiple selectable services get a chevron beside the name. Put Connect in the affected row if a selected service is missing.
 After four groups, scroll the inset panel internally rather than pushing the decision footer away.
@@ -113,7 +114,7 @@ Keep earlier permission-set and service selections when submitting a new choice.
 
 Preserve the canonical draft through tab-local `consent_state_id`, bounded form POST, and provider callback.
 Keep the original return URL out of provider-facing state. Restore only a matching, unexpired record; then remove the ID from history.
-If connection is needed, the primary control becomes “Connect {Service} to continue”; after return it becomes Allow.
+Keep the primary label as Allow. While selected connections are missing, disable Allow, explain the requirement above the footer actions, and keep inline Connect actions available. Enable Allow only when all selected services are connected.
 Keep Deny as an `outline` action. Deny changes no grant and constructs no redirect.
 Link inline validation errors to the affected row and summarize them in the footer.
 Keep the action visible at 1280 × 720 with three groups and a risk callout.

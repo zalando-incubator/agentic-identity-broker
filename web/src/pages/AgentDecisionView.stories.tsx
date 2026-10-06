@@ -83,12 +83,19 @@ export const RegisteredOrigin: Story = {
 };
 export const AlreadyGranted: Story = { args: { data: consentDetail } };
 export const MissingConnection: Story = {
-  args: { missingServiceIds: ['drive'] },
+  args: { missingServiceIds: ['mail', 'drive'] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByRole('button', { name: 'Connect Drive to continue' })).toBeVisible();
-    await userEvent.click(canvas.getByRole('button', { name: 'Connect Drive to continue' }));
-    await expect(canvas.getByRole('button', { name: 'Allow' })).toBeVisible();
+    const allow = canvas.getByRole('button', { name: 'Allow', exact: true });
+    await expect(allow).toBeDisabled();
+    await expect(allow).toHaveAccessibleDescription(consentCopy.connectionRequired);
+    await userEvent.click(canvas.getAllByRole('button', { name: 'Connect Mail', exact: true })[0]!);
+    await expect(allow).toBeDisabled();
+    await expect(allow).toHaveAccessibleName('Allow');
+    await userEvent.click(canvas.getAllByRole('button', { name: 'Connect Drive', exact: true })[0]!);
+    await expect(allow).toBeEnabled();
+    await expect(allow).toHaveAccessibleName('Allow');
+    await expect(allow).not.toHaveAccessibleDescription();
   },
 };
 export const Empty: Story = { args: { data: consentEmptyDetail, draft: empty } };

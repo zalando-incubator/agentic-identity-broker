@@ -53,7 +53,7 @@ Use the accepted contract and the owned component API, not retired examples or c
 | Motion | 120/160/200 ms feedback, 320 ms emphasis; CSS decisions, Motion permitted on console routes |
 | Reduced motion | No movement or icon animation; retain opacity and color fades |
 | Button variants | `primary`, `secondary`, `outline`, `ghost`, `destructive-outline`, `destructive` |
-| Decisions | Pinned footer; consent Allow becomes Connect {Service} to continue when a selected connection is missing |
+| Decisions | Pinned footer; stable consent Allow label, disabled with an explanation while selected connections are missing; inline Connect stays available |
 | Console | Three sidebar destinations, optional header purpose, icon toolbar, Settings in the user menu |
 | Bundles | Concrete imports; Command and Motion excluded from decision-route graphs |
 

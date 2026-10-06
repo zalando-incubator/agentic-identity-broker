@@ -4,6 +4,7 @@ import { Checkbox } from '@design-system/components/inputs/Checkbox';
 import { TruncatedText } from '@design-system/components/data-display/TruncatedText';
 import { Avatar } from '@design-system/components/primitives/Avatar';
 import { Button } from '@design-system/components/primitives/Button';
+import { Badge } from '@design-system/components/primitives/Badge';
 import { cn } from '@design-system/utils/cn';
 import { consentCopy } from '@copy';
 import { delegationsCopy } from '@copy/delegations';
@@ -80,11 +81,14 @@ export function PermissionPanel({ draft, services, disabled, onChange, mode = 'd
                 ? <LockKeyhole aria-hidden="true" className="mt-0.5 size-5 shrink-0 p-0.5 text-muted-foreground" />
                 : <Checkbox id={checkboxId} aria-labelledby={nameId} aria-describedby={[descriptionId, removalBlocked ? minimumId : undefined].filter(Boolean).join(' ')} checked={group.selected} disabled={disabled || group.readOnly || group.removalBlocked} className={mode === 'console' ? 'size-5' : undefined} onCheckedChange={(checked) => onChange(draft.setPermissionSet(group.id, checked === true))} />}
               <div className="min-w-0 flex-1">
-                <Label id={nameId} htmlFor={Label === 'label' ? checkboxId : undefined} data-testid="permission-group-name" className={cn('block font-medium text-foreground [overflow-wrap:anywhere]', Label === 'label' && 'cursor-pointer')}>{group.name}</Label>
+                <div className={mode === 'console' ? 'flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1' : undefined}>
+                  <Label id={nameId} htmlFor={Label === 'label' ? checkboxId : undefined} data-testid="permission-group-name" className={cn('block font-medium text-foreground [overflow-wrap:anywhere]', Label === 'label' && 'cursor-pointer')}>{group.name}</Label>
+                  {mode === 'console' && group.alreadyGranted && <Badge data-testid="permission-group-granted" variant="neutral" icon={<Check />}>{consentCopy.granted}</Badge>}
+                </div>
                 {mode === 'console' && group.selected !== group.alreadyGranted && <p className="text-xs text-muted-foreground">{group.alreadyGranted ? consentCopy.removalPending : consentCopy.additionPending}</p>}
                 {group.required && <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">{mode === 'decision' && <LockKeyhole aria-hidden="true" className="size-3" />}{consentCopy.required}</span>}
                 {mode === 'console' ? <Label id={descriptionId} htmlFor={Label === 'label' ? checkboxId : undefined} data-testid="permission-group-description" className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">{group.description}</Label> : <TruncatedText id={descriptionId} data-testid="permission-group-description" as={Label} htmlFor={Label === 'label' ? checkboxId : undefined} text={group.description} lines={2} expandLabel={consentCopy.more} collapseLabel={consentCopy.less} className="text-xs text-muted-foreground [&>label]:cursor-pointer [&>button]:h-auto [&>button]:border-0 [&>button]:bg-transparent [&>button]:p-0 [&>button]:text-xs [&>button]:underline" />}
-                {group.alreadyGranted && <span data-testid="permission-group-granted" className="inline-flex items-center gap-0.5 text-xs text-muted-foreground"><Check aria-hidden="true" className="size-3" />{consentCopy.granted}</span>}
+                {mode === 'decision' && group.alreadyGranted && <span data-testid="permission-group-granted" className="inline-flex items-center gap-0.5 text-xs text-muted-foreground"><Check aria-hidden="true" className="size-3" />{consentCopy.granted}</span>}
                 {mode === 'console' && group.services.length === 1 && !showConsoleServices && <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]"><span data-testid="permission-service-name">{serviceNames.get(group.services[0]!.id) ?? group.services[0]!.id}</span> — {consentCopy.required}</p>}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">

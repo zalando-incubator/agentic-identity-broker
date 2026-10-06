@@ -184,7 +184,7 @@ Before you write a styled component, read `src/design-system/docs/COMMON_MISTAKE
 4. Use the centered 1120 px console, 12-column grid, and a 480 px three-zone consent card with a pinned footer.
 5. Use EntityCard grids with a list toggle for Agents and Connections. Use fixed-height approval rows and a separate detail panel.
 6. Give resting actions a visible boundary. Agent and connection collections use `destructive-quiet` with `ShieldOff` and `Unlink`, respectively. Keep `destructive-outline` for agent detail.
-7. Keep a primary action visible in each decision context: Allow, or Connect to continue when a selected service is missing.
+7. Keep the consent primary label as Allow. Disable it while selected services need connecting, explain why, and keep inline Connect actions available.
 8. Use Motion only on console routes and CSS animation on decision routes. Reduced motion retains opacity and color fades.
 9. Use ConsoleShell with PageHeader for the console, and DecisionShell for focused decisions.
 10. Keep focus, labels, contrast, keyboard behavior, and announcements accessible in both themes.

@@ -14,7 +14,7 @@ export const consentCopy = {
   connect: 'Connect',
   connectService: (service: string) => `Connect ${service}`,
   reconnectService: (service: string) => `Reconnect ${service}`,
-  connectToContinue: (service: string) => `Connect ${service} to continue`,
+  connectionRequired: 'Connect the selected services before allowing access.',
   chooseCustomDate: 'Choose custom date',
   untilRevoked: 'Until I revoke it',
   headingSuffix: 'wants to act on your behalf',

@@ -138,8 +138,8 @@ The Vite server at `http://localhost:8000/` supplies development identity `dev@e
 
 1. Open `http://localhost:9002/` and select **Login as Proxy Client**. The browser opens the decision view at `/agents/:id?session_token=…` on port 8000.
 2. Inspect the required **Identity Access** group in the inset permission panel, optional groups, signed-in identity, and pinned duration/actions. Leave **Weather Access** and **Calendar Sync** off for this run. Their provider URLs are examples, not running local services.
-3. Select **30 days**. If Mock OAuth2 Service is a selected but unconnected service, choose **Connect Mock OAuth2 Service to continue**. The mock provider opens at `http://localhost:9000/oauth/authorize`.
-4. Click **Approve** on the mock provider. The browser returns to the decision card and keeps the 30-day choice. The primary action becomes **Allow**; click it.
+3. Select **30 days**. If Mock OAuth2 Service is selected but unconnected, **Allow** is disabled with an explanation. Choose the inline **Connect** action for Mock OAuth2 Service. The mock provider opens at `http://localhost:9000/oauth/authorize`.
+4. Click **Approve** on the mock provider. The browser returns to the decision card and keeps the 30-day choice. **Allow** is now enabled; click it.
 5. On the upstream provider at `http://localhost:9001/oauth/authorize`, click **Approve**. The browser returns to the Sample Agent with an OAuth2 success message.
 6. Open `http://localhost:8000/agents`. Find **Sample Agent** and its expiry. Open its whole card to inspect `/agents/:id` without `session_token`. The editable permission panel and Connections rail appear together, not as tabs.
 7. Open `http://localhost:8000/connections`. Find the connected **Mock OAuth2 Service (Dev)** and open its four-scope popover.

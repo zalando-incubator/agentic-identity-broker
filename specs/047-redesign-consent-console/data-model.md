@@ -49,7 +49,7 @@ The UI derives this value object from existing session fields, refresh responses
 | Condition, in precedence order | Visible state | Available action |
 | --- | --- | --- |
 | Session read fails, or a refresh fails without an authoritative rejection | Unavailable, with the last authoritative state kept as stale, never Connected from missing data | Retry the read |
-| No stored session for an agent service requirement (`connectionStatus: not_connected`) | No connection badge, only in the agent-detail Connections rail. Consent marks the selected service with a warning icon and an inline Connect action | Connect through the existing authorization flow; the consent primary slot reads "Connect {Service} to continue" until callback return |
+| No stored session for an agent service requirement (`connectionStatus: not_connected`) | No connection badge, only in the agent-detail Connections rail. Consent marks the selected service with a warning icon and an inline Connect action | Connect through the existing authorization flow; consent Allow keeps its label but is disabled with an explanation until all selected services are connected |
 | Known rejected refresh result in the current page | Needs re-authentication (badge “Needs sign-in”) | Reconnect |
 | Session expired, refresh token expired, or access expired without a refresh token | Expired | Reconnect |
 | Access expired with a refresh token, but refresh not yet successful | Needs re-authentication, with refresh explanation | Refresh when supported, otherwise reconnect |

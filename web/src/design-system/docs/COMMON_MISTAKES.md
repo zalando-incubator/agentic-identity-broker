@@ -29,7 +29,7 @@ Use `--primary-soft` for active navigation and selected rows. Soft status colors
 ## Showing multiple primary actions or hiding the one needed
 
 Use one accent action in each decision context, not one per row or section.
-Consent uses Allow when ready. If a selected service is not connected, the primary action becomes “Connect {Service} to continue”.
+Consent keeps the Allow label in every editable state. Disable Allow while selected services need connecting. Explain the requirement above the footer actions and keep inline Connect buttons available.
 
 ```tsx
 <div className="flex gap-3">

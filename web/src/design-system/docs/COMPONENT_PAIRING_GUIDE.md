@@ -66,7 +66,7 @@ After a confirmed Allow, draw the success check for 320 ms before a validated re
 </div>
 ```
 
-Supply Allow or “Connect {Service} to continue” as the primary label according to the existing connection state.
+Keep Allow as the primary label. Disable it while selected connections are missing, show an explanation, and leave inline Connect actions available.
 Keep the current permission and duration draft across the existing provider callback. Deny does not change an existing grant.
 The buttons remain 40 px tall, with each taking half the footer width.
 

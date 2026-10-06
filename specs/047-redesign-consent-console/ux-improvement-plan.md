@@ -272,7 +272,7 @@ A visually separate inset panel (`--muted` background, 12 px radius) headed "It 
 
 - **Duration:** one line, "Access lasts" followed by a select with Until I revoke it, 30 days and Custom date. The date picker appears in a popover. This replaces three stacked radio rows.
 - **Buttons:** Deny (outline) and Allow (primary) side by side, each half the card width, 40 px tall. Allow is on the right.
-- **Blocked state:** when a selected service is not connected, the primary button reads "Connect {Service} to continue" and starts that connection. After return it becomes Allow. One primary action is always available, and no disabled button needs explaining.
+- **Blocked state (2026-10-06 correction):** keep the Allow label while selected services need connecting. Disable it with an explanation above the footer actions and leave inline Connect buttons available. Enable Allow only after all selected connections are available. This replaces the 2026-10-04 changing primary-action choice.
 - **Reassurance:** one line of 12 px muted text under the buttons: "You can change or revoke this at any time in Agents." It replaces the next-steps paragraph.
 - **Technical details:** a text link, right-aligned on the reassurance line, opens a dialog with client ID, redirect URI and requested scopes. The MCP security guidance expects the redirect URI to be available to the user ([MCP security best practices](https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices)), so also show the redirect host in the origin line when it differs from the agent's domain.
 

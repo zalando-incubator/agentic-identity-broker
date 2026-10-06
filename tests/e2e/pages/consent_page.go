@@ -1223,15 +1223,17 @@ func (cp *ConsentPage) ClickConnect(ctx context.Context, service string) error {
 		}
 	}
 	detail := cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Connect " + service, Exact: playwright.Bool(true)})
-	decision := cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Connect " + service + " to continue", Exact: playwright.Bool(true)})
 	reconnect := cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Reconnect " + service, Exact: playwright.Bool(true)})
-	return cp.locatorClick(ctx, detail.Or(decision).Or(reconnect).First(), "connect service "+service)
+	return cp.locatorClick(ctx, detail.Or(reconnect).First(), "connect service "+service)
 }
 
-func (cp *ConsentPage) ClickDecisionConnect(ctx context.Context, service string) error {
-	return cp.locatorClick(ctx, cp.page().GetByTestId("consent-footer").GetByRole("button", playwright.LocatorGetByRoleOptions{
-		Name: "Connect " + service + " to continue", Exact: playwright.Bool(true),
-	}), "connect "+service+" from the primary decision slot")
+func (cp *ConsentPage) IsAllowEnabled(ctx context.Context) (bool, error) {
+	timeout, err := cp.locatorTimeout(ctx)
+	if err != nil {
+		return false, err
+	}
+	return cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Allow", Exact: playwright.Bool(true)}).
+		IsEnabled(playwright.LocatorIsEnabledOptions{Timeout: timeout})
 }
 
 func (cp *ConsentPage) HasOriginLabel(ctx context.Context) (bool, error) {

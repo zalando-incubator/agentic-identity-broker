@@ -47,7 +47,7 @@ There is no fallback to `primary` merely because a button exists.
 | View | Primary action | Other actions |
 | --- | --- | --- |
 | Agents (`/agents`) | None | Whole card opens detail; Revoke is `destructive-quiet` with `ShieldOff` |
-| Agent consent | Allow, or Connect {Service} to continue while blocked | Deny uses `outline` |
+| Agent consent | Allow, disabled while selected connections are missing | Deny and inline Connect use `outline`; explain why Allow is disabled |
 | Agent management | Save changes only for a dirty draft | Revoke access is `destructive-outline`; Cancel is non-accent |
 | Connections (`/connections`) | None | Reconnect, Refresh, Retry use `outline`; Disconnect is `destructive-quiet` with `Unlink` |
 | Pending approval inbox panel | Approve once | Deny uses `outline`; caret menus hold remembered choices |

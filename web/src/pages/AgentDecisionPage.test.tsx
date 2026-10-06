@@ -144,6 +144,38 @@ describe('focused consent decisions', () => {
     expect(screen.getByTestId('consent-validation-summary')).toBeVisible();
     expect(consentApi.createOrUpdateGrant).not.toHaveBeenCalled();
   });
+  it('keeps Allow disabled for missing selected connections and enables it when the optional access is removed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(consentApi.getAgentDetail).mockResolvedValue({ ...detail, agent: { ...detail.agent, active_session_service_ids: ['mail'] } });
+    vi.mocked(consentApi.getAgentGrants).mockResolvedValue([]);
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+    open();
+    const allow = await screen.findByRole('button', { name: 'Allow', exact: true });
+    expect(allow).toBeEnabled();
+    const write = screen.getByRole('checkbox', { name: 'Write documents', exact: true });
+    await user.click(write);
+    expect(allow).toBeDisabled();
+    expect(allow).toHaveAccessibleDescription('Connect the selected services before allowing access.');
+    expect(screen.getByRole('button', { name: 'Connect Drive', exact: true })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Deny', exact: true })).toBeEnabled();
+    await user.click(allow);
+    expect(consentApi.createOrUpdateGrant).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    await user.click(write);
+    expect(allow).toBeEnabled();
+    expect(allow).not.toHaveAccessibleDescription();
+    await user.click(allow);
+    await waitFor(() => expect(consentApi.createOrUpdateGrant).toHaveBeenCalledWith('agent', { granted_permission_sets: { read: ['mail'] } }, { sessionToken: 'authorization' }));
+  });
+  it('blocks both the consent button and form submission when a mandatory connection is missing', async () => {
+    vi.mocked(consentApi.getAgentDetail).mockResolvedValue({ ...detail, agent: { ...detail.agent, active_session_service_ids: [] } });
+    vi.mocked(consentApi.getAgentGrants).mockResolvedValue([]);
+    open();
+    expect(await screen.findByRole('button', { name: 'Allow', exact: true })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Connect Mail', exact: true })).toBeEnabled();
+    fireEvent.submit(screen.getByTestId('consent-card'));
+    expect(consentApi.createOrUpdateGrant).not.toHaveBeenCalled();
+  });
   it('denies locally without saving, revoking, or navigating', async () => {
     open();
     await userEvent.click(await screen.findByRole('button', { name: 'Deny', exact: true }));
@@ -264,7 +296,7 @@ describe('focused consent decisions', () => {
     const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
     open();
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Write documents', exact: true }));
-    await userEvent.click(screen.getByRole('button', { name: 'Connect Drive to continue' }));
+    await userEvent.click(within(screen.getByRole('checkbox', { name: 'Write documents', exact: true }).closest('li')!).getByRole('button', { name: 'Connect Drive', exact: true }));
     expect(screen.getByText('Cannot save your choices in this tab. Enable browser storage and try connecting again.')).toBeVisible();
     expect(submit).not.toHaveBeenCalled();
     expect(consentApi.createOrUpdateGrant).not.toHaveBeenCalled();

@@ -1224,3 +1224,11 @@ FR-028 and SC-010 rule out a partial release. The minimum shippable scope is all
 - [ ] T252 Capture and review eight route/context `_light.png` references at 1280 × 720 under `tests/e2e/screenshots/`, as required by ADR 040. Required state references use the same configuration. Update `tests/e2e/screenshots/visual-gate.txt` and `specs/047-redesign-consent-console/cutover-inventory.md`. Keep route guidance in `docs/concepts/delegation-and-consent.md`, not the README. Do not approve references automatically or require dark/mobile PNGs.
 - [ ] T253 After integration, run `just web-test`, `just web-storybook-test`, `just web-bundle-check`, `just test-e2e-frontend`, `just test-e2e-frontend-visual` and `just verify` as applicable. Record actual results in `specs/047-redesign-consent-console/cutover-inventory.md`; keep existing known external security advisories visible.
 - [ ] T254 Confirm seven active destination routes and both agent contexts, no obsolete aliases or Motion decision imports, no API/persistence changes, preservation of all 17 active acceptance scenarios, and updated current guidance before a single release. Keep unmeasured user-study outcomes disclosed in `specs/047-redesign-consent-console/cutover-inventory.md`.
+
+## Consent action and permission-status corrections (2026-10-06)
+
+- [X] T255 Keep the consent Allow label stable, disable it while selected connections are missing, explain the requirement, and retain inline Connect actions. Cover optional-selection removal, mandatory connection blocking, multiple missing services, and the real provider callback without losing the draft.
+- [X] T256 Move Granted beside permission names on agent details as a neutral check badge. Preserve checkbox labels and selection behavior, keep consent's muted hint unchanged, and verify desktop/mobile placement plus both-theme browser interactions.
+
+The desktop light MissingConnection screenshot comparison differs from the stored reference. Reviewed references remain unchanged; visual approval remains under T252.
+

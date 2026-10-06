@@ -237,7 +237,7 @@ Only read-only assertions run once per theme, each in a fresh browser context: A
 
 | Scenario | Journey and principal assertion |
 | --- | --- |
-| AS-01 | One 480 px consent card identifies acting user and origin, warns on risk, shows required groups first, and keeps Allow or Connect visible at 1280 × 720 |
+| AS-01 | One 480 px consent card identifies acting user and origin, warns on risk, shows required groups first, and keeps Allow visible at 1280 × 720; missing selected connections disable Allow with an explanation and inline Connect actions |
 | AS-02 | Re-consent decides only new access, preserves read-only prior groups and existing validity, and does not widen the grant |
 | AS-03 | Duration and selections survive the required-service connection form POST and callback; Allow follows validated continuation, Deny/expiry add no grant |
 | AS-04 | Standalone review shows acting user, tool inputs, server risk and scope before any choice; Approve once stays the only accent action |

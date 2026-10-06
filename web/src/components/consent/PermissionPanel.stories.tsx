@@ -53,6 +53,11 @@ export const ConsoleSingleService: Story = {
     await expect(required).toHaveAttribute('data-read-only', 'true');
     await expect(within(required).queryByRole('checkbox')).not.toBeInTheDocument();
     await expect(within(required).getByText(consentCopy.required)).toBeVisible();
+    const nameBounds = within(required).getByTestId('permission-group-name').getBoundingClientRect();
+    const grantedBounds = within(required).getByTestId('permission-group-granted').getBoundingClientRect();
+    expect(Math.abs(grantedBounds.top - nameBounds.top)).toBeLessThan(4);
+    expect(grantedBounds.left).toBeGreaterThanOrEqual(nameBounds.right);
+    await expect(within(required).getAllByText(consentCopy.granted)).toHaveLength(1);
     await expect(within(optional).getByText('Drive')).toBeVisible();
     await expect(within(optional).getAllByRole('checkbox')).toHaveLength(1);
     await userEvent.click(within(optional).getByTestId('permission-group-name'));
