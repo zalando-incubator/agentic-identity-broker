@@ -23,6 +23,10 @@ The stakeholder approved the refreshed canonical light-mode references at 1280 Ã
 
 The [Storybook baseline directory](../../web/.storybook/__screenshots__/) contains 376 canonical references. All 403 stories still run in six theme/viewport interaction and accessibility projects; intentional dark/narrow overrides have no pixel reference. Run `just test-e2e-frontend-visual` and `just web-storybook-test` for comparisons. Neither comparison updates approved baselines.
 
+The stakeholder approved 39 changed Storybook references from [CI run 37474521836](https://github.com/zalando-incubator/agentic-identity-broker/actions/runs/37474521836) on 2026-10-06. They cover approval counts, remembered-decision actions, Granted badges, minimum selections, and the revised Allow/Connect flow. The comparison thresholds and all six interaction/accessibility projects remain unchanged.
+
+The stakeholder also approved the updated agent-detail route reference after a Linux run passed all 78 frontend journeys. The other seven route references remain unchanged.
+
 
 ## E2E vs Integration Tests
 
@@ -2366,6 +2370,8 @@ func (cp *ConsentPage) DelegateService(ctx context.Context, serviceName string) 
    ```
 
 5. **Disambiguate repeated controls** - When cards share a button or radio label, scope the locator to a card or use `.First()` for an explicit first-card contract. Exercise the page object with multiple matching cards.
+
+6. **Separate required access from disabled controls** - Read each group's Required indicator independently of its name wrapper and service indicators. The final selected group or service is disabled by the minimum-selection rule, but optional access does not become required. Callback journeys must retain the selection and its current editability. Optional-service journeys remove a service only while another selection remains.
 
 ### Ginkgo By() for Longer Test Sequences
 

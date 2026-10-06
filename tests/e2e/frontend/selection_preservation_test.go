@@ -205,7 +205,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		selectOptionalPermissionSet(ctx, consentPage)
 		Expect(consentPage.SetPermissionServiceChecked(ctx, "Productivity Suite", "Slack", false)).To(Succeed())
 		Expect(consentPage.PermissionServices(ctx, "Productivity Suite")).To(ConsistOf(
-			pages.PermissionService{Name: "Google", Checked: true},
+			pages.PermissionService{Name: "Google", ReadOnly: true, Checked: true},
 			pages.PermissionService{Name: "Slack"},
 		))
 		Expect(consentPage.ChooseDuration(ctx, "30 days")).To(Succeed())
@@ -270,7 +270,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(consentPage.PermissionGroups(ctx)).To(ContainElement(And(HaveField("Name", "Code Access"), HaveField("Checked", true))))
 		expectOptionalSelectionRestored(ctx, consentPage, "Google")
 		Expect(consentPage.PermissionServices(ctx, "Productivity Suite")).To(ConsistOf(
-			pages.PermissionService{Name: "Google", Checked: true},
+			pages.PermissionService{Name: "Google", ReadOnly: true, Checked: true},
 			pages.PermissionService{Name: "Slack"},
 		))
 		Expect(consentPage.SelectedDuration(ctx)).To(Equal("30 days"))
@@ -420,7 +420,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		Expect(page.URL()).To(HaveSuffix("#original"))
 		expectOptionalSelectionRestored(ctx, consentPage, "Google")
 		Expect(consentPage.PermissionServices(ctx, "Productivity Suite")).To(ConsistOf(
-			pages.PermissionService{Name: "Google", Checked: true},
+			pages.PermissionService{Name: "Google", ReadOnly: true, Checked: true},
 			pages.PermissionService{Name: "Slack"},
 		))
 		Expect(consentPage.SelectedDuration(ctx)).To(Equal("Custom date"))

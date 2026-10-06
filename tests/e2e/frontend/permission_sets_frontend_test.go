@@ -550,9 +550,18 @@ var _ = Describe("Permission Sets - ServiceScope requirement_type overrides opti
 		)
 
 		BeforeEach(func() {
+			microsoftSvc := createTestService(psMicrosoftServiceID, "Microsoft", []model.OAuthScope{
+				{ScopeValue: "mail.read", Description: "Read mail"},
+			})
+			Expect(GetTestStorage().Services().Create(ctx, microsoftSvc)).To(Succeed())
+			Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionForServiceWithScopes(
+				fixtures.DefaultPrincipal().String(), psMicrosoftServiceID.String(), []string{"mail.read"},
+			))).To(Succeed())
+
 			// Both the permission-set scope and the agent service requirement are optional.
 			createPermissionSet(ctx, psOptionalScopeID, "Optional Scope Productivity", "PS with optional service scope", []storage.ServiceScope{
 				{ServiceID: gwServiceID, Scopes: []string{"drive", "calendar"}, RequirementType: storage.RequirementTypeOptional},
+				{ServiceID: psMicrosoftServiceID, Scopes: []string{"mail.read"}, RequirementType: storage.RequirementTypeOptional},
 			})
 
 			optAgent := fixtures.ValidAgent()
@@ -562,29 +571,50 @@ var _ = Describe("Permission Sets - ServiceScope requirement_type overrides opti
 			}
 			optAgent.ServiceRequirements = []storage.ServiceRequirement{
 				{ServiceID: gwServiceID, RequirementType: storage.RequirementTypeOptional, RequiredScopes: []string{"drive", "calendar"}},
+				{ServiceID: psMicrosoftServiceID, RequirementType: storage.RequirementTypeOptional, RequiredScopes: []string{"mail.read"}},
 			}
 			err := GetTestStorage().Agents().Create(ctx, optAgent)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create optional-scope test agent")
 		})
 
-		It("should allow excluding a service when both requirement sources are optional", func() {
+		// US2-S4 from specs/019-permission-sets/spec.md; minimum selection from specs/047-redesign-consent-console/data-model.md.
+		It("should allow excluding optional services while preserving a nonempty selection", func() {
 			Expect(consentPage.NavigateToAgent(ctx, optAgentID)).To(Succeed())
 			Expect(consentPage.SetPermissionGroupChecked(ctx, "Optional Scope Productivity", true)).To(Succeed())
-			Expect(consentPage.PermissionServices(ctx, "Optional Scope Productivity")).To(Equal([]pages.PermissionService{
-				{Name: "Google Workspace", Checked: true},
-			}))
+			Expect(consentPage.PermissionServices(ctx, "Optional Scope Productivity")).To(ConsistOf(
+				pages.PermissionService{Name: "Google Workspace", Checked: true},
+				pages.PermissionService{Name: "Microsoft", Checked: true},
+			))
 			Expect(consentPage.ChooseDuration(ctx, "30 days")).To(Succeed())
+			Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeFalse(), "selected Google Workspace still needs a connection")
+			Expect(consentPage.SetPermissionServiceChecked(ctx, "Optional Scope Productivity", "Google Workspace", false)).To(Succeed())
+			Expect(consentPage.PermissionServices(ctx, "Optional Scope Productivity")).To(ConsistOf(
+				pages.PermissionService{Name: "Google Workspace"},
+				pages.PermissionService{Name: "Microsoft", ReadOnly: true, Checked: true},
+			))
+			Expect(consentPage.PermissionGroups(ctx)).To(ContainElement(And(
+				HaveField("Name", "Optional Scope Productivity"), HaveField("Required", false),
+				HaveField("Checked", true), HaveField("ReadOnly", true),
+			)))
+			Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeTrue(), "only connected Microsoft remains selected")
+			Expect(consentPage.SetPermissionServiceChecked(ctx, "Optional Scope Productivity", "Google Workspace", true)).To(Succeed())
+			Expect(consentPage.PermissionServices(ctx, "Optional Scope Productivity")).To(ConsistOf(
+				pages.PermissionService{Name: "Google Workspace", Checked: true},
+				pages.PermissionService{Name: "Microsoft", Checked: true},
+			))
 			Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeFalse())
 			Expect(consentPage.SetPermissionServiceChecked(ctx, "Optional Scope Productivity", "Google Workspace", false)).To(Succeed())
-			Expect(consentPage.PermissionServices(ctx, "Optional Scope Productivity")).To(Equal([]pages.PermissionService{
-				{Name: "Google Workspace"},
-			}))
-			Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeTrue())
-			Expect(consentPage.SaveChanges(ctx)).To(Succeed())
-			Expect(consentPage.HasError(ctx)).To(BeTrue())
 			grants, err := GetTestStorage().UserGrants().ListByPrincipalAndAgent(ctx, id.Principal(fixtures.DefaultPrincipal().String()), id.MustParseAgentID(optAgentID))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(grants).To(BeEmpty())
+			Expect(grants).To(BeEmpty(), "editing must not save before explicit submission")
+			Expect(consentPage.SaveChanges(ctx)).To(Succeed())
+			Expect(consentPage.WaitForGrantSuccess(ctx)).To(Succeed())
+			grant, err := GetTestStorage().UserGrants().FindByPrincipalAndAgent(ctx, id.Principal(fixtures.DefaultPrincipal().String()), id.MustParseAgentID(optAgentID))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(grant).NotTo(BeNil())
+			Expect(grant.GrantedPermissionSets).To(ConsistOf(storage.GrantedPermissionSetEntry{
+				PermissionSetID: psOptionalScopeID, IncludedServiceIDs: []id.ServiceID{psMicrosoftServiceID},
+			}))
 		})
 	})
 })

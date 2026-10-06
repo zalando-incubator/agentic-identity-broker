@@ -740,8 +740,9 @@ func (cp *ConsentPage) PermissionGroups(ctx context.Context) ([]PermissionGroup,
 			const name = group.querySelector('[data-testid="permission-group-name"]');
 			const description = group.querySelector('[data-testid="permission-group-description"]');
 			if (!name || !description || (!control && group.dataset.readOnly !== 'true')) throw new Error('Permission group is missing its name, description or selection');
-			const required = [...name.parentElement.children].some(element =>
-				element !== name && element.textContent.trim() === 'Required');
+			const required = [...group.querySelectorAll('span')].some(element =>
+				element !== name && !element.contains(name) && !description.contains(element) &&
+				!element.closest('[data-testid="permission-service"]') && element.textContent.trim() === 'Required');
 			const descriptionText = description.cloneNode(true);
 			descriptionText.querySelectorAll('[aria-hidden="true"],button,[data-testid="permission-group-granted"]').forEach(node => node.remove());
 			const disclosure = group.querySelector('button[aria-expanded]');

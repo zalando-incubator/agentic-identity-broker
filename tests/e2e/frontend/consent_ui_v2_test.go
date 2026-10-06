@@ -98,7 +98,7 @@ var _ = Describe("Consent UI v2", func() {
 				groups := readV2(consent.PermissionGroups(ctx))
 				Expect(groups).To(HaveLen(len(request.agent.PermissionSets)))
 				for i, group := range groups {
-					Expect(group.Required).To(Equal(i < 2))
+					Expect(group.Required).To(Equal(i < 2), "%s permission group %d (%s)", request.agent.DisplayName, i, group.Name)
 					Expect(group.Name).To(Equal(f.sets[i].Name))
 					Expect(group.Description).To(Equal(f.sets[i].Description))
 					Expect(readV2(consent.GroupServices(ctx, group.Name))).To(ConsistOf(f.services[i%2].DisplayName))
