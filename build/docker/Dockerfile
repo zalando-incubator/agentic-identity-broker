@@ -1,5 +1,5 @@
 # Agentic Identity Broker - Production Docker Image
-# This Dockerfile packages pre-built backend and frontend artifacts
+# This Dockerfile packages pre-built backend and frontend artifacts.
 # BASE_IMAGE lets internal release pipelines override the public default
 # with an internally-mirrored/allowed base image (see delivery.yaml).
 ARG BASE_IMAGE=alpine:3@sha256:5b02b42e375f7426f8d65c3af331ca05d9878f9989230354504e0b9dfd431f60
@@ -39,8 +39,7 @@ WORKDIR /app
 # Binary should be built with: just build-linux-amd64 or just build-linux-arm64
 COPY --chown=1000:1000 ./bin/linux/${TARGETARCH}/agentic-identity-broker /app/agentic-identity-broker
 
-# Copy pre-built frontend assets from ./web/dist/.
-# Assumes frontend is already built and available at ./web/dist/.
+# Copy pre-built frontend assets.
 COPY --chown=1000:1000 ./web/dist /app/web/dist
 
 # Ensure binary is executable

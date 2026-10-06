@@ -17,16 +17,24 @@ npm-debug.log*
 pnpm-debug.log*
 yarn-error.log*
 package-lock.json
+!web/package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
 # Build artifacts
 build/*
 !build/air/
+!web/build/
+!web/build/**
 bin/
 !bin/linux/
 dist/*
 !web/dist/
+web/storybook-static/
+web/.vitest-attachments/
+web/.storybook/candidates*/
+web/.storybook/feedback-candidates/
+web/.storybook/test-results/
 coverage/
 *.test.js
 *.spec.js

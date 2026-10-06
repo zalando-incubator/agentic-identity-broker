@@ -1,0 +1,62 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+import {
+  FoundationColors,
+  FoundationTypography,
+  FoundationSpacing,
+  FoundationRadii,
+  FoundationMotion,
+  FoundationIcons,
+} from './storybook/Foundations';
+
+<Meta title="Design System/Foundations" />
+
+# Foundations
+
+These samples use the current CSS tokens. Switch the Storybook theme toolbar to inspect light and dark values.
+The contrast ratios come from computed CSS color tokens, not the proposed ratios in the design plan.
+They measure token pairs, not transparent layers, disabled states, or every rendered interaction.
+Browser accessibility checks and reviewed visual baselines remain separate release requirements.
+
+## Semantic colors and contrast
+
+Use the named foreground with its background. Soft status and risk colors include a word, not color alone.
+Use risk colors only for a server-provided tool risk level. Do not assign risk to permission groups.
+Decorative borders do not need a 3:1 ratio. Form-control boundaries and focus indicators do.
+
+<FoundationColors />
+
+## Typography
+
+The font samples use the self-hosted Zalando Sans Variable, Inter Variable, and JetBrains Mono Variable faces in `web/public/fonts/`.
+No font sample fetches an off-origin asset. Page titles use 20 px semibold, not 24 px.
+
+<FoundationTypography />
+
+## Spacing
+
+The spacing base is 4 px. Use only the seven steps shown here.
+The console uses a 1120 px maximum content width and a 12-column layout with 24 px gutters.
+
+<FoundationSpacing />
+
+## Radii
+
+Badges use 6 px, controls and agent avatars use 8 px, cards use 12 px, and dialogs use 16 px.
+
+<FoundationRadii />
+
+## Motion
+
+Use motion to explain a change, not to decorate a route. Console routes can animate a removed card or row.
+Consent and standalone approval review use CSS-only animations. Under reduced motion, keep useful opacity and color feedback without movement.
+
+<FoundationMotion />
+
+## Icon map
+
+Use Lucide icons at 1.75 stroke for 16 px and 1.5 stroke for 20 px or larger.
+Each status also needs a visible word. Use animation only where the state changes or hover calls for feedback.
+
+<FoundationIcons />
+
+See the [color guide](./docs/COLOR_GUIDE.md), [token guide](./docs/TOKEN_GUIDE.md), [motion guide](./docs/MOTION_GUIDE.md), and [common mistakes](./docs/COMMON_MISTAKES.md) for usage rules.

@@ -104,6 +104,7 @@ type AgentMetadata struct {
 	ClientURIs           []string `json:"client_uris,omitempty"`
 	DisplayName          string   `json:"display_name"`
 	Description          string   `json:"description"`
+	LogoURL              *string  `json:"logoUrl,omitempty"`
 	GovernanceURL        *string  `json:"governance_url,omitempty"`
 	UserDocumentationURL *string  `json:"user_documentation_url,omitempty"`
 	AgentInterfaceURL    *string  `json:"agent_interface_url,omitempty"`

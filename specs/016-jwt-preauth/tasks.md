@@ -71,6 +71,8 @@
 
 ### Phase 2e: Frontend/Design System Review [MANDATORY]
 
+> **Historical visual scope**: The design checks below retain their original wording and completion states; the recorded `slate-600` choice is not a current semantic-token recommendation. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 **Constitution Reference**: Principle XI (Design System Compliance & Consistency)
 
 - [x] T008 Review `web/src/design-system/docs/INDEX.md` for component selection — confirm Avatar primitive already supports profile pictures

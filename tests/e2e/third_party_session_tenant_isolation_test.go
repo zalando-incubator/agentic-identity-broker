@@ -92,6 +92,29 @@ var _ = Describe("Third-party session tenant isolation", func() {
 		Expect(body.Data.DependentAgentCount).To(Equal(1))
 	})
 
+	// US3.S1 from specs/008-thirdparty-oauth2-sessions/spec.md — disconnect warning dependencies.
+	It("returns only the authenticated principal's affected agents before disconnection", func() {
+		resp, err := server.AuthenticatedGET("/api/third-party/"+fixtures.PlaceholderServiceID.String()+"/session/affected-agents", principalA)
+		Expect(err).ToNot(HaveOccurred())
+		defer func() { _ = resp.Body.Close() }()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+
+		var body struct {
+			Data struct {
+				AffectedAgents []struct {
+					AgentID     string `json:"agent_id"`
+					DisplayName string `json:"display_name"`
+				} `json:"affected_agents"`
+			} `json:"data"`
+		}
+		Expect(json.NewDecoder(resp.Body).Decode(&body)).To(Succeed())
+		Expect(body.Data.AffectedAgents).To(HaveLen(1))
+		Expect(body.Data.AffectedAgents[0].AgentID).To(Equal(agentAID))
+		Expect(body.Data.AffectedAgents[0].DisplayName).To(Equal(agentAName))
+		Expect(body.Data.AffectedAgents[0].AgentID).ToNot(Equal(agentBID))
+		Expect(body.Data.AffectedAgents[0].DisplayName).ToNot(Equal(agentBName))
+	})
+
 	// US1.S5 — tenant-isolation security regression; public contract: api/enduser/openapi.yaml.
 	It("counts only the authenticated principal's dependent agents", func() {
 		resp, err := server.AuthenticatedGET("/api/third-party/sessions", principalA)

@@ -1,55 +1,23 @@
+import { CircleAlert, Minus } from 'lucide-react';
+import { useId } from 'react';
+import { Badge } from '@design-system/components/primitives/Badge';
+import { accessCopy } from '@copy';
+import { approvalCopy } from '@copy/approvals';
 import type { RiskLevel } from '../../types/approval';
 
-interface RiskBadgeProps {
-  level?: RiskLevel | null;
-}
-
-type KnownRiskLevel = 'low' | 'medium' | 'critical';
-
-const RISK_BADGES: Record<KnownRiskLevel, { label: string; className: string }> = {
-  low: {
-    label: 'Low Risk',
-    className: 'border-success-primary/30 bg-success-light text-success-dark',
-  },
-  medium: {
-    label: 'Medium Risk',
-    className: 'border-warning-primary/30 bg-warning-light text-warning-dark',
-  },
-  critical: {
-    label: 'Critical Risk',
-    className: 'border-error-primary/30 bg-error-light text-error-dark',
-  },
-};
-
-const UNKNOWN_RISK_BADGE_CLASSNAME =
-  'border-warning-primary/30 bg-warning-light text-warning-dark';
+interface RiskBadgeProps { level?: RiskLevel | null }
+const labels = { low: approvalCopy.lowRisk, medium: approvalCopy.mediumRisk, high: approvalCopy.highRisk, critical: approvalCopy.criticalRisk };
 
 export function RiskBadge({ level }: RiskBadgeProps) {
-  if (!level) {
-    return null;
-  }
-
-  const normalizedLevel = level.toLowerCase().trim();
-
-  const config =
-    normalizedLevel === 'low' ||
-    normalizedLevel === 'medium' ||
-    normalizedLevel === 'critical'
-      ? RISK_BADGES[normalizedLevel]
-      : {
-          label: `${normalizedLevel
-            .replace(/[_-]+/g, ' ')
-            .replace(/\b\w/g, (char) => char.toUpperCase())} Risk`,
-          className: UNKNOWN_RISK_BADGE_CLASSNAME,
-        };
-
-  return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${config.className}`}
-    >
-      {config.label}
-    </span>
-  );
+  const explanationId = useId();
+  const normalized = level?.trim().toLowerCase();
+  const label = !normalized ? accessCopy.riskNotRated
+    : normalized === 'low' || normalized === 'medium' || normalized === 'high' || normalized === 'critical'
+      ? labels[normalized]
+      : approvalCopy.otherRisk(level!.trim());
+  const variant = normalized === 'low' ? 'risk-low' : normalized === 'medium' ? 'risk-medium' : normalized === 'critical' || normalized === 'high' ? 'risk-high' : 'neutral';
+  return <>
+    <Badge variant={variant} icon={normalized === 'critical' ? <CircleAlert fill="currentColor" className="text-status-danger-foreground [&_circle]:stroke-status-danger [&_line]:stroke-status-danger" /> : !normalized ? <Minus /> : undefined} data-testid="approval-risk" aria-describedby={explanationId}>{label}</Badge>
+    <span id={explanationId} className="sr-only">{normalized ? approvalCopy.riskExplanation : approvalCopy.unratedExplanation}</span>
+  </>;
 }
-
-export default RiskBadge;

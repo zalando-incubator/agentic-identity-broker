@@ -5,6 +5,7 @@ package pages
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mxschmitt/playwright-go"
 )
@@ -17,7 +18,7 @@ import (
 // States:
 //   - Loading: Skeleton placeholder with aria-busy="true"
 //   - Error: Alert banner (expired, forbidden, not_found, network_error, server_error, already_actioned)
-//   - Review: ToolCallCard + PersistenceSelector + Approve/Deny buttons
+//   - Review: Tool call details, scope editor, and explicit once/remembered/deny actions
 //   - Confirmed: ApprovalConfirmation (approved or denied)
 type ApprovalPage struct {
 	*Page
@@ -35,6 +36,21 @@ func (ap *ApprovalPage) pwPage() playwright.Page {
 	return ap.GetPlaywrightPage()
 }
 
+// reviewPanel excludes inert exit animations but remains strict if two panels are actionable.
+func (ap *ApprovalPage) reviewPanel() playwright.Locator {
+	return ap.pwPage().Locator("[data-testid='approval-review-panel']:not([inert] *)")
+}
+
+// Exiting panels must not retain enabled decision controls.
+func (ap *ApprovalPage) HasStaleReviewActions(ctx context.Context) (bool, error) {
+	var stale bool
+	err := ap.evaluateJSON(ctx, ap.pwPage().Locator("html"), `root =>
+		[...root.querySelectorAll('[data-exiting="true"] [data-testid="approval-review-panel"]')].some(panel =>
+			[...panel.querySelectorAll('button')].some(button => !button.disabled &&
+				(button.hasAttribute('data-approval-action') || ['Approve options', 'Deny options'].includes(button.getAttribute('aria-label')))))`, &stale)
+	return stale, err
+}
+
 // NavigateToApproval navigates to the approval review page for the given approval ID.
 // Route: /approvals/{approvalID}
 func (ap *ApprovalPage) NavigateToApproval(ctx context.Context, approvalID string) error {
@@ -45,16 +61,27 @@ func (ap *ApprovalPage) NavigateToApproval(ctx context.Context, approvalID strin
 	return ap.Navigate(ctx, path)
 }
 
+// BeginApprovalLoad navigates without waiting for the detail request so loading is observable.
+func (ap *ApprovalPage) BeginApprovalLoad(ctx context.Context, approvalID string) error {
+	if approvalID == "" {
+		return fmt.Errorf("approvalID cannot be empty")
+	}
+	timeout, err := ap.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("%s/approvals/%s", ap.GetBaseURL(), approvalID)
+	if _, err := ap.pwPage().Goto(url, playwright.PageGotoOptions{Timeout: timeout}); err != nil {
+		return fmt.Errorf("begin approval load at %s: %w", url, err)
+	}
+	return ctx.Err()
+}
+
 // --- Loading state ---
 
-// IsLoading returns true if the loading skeleton is visible (aria-busy="true").
+// IsLoading returns true while the approval detail skeleton is visible.
 func (ap *ApprovalPage) IsLoading(ctx context.Context) (bool, error) {
-	locator := ap.pwPage().Locator("[aria-busy='true']")
-	count, err := locator.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to check loading state: %w", err)
-	}
-	return count > 0, nil
+	return ap.locatorVisible(ctx, ap.pwPage().Locator("[role='status'][aria-busy='true']"), "approval loading skeleton")
 }
 
 // --- Error states ---
@@ -71,20 +98,10 @@ func (ap *ApprovalPage) HasErrorAlert(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// GetErrorTitle returns the heading text within the error alert.
-func (ap *ApprovalPage) GetErrorTitle(ctx context.Context) (string, error) {
-	heading := ap.pwPage().GetByRole("alert").GetByRole("heading").First()
-	text, err := heading.TextContent()
-	if err != nil {
-		return "", fmt.Errorf("failed to get error heading text: %w", err)
-	}
-	return text, nil
-}
-
-// HasRetryButton returns true if the "Try Again" retry button is visible.
+// HasRetryButton returns true if the retry button is visible.
 func (ap *ApprovalPage) HasRetryButton(ctx context.Context) (bool, error) {
 	locator := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name: "Try Again",
+		Name: "Try again",
 	})
 	count, err := locator.Count()
 	if err != nil {
@@ -95,102 +112,61 @@ func (ap *ApprovalPage) HasRetryButton(ctx context.Context) (bool, error) {
 
 // --- Review state ---
 
-// WaitForReviewPage waits for the "Tool Approval Request" heading to appear.
+// WaitForReviewPage waits for the current request's tool identity to appear.
 func (ap *ApprovalPage) WaitForReviewPage(ctx context.Context) error {
-	heading := ap.pwPage().GetByRole("heading", playwright.PageGetByRoleOptions{
-		Name: "Tool Approval Request",
-	})
-	err := heading.WaitFor(playwright.LocatorWaitForOptions{
-		Timeout: playwright.Float(float64(ap.timeout.Milliseconds())),
-	})
+	timeout, err := ap.locatorTimeout(ctx)
 	if err != nil {
-		return fmt.Errorf("review page heading not found: %w", err)
+		return err
 	}
-	return nil
+	if err := ap.reviewPanel().GetByTestId("approval-tool-name").WaitFor(playwright.LocatorWaitForOptions{
+		State: playwright.WaitForSelectorStateVisible, Timeout: timeout,
+	}); err != nil {
+		return fmt.Errorf("approval tool identity did not appear: %w", err)
+	}
+	return ctx.Err()
 }
 
-// HasReviewHeading returns true if the approval review heading is visible.
-func (ap *ApprovalPage) HasReviewHeading(ctx context.Context) (bool, error) {
-	heading := ap.pwPage().GetByRole("heading", playwright.PageGetByRoleOptions{
-		Name: "Tool Approval Request",
-	})
-	count, err := heading.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to check review page heading: %w", err)
-	}
-	return count > 0, nil
+// HasReviewIdentity returns true if the current request's tool identity is visible.
+func (ap *ApprovalPage) HasReviewIdentity(ctx context.Context) (bool, error) {
+	return ap.locatorVisible(ctx, ap.reviewPanel().GetByTestId("approval-tool-name"), "approval tool identity")
 }
 
-// GetToolName returns the tool name displayed in the ToolCallCard (h3 element).
-func (ap *ApprovalPage) GetToolName(ctx context.Context) (string, error) {
-	locator := ap.pwPage().Locator("h3").First()
-	count, err := locator.Count()
-	if err != nil {
-		return "", fmt.Errorf("failed to count tool name heading: %w", err)
-	}
-	if count == 0 {
-		return "", fmt.Errorf("tool name heading not found")
-	}
-	text, err := locator.TextContent()
-	if err != nil {
-		return "", fmt.Errorf("failed to get tool name: %w", err)
-	}
-	return text, nil
-}
-
-// GetAgentName returns the agent display name shown as "Requested by {name}".
-func (ap *ApprovalPage) GetAgentName(ctx context.Context) (string, error) {
-	locator := ap.pwPage().GetByText("Requested by")
-	count, err := locator.Count()
-	if err != nil {
-		return "", fmt.Errorf("failed to check agent name: %w", err)
-	}
-	if count == 0 {
-		return "", fmt.Errorf("agent name not found")
-	}
-	text, err := locator.TextContent()
-	if err != nil {
-		return "", fmt.Errorf("failed to get agent name: %w", err)
-	}
-	return text, nil
-}
-
-// HasSectionLabel returns true if the given section label text is visible.
-func (ap *ApprovalPage) HasSectionLabel(ctx context.Context, label string) (bool, error) {
-	locator := ap.pwPage().GetByText(label, playwright.PageGetByTextOptions{
-		Exact: playwright.Bool(true),
-	})
-	count, err := locator.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to check section label %q: %w", label, err)
-	}
-	return count > 0, nil
-}
-
-// HasVisibleText returns true if the given text is visible anywhere on the page.
+// HasVisibleText reports whether the current review shows the given text.
 func (ap *ApprovalPage) HasVisibleText(ctx context.Context, text string) (bool, error) {
-	locator := ap.pwPage().GetByText(text, playwright.PageGetByTextOptions{
-		Exact: playwright.Bool(false),
-	})
-	visible, err := locator.First().IsVisible()
-	if err != nil {
-		count, countErr := locator.Count()
-		if countErr != nil {
-			return false, fmt.Errorf("failed to locate text %q: %w", text, countErr)
-		}
-		if count == 0 {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to check visibility for text %q: %w", text, err)
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
-	return visible, nil
+	panel := ap.reviewPanel()
+	panels, err := panel.Count()
+	if err != nil {
+		return false, fmt.Errorf("find current approval review: %w", err)
+	}
+	if panels > 1 {
+		return false, fmt.Errorf("more than one actionable approval review")
+	}
+	if panels == 0 {
+		return false, nil
+	}
+	locator := panel.GetByText(text, playwright.LocatorGetByTextOptions{Exact: playwright.Bool(false)})
+	count, err := locator.Count()
+	if err != nil {
+		return false, fmt.Errorf("find approval text %q: %w", text, err)
+	}
+	for index := range count {
+		visible, err := locator.Nth(index).IsVisible()
+		if err != nil {
+			return false, fmt.Errorf("inspect approval text %q: %w", text, err)
+		}
+		if visible {
+			return true, ctx.Err()
+		}
+	}
+	return false, ctx.Err()
 }
 
-// HasGlobalErrorBoundary returns true if the global Oops error screen is visible.
+// HasGlobalErrorBoundary returns true if the global error screen is visible.
 func (ap *ApprovalPage) HasGlobalErrorBoundary(ctx context.Context) (bool, error) {
-	locator := ap.pwPage().GetByText("Oops! Something went wrong", playwright.PageGetByTextOptions{
-		Exact: playwright.Bool(true),
-	})
+	locator := ap.pwPage().GetByTestId("global-error-boundary")
 	count, err := locator.Count()
 	if err != nil {
 		return false, fmt.Errorf("failed to check global error boundary: %w", err)
@@ -200,66 +176,51 @@ func (ap *ApprovalPage) HasGlobalErrorBoundary(ctx context.Context) (bool, error
 
 // HasRiskBadge returns true if a risk badge is visible.
 func (ap *ApprovalPage) HasRiskBadge(ctx context.Context, level string) (bool, error) {
-	locator := ap.pwPage().GetByText(level + " Risk")
-	count, err := locator.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to check risk badge: %w", err)
-	}
-	return count > 0, nil
+	return ap.locatorVisible(ctx, ap.reviewPanel().GetByText(level+" risk"), "approval risk badge")
 }
 
 // --- Persistence selector ---
 
-// SelectPersistence clicks the radio button for the given persistence option.
-// Valid values: "Just this once", "For this session", "Always allow"
-func (ap *ApprovalPage) SelectPersistence(ctx context.Context, label string) error {
-	radio := ap.pwPage().GetByRole("radio", playwright.PageGetByRoleOptions{
-		Name: label,
-	})
-	if err := radio.Click(); err != nil {
-		return fmt.Errorf("failed to click radio %q: %w", label, err)
-	}
-	return nil
+func (ap *ApprovalPage) OpenApproveOptions(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Approve options", Exact: playwright.Bool(true)}), "open approval options")
 }
 
-// HasPermanentWarning returns true if the permanent warning alert is visible.
+func (ap *ApprovalPage) OpenDenyOptions(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Deny options", Exact: playwright.Bool(true)}), "open denial options")
+}
+
+func (ap *ApprovalPage) ChooseDenyOption(ctx context.Context, label string) error {
+	return ap.locatorClick(ctx, ap.pwPage().GetByRole("menuitem", playwright.PageGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "choose denial option "+label)
+}
+
+func (ap *ApprovalPage) ClickSelectedApproval(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.reviewPanel().Locator(`[data-approval-action="approve"]`), "activate selected approval")
+}
+
+func (ap *ApprovalPage) ClickSelectedDenial(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.reviewPanel().Locator(`[data-approval-action="deny"]`), "activate selected denial")
+}
+
+func (ap *ApprovalPage) ConfirmRememberedDenial(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.pwPage().GetByRole("dialog", playwright.PageGetByRoleOptions{Name: "Confirm permanent denial", Exact: playwright.Bool(true)}).
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Confirm permanent denial", Exact: playwright.Bool(true)}), "confirm permanent denial")
+}
+
 func (ap *ApprovalPage) HasPermanentWarning(ctx context.Context) (bool, error) {
-	locator := ap.pwPage().GetByText("Warning:")
-	count, err := locator.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to check permanent warning: %w", err)
-	}
-	return count > 0, nil
+	return ap.locatorVisible(ctx, ap.reviewPanel().GetByRole("alert").Filter(playwright.LocatorFilterOptions{
+		HasText: "grants permanent access",
+	}), "permanent approval warning")
 }
 
-// --- Action buttons ---
-
-// ClickApprove clicks the "Approve" button.
-func (ap *ApprovalPage) ClickApprove(ctx context.Context) error {
-	button := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name: "Approve",
-	})
-	if err := button.Click(); err != nil {
-		return fmt.Errorf("failed to click Approve button: %w", err)
-	}
-	return nil
-}
-
-// ClickDeny clicks the "Deny" button.
 func (ap *ApprovalPage) ClickDeny(ctx context.Context) error {
-	button := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{
-		Name:  "Deny",
-		Exact: playwright.Bool(true),
-	})
-	if err := button.Click(); err != nil {
-		return fmt.Errorf("failed to click Deny button: %w", err)
-	}
-	return nil
+	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{
+		Name: "Deny", Exact: playwright.Bool(true),
+	}), "deny selected tool request")
 }
 
 // ExpandApprovalScope opens the "Approval scope" disclosure when it is collapsed.
 func (ap *ApprovalPage) ExpandApprovalScope(ctx context.Context) error {
-	toggle := ap.pwPage().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Approval scope"})
+	toggle := ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Approval scope"})
 	expanded, err := toggle.GetAttribute("aria-expanded")
 	if err != nil {
 		return fmt.Errorf("read approval scope state: %w", err)
@@ -275,7 +236,7 @@ func (ap *ApprovalPage) ExpandApprovalScope(ctx context.Context) error {
 
 // parameterScope locates the scope block of a single request parameter.
 func (ap *ApprovalPage) parameterScope(key string) playwright.Locator {
-	return ap.pwPage().Locator(fmt.Sprintf("[data-testid='approval-scope-param-%s']", key))
+	return ap.reviewPanel().Locator(fmt.Sprintf("[data-testid='approval-scope-param-%s']", key))
 }
 
 // SetParameterMode selects a per-parameter mode from its match dropdown.
@@ -304,7 +265,7 @@ func (ap *ApprovalPage) SetParameterCustomPattern(ctx context.Context, key, valu
 
 // GetPatternPreview returns the displayed combined approval pattern.
 func (ap *ApprovalPage) GetPatternPreview(ctx context.Context) (string, error) {
-	preview := ap.pwPage().GetByLabel("Approval pattern preview").Locator("code")
+	preview := ap.reviewPanel().GetByLabel("Approval pattern preview").Locator("code")
 	text, err := preview.TextContent()
 	if err != nil {
 		return "", fmt.Errorf("get pattern preview: %w", err)
@@ -362,12 +323,138 @@ func (ap *ApprovalPage) HasPersistenceText(ctx context.Context, text string) (bo
 	return count > 0, nil
 }
 
-// HasPermanentDenialNote returns true if the permanent denial note is visible.
-func (ap *ApprovalPage) HasPermanentDenialNote(ctx context.Context) (bool, error) {
-	locator := ap.pwPage().GetByText("permanent and will apply to future requests")
-	count, err := locator.Count()
-	if err != nil {
-		return false, fmt.Errorf("failed to check permanent denial note: %w", err)
+// ArgumentRows returns key/value rows visible without opening the raw JSON dialog.
+func (ap *ApprovalPage) ArgumentRows(ctx context.Context) (map[string]string, error) {
+	var rows map[string]string
+	err := ap.evaluateJSON(ctx, ap.reviewPanel().GetByRole("region", playwright.LocatorGetByRoleOptions{Name: "Arguments", Exact: playwright.Bool(true)}), `section => {
+		const list = section.querySelector(':scope > dl');
+		if (!list) throw new Error('No visible key/value argument list');
+		return Object.fromEntries([...list.querySelectorAll(':scope > div')].map(row => {
+			const key = row.querySelector('dt'), value = row.querySelector('dd');
+			if (!key || !value) throw new Error('Incomplete argument row');
+			return [key.innerText.trim(), value.innerText.trim()];
+		}));
+	}`, &rows)
+	return rows, err
+}
+
+func (ap *ApprovalPage) OpenArgumentsJSON(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "View JSON", Exact: playwright.Bool(true)}), "view raw tool arguments")
+}
+
+func (ap *ApprovalPage) ArgumentsText(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.pwPage().GetByRole("dialog", playwright.PageGetByRoleOptions{Name: "Raw tool arguments", Exact: playwright.Bool(true)}).
+		GetByTestId("approval-arguments"), "raw tool arguments")
+}
+
+func (ap *ApprovalPage) CloseArgumentsJSON(ctx context.Context) error {
+	dialog := ap.pwPage().GetByRole("dialog", playwright.PageGetByRoleOptions{Name: "Raw tool arguments", Exact: playwright.Bool(true)})
+	if err := ap.locatorClick(ctx, dialog.GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Close", Exact: playwright.Bool(true)}), "close raw tool arguments"); err != nil {
+		return err
 	}
-	return count > 0, nil
+	timeout, err := ap.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	if err := dialog.WaitFor(playwright.LocatorWaitForOptions{State: playwright.WaitForSelectorStateHidden, Timeout: timeout}); err != nil {
+		return fmt.Errorf("raw tool arguments did not close: %w", err)
+	}
+	return ctx.Err()
+}
+
+func (ap *ApprovalPage) OpenSessionContext(ctx context.Context) error {
+	if err := ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Session context", Exact: playwright.Bool(true)}), "open session context"); err != nil {
+		return err
+	}
+	timeout, err := ap.locatorTimeout(ctx)
+	if err != nil {
+		return err
+	}
+	if err := ap.pwPage().GetByRole("dialog", playwright.PageGetByRoleOptions{Name: "Session context", Exact: playwright.Bool(true)}).
+		WaitFor(playwright.LocatorWaitForOptions{State: playwright.WaitForSelectorStateVisible, Timeout: timeout}); err != nil {
+		return fmt.Errorf("wait for session context: %w", err)
+	}
+	return ctx.Err()
+}
+
+func (ap *ApprovalPage) SessionContextText(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.pwPage().GetByRole("dialog", playwright.PageGetByRoleOptions{Name: "Session context", Exact: playwright.Bool(true)}), "session context")
+}
+
+func (ap *ApprovalPage) ActingUser(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.reviewPanel().GetByTestId("approval-acting-user"), "acting user")
+}
+
+func (ap *ApprovalPage) RiskLabel(ctx context.Context) (string, error) {
+	label, err := ap.locatorText(ctx, ap.reviewPanel().GetByTestId("approval-risk"), "tool risk label")
+	return strings.TrimSuffix(label, " risk"), err
+}
+
+func (ap *ApprovalPage) ApprovalScopeText(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.reviewPanel().GetByLabel("Approval pattern preview").Locator("code"), "approval scope preview")
+}
+
+func (ap *ApprovalPage) ClickApproveOnce(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Approve once", Exact: playwright.Bool(true)}), "approve tool call once")
+}
+
+func (ap *ApprovalPage) ChooseApprovalOption(ctx context.Context, label string) error {
+	return ap.locatorClick(ctx, ap.pwPage().GetByRole("menuitem", playwright.PageGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "select approval option "+label)
+}
+
+func (ap *ApprovalPage) HasDecisionActions(ctx context.Context) (bool, error) {
+	var actions bool
+	err := ap.evaluateJSON(ctx, ap.pwPage().Locator("html"), `root => {
+		const panels = [...root.querySelectorAll('[data-testid="approval-review-panel"]')].filter(panel => !panel.closest('[inert]'));
+		if (panels.length > 1) throw new Error('More than one actionable approval panel');
+		const buttons = [...(panels[0]?.querySelectorAll('button') ?? []), ...root.querySelectorAll('[role="dialog"] button')];
+		return buttons.some(button => {
+			if (button.disabled || button.closest('[inert]') || button.getClientRects().length === 0) return false;
+			const label = (button.getAttribute('aria-label') || button.innerText).trim();
+			return button.hasAttribute('data-approval-action') || label === 'Confirm permanent denial';
+		});
+	}`, &actions)
+	return actions, err
+}
+
+func (ap *ApprovalPage) ResolvedOutcomeText(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.pwPage().GetByTestId("approval-outcome"), "resolved approval outcome")
+}
+
+func (ap *ApprovalPage) ToolName(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.reviewPanel().GetByTestId("approval-tool-name"), "approval tool name")
+}
+
+func (ap *ApprovalPage) AgentName(ctx context.Context) (string, error) {
+	return ap.locatorText(ctx, ap.reviewPanel().GetByTestId("approval-agent-name"), "approval agent name")
+}
+
+func (ap *ApprovalPage) ArgumentsAreMonospace(ctx context.Context) (bool, error) {
+	var monospace bool
+	err := ap.evaluateJSON(ctx, ap.pwPage().GetByTestId("approval-arguments"), `element =>
+		element.getClientRects().length > 0 &&
+		getComputedStyle(element).fontFamily.split(',').some(family =>
+			['monospace', 'ui-monospace'].includes(family.trim().replace(/["']/g, '')))`, &monospace)
+	return monospace, err
+}
+
+func (ap *ApprovalPage) HasApproveOptionsAndDeny(ctx context.Context) (bool, error) {
+	options, err := ap.locatorVisible(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Approve options", Exact: playwright.Bool(true)}), "approval options")
+	if err != nil || !options {
+		return false, err
+	}
+	return ap.locatorVisible(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Deny", Exact: playwright.Bool(true)}), "deny approval")
+}
+
+func (ap *ApprovalPage) PanelHasFocus(ctx context.Context) (bool, error) {
+	var focused bool
+	err := ap.evaluateJSON(ctx, ap.reviewPanel(), `panel => panel === document.activeElement`, &focused)
+	return focused, err
+}
+
+func (ap *ApprovalPage) ApproveViewportBottom(ctx context.Context) (float64, error) {
+	var bottom float64
+	err := ap.evaluateJSON(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Approve once", Exact: playwright.Bool(true)}),
+		`button => button.getBoundingClientRect().bottom`, &bottom)
+	return bottom, err
 }

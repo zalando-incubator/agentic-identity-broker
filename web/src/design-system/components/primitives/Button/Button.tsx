@@ -1,167 +1,100 @@
-/**
- * Button Component
+/*
+ * Adapted from shadcn/ui (https://ui.shadcn.com).
+ * MIT License — Copyright (c) 2023 shadcn
  *
- * Primary interactive element with multiple variants and states.
- * Follows the "Refined Trust Architecture" design system.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Features:
- * - 5 variants: primary, secondary, outline, ghost, danger
- * - 4 sizes: sm, md, lg, xl
- * - Loading state with spinner
- * - Full keyboard accessibility
- * - WCAG 2.1 AA compliant
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
-
-import React from 'react';
+import type { ComponentProps, SyntheticEvent } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
+import { Loader2 } from 'lucide-react';
+import { Slot } from 'radix-ui';
 import { cn } from '@design-system/utils';
 
 const buttonVariants = cva(
-  // Base styles - applied to all variants
-  'inline-flex items-center justify-center font-medium rounded-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60',
+  'inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-transparent text-sm font-medium no-underline outline-none transition-colors duration-(--motion-feedback) ease-(--motion-ease) hover:no-underline motion-safe:active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground aria-disabled:cursor-not-allowed aria-disabled:border-border aria-disabled:bg-muted aria-disabled:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:stroke-[1.75]',
   {
     variants: {
       variant: {
-        // Primary: Deep navy (trust) - most important actions
-        primary:
-          'bg-trust-deep text-white border-transparent hover:bg-trust-hover focus:ring-trust shadow-md hover:shadow-lg hover:-translate-y-px',
-
-        // Secondary: Success green - secondary actions
-        secondary:
-          'bg-success-primary text-white border-transparent hover:bg-success-hover focus:ring-success-primary shadow-md hover:shadow-lg hover:-translate-y-px',
-
-        // Outline: White bg with trust border - tertiary actions
-        outline:
-          'bg-white text-trust-deep border border-neutral-300 hover:bg-neutral-50 hover:border-neutral-400 focus:ring-trust shadow-sm',
-
-        // Ghost: Transparent bg - subtle actions
-        ghost:
-          'bg-transparent text-trust-deep hover:bg-neutral-100 focus:ring-trust',
-
-        // Danger: Error red - destructive actions
-        danger:
-          'bg-error-primary text-white border-transparent hover:bg-error-hover focus:ring-error-primary shadow-md hover:shadow-lg hover:-translate-y-px',
+        primary: 'bg-primary text-primary-foreground hover:bg-primary-hover',
+        secondary: 'border-border bg-secondary text-secondary-foreground hover:bg-accent',
+        outline: 'border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground',
+        ghost: 'bg-transparent text-foreground hover:bg-accent hover:text-accent-foreground',
+        destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive-hover',
+        'destructive-outline': 'border-border bg-background text-status-danger-foreground hover:bg-status-danger',
+        'destructive-quiet': 'border-border bg-background text-foreground hover:border-status-danger-foreground hover:bg-status-danger hover:text-status-danger-foreground focus-visible:border-status-danger-foreground focus-visible:bg-status-danger focus-visible:text-status-danger-foreground focus-visible:ring-status-danger-foreground',
       },
       size: {
-        sm: 'px-3 py-1.5 text-sm h-9',
-        md: 'px-4 py-3 text-base h-11',
-        lg: 'px-6 py-3 text-lg h-12',
-        xl: 'px-8 py-4 text-xl h-14',
-      },
-      fullWidth: {
-        true: 'w-full',
-        false: 'w-auto',
+        default: 'h-10 px-4 py-2',
+        sm: 'h-8 px-3',
+        lg: 'h-11 px-6',
+        icon: 'size-10',
+        'icon-sm': 'size-8',
       },
     },
-    defaultVariants: {
-      variant: 'primary',
-      size: 'md',
-      fullWidth: false,
-    },
+    defaultVariants: { variant: 'primary', size: 'default' },
   },
 );
 
-export interface ButtonProps
-  extends
-    React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
-  /** Whether button is in loading state */
+export interface ButtonProps extends ComponentProps<'button'>, VariantProps<typeof buttonVariants> {
+  asChild?: boolean;
   isLoading?: boolean;
-  /** Icon to display before children */
-  iconBefore?: React.ReactNode;
-  /** Icon to display after children */
-  iconAfter?: React.ReactNode;
 }
 
-/**
- * Button component with consistent styling and behavior.
- * Shows spinner when loading and disables interactions.
- *
- * @example
- * ```tsx
- * <Button variant="primary" size="md" onClick={handleClick}>
- *   Click me
- * </Button>
- *
- * <Button variant="outline" isLoading>
- *   Loading...
- * </Button>
- *
- * <Button variant="danger" iconBefore={<TrashIcon />}>
- *   Delete
- * </Button>
- * ```
- */
-export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  (
-    {
-      variant,
-      size,
-      fullWidth,
-      className,
-      children,
-      isLoading = false,
-      disabled = false,
-      iconBefore,
-      iconAfter,
-      type = 'button',
-      ...props
-    },
-    ref,
-  ) => {
-    const isDisabled = disabled || isLoading;
+function preventActivation(event: SyntheticEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+}
 
-    return (
-      <button
-        ref={ref}
-        type={type}
-        disabled={isDisabled}
-        className={cn(buttonVariants({ variant, size, fullWidth }), className)}
-        {...props}
-      >
-        {/* Loading spinner */}
-        {isLoading && (
-          <svg
-            className="animate-spin -ml-1 mr-2 h-4 w-4"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-            data-testid="button-spinner"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            />
-          </svg>
-        )}
+export function Button({
+  className, variant = 'primary', size = 'default', asChild = false,
+  isLoading = false, disabled = false, children, type = 'button',
+  onClickCapture, onKeyDownCapture, tabIndex, ...props
+}: ButtonProps) {
+  const Comp = asChild ? Slot.Root : 'button';
+  const isDisabled = disabled || isLoading;
 
-        {/* Icon before */}
-        {!isLoading && iconBefore && (
-          <span className="mr-2 -ml-1 flex items-center">{iconBefore}</span>
-        )}
+  return (
+    <Comp
+      {...props}
+      data-slot="button"
+      data-variant={variant}
+      data-size={size}
+      type={asChild ? undefined : type}
+      disabled={asChild ? undefined : isDisabled}
+      aria-disabled={asChild && isDisabled ? true : props['aria-disabled']}
+      aria-busy={isLoading ? true : props['aria-busy']}
+      tabIndex={asChild && isDisabled ? -1 : tabIndex}
+      className={cn(buttonVariants({ variant, size }), className)}
+      onClickCapture={(event) => {
+        // Capture prevents a slotted child's click handler as well as navigation.
+        if (isDisabled) preventActivation(event);
+        else onClickCapture?.(event);
+      }}
+      onKeyDownCapture={(event) => {
+        if (isDisabled && (event.key === 'Enter' || event.key === ' ')) preventActivation(event);
+        else onKeyDownCapture?.(event);
+      }}
+    >
+      {isLoading && <Loader2 aria-hidden="true" className="motion-safe:animate-spin" />}
+      <Slot.Slottable>{children}</Slot.Slottable>
+    </Comp>
+  );
+}
 
-        {/* Button content */}
-        {children}
-
-        {/* Icon after */}
-        {iconAfter && (
-          <span className="ml-2 -mr-1 flex items-center">{iconAfter}</span>
-        )}
-      </button>
-    );
-  },
-);
-
-Button.displayName = 'Button';
-
-export default Button;
+export { buttonVariants };

@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  loadConsentState,
-  saveConsentSelections,
-  type ConsentSelections,
-} from './session';
+import { loadConsentDraft, saveConsentDraft } from './session';
+import type { ConsentDraftSnapshot } from '@components/consent/consentDraft';
 
 const storagePrefix = 'agentic-identity-broker:consent-state:';
 const recordLifetimeMilliseconds = 15 * 60 * 1000;
@@ -14,14 +11,15 @@ const serviceID = 'd0000000-0000-0000-0000-000000000002';
 const returnURL = `${window.location.origin}/agents/agent?session_token=sealed`;
 const pathname = '/agents/agent';
 
-const largeSelections: ConsentSelections = Object.fromEntries(
-  Array.from({ length: 250 }, (_, index) => [
-    `permission-set-${index}`,
-    [`service-${index}-a`, `service-${index}-b`],
-  ]),
-);
+const largeDraft: ConsentDraftSnapshot = {
+  selections: Object.fromEntries(Array.from({ length: 250 }, (_, index) => [
+    `permission-set-${index}`, [`service-${index}-a`, `service-${index}-b`],
+  ])),
+  duration: 'custom',
+  customDate: '2031-02-04',
+};
 
-describe('consent selection session storage', () => {
+describe('consent draft session storage', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(testTime);
@@ -34,21 +32,26 @@ describe('consent selection session storage', () => {
     sessionStorage.clear();
   });
 
-  it('stores a large selection map beneath a fixed-size UUID reference', () => {
-    const stateID = saveConsentSelections(largeSelections, serviceID, returnURL);
+  it('stores a large canonical draft beneath a fixed-size UUID reference', () => {
+    const stateID = saveConsentDraft(largeDraft, serviceID, `${returnURL}&other=value#section`);
 
     expect(stateID).toMatch(uuidPattern);
     expect(stateID).toHaveLength(36);
-    expect(
-      JSON.parse(sessionStorage.getItem(`${storagePrefix}${stateID}`) ?? ''),
-    ).toEqual({
+    expect(JSON.parse(sessionStorage.getItem(`${storagePrefix}${stateID}`) ?? '')).toEqual({
       expiresAt: Date.now() + recordLifetimeMilliseconds,
-      selections: largeSelections,
+      ...largeDraft,
       serviceID,
-      returnURL,
+      returnURL: `${returnURL}&other=value#section`,
     });
   });
 
+  it('expires the reference at exactly fifteen minutes', () => {
+    const stateID = saveConsentDraft(largeDraft, serviceID, returnURL)!;
+    vi.setSystemTime(testTime.getTime() + recordLifetimeMilliseconds - 1);
+    expect(loadConsentDraft(stateID, serviceID, pathname)).toBeDefined();
+    vi.setSystemTime(testTime.getTime() + recordLifetimeMilliseconds);
+    expect(loadConsentDraft(stateID, serviceID, pathname)).toBeUndefined();
+  });
   it('prunes expired consent records before saving a new selection map', () => {
     const expiredStateID = 'd0000000-0000-4000-8000-000000000010';
     sessionStorage.setItem(
@@ -60,7 +63,7 @@ describe('consent selection session storage', () => {
     );
 
     expect(
-      saveConsentSelections(largeSelections, serviceID, returnURL),
+      saveConsentDraft(largeDraft, serviceID, returnURL),
     ).toMatch(uuidPattern);
     expect(
       sessionStorage.getItem(`${storagePrefix}${expiredStateID}`),
@@ -68,24 +71,17 @@ describe('consent selection session storage', () => {
   });
 
   it('restores only the matching callback ID, service and page in the originating tab', () => {
-    const firstID = saveConsentSelections(
-      { 'permission-set-1': ['service-1'] },
-      serviceID,
-      returnURL,
-    );
-    const secondSelections = { 'permission-set-2': ['service-2'] };
-    const secondID = saveConsentSelections(secondSelections, serviceID, returnURL);
+    const firstDraft = { selections: { 'permission-set-1': ['service-1'] }, duration: '30-days' as const, customDate: '' };
+    const firstID = saveConsentDraft(firstDraft, serviceID, returnURL);
+    const secondDraft = { selections: { 'permission-set-2': ['service-2'] }, duration: 'custom' as const, customDate: '2031-02-04' };
+    const secondID = saveConsentDraft(secondDraft, serviceID, returnURL);
 
-    expect(loadConsentState(firstID ?? '', serviceID, pathname)?.selections).toEqual({
-      'permission-set-1': ['service-1'],
-    });
-    expect(
-      loadConsentState(secondID ?? '', serviceID, pathname)?.selections,
-    ).toEqual(secondSelections);
-    expect(loadConsentState(firstID ?? '', 'another-service', pathname)).toBeUndefined();
-    expect(loadConsentState(firstID ?? '', serviceID, '/agents/other')).toBeUndefined();
+    expect(loadConsentDraft(firstID ?? '', serviceID, pathname)).toMatchObject(firstDraft);
+    expect(loadConsentDraft(secondID ?? '', serviceID, pathname)).toMatchObject(secondDraft);
+    expect(loadConsentDraft(firstID ?? '', 'another-service', pathname)).toBeUndefined();
+    expect(loadConsentDraft(firstID ?? '', serviceID, '/agents/other')).toBeUndefined();
     sessionStorage.clear();
-    expect(loadConsentState(firstID ?? '', serviceID, pathname)).toBeUndefined();
+    expect(loadConsentDraft(firstID ?? '', serviceID, pathname)).toBeUndefined();
   });
 
   it('rejects a cross-origin return URL even for a valid record', () => {
@@ -94,12 +90,12 @@ describe('consent selection session storage', () => {
       `${storagePrefix}${stateID}`,
       JSON.stringify({
         expiresAt: Date.now() + recordLifetimeMilliseconds,
-        selections: largeSelections,
+        ...largeDraft,
         serviceID,
         returnURL: 'https://other.example.com/agents/agent',
       }),
     );
-    expect(loadConsentState(stateID, serviceID, pathname)).toBeUndefined();
+    expect(loadConsentDraft(stateID, serviceID, pathname)).toBeUndefined();
   });
 
   it.each([
@@ -110,8 +106,8 @@ describe('consent selection session storage', () => {
       'an expired record',
       'd0000000-0000-4000-8000-000000000004',
       JSON.stringify({
+        ...largeDraft,
         expiresAt: testTime.getTime() - 1,
-        selections: { 'permission-set-1': ['service-1'] },
         serviceID,
         returnURL,
       }),
@@ -120,18 +116,29 @@ describe('consent selection session storage', () => {
       'a record with a non-string selection ID',
       'd0000000-0000-4000-8000-000000000005',
       JSON.stringify({
+        ...largeDraft,
         expiresAt: testTime.getTime() + recordLifetimeMilliseconds,
         selections: { 'permission-set-1': ['service-1', 2] },
         serviceID,
         returnURL,
       }),
     ],
+    [
+      'a record with an invalid duration',
+      'd0000000-0000-4000-8000-000000000008',
+      JSON.stringify({ ...largeDraft, duration: 'invalid', expiresAt: testTime.getTime() + recordLifetimeMilliseconds, serviceID, returnURL }),
+    ],
+    [
+      'a record with a missing custom date',
+      'd0000000-0000-4000-8000-000000000009',
+      JSON.stringify({ selections: largeDraft.selections, duration: 'custom', expiresAt: testTime.getTime() + recordLifetimeMilliseconds, serviceID, returnURL }),
+    ],
   ])('returns undefined for %s', (_description, stateID, record) => {
     if (record) {
       sessionStorage.setItem(`${storagePrefix}${stateID}`, record);
     }
 
-    expect(loadConsentState(stateID, serviceID, pathname)).toBeUndefined();
+    expect(loadConsentDraft(stateID, serviceID, pathname)).toBeUndefined();
   });
 
   it('returns undefined when browser storage is unavailable', () => {
@@ -140,10 +147,15 @@ describe('consent selection session storage', () => {
     });
 
     expect(
-      saveConsentSelections(largeSelections, serviceID, returnURL),
+      saveConsentDraft(largeDraft, serviceID, returnURL),
     ).toBeUndefined();
     expect(
-      loadConsentState('d0000000-0000-4000-8000-000000000006', serviceID, pathname),
+      loadConsentDraft('d0000000-0000-4000-8000-000000000006', serviceID, pathname),
     ).toBeUndefined();
+  });
+
+  it('does not return a reference when writing storage fails', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('storage full'); });
+    expect(saveConsentDraft(largeDraft, serviceID, returnURL)).toBeUndefined();
   });
 });

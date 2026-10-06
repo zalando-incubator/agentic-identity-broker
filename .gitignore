@@ -10,6 +10,8 @@
 bin/*
 dist/
 build/
+!web/build/
+!web/build/**
 # Keep Dockerfile sources under build/docker, but ignore other build output.
 !/build/
 /build/*
@@ -48,6 +50,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.log
 .pnp
 .pnp.js
 assets/docusaurus/build/
@@ -75,12 +78,21 @@ tmp
 /agentic-identity-broker
 
 tests/e2e/frontend/coverage/
+coverage/
+*.tsbuildinfo
+web/storybook-static/
+web/.storybook/candidates/
+web/.storybook/candidates-*/
+web/.storybook/feedback-candidates/
+web/.vitest-attachments/
+web/.storybook/test-results/
 
 infra/cdk/cdk
 infra/cdk/cdk.out
 /bin/extproc-token-exchange
 /mocks/mcp-server/mcp-server
 /tools/imgdiff/imgdiff
+/imgdiff
 .githooks/
 .pi/
 .pi-lens/
@@ -88,5 +100,6 @@ infra/cdk/cdk.out
 
 # OPA build artifacts (from just opa-check)
 mocks/opa/bundles/
+/.specify/feature.json
 
 plans/*

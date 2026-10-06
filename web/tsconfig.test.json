@@ -1,7 +1,8 @@
 {
   "extends": "./tsconfig.app.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    "lib": ["ES2024", "DOM", "DOM.Iterable"]
   },
   "include": ["src", "vitest.setup.ts", "**/*.test.ts", "**/*.test.tsx"],
   "exclude": [

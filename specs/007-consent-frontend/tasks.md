@@ -6,6 +6,8 @@
 **Plan**: [plan.md](plan.md)
 **Spec**: [spec.md](spec.md)
 
+> **Historical visual scope**: The visual choices and design tasks below record feature 007's original plan; their wording and completion states are preserved, not renewed aesthetic requirements. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 ## Task Summary
 
 **Total Tasks**: 74

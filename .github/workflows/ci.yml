@@ -85,7 +85,7 @@ jobs:
           } | tee -a "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
-  # Five independent verification jobs run after path classification.
+  # Independent verification jobs run after path classification.
   # Each runner owns its reports; the required gate combines their results.
   # ---------------------------------------------------------------------------
   unit:
@@ -130,12 +130,16 @@ jobs:
         run: just web-ci
       - name: Static checks (fmt, vet, lint)
         run: just check
+      - name: Frontend accessibility and semantic-token lint
+        run: just web-lint
       - name: Unit suites with JUnit
         run: just verify-unit-junit
       - name: Build artifacts
         run: |
           just build-all
           test -f web/dist/index.html
+      - name: Check decision route bundle budgets
+        run: just web-bundle-check
       - name: Verify broker and ExtProc build flags
         run: |
           set -euo pipefail
@@ -152,6 +156,55 @@ jobs:
         with:
           name: unit-test-results
           path: test-results/
+          if-no-files-found: warn
+
+  storybook:
+    name: Storybook (${{ matrix.project }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - storybook-light
+          - storybook-dark
+          - storybook-light-375
+          - storybook-dark-375
+          - storybook-light-768
+          - storybook-dark-768
+    env:
+      CI: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm --prefix web ci
+      - name: Build shared component documentation
+        if: matrix.project == 'storybook-light'
+        run: npm --prefix web run build-storybook
+      - name: Check component interactions, accessibility, and canonical visuals
+        working-directory: web
+        env:
+          STORYBOOK_PROJECT: ${{ matrix.project }}
+        run: ./node_modules/.bin/vitest run --project "$STORYBOOK_PROJECT" --maxWorkers=1
+      - name: Upload component visual differences
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: storybook-visual-diff-${{ matrix.project }}
+          path: web/.storybook/test-results/
           if-no-files-found: warn
 
   docker-build-flags:
@@ -388,6 +441,15 @@ jobs:
         run: just web-ci
       - name: Frontend E2E suite with JUnit
         run: just verify-e2e-frontend-junit
+      - name: Compare reviewed frontend screenshots
+        run: just test-e2e-frontend-visual
+      - name: Upload frontend visual differences
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-frontend-visual-diff
+          path: tests/e2e/frontend/coverage/visual-diff/
+          if-no-files-found: warn
       - name: Upload frontend E2E test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -502,7 +564,7 @@ jobs:
   gate:
     name: CI gate
     if: always()
-    needs: [changes, unit, docker-build-flags, integration, e2e-backend, e2e-extproc, e2e-frontend, docs, helm, workflows, dependency-review]
+    needs: [changes, unit, storybook, docker-build-flags, integration, e2e-backend, e2e-extproc, e2e-frontend, docs, helm, workflows, dependency-review]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

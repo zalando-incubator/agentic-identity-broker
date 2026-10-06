@@ -84,14 +84,13 @@ func (h *GrantsHandler) GetGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var response *GrantResponse
-	if len(grants) > 0 {
-		grantResponse := h.toGrantResponse(grants[0])
-		response = &grantResponse
+	response := make([]GrantResponse, len(grants))
+	for i, grant := range grants {
+		response[i] = h.toGrantResponse(grant)
 	}
 
-	h.logger.Info("user grant retrieved", "agent_id", agentID, "principal", principalValue, "has_grant", response != nil)
-	h.writeJSON(w, http.StatusOK, map[string]*GrantResponse{"data": response})
+	h.logger.Info("user grants retrieved", "agent_id", agentID, "principal", principalValue, "grant_count", len(response))
+	h.writeJSON(w, http.StatusOK, map[string][]GrantResponse{"data": response})
 }
 
 // CreateGrant handles POST /api/consent/agent/:agent-id/grants

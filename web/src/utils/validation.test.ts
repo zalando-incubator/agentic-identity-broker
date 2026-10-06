@@ -76,6 +76,11 @@ describe('isSafeRedirectUrl', () => {
     });
   });
 
+  it.each(['\\\\attacker.example/phishing', '/\\attacker.example/phishing', ' \t//attacker.example/phishing'])('rejects a redirect that the browser resolves off-origin: %s', (redirect) => {
+    expect(new URL(redirect, window.location.origin).origin).not.toBe(window.location.origin);
+    expect(isSafeRedirectUrl(redirect)).toBe(false);
+  });
+
   describe('edge cases', () => {
     it('should reject empty or null URLs', () => {
       expect(isSafeRedirectUrl('')).toBe(false);

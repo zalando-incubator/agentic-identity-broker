@@ -13,6 +13,10 @@ The Helm chart supports these deployment patterns:
 - **Automatic migrations** with separate database credentials
 - **Static manifest generation** outside Helm
 
+The broker image serves the current frontend at `/` on the end-user port 8000.
+Its Docker build compiles the `web/` source and packages `/app/web/dist` beside the broker binary.
+Do not mount an older frontend build over that directory. Browser routes and API routes share the configured public origin.
+
 ## Prerequisites
 
 Before deployment, make sure that you have:

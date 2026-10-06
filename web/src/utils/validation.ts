@@ -155,71 +155,13 @@ export function formatValidationErrors(errors: string[]): string {
   return errors.map((error, index) => `${index + 1}. ${error}`).join('\n');
 }
 
-/**
- * Validates that a URL is safe for redirection (same-origin or relative).
- *
- * This provides defense-in-depth protection against open redirect vulnerabilities.
- * While the backend performs the primary validation (SR-003), frontend validation
- * adds an additional security layer.
- *
- * @param redirectUrl - URL to validate
- * @returns True if URL is safe (relative or same-origin), false otherwise
- */
+/** Browser URL parsing also normalizes whitespace and backslashes. */
 export function isSafeRedirectUrl(redirectUrl: string): boolean {
-  if (!redirectUrl) {
-    return false;
-  }
-
-  // Check for obviously malicious or dangerous schemes first
-  const dangerousSchemes = [
-    'javascript:',
-    'data:',
-    'vbscript:',
-    'file:',
-    'about:',
-    'blob:',
-  ];
-  const lowerUrl = redirectUrl.toLowerCase();
-  if (dangerousSchemes.some((scheme) => lowerUrl.startsWith(scheme))) {
-    return false;
-  }
-
-  // Check for protocol-relative URLs (e.g., "//evil.com")
-  if (redirectUrl.startsWith('//')) {
-    return false;
-  }
-
+  if (!redirectUrl || redirectUrl.startsWith('//')) return false;
   try {
-    // Try to parse as absolute URL
-    const url = new URL(redirectUrl);
-
-    // It's an absolute URL - check if it's same-origin
-    // Normalize ports: http default 80, https default 443
-    const normalizePort = (protocol: string, port: string): string => {
-      if (port) return port;
-      return protocol === 'https:' ? '443' : '80';
-    };
-
-    const urlPort = normalizePort(url.protocol, url.port);
-    const locationPort = normalizePort(
-      window.location.protocol,
-      window.location.port,
-    );
-
-    return (
-      url.protocol === window.location.protocol &&
-      url.hostname === window.location.hostname &&
-      urlPort === locationPort
-    );
+    const url = new URL(redirectUrl, window.location.origin);
+    return url.protocol === window.location.protocol && url.origin === window.location.origin;
   } catch {
-    // Not a valid absolute URL - treat as relative URL
-    // Relative URLs are safe (e.g., "/consent", "consent", "./consent")
-    // But double-check it's not trying to be a URL with protocol
-    // Use regex to match protocol pattern: scheme followed by colon
-    // (e.g., "http:", "https:", "ftp:", "javascript:")
-    if (redirectUrl.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:/)) {
-      return false;
-    }
-    return true;
+    return false;
   }
 }

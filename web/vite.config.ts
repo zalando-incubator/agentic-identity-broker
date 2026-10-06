@@ -2,26 +2,46 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import istanbul from 'vite-plugin-istanbul'
 import path from 'path'
+import { themeInitPlugin } from './build/themeInitPlugin'
+import { decisionModulesPlugin } from './build/decisionModulesPlugin'
+import { assetCompressionPlugin } from './build/assetCompressionPlugin'
 
 const browserCoverage = process.env.VITE_COVERAGE === '1'
 
 export default defineConfig(({ command }) => ({
-  plugins: [react(), ...(browserCoverage && command === 'build' ? [istanbul({
-    include: 'src/**/*',
-    exclude: ['**/*.stories.*'],
-    extension: ['.ts', '.tsx'],
-    forceBuildInstrument: true,
-    cwd: __dirname,
-  })] : [])],
+  plugins: [
+    react(),
+    ...(browserCoverage && command === 'build' ? [istanbul({
+      include: 'src/**/*',
+      exclude: ['**/*.stories.*'],
+      extension: ['.ts', '.tsx'],
+      forceBuildInstrument: true,
+      cwd: __dirname,
+    })] : []),
+    themeInitPlugin(),
+    decisionModulesPlugin(),
+    assetCompressionPlugin(),
+    {
+      name: 'react-router-production',
+      apply: 'build',
+      enforce: 'pre',
+      // React Router's published exports still select development code: remix-run/react-router#14102.
+      resolveId(source) {
+        if (source === 'react-router') return path.resolve(__dirname, 'node_modules/react-router/dist/production/index.mjs')
+        if (source === 'react-router/dom') return path.resolve(__dirname, 'node_modules/react-router/dist/production/dom-export.mjs')
+      },
+    },
+  ],
   base: '/',
   build: {
     outDir: 'dist',
+    manifest: true,
     sourcemap: browserCoverage ? 'hidden' : false,
     minify: 'terser',
   },
   server: {
     port: 3000,
-    strictPort: false,
+    strictPort: true,
     open: false,
 
     // Conditionally enable polling and HMR for Docker (only when VITE_USE_POLLING=true)
@@ -33,7 +53,7 @@ export default defineConfig(({ command }) => ({
       },
       hmr: {
         host: process.env.VITE_HMR_HOST || 'localhost',
-        port: 3000,
+        clientPort: Number(process.env.VITE_HMR_CLIENT_PORT || 3000),
         protocol: 'ws',
       },
     } : {}),
@@ -42,7 +62,7 @@ export default defineConfig(({ command }) => ({
       // Proxy backend namespaces to the Go server; Vite serves all SPA view routes.
       '^/(api|oauth2|\\.well-known|health)(/|$)': {
         target: process.env.VITE_API_URL || 'http://localhost:8000',
-        changeOrigin: true,
+        changeOrigin: false,
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('X-Remote-User', 'dev@example.com');
@@ -54,10 +74,11 @@ export default defineConfig(({ command }) => ({
   resolve: {
     alias: {
       '@design-system': path.resolve(__dirname, './src/design-system'),
+      '@copy': path.resolve(__dirname, './src/copy'),
       '@components': path.resolve(__dirname, './src/components'),
       '@hooks': path.resolve(__dirname, './src/hooks'),
       '@services': path.resolve(__dirname, './src/services'),
-      '@types': path.resolve(__dirname, './src/types'),
+      '@app-types': path.resolve(__dirname, './src/types'),
       '@utils': path.resolve(__dirname, './src/utils'),
       '@assets': path.resolve(__dirname, './src/assets'),
       '@styles': path.resolve(__dirname, './src/styles'),

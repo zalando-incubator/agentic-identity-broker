@@ -23,9 +23,21 @@ Thank you for contributing! This document provides guidelines for maintaining ou
 
 4. **Develop**:
    ```bash
-   just dev              # Backend with hot-reload
-   just web-dev          # Frontend (optional, separate terminal)
+   just dev              # Backend and built frontend with hot reload on port 8000
    ```
+
+   For optional native Vite HMR, start the backend with a matching callback origin:
+
+   ```bash
+   # Terminal 1
+   IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL=http://localhost:3000 just dev
+
+   # Terminal 2
+   just web-dev          # Current source UI and development API proxy on port 3000
+   ```
+
+   Open the UI on port 3000 for that workflow. Do not run native Vite alongside Docker Compose.
+   Compose already serves the UI and API proxy on port 8000. See [the Compose guide](docs/docker-compose-setup.md).
 
 ## Governance Principles
 
@@ -100,12 +112,16 @@ export function MyComponent() {
 - ExtProc unit tests with race detection: `just extproc-test`. These include checks that
   disabled local tracing neither creates child spans nor modifies inherited spans.
 - Integration suites: `just test-integration`
+- Frontend unit and integration journeys: `just web-test`. The `*.integration.test.tsx` suites run real routes, providers, hooks, and API clients with HTTP responses replaced.
+- Frontend unit and integration coverage: `just web-test-coverage`.
 - All E2E suites: `just test-e2e`
 - Dedicated E2E performance measurement: `just test-e2e-performance` (manual; normal E2E commands exclude performance-labelled specs)
 - Full verification gate, including security scanning: `just verify`
 - Coverage for the fast Go/package suite: `just test-coverage`
 - Coverage summary for fast Go/package tests: `just test-coverage-summary`
 - Frontend coverage report: `just web-test-coverage`
+
+The CI unit recipe, `just verify-unit-junit`, completes the Go, CDK, and mock suites before it starts frontend tests. This prevents Go compilation from competing with frontend tests. Vitest writes JUnit XML directly to `test-results/web-unit-junit.xml`. Command diagnostics go to `test-results/web-unit.log`.
 
 The [Coverage workflow](https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/scheduled-coverage.yml) runs manually from the GitHub Actions UI and weekly on `main`. It sends coverage from the Go unit, integration, and functional backend, ExtProc, and frontend E2E suites, plus Vitest and instrumented Playwright browser runs, to [Coveralls](https://coveralls.io/github/zalando-incubator/agentic-identity-broker?branch=main). Go coverage measures `cmd/` and `internal/`; browser coverage measures `web/src/`. The separate performance measurement is excluded. The README badge shows the latest main-branch result.
 

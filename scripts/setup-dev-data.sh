@@ -452,7 +452,7 @@ if [ -n "$PS_IDENTITY_ID" ] && [ -n "$PS_WEATHER_ID" ] && [ -n "$PS_CALENDAR_ID"
     \"description\": \"Demo agent with one mandatory and two optional service requirements for permission-set toggle testing\",
     \"governance_url\": \"https://example.com/sample-agent/governance\",
     \"user_documentation_url\": \"https://example.com/sample-agent/docs\",
-    \"agent_interface_url\": \"http://localhost:3000\",
+    \"agent_interface_url\": \"http://localhost:8000\",
     \"redirect_uris\": [\"http://localhost:9002/oauth2/callback\"],
     \"service_requirements\": [
       {
@@ -495,7 +495,7 @@ else
     \"description\": \"Demo agent (permission-sets endpoint not yet available)\",
     \"governance_url\": \"https://example.com/sample-agent/governance\",
     \"user_documentation_url\": \"https://example.com/sample-agent/docs\",
-    \"agent_interface_url\": \"http://localhost:3000\"
+    \"agent_interface_url\": \"http://localhost:8000\"
   }"
 	echo -e "${YELLOW}Creating Sample Agent without permission sets (PS endpoint not available)${NC}"
 fi
@@ -656,7 +656,7 @@ if [ -n "$PS_IDENTITY_ID" ]; then
 	echo "    - Calendar Sync          (optional)  — calendar.read + calendar.write"
 	echo ""
 	echo "Testing optional service toggle:"
-	echo "  1. Open consent UI at http://localhost:3000"
+	echo "  1. Open consent UI at http://localhost:8000"
 	echo "  2. Navigate to Sample Agent consent screen"
 	echo "  3. 'Weather Access' PS card:  toggle OFF to exclude Weather API"
 	echo "  4. 'Calendar Sync' PS card:   toggle OFF to exclude Calendar API"
@@ -664,7 +664,6 @@ if [ -n "$PS_IDENTITY_ID" ]; then
 fi
 echo ""
 echo "Access services at:"
-echo "  - Frontend (consent UI): http://localhost:3000"
-echo "  - Backend API:           http://localhost:8000"
+echo "  - Frontend and API:      http://localhost:8000"
 echo "  - Admin API:             http://localhost:14000"
 echo ""

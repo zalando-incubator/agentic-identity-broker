@@ -44,12 +44,12 @@ func newTestApproval(principal id.Principal, agentID id.AgentID, toolName, descr
 	return approval
 }
 
-// Tool Authorizations page tests verify the approval list and management UI
-// for the Tool Authorizations route (/approvals).
-var _ = Describe("Tool Authorizations Page", func() {
+// Approval inbox tests exercise the fixed pending list, shared review panel,
+// and remembered decisions at /approvals and /approvals/remembered.
+var _ = Describe("Approvals Inbox", func() {
 	var (
 		ctx       context.Context
-		authzPage *pages.ToolAuthorizationsPage
+		authzPage *pages.ApprovalsInboxPage
 		testAgent *storage.Agent
 	)
 
@@ -62,12 +62,12 @@ var _ = Describe("Tool Authorizations Page", func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to create test agent")
 
 		// Initialize page object
-		authzPage = pages.NewToolAuthorizationsPage(GetTestPage(), GetFrontendURL())
+		authzPage = pages.NewApprovalsInboxPage(GetTestPage(), GetFrontendURL())
 	})
 
-	// State 1: Empty state — no pending or permanent approvals
+	// AS-12 from specs/047-redesign-consent-console/spec.md: empty inbox.
 	It("should display empty state when no approvals exist", func() {
-		err := authzPage.NavigateToToolAuthorizations(ctx)
+		err := authzPage.NavigateToApprovals(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = authzPage.WaitForLoaded(ctx)
@@ -79,13 +79,13 @@ var _ = Describe("Tool Authorizations Page", func() {
 			g.Expect(hasEmpty).To(BeTrue())
 		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
-		err = authzPage.TakeScreenshot(ctx, "tool_authorizations_empty")
+		err = authzPage.TakeScreenshot(ctx, "approvals_empty")
 		Expect(err).NotTo(HaveOccurred())
 
 		GetLogger().Info("Test passed: Empty state displayed correctly")
 	})
 
-	// State 2: Pending approvals list
+	// AS-12 from specs/047-redesign-consent-console/spec.md: stable pending rows.
 	It("should display pending approvals with tool details and action buttons", func() {
 		principal := fixtures.DefaultPrincipal()
 
@@ -98,16 +98,16 @@ var _ = Describe("Tool Authorizations Page", func() {
 		_, err = GetTestStorage().ToolApprovals().Create(ctx, approval2)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = authzPage.NavigateToToolAuthorizations(ctx)
+		err = authzPage.NavigateToApprovals(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = authzPage.WaitForLoaded(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func(g Gomega) {
-			hasPending, err := authzPage.HasPendingSection(ctx)
+			rows, err := authzPage.PendingRows(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(hasPending).To(BeTrue())
+			g.Expect(rows).To(HaveLen(2))
 		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
 		// Verify tool names are displayed
@@ -124,41 +124,71 @@ var _ = Describe("Tool Authorizations Page", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(hasRisk).To(BeTrue())
 
-		err = authzPage.TakeScreenshot(ctx, "tool_authorizations_pending_list")
+		err = authzPage.TakeScreenshot(ctx, "approvals_pending_list")
 		Expect(err).NotTo(HaveOccurred())
 
 		GetLogger().Info("Test passed: Pending approvals list displayed correctly")
 	})
 
 	// Scenario US1-S1 from specs/024-approval-api-ui/spec.md
-	// Regression: high-risk pending approvals must not crash the Tool Authorizations page.
+	// Regression: selecting a high-risk pending request must keep the shared panel stable.
 	It("should render high-risk pending approvals without hitting the global error boundary", func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newTestApproval(id.Principal(principal.Email), testAgent.ID, "delete_repo", "Delete repository permanently", "high")
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create high-risk pending approval")
 
-		err = authzPage.NavigateToToolAuthorizations(ctx)
+		err = authzPage.NavigateToApprovals(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func(g Gomega) {
-			hasPending, err := authzPage.HasPendingSection(ctx)
+			rows, err := authzPage.PendingRows(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(hasPending).To(BeTrue(), "pending approvals section should remain visible")
-
-			hasTool, err := authzPage.HasToolName(ctx, "delete_repo")
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(hasTool).To(BeTrue(), "high-risk approval should still render its tool name")
-
+			g.Expect(rows).To(ContainElement(HaveField("Tool", "delete_repo")))
 			hasGlobalError, err := authzPage.HasGlobalErrorBoundary(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(hasGlobalError).To(BeFalse(), "high-risk approval should not crash the Tool Authorizations page")
+			g.Expect(hasGlobalError).To(BeFalse(), "high-risk approval must not crash the inbox")
 		}).WithPolling(500 * time.Millisecond).Should(Succeed())
+		Expect(authzPage.SelectPendingRow(ctx, approval.ToolName)).To(Succeed())
+		Expect(readV2(authzPage.ToolName(ctx))).To(Equal(approval.ToolName))
+		Expect(readV2(authzPage.AgentName(ctx))).To(Equal(testAgent.DisplayName))
+		Expect(readV2(authzPage.RiskLabel(ctx))).To(Equal("High"))
+		Expect(readV2(authzPage.HasApproveOptionsAndDeny(ctx))).To(BeTrue(), "the selected request still offers decisions")
 	})
 
-	// State 3: Approve action with persistence selection
-	// Scenario US1-S4 from specs/024-approval-api-ui/spec.md
-	It("approves the first of two expanded requests with permanent persistence", func() {
+	// AS-12 from specs/047-redesign-consent-console/spec.md: only the current request may offer a decision.
+	It("keeps rapid selection bound to the current request, not an exiting panel", func() {
+		principal := fixtures.DefaultPrincipal()
+		first := newTestApproval(id.Principal(principal.Email), testAgent.ID, "read_document", "Read the project files you choose.", "low")
+		second := newTestApproval(id.Principal(principal.Email), testAgent.ID, "write_document", "Read the project files you choose.", "high")
+		_, err := GetTestStorage().ToolApprovals().Create(ctx, first)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = GetTestStorage().ToolApprovals().Create(ctx, second)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(authzPage.NavigateToApprovals(ctx)).To(Succeed())
+		Expect(authzPage.WaitForLoaded(ctx)).To(Succeed())
+
+		for _, tool := range []string{first.ToolName, second.ToolName, first.ToolName} {
+			Expect(authzPage.SelectPendingRow(ctx, tool)).To(Succeed())
+			Expect(readV2(authzPage.SelectedTool(ctx))).To(Equal(tool))
+			Expect(readV2(authzPage.ToolName(ctx))).To(Equal(tool), "the active panel shows the selected tool, not the shared description")
+			Expect(readV2(authzPage.HasStaleReviewActions(ctx))).To(BeFalse(), "exiting panels cannot retain decision controls")
+		}
+		Expect(authzPage.ClickApproveOnce(ctx)).To(Succeed())
+		Eventually(func(g Gomega) {
+			approved, err := GetTestStorage().ToolApprovals().Get(ctx, first.ID)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(approved.Status).To(Equal(storage.ApprovalStatusApproved))
+			g.Expect(approved.Persistence).NotTo(BeNil())
+			g.Expect(*approved.Persistence).To(Equal(storage.ApprovalPersistenceOnce))
+			unrelated, err := GetTestStorage().ToolApprovals().Get(ctx, second.ID)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(unrelated.Status).To(Equal(storage.ApprovalStatusPending))
+		}).Should(Succeed())
+	})
+
+	// AS-12 from specs/047-redesign-consent-console/spec.md; US1-S4 from specs/024-approval-api-ui/spec.md.
+	It("approves one of two pending requests with confirmed permanent scope", func() {
 		principal := fixtures.DefaultPrincipal()
 
 		approval := newTestApproval(id.Principal(principal.Email), testAgent.ID, "read_file", "Read configuration file", "low")
@@ -169,153 +199,104 @@ var _ = Describe("Tool Authorizations Page", func() {
 		_, err = GetTestStorage().ToolApprovals().Create(ctx, otherApproval)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = authzPage.NavigateToToolAuthorizations(ctx)
+		err = authzPage.NavigateToApprovals(ctx)
 		Expect(err).NotTo(HaveOccurred())
-
-		err = authzPage.WaitForLoaded(ctx)
-		Expect(err).NotTo(HaveOccurred())
-
+		Expect(authzPage.WaitForLoaded(ctx)).To(Succeed())
 		Eventually(func(g Gomega) {
 			count, err := authzPage.GetPendingCount(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(count).To(Equal(2))
 		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
-		// Click Approve to expand persistence picker
-		err = authzPage.ClickApproveOnFirst(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		err = authzPage.ClickApproveOnFirst(ctx)
-		Expect(err).NotTo(HaveOccurred())
+		bounds := readV2(authzPage.PendingListBounds(ctx))
+		Expect(authzPage.SelectPendingRow(ctx, approval.ToolName)).To(Succeed())
+		Expect(readV2(authzPage.SelectedTool(ctx))).To(Equal(approval.ToolName))
+		Expect(authzPage.OpenApproveOptions(ctx)).To(Succeed())
+		Expect(authzPage.ChooseApprovalOption(ctx, "Always…")).To(Succeed())
+		Expect(readV2(authzPage.ApprovalScopeText(ctx))).To(ContainSubstring(approval.ToolName))
+		Expect(readV2(authzPage.HasPermanentWarning(ctx))).To(BeTrue())
+		Expect(readV2(authzPage.PendingListBounds(ctx))).To(Equal(bounds), "scope editing cannot expand the pending list")
+		Expect(readV2(GetTestStorage().ToolApprovals().Get(ctx, approval.ID)).Status).To(Equal(storage.ApprovalStatusPending), "scope editing alone cannot approve")
+		Expect(authzPage.TakeScreenshot(ctx, "approvals_scope_editor")).To(Succeed())
+		Expect(authzPage.ClickSelectedApproval(ctx)).To(Succeed())
 		Eventually(func(g Gomega) {
 			count, err := authzPage.GetPendingCount(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(count).To(Equal(0))
+			g.Expect(count).To(Equal(1), "the unrelated request must stay pending")
 		}).Should(Succeed())
-
-		// Select "Always allow" persistence
-		err = authzPage.SelectPersistence(ctx, "Always allow")
-		Expect(err).NotTo(HaveOccurred())
-
-		// Verify permanent warning appears
-		Eventually(func(g Gomega) {
-			hasWarning, err := authzPage.HasPermanentWarning(ctx)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(hasWarning).To(BeTrue())
-		}).WithPolling(500 * time.Millisecond).Should(Succeed())
-
-		err = authzPage.TakeScreenshot(ctx, "tool_authorizations_approve_action")
-		Expect(err).NotTo(HaveOccurred())
-
-		// Confirm the approval
-		err = authzPage.ClickConfirmApprove(ctx)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Wait for the card to be removed from pending and appear in permanent
-		Eventually(func(g Gomega) {
-			hasPermanent, err := authzPage.HasPermanentSection(ctx)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(hasPermanent).To(BeTrue())
-		}).WithPolling(500 * time.Millisecond).Should(Succeed())
+		Expect(readV2(authzPage.PendingListBounds(ctx))).To(Equal(bounds))
+		Expect(authzPage.OpenRemembered(ctx)).To(Succeed())
+		Expect(readV2(authzPage.StandingDecisions(ctx))).To(ContainElement(HaveField("Tool", approval.ToolName)))
 		Eventually(func(g Gomega) {
 			selected, err := GetTestStorage().ToolApprovals().Get(ctx, approval.ID)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(selected.Status).To(Equal(storage.ApprovalStatusApproved))
 			g.Expect(selected.Persistence).NotTo(BeNil())
 			g.Expect(*selected.Persistence).To(Equal(storage.ApprovalPersistencePermanent))
+			g.Expect(selected.ToolPattern).To(Equal(approval.ToolPattern))
+			g.Expect(selected.ParamsPattern).To(Equal(approval.ParamsPattern))
 
 			other, err := GetTestStorage().ToolApprovals().Get(ctx, otherApproval.ID)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(other.Status).To(Equal(storage.ApprovalStatusPending))
 		}).Should(Succeed())
-
 		GetLogger().Info("Test passed: Approve action with persistence completed")
 	})
 
-	// State 4: Deny action from list
-	It("should allow denying a pending request from the list", func() {
+	// AS-12 from specs/047-redesign-consent-console/spec.md: Deny is an explicit panel action.
+	It("should deny the selected pending request without an inline row expansion", func() {
 		principal := fixtures.DefaultPrincipal()
-
 		approval := newTestApproval(id.Principal(principal.Email), testAgent.ID, "write_file", "Overwrite system file", "critical")
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
 		Expect(err).NotTo(HaveOccurred())
-
-		err = authzPage.NavigateToToolAuthorizations(ctx)
-		Expect(err).NotTo(HaveOccurred())
-
-		err = authzPage.WaitForLoaded(ctx)
-		Expect(err).NotTo(HaveOccurred())
-
-		Eventually(func(g Gomega) {
-			hasPending, err := authzPage.HasPendingSection(ctx)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(hasPending).To(BeTrue())
-		}).WithPolling(500 * time.Millisecond).Should(Succeed())
-
-		// Click Deny to expand denial options
-		err = authzPage.ClickDenyOnFirst(ctx)
-		Expect(err).NotTo(HaveOccurred())
-
-		err = authzPage.TakeScreenshot(ctx, "tool_authorizations_deny_action")
-		Expect(err).NotTo(HaveOccurred())
-
-		// Click "Deny this request"
-		err = authzPage.ClickDenyThisRequest(ctx)
-		Expect(err).NotTo(HaveOccurred())
-
-		// Confirm the POST resolved in storage, not just that the pending card disappeared.
+		Expect(authzPage.NavigateToApprovals(ctx)).To(Succeed())
+		Expect(authzPage.WaitForLoaded(ctx)).To(Succeed())
+		Expect(authzPage.SelectPendingRow(ctx, approval.ToolName)).To(Succeed())
+		Expect(readV2(authzPage.ToolName(ctx))).To(Equal(approval.ToolName))
+		Expect(readV2(authzPage.RiskLabel(ctx))).To(Equal("Critical"))
+		Expect(readV2(GetTestStorage().ToolApprovals().Get(ctx, approval.ID)).Status).To(Equal(storage.ApprovalStatusPending))
+		Expect(authzPage.TakeScreenshot(ctx, "approvals_deny_action")).To(Succeed())
+		Expect(authzPage.ClickDeny(ctx)).To(Succeed())
 		Eventually(func(g Gomega) {
 			resolved, err := GetTestStorage().ToolApprovals().Get(ctx, approval.ID)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(resolved.Status).To(Equal(storage.ApprovalStatusDenied))
-		}).Should(Succeed())
-
-		// Wait for the card to be removed from pending
-		Eventually(func(g Gomega) {
+			g.Expect(resolved.Persistence).To(BeNil())
 			count, err := authzPage.GetPendingCount(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(count).To(Equal(0))
-		}).WithPolling(500 * time.Millisecond).Should(Succeed())
-
-		GetLogger().Info("Test passed: Deny action from list completed")
+		}).Should(Succeed())
+		Expect(readV2(authzPage.HasEmptyState(ctx))).To(BeTrue())
 	})
 
-	// State 5: Permanent authorizations with revoke
-	It("should display permanent authorizations and allow revoking", func() {
+	// AS-12 from specs/047-redesign-consent-console/spec.md: remembered allow decisions can be revoked.
+	It("shows and revokes a remembered approval after confirmation", func() {
 		principal := fixtures.DefaultPrincipal()
-
-		// Create and approve an approval permanently
 		approval := newTestApproval(id.Principal(principal.Email), testAgent.ID, "access_api", "Access external API", "medium")
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
 		Expect(err).NotTo(HaveOccurred())
-
 		_, err = GetTestStorage().ToolApprovals().Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistencePermanent, ToolPattern: approval.ToolPattern, ParamsPattern: approval.ParamsPattern}, time.Now())
 		Expect(err).NotTo(HaveOccurred())
-
-		err = authzPage.NavigateToToolAuthorizations(ctx)
-		Expect(err).NotTo(HaveOccurred())
-
-		err = authzPage.WaitForLoaded(ctx)
-		Expect(err).NotTo(HaveOccurred())
-
+		Expect(authzPage.NavigateRemembered(ctx)).To(Succeed())
+		Expect(authzPage.FilterRemembered(ctx, "Always allowed")).To(Succeed())
 		Eventually(func(g Gomega) {
-			hasPermanent, err := authzPage.HasPermanentSection(ctx)
+			rows, err := authzPage.StandingDecisions(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(hasPermanent).To(BeTrue())
-		}).WithPolling(500 * time.Millisecond).Should(Succeed())
-
-		// Verify permanent status
-		hasAllowed, err := authzPage.HasPermanentlyAllowed(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasAllowed).To(BeTrue())
-
-		// Verify revoke button
-		hasRevoke, err := authzPage.HasRevokeButton(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasRevoke).To(BeTrue())
-
-		err = authzPage.TakeScreenshot(ctx, "tool_authorizations_permanent_list")
-		Expect(err).NotTo(HaveOccurred())
-
-		GetLogger().Info("Test passed: Permanent authorizations displayed with revoke action")
+			g.Expect(rows).To(ContainElement(HaveField("Tool", approval.ToolName)))
+		}).Should(Succeed())
+		Expect(readV2(authzPage.HasAlwaysAllowed(ctx))).To(BeTrue())
+		Expect(readV2(authzPage.HasRevokeButton(ctx))).To(BeTrue())
+		Expect(readV2(authzPage.StandingScope(ctx, approval.ToolName))).To(ContainSubstring(approval.ToolName))
+		Expect(authzPage.TakeScreenshot(ctx, "approvals_remembered")).To(Succeed())
+		Expect(authzPage.RevokeStanding(ctx, approval.ToolName)).To(Succeed())
+		Expect(*readV2(GetTestStorage().ToolApprovals().Get(ctx, approval.ID)).Persistence).To(Equal(storage.ApprovalPersistencePermanent))
+		Expect(authzPage.CancelRevokeStanding(ctx)).To(Succeed())
+		Expect(*readV2(GetTestStorage().ToolApprovals().Get(ctx, approval.ID)).Persistence).To(Equal(storage.ApprovalPersistencePermanent))
+		Expect(authzPage.RevokeStanding(ctx, approval.ToolName)).To(Succeed())
+		Expect(authzPage.ConfirmRevokeStanding(ctx)).To(Succeed())
+		Eventually(func() *storage.ApprovalPersistence {
+			return readV2(GetTestStorage().ToolApprovals().Get(ctx, approval.ID)).Persistence
+		}).Should(BeNil())
+		Expect(readV2(authzPage.StandingDecisions(ctx))).NotTo(ContainElement(HaveField("Tool", approval.ToolName)))
 	})
 })

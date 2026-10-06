@@ -1,105 +1,109 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import type { QueryClient } from '@tanstack/react-query';
 import { consentApi } from '@services/api/consent';
 import { sessionsApi } from '@services/api/sessions';
+import { approvalApi } from '@services/api/approvals';
+import { QueryProvider } from '@services/query/QueryProvider';
+import { createQueryClient } from '@services/query/queryClient';
+import { ThemeProvider } from '@design-system/theme/ThemeProvider';
+import type { ToolApprovalDetail } from './types/approval';
 import App from './App';
 
-vi.mock('@services/api/consent', () => ({
-  consentApi: {
-    getUserInfo: vi.fn(),
-    getAgentDelegations: vi.fn(),
-  },
-}));
+vi.mock('@services/api/consent', () => ({ consentApi: {
+  getUserInfo: vi.fn(), getAgentDelegations: vi.fn(), getAgentDetail: vi.fn(),
+  getAgentGrants: vi.fn(), createOrUpdateGrant: vi.fn(), deleteGrant: vi.fn(),
+} }));
+vi.mock('@services/api/sessions', () => ({ sessionsApi: { listSessions: vi.fn() } }));
+vi.mock('@services/api/approvals', () => ({ approvalApi: {
+  getApproval: vi.fn(), listPendingApprovals: vi.fn(), listPermanentApprovals: vi.fn(),
+} }));
 
-vi.mock('@services/api/sessions', () => ({
-  sessionsApi: {
-    listSessions: vi.fn(),
-  },
-}));
+const agentId = '00000000-0000-4000-8000-000000000001';
+const approvalId = '00000000-0000-4000-8000-000000000002';
+const user = { principal: 'route-user@example.com', displayName: 'Route User' };
+const approval: ToolApprovalDetail = {
+  id: approvalId, principal: user.principal, agent_id: agentId, agent_display_name: 'Route agent',
+  tool_name: 'read_calendar', arguments: {}, tool_pattern: 'read_calendar', params_pattern: {},
+  pattern_preview: 'read_calendar()', status: 'approved', persistence: 'once',
+  approval_url: `/approvals/${approvalId}`, created_at: '2026-09-27T12:00:00Z',
+  approved_at: '2026-09-27T12:01:00Z', expires_at: '2099-01-01T00:00:00Z',
+};
+const clients: QueryClient[] = [];
 
-vi.mock('./pages/ConsentOverviewPage', () => ({
-  default: () => <h1>My Agent Delegations</h1>,
-}));
+function openRoute(path: string) {
+  window.history.replaceState({}, '', path);
+  const client = createQueryClient();
+  clients.push(client);
+  return render(<ThemeProvider><QueryProvider client={client}><App /></QueryProvider></ThemeProvider>);
+}
 
-vi.mock('./pages/AgentGrantDetailPage', () => ({
-  default: () => <h1>Agent grant detail</h1>,
-}));
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+  vi.mocked(consentApi.getUserInfo).mockResolvedValue(user);
+  vi.mocked(consentApi.getAgentDelegations).mockResolvedValue([]);
+  vi.mocked(consentApi.getAgentGrants).mockResolvedValue([]);
+  vi.mocked(consentApi.getAgentDetail).mockResolvedValue({
+    agent: { agentId, displayName: 'Route agent', description: 'Review calendar access.', permission_sets: [], active_session_service_ids: [], service_requirements: [] },
+    services: [],
+  });
+  vi.mocked(sessionsApi.listSessions).mockResolvedValue([]);
+  vi.mocked(approvalApi.listPendingApprovals).mockResolvedValue([]);
+  vi.mocked(approvalApi.listPermanentApprovals).mockResolvedValue([]);
+  vi.mocked(approvalApi.getApproval).mockResolvedValue(approval);
+});
 
-vi.mock('./pages/ToolAuthorizationsPage', () => ({
-  default: () => <h1>Tool approvals</h1>,
-}));
+afterEach(() => {
+  clients.splice(0).forEach((client) => client.clear());
+  vi.unstubAllGlobals();
+  window.history.replaceState({}, '', '/');
+});
 
-describe('App routes', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    window.history.replaceState({}, '', '/sessions');
-    vi.mocked(consentApi.getUserInfo).mockResolvedValue({
-      principal: 'user@example.com',
-      displayName: 'Test User',
-      pictureUrl: 'https://example.com/avatar.png',
-    });
-    vi.mocked(consentApi.getAgentDelegations).mockResolvedValue([]);
-    vi.mocked(sessionsApi.listSessions).mockResolvedValue([]);
+describe('route context isolation', () => {
+  it.each(['/agents', '/connections', '/approvals', `/agents/${agentId}`])('keeps console navigation available at %s', async (path) => {
+    openRoute(path);
+    const navigation = await screen.findByRole('navigation', { name: 'Main navigation' }, { timeout: 5000 });
+    expect(within(navigation).getByRole('link', { name: 'Agents', exact: true })).toHaveAttribute('href', '/agents');
+    expect(screen.queryByTestId('agent-origin-label')).not.toBeInTheDocument();
   });
 
-  afterEach(() => {
-    window.history.replaceState({}, '', '/');
+  it.each([`/agents/${agentId}?session_token=invalid`, `/agents/${agentId}?session_token=`])('never turns an invalid decision context into a console at %s', async (path) => {
+    vi.mocked(consentApi.getAgentDetail).mockRejectedValue({ statusCode: 400, error: 'invalid_token', message: 'Restart the authorization request.' });
+    openRoute(path);
+    const alert = await screen.findByRole('alert');
+    expect(screen.getByRole('main')).toContainElement(alert);
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    expect(consentApi.createOrUpdateGrant).not.toHaveBeenCalled();
   });
 
-  it('renders the sessions view at /sessions', async () => {
-    render(<App />);
-
-    expect(
-      await screen.findByRole(
-        'heading',
-        { name: 'No Sessions Found' },
-        { timeout: 5_000 },
-      ),
-    ).toBeInTheDocument();
+  it('keeps tool review in a branded decision frame without console navigation', async () => {
+    openRoute(`/approvals/${approvalId}`);
+    await screen.findByRole('main');
+    expect(screen.getByRole('img', { name: 'Agentic Identity Broker' })).toBeInTheDocument();
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 
-  it('renders agent delegations at /delegations', async () => {
-    window.history.replaceState({}, '', '/delegations');
-
-    render(<App />);
-
-    expect(
-      await screen.findByRole(
-        'heading',
-        { name: 'My Agent Delegations' },
-        { timeout: 5_000 },
-      ),
-    ).toBeInTheDocument();
+  it('replaces the root history entry with the canonical agents route', async () => {
+    const length = window.history.length;
+    openRoute('/');
+    await waitFor(() => expect(window.location.pathname).toBe('/agents'));
+    expect(window.history.length).toBe(length);
   });
 
-  it('redirects the root route to /delegations', async () => {
-    window.history.replaceState({}, '', '/');
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(window.location.pathname).toBe('/delegations');
-    });
+  it.each(['/delegations', '/sessions', '/settings'])('does not retain a legacy browser alias at %s', async (path) => {
+    openRoute(path);
+    expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeVisible();
+    expect(window.location.pathname).toBe(path);
+    expect(screen.getByRole('link', { name: 'Go to Agents' })).toHaveAttribute('href', '/agents');
   });
 
-  it('renders agent detail at /agents/:agentId', async () => {
-    window.history.replaceState({}, '', '/agents/agent-123');
-
-    render(<App />);
-
-    expect(
-      await screen.findByRole('heading', { name: 'Agent grant detail' }),
-    ).toBeInTheDocument();
-  });
-
-  it('renders tool approvals at /approvals', async () => {
-    window.history.replaceState({}, '', '/approvals');
-
-    render(<App />);
-
-    expect(
-      await screen.findByRole('heading', { name: 'Tool approvals' }),
-    ).toBeInTheDocument();
+  it('recovers an unknown route through an internal console link', async () => {
+    const keyboard = userEvent.setup();
+    openRoute('/not-a-broker-route');
+    const main = await screen.findByRole('main');
+    await keyboard.click(within(main).getByRole('link'));
+    await waitFor(() => expect(window.location.pathname).toBe('/agents'));
   });
 });

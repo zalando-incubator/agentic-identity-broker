@@ -1,331 +1,173 @@
-/**
- * ApprovalScopeEditor - Plain-language editor for what a session or permanent
- * approval covers.
- *
- * Collapsed by default: the summary states what future calls must match. Expanded,
- * each parameter offers "This value", "Any value" or a custom glob, and the raw
- * pattern stays visible as the technical rule.
- */
-
-import { useEffect, useRef, useState } from 'react';
-import { Accordion } from '@design-system/components/advanced/Accordion';
+import { useEffect, useState } from 'react';
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '@design-system/components/advanced/Accordion';
 import { Badge } from '@design-system/components/primitives/Badge';
-import { Select, type SelectOption } from '@design-system/components/inputs/Select';
-import { TextInput } from '@design-system/components/inputs/TextInput';
-import { Button } from '@components/ui/Button';
-import { approvalApi } from '@services/api/approvals';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@design-system/components/inputs/Select';
+import { Input } from '@design-system/components/inputs/Input';
+import { Button } from '@design-system/components/primitives/Button';
+import { approvalCopy } from '@copy/approvals';
 import { humanizeParameterKey } from '@utils/humanize';
-import type { ApprovalPersistence, ToolApprovalDetail } from '../../types/approval';
+import type { ApprovalPersistence, ScopePreview, ToolApprovalDetail } from '../../types/approval';
 
-interface ApprovalScopeEditorProps {
+export interface ApprovalScopeEditorProps {
   approval: ToolApprovalDetail;
   paramsPattern: Record<string, string>;
   onParamsPatternChange: (value: Record<string, string>) => void;
   persistence: ApprovalPersistence;
   disabled?: boolean;
+  onPreview: (paramsPattern: Record<string, string>, signal: AbortSignal) => Promise<ScopePreview>;
   onScopeValidationChange?: (valid: boolean) => void;
 }
 
 type ParameterMode = 'exact' | 'any' | 'custom';
+const parameterModes = [
+  { value: 'exact', label: approvalCopy.thisValue },
+  { value: 'any', label: approvalCopy.anyValue },
+  { value: 'custom', label: approvalCopy.customMatch },
+] as const;
+const valuePreviewLimit = 120;
 
-
-const PARAMETER_MODE_OPTIONS: SelectOption[] = [
-  { value: 'exact', label: 'This value' },
-  { value: 'any', label: 'Any value' },
-  { value: 'custom', label: 'Custom match' },
-];
-
-const VALUE_PREVIEW_LIMIT = 120;
-
-function isParameterMode(value: string | number | (string | number)[] | null): value is ParameterMode {
-  return value === 'exact' || value === 'any' || value === 'custom';
+export function ApprovalScopeEditor(props: ApprovalScopeEditorProps) {
+  if (props.persistence === 'once') return null;
+  return <ScopeEditor key={props.approval.id} {...props} />;
 }
 
-
-function exactParamPattern(approval: ToolApprovalDetail, key: string): string {
-  return approval.params_pattern?.[key] ?? '';
-}
-
-function parameterKeys(approval: ToolApprovalDetail): string[] {
-  const keys = new Set([
-    ...Object.keys(approval.arguments ?? {}),
-    ...Object.keys(approval.params_pattern ?? {}),
-  ]);
-  return Array.from(keys).sort();
-}
-
-
-export function ApprovalScopeEditor({
-  approval,
-  paramsPattern,
-  onParamsPatternChange,
-  persistence,
-  disabled = false,
-  onScopeValidationChange,
-}: ApprovalScopeEditorProps) {
+function ScopeEditor({ approval, paramsPattern, onParamsPatternChange, persistence, disabled = false, onPreview, onScopeValidationChange }: ApprovalScopeEditorProps) {
   const [customKeys, setCustomKeys] = useState<Set<string>>(new Set());
   const [expandedValues, setExpandedValues] = useState<Set<string>>(new Set());
   const [lastPersistence, setLastPersistence] = useState(persistence);
-  const validationRequest = useRef(0);
-  const [serverPreview, setServerPreview] = useState(approval.pattern_preview);
-
-  // Call sites restore the exact patterns whenever persistence changes, so the sticky
-  // custom-mode flags must drop with them.
+  const [validation, setValidation] = useState<{ pattern: Record<string, string>; persistence: ApprovalPersistence; preview?: string; error: boolean } | null>(null);
   if (persistence !== lastPersistence) {
     setLastPersistence(persistence);
     setCustomKeys(new Set());
     setExpandedValues(new Set());
   }
 
-
-  const keys = parameterKeys(approval);
-  const constraints = paramsPattern ?? {};
-
   useEffect(() => {
-    if (persistence === 'once') return;
-    const request = ++validationRequest.current;
+    const controller = new AbortController();
     onScopeValidationChange?.(false);
     const timer = window.setTimeout(() => {
-      void approvalApi
-        .previewApprovalScope(approval.id, {
-          params_pattern: constraints,
-        })
+      void onPreview(paramsPattern, controller.signal)
         .then((response) => {
-          if (validationRequest.current === request) {
-            setServerPreview(response.preview);
-            onScopeValidationChange?.(true);
-          }
+          if (controller.signal.aborted) return;
+          setValidation({ pattern: paramsPattern, persistence, preview: response.preview, error: false });
+          onScopeValidationChange?.(true);
         })
         .catch(() => {
-          if (validationRequest.current === request) onScopeValidationChange?.(false);
+          if (controller.signal.aborted) return;
+          setValidation({ pattern: paramsPattern, persistence, error: true });
+          onScopeValidationChange?.(false);
         });
     }, 250);
-    return () => window.clearTimeout(timer);
-  }, [approval.id, constraints, onScopeValidationChange, persistence]);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [approval.id, paramsPattern, persistence, onPreview, onScopeValidationChange]);
 
-  if (persistence === 'once') return null;
-
-
-  const modeOf = (key: string): ParameterMode => {
-    const value = constraints[key];
-    if (value === undefined) return 'any';
-    if (!customKeys.has(key) && value === exactParamPattern(approval, key)) return 'exact';
-    return 'custom';
-  };
-
-  const withCustomKey = (key: string, custom: boolean) => {
+  const keys = Array.from(new Set([...Object.keys(approval.arguments), ...Object.keys(approval.params_pattern)])).sort();
+  const exactPattern = (key: string) => Object.prototype.hasOwnProperty.call(approval.params_pattern, key) ? approval.params_pattern[key] : '';
+  function modeOf(key: string): ParameterMode {
+    if (!Object.prototype.hasOwnProperty.call(paramsPattern, key)) return 'any';
+    return !customKeys.has(key) && paramsPattern[key] === exactPattern(key) ? 'exact' : 'custom';
+  }
+  function setParamPattern(key: string, value: string | undefined) {
+    onScopeValidationChange?.(false);
+    if (value === undefined) {
+      const next = { ...paramsPattern };
+      delete next[key];
+      onParamsPatternChange(next);
+    } else {
+      // Computed properties preserve literal keys such as __proto__ from tool metadata.
+      onParamsPatternChange({ ...paramsPattern, [key]: value });
+    }
+  }
+  function selectMode(key: string, mode: string) {
+    if (mode !== 'exact' && mode !== 'any' && mode !== 'custom') return;
     setCustomKeys((previous) => {
-      if (previous.has(key) === custom) return previous;
       const next = new Set(previous);
-      if (custom) next.add(key);
-      else next.delete(key);
+      if (mode === 'custom') next.add(key); else next.delete(key);
       return next;
     });
-  };
-
-
-  const setParamPattern = (key: string, value: string | undefined) => {
-    const next = { ...constraints };
-    if (value === undefined) delete next[key];
-    else next[key] = value;
-    onParamsPatternChange(next);
-  };
-
-  const selectMode = (key: string, mode: ParameterMode) => {
-    withCustomKey(key, mode === 'custom');
-    if (mode === 'any') setParamPattern(key, undefined);
-    else if (mode === 'exact') setParamPattern(key, exactParamPattern(approval, key));
-    else setParamPattern(key, `${exactParamPattern(approval, key)}*`);
-  };
-
-
-  const toggleExpanded = (key: string) => {
-    setExpandedValues((previous) => {
-      const next = new Set(previous);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  const resetToRequest = () => {
-    setCustomKeys(new Set());
-    const exact: Record<string, string> = {};
-    for (const key of keys) exact[key] = exactParamPattern(approval, key);
-    onParamsPatternChange(exact);
-  };
-
+    setParamPattern(key, mode === 'any' ? undefined : mode === 'exact' ? exactPattern(key) : `${exactPattern(key)}*`);
+  }
   const changedKeys = keys.filter((key) => modeOf(key) !== 'exact');
-  const customized = changedKeys.length > 0;
+  const summary = changedKeys.length > 0
+    ? approvalCopy.changedScope(changedKeys.slice(0, 3).map((key) => approvalCopy.changedParameter(humanizeParameterKey(key), modeOf(key) === 'any')), changedKeys.length)
+    : approvalCopy.exactScope(keys.length);
+  const currentValidation = validation?.pattern === paramsPattern && validation.persistence === persistence ? validation : null;
+  const preview = currentValidation?.preview ?? (!currentValidation?.error && paramsPattern === approval.params_pattern ? approval.pattern_preview : undefined);
 
-  const changeSummaries = changedKeys.map(
-    (key) =>
-      `${humanizeParameterKey(key)} (${modeOf(key) === 'any' ? 'any value' : 'custom match'})`,
-  );
-
-  const description = customized
-    ? `Future calls may vary: ${changeSummaries.slice(0, 3).join(', ')}${
-        changeSummaries.length > 3 ? `, +${changeSummaries.length - 3} more` : ''
-      }`
-    : keys.length === 0
-      ? 'Future calls must match this tool.'
-      : `Future calls must match this tool and all ${keys.length} values from this request.`;
-
-
-  const content = (
-    <div className="space-y-6">
-      <p className="border-l-2 border-trust/20 pl-3 text-sm text-secondary">
-        Future calls must match this tool and these values. Change only what should be allowed
-        to differ.
-      </p>
-
-
-      {keys.length > 0 && (
-        <div className="space-y-0">
-          <p className="pb-2 text-xs font-semibold uppercase tracking-wide text-trust">Request details</p>
-          {keys.map((key) => {
-            const mode = modeOf(key);
-            const label = humanizeParameterKey(key);
-            const currentValue = (typeof approval.arguments?.[key] === 'string'
-              ? approval.arguments[key]
-              : JSON.stringify(approval.arguments?.[key])) ?? '';
-            const modeControlId = `approval-${approval.id}-param-${key}-mode`;
-            const truncatable = currentValue.length > VALUE_PREVIEW_LIMIT;
-            const expanded = expandedValues.has(key);
-
-            return (
-              <div
-                key={key}
-                data-testid={`approval-scope-param-${key}`}
-                className="space-y-3 border-b border-neutral-200 py-5 first:pt-3 last:border-b-0 last:pb-0"
-              >
-                <div className="grid gap-x-3 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(12rem,0.8fr)] sm:items-center">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                      <span className="text-sm font-semibold text-trust">{label}</span>
-                      {label !== key && (
-                        <code className="font-mono text-xs text-neutral-500 break-all">{key}</code>
-                      )}
+  return <div className="min-w-0 space-y-3">
+    <Accordion type="single" collapsible>
+      <AccordionItem value="scope">
+        <AccordionTrigger aria-label={approvalCopy.scope}>
+          <span>{approvalCopy.scope}</span>
+          <Badge variant={changedKeys.length > 0 ? 'warning' : 'neutral'}>{changedKeys.length > 0 ? approvalCopy.customRule : approvalCopy.exactRequest}</Badge>
+        </AccordionTrigger>
+        <p className="px-2 pb-3 text-sm text-muted-foreground">{summary}</p>
+        <AccordionContent>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">{approvalCopy.scopeInstructions}</p>
+            {keys.length > 0 && <div>
+              <p className="text-xs font-semibold">{approvalCopy.requestDetails}</p>
+              {keys.map((key) => {
+                const mode = modeOf(key);
+                const label = humanizeParameterKey(key);
+                const argument = Object.prototype.hasOwnProperty.call(approval.arguments, key) ? approval.arguments[key] : undefined;
+                const currentValue = (typeof argument === 'string' ? argument : JSON.stringify(argument)) ?? '';
+                const controlId = `approval-${approval.id}-param-${key}-mode`;
+                const expanded = expandedValues.has(key);
+                const truncatable = currentValue.length > valuePreviewLimit;
+                return <div key={key} data-testid={`approval-scope-param-${key}`} className="space-y-3 border-b border-border-subtle py-4 last:border-b-0">
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(10rem,1fr)] sm:items-center">
+                    <div className="min-w-0 space-y-1">
+                      <p className="text-sm font-semibold">{label}</p>
+                      {label !== key && <code className="break-all font-mono text-xs text-muted-foreground">{key}</code>}
+                      <p className="text-xs text-muted-foreground">{approvalCopy.currentValue}{' '}
+                        <span className="whitespace-pre-wrap break-all font-mono text-foreground">{currentValue === '' ? approvalCopy.empty : truncatable && !expanded ? `${currentValue.slice(0, valuePreviewLimit)}…` : currentValue}</span>
+                      </p>
                     </div>
-                    <p className="mt-1 text-xs text-tertiary">
-                      Current value{' '}
-                      {currentValue === '' ? (
-                        <span className="italic">(empty)</span>
-                      ) : (
-                        <span
-                          className={
-                            truncatable && expanded
-                              ? 'block font-mono text-neutral-800 whitespace-pre-wrap break-all max-h-40 overflow-auto'
-                              : 'font-mono text-neutral-800 break-all'
-                          }
-                        >
-                          {truncatable && !expanded
-                            ? `${currentValue.slice(0, VALUE_PREVIEW_LIMIT)}…`
-                            : currentValue}
-                        </span>
-                      )}
-                    </p>
+                    <span className="text-sm text-muted-foreground">{approvalCopy.matches}</span>
+                    <Select value={mode} disabled={disabled} onValueChange={(value) => selectMode(key, value)}>
+                      <SelectTrigger id={controlId} aria-label={approvalCopy.matchMode(label)} size="sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>{parameterModes.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+                    </Select>
                   </div>
-                  <span className="text-sm text-secondary">matches</span>
-                  <Select
-                    id={modeControlId}
-                    aria-label={`${label} match mode`}
-                    size="sm"
-                    options={PARAMETER_MODE_OPTIONS}
-                    value={mode}
-                    disabled={disabled}
-                    className="[&>div:last-child]:hidden"
-                    onChange={(value) => {
-                      if (isParameterMode(value)) selectMode(key, value);
-                    }}
-                  />
-                </div>
-
-                {truncatable && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => toggleExpanded(key)}
-                  >
-                    {expanded ? 'Hide full value' : 'Show full value'}
-                  </Button>
-                )}
-
-                {mode === 'custom' && (
-                  <TextInput
-                    id={`${modeControlId}-pattern`}
-                    size="sm"
-                    label={`${label} custom match`}
-                    value={constraints[key] ?? ''}
-                    disabled={disabled}
-                    onChange={(event) => {
-                      withCustomKey(key, true);
-                      setParamPattern(key, event.target.value);
-                    }}
-                    helperText="Use * for any characters. Example: acme/* matches values that start with acme/."
-                    successMessage="Validated by the broker."
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <Button type="button" variant="outline" size="sm" onClick={resetToRequest} disabled={disabled}>
-        Reset to this request
-      </Button>
-
-      <div className="space-y-2 border-t border-neutral-200 pt-5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-trust">Applies to</p>
-        <ul className="list-disc space-y-1 pl-5 text-sm text-neutral-700 break-words">
-          <li>{`Only the tool ${approval.tool_name}`}</li>
-          {keys.map((key) => {
-            const mode = modeOf(key);
-            const label = humanizeParameterKey(key);
-            if (mode === 'any') return <li key={key}>{`${label}: any value`}</li>;
-            if (mode === 'custom') {
-              return <li key={key}>{`${label}: values matching ${constraints[key] ?? ''}`}</li>;
-            }
-            return (
-              <li key={key}>{`${label}: exactly ${String(approval.arguments?.[key] ?? '')}`}</li>
-            );
-          })}
-        </ul>
-      </div>
-
-      <div className="space-y-2 border-t border-neutral-200 pt-5" aria-label="Approval pattern preview">
-        <p className="text-xs font-semibold uppercase tracking-wide text-trust">Technical rule</p>
-        <code className="font-mono text-xs text-neutral-500 break-words">
-          {serverPreview}
-        </code>
-      </div>
+                  {truncatable && <Button variant="ghost" size="sm" aria-expanded={expanded} onClick={() => setExpandedValues((previous) => {
+                    const next = new Set(previous);
+                    if (next.has(key)) next.delete(key); else next.add(key);
+                    return next;
+                  })}>{expanded ? approvalCopy.hideFullValue : approvalCopy.showFullValue}</Button>}
+                  {mode === 'custom' && <Input id={`${controlId}-pattern`} label={approvalCopy.customMatchLabel(label)} value={paramsPattern[key] ?? ''} disabled={disabled} onChange={(event) => setParamPattern(key, event.target.value)} description={approvalCopy.customMatchDescription} />}
+                </div>;
+              })}
+            </div>}
+            <Button variant="outline" size="sm" disabled={disabled} onClick={() => {
+              setCustomKeys(new Set());
+              onScopeValidationChange?.(false);
+              onParamsPatternChange({ ...approval.params_pattern });
+            }}>{approvalCopy.resetScope}</Button>
+            <div className="space-y-2 border-t border-border-subtle pt-3">
+              <p className="text-xs font-semibold">{approvalCopy.appliesTo}</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm [overflow-wrap:anywhere]">
+                <li>{approvalCopy.onlyTool} <code className="font-mono">{approval.tool_name}</code></li>
+                {keys.map((key) => {
+                  const label = humanizeParameterKey(key);
+                  const mode = modeOf(key);
+                  const argument = Object.prototype.hasOwnProperty.call(approval.arguments, key) ? approval.arguments[key] : undefined;
+                  const value = (typeof argument === 'string' ? argument : JSON.stringify(argument)) ?? '';
+                  return <li key={key}>{mode === 'any' ? approvalCopy.anyValueSummary(label) : <>{mode === 'custom' ? approvalCopy.customValueSummary(label) : approvalCopy.exactValueSummary(label)} <code className="font-mono">{mode === 'custom' ? paramsPattern[key] ?? '' : value}</code></>}</li>;
+                })}
+              </ul>
+            </div>
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+    <div aria-label={approvalCopy.patternPreview} className="space-y-2 rounded-md border border-border bg-muted p-3">
+      <p className="text-xs font-semibold">{approvalCopy.technicalRule}</p>
+      {preview && <code data-testid="approval-scope-preview" className="block whitespace-pre-wrap font-mono text-xs [overflow-wrap:anywhere]">{preview}</code>}
+      {currentValidation?.error ? <p role="alert" className="text-sm text-destructive">{approvalCopy.invalidScope}</p> : !currentValidation && <p role="status" className="text-sm text-muted-foreground">{approvalCopy.validatingScope}</p>}
     </div>
-  );
-
-  return (
-    <Accordion
-      size="sm"
-      items={[
-        {
-          id: `approval-${approval.id}-scope`,
-          title: 'Approval scope',
-          description,
-          badge: customized ? (
-            <Badge variant="warning" size="sm">
-              Custom rule
-            </Badge>
-          ) : (
-            <Badge variant="neutral" size="sm">
-              Exact request
-            </Badge>
-          ),
-          content,
-        },
-      ]}
-    />
-  );
+  </div>;
 }
-
-export default ApprovalScopeEditor;

@@ -3,6 +3,7 @@
 **Status**: Accepted
 **Date**: 2025-12-18
 **Feature**: 007-consent-frontend
+**Partially superseded by**: [ADR 038](038-design-system-rebuilt-on-shadcn-radix.md) (UI components, animation, server-state ownership).
 
 ## Context
 

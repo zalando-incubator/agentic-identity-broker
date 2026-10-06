@@ -266,8 +266,8 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			"error", callbackReq.Error,
 			"error_description", callbackReq.ErrorDesc)
 
-		// Redirect to sessions page with error in query
-		redirectURL := "/sessions?error=" + url.QueryEscape(callbackReq.Error)
+		// Return provider errors to the Connections view.
+		redirectURL := "/connections?error=" + url.QueryEscape(callbackReq.Error)
 		if callbackReq.ErrorDesc != "" {
 			redirectURL += "&error_description=" + url.QueryEscape(callbackReq.ErrorDesc)
 		}
@@ -282,7 +282,7 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			"has_code", callbackReq.Code != "",
 			"has_state", callbackReq.State != "")
 
-		redirectURL := "/sessions?error=invalid_callback&error_description=" +
+		redirectURL := "/connections?error=invalid_callback&error_description=" +
 			url.QueryEscape("Missing required OAuth2 parameters")
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
@@ -325,7 +325,7 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 				"service_id", serviceIDStr,
 				"error", err)
 
-			redirectURL := "/sessions?error=expired_token&error_description=" +
+			redirectURL := "/connections?error=expired_token&error_description=" +
 				url.QueryEscape("OAuth2 state token expired - please try again")
 			http.Redirect(w, r, redirectURL, http.StatusFound)
 			return
@@ -336,7 +336,7 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 				"service_id", serviceIDStr,
 				"error", err)
 
-			redirectURL := "/sessions?error=invalid_state&error_description=" +
+			redirectURL := "/connections?error=invalid_state&error_description=" +
 				url.QueryEscape("OAuth2 state token invalid - please try again")
 			http.Redirect(w, r, redirectURL, http.StatusFound)
 			return
@@ -348,7 +348,7 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			"service_id", serviceIDStr,
 			"error", err)
 
-		redirectURL := "/sessions?error=callback_failed&error_description=" +
+		redirectURL := "/connections?error=callback_failed&error_description=" +
 			url.QueryEscape("Authorization failed - please try again")
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
@@ -362,18 +362,17 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// Redirect to the original page that initiated the OAuth2 flow
 	redirectURIStr := result.RedirectURI
 	if redirectURIStr == "" {
-		// Fallback to sessions page if redirectURI is not set (shouldn't happen)
-		redirectURIStr = "/sessions"
+		// Default to Connections when no initiating return page is available.
+		redirectURIStr = "/connections"
 	}
 
 	// Parse redirect URI and add success parameters securely
 	redirectURL, err := url.Parse(redirectURIStr)
 	if err != nil {
-		// If parsing fails, fall back to sessions page
 		h.logger.Error("failed to parse redirect URI",
 			"redirect_uri", redirectURIStr,
 			"error", err)
-		http.Redirect(w, r, "/sessions", http.StatusFound)
+		http.Redirect(w, r, "/connections", http.StatusFound)
 		return
 	}
 
@@ -389,9 +388,7 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 }
 
-// GetSessionDetails handles GET /api/third-party/{serviceId}/session
-// Returns session details including list of dependent agents.
-func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) getSessionWithAgents(w http.ResponseWriter, r *http.Request) (*oauth2session.SessionWithAgents, bool) {
 	ctx := r.Context()
 
 	// Extract principal from context (set by middleware)
@@ -404,7 +401,7 @@ func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
 			"error":   "unauthorized",
 			"message": "principal not found in context",
 		})
-		return
+		return nil, false
 	}
 
 	// Extract serviceId from URL path parameter
@@ -417,7 +414,7 @@ func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
 			"error":   "invalid_request",
 			"message": "serviceId parameter required in path",
 		})
-		return
+		return nil, false
 	}
 
 	parsedServiceID, err := id.ParseServiceID(serviceIDStr)
@@ -429,7 +426,7 @@ func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
 			"error":   "invalid_request",
 			"message": "serviceId must be a valid UUID",
 		})
-		return
+		return nil, false
 	}
 
 	// Fetch session details via service
@@ -444,7 +441,7 @@ func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
 				"error":   "not_found",
 				"message": "session not found",
 			})
-			return
+			return nil, false
 		}
 
 		if errors.Is(err, oauth2session.ErrUnauthorized) {
@@ -458,7 +455,7 @@ func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
 				"error":   "forbidden",
 				"message": "you do not have access to this session",
 			})
-			return
+			return nil, false
 		}
 
 		// Generic error
@@ -472,13 +469,22 @@ func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
 			"error":   "internal_error",
 			"message": "failed to retrieve session details",
 		})
-		return
+		return nil, false
 	}
 
 	h.logger.Info("retrieved session details",
 		"principal", principalValue,
 		"service_id", serviceIDStr,
 		"dependent_agents", len(sessionWithAgents.DependentAgents))
+	return sessionWithAgents, true
+}
+
+// GetSessionDetails handles GET /api/third-party/{serviceId}/session.
+func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
+	sessionWithAgents, ok := h.getSessionWithAgents(w, r)
+	if !ok {
+		return
+	}
 
 	// Return response
 	resp := map[string]interface{}{
@@ -492,6 +498,30 @@ func (h *Handler) GetSessionDetails(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// GetAffectedAgents handles GET /api/third-party/{serviceId}/session/affected-agents.
+func (h *Handler) GetAffectedAgents(w http.ResponseWriter, r *http.Request) {
+	sessionWithAgents, ok := h.getSessionWithAgents(w, r)
+	if !ok {
+		return
+	}
+	type affectedAgent struct {
+		AgentID     id.AgentID `json:"agent_id"`
+		DisplayName string     `json:"display_name"`
+	}
+	response := struct {
+		Data struct {
+			AffectedAgents []affectedAgent `json:"affected_agents"`
+		} `json:"data"`
+	}{}
+	response.Data.AffectedAgents = make([]affectedAgent, len(sessionWithAgents.DependentAgents))
+	for i, agent := range sessionWithAgents.DependentAgents {
+		response.Data.AffectedAgents[i] = affectedAgent{AgentID: agent.ID, DisplayName: agent.DisplayName}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // TerminateSession handles DELETE /api/third-party/{serviceId}/session
@@ -652,6 +682,7 @@ func (h *Handler) RegisterRoutes(router chi.Router) {
 	router.With(http.NewCrossOriginProtection().Handler).Post("/third-party/{serviceId}/oauth2/authorize", h.InitiateFlow)
 	router.Get("/third-party/{serviceId}/oauth2/callback", h.HandleCallback)
 	router.Get("/third-party/{serviceId}/session", h.GetSessionDetails)
+	router.Get("/third-party/{serviceId}/session/affected-agents", h.GetAffectedAgents)
 	router.Delete("/third-party/{serviceId}/session", h.TerminateSession)
 	router.Post("/third-party/{serviceId}/session/refresh", h.RefreshSession)
 }

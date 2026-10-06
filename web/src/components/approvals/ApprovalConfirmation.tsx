@@ -1,105 +1,35 @@
-/**
- * ApprovalConfirmation - Success/denial confirmation screen.
- *
- * Shown after the user has approved or denied a tool call.
- * Displays the outcome and allows the user to close the page.
- */
+import { Card, CardContent } from '@design-system/components/data-display/Card';
+import { Badge } from '@design-system/components/primitives/Badge';
+import { DecisionSuccessCheck } from '@design-system/components/feedback/DecisionSuccessCheck/DecisionSuccessCheck';
+import { approvalCopy } from '@copy/approvals';
+import type { ApprovalPersistence } from '../../types/approval';
+import { approvalTimeAgo } from './approvalTimeAgo';
+import { ApprovalDecisionIdentity } from './ApprovalDecisionIdentity';
 
 interface ApprovalConfirmationProps {
   type: 'approved' | 'denied';
-  persistence?: 'once' | 'session' | 'permanent' | null;
+  persistence?: ApprovalPersistence | null;
   decidedAt?: string | null;
   toolName: string;
   agentName?: string;
   historical?: boolean;
+  consumed?: boolean;
 }
 
-export function ApprovalConfirmation({
-  type,
-  persistence,
-  decidedAt,
-  toolName,
-  agentName,
-  historical = false,
-}: ApprovalConfirmationProps) {
-  const isApproved = type === 'approved';
-
-  const outcome = isApproved ? 'Approved' : 'Denied';
-
-  if (isApproved && historical) {
-    return (
-      <div className="max-w-2xl mx-auto p-6">
-        <div className="rounded-xl border border-success-primary/30 bg-success-light p-8 text-center space-y-4">
-          <p className="text-xl font-semibold text-success-dark">
-            Decision recorded.
-          </p>
-          <p className="text-sm text-neutral-700">
-            The next tool invocation will be allowed.
-          </p>
-          <p className="text-sm text-neutral-700">
-            You can return to your agent now.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-w-2xl mx-auto p-6">
-      <div
-        className={`rounded-xl border p-8 text-center space-y-4 ${
-          isApproved
-            ? 'border-success-primary/30 bg-success-light'
-            : 'border-error-primary/30 bg-error-light'
-        }`}
-      >
-        <div className="text-5xl" aria-hidden="true">
-          {isApproved ? '✓' : '✕'}
-        </div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-600">
-          Decision recorded
-        </p>
-        <h2
-          className={`text-xl font-semibold ${
-            isApproved ? 'text-success-dark' : 'text-error-primary'
-          }`}
-        >
-          {outcome}
-        </h2>
-        <p className="text-sm text-neutral-700">
-          <strong>{toolName}</strong>
-          {agentName && (
-            <>
-              {' '}
-              for <strong>{agentName}</strong>
-            </>
-          )}
-          {persistence && (
-            <>
-              {' '}
-              · <strong>{persistence}</strong>
-            </>
-          )}
-        </p>
-        {decidedAt && (
-          <p className="text-xs text-neutral-500" data-screenshot-dynamic>
-            {outcome} at {new Date(decidedAt).toLocaleString()}
-          </p>
-        )}
-        <p className="text-sm text-neutral-700 pt-4">
-          This request is complete and is shown read-only.
-        </p>
-        <p className="text-sm text-neutral-700">
-          You can safely close this page.
-        </p>
-        {persistence === 'permanent' && (
-          <p className="text-xs text-neutral-600">
-            Manage this permanent decision from Tool Authorizations.
-          </p>
-        )}
-      </div>
-    </div>
-  );
+export function ApprovalConfirmation({ type, persistence, decidedAt, toolName, agentName, historical = false, consumed = false }: ApprovalConfirmationProps) {
+  const approved = type === 'approved';
+  const outcome = approved ? approvalCopy.approved : approvalCopy.denied;
+  return <Card data-testid="approval-outcome" role="status">
+    <CardContent className="space-y-4 pt-6">
+      <p className="text-sm text-muted-foreground">{approvalCopy.recorded}</p>
+      <div className="flex items-center gap-2">{approved && !historical && <DecisionSuccessCheck className="size-6 text-success-foreground" />}<h2 className="font-display text-xl font-semibold">{outcome}</h2></div>
+      <ApprovalDecisionIdentity toolName={toolName} agentName={agentName} />
+      {persistence && <Badge variant="neutral">{approvalCopy.persistenceValue[persistence]}</Badge>}
+      {decidedAt && <p className="text-xs tabular-nums text-muted-foreground" data-screenshot-dynamic><time dateTime={decidedAt} title={new Date(decidedAt).toLocaleString()}>{approvalCopy.decidedAt(outcome, approvalTimeAgo(decidedAt, approvalCopy.decisionTimeUnknown))}</time></p>}
+      {approved && persistence === 'once' && <p className="text-sm">{consumed ? approvalCopy.consumed : approvalCopy.nextInvocation}</p>}
+      <p className="text-sm">{approvalCopy.readonly}</p>
+      <p className="text-sm">{historical ? approvalCopy.returnToAgent : approvalCopy.closePage}</p>
+      {persistence === 'permanent' && <p className="text-sm text-muted-foreground">{approvalCopy.managePermanent}</p>}
+    </CardContent>
+  </Card>;
 }
-
-export default ApprovalConfirmation;

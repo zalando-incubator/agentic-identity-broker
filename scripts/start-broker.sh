@@ -37,9 +37,9 @@ apply_seed_data() {
     # Token endpoint: service-to-service communication (use service name in Docker, localhost in local)
     # Authorize endpoint: browser redirect (always use localhost)
     # Try to resolve service name - if successful, we're in Docker/Podman, otherwise we're in local dev
-    if getent hosts aib-third-party-oauth2 > /dev/null 2>&1; then
+    if getent hosts third-party-oauth2 > /dev/null 2>&1; then
         # Running in Docker/Podman Compose - use service name for token endpoint
-        export MOCK_SERVER_TOKEN_URL="http://aib-third-party-oauth2:9000"
+        export MOCK_SERVER_TOKEN_URL="http://third-party-oauth2:9000"
         echo -e "${YELLOW}[Broker Wrapper]${NC} Running in container - using service name for token endpoint"
     else
         # Running in local development - use localhost for both

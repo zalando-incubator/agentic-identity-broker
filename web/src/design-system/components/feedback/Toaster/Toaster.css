@@ -1,0 +1,67 @@
+.aib-toaster[data-sonner-toaster][data-sonner-theme] {
+  font-family: var(--font-sans);
+  --normal-bg: var(--popover);
+  --normal-text: var(--popover-foreground);
+  --normal-border: var(--border);
+  --normal-bg-hover: var(--accent);
+  --normal-border-hover: var(--border);
+  transition: transform var(--motion-overlay) var(--motion-ease);
+}
+
+.aib-toaster[data-sonner-toaster] [data-sonner-toast] {
+  box-shadow: var(--elevation-overlay);
+  transition: transform var(--motion-overlay) var(--motion-ease), opacity var(--motion-feedback) var(--motion-ease), height var(--motion-overlay) var(--motion-ease);
+  animation-duration: var(--motion-overlay);
+  animation-timing-function: var(--motion-ease);
+}
+
+.aib-toaster[data-sonner-toaster][data-sonner-theme] [data-description] {
+  color: var(--muted-foreground);
+}
+
+.aib-toaster[data-sonner-toaster][data-sonner-theme] [data-sonner-toast]:not([data-type='normal']):not([data-type='loading']) [data-description] {
+  color: inherit;
+}
+
+.aib-toaster[data-sonner-toaster][data-sonner-theme] [data-close-button] {
+  background: var(--popover);
+  border-color: var(--border);
+  color: var(--popover-foreground);
+  cursor: pointer;
+  transition: background-color var(--motion-feedback) var(--motion-ease), border-color var(--motion-feedback) var(--motion-ease), color var(--motion-feedback) var(--motion-ease);
+}
+
+.aib-toaster[data-sonner-toaster][data-sonner-theme] [data-close-button]:not([data-disabled='true']):hover,
+.aib-toaster[data-sonner-toaster] [data-button]:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  border-color: var(--muted-foreground);
+}
+
+.aib-toaster[data-sonner-toaster] [data-close-button][data-disabled='true'] {
+  cursor: not-allowed;
+}
+
+.aib-toaster[data-sonner-toaster] [data-sonner-toast]:focus-visible,
+.aib-toaster[data-sonner-toaster] button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aib-toaster[data-sonner-toaster] {
+    transition: none;
+  }
+
+  .aib-toaster[data-sonner-toaster] [data-sonner-toast] {
+    transition: opacity var(--motion-feedback) var(--motion-ease);
+    animation: none;
+  }
+
+  .aib-toaster[data-sonner-toaster] [data-sonner-toast] * {
+    transition-property: color, background-color, border-color, opacity;
+    transition-duration: var(--motion-feedback);
+    transition-timing-function: var(--motion-ease);
+    animation: none;
+  }
+}

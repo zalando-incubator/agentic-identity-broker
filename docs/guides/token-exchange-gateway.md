@@ -213,7 +213,7 @@ sessions:
 The cache is warmed asynchronously at startup and then refreshed by one ETag long-poll loop. A failed refresh, malformed response, missing approval identity, or failed one-time consume denies the request. `ciba_required`, batches, and header-only requests never enter the approval elicitation flow.
 ## Use a trusted Compose JWT
 
-The Compose gateway trusts upstream JWTs from `http://upstream-oauth2:9001` and broker-issued local JWTs from `http://localhost:3000`.
+The Compose gateway trusts upstream JWTs from `http://upstream-oauth2:9001` and broker-issued local JWTs from `http://localhost:8000`.
 
 An upstream JWT must contain `token-exchange-broker` in `aud` and identify a registered agent in `azp`. A local JWT must contain the same audience and its broker-issued `agent_id` claim.
 

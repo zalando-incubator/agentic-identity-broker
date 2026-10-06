@@ -1,164 +1,62 @@
-/**
- * Checkbox Component
- *
- * Accessible checkbox with label and validation states.
- * Follows the "Refined Trust Architecture" design system.
- *
- * Features:
- * - 3 sizes: sm, md, lg
- * - Indeterminate state support
- * - Disabled state
- * - Error/success states
- * - Label with description
- * - Full keyboard accessibility
- * - WCAG 2.1 AA compliant
- */
+// Adapted from shadcn/ui (MIT). Copyright (c) 2023 shadcn. See ../Input/LICENSE.
+import { useId, type ComponentProps, type ReactNode } from 'react';
+import { Checkbox as CheckboxPrimitive } from 'radix-ui';
+import { Check, Minus } from 'lucide-react';
+import { cn } from '@design-system/utils/cn';
 
-import React from 'react';
-import { cva, type VariantProps } from 'class-variance-authority';
-import { cn } from '@design-system/utils';
+export type CheckboxProps = ComponentProps<typeof CheckboxPrimitive.Root> & {
+  label?: ReactNode;
+  description?: ReactNode;
+  error?: ReactNode;
+};
 
-const checkboxVariants = cva(
-  'rounded border-1.5 transition-all cursor-pointer flex-shrink-0',
-  {
-    variants: {
-      size: {
-        sm: 'w-4 h-4',
-        md: 'w-5 h-5',
-        lg: 'w-6 h-6',
-      },
-      variant: {
-        default: 'border-neutral-300 bg-white text-trust-deep',
-        error: 'border-error-primary bg-error-light/20 text-error-primary',
-        success:
-          'border-success-primary bg-success-light/20 text-success-primary',
-      },
-    },
-    defaultVariants: {
-      size: 'md',
-      variant: 'default',
-    },
-  },
-);
+export function Checkbox({
+  className,
+  id: suppliedId,
+  label,
+  description,
+  error,
+  'aria-describedby': describedBy,
+  ...props
+}: CheckboxProps) {
+  const generatedId = useId();
+  const id = suppliedId ?? generatedId;
+  const messageId = error ? `${id}-error` : description ? `${id}-description` : undefined;
+  const checkbox = (
+    <CheckboxPrimitive.Root
+      {...props}
+      id={id}
+      data-slot="checkbox"
+      aria-invalid={error ? true : props['aria-invalid']}
+      aria-describedby={[describedBy, messageId].filter(Boolean).join(' ') || undefined}
+      className={cn(
+        'group/checkbox flex size-6 shrink-0 items-center justify-center rounded-sm border border-border-control bg-background text-foreground outline-none transition-colors duration-(--motion-control) ease-(--motion-ease)',
+        'hover:border-ring focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:data-[state=unchecked]:bg-muted',
+        'data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary data-[state=indeterminate]:text-primary-foreground',
+        'aria-invalid:border-status-danger-foreground',
+        className,
+      )}
+    >
+      <CheckboxPrimitive.Indicator data-slot="checkbox-indicator" className="flex items-center justify-center">
+        <Check aria-hidden="true" className="size-4 group-data-[state=indeterminate]/checkbox:hidden" />
+        <Minus aria-hidden="true" className="hidden size-4 group-data-[state=indeterminate]/checkbox:block" />
+      </CheckboxPrimitive.Indicator>
+    </CheckboxPrimitive.Root>
+  );
 
-export interface CheckboxProps
-  extends
-    Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size' | 'type'>,
-    VariantProps<typeof checkboxVariants> {
-  /** Label text displayed next to checkbox */
-  label?: string;
-  /** Description text displayed below label */
-  description?: string;
-  /** Error message (changes variant to error) */
-  errorMessage?: string;
-  /** Success message */
-  successMessage?: string;
-  /** Unique identifier for form association */
-  id?: string;
-}
+  if (!label && !error && !description) return checkbox;
 
-/**
- * Checkbox component for boolean selections.
- * Supports labels, descriptions, and validation states.
- *
- * @example
- * ```tsx
- * <Checkbox label="I agree to the terms" />
- *
- * <Checkbox
- *   label="Enable notifications"
- *   description="Receive updates about your grants"
- * />
- *
- * <Checkbox
- *   label="Confirm deletion"
- *   errorMessage="You must confirm before deleting"
- *   variant="error"
- * />
- * ```
- */
-export const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
-  (
-    {
-      size = 'md',
-      label,
-      description,
-      errorMessage,
-      successMessage,
-      className,
-      id,
-      disabled = false,
-      checked,
-      ...props
-    },
-    ref,
-  ) => {
-    // Determine variant based on error/success state
-    const variant = errorMessage
-      ? 'error'
-      : successMessage
-        ? 'success'
-        : 'default';
-
-    return (
-      <div className="flex items-start gap-3">
-        {/* Checkbox input */}
-        <div className="flex items-center h-5 pt-0.5">
-          <input
-            ref={ref}
-            id={id}
-            type="checkbox"
-            checked={checked}
-            disabled={disabled}
-            className={cn(
-              checkboxVariants({ size, variant }),
-              'accent-current',
-              disabled && 'opacity-50 cursor-not-allowed',
-              className,
-            )}
-            {...props}
-          />
-        </div>
-
-        {/* Label and description */}
-        {(label || description || errorMessage || successMessage) && (
-          <div className="flex flex-col gap-1">
-            {label && (
-              <label
-                htmlFor={id}
-                className={cn(
-                  'text-sm font-medium',
-                  disabled
-                    ? 'text-neutral-500 cursor-not-allowed'
-                    : 'text-neutral-900 cursor-pointer',
-                )}
-              >
-                {label}
-              </label>
-            )}
-
-            {description && !errorMessage && !successMessage && (
-              <p className="text-xs text-neutral-600">{description}</p>
-            )}
-
-            {errorMessage && (
-              <p className="text-xs text-error-primary font-medium">
-                {errorMessage}
-              </p>
-            )}
-
-            {successMessage && !errorMessage && (
-              <p className="text-xs text-success-primary font-medium">
-                {successMessage}
-              </p>
-            )}
-          </div>
-        )}
+  return (
+    <div className="flex items-start gap-3">
+      {checkbox}
+      <div className="space-y-1">
+        {label && <label htmlFor={id} className="block text-sm font-medium text-foreground">{label}</label>}
+        {error ? (
+          <p id={messageId} role="alert" className="text-sm text-status-danger-foreground">{error}</p>
+        ) : description ? (
+          <p id={messageId} className="text-sm text-muted-foreground">{description}</p>
+        ) : null}
       </div>
-    );
-  },
-);
-
-Checkbox.displayName = 'Checkbox';
-
-export default Checkbox;
+    </div>
+  );
+}

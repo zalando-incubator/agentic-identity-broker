@@ -3,7 +3,7 @@
  * Combines clsx (conditional classes) with tailwind-merge (deduplication)
  *
  * @example
- * cn('px-4 py-2', isActive && 'bg-blue-500', className)
+ * cn('px-4 py-2', isActive && 'bg-primary', className)
  * // Correctly handles conflicting classes like 'px-2 px-4' → 'px-4'
  */
 

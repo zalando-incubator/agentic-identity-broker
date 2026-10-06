@@ -48,11 +48,12 @@ var _ = Describe("Root-Mounted SPA Routing", func() {
 	It("serves canonical browser views for GET and HEAD", func() {
 		for _, path := range []string{
 			"/",
-			"/delegations",
+			"/agents",
 			"/agents/agent-123",
-			"/sessions",
+			"/connections",
 			"/approvals",
 			"/approvals/approval-123",
+			"/settings/appearance",
 		} {
 			response, err := server.DirectRequest(http.MethodGet, path, "", nil, nil)
 			Expect(err).ToNot(HaveOccurred())
@@ -60,23 +61,29 @@ var _ = Describe("Root-Mounted SPA Routing", func() {
 			Expect(response.Body.Close()).To(Succeed())
 		}
 
-		getResponse, err := server.DirectRequest(http.MethodGet, "/agents/agent-123", "", nil, nil)
+		headers := map[string]string{"Accept-Encoding": "identity"}
+		getResponse, err := server.DirectRequest(http.MethodGet, "/agents/agent-123", "", headers, nil)
 		Expect(err).ToNot(HaveOccurred())
 		DeferCleanup(func() { _ = getResponse.Body.Close() })
 		Expect(getResponse.StatusCode).To(Equal(http.StatusOK))
 
-		headResponse, err := server.DirectRequest(http.MethodHead, "/agents/agent-123", "", nil, nil)
+		headResponse, err := server.DirectRequest(http.MethodHead, "/agents/agent-123", "", headers, nil)
 		Expect(err).ToNot(HaveOccurred())
 		DeferCleanup(func() { _ = headResponse.Body.Close() })
 		Expect(headResponse.StatusCode).To(Equal(http.StatusOK))
 		for header, expected := range map[string]string{
-			"X-Frame-Options":         "DENY",
-			"X-Content-Type-Options":  "nosniff",
-			"Content-Security-Policy": "frame-ancestors 'none'",
+			"X-Frame-Options":        "DENY",
+			"X-Content-Type-Options": "nosniff",
 		} {
 			Expect(getResponse.Header.Values(header)).To(Equal([]string{expected}), header)
 			Expect(headResponse.Header.Values(header)).To(Equal([]string{expected}), header)
 		}
+		policy := getResponse.Header.Get("Content-Security-Policy")
+		Expect(policy).To(MatchRegexp(`(^|;\s*)frame-ancestors 'none'(;|$)`))
+		Expect(policy).To(MatchRegexp(`(^|;\s*)script-src 'self'(\s|;|$)`))
+		Expect(policy).To(MatchRegexp(`(^|;\s*)font-src 'self'(;|$)`))
+		Expect(policy).ToNot(ContainSubstring("'unsafe-inline'"))
+		Expect(headResponse.Header.Values("Content-Security-Policy")).To(Equal(getResponse.Header.Values("Content-Security-Policy")))
 		for _, header := range []string{"Content-Type", "Content-Length", "Last-Modified", "Accept-Ranges"} {
 			Expect(headResponse.Header.Values(header)).To(Equal(getResponse.Header.Values(header)), header)
 		}

@@ -23,5 +23,5 @@ COPY web/ ./
 # Expose port 3000 for Vite dev server
 EXPOSE 3000
 
-# Run Vite dev server with host binding (required for container)
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+# Sync dependencies in the persistent volume with the mounted source lockfile.
+CMD ["sh", "-c", "npm ci && exec npm run dev -- --host 0.0.0.0"]

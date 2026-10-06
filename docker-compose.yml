@@ -2,9 +2,6 @@
 networks:
   aib-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.28.0.0/16
 
 # Shared volumes
 volumes:
@@ -23,9 +20,7 @@ services:
     build:
       context: .
       dockerfile: build/docker/Dockerfile.dev
-    container_name: aib-broker
     ports:
-      - "8000:8000"
       - "14000:14000"
     volumes:
       # Mount source code for Air hot reload
@@ -74,7 +69,6 @@ services:
     build:
       context: .
       dockerfile: build/docker/Dockerfile.cimd
-    container_name: aib-cimd-mock
     ports:
       - "9004:443"
     environment:
@@ -102,7 +96,6 @@ services:
       args:
         SERVICE_PATH: >-
           mocks/upstream-oauth2-server/cmd/mock-upstream-oauth2-server
-    container_name: aib-upstream-oauth2
     ports:
       - "9001:9001"
     volumes:
@@ -122,7 +115,6 @@ services:
       dockerfile: build/docker/Dockerfile.mock
       args:
         SERVICE_PATH: mocks/third-party-service/cmd/mock-oauth2-server
-    container_name: aib-third-party-oauth2
     ports:
       - "9000:9000"
     volumes:
@@ -140,7 +132,6 @@ services:
     build:
       context: .
       dockerfile: build/docker/Dockerfile.dev
-    container_name: aib-sample-agent
     command: ["air", "-c", "build/air/.air.sample-agent.toml"]
     ports:
       - "9002:9002"
@@ -171,7 +162,6 @@ services:
   # For local policy development and testing, use `just opa-check` instead.
   opa-bundle-build:
     image: openpolicyagent/opa:latest@sha256:1b9ca9be95e6867ac658bfd3aa36804064c06017c7977759de68e9dd00de37fb
-    container_name: aib-opa-bundle-build
     working_dir: /bundle
     volumes:
       - ./mocks/opa/bundle:/bundle:ro
@@ -185,7 +175,6 @@ services:
   # Serves the compiled bundle as a static file for OPA to poll.
   opa-bundle-server:
     image: nginx:alpine@sha256:62ff2089abf5a9ed33bd232895bef5e22f7bb4b200675cec49a5ebc48e3d4ac8
-    container_name: aib-opa-bundle-server
     ports:
       - "8080:80"  # exposed for local testing only; extproc uses container-internal port 80
     volumes:
@@ -202,7 +191,6 @@ services:
       context: .
       dockerfile: build/docker/Dockerfile.extproc
       target: development
-    container_name: aib-extproc
     volumes:
       - ./configs/config.extproc.docker.yaml:/app/config.yaml:ro
       - ./mocks/opa/opa-config.yaml:/etc/extproc/opa-config.yaml:ro
@@ -227,7 +215,6 @@ services:
       dockerfile: build/docker/Dockerfile.mock
       args:
         SERVICE_PATH: mocks/mcp-server/cmd/mcp-server
-    container_name: aib-mcp-server
     ports:
       - "9003:9003"
     volumes:
@@ -243,7 +230,6 @@ services:
   # Agentgateway routes MCP calls through ExtProc for token exchange.
   agentgateway:
     image: cr.agentgateway.dev/agentgateway:v1.5.0@sha256:bf2f339ef326d32def2aaeb44b1b4549801293c19b89e764a4228667d97d9896
-    container_name: aib-agentgateway
     ports:
       - "4000:4000"
       - "15000:15000"
@@ -263,9 +249,8 @@ services:
     build:
       context: .
       dockerfile: build/docker/Dockerfile.web
-    container_name: aib-frontend
     ports:
-      - "3000:3000"
+      - "8000:3000"
     volumes:
       # Mount the entire web directory for full hot reload.
       - ./web:/app
@@ -278,8 +263,15 @@ services:
       # Enable polling and HMR for Docker hot-reload
       - VITE_USE_POLLING=true
       - VITE_HMR_HOST=localhost
+      - VITE_HMR_CLIENT_PORT=8000
     networks:
       - aib-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+      start_period: 1m
     depends_on:
       identity-broker:
         condition: service_healthy

@@ -1,0 +1,23 @@
+.ds-accordion-trigger {
+  transition-property: background-color, color;
+  transition-duration: var(--motion-feedback);
+  transition-timing-function: var(--motion-ease);
+}
+
+.ds-accordion-indicator {
+  transition: transform var(--motion-control) var(--motion-ease);
+}
+
+.ds-accordion-trigger[data-state='open'] > .ds-accordion-indicator {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-accordion-indicator {
+    transition: none;
+  }
+
+  .ds-accordion-trigger[data-state='open'] > .ds-accordion-indicator {
+    transform: none;
+  }
+}

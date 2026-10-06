@@ -21,9 +21,10 @@ import (
 // agent → broker → consent → save cycle.
 var _ = Describe("Consent Grant Save Flow", func() {
 	var (
-		ctx         context.Context
-		consentPage *pages.ConsentPage
-		testAgentID string
+		ctx                 context.Context
+		consentPage         *pages.ConsentPage
+		testAgentID         id.AgentID
+		testPermissionSetID id.PermissionSetID
 	)
 
 	// Well-known IDs for this test's fixtures
@@ -69,9 +70,9 @@ var _ = Describe("Consent Grant Save Flow", func() {
 		}
 		err = GetTestStorage().Services().Create(ctx, svc2)
 		Expect(err).NotTo(HaveOccurred(), "Failed to create test service 2")
-		permissionSetID := id.NewPermissionSetID()
+		testPermissionSetID = id.NewPermissionSetID()
 		err = GetTestStorage().PermissionSets().Create(ctx, &storage.PermissionSet{
-			ID:          permissionSetID,
+			ID:          testPermissionSetID,
 			Name:        "Grant Save Permission Set",
 			Description: "Required services for the grant-save flow",
 			ServiceScopes: []storage.ServiceScope{
@@ -82,7 +83,7 @@ var _ = Describe("Consent Grant Save Flow", func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to create test permission set")
 
 		agent := fixtures.AgentWithClientID("grant-flow-test-client")
-		testAgentID = agent.ID.String()
+		testAgentID = agent.ID
 		agent.ServiceRequirements = []storage.ServiceRequirement{
 			{
 				ServiceID:       grantTestServiceID,
@@ -96,7 +97,7 @@ var _ = Describe("Consent Grant Save Flow", func() {
 			},
 		}
 		agent.PermissionSets = []storage.AgentPermissionSetEntry{{
-			PermissionSetID: permissionSetID,
+			PermissionSetID: testPermissionSetID,
 			RequirementType: storage.RequirementTypeMandatory,
 		}}
 		err = GetTestStorage().Agents().Create(ctx, agent)
@@ -118,39 +119,63 @@ var _ = Describe("Consent Grant Save Flow", func() {
 
 	It("should successfully save a grant through the consent screen", func() {
 		// specs/007-consent-frontend/spec.md — User Story 3, Scenario 7:
-		// "Given a user clicks Approve & Delegate, When the request is processed successfully,
-		// Then the system creates or updates the grant and displays a success message."
-		err := consentPage.NavigateToAgent(ctx, testAgentID)
+		// The console requires an explicit draft edit before saving (047 AS-08).
+		err := consentPage.NavigateToAgent(ctx, testAgentID.String())
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 
 		agentName, err := consentPage.GetAgentName(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to get agent name")
 		Expect(agentName).NotTo(BeEmpty(), "Agent name should be displayed")
 
-		err = consentPage.SubmitConsent(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Failed to click Approve & Delegate button")
+		Expect(consentPage.IsSaveBarVisible(ctx)).To(BeFalse())
+		Expect(consentPage.ChooseDuration(ctx, "30 days")).To(Succeed())
+		Expect(consentPage.IsSaveBarVisible(ctx)).To(BeTrue(), "Save appears only after the duration edit")
+		Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeTrue())
+		err = consentPage.SaveChanges(ctx)
+		Expect(err).NotTo(HaveOccurred(), "Failed to save the edited grant")
 
 		err = consentPage.WaitForGrantSuccess(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Grant save should succeed")
+		grant, err := GetTestStorage().UserGrants().FindByPrincipalAndAgent(ctx, id.Principal(fixtures.DefaultPrincipal().String()), testAgentID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(grant).NotTo(BeNil())
+		Expect(grant.GrantedPermissionSets).To(ConsistOf(And(
+			HaveField("PermissionSetID", testPermissionSetID),
+			HaveField("IncludedServiceIDs", ConsistOf(grantTestServiceID, grantTestService2ID)),
+		)))
+		Expect(grant.ValidUntil).NotTo(BeNil(), "the edited duration must be persisted")
+		Expect(consentPage.IsSaveBarVisible(ctx)).To(BeFalse())
 	})
 
 	It("should save grant when redirect_uri parameter is present", func() {
 		// User Story 3, Scenario 7 from specs/007-consent-frontend/spec.md.
 		// Without session_token, redirect_uri does not turn a direct grant save into an OAuth2 redirect.
-		err := consentPage.NavigateToAgentWithRedirectURI(ctx, testAgentID, "/oauth2/callback?code=abc")
+		err := consentPage.NavigateToAgentWithRedirectURI(ctx, testAgentID.String(), "/oauth2/callback?code=abc")
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate with redirect_uri")
 
 		agentName, err := consentPage.GetAgentName(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(agentName).NotTo(BeEmpty())
 
-		err = consentPage.SubmitConsent(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Failed to submit consent with redirect_uri")
+		Expect(consentPage.ChooseDuration(ctx, "30 days")).To(Succeed())
+		Expect(consentPage.IsSaveBarVisible(ctx)).To(BeTrue())
+		err = consentPage.SaveChanges(ctx)
+		Expect(err).NotTo(HaveOccurred(), "Failed to save grant with redirect_uri")
 
 		Expect(consentPage.WaitForGrantSuccess(ctx)).To(Succeed(),
 			"Direct grant save should display success even with redirect_uri in the page URL")
 		hasError, err := consentPage.HasError(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(hasError).To(BeFalse(), "No validation error should remain after saving the grant")
+		Expect(consentPage.GetURLQueryParam("redirect_uri")).To(Equal("/oauth2/callback?code=abc"),
+			"A direct console save must not follow an untrusted redirect_uri")
+		grant, err := GetTestStorage().UserGrants().FindByPrincipalAndAgent(ctx, id.Principal(fixtures.DefaultPrincipal().String()), testAgentID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(grant).NotTo(BeNil())
+		Expect(grant.GrantedPermissionSets).To(ConsistOf(And(
+			HaveField("PermissionSetID", testPermissionSetID),
+			HaveField("IncludedServiceIDs", ConsistOf(grantTestServiceID, grantTestService2ID)),
+		)))
+		Expect(grant.ValidUntil).NotTo(BeNil())
 	})
 })

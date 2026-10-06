@@ -216,7 +216,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 			failureURL, err := url.Parse(response.Header.Get("Location"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(response.Body.Close()).To(Succeed())
-			Expect(failureURL.Path).To(Equal("/sessions"))
+			Expect(failureURL.Path).To(Equal("/connections"))
 			Expect(failureURL.Query().Get("error")).To(Equal("callback_failed"))
 
 			observations := upstream.Observations()

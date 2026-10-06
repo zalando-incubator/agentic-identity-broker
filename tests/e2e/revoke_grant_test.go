@@ -185,9 +185,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 		// SEMANTIC FAILURE IN RED PHASE: DELETE route not yet registered
 		Expect(resp.StatusCode).To(Equal(http.StatusNoContent))
 
-		// Then: GET /api/consent/agent/{agent-id}/grants returns {"data": null}
-		// The endpoint returns 200 with a null data field (not 404) because the agent
-		// still exists — only the grant was deleted. Response shape is {"data": GrantResponse|null}.
+		// Then: The existing agent has no grants after revocation.
 		listResp, err := enduserServer.AuthenticatedGET(agentPath, principal)
 		Expect(err).NotTo(HaveOccurred())
 		defer func() { _ = listResp.Body.Close() }()
@@ -196,8 +194,9 @@ var _ = Describe("Revoke Agent Grant", func() {
 		var body map[string]interface{}
 		err = json.NewDecoder(listResp.Body).Decode(&body)
 		Expect(err).NotTo(HaveOccurred())
-		// data field must be null (not an array — the endpoint returns a single nullable grant object)
-		Expect(body["data"]).To(BeNil(), "grant data should be null after revocation")
+		grants, ok := body["data"].([]interface{})
+		Expect(ok).To(BeTrue(), "grant data should remain an array after revocation")
+		Expect(grants).To(BeEmpty())
 	})
 
 	// US3: Token exchange enforcement after revocation

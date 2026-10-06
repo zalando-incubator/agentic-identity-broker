@@ -1,645 +1,137 @@
-# Design System Usage for OAuth2 Session Components
+# Design System Usage for Connections
 
-**Feature**: Third-Party OAuth2 Session Management
-**Component Scope**: SessionCard, TerminationDialog, ThirdPartySessionsPage
-**Design System Version**: Refined Trust Architecture
+## Authority and example status
 
----
+[ADR 038](../../../../adrs/038-design-system-rebuilt-on-shadcn-radix.md) was accepted on 2026-09-27.
+[Design principles](../../design-system/docs/DESIGN_PRINCIPLES.md) define the accepted feature 047 system.
+The console composes `ConnectionsView`, `ConnectionCard`, `ConnectionStateBadge`, and `DisconnectDialog` on `/connections`.
+Use the frontend integration tests and browser journeys to verify connection behavior.
+See [README.md](README.md) for source contracts, service methods, and development commands.
 
-## Component Mapping
+Application components obtain UI strings from `@copy`. Primitives receive labels and descriptions through props; they do not import the catalogue.
 
-This document maps design system components to OAuth2 session management requirements (US1-US3).
+## Component map
 
----
+| Responsibility | Owned component |
+| --- | --- |
+| Console navigation and mobile navigation | ConsoleShell and Sheet |
+| Page header, count, and controls | PageHeader and controlled CollectionToolbar |
+| Grid and list | EntityCard and EntityRow in ConnectionCard, wrapped by AnimatedCollection |
+| One-line name and safe avatar | Shared Entity tooltip and Avatar fallback |
+| Derived state | Soft Badge inside application-owned ConnectionStateBadge |
+| Raw scope details | Quiet text-and-chevron Button and provider-labeled Popover in ConnectionCard |
+| Card actions | Outline contextual Button; destructive-outline Disconnect Button |
+| Destructive confirmation | Dialog inside application-owned DisconnectDialog |
+| Read failure and recovery | Alert with explicit retry; stale card shows Unavailable |
+| Loading and no data | CollectionSkeleton and EmptyState |
+| Server-confirmed and callback results | Shared Sonner Toaster |
 
-## 1. SessionCard Component (US1)
+Use the existing design-system categories, not a second primitive library.
+The page has no accent action.
+Keep Table and Command out of every decision-route import.
 
-**Purpose**: Display individual third-party OAuth2 session information with status, metadata, and actions.
+## Cards, rows, and controls
 
-**Design System Components Used**:
-
-### Primary Container: Card
-
-**Import**: `@design-system/components/data-display/Card`
+`ConnectionsView` is pure: it takes the records and callbacks from `ConnectionsPage` rather than calling a hook. The page mirrors `q`, `sort`, and `state` in the URL, while `useCollectionView('connections', count)` persists only the grid/list choice. Sort choices are attention first, recently connected by `initiated_at`, and provider name. The state filter can select Connected, Needs sign-in, Expired, or Unavailable. Active URL choices appear as removable chips below the header.
 
 ```tsx
-import { Card } from '@design-system/components/data-display/Card';
+import { ConnectionCard } from '@components/sessions/ConnectionCard';
 
-<Card
-  padding="default" // 24px padding (spacious feel)
-  border="subtle" // Ring-based border
-  hover="lift" // Elevation on hover (interactive feel)
-  backgroundColor="white" // Default white background
-  header={/* Service name + logo */}
-  footer={/* Action buttons */}
-  divider={true} // Divider between sections
->
-  {/* Session metadata */}
-</Card>;
+<ConnectionCard session={session} state={getState(session.service_id)} view="grid"
+  refreshing={isRefreshing(session.service_id)} disconnecting={isDisconnecting(session.service_id)}
+  onRefresh={refresh} onRetry={refetch} onDisconnect={requestDisconnect} />
 ```
 
-**Props Used**:
+Connection cards use a 160 px minimum and grow for real explanations or wrapped metadata. List rows are 208 px below 768 px, 144 px from 768 through 1240 px, and 88 px above 1240 px. Provider identity and a fixed status slot form the header. Explanations wrap without clipping. A deliberate metadata area groups the quiet scope disclosure and relative connection age; the action footer remains separate.
 
-- `padding="default"` (24px) - Standard spacing for session cards
-- `border="subtle"` - Soft ring border for clean appearance
-- `hover="lift"` - Subtle elevation feedback when hovering over card
-- `header` - Service name (h3) + service logo (Avatar)
-- `footer` - Action buttons (Terminate, View Details)
-- `divider={true}` - Visual separation between header/body/footer
+The scope count uses a text-and-chevron disclosure, not an outlined pill beside the status badge. Its popover names the provider and shows wrapping monospace scope values. Zero scopes remain plain text without a dead control. Every stored state displays the count and real initiated date. No account, last-use, or modified timestamp is invented. Name overflow uses the shared one-line tooltip, not an expanding toggle.
 
----
+Avatar rejects off-origin images before loading them.
 
-### Service Logo: Avatar
+The connected card shows only Disconnect, with `destructive-outline` styling. Needs sign-in exposes Refresh only when supported and Reconnect otherwise; Expired exposes Reconnect; Unavailable exposes Retry. The contextual action uses `outline`. Disconnect opens confirmation and never deletes on its own. Busy cards prevent duplicate operations. Reconnect navigates through the existing same-origin authorization URL, returning to `/connections`.
 
-**Import**: `@design-system/components/primitives/Avatar`
+## Truthful state badges
 
-```tsx
-import { Avatar } from '@design-system/components/primitives/Avatar';
+ConnectionStateBadge belongs to the application because token usability is domain-specific. Badge supplies presentation without deciding whether access is usable.
 
-<Avatar
-  src={service.logo_url}
-  alt={`${service.display_name} logo`}
-  size="md" // 40px size for service logos
-  fallback={service.display_name[0]}
-/>;
-```
+| Label | Presentation | Required interpretation |
+| --- | --- | --- |
+| Connected | `success` Badge | Stored evidence establishes usable access |
+| Needs sign-in | `warning` Badge | Access is unusable; supported refresh or reconnect is needed |
+| Expired | `warning` Badge | Session or refresh capacity expired; reconnect is needed |
+| Unavailable | `danger` Badge | Read failure/stale evidence cannot confirm current status |
 
-**Props Used**:
+The full precedence is in the [data model](../../../../specs/047-redesign-consent-console/data-model.md). A service required by an agent with no stored connection can show No connection elsewhere; it is never a stored `/connections` card. A failed read must not fabricate Connected. A network-only refresh error does not prove credential rejection. Do not infer missing scopes. The badge's visible label carries meaning without color; icons are decorative.
 
-- `src` - Service logo URL from API
-- `alt` - Accessible label for screen readers
-- `size="md"` (40px) - Appropriate size for card headers
-- `fallback` - First letter of service name if logo fails to load
+## Disconnect confirmation
 
----
-
-### Status Badge: Badge
-
-**Import**: `@design-system/components/primitives/Badge`
+Import DisconnectDialog through its concrete application module:
 
 ```tsx
-import { Badge } from '@design-system/components/primitives/Badge';
+import { DisconnectDialog } from '@components/sessions/DisconnectDialog';
 
-// Active session
-<Badge variant="success" size="sm" shape="pill">
-  Active
-</Badge>
-
-// Expiring soon
-<Badge variant="warning" size="sm" shape="pill" showDot>
-  Expiring Soon
-</Badge>
-
-// Expired session
-<Badge variant="error" size="sm" shape="pill">
-  Expired
-</Badge>
-
-// No session
-<Badge variant="neutral" size="sm" shape="pill">
-  No Session
-</Badge>
-```
-
-**Props Used**:
-
-- `variant` - Semantic variant based on session status
-  - `success` - Active, valid session
-  - `warning` - Expiring within 7 days
-  - `error` - Expired session
-  - `neutral` - No session established
-- `size="sm"` - Compact size for inline status
-- `shape="pill"` - Rounded pill shape (consistent with design system)
-- `showDot` - Optional dot indicator for visual emphasis (expiring state)
-
----
-
-### Metadata Display: StatusIndicator
-
-**Import**: `@design-system/components/data-display/StatusIndicator`
-
-```tsx
-import { StatusIndicator } from '@design-system/components/data-display/StatusIndicator';
-
-// Encryption status
-<StatusIndicator
-  icon={<LockIcon />}
-  label="Encrypted"
-  variant="default"
-/>
-
-// Dependent agent count
-<StatusIndicator
-  icon={<UsersIcon />}
-  label={`${agentCount} agent${agentCount !== 1 ? 's' : ''}`}
-  variant="default"
-/>
-
-// Initiation timestamp
-<StatusIndicator
-  icon={<ClockIcon />}
-  label={formatRelativeTime(initiated_at)}
-  variant="default"
+<DisconnectDialog
+  session={disconnect.confirmation}
+  onCancel={disconnect.cancelRevoke}
+  onConfirm={() => void disconnect.confirmRevoke()}
+  onReturnFocus={restoreFocus}
 />
 ```
 
-**Props Used**:
+The dialog owns the current dependent-agent query and disables confirmation until that query succeeds. Cancel receives initial focus; the page owns mutation outcomes and focus recovery after removal.
 
-- `icon` - Icon component (16px size, from Lucide React or similar)
-- `label` - Text label for metadata
-- `variant` - Color variant (default for neutral metadata)
-- `interactive={true}` - Can be wrapped in Tooltip for additional context
+The warning must state that broker disconnection does not revoke provider-side tokens.
+Do not claim that every dependent grant is revoked or that provider access is removed.
+Read dependent agents through the existing session detail operation.
+Escape all service and agent names.
 
----
+The open Dialog makes background content inert.
+Preserve its accessible title, description, focus boundary, Escape behavior, and focus return.
+Cancel leaves the connection unchanged.
 
-### Action Buttons: Button
+Only after confirmation can the application mark the affected record pending.
+Announce success only after server acceptance.
+On failure, restore the record and show safe copy through the shared Toaster rather than a second inline notice.
 
-**Import**: `@design-system/components/primitives/Button`
+## Loading, empty, error, and callback states
 
-```tsx
-import { Button } from '@design-system/components/primitives/Button';
+CollectionSkeleton announces the initial read. EmptyState explains a successful empty list without inventing a global connection-creation action. A failed read presents an Alert with retry, not an empty success; stale records stay visible with an Unavailable badge and retry.
 
-// Terminate session (destructive action)
-<Button
-  variant="danger"
-  size="sm"
-  onClick={handleTerminate}
-  iconBefore={<TrashIcon />}
->
-  Terminate
-</Button>
+ConnectionsPage consumes `success`, `error`, and `error_description` callback parameters once on `/connections`. The matching `service_id` from a successful callback pulses its card's border for 320 ms and plays the connection icon, including when a new record arrives. Display only local allowlisted error copy, never arbitrary provider descriptions. Server-confirmed refresh and disconnect, callback outcomes, and operation errors use the existing shared Toaster; there is no inline notice timer.
 
-// View details (secondary action)
-<Button
-  variant="outline"
-  size="sm"
-  onClick={handleViewDetails}
->
-  View Details
-</Button>
+## Theme, assets, and motion
 
-// Establish session (CTA)
-<Button
-  variant="primary"
-  size="md"
-  onClick={handleEstablish}
-  iconBefore={<LinkIcon />}
->
-  Establish Session
-</Button>
-```
+Use [COLOR_GUIDE.md](../../design-system/docs/COLOR_GUIDE.md) for exact semantic OKLCH values in both themes.
+Use `background`, `card`, `foreground`, `muted-foreground`, `border`, and `ring` roles through generated utilities.
+Control boundaries use `border`; quiet separators use `border-subtle`; `border-control` is reserved for form controls.
+Do not add raw palette examples or literal component colors.
 
-**Props Used**:
+Use local Wordmark artwork from `web/public/brand/` and fonts from `web/public/fonts/`.
+Display text uses Zalando Sans Variable, body text uses Inter Variable, and technical values use JetBrains Mono.
+Do not request third-party fonts, scripts, or images.
 
-- `variant` - Button variant based on action importance
-  - `danger` - Destructive actions (terminate)
-  - `outline` - Secondary actions (view details)
-  - `primary` - Primary CTAs (establish session)
-- `size` - Button size (`sm` for card footers, `md` for primary actions)
-- `iconBefore` - Icon before button text
-- `onClick` - Action handler
-- `isLoading` - Loading state during async operations
+Use shared spacing and radius tokens, neutral surfaces, and 1 px borders. Motion is confined to console composition: AnimatedCollection handles removal, the connection icon explains updates, and CSS pulses the matching border for 320 ms. Disable movement under reduced motion. Do not add decorative gradients or page-entry motion.
 
----
+## Accessibility and behavior requirements
 
-### Layout: Stack
+Principle XI requires WCAG 2.1 AA. Feature 047 targets WCAG 2.2 AA.
+These requirements do not record completed validation.
 
-**Import**: `@design-system/components/layout/Stack`
+- Keep card and row actions available at 320 px and 200% zoom without changing their height.
+- Keep keyboard focus visible and unobscured.
+- Return focus after cancellation and move it predictably after record removal.
+- Announce state changes and results without taking focus during background updates.
+- Validate 4.5:1 text contrast and 3:1 control contrast in both themes.
+- Cover default, hover, focus-visible, disabled, error, loading, and overlay-open story states where applicable.
+- Require both-theme story accessibility checks and reviewed visual baselines.
 
-```tsx
-import { Stack } from '@design-system/components/layout/Stack';
-
-// Vertical stack for metadata
-<Stack gap="sm" direction="column">
-  <StatusIndicator icon={<LockIcon />} label="Encrypted" />
-  <StatusIndicator icon={<UsersIcon />} label="3 agents" />
-  <StatusIndicator icon={<ClockIcon />} label="2 days ago" />
-</Stack>
-
-// Horizontal stack for action buttons
-<Stack gap="sm" direction="row" justify="end">
-  <Button variant="outline" size="sm">View Details</Button>
-  <Button variant="danger" size="sm">Terminate</Button>
-</Stack>
-```
-
-**Props Used**:
-
-- `gap` - Spacing between items (`xs`, `sm`, `md`, `lg`)
-- `direction` - Layout direction (`row`, `column`)
-- `justify` - Horizontal alignment (`start`, `center`, `end`, `between`)
-- `align` - Vertical alignment (`start`, `center`, `end`)
-
----
-
-## 2. TerminationDialog Component (US3)
-
-**Purpose**: Confirmation modal for terminating OAuth2 sessions with warning about affected agents.
-
-**Design System Components Used**:
-
-### Dialog Container: Modal
-
-**Import**: `@design-system/components/overlays/Modal`
-
-```tsx
-import { Modal } from '@design-system/components/overlays/Modal';
-
-<Modal
-  isOpen={isTerminationDialogOpen}
-  onClose={handleClose}
-  title="Terminate OAuth2 Session"
-  icon={<AlertTriangleIcon className="text-warning-primary" />}
-  size="md" // 600px width for confirmation dialogs
-  closeOnBackdropClick={false} // Prevent accidental dismissal
-  footer={
-    <div className="flex gap-3 justify-end">
-      <Button variant="outline" onClick={handleClose}>
-        Cancel
-      </Button>
-      <Button
-        variant="danger"
-        onClick={handleConfirmTerminate}
-        isLoading={isTerminating}
-      >
-        Terminate Session
-      </Button>
-    </div>
-  }
->
-  <Stack gap="md" direction="column">
-    <p className="text-neutral-700">
-      Terminating this session will revoke access for the following agents:
-    </p>
-    <ul className="list-disc list-inside space-y-2 text-neutral-600">
-      {affectedAgents.map((agent) => (
-        <li key={agent.agent_id}>{agent.agent_name || agent.agent_id}</li>
-      ))}
-    </ul>
-    <Alert variant="warning" size="sm">
-      This action cannot be undone. Affected agents will need to be
-      re-authorized.
-    </Alert>
-  </Stack>
-</Modal>;
-```
-
-**Props Used**:
-
-- `isOpen` - Boolean state controlling modal visibility
-- `onClose` - Close handler (Cancel button or ESC key)
-- `title` - Modal header title
-- `icon` - Warning icon in header (AlertTriangle from Lucide)
-- `size="md"` (600px) - Appropriate for confirmation dialogs
-- `closeOnBackdropClick={false}` - Prevent accidental dismissal of destructive action
-- `footer` - Cancel + Terminate buttons
-
----
-
-### Warning Alert: Alert
-
-**Import**: `@design-system/components/feedback/Alert`
-
-```tsx
-import { Alert } from '@design-system/components/feedback/Alert';
-
-<Alert variant="warning" size="sm">
-  This action cannot be undone. Affected agents will need to be re-authorized.
-</Alert>;
-```
-
-**Props Used**:
-
-- `variant="warning"` - Warning color scheme (amber background)
-- `size="sm"` - Compact size for inline alerts
-
----
-
-## 3. ThirdPartySessionsPage Component (US1)
-
-**Purpose**: Page layout displaying list of OAuth2 sessions.
-
-**Design System Components Used**:
-
-### Page Container: Container
-
-**Import**: `@design-system/components/layout/Container`
-
-```tsx
-import { Container } from '@design-system/components/layout/Container';
-
-<Container maxWidth="4xl" className="py-8">
-  {/* Page content */}
-</Container>;
-```
-
-**Props Used**:
-
-- `maxWidth="4xl"` (896px) - Maximum width for page content
-- `className="py-8"` - Vertical padding (32px)
-
----
-
-### Grid Layout: Grid
-
-**Import**: `@design-system/components/layout/Grid`
-
-```tsx
-import { Grid } from '@design-system/components/layout/Grid';
-
-<Grid cols={1} md={2} lg={3} gap="md">
-  {sessions.map((session) => (
-    <SessionCard key={session.service.id} session={session} />
-  ))}
-</Grid>;
-```
-
-**Props Used**:
-
-- `cols={1}` - 1 column on mobile
-- `md={2}` - 2 columns on tablet
-- `lg={3}` - 3 columns on desktop
-- `gap="md"` (16px) - Spacing between cards
-
----
-
-### Empty State: EmptyState
-
-**Import**: `@design-system/components/feedback/EmptyState`
-
-```tsx
-import { EmptyState } from '@design-system/components/feedback/EmptyState';
-
-<EmptyState
-  title="No Sessions Yet"
-  description="You haven't established any third-party OAuth2 sessions. Establish a session to allow agents to access third-party services on your behalf."
-  icon={<LinkIcon />}
-  action={
-    <Button variant="primary" onClick={handleEstablishSession}>
-      Establish Session
-    </Button>
-  }
-/>;
-```
-
-**Props Used**:
-
-- `title` - Empty state heading
-- `description` - Explanatory text
-- `icon` - Icon illustration
-- `action` - Optional CTA button
-
----
-
-### Loading State: Skeleton
-
-**Import**: `@design-system/components/feedback/Skeleton`
-
-```tsx
-import { Skeleton } from '@design-system/components/feedback/Skeleton';
-
-<Card padding="default" border="subtle">
-  <Stack gap="md" direction="column">
-    <Skeleton variant="text" width="60%" />
-    <Skeleton variant="text" width="40%" />
-    <Skeleton variant="rectangular" height="80px" />
-  </Stack>
-</Card>;
-```
-
-**Props Used**:
-
-- `variant` - Skeleton type (`text`, `circular`, `rectangular`)
-- `width` - Width (percentage or px)
-- `height` - Height (required for `rectangular`)
-
----
-
-## Accessibility Considerations
-
-All design system components used comply with WCAG 2.1 AA:
-
-### Keyboard Navigation
-
-- Card: Focusable when interactive (`clickable` or `onClick`)
-- Button: Full keyboard support (Tab, Enter, Space)
-- Modal: Focus trap, ESC to close
-- Badge: Semantic markup (no interactive role)
-
-### Screen Readers
-
-- Card: Role and semantic HTML (`<article>`, `<section>`)
-- Button: Proper ARIA labels for icon-only buttons
-- Modal: ARIA attributes (role="dialog", aria-labelledby, aria-describedby)
-- StatusIndicator: Icon marked as `aria-hidden="true"`, text label read
-
-### Color Contrast
-
-- All text colors meet 4.5:1 ratio (WCAG AA)
-- UI elements meet 3:1 ratio (WCAG AA)
-- Badge variants tested for contrast (success, warning, error all pass)
-
-### Motion
-
-- All components respect `prefers-reduced-motion`
-- Card hover animation disabled if user prefers reduced motion
-- Modal entrance animation disabled if user prefers reduced motion
-
----
-
-## Color Token Usage (See oauth2-semantic-tokens.md)
-
-Refer to `web/src/design-system/oauth2-semantic-tokens.md` for detailed semantic token mappings for session statuses.
-
-**Quick Reference**:
-
-- **Active session**: `success-primary` (#059669)
-- **Expiring session**: `warning-primary` (#D97706)
-- **Expired session**: `error-primary` (#DC2626)
-- **No session**: `neutral-300` (#ddd8d1)
-
----
-
-## Implementation Checklist
-
-### US1: View Sessions (T038-T041)
-
-- [ ] SessionCard uses Card component with proper props
-- [ ] Status indicators use Badge component with correct variants
-- [ ] Metadata uses StatusIndicator with icons
-- [ ] Actions use Button component with correct variants
-- [ ] Layout uses Stack for vertical/horizontal spacing
-- [ ] Page uses Container + Grid for responsive layout
-- [ ] Empty state uses EmptyState component
-- [ ] Loading state uses Skeleton components
-
-### US3: Terminate Session (T071-T072)
-
-- [ ] TerminationDialog uses Modal component
-- [ ] Warning alert uses Alert component
-- [ ] Affected agents list uses semantic HTML (<ul>)
-- [ ] Footer buttons use correct variants (outline + danger)
-- [ ] Modal prevents backdrop click dismissal
-
-### Design System Compliance
-
-- [ ] No custom CSS beyond design system tokens
-- [ ] All components imported from `@design-system/`
-- [ ] Semantic token usage consistent
-- [ ] Accessibility requirements met (WCAG 2.1 AA)
-- [ ] Animation system respected (200ms interactions, 300ms elevations)
-- [ ] Spacing system followed (24px padding, 16px gaps)
-
----
-
-## Example Code Snippets
-
-### Complete SessionCard Example
-
-```tsx
-import { Card } from '@design-system/components/data-display/Card';
-import { Avatar } from '@design-system/components/primitives/Avatar';
-import { Badge } from '@design-system/components/primitives/Badge';
-import { Button } from '@design-system/components/primitives/Button';
-import { StatusIndicator } from '@design-system/components/data-display/StatusIndicator';
-import { Stack } from '@design-system/components/layout/Stack';
-import { LockIcon, UsersIcon, ClockIcon, TrashIcon } from 'lucide-react';
-
-export function SessionCard({ session }) {
-  return (
-    <Card
-      padding="default"
-      border="subtle"
-      hover="lift"
-      header={
-        <Stack direction="row" align="center" justify="between">
-          <Stack direction="row" align="center" gap="sm">
-            <Avatar
-              src={session.service.logo_url}
-              alt={`${session.service.display_name} logo`}
-              size="md"
-              fallback={session.service.display_name[0]}
-            />
-            <h3 className="font-semibold text-neutral-900">
-              {session.service.display_name}
-            </h3>
-          </Stack>
-          <Badge variant="success" size="sm" shape="pill">
-            Active
-          </Badge>
-        </Stack>
-      }
-      footer={
-        <Stack direction="row" gap="sm" justify="end">
-          <Button variant="outline" size="sm">
-            View Details
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            iconBefore={<TrashIcon size={16} />}
-          >
-            Terminate
-          </Button>
-        </Stack>
-      }
-      divider
-    >
-      <Stack gap="sm" direction="column">
-        <StatusIndicator
-          icon={<LockIcon size={16} />}
-          label="Encrypted"
-          variant="default"
-        />
-        <StatusIndicator
-          icon={<UsersIcon size={16} />}
-          label={`${session.dependent_agents} agents`}
-          variant="default"
-        />
-        <StatusIndicator
-          icon={<ClockIcon size={16} />}
-          label={formatRelativeTime(session.initiated_at)}
-          variant="default"
-        />
-      </Stack>
-    </Card>
-  );
-}
-```
-
-### Complete TerminationDialog Example
-
-```tsx
-import { Modal } from '@design-system/components/overlays/Modal';
-import { Button } from '@design-system/components/primitives/Button';
-import { Alert } from '@design-system/components/feedback/Alert';
-import { Stack } from '@design-system/components/layout/Stack';
-import { AlertTriangleIcon } from 'lucide-react';
-
-export function TerminationDialog({ isOpen, onClose, session, onConfirm }) {
-  const [isTerminating, setIsTerminating] = useState(false);
-
-  const handleConfirm = async () => {
-    setIsTerminating(true);
-    try {
-      await onConfirm();
-      onClose();
-    } catch (error) {
-      // Error handling
-    } finally {
-      setIsTerminating(false);
-    }
-  };
-
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Terminate OAuth2 Session"
-      icon={<AlertTriangleIcon className="text-warning-primary" />}
-      size="md"
-      closeOnBackdropClick={false}
-      footer={
-        <div className="flex gap-3 justify-end">
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="danger"
-            onClick={handleConfirm}
-            isLoading={isTerminating}
-          >
-            Terminate Session
-          </Button>
-        </div>
-      }
-    >
-      <Stack gap="md" direction="column">
-        <p className="text-neutral-700">
-          Terminating this session will revoke access for the following agents:
-        </p>
-        <ul className="list-disc list-inside space-y-2 text-neutral-600">
-          {session.affected_agents.map((agent) => (
-            <li key={agent.agent_id}>{agent.agent_name || agent.agent_id}</li>
-          ))}
-        </ul>
-        <Alert variant="warning" size="sm">
-          This action cannot be undone. Affected agents will need to be
-          re-authorized.
-        </Alert>
-      </Stack>
-    </Modal>
-  );
-}
-```
-
----
+Use T116–T122 for hook, page, callback, refresh, and disconnect acceptance requirements.
+Keep browser selectors inside the existing session page object.
 
 ## References
 
-- Design System Index: `web/src/design-system/docs/INDEX.md`
-- Component Archetypes: `web/src/design-system/docs/COMPONENT_ARCHETYPES.md`
-- Composition Patterns: `web/src/design-system/docs/COMPOSITION_PATTERNS.md`
-- Color Guide: `web/src/design-system/docs/COLOR_GUIDE.md`
-- Accessibility Guide: `web/src/design-system/docs/ACCESSIBILITY_GUIDE.md`
-- Existing Pattern: `web/src/components/consent/ServiceCard.tsx`
+- [Design system index](../../design-system/docs/INDEX.md)
+- [Component archetypes](../../design-system/docs/COMPONENT_ARCHETYPES.md)
+- [Composition patterns](../../design-system/docs/COMPOSITION_PATTERNS.md)
+- [Accessibility guide](../../design-system/docs/ACCESSIBILITY_GUIDE.md)
+- [UI contract](../../../../specs/047-redesign-consent-console/contracts/ui-and-configuration.md)

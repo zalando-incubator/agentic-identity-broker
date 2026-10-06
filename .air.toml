@@ -6,30 +6,28 @@ testdata_dir = "testdata"
 tmp_dir = "tmp"
 
 [build]
-  # Command to build the application
-  cmd = "go build -o ./tmp/agentic-identity-broker ./cmd/agentic-identity-broker"
+  # Rebuild both served artifacts from the current source.
+  cmd = "npm --prefix web run build && go build -o ./tmp/agentic-identity-broker ./cmd/agentic-identity-broker"
 
-  # Use wrapper script that auto-seeds data before starting broker (docker-compose only)
-  # The wrapper checks if we're in docker-compose and seeds data, then execs the broker binary
+  # The wrapper seeds local mock data after the broker starts.
   bin = "scripts/start-broker.sh"
 
   # Customize binary arguments
   args_bin = []
 
   # Watch these filename extensions
-  include_ext = ["go", "tpl", "tmpl", "html", "yaml", "yml", "toml", "env"]
+  include_ext = ["go", "tpl", "tmpl", "html", "yaml", "yml", "toml", "env", "ts", "tsx", "css", "js", "json", "svg", "png", "jpg", "jpeg", "webp", "avif", "ico", "woff", "woff2"]
 
   # Ignore these filename extensions or directories
-  exclude_dir = ["assets", "tmp", "vendor", "testdata", "bin", "coverage", "node_modules", ".git"]
+  exclude_dir = ["tmp", "vendor", "testdata", "bin", "coverage", "node_modules", ".git", "web/dist", "web/storybook-static", "web/.storybook", "web/.vitest-attachments"]
 
-  # Watch only backend-relevant directories; the repo also contains web/, docs/, etc.
-  include_dir = ["cmd", "internal", "scripts", "migrations", "mocks"]
+  include_dir = ["cmd", "internal", "scripts", "migrations", "mocks", "web"]
 
   # Exclude files
   exclude_file = []
 
   # Exclude specific regular expressions
-  exclude_regex = ["_test.go"]
+  exclude_regex = ["_test.go", "\\.test\\.[jt]sx?$", "\\.stories\\.[jt]sx?$"]
 
   # Exclude unchanged files
   exclude_unchanged = false

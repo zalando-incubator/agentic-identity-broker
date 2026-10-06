@@ -1,5 +1,1 @@
-/**
- * TextArea component exports
- */
-
-export { TextArea, type TextAreaProps, TextArea as default } from './TextArea';
+export { TextArea, type TextAreaProps } from './TextArea';

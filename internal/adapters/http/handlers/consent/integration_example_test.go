@@ -224,25 +224,26 @@ func TestIntegration_GetAgentGrants(t *testing.T) {
 	}
 
 	var response struct {
-		Data *consent.GrantResponse `json:"data"`
+		Data []consent.GrantResponse `json:"data"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if response.Data == nil {
-		t.Fatal("expected a grant in response, got nil")
+	if len(response.Data) != 1 {
+		t.Fatalf("expected one grant in response, got %d", len(response.Data))
 	}
-	if response.Data.AgentID != testAgentID.String() {
-		t.Errorf("expected agent ID %q, got %q", testAgentID.String(), response.Data.AgentID)
+	grantResponse := response.Data[0]
+	if grantResponse.AgentID != testAgentID.String() {
+		t.Errorf("expected agent ID %q, got %q", testAgentID.String(), grantResponse.AgentID)
 	}
-	if response.Data.Principal != principalValue {
-		t.Errorf("expected principal %q, got %q", principalValue, response.Data.Principal)
+	if grantResponse.Principal != principalValue {
+		t.Errorf("expected principal %q, got %q", principalValue, grantResponse.Principal)
 	}
-	if len(response.Data.GrantedPermissionSets) != 1 {
-		t.Fatalf("expected 1 permission set, got %d", len(response.Data.GrantedPermissionSets))
+	if len(grantResponse.GrantedPermissionSets) != 1 {
+		t.Fatalf("expected 1 permission set, got %d", len(grantResponse.GrantedPermissionSets))
 	}
-	if _, ok := response.Data.GrantedPermissionSets[testPermissionSetID.String()]; !ok {
+	if _, ok := grantResponse.GrantedPermissionSets[testPermissionSetID.String()]; !ok {
 		t.Errorf("expected permission set ID %q to be present", testPermissionSetID.String())
 	}
 }
@@ -394,20 +395,20 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 		}
 
 		var response struct {
-			Data *consent.GrantResponse `json:"data"`
+			Data []consent.GrantResponse `json:"data"`
 		}
 		if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
 
-		if response.Data == nil {
-			t.Fatal("expected a grant, got nil")
+		if len(response.Data) != 1 {
+			t.Fatalf("expected one grant, got %d", len(response.Data))
 		}
-		if response.Data.AgentID != testAgentID.String() {
-			t.Errorf("expected agent ID %q, got %q", testAgentID.String(), response.Data.AgentID)
+		if response.Data[0].AgentID != testAgentID.String() {
+			t.Errorf("expected agent ID %q, got %q", testAgentID.String(), response.Data[0].AgentID)
 		}
-		if len(response.Data.GrantedPermissionSets) != 1 {
-			t.Fatalf("expected 1 delegated token, got %d", len(response.Data.GrantedPermissionSets))
+		if len(response.Data[0].GrantedPermissionSets) != 1 {
+			t.Fatalf("expected 1 permission set, got %d", len(response.Data[0].GrantedPermissionSets))
 		}
 	})
 }
