@@ -363,9 +363,9 @@ The optional `token_exchange.failure_reason` attribute uses these stable values:
 Transport, decode, decrypt, storage, CIMD, and cancellation errors have no failure reason.
 Refresh rejection classification checks the HTTP status before decoding the body.
 The broker does not populate stored refresh-token expiry, so the third-party service's `invalid_grant` identifies refresh expiry in production.
-An `invalid_grant` response from that service retains the existing client-visible `server_error` response.
+A parsed HTTP 400 `invalid_grant` refresh rejection returns client-visible `invalid_grant` with a broker-generated re-authentication `error_uri`; other refresh failures return `server_error`.
 Service metadata stays outside response JSON and contains no client secrets.
-HTTP statuses, error codes, descriptions, `error_uri`, existing log fields, and other span attributes remain unchanged.
+Refresh rejection logs and spans include the third-party HTTP status and an allowlisted OAuth error code; provider-controlled descriptions, URIs, headers, and bodies are omitted.
 
 #### 3.1.4. End-to-End Testing Architecture
 

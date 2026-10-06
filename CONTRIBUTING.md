@@ -97,6 +97,8 @@ export function MyComponent() {
 
 - Tests live next to source files (`*_test.go` or `*.test.tsx`)
 - Fast Go/package tests: `just test`
+- ExtProc unit tests with race detection: `just extproc-test`. These include checks that
+  disabled local tracing neither creates child spans nor modifies inherited spans.
 - Integration suites: `just test-integration`
 - All E2E suites: `just test-e2e`
 - Dedicated E2E performance measurement: `just test-e2e-performance` (manual; normal E2E commands exclude performance-labelled specs)

@@ -38,7 +38,7 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 		{name: "no session", code: "invalid_grant", reason: FailureReasonNoSession},
 		{name: "access token expired, no refresh token", code: "invalid_grant", reason: FailureReasonAccessTokenExpired},
 		{name: "stored refresh token expired", code: "invalid_grant", reason: FailureReasonRefreshTokenExpired},
-		{name: "service invalid_grant", code: "server_error", reason: FailureReasonRefreshTokenExpired, status: 400, body: `{"error":"invalid_grant"}`},
+		{name: "service invalid_grant", code: "invalid_grant", reason: FailureReasonRefreshTokenExpired, status: 400, body: `{"error":"invalid_grant"}`},
 		{name: "service rejects otherwise", code: "server_error", reason: FailureReason("service_rejected"), status: 502, body: "unavailable"},
 		{name: "service unreachable", code: "server_error"},
 		{name: "insufficient scope", code: "invalid_grant", reason: FailureReasonInsufficientScope},

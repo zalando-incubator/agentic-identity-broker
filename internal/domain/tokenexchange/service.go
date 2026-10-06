@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtclaims"
@@ -302,7 +304,8 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// session lookup or credential decryption. Agents that declare neither PermissionSets
 	// nor ServiceRequirements are not exempt.
 	if len(grant.GrantedPermissionSets) == 0 {
-		return nil, NewInvalidGrantError("grant has no permission set entries; re-consent required").WithFailureReason(FailureReasonNoGrant)
+		return nil, NewInvalidGrantError("grant has no permission set entries; re-consent required").
+			WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
 	}
 	effectiveScopes, err := s.resolveEffectiveScopes(ctx, grant, agent)
 	if err != nil {
@@ -313,7 +316,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, NewInvalidGrantError(fmt.Sprintf(
 			"service %s is not authorized by any permission set in the grant; re-consent required",
 			service.ID,
-		)).WithFailureReason(FailureReasonNoGrant)
+		)).WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
 	}
 
 	// Step 10: Get valid access token with session metadata (with transparent refresh if needed)
@@ -354,7 +357,17 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 			}
 			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL).WithFailureReason(reason)
 		}
-		// Other errors (refresh failed, decryption failed, etc)
+		if refreshRejectedWithInvalidGrant(err) {
+			description := fmt.Sprintf(
+				"User session refresh was rejected by the requested service. Service: %s. Please re-authenticate to %s.",
+				service.ID,
+				service.DisplayName,
+			)
+			return nil, NewInvalidGrantError(description).
+				WithErrorURI(s.oauth2SessionService.ServiceAuthorizeURL(service.ID)).
+				WithCause(err).WithFailureReason(FailureReasonRefreshTokenExpired)
+		}
+		// Other errors (other refresh failures, decryption failed, etc)
 		serverErr := NewServerErrorWithCause("failed to get valid access token", err)
 		var rejected *oauth2session.RefreshRejectedError
 		if errors.As(err, &rejected) {
@@ -427,6 +440,21 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	return response, nil
 }
 
+// refreshRejectedWithInvalidGrant reports whether the provider explicitly rejected the stored
+// refresh token (RFC 6749 §5.2 HTTP 400 invalid_grant), which only user re-authentication fixes.
+func refreshRejectedWithInvalidGrant(err error) bool {
+	var retrieveErr *oauth2.RetrieveError
+	return errors.Is(err, oauth2session.ErrRefreshFailed) &&
+		errors.As(err, &retrieveErr) &&
+		retrieveErr.Response != nil &&
+		retrieveErr.Response.StatusCode == 400 &&
+		retrieveErr.ErrorCode == "invalid_grant"
+}
+
+func (s *TokenExchangeService) agentConsentURL(agentID id.AgentID) string {
+	return strings.TrimRight(s.oauth2SessionService.GetCallbackBaseURL(), "/") + "/agents/" + agentID.String()
+}
+
 // resolveEffectiveScopes resolves permission sets from the grant and computes
 // per-service effective scopes by taking the union across all permission sets
 // and intersecting with the agent's service requirement scope ceiling (FR-013).
@@ -450,7 +478,7 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 			return nil, NewInvalidGrantError(fmt.Sprintf(
 				"permission set %s referenced in grant is not declared by the agent; re-consent required",
 				entry.PermissionSetID,
-			)).WithErrorURI(strings.TrimRight(s.oauth2SessionService.GetCallbackBaseURL(), "/") + "/agents/" + agent.ID.String()).WithFailureReason(FailureReasonNoGrant)
+			)).WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
 		}
 		psIDs[i] = entry.PermissionSetID
 	}
@@ -488,7 +516,7 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 			return nil, NewInvalidGrantError(fmt.Sprintf(
 				"permission set %s referenced in grant no longer exists; re-consent required",
 				entry.PermissionSetID,
-			)).WithFailureReason(FailureReasonNoGrant)
+			)).WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
 		}
 		included := grantIndex[entry.PermissionSetID]
 		for _, ss := range ps.ServiceScopes {
