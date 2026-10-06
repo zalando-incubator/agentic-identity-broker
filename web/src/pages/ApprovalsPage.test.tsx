@@ -63,7 +63,48 @@ it('shows a stable pending EntityRow list beside the shared detail panel and rou
   expect(within(panel()).getByRole('button', { name: 'Deny', exact: true })).toHaveAttribute('data-variant', 'outline');
   expect(within(panel()).getByRole('button', { name: 'Approve once' })).toHaveAttribute('data-variant', 'primary');
   expect(screen.getByRole('tab', { name: /Pending/ })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.getByRole('tab', { name: 'Remembered' })).toHaveAttribute('href', '/approvals/remembered');
+  expect(screen.getByRole('tab', { name: /^Remembered/ })).toHaveAttribute('href', '/approvals/remembered');
+});
+
+it('shows the principal-scoped remembered total before visiting the tab and keeps it independent of filters', async () => {
+  vi.mocked(approvalApi.listPermanentApprovals).mockResolvedValue([
+    { ...pending, id: 'allow', status: 'approved', persistence: 'permanent' },
+    { ...pending, id: 'deny', status: 'denied', persistence: 'permanent' },
+    { ...pending, id: 'foreign', principal: 'bob', status: 'approved', persistence: 'permanent' },
+  ]);
+  const user = userEvent.setup();
+  renderPage();
+  const tab = await screen.findByRole('tab', { name: 'Remembered · 2' });
+  await user.click(tab);
+  await user.click(screen.getByRole('button', { name: `${copy.filter}: ${copy.all}` }));
+  await user.click(within(await screen.findByRole('group', { name: copy.filter })).getByRole('button', { name: copy.denied }));
+  await waitFor(() => expect(screen.getAllByTestId('standing-decision-row')).toHaveLength(1));
+  expect(tab).toHaveAccessibleName('Remembered · 2');
+  await act(async () => { client.setQueryData(queryKeys.standing('alice'), []); });
+  await waitFor(() => expect(tab).toHaveAccessibleName('Remembered · 0'));
+});
+
+it('honors the displayed decision shortcut when focus is on its main button', async () => {
+  const approve = vi.spyOn(approvalApi, 'approveApproval').mockResolvedValue({ id: pending.id, status: 'approved', persistence: 'once', approved_at: '2026-10-06T10:00:00Z' });
+  const user = userEvent.setup();
+  renderPage();
+  const action = await screen.findByRole('button', { name: 'Approve once' });
+  action.focus();
+  await user.keyboard('a');
+  await waitFor(() => expect(approve).toHaveBeenCalledWith(pending.id, { persistence: 'once' }));
+});
+
+it('uses the selected approval action for its shortcut instead of bypassing remembered-scope review', async () => {
+  const approve = vi.spyOn(approvalApi, 'approveApproval');
+  const user = userEvent.setup();
+  renderPage();
+  await user.click(await screen.findByRole('button', { name: 'Approve options' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
+  expect(screen.queryByRole('button', { name: 'Confirm approval' })).not.toBeInTheDocument();
+  screen.getByRole('button', { name: pending.tool_name }).focus();
+  await user.keyboard('a');
+  expect(await screen.findByRole('button', { name: 'Confirm approval' })).toBeInTheDocument();
+  expect(approve).not.toHaveBeenCalled();
 });
 
 it('keeps the header and tabs mounted while remembered controls stay in their panel and pending decisions disappear immediately', async () => {
@@ -77,8 +118,8 @@ it('keeps the header and tabs mounted while remembered controls stay in their pa
   const tabs = screen.getByRole('tablist', { name: navigationCopy.approvals });
   expect(screen.queryByRole('button', { name: copy.searchRemembered })).not.toBeInTheDocument();
 
-  await user.click(screen.getByRole('tab', { name: copy.rememberedTitle }));
-  const remembered = screen.getByRole('tabpanel', { name: copy.rememberedTitle });
+  await user.click(screen.getByRole('tab', { name: /^Remembered/ }));
+  const remembered = screen.getByRole('tabpanel', { name: /^Remembered/ });
   expect(screen.getByRole('heading', { level: 1, name: navigationCopy.approvals })).toBe(heading);
   expect(screen.getByRole('tablist', { name: navigationCopy.approvals })).toBe(tabs);
   expect(within(remembered).getByRole('button', { name: `${copy.filter}: ${copy.all}` })).toBeInTheDocument();
@@ -222,6 +263,7 @@ it.each([['For this session', 'session'], ['Always…', 'permanent']] as const)(
   await waitFor(() => expect(list).toHaveStyle({ minHeight: '188px' }));
   await user.click(screen.getByRole('button', { name: 'Approve options' }));
   await user.click(await screen.findByRole('menuitem', { name: label }));
+  await user.click(screen.getByRole('button', { name: persistence === 'session' ? 'Approve for this session' : 'Always approve' }));
   expect(screen.getByTestId('pending-approvals')).toBe(list);
   const confirm = screen.getByRole('button', { name: 'Confirm approval' });
   await waitFor(() => expect(confirm).toBeEnabled());
@@ -245,10 +287,13 @@ it('denies only on the deliberate Deny action and uses the separate permanent-de
   expect(deny).not.toHaveBeenCalled();
   await user.click(await screen.findByRole('menuitem', { name: 'Always deny…' }));
   expect(deny).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Always deny', exact: true }));
   const dialog = await screen.findByRole('dialog', { name: 'Confirm permanent denial' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   expect(deny).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Deny', exact: true }));
+  await user.click(screen.getByRole('button', { name: 'Deny options' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Deny', exact: true }));
+  await user.click(screen.getByRole('button', { name: 'Deny', exact: true }));
   await waitFor(() => expect(deny).toHaveBeenCalledWith('pending', {}));
   expect(screen.getByTestId('pending-approvals')).toBeVisible();
   vi.mocked(approvalApi.listPendingApprovals).mockResolvedValue([]);
@@ -264,6 +309,7 @@ it('posts a permanent denial only after confirming its dialog', async () => {
   await user.click(screen.getByRole('button', { name: 'Deny options' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Always deny…' }));
   expect(deny).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Always deny', exact: true }));
   fireEvent.click(within(await screen.findByRole('dialog', { name: 'Confirm permanent denial' })).getByRole('button', { name: 'Confirm permanent denial' }));
   await waitFor(() => expect(deny).toHaveBeenCalledWith('pending', { persistence: 'permanent' }));
 });
@@ -283,6 +329,7 @@ it('expires an open editor at the server deadline without submitting a decision'
     await vi.advanceTimersByTimeAsync(0);
   });
   fireEvent.click(screen.getByRole('menuitem', { name: 'For this session' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Approve for this session' }));
   await act(async () => { await vi.advanceTimersByTimeAsync(251); });
   expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeEnabled();
   await act(async () => { await vi.advanceTimersByTimeAsync(expiresAt - Date.now()); });
@@ -397,6 +444,7 @@ it('ignores decision shortcuts in the remembered editor and permanent-denial dia
   await screen.findByTestId('approval-review-panel');
   await user.click(screen.getByRole('button', { name: 'Approve options' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
+  await user.click(screen.getByRole('button', { name: 'Always approve' }));
   await screen.findByRole('button', { name: 'Confirm approval' });
   panel().focus();
   await user.keyboard('adjk{Enter}');
@@ -408,6 +456,7 @@ it('ignores decision shortcuts in the remembered editor and permanent-denial dia
   const reviewPanel = panel();
   await user.click(screen.getByRole('button', { name: 'Deny options' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Always deny…' }));
+  await user.click(screen.getByRole('button', { name: 'Always deny', exact: true }));
   const dialog = await screen.findByRole('dialog', { name: 'Confirm permanent denial' });
   await user.keyboard('ad');
   expect(dialog).toContainElement(document.activeElement as HTMLElement);
@@ -558,7 +607,7 @@ it('shows loading without inventing rows and the truthful empty states only afte
   expect(screen.queryByText("You're all caught up")).not.toBeInTheDocument();
   await act(async () => response.resolve([]));
   await screen.findByText("You're all caught up");
-  fireEvent.click(screen.getByRole('tab', { name: 'Remembered' }));
+  fireEvent.click(screen.getByRole('tab', { name: /^Remembered/ }));
   await screen.findByText('No remembered decisions');
 });
 
@@ -570,6 +619,7 @@ it('rejects a remembered scope when authoritative preview fails without posting 
   await screen.findByTestId('approval-review-panel');
   await user.click(screen.getByRole('button', { name: 'Approve options' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
+  await user.click(screen.getByRole('button', { name: 'Always approve' }));
   await waitFor(() => expect(approvalApi.previewApprovalScope).toHaveBeenCalledWith('pending', { params_pattern: pending.params_pattern }, expect.anything()));
   expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeDisabled();
   expect(approve).not.toHaveBeenCalled();

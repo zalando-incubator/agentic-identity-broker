@@ -51,8 +51,6 @@ export interface ApprovalsViewProps {
   standing: ApprovalListState;
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onApproveOnce?: () => void;
-  onDenyOnce?: () => void;
   review: ApprovalReviewPageProps | null;
   search: string;
   onSearchChange: (search: string) => void;
@@ -82,7 +80,7 @@ function pendingRows(approvals: readonly ToolApprovalDetail[], selectedId: strin
     const agentName = approval.agent_display_name?.trim() || approval.agent_id;
     const remaining = Date.parse(approval.expires_at) - Date.now();
     const expiryMinutes = remaining > 0 && remaining < 60 * 60_000 ? Math.max(1, Math.ceil(remaining / 60_000)) : null;
-    return <EntityRow key={approval.id} id={approval.id} name={approval.tool_name} nameClassName="font-mono" rowLayout="stacked"
+    return <EntityRow key={approval.id} id={approval.id} name={approval.tool_name} nameClassName="font-mono" rowLayout="stacked" className="select-none"
       data-testid="pending-approval-row" role="listitem" selected={selectedId === approval.id}
       selectionIndicator={selectedId === approval.id && <motion.span aria-hidden="true" layoutId={reduced ? undefined : 'approval-selected-accent'}
         className="pointer-events-none absolute inset-y-2 left-0 w-1 rounded-r bg-primary" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
@@ -100,7 +98,7 @@ function pendingRows(approvals: readonly ToolApprovalDetail[], selectedId: strin
 function rememberedRows(approvals: readonly ToolApprovalDetail[], onRequest: ApprovalsViewProps['revoke']['request'], isPending: ApprovalsViewProps['revoke']['isPending']) {
   return approvals.map(approval => {
     const agentName = approval.agent_display_name?.trim() || approval.agent_id;
-    return <EntityRow key={approval.id} id={approval.id} name={approval.tool_name} nameClassName="font-mono" rowLayout="stacked" data-testid="standing-decision-row" role="listitem"
+    return <EntityRow key={approval.id} id={approval.id} name={approval.tool_name} nameClassName="font-mono" rowLayout="stacked" className="select-none" data-testid="standing-decision-row" role="listitem"
       avatar={<Avatar id={approval.agent_id} label={agentName} />}
       supporting={<span data-testid="approval-agent-name" title={agentName}>{agentName}</span>}
       status={<Badge variant={approval.status === 'approved' ? 'success' : 'danger'} data-testid="approval-decision">{approval.status === 'approved' ? copy.allowed : copy.denied}</Badge>}
@@ -115,8 +113,6 @@ interface ShortcutContext {
   selectedId: string | null;
   onSelect: (id: string) => void;
   review: ApprovalReviewPageProps | null;
-  onApproveOnce?: () => void;
-  onDenyOnce?: () => void;
 }
 
 /** Inbox shortcuts require focus and an event target inside the pending panel. */
@@ -130,7 +126,7 @@ export function handleApprovalShortcut(event: ReactKeyboardEvent<HTMLElement>, c
   if (document.querySelector('[role="dialog"],[role="menu"],[role="listbox"],[data-slot="popover-content"]')) return;
   if (inbox.querySelector('[data-active-approval] [data-testid="approval-review-panel"][data-editor-active="true"]')) return;
   const inRow = Boolean(target?.closest('[data-testid="pending-approval-row"]'));
-  if (target?.closest('button,a,[role="tab"]') && !inRow) return;
+  if (target?.closest('button,a,[role="tab"]') && !inRow && !target.closest('[data-approval-action]')) return;
   const index = context.approvals.findIndex(approval => approval.id === context.selectedId);
   if (event.key.toLowerCase() === 'j' || event.key.toLowerCase() === 'k') {
     if (!context.approvals.length || context.review?.submitting) return;
@@ -149,12 +145,11 @@ export function handleApprovalShortcut(event: ReactKeyboardEvent<HTMLElement>, c
   if (!review || !selected || selected.id !== context.selectedId || selected.status !== 'pending' || selected.principal !== review.actingPrincipal || review.submitting || review.approveResult || review.denyResult ||
     !Number.isFinite(Date.parse(selected.expires_at)) || Date.parse(selected.expires_at) <= Date.now() ||
     review.errorCode === 'EXPIRED' || review.errorCode === 'ALREADY_ACTIONED' || review.errorCode === 'FORBIDDEN' || review.errorCode === 'NOT_FOUND') return;
-  if (event.key.toLowerCase() === 'a' && context.onApproveOnce) {
+  const action = event.key.toLowerCase() === 'a' ? 'approve' : event.key.toLowerCase() === 'd' ? 'deny' : null;
+  const button = action ? inbox.querySelector<HTMLButtonElement>(`[data-active-approval] [data-approval-action="${action}"]`) : null;
+  if (button && !button.disabled) {
     event.preventDefault();
-    context.onApproveOnce();
-  } else if (event.key.toLowerCase() === 'd' && context.onDenyOnce) {
-    event.preventDefault();
-    context.onDenyOnce();
+    button.click();
   }
 }
 
@@ -207,7 +202,7 @@ function RememberedApprovalList({ standing, search, onSearchChange, filter, onFi
 }
 
 /** Network-free render of both console routes. Decision requests are only callbacks supplied by the container. */
-export function ApprovalsView({ tab, compact = false, minRows = 0, pending, standing, selectedId, onSelect, onApproveOnce, onDenyOnce, review, search, onSearchChange, filter, onFilterChange, revoke }: ApprovalsViewProps) {
+export function ApprovalsView({ tab, compact = false, minRows = 0, pending, standing, selectedId, onSelect, review, search, onSearchChange, filter, onFilterChange, revoke }: ApprovalsViewProps) {
   const reduced = useConsoleReducedMotion();
   const countBump = usePendingCountBump(pending.data, pending.stale);
   const list = tab === 'pending' ? pending : standing;
@@ -215,11 +210,11 @@ export function ApprovalsView({ tab, compact = false, minRows = 0, pending, stan
     <PageHeader title={navigationCopy.approvals} />
     <Tabs value={tab} className="gap-5"><TabsList aria-label={navigationCopy.approvals}>
       <TabsTrigger value="pending" asChild><Link to="/approvals">{copy.pendingTitle}{pending.data && <span className="tabular-nums">· <PendingApprovalCount count={pending.data.length} bumpRevision={countBump} /></span>}</Link></TabsTrigger>
-      <TabsTrigger value="remembered" asChild><Link to="/approvals/remembered">{copy.rememberedTitle}</Link></TabsTrigger>
+      <TabsTrigger value="remembered" asChild><Link to="/approvals/remembered">{copy.rememberedTitle}{standing.data && <>{' '}<span className="tabular-nums">· {standing.data.length}</span></>}</Link></TabsTrigger>
     </TabsList>
     {list.stale && <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-status-danger-foreground"><p>{list.data ? tab === 'pending' ? navigationCopy.pendingStale : copy.standingStale : tab === 'pending' ? copy.pendingError : copy.standingError}</p><Button variant="outline" size="sm" onClick={list.onRetry}>{commonCopy.retry}</Button></div>}
     <AnimatePresence initial={false}><motion.div key={tab} className="min-w-0" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: consoleMotion.control, ease: consoleMotion.ease }}>
-    <TabsContent value="pending" className="p-0" onKeyDown={compact ? undefined : event => handleApprovalShortcut(event, { approvals: pending.data ?? [], selectedId, onSelect, review, onApproveOnce, onDenyOnce })}><section data-testid="approval-section" aria-label={copy.pendingTitle} className="min-w-0">
+    <TabsContent value="pending" className="p-0" onKeyDown={compact ? undefined : event => handleApprovalShortcut(event, { approvals: pending.data ?? [], selectedId, onSelect, review })}><section data-testid="approval-section" aria-label={copy.pendingTitle} className="min-w-0">
       {pending.data ? pending.data.length ? <div className="grid min-w-0 items-start gap-6 min-[1012px]:grid-cols-12">
         <div className="min-w-0 min-[1012px]:col-span-5">
           <div data-testid="pending-approvals" role="list" aria-label={copy.pendingTitle} style={{ minHeight: compact || minRows === 0 ? undefined : minRows * 88 + Math.max(0, minRows - 1) * 12 }}>

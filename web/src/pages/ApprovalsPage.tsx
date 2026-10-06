@@ -88,8 +88,6 @@ export default function ApprovalsPage() {
       pending={{ data: pending.data ? approvals : undefined, loading: pending.isPending, stale: pending.stale, onRetry: () => { void pending.refetch(); } }}
       standing={{ data: standing.data?.filter(approval => approval.principal === principal), loading: standing.isPending, stale: standing.stale, onRetry: () => { void standing.refetch(); } }}
       selectedId={currentId} onSelect={setSelectedId} review={review} search={search} onSearchChange={value => updateParam('q', value)} filter={filter}
-      onApproveOnce={() => { void approve({ persistence: 'once' }); }}
-      onDenyOnce={() => { void deny(); }}
       onFilterChange={next => updateParam('filter', next)}
       revoke={{
         confirmation: standing.revoke.confirmation,

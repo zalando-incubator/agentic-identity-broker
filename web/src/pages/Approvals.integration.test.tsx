@@ -65,6 +65,9 @@ describe('approval routes with real review actions and HTTP state', () => {
     expect(within(list).getByTestId('pending-approval-row')).toHaveTextContent('read_file');
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
+    expect(screen.queryByRole('button', { name: 'Confirm approval' })).not.toBeInTheDocument();
+    expect(requests.mock.calls.filter(([config]) => config.method === 'post')).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Always approve' }));
     const confirm = screen.getByRole('button', { name: 'Confirm approval' });
     expect(confirm).toBeDisabled();
     expect(screen.getByText('This grants permanent access. You can revoke it from Approvals.')).toBeVisible();
@@ -86,7 +89,7 @@ describe('approval routes with real review actions and HTTP state', () => {
     remembered = [{ ...approval, status: 'approved', persistence: 'permanent', approved_at: decidedAt }];
     await act(async () => decision.resolve({ body: { data: { id: approval.id, status: 'approved', persistence: 'permanent', approved_at: decidedAt } } }));
     expect(await screen.findByText("You're all caught up")).toBeVisible();
-    await user.click(screen.getByRole('tab', { name: 'Remembered' }));
+    await user.click(screen.getByRole('tab', { name: /^Remembered/ }));
     await waitFor(() => expect(window.location.pathname).toBe('/approvals/remembered'));
     const row = await screen.findByTestId('standing-decision-row');
     expect(row).toHaveTextContent('read_file');
@@ -114,12 +117,13 @@ describe('approval routes with real review actions and HTTP state', () => {
     });
     await user.click(await screen.findByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'For this session' }));
+    await user.click(screen.getByRole('button', { name: 'Approve for this session' }));
     expect(await screen.findByText('The broker could not validate this scope. Adjust the scope or try the preview again.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeDisabled();
     expect(requests.mock.calls.filter(([config]) => config.url === `${detailPath}/approve`)).toHaveLength(0);
     expect(screen.queryByTestId('approval-outcome')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Back' }));
-    expect(screen.getByRole('button', { name: 'Approve once' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Approve for this session' })).toBeEnabled();
     expect(requests.mock.calls.filter(([config]) => config.method === 'post')).toHaveLength(1);
   });
 

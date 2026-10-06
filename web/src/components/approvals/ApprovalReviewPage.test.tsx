@@ -139,24 +139,42 @@ describe('ApprovalReviewPage', () => {
     expect(screen.getByRole('button', { name: 'Deny', exact: true })).toHaveAttribute('data-variant', 'outline');
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     expect(await screen.findByRole('menuitem', { name: 'For this session' })).toBeVisible();
-    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'For this session' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Approve once' })).toHaveFocus());
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Approve options' })).toHaveFocus());
     expect(callbacks.onApprove).not.toHaveBeenCalled();
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
   });
 
-  it.each([['session', 'For this session'], ['permanent', 'Always…']] as const)('requires server preview and explicit confirmation for %s', async (persistence, label) => {
+  it.each([['session', 'For this session', 'Approve for this session'], ['permanent', 'Always…', 'Always approve']] as const)('selects %s without opening its editor until the main action is clicked', async (persistence, option, action) => {
     const user = userEvent.setup();
     const callbacks = props();
     render(<ApprovalReviewPage {...callbacks} />);
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
-    await user.click(await screen.findByRole('menuitem', { name: label }));
-    expect(screen.getByRole('button', { name: 'Back' })).toBeVisible();
+    await user.click(await screen.findByRole('menuitem', { name: option }));
+    expect(screen.queryByRole('button', { name: 'Confirm approval' })).not.toBeInTheDocument();
+    expect(approvalApi.previewApprovalScope).not.toHaveBeenCalled();
     expect(callbacks.onApprove).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: action }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Confirm approval' }));
     expect(callbacks.onApprove).toHaveBeenCalledWith({ persistence, params_pattern: approval.params_pattern });
+  });
+
+  it('selects permanent denial without opening confirmation and can switch back to deny once', async () => {
+    const user = userEvent.setup();
+    const callbacks = props();
+    render(<ApprovalReviewPage {...callbacks} />);
+    await user.click(screen.getByRole('button', { name: 'Deny options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Always deny…' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(callbacks.onDeny).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Always deny', exact: true }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Deny options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Deny', exact: true }));
+    await user.click(screen.getByRole('button', { name: 'Deny', exact: true }));
+    expect(callbacks.onDeny).toHaveBeenCalledWith();
   });
 
   it('does not reopen a decision menu when returning from the scope editor', async () => {
@@ -164,9 +182,10 @@ describe('ApprovalReviewPage', () => {
     render(<ApprovalReviewPage {...props()} />);
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'For this session' }));
+    await user.click(screen.getByRole('button', { name: 'Approve for this session' }));
     await user.click(screen.getByRole('button', { name: 'Back' }));
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Approve once' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Approve for this session' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Deny options' })).toBeVisible();
   });
 
@@ -177,6 +196,7 @@ describe('ApprovalReviewPage', () => {
     render(<ApprovalReviewPage {...callbacks} errorCode="INVALID_PATTERN" />);
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'For this session' }));
+    await user.click(screen.getByRole('button', { name: 'Approve for this session' }));
     await waitFor(() => expect(approvalApi.previewApprovalScope).toHaveBeenCalled());
     expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: /approval scope/i }));
@@ -190,6 +210,7 @@ describe('ApprovalReviewPage', () => {
     const { rerender } = render(<ApprovalReviewPage {...callbacks} />);
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
+    await user.click(screen.getByRole('button', { name: 'Always approve' }));
     await user.click(screen.getByRole('button', { name: /approval scope/i }));
     await user.click(screen.getByRole('combobox', { name: 'Path match mode' }));
     await user.click(screen.getByRole('option', { name: 'Any value' }));
@@ -200,6 +221,7 @@ describe('ApprovalReviewPage', () => {
     expect(callbacks.onApprove).toHaveBeenCalledWith({ persistence: 'once' });
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'For this session' }));
+    await user.click(screen.getByRole('button', { name: 'Approve for this session' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Confirm approval' }));
     expect(callbacks.onApprove).toHaveBeenLastCalledWith({ persistence: 'session', params_pattern: { path: '/new' } });
@@ -212,14 +234,16 @@ describe('ApprovalReviewPage', () => {
     const trigger = screen.getByRole('button', { name: 'Deny options' });
     await user.click(trigger);
     await user.click(await screen.findByRole('menuitem', { name: 'Always deny…' }));
+    await user.click(screen.getByRole('button', { name: 'Always deny', exact: true }));
     const dialog = await screen.findByRole('dialog', { name: 'Confirm permanent denial' });
     expect(callbacks.onDeny).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Deny options' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Always deny', exact: true })).toHaveFocus());
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(callbacks.onDeny).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Deny options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Always deny…' }));
+    await user.click(screen.getByRole('button', { name: 'Always deny', exact: true }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Confirm permanent denial' }));
     expect(callbacks.onDeny).toHaveBeenCalledWith(true);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -242,6 +266,7 @@ describe('ApprovalReviewPage', () => {
     rerender(<ApprovalReviewPage {...callbacks} inboxSelected decisionEnabled />);
     await user.click(screen.getByRole('button', { name: 'Deny options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Always deny…' }));
+    await user.click(screen.getByRole('button', { name: 'Always deny', exact: true }));
     expect(await screen.findByRole('dialog', { name: 'Confirm permanent denial' })).toBeVisible();
     rerender(<ApprovalReviewPage {...callbacks} inboxSelected decisionEnabled={false} />);
     expect(screen.queryByRole('dialog', { name: 'Confirm permanent denial' })).not.toBeInTheDocument();

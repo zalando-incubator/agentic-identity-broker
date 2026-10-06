@@ -213,6 +213,7 @@ var _ = Describe("Approvals Inbox", func() {
 		Expect(readV2(authzPage.SelectedTool(ctx))).To(Equal(approval.ToolName))
 		Expect(authzPage.OpenApproveOptions(ctx)).To(Succeed())
 		Expect(authzPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
+		Expect(authzPage.ClickSelectedApproval(ctx)).To(Succeed())
 		Expect(readV2(authzPage.ApprovalScopeText(ctx))).To(ContainSubstring(approval.ToolName))
 		Expect(readV2(authzPage.HasPermanentWarning(ctx))).To(BeTrue())
 		Expect(readV2(authzPage.PendingListBounds(ctx))).To(Equal(bounds), "scope editing cannot expand the pending list")

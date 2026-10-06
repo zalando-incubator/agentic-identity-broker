@@ -159,6 +159,7 @@ var _ = Describe("Approval UI", func() {
 
 		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
 		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
+		Expect(approvalPage.ClickSelectedApproval(ctx)).To(Succeed())
 
 		hasWarning, err := approvalPage.HasPermanentWarning(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -219,6 +220,7 @@ var _ = Describe("Approval UI", func() {
 
 		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
 		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
+		Expect(approvalPage.ClickSelectedApproval(ctx)).To(Succeed())
 
 		err = approvalPage.ConfirmRememberedApproval(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -407,6 +409,7 @@ var _ = Describe("Approval UI", func() {
 		Expect(approvalPage.WaitForReviewPage(ctx)).To(Succeed())
 		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
 		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
+		Expect(approvalPage.ClickSelectedApproval(ctx)).To(Succeed())
 		Expect(approvalPage.ExpandApprovalScope(ctx)).To(Succeed())
 		hasToolRule, err := approvalPage.HasVisibleText(ctx, "Tool matching rule")
 		Expect(err).NotTo(HaveOccurred())
@@ -444,6 +447,7 @@ var _ = Describe("Approval UI", func() {
 		Expect(approvalPage.WaitForReviewPage(ctx)).To(Succeed())
 		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
 		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
+		Expect(approvalPage.ClickSelectedApproval(ctx)).To(Succeed())
 		Expect(approvalPage.ExpandApprovalScope(ctx)).To(Succeed())
 		Expect(approvalPage.SetParameterMode(ctx, "title", "Any value")).To(Succeed())
 		Eventually(func(g Gomega) {

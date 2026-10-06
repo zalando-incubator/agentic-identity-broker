@@ -182,7 +182,7 @@ func (ap *ApprovalPage) HasRiskBadge(ctx context.Context, level string) (bool, e
 
 // --- Persistence selector ---
 
-// Approval and denial options open a separate review step; they do not submit.
+// Menu choices select the main action without opening a review step or submitting.
 func (ap *ApprovalPage) OpenApproveOptions(ctx context.Context) error {
 	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Approve options", Exact: playwright.Bool(true)}), "open approval options")
 }
@@ -193,6 +193,14 @@ func (ap *ApprovalPage) OpenDenyOptions(ctx context.Context) error {
 
 func (ap *ApprovalPage) ChooseDenyOption(ctx context.Context, label string) error {
 	return ap.locatorClick(ctx, ap.pwPage().GetByRole("menuitem", playwright.PageGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "choose denial option "+label)
+}
+
+func (ap *ApprovalPage) ClickSelectedApproval(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.reviewPanel().Locator(`[data-approval-action="approve"]`), "activate selected approval")
+}
+
+func (ap *ApprovalPage) ClickSelectedDenial(ctx context.Context) error {
+	return ap.locatorClick(ctx, ap.reviewPanel().Locator(`[data-approval-action="deny"]`), "activate selected denial")
 }
 
 func (ap *ApprovalPage) ConfirmRememberedDenial(ctx context.Context) error {
@@ -394,7 +402,7 @@ func (ap *ApprovalPage) ClickApproveOnce(ctx context.Context) error {
 }
 
 func (ap *ApprovalPage) ChooseRememberDuration(ctx context.Context, label string) error {
-	return ap.locatorClick(ctx, ap.pwPage().GetByRole("menuitem", playwright.PageGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "review remembered approval for "+label)
+	return ap.locatorClick(ctx, ap.pwPage().GetByRole("menuitem", playwright.PageGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "select approval duration "+label)
 }
 
 func (ap *ApprovalPage) BackFromScopeEditor(ctx context.Context) error {
@@ -410,8 +418,7 @@ func (ap *ApprovalPage) HasDecisionActions(ctx context.Context) (bool, error) {
 		return buttons.some(button => {
 			if (button.disabled || button.closest('[inert]') || button.getClientRects().length === 0) return false;
 			const label = (button.getAttribute('aria-label') || button.innerText).trim();
-			return label.startsWith('Approve once') || label === 'Confirm approval' ||
-				(label.startsWith('Deny') && !label.startsWith('Deny options')) || label === 'Confirm permanent denial';
+			return button.hasAttribute('data-approval-action') || label === 'Confirm approval' || label === 'Confirm permanent denial';
 		});
 	}`, &actions)
 	return actions, err

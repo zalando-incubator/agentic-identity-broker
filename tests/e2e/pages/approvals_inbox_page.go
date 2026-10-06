@@ -167,7 +167,21 @@ func (tp *ApprovalsInboxPage) PressInboxKey(ctx context.Context, key string) err
 }
 
 func (tp *ApprovalsInboxPage) OpenRemembered(ctx context.Context) error {
-	return tp.locatorClick(ctx, tp.pwPage().GetByRole("tab", playwright.PageGetByRoleOptions{Name: "Remembered", Exact: playwright.Bool(true)}), "open remembered decisions")
+	return tp.locatorClick(ctx, tp.pwPage().GetByRole("tab", playwright.PageGetByRoleOptions{Name: "Remembered", Exact: playwright.Bool(false)}), "open remembered decisions")
+}
+
+func (tp *ApprovalsInboxPage) ShiftSelectRememberedText(ctx context.Context, first, second string) (string, error) {
+	if err := tp.pwPage().GetByTestId("standing-decision-row").Filter(playwright.LocatorFilterOptions{Has: tp.entityNameLocator(first)}).
+		GetByTestId("entity-name").Dblclick(); err != nil {
+		return "", fmt.Errorf("double-click remembered tool: %w", err)
+	}
+	if err := tp.pwPage().GetByTestId("standing-decision-row").Filter(playwright.LocatorFilterOptions{Has: tp.entityNameLocator(second)}).
+		GetByTestId("entity-name").Click(playwright.LocatorClickOptions{Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierShift}}); err != nil {
+		return "", fmt.Errorf("shift-click remembered tool: %w", err)
+	}
+	var selected string
+	err := tp.evaluateJSON(ctx, tp.pwPage().Locator("html"), `() => window.getSelection().toString()`, &selected)
+	return selected, err
 }
 
 func (tp *ApprovalsInboxPage) FilterRemembered(ctx context.Context, label string) error {

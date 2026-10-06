@@ -32,9 +32,9 @@ Each view shows at most one accent (`primary` variant) action. Row, menu, and di
 | `/agents/:id` decision | Allow; if a selected service lacks a connection, "Connect {Service} to continue" uses the same slot until callback return |
 | `/agents/:id` console | Save changes, only while the draft is dirty |
 | `/connections` | None |
-| `/approvals` selected request | Approve once in the detail panel, not in a list row |
+| `/approvals` selected request | Selected approval action in the detail panel, initially Approve once, not in a list row |
 | `/approvals/remembered` | None |
-| `/approvals/:id` pending | Approve once |
+| `/approvals/:id` pending | Selected approval action, initially Approve once |
 | `/approvals/:id` resolved or expired | None |
 | `/settings/appearance` | None; preferences apply immediately |
 
@@ -139,6 +139,8 @@ The re-consent duration starts from the existing grant: Until revoked for a null
 Keep the current authorization-session parameter, expiry, callback, scope-preview, and continuation checks. Deny leaves existing grants untouched. Without an existing validated cancellation path, show a local cancelled outcome instead of inventing an OAuth2 redirect.
 
 Grant durations remain Until revoked, 30 days, and a validated custom date. The control label “Until I revoke it” retains the existing null-validity behavior. Tool persistence remains once, session, or permanent with its existing semantics. No saved default preselects it. Show exact remembered scope before confirmation; keyboard shortcuts cannot bypass the scope editor or server checks.
+
+Approval and denial split menus select the main button action without opening an editor, dialog, or submitting. Activating the main action opens the existing scope review for session/permanent approval or the permanent-denial confirmation; once decisions submit directly. Selection resets with the request. Inbox `A`/`D` activate those same selected actions and retain focus, editor, expiry, principal, and overlay guards.
 
 ## Component and validation contract
 

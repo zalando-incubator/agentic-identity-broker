@@ -207,6 +207,7 @@ export const PermanentScopeEditor: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Approve options' }));
     // The decision menu mounts after a lazy import; await its accessible item before selecting it.
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'Always…' }));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Always approve' }));
     const confirm = canvas.getByRole('button', { name: 'Confirm approval' });
     await waitFor(() => expect(confirm).toBeEnabled());
     await expect(args.onPreview).toHaveBeenCalled();
@@ -220,6 +221,7 @@ export const SessionScopeEditor: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Approve options' }));
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'For this session' }));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Approve for this session' }));
     await waitFor(() => expect(canvas.getByRole('button', { name: 'Confirm approval' })).toBeEnabled());
     await expect(args.onPreview).toHaveBeenCalled();
     await expect(canvas.getByTestId('approval-scope-preview')).toHaveTextContent(approval.pattern_preview);
@@ -234,6 +236,7 @@ export const InvalidScope: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Approve options' }));
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'For this session' }));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Approve for this session' }));
     await waitFor(() => expect(args.onPreview).toHaveBeenCalled());
     await waitFor(() => expect(canvas.getByRole('button', { name: 'Confirm approval' })).toBeDisabled());
     await waitFor(() => expect(canvas.getByText(/could not validate this scope/i)).toBeVisible());
@@ -252,6 +255,7 @@ export const PermanentDenialConfirmation: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: /deny options/i }));
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: /always deny/i }));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Always deny', exact: true }));
     const dialog = await within(canvasElement.ownerDocument.body).findByRole('dialog');
     await expect(args.onDeny).not.toHaveBeenCalled();
     await userEvent.click(within(dialog).getByRole('button', { name: /confirm permanent denial/i }));

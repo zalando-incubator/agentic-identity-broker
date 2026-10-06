@@ -28,8 +28,6 @@ const defaultArgs: ViewProps = {
   standing: { data: rememberedRequests, loading: false, stale: false, onRetry: fn() },
   selectedId: calendarRequest.id,
   onSelect: fn(),
-  onApproveOnce: fn(),
-  onDenyOnce: fn(),
   review: {
     approval: calendarRequest,
     actingPrincipal: calendarRequest.principal,
@@ -210,6 +208,7 @@ export const RememberedScopeEditor: Story = {
     const before = list.getBoundingClientRect();
     await userEvent.click(canvas.getByRole('button', { name: 'Approve options' }));
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'Always…' }));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Always approve' }));
     await waitFor(() => expect(canvas.getByRole('button', { name: 'Confirm approval' })).toBeEnabled());
     await expect(args.review?.onPreview).toHaveBeenCalled();
     await userEvent.click(canvas.getByRole('button', { name: 'Confirm approval' }));
@@ -225,7 +224,7 @@ export const RememberedTab: Story = {
     const canvas = within(canvasElement);
     const rows = canvas.getAllByTestId('standing-decision-row');
     await expect(rows).toHaveLength(rememberedRequests.length);
-    await expect(canvas.getByRole('tab', { name: 'Remembered' })).toHaveAttribute('aria-selected', 'true');
+    await expect(canvas.getByRole('tab', { name: /^Remembered/ })).toHaveAttribute('aria-selected', 'true');
     for (const [index, row] of rows.entries()) {
       await expect(row).toHaveAttribute('data-layout', 'stacked');
       await expect(within(row).getByTestId('entity-name')).toHaveTextContent(rememberedRequests[index]!.tool_name);
@@ -247,10 +246,10 @@ export const TabGeometryAndControls: Story = {
     };
     const before = [bounds(heading), bounds(tabList)];
 
-    const rememberedTab = canvas.getByRole('tab', { name: 'Remembered' });
+    const rememberedTab = canvas.getByRole('tab', { name: /^Remembered/ });
     await userEvent.click(rememberedTab);
-    const remembered = canvas.getByRole('tabpanel', { name: 'Remembered' });
-    await expect(canvas.getByRole('tab', { name: 'Remembered' })).toHaveAttribute('aria-selected', 'true');
+    const remembered = canvas.getByRole('tabpanel', { name: /^Remembered/ });
+    await expect(canvas.getByRole('tab', { name: /^Remembered/ })).toHaveAttribute('aria-selected', 'true');
     await expect([bounds(heading), bounds(tabList)]).toEqual(before);
     await expect(canvas.queryByRole('button', { name: 'Approve once' })).not.toBeInTheDocument();
     await userEvent.click(within(remembered).getByRole('button', { name: 'Filter decisions: All' }));
@@ -348,14 +347,14 @@ export const KeyboardAndListStability: Story = {
     await expect(canvasElement.ownerDocument.body).toHaveFocus();
     await userEvent.keyboard('adjk{Enter}');
     await expect(args.onSelect).not.toHaveBeenCalled();
-    await expect(args.onApproveOnce).not.toHaveBeenCalled();
-    await expect(args.onDenyOnce).not.toHaveBeenCalled();
+    await expect(args.review?.onApprove).not.toHaveBeenCalled();
+    await expect(args.review?.onDeny).not.toHaveBeenCalled();
     const pendingTab = canvas.getByRole('tab', { name: /Pending/ });
     pendingTab.focus();
     await userEvent.keyboard('adjk{Enter}');
     await expect(args.onSelect).not.toHaveBeenCalled();
-    await expect(args.onApproveOnce).not.toHaveBeenCalled();
-    await expect(args.onDenyOnce).not.toHaveBeenCalled();
+    await expect(args.review?.onApprove).not.toHaveBeenCalled();
+    await expect(args.review?.onDeny).not.toHaveBeenCalled();
     const before = list.getBoundingClientRect();
     const firstRow = canvas.getAllByTestId('pending-approval-row')[0];
     const firstTitleLeft = within(firstRow).getByTestId('entity-name').getBoundingClientRect().left;
@@ -378,18 +377,19 @@ export const KeyboardAndListStability: Story = {
     await expect(fileRow).not.toHaveAttribute('data-selected');
     await expect(within(selectedDetail()).getByTestId('selected-approval-identity')).toHaveTextContent(calendarRequest.description!);
     await userEvent.keyboard('a');
-    await expect(args.onApproveOnce).toHaveBeenCalledOnce();
+    await expect(args.review?.onApprove).toHaveBeenCalledOnce();
     await userEvent.keyboard('d');
-    await expect(args.onDenyOnce).toHaveBeenCalledOnce();
+    await expect(args.review?.onDeny).toHaveBeenCalledOnce();
     await userEvent.keyboard('{Enter}');
     await expect(selectedDetail()).toHaveFocus();
     await userEvent.click(canvas.getByRole('button', { name: 'Approve options' }));
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'Always…' }));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Always approve' }));
     await waitFor(() => expect(canvas.getByRole('button', { name: 'Confirm approval' })).toBeEnabled());
     selectedDetail().focus();
     await userEvent.keyboard('adjk{Enter}');
-    await expect(args.onApproveOnce).toHaveBeenCalledOnce();
-    await expect(args.onDenyOnce).toHaveBeenCalledOnce();
+    await expect(args.review?.onApprove).toHaveBeenCalledOnce();
+    await expect(args.review?.onDeny).toHaveBeenCalledOnce();
     await expect(args.onSelect).toHaveBeenLastCalledWith(calendarRequest.id);
     const after = list.getBoundingClientRect();
     await expect([after.x, after.y, after.width, after.height]).toEqual([before.x, before.y, before.width, before.height]);
