@@ -135,7 +135,7 @@ Authorization policies that scope permissions per downstream MCP server (for exa
 ### Impact
 
 - The Input Schema example above now includes `target_server_name`.
-- `BuildOPAInput` and `BuildOPAInputHeadersOnly` both take a `targetServerName` parameter, populated only after the mandatory-metadata check has passed.
+- `NewInputBuilder` and `BuildOPAInputHeadersOnly` both take a `targetServerName` parameter, populated only after the mandatory-metadata check has passed.
 - Existing non-MCP request types (`type: "unknown"`) are unaffected; the mandatory check only applies when `protocol == "mcp"`.
 
 ---

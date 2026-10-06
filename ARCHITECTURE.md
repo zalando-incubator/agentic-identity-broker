@@ -549,15 +549,19 @@ Admin Server (Port 14000):
 - `internal/domain/oauth2server/` must **never** import adapter packages or `internal/app/`.
 - No other package in the codebase may import fosite types directly — all interaction flows through `oauth2server` domain interfaces.
 
-**Public OAuth2 endpoints** (served in all three modes; strategy behavior differs by mode):
+**Public protocol endpoints** (served on the End-User server in all modes):
 
 ```
 End-User Server (Port 8000):
-  ├── GET  /.well-known/oauth-authorization-server   (RFC 8414 discovery)
-  ├── GET  /oauth2/jwks.json                         (broker-hosted verification surface)
-  ├── GET  /oauth2/authorize                         (proxy, local, or hybrid proceed path)
-  └── POST /oauth2/token                             (proxy, local, hybrid, and token-exchange flows)
+  ├── GET  /.well-known/oauth-authorization-server                    (RFC 8414 discovery)
+  ├── GET  /.well-known/oauth-client/{service-id}                     (anonymous CIMD metadata)
+  ├── GET  /.well-known/oauth-client/{service-id}/jwks.json           (anonymous CIMD verification keys)
+  ├── GET  /oauth2/jwks.json                                          (broker token-verification surface)
+  ├── GET  /oauth2/authorize                                          (proxy, local, or hybrid proceed path)
+  └── POST /oauth2/token                                              (proxy, local, hybrid, and token-exchange flows)
 ```
+
+**Public JWK trust surfaces**: `/oauth2/jwks.json` publishes only mode-appropriate `token_signing` and upstream verification sources. It never publishes CIMD client-authentication keys. `/.well-known/oauth-client/{service-id}/jwks.json` publishes only public ES256 keys from `cimd_client_authentication`. It never publishes token-signing keys, upstream keys, private key material, or secrets.
 
 **Upstream JWKS bootstrap policy**: In `proxy` and `hybrid` modes the upstream JWKS remains required by the public `/oauth2/jwks.json` publisher and multi-agent upstream-token verification. The builder resolves upstream OAuth2 metadata at startup for those surfaces, so proxy/hybrid mode does not start with an unknown upstream verifier configuration. If that metadata discovery fails, startup fails. RFC 8693 client-assertion validation instead uses the dedicated `token_exchange.client_assertion.issuer_uri` trust anchor: it defaults to the proxy upstream in `proxy` and `hybrid` modes and works independently in `proxy`, `local`, and `hybrid` modes. A configured anchor without an explicit `jwks_uri` is discovered at startup; discovery or verifier initialization failure prevents startup. An explicit `jwks_uri` supports IdPs without discovery. After startup, upstream JWKS refresh failures return HTTP 503 from `/oauth2/jwks.json`, and client-assertion or other verification-dependent flows fail closed until their required JWKS source recovers.
 
@@ -577,6 +581,19 @@ Admin Server (Port 14000):
       ├── PUT    /{kid}/current   (promote key to current)
       └── DELETE /{kid}           (remove key)
 ```
+
+**CIMD key administrative endpoints** (served in `proxy`, `local`, and `hybrid` modes):
+
+```
+Admin Server (Port 14000):
+  └── /api/cimd-client-keys
+      ├── POST   /                (generate an ES256 CIMD key)
+      ├── GET    /                (list active CIMD keys)
+      ├── PUT    /{kid}/current   (promote a CIMD key)
+      └── DELETE /{kid}           (remove a non-signing CIMD key)
+```
+
+These routes use the existing administrative authentication boundary. They operate only on the `cimd_client_authentication` domain. Token-signing key routes remain unavailable in `proxy` mode.
 
 #### 3.1.4.2. Request Security Context Propagation (Feature 033)
 
@@ -813,6 +830,50 @@ OAuth2 /authorize request
 
 **See Also**: ADR 015 — CIMD Fetcher Architecture (SSRF hardening, caching, strategy pattern)
 
+#### 3.1.z. Outbound CIMD Client Authentication (Feature 046)
+
+**Purpose**: Authenticate the broker to a third-party OAuth2 token endpoint for a CIMD confidential service. This outbound client-authentication feature does not change **inbound CIMD client resolution**, where the broker fetches and validates an agent's client metadata document before authorization.
+
+**Service modes**: Third-party OAuth2 service authentication is explicit:
+
+| `token_endpoint_auth_method` | Service identity | Token endpoint credential |
+|---|---|---|
+| Omitted or `null` | Operator-supplied client ID | Existing encrypted shared secret |
+| `none` | Operator-supplied client ID | No client credential |
+| `private_key_jwt` | Broker-hosted HTTPS client ID URL | Fresh ES256 client assertion |
+
+`private_key_jwt` is confidential authentication. The broker generates its stable client ID URL and stores no shared secret. A service request with a caller client ID or non-empty secret is rejected before provider traffic.
+
+**Key-domain boundary (ADR 037)**: Each signing-key record has a required `key_domain`. `token_signing` signs broker-issued access tokens. `cimd_client_authentication` signs outbound CIMD client assertions. The domains share encrypted storage and lifecycle mechanics, but each has separate selection, publication, and lifecycle operations. `kid` values are globally unique, and each domain has at most one active current key.
+
+CIMD client-authentication keys use ES256 only. Their private material uses a CIMD branch-key namespace and an encryption context with one `kid` subject. The token issuer uses only `token_signing`. `/oauth2/jwks.json` uses `token_signing` and mode-appropriate upstream sources. It never uses `cimd_client_authentication`. The CIMD metadata service, public JWK publisher, and assertion signer use only `cimd_client_authentication`.
+
+On create and update, the broker provisions a service-scoped branch key before it stores the service configuration. This includes CIMD services without shared secrets. The token vault encrypts their session tokens with the service ID as authenticated context. The broker-global CIMD assertion key uses a separate `kid` subject.
+
+**Outbound client-authentication flow**:
+
+```
+Authorization-code exchange after PKCE, or token refresh
+  ↓ Select the current usable CIMD client-authentication key
+  ↓ Create a fresh ES256 client assertion with an advertised `kid`
+  ↓ Send `client_id` and one JWT-bearer `client_assertion_type` / `client_assertion` pair to the configured token endpoint
+  ↓ Store the resulting user session through the existing token vault
+```
+
+The assertion has `iss` and `sub` equal to the broker-hosted client ID URL. Its sole `aud` equals the configured token endpoint. It expires within five minutes and has a new `jti` for every attempt. Authorization-code exchange uses `AuthStyleInParams`, an empty client secret, and a fresh assertion pair inside the existing retry loop. Refresh uses the manual form-post path and adds a fresh assertion pair. No CIMD request sends a shared secret or HTTP Basic credential. A metadata, key, assertion, or provider-validation error fails the affected operation closed without an authentication downgrade.
+
+**Public documents**: The anonymous metadata route returns the broker-hosted Client ID Metadata Document only for an existing CIMD confidential service with a usable published key. Its JWK route publishes public CIMD verification keys only. Both routes use `Cache-Control: public, max-age=300`. All unavailable service states return the existing JSON `404` response without a redirect, partial document, or key material.
+
+An advertised CIMD key can remain pending during its activation grace period. Metadata and JWK routes require an effective signing key whose `kid` appears in the public JWK set. The set still includes pending and retained prior keys. A pending-only set produces JSON `404` responses.
+
+The broker caches only the public CIMD JWK set for 45 seconds per process. Each read checks the database-backed key-set revision. A revision change rebuilds the set, so another replica sees a committed key removal on its next read. Concurrent rebuilds share one bounded operation. Revision or rebuild errors never return a stale set.
+
+**SC-008 normal load**: After one warm-up request per route, ten concurrent clients send 100 anonymous requests to each public metadata and CIMD JWK route. Each request must return `200 OK`. The p95 retrieval latency for each route, measured through reading and closing the response body, must be less than one second.
+
+**Client-ID continuity**: The broker persists the complete HTTPS client ID derived from `server.enduser.public_url` and the immutable service ID. Startup validates every persisted outbound CIMD identity before key bootstrap or route serving. A changed public origin fails startup rather than rewriting an identity or returning metadata from a fallback location. Restore the prior origin for immediate recovery; any re-registration or identity migration is an explicit, separately approved operation.
+
+**See Also**: [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md)
+
 #### 3.1.y. User Impersonation Domain (Feature 037)
 
 **Purpose**: Orchestrate the broker's user-impersonation capability on `POST /oauth2/token` so a privileged client can mint a broker-issued access token that represents a specified subject while explicitly attributing the acting party via the standard `act` claim. Because the issued token carries both `sub` and `act`, this is *delegation* in RFC 8693 §1.1 terms, not impersonation; the broker keeps **impersonation** as the operator-facing capability name but implements RFC 8693 delegation semantics for actor accountability. It separately requires the repo's user-consented `UserGrant` delegation before minting. Available only in `local` mode.
@@ -896,6 +957,10 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 | ExtProc approval gate | `extproc-token-exchange` request path | May this standalone MCP tool call proceed after OPA returns `approval_required`? | OPA action, broker-issued `principal` and `agent_id`, invocation data, and cache or broker approval state | `tool_approvals.*` in ExtProc config | Disabled |
 
 All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can further restrict the request after broker token exchange. The approval gate runs only for a standalone MCP tool call after OPA returns `approval_required`.
+
+**Body input construction**: In OPA mode, ExtProc decodes each body or JSON-RPC batch element once, preserving JSON numbers with `json.Number` and the original raw bytes for `attributes.request.http.body`. MCP fields and approval invocations use the decoded value. `InputBuilder` converts Envoy-compatible headers once per request; batch elements receive independent input documents. The authorizer converts each document to `ast.Value` before policy evaluation. Header-only requests retain their separate input path, and requests without OPA do not inspect bodies.
+
+**MCP member ambiguity**: With OPA enabled, ExtProc rejects standalone requests and batch elements with repeated JSON-RPC envelope members, including case-folded variants of `jsonrpc`, `id`, `method`, and `params`. It also rejects repeated `params.name` and `params.arguments`, including case-folded variants, before policy or approval evaluation. Unique case-insensitive spellings of these members are normalized for policy input and approval correlation, while the forwarded body remains unchanged. This keeps decisions aligned with downstream struct decoders.
 
 #### 3.2.2. gRPC Server
 
@@ -1204,6 +1269,7 @@ This section lists all architectural decisions made for this project. ADRs docum
 ### Client ID Metadata Document (CIMD)
 
 - [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) - SSRF-hardened HTTP client, in-process caching, hexagonal port, strategy pattern for opaque vs URL-based client IDs
+- [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) - Separate broker key domains and public JWK trust surfaces for outbound CIMD client authentication
 
 ### Tool Approval
 - [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
@@ -1306,17 +1372,17 @@ Define any project-specific terms or acronyms.)
 
 **Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization flow - if user lacks session or scopes, authorization proceeds anyway. Allows agents to degrade gracefully when optional integrations unavailable.
 
-**ThirdpartyOAuth2Provider**: External OAuth2 provider (e.g., GitHub, Google, Microsoft) registered in the system. Each provider defines a set of OAuth scopes that can be delegated to agents. Providers have a client_id and, when confidential, a client_secret stored as a `Secret` value object. They also have a display name. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
+**ThirdpartyOAuth2Provider**: External OAuth2 provider (e.g., GitHub, Google, Microsoft) registered in the system. Each provider defines a set of OAuth scopes that can be delegated to agents. Each provider has a client ID and an authentication mode. Static confidential providers have a client secret stored as a `Secret` value object. Public and CIMD confidential providers have no secret. Providers also have a display name. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
 
 **Provider Authorization Parameters**: Static provider-defined authorization request parameters owned by a `ThirdpartyOAuth2Provider`. They are administrator-managed service configuration, not end-user input, and are appended only when the broker constructs the upstream authorization URL.
 
-**TokenEndpointAuthMethod**: Optional attribute of a `ThirdpartyOAuth2Service`. Its only accepted value is `none`. Absence makes the service confidential and retains its existing upstream authentication. `none` makes the service public and prohibits stored or upstream credentials.
+**TokenEndpointAuthMethod**: Optional attribute of a `ThirdpartyOAuth2Service`. Its accepted values are `none` and `private_key_jwt`. An omitted or `null` value selects static confidential authentication.
 
 **Public client**: A `ThirdpartyOAuth2Service` that declares `token_endpoint_auth_method: none`. It stores no client credential. At the upstream token endpoint, it sends its client identifier and PKCE code verifier but no client credential.
 
-**Confidential client**: A `ThirdpartyOAuth2Service` that declares no token endpoint authentication method. It stores an encrypted client credential. It uses the existing upstream client-authentication negotiation for code exchange and token refresh.
+**Static confidential client**: A `ThirdpartyOAuth2Service` with an omitted or `null` authentication method. It stores an encrypted client credential. It uses the existing upstream client-authentication negotiation for code exchange and token refresh.
 
-**Secret**: Immutable value object in `internal/domain/` with exclusive plaintext, encrypted, or absent state. `NewPlaintextSecret(value)`, `NewEncryptedSecret(ciphertext)`, and `NewAbsentSecret()` construct these states. The absent state represents a public service with no credential. `GetPlaintext()` fails on encrypted or absent state. `GetCiphertext()` fails on plaintext or absent state. `Redacted()` always returns `"REDACTED"`. The zero value remains plaintext-uninitialized, never absent. This prevents accidental plaintext persistence because `GetCiphertext()` errors until encryption occurs.
+**Secret**: Immutable value object in `internal/domain/` with exclusive plaintext, encrypted, or absent state. `NewPlaintextSecret(value)`, `NewEncryptedSecret(ciphertext)`, and `NewAbsentSecret()` construct these states. The absent state represents a secretless public or CIMD confidential service. `GetPlaintext()` fails on encrypted or absent state. `GetCiphertext()` fails on plaintext or absent state. `Redacted()` always returns `"REDACTED"`. The zero value remains plaintext-uninitialized, never absent. This prevents accidental plaintext persistence because `GetCiphertext()` errors until encryption occurs.
 
 **OAuth Scope**: A specific permission defined by an OAuth2 provider (e.g., "repo", "user:email"). Each scope has a scope_value (the OAuth scope string) and a human-readable description. Scopes are defined per service and validated during grant creation.
 
@@ -1380,14 +1446,15 @@ Define any project-specific terms or acronyms.)
 
 **PKCE**: Proof Key for Code Exchange (RFC 7636). Security extension for OAuth2 that prevents authorization code interception attacks. Uses code_verifier (random 32-128 byte secret, base64url-encoded) and code_challenge (SHA256 hash of verifier). Mandatory for all OAuth2 flows with no bypass allowed.
 
-**Upstream Client Authentication**: Third-party OAuth2 services use one of two modes:
+**Upstream Client Authentication**: Third-party OAuth2 services use three explicit modes:
 
-- **Confidential clients** leave `Endpoint.AuthStyle` at `AuthStyleAutoDetect` and keep the existing client-secret negotiation.
+- **Static confidential clients** leave `Endpoint.AuthStyle` at `AuthStyleAutoDetect` and keep the existing client-secret negotiation.
 - **Public clients** use an empty `ClientSecret` and pin `Endpoint.AuthStyle` to `AuthStyleInParams`. This sends `client_id` in the request body and sends no client credential.
+- **CIMD confidential services** use `private_key_jwt`, a broker-hosted client ID URL, and no shared secret. The broker uses the dedicated broker-global `cimd_client_authentication` key set.
+
+For a CIMD confidential service, code exchange uses `AuthStyleInParams`, an empty `ClientSecret`, and one fresh JWT-bearer assertion pair inside the retry loop. Refresh uses the manual form post with one fresh assertion pair. The assertion uses ES256, an advertised `kid`, and the exact client ID URL for `iss` and `sub`. Its sole audience is the configured token endpoint. It expires within five minutes and has a new `jti` for every request attempt. The broker never sends a shared secret or HTTP Basic credential for this mode. A metadata, key, assertion, or provider-validation error fails closed without fallback to public or static authentication.
 
 Every third-party authorization request uses PKCE with `code_challenge_method=S256`. This is unconditional for public and confidential clients. Every code exchange sends the flow-bound code verifier.
-
-**Token Vault**: Secure storage for encrypted OAuth2 tokens. Tokens are encrypted using AES-GCM with encryption context binding them to principal, service_id, and session_id. Uses EncryptionPort for all cryptographic operations. All tokens stored as ciphertext (BYTEA in PostgreSQL).
 
 **Session Termination**: User-initiated action to delete their OAuth2 session with a third-party service. Removes encrypted tokens from storage and displays warning about affected agents before deletion. Idempotent operation (safe to terminate non-existent sessions).
 
@@ -1463,9 +1530,11 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **StorageTransactionManager**: Shared context-based transaction contract in `internal/ports/storage.go`. Participating PostgreSQL repositories select the ambient transaction through `storageExecutor`. The in-memory factory currently returns a no-op transaction manager. The shared name does not imply memory rollback or nested transaction ownership.
 
-**SigningKey**: Asymmetric key pair (ES256 or RS256) used to sign locally-issued JWT access tokens. Private material is stored PEM-encoded and encrypted via `EncryptionPort`; the corresponding public JWK is stored alongside it for publication without decryption. Migration 033 leaves existing public JWKs nullable; the first JWKS rebuild for an older key derives and backfills its public JWK once. Newly added current keys may wait behind an `activates_at` grace period so JWKS caches can learn them before they begin signing; if local or hybrid mode starts with no active key, `Builder` calls `SigningKeyService.EnsureInitialKey` to auto-generate one immediately. Keys remain in JWKS until explicitly soft-deleted via `removed_at`. Located in `internal/domain/storage/signing_key.go`.
+**SigningKey**: An asymmetric key pair scoped to a `key_domain`. `token_signing` keys support ES256 or RS256 and sign locally-issued JWT access tokens; `cimd_client_authentication` keys support ES256 only and sign outbound client assertions. Each domain has separate current-key and activation-grace state, while `kid` remains globally unique. Private material is PEM-encoded and encrypted via `EncryptionPort`; the corresponding public JWK is stored alongside it for publication without decryption. Migration 033 leaves existing public JWKs nullable; the first JWKS rebuild for an older token-signing key derives and backfills its public JWK once. Newly added current keys may wait behind an `activates_at` grace period so JWKS caches can learn them before they begin signing; if local or hybrid mode starts with no active token-signing key, `Builder` calls `SigningKeyService.EnsureInitialKey` to auto-generate one immediately. Keys remain in their public key set until explicitly soft-deleted via `removed_at`. Located in `internal/domain/storage/signing_key.go`.
 
 **SigningKeySetVersion**: Database-backed, monotonically increasing revision of signing-key rows. Migration 033 updates it in the same transaction as each PostgreSQL key mutation; the memory adapter tracks it under the store lock. Every broker JWKS request and broker-local token validation reads the revision before using the 45-second in-process JWKS cache and rechecks after a rebuild. A failed revision read fails closed. A validation or direct JWKS request started after a key removal commits therefore rejects or omits that key on every replica under a healthy shared database; a JWKS error never serves a stale set. Requests already in flight are not covered. HTTP `max-age=300` only bounds compliant consumers of successful JWKS responses; independent verifier caches and intermediaries have no broker-enforced revocation deadline. New current keys start their 600-second activation grace immediately before persistence, leaving 270 seconds beyond one 300-second cache lifetime and a 30-second rebuild under healthy-service conditions.
+
+The outbound CIMD public JWK cache uses the same revision and 45-second lifetime. It stays separate from the broker token-signing JWK cache. It does not cache decrypted CIMD private keys.
 
 The public JWK is a verification trust anchor: write access to `signing_keys.public_jwk` must be protected as strictly as write access to signing keys, since substituting it could authorize tokens signed outside the broker without decrypting the stored private key.
 
@@ -1487,7 +1556,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **TokenClaimsExpression**: CEL expression evaluated at token issuance time to produce custom JWT claims. Has access to `agent`, `principal`, and `request` variables. Return type must be `map[string]dyn`. Base claim keys (iss, sub, iat, exp, jti, kid, agent_id, scope) are silently stripped from the result to prevent override. Compiled at startup — invalid expressions cause startup failure (fail-closed). Located in `internal/domain/oauth2server/token_claims_cel.go`.
 
-**Domain Model Invariants**: (1) One credential per agent — enforced by UNIQUE constraint on `client_credentials.client_id`. (2) Exactly one `is_current` signing key among active keys — enforced in layers: domain-service preflight in `SigningKeyService`, atomic adapter checks in memory/PostgreSQL delete and promotion paths, and PostgreSQL partial unique index `idx_signing_keys_single_current_active` from migration 021. (3) Authorization codes are single-use with 60-second TTL — enforced by atomic `MarkUsed` (UPDATE WHERE used_at IS NULL) and expiry check before token exchange.
+**Domain Model Invariants**: (1) One credential per agent — enforced by UNIQUE constraint on `client_credentials.client_id`. (2) At most one `is_current` signing key among active keys in each `key_domain` — enforced in layers: domain-service preflight, atomic adapter checks in memory/PostgreSQL delete and promotion paths, and PostgreSQL partial unique index `idx_signing_keys_single_current_active_per_domain` from migration 034. (3) Authorization codes are single-use with 60-second TTL — enforced by atomic `MarkUsed` (UPDATE WHERE used_at IS NULL) and expiry check before token exchange.
 
 **ModeStrategy**: Domain interface that determines whether a classified agent is permitted in the active OAuth server mode. Single method: `AcceptsClientType(ClientType) bool`. Three implementations wired by the builder at startup: `proxyModeStrategy` (accepts ProxyClient only), `localModeStrategy` (accepts CIMDClient and LocalClient), `hybridModeStrategy` (accepts all client types). Strategy is injected once at startup — no runtime mode checks in handlers. Located in `internal/domain/oauth2/mode_strategy.go`.
 
@@ -1511,7 +1580,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 ### JWKS Aggregation Domain
 
-**AggregatedKeySet**: The `jwk.Set` value returned by `JWKSPublisherService.PublishJWKS()` for `/oauth2/jwks.json`. It is assembled from mode-appropriate sources: local signing keys only (`local` mode), upstream keys republished verbatim (`proxy` mode), or both sets merged with kid-uniqueness enforcement (`hybrid` mode). The publisher does not persist a separate snapshot; upstream material comes from the cached `JWKSPort` adapter state, while local public keys come from `SigningKeyService`'s in-process cache. Never contains private key material.
+**AggregatedKeySet**: The `jwk.Set` value returned by `JWKSPublisherService.PublishJWKS()` for `/oauth2/jwks.json`. It is assembled from mode-appropriate `token_signing` sources: local signing keys only (`local` mode), upstream keys republished verbatim (`proxy` mode), or both sets merged with kid-uniqueness enforcement (`hybrid` mode). The publisher does not persist a separate snapshot; upstream material comes from the cached `JWKSPort` adapter state, while local public keys come from `SigningKeyService`'s in-process cache. It never contains CIMD client-authentication keys or private key material.
 
 **KeySource**: A conceptual origin of public JWK material used during `PublishJWKS()`, not a standalone interface in the current code. Two sources are used directly by the publisher service: the broker's local `SigningKeyManager` (local signing keys generated by the admin API) and the upstream JWKS adapter (`JWKSPort`) that fetches and caches the upstream authorization server's public keys. Only the sources relevant to the active `OAuthServerMode` are consulted at request time.
 
@@ -1519,7 +1588,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **JWKSPublisher**: Domain service (`JWKSPublisherService` in `internal/domain/oauth2/jwks_publisher.go`) implementing the `JWKSPublisherPort` interface. On each request it reads the current mode-appropriate key sources, merges them, enforces kid-uniqueness across local and upstream keys, tracks upstream freshness, and returns `ErrUpstreamUnavailable` or `ErrKidConflict` sentinel errors when the verification surface is incomplete. Mapped to HTTP 503 at the handler layer.
 
-### Client ID Metadata Document (CIMD) Domain
+### Inbound Client ID Metadata Document (CIMD) Domain
 
 **ClientIDMetadataDocument**: Immutable value object representing a parsed and validated CIMD JSON document fetched from a client's registered HTTPS URL. Validated at construction time: `client_id` field must exactly match the fetch URL, `redirect_uris` must not be empty, `token_endpoint_auth_method` must not be a client-secret variant, and `client_name` must not match the keyword blocklist. Located in `internal/domain/oauth2/cimd/`.
 
@@ -1537,13 +1606,25 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **ClientResolution**: DTO returned by `ClientResolver.ResolveClient()`. Contains the resolved `*storage.Agent` and an optional `*cimd.ClientIDMetadataDocument` (nil for opaque UUID client IDs). Used by `OAuth2AuthorizationService` to carry CIMD metadata into the consent session.
 
-**OPAInput**: Map-based OPA document constructed by ExtProc for policy evaluation. Starts with the opa-envoy-plugin-compatible base document and adds top-level `type`, `mcp`, `request`, and `context` keys so policies can use both Envoy-compatible fields and protocol-specific ExtProc fields.
+**OPAInput**: Map-based OPA document constructed by ExtProc for policy evaluation. Starts with the opa-envoy-plugin-compatible base document and adds top-level `type`, `mcp`, and `context` keys so policies can use both Envoy-compatible fields and protocol-specific ExtProc fields.
 
 **OPADecision**: Result of OPA policy evaluation — a structured object with an action (`allow` or `deny`) and an optional `reasons` array of strings. ExtProc parses the configured decision document and includes deny reasons in the 403 response body.
 
 **Authorizer**: Interface for evaluating authorization policies in ExtProc. Accepts an `OPAInput` document and returns an `OPADecision`. The production implementation wraps `rego.PreparedEvalQuery` or the OPA SDK depending on policy source. Authorization is disabled by constructing the server with `authorizer == nil`.
 
-**ProtocolParser**: Conceptual parsing stage implemented by `BuildOPAInput`, `BuildOPAInputHeadersOnly`, `ParseMCPMessage`, and `ParseMCPBatch`; not a standalone Go interface or struct in the current code.
+**ProtocolParser**: Conceptual stage implemented by `ParseMCPMessage` over already-decoded JSON-RPC messages; `InputBuilder` builds the body-bearing policy input, while `BuildOPAInputHeadersOnly` handles requests without a body.
+
+### Outbound CIMD Client-Authentication Domain
+
+**CIMD confidential service**: A third-party OAuth2 service that uses `private_key_jwt`. It has a broker-hosted HTTPS client ID URL and no shared secret.
+
+**CIMD client-authentication key**: A broker-global ES256 key in the `cimd_client_authentication` key domain. It signs outbound client assertions only. Its public JWK appears only through a CIMD service JWK route.
+
+**Broker-hosted Client ID Metadata Document**: The public document at a CIMD confidential service's client ID URL. It identifies the broker client, its callback URI, `private_key_jwt`, ES256, and its CIMD JWK URL. It never contains private material, secrets, user data, or token data.
+
+**Client assertion**: An ephemeral ES256 JWT that authenticates the broker to one configured third-party token endpoint. It uses a CIMD client-authentication key. It is distinct from the RFC 8693 `ClientAssertion` that authenticates a privileged token-exchange client.
+
+**Key domain**: A persisted purpose boundary for asymmetric broker keys. `token_signing` signs broker-issued access tokens. `cimd_client_authentication` signs outbound CIMD client assertions. `kid` remains globally unique across both domains.
 
 ### General Acronyms
 

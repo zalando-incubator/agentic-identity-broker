@@ -2,9 +2,9 @@ package authorization
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 
 	ext_authz_v3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
@@ -12,46 +12,47 @@ import (
 	"github.com/open-policy-agent/opa/v1/logging"
 )
 
-// BuildOPAInput constructs an OPA input document from a request's protocol, body, and headers.
-//
-// The base layer is produced by the opa-envoy-plugin's envoyauth.RequestToInput function,
-// which converts an ext_authz v3 CheckRequest into a map[string]any. This ensures full
-// compatibility with existing opa-envoy-plugin Rego libraries and policies.
-//
-// ExtProc-specific extensions (type, mcp, context) are added on top so policies can
-// reference both envoy-plugin fields (input.attributes.request.http.method) and
-// MCP-specific fields (input.mcp.tool_name).
-//
-// Dispatches on protocol to perform protocol-specific parsing:
-//   - "mcp": parses body as JSON-RPC 2.0, sets type discriminator, extracts MCP fields
-//   - any other value: type="unknown", body stored as raw string
-//
-// targetServerName populates mcp.target_server_name when protocol == "mcp" and
-// non-empty; it is agentgateway routing metadata, not an MCP protocol field, so it
-// is never set for other protocols.
-//
-// The returned OPAInput (map[string]any) is safe for direct use as the OPA input document.
-func BuildOPAInput(protocol string, body []byte, headers map[string]string, targetServerName string, contextInput ContextInput) (OPAInput, error) {
-	checkReq := buildCheckRequest(headers, body)
-	input, err := envoyauth.RequestToInput(checkReq, nopLogger{}, nil, true)
+// InputBuilder converts ExtProc headers to the opa-envoy-plugin input shape once
+// and builds an independent OPA document for each decoded body or batch element.
+type InputBuilder struct {
+	base             OPAInput
+	protocol         string
+	sessionID        string
+	targetServerName string
+	context          ContextInput
+}
+
+func NewInputBuilder(protocol string, headers map[string]string, targetServerName string, contextInput ContextInput) (*InputBuilder, error) {
+	input, err := envoyauth.RequestToInput(buildCheckRequest(headers), nopLogger{}, nil, true)
 	if err != nil {
 		return nil, fmt.Errorf("input builder: envoyauth.RequestToInput failed: %w", err)
 	}
-	input["parsed_body"] = parseJSONBody(body)
+	return &InputBuilder{base: input, protocol: protocol, sessionID: extractSessionID(headers), targetServerName: targetServerName, context: contextInput}, nil
+}
+
+func (b *InputBuilder) Build(body []byte, parsed any) (OPAInput, error) {
+	input := maps.Clone(b.base)
+	attributes := maps.Clone(input["attributes"].(map[string]any))
+	request := maps.Clone(attributes["request"].(map[string]any))
+	http := maps.Clone(request["http"].(map[string]any))
+	if len(body) > 0 {
+		http["body"] = string(body)
+	}
+	request["http"] = http
+	attributes["request"] = request
+	input["attributes"] = attributes
+	input["parsed_body"] = parsed
 	input["truncated_body"] = false
-	input["context"] = contextInput
-	switch protocol {
-	case "mcp":
-		return buildMCPInput(input, body, headers, targetServerName)
-	default:
+	input["context"] = b.context
+	if b.protocol != "mcp" {
 		input["type"] = "unknown"
 		return input, nil
 	}
+	return buildMCPInput(input, parsed, b.sessionID, b.targetServerName)
 }
 
-// buildCheckRequest constructs an ext_authz v3 CheckRequest from ExtProc header data.
-// This bridges the ExtProc gRPC types to the ext_authz types expected by the opa-envoy-plugin.
-func buildCheckRequest(headers map[string]string, body []byte) *ext_authz_v3.CheckRequest {
+// buildCheckRequest bridges ExtProc headers to the ext_authz type used by the plugin.
+func buildCheckRequest(headers map[string]string) *ext_authz_v3.CheckRequest {
 	// Filter out pseudo-headers from the headers map for the ext_authz representation.
 	// The ext_authz HttpRequest has dedicated fields for method, path, host, scheme.
 	httpHeaders := make(map[string]string, len(headers))
@@ -71,7 +72,6 @@ func buildCheckRequest(headers map[string]string, body []byte) *ext_authz_v3.Che
 					Scheme:   headers[":scheme"],
 					Protocol: headers[":protocol"],
 					Headers:  httpHeaders,
-					Body:     string(body),
 				},
 			},
 		},
@@ -90,7 +90,7 @@ func buildCheckRequest(headers map[string]string, body []byte) *ext_authz_v3.Che
 // from non-MCP traffic rather than mapping both to type="unknown".
 // For any other protocol: type="unknown".
 func BuildOPAInputHeadersOnly(protocol string, headers map[string]string, targetServerName string) (OPAInput, error) {
-	checkReq := buildCheckRequest(headers, nil)
+	checkReq := buildCheckRequest(headers)
 	input, err := envoyauth.RequestToInput(checkReq, nopLogger{}, nil, true)
 	if err != nil {
 		return nil, fmt.Errorf("input builder: envoyauth.RequestToInput failed: %w", err)
@@ -101,7 +101,14 @@ func BuildOPAInputHeadersOnly(protocol string, headers map[string]string, target
 
 	if protocol == "mcp" {
 		input["type"] = "mcp_headers_only"
-		input["mcp"] = &MCPInput{SessionID: extractSessionID(headers), TargetServerName: targetServerName}
+		mcp := map[string]any{}
+		if sessionID := extractSessionID(headers); sessionID != "" {
+			mcp["session_id"] = sessionID
+		}
+		if targetServerName != "" {
+			mcp["target_server_name"] = targetServerName
+		}
+		input["mcp"] = mcp
 	} else {
 		input["type"] = "unknown"
 	}
@@ -109,20 +116,21 @@ func BuildOPAInputHeadersOnly(protocol string, headers map[string]string, target
 }
 
 // buildMCPInput adds MCP-specific fields to the OPA input map.
-// For tools/call: type="mcp_tool_call", populates mcp.tool_name + mcp.arguments.
-// For other methods: type="mcp_method", populates mcp.method + mcp.params.
-func buildMCPInput(input OPAInput, body []byte, headers map[string]string, targetServerName string) (OPAInput, error) {
-	msg, err := ParseMCPMessage(body)
+func buildMCPInput(input OPAInput, parsed any, sessionID, targetServerName string) (OPAInput, error) {
+	msg, err := ParseMCPMessage(parsed)
 	if err != nil {
 		return nil, fmt.Errorf("input builder: %w", err)
 	}
 
-	mcpInput := &MCPInput{
-		JSONRPC:          msg.JSONRPC,
-		Method:           msg.Method,
-		ID:               msg.ID,
-		SessionID:        extractSessionID(headers),
-		TargetServerName: targetServerName,
+	mcpInput := map[string]any{"jsonrpc": msg.JSONRPC, "method": msg.Method}
+	if msg.ID != nil {
+		mcpInput["id"] = msg.ID
+	}
+	if sessionID != "" {
+		mcpInput["session_id"] = sessionID
+	}
+	if targetServerName != "" {
+		mcpInput["target_server_name"] = targetServerName
 	}
 
 	if msg.Method == "tools/call" {
@@ -136,14 +144,16 @@ func buildMCPInput(input OPAInput, body []byte, headers map[string]string, targe
 		if !ok || name == "" {
 			return nil, fmt.Errorf("input builder: tools/call missing or invalid params.name")
 		}
-		mcpInput.ToolName = name
-		if args, ok := msg.Params["arguments"].(map[string]any); ok {
-			mcpInput.Arguments = args
+		mcpInput["tool_name"] = name
+		if args, ok := msg.Params["arguments"].(map[string]any); ok && len(args) > 0 {
+			mcpInput["arguments"] = args
 		}
 		input["type"] = "mcp_tool_call"
 	} else {
 		input["type"] = "mcp_method"
-		mcpInput.Params = msg.Params
+		if len(msg.Params) > 0 {
+			mcpInput["params"] = msg.Params
+		}
 	}
 
 	input["mcp"] = mcpInput
@@ -159,19 +169,6 @@ func extractSessionID(headers map[string]string) string {
 		}
 	}
 	return ""
-}
-
-// parseJSONBody attempts to parse body as JSON. Returns the parsed value on success,
-// or nil if the body is empty or not valid JSON.
-func parseJSONBody(body []byte) any {
-	if len(body) == 0 {
-		return nil
-	}
-	var parsed any
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil
-	}
-	return parsed
 }
 
 // nopLogger implements the OPA logging.Logger interface with no-op methods.

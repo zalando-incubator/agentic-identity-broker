@@ -116,12 +116,24 @@ type OAuthScopeResponse struct {
 
 func serviceClientAuthentication(req ServiceRequest) (model.TokenEndpointAuthMethod, model.Secret, error) {
 	if req.TokenEndpointAuthMethod != nil && *req.TokenEndpointAuthMethod == "" {
-		return "", model.Secret{}, errors.New(`token_endpoint_auth_method: only "none" is accepted`)
+		return "", model.Secret{}, errors.New(`token_endpoint_auth_method: only "none" and "private_key_jwt" are accepted`)
 	}
 
 	method := model.TokenEndpointAuthMethod("")
 	if req.TokenEndpointAuthMethod != nil {
 		method = model.TokenEndpointAuthMethod(*req.TokenEndpointAuthMethod)
+	}
+	if err := method.Validate(); err != nil {
+		return "", model.Secret{}, err
+	}
+	if method.IsCIMDConfidential() {
+		if req.ClientID != "" {
+			return "", model.Secret{}, errors.New(`client_id must be absent when token_endpoint_auth_method is "private_key_jwt"`)
+		}
+		if req.ClientSecret != "" {
+			return "", model.Secret{}, errors.New(`client_secret must be absent when token_endpoint_auth_method is "private_key_jwt"`)
+		}
+		return method, model.NewAbsentSecret(), nil
 	}
 	if method == model.TokenEndpointAuthMethodNone && req.ClientSecret == "" {
 		return method, model.NewAbsentSecret(), nil
@@ -165,8 +177,9 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 
 	// Build entity from request
 	now := time.Now().UTC()
+	serviceID := id.NewServiceID()
 	entity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:                      id.NewServiceID(),
+		ID:                      serviceID,
 		CanonicalID:             req.CanonicalID,
 		DisplayName:             req.DisplayName,
 		ClientID:                id.ClientID(req.ClientID),
@@ -615,7 +628,7 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		tokenEndpointAuthMethod := string(entity.TokenEndpointAuthMethod)
 		response.TokenEndpointAuthMethod = &tokenEndpointAuthMethod
 	}
-	if !entity.IsPublicClient() {
+	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
 		clientSecret := entity.Secret.Redacted()
 		response.ClientSecret = &clientSecret
 	}

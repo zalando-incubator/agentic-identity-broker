@@ -1,13 +1,22 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import istanbul from 'vite-plugin-istanbul'
 import path from 'path'
 
-export default defineConfig({
-  plugins: [react()],
+const browserCoverage = process.env.VITE_COVERAGE === '1'
+
+export default defineConfig(({ command }) => ({
+  plugins: [react(), ...(browserCoverage && command === 'build' ? [istanbul({
+    include: 'src/**/*',
+    exclude: ['**/*.stories.*'],
+    extension: ['.ts', '.tsx'],
+    forceBuildInstrument: true,
+    cwd: __dirname,
+  })] : [])],
   base: '/',
   build: {
     outDir: 'dist',
-    sourcemap: false,
+    sourcemap: browserCoverage ? 'hidden' : false,
     minify: 'terser',
   },
   server: {
@@ -54,4 +63,4 @@ export default defineConfig({
       '@styles': path.resolve(__dirname, './src/styles'),
     },
   },
-})
+}))

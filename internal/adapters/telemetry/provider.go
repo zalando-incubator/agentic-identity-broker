@@ -265,6 +265,7 @@ func buildHTTPProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 	if cfg.Traces.Enabled {
 		traceOpts := []otlptracehttp.Option{
 			otlptracehttp.WithEndpointURL(cfg.Exporter.Endpoint),
+			otlptracehttp.WithURLPath("/v1/traces"),
 			otlptracehttp.WithTimeout(cfg.Exporter.Timeout),
 			otlptracehttp.WithHeaders(cfg.Exporter.Headers),
 		}
@@ -283,6 +284,7 @@ func buildHTTPProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 	if cfg.Metrics.Enabled {
 		metricOpts := []otlpmetrichttp.Option{
 			otlpmetrichttp.WithEndpointURL(cfg.Exporter.Endpoint),
+			otlpmetrichttp.WithURLPath("/v1/metrics"),
 			otlpmetrichttp.WithTimeout(cfg.Exporter.Timeout),
 			otlpmetrichttp.WithHeaders(cfg.Exporter.Headers),
 		}
@@ -302,6 +304,7 @@ func buildHTTPProviders(ctx context.Context, cfg ports.TelemetryConfig, res *res
 	if cfg.Logs.Enabled {
 		logOpts := []otlploghttp.Option{
 			otlploghttp.WithEndpointURL(cfg.Exporter.Endpoint),
+			otlploghttp.WithURLPath("/v1/logs"),
 			otlploghttp.WithTimeout(cfg.Exporter.Timeout),
 			otlploghttp.WithHeaders(cfg.Exporter.Headers),
 		}

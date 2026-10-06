@@ -2,6 +2,7 @@ package authorization
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 )
 
@@ -11,22 +12,23 @@ func FuzzParseMCPMessage(f *testing.F) {
 	f.Add([]byte(`[`))
 
 	f.Fuzz(func(t *testing.T, body []byte) {
-		message, err := ParseMCPMessage(body)
+		decoder := json.NewDecoder(bytes.NewReader(body))
+		decoder.UseNumber()
+		var parsed any
+		if decoder.Decode(&parsed) != nil || len(bytes.TrimSpace(body[decoder.InputOffset():])) != 0 {
+			return
+		}
+		message, err := ParseMCPMessage(parsed)
 		if err == nil {
 			assertValidMCPMessage(t, message)
 		}
-
-		messages, err := ParseMCPBatch(body)
-		if err != nil {
-			return
-		}
-
-		trimmed := bytes.TrimLeft(body, " \t\r\n")
-		if len(trimmed) > 0 && trimmed[0] == '[' && messages == nil {
-			t.Fatal("valid JSON-RPC batch parsed as nil")
-		}
-		for _, message := range messages {
-			assertValidMCPMessage(t, message)
+		if batch, ok := parsed.([]any); ok {
+			for _, element := range batch {
+				message, err := ParseMCPMessage(element)
+				if err == nil {
+					assertValidMCPMessage(t, message)
+				}
+			}
 		}
 	})
 }

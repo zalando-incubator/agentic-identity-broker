@@ -319,6 +319,10 @@ time psql -c "INSERT INTO users (id, email, created_at, updated_at)
 3. If transactions are available, batch writes in a transaction.
 4. Archive old data when the table is large.
 
+### Slow provider deletion
+
+The PostgreSQL provider-delete guard checks active `user_grants.granted_permission_sets` using JSONB containment. Migration 019 creates the `idx_grants_permission_sets` GIN index for this check. If deletion slows as grants grow, confirm that the index exists and inspect the query plan; small grant tables may still favor a sequential scan.
+
 ## Debugging with Environment Variables
 
 Enable detailed logging:
