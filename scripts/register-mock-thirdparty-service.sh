@@ -74,7 +74,7 @@ if [ "$HTTP_CODE" = "201" ]; then
     echo "  Service ID: $SERVICE_ID"
     echo ""
     echo "Next steps:"
-    echo "  1. Open: http://localhost:3000/api/third-party/$SERVICE_ID/oauth2/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fconsent"
+    echo "  1. Open: http://localhost:8000/api/third-party/$SERVICE_ID/oauth2/authorize?redirect_uri=%2Fconnections"
     echo "  2. Approve consent on mock OAuth2 page"
     echo "  3. Session established!"
     exit 0

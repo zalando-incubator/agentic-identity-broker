@@ -1,515 +1,191 @@
 # Design Token Guide
 
-Design tokens are the visual design decisions encoded as data. This guide covers the tokens available in the Refined Trust Architecture design system and how to use them.
+## Authority and delivery status
 
-## Overview
+[ADR 038](../../../../adrs/038-design-system-rebuilt-on-shadcn-radix.md) became Accepted on 2026-09-27 and its UX amendment was approved on 2026-10-04.
+This guide defines token targets for [feature 047](../../../../specs/047-redesign-consent-console/spec.md).
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current visual direction.
 
-Design tokens in this system are managed through:
+The runtime defines these tokens. The feature [plan](../../../../specs/047-redesign-consent-console/plan.md) describes implementation and CI verification. The feature [tasks](../../../../specs/047-redesign-consent-console/tasks.md) record task status.
 
-- **Tailwind CSS v4**: CSS variables via `@theme` directive
-- **CSS Custom Properties**: For runtime customization
-- **TypeScript Type System**: For compile-time safety
-- **Class Variance Authority (CVA)**: For component variants
+## One token source
 
-## Color System
+Principle XI requires centralized semantic tokens for color, type, spacing, radius, motion, and theme.
+Definitions belong under `web/src/design-system/tokens/`.
+Component CVA variants select these tokens. They do not define another palette or visual system.
 
-The color palette uses **semantic tokens** based on meaning, brand identity, and accessibility requirements. All colors meet WCAG 2.1 AA standards.
+[COLOR_GUIDE.md](COLOR_GUIDE.md#semantic-oklch-contract) owns the exact light and dark color targets.
+This guide defines their use, not a second palette. The target includes foreground, soft status and risk, selection, three borders, and focus roles.
 
-### Why Semantic Tokens?
+Implement the targets in `tokens/theme.css` and map them through `@theme inline` in `web/src/styles/index.css`.
+The runtime must define every role in both themes. Remove retired palette tokens rather than preserving compatibility aliases.
 
-Semantic tokens provide meaning-driven color naming that improves code readability and maintainability.
+## Semantic color use
 
-**✅ DO: Use semantic tokens**
+Choose a role by meaning:
 
-```tsx
-<button className="bg-trust text-white hover:bg-trust-hover">
-  Primary Action
-</button>
-<div className="bg-neutral-50 text-neutral-700 border-neutral-200">
-  Content
-</div>
-```
+| Meaning | Utility pair |
+| --- | --- |
+| Page content | `bg-background text-foreground`; console main uses `bg-console-background` |
+| Contained content | `bg-card text-card-foreground border-border-subtle` |
+| Raised content | `bg-popover text-popover-foreground border-border` |
+| Supporting text | `text-muted-foreground` on a supported surface |
+| Primary action | `bg-primary text-primary-foreground` |
+| Active navigation and selection | `bg-primary-soft text-primary-soft-foreground` |
+| Neutral hover | `bg-accent text-accent-foreground` |
+| Input, checkbox, and radio | `border-border-control` |
+| Button boundary | `border-border` |
+| Card edge and divider | `border-border-subtle` |
+| Focus indicator | `ring-ring` |
+| Sidebar | `bg-sidebar text-sidebar-foreground` |
 
-**❌ DON'T: Use extended palette classes**
+Headings use their surface's foreground, not the primary-action color.
+Soft status and risk badges use their paired background and foreground with a dot or icon. No solid status badges remain.
+Use the stronger `--border-control` only on form controls. It must meet 3:1 against their adjacent surface.
 
-### Semantic Color Tokens
-
-```typescript
-// PRIMARY - Trust & Authority (Navy)
-trust-deep:  #0A2540     // Darkest - headings, primary brand
-trust:       #1E4D6B     // Medium - primary actions, links
-trust-hover: #2b68a5     // Lighter - hover states
-trust-light: #E8F1F5     // Lightest - backgrounds, tints
-
-// ACTION - CTA (Unified with Warning)
-cta:       #D97706       // Call-to-action and warnings
-cta-hover: #B45309       // CTA hover state
-cta-light: #fef3c7       // CTA light background
-
-// SUCCESS - Emerald tones for positive actions
-success-primary: #059669 // Success state, granted permissions
-success-hover:   #047857 // Success hover state
-success-light:   #d1fae5 // Success light background
-success-dark:    #065f46 // Success dark text
-
-// ERROR - Red tones for destructive actions
-error-primary: #DC2626   // Error state, destructive actions
-error-hover:   #b91c1c   // Error hover state
-error-light:   #fee2e2   // Error light background
-error-dark:    #991b1b   // Error dark text
-
-// WARNING - Unified with CTA (Amber)
-warning-primary: #D97706 // Warning state (same as CTA)
-warning-hover:   #B45309 // Warning hover state
-warning-light:   #fef3c7 // Warning light background
-warning-dark:    #92400e // Warning dark text
-
-// INFO - Blue tones for informational content
-info-primary: #3B82F6   // Info state
-info-hover:   #2563eb   // Info hover state
-info-light:   #dbeafe   // Info light background
-info-dark:    #1e40af   // Info dark text
-
-// WARM NEUTRALS - Sophisticated cream/sand/taupe (replaces gray)
-neutral-50:  #faf9f7    // Cream - page backgrounds
-neutral-100: #f5f1ed    // Sand - section backgrounds
-neutral-200: #e8e3de    // Taupe - card borders
-neutral-300: #ddd8d1    // Light taupe - input borders
-neutral-400: #c4bdb3    // Medium taupe - placeholders
-neutral-500: #9a9591    // Medium-dark - secondary icons
-neutral-600: #6b6561    // Dark taupe - secondary text
-neutral-700: #4a4137    // Darker taupe - body text
-neutral-800: #2a251f    // Very dark - emphasized text
-neutral-900: #1a1511    // Darkest - headings (or use trust-deep)
-
-// SEMANTIC ALIASES - Contextual color names
-text-primary:   #0A2540  // Primary text (trust-deep)
-text-secondary: #6b6561  // Secondary text (neutral-600)
-text-tertiary:  #9a9591  // Tertiary text (neutral-500)
-text-disabled:  #c4bdb3  // Disabled text (neutral-400)
-
-bg-primary:   #faf9f7    // Primary background (neutral-50)
-bg-secondary: #f5f1ed    // Secondary background (neutral-100)
-bg-elevated:  #ffffff    // Elevated cards (pure white)
-
-border-primary:   #ddd8d1 // Primary borders (neutral-300)
-border-secondary: #e8e3de // Secondary borders (neutral-200)
-border-focus:     #1E4D6B // Focus ring (trust)
-```
-
-### Color Usage
-
-| Use Case            | Token                                | Example                                    |
-| ------------------- | ------------------------------------ | ------------------------------------------ |
-| Primary buttons     | bg-trust-deep                        | `<Button variant="primary">`               |
-| Success status      | bg-success-primary                   | `<Badge variant="success">Granted</Badge>` |
-| Warning/Pending     | bg-warning-primary or bg-cta         | `<Badge variant="warning">Pending</Badge>` |
-| Error/Denied        | bg-error-primary                     | `<Alert variant="error">`                  |
-| Link hover          | hover:text-trust-hover               | Navigation links                           |
-| Disabled state      | text-disabled or bg-neutral-50       | Inactive form inputs                       |
-| Borders             | border-primary or border-neutral-300 | Card outlines                              |
-| Backgrounds         | bg-primary or bg-neutral-50          | Page backgrounds                           |
-| Section backgrounds | bg-secondary or bg-neutral-100       | Section containers                         |
-| Body text           | text-neutral-700                     | Paragraph text                             |
-| Headings (h1-h2)    | text-trust-deep                      | Major headings for authority               |
-| Headings (h3-h6)    | text-trust                           | Minor headings, subsections                |
-
-### ⚠️ Important: Semantic Token Naming Clarification
-
-**Always use explicit color tokens for headings, not semantic aliases:**
+Application examples take their labels from `@copy`. Primitives receive strings through props or children.
 
 ```tsx
-// ❌ DON'T - Ambiguous semantic alias
-<h1 className="text-primary">Dashboard</h1>
-
-// ✅ DO - Explicit brand color
-<h1 className="text-trust-deep">Dashboard</h1>
-<h3 className="text-trust">Subsection</h3>
-```
-
-**Why `text-primary` is confusing for headings:**
-
-- `text-primary` points to `trust-deep` (#0A2540) technically, but semantically it's unclear
-- "Primary" could mean "primary text" (body text) OR "primary brand color" (headings)
-- This creates ambiguity that makes code harder to maintain
-
-**Semantic Token Rules:**
-
-- `text-trust-deep` → h1, h2 (major sections, authority)
-- `text-trust` → h3-h6 (minor sections, subsections)
-- `text-secondary` → Supporting text, metadata (neutral-600)
-- `text-tertiary` → Labels, timestamps (neutral-500)
-- `text-neutral-700` → Body paragraphs (explicit and clear)
-
-**When to use semantic aliases:**
-
-- ✅ `text-secondary` for supporting text (consistent, clear intent)
-- ✅ `text-tertiary` for metadata (consistent, clear intent)
-- ✅ `bg-primary` / `bg-secondary` for backgrounds (layouts, not brand)
-- ❌ `text-primary` for headings (too ambiguous - use `text-trust-deep` instead)
-
-See [COMMON_MISTAKES.md](./COMMON_MISTAKES.md) (Mistake #1) and [DECISION_TREES.md](./DECISION_TREES.md) (Text Color Hierarchy) for detailed guidance.
-
-### Color Accessibility
-
-All semantic colors meet WCAG AA contrast requirements:
-
-- Text contrast: Minimum 4.5:1 (for body text)
-- UI component contrast: Minimum 3:1 (for graphics)
-- Use ColorSnack or WebAIM for verification
-
-**When choosing colors:**
-
-1. Prefer semantic tokens (trust, success, warning, error)
-2. Use warm neutrals (neutral-\*) instead of standard grays
-3. Check contrast with intended background (WCAG AA minimum 4.5:1 for text)
-4. Consider colorblind accessibility (don't rely on color alone)
-5. Test with accessibility tools (WebAIM, ColorSnack)
-
-## Spacing System
-
-Tailwind's spacing scale follows a consistent 4px base unit (0.25rem).
-
-```typescript
-// Core Spacing Scale
-0; // 0px       - No space (useful for removing margins)
-px; // 1px       - Divider lines
-0.5; // 2px       - Very tight spacing
-1; // 4px       - xs: Extra small spacing
-2; // 8px       - Extra small
-3; // 12px      - Small
-4; // 16px      - md: Medium (default)
-6; // 24px      - lg: Large
-8; // 32px      - Extra large
-10; // 40px      - XXL
-12; // 48px      - XXXL
-16; // 64px      - 2XL
-```
-
-### Named Spacing (in components)
-
-Components use semantic names that map to this scale:
-
-```typescript
-size: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
-
-// Typical mapping
-'xs' → 0.5  (2px)   or  2 (8px)    - Compact
-'sm' → 3    (12px)                 - Small
-'md' → 4    (16px)                 - Default
-'lg' → 6    (24px)                 - Large
-'xl' → 8    (32px)                 - Extra large
-```
-
-### Spacing Usage
-
-```tsx
-// Padding (internal spacing)
-<Card padding="lg" />           // 24px internal padding
-<Button size="sm" />            // Compact button
-
-// Gaps (space between children)
-<Stack gap="md" />              // 16px between items
-<Grid gap="lg" />               // 24px between grid cells
-
-// Margins (external spacing)
-<div className="mb-4" />        // 16px margin bottom
-<section className="my-6" />    // 24px margin top/bottom
-
-// Margins within components
-'mt-1' → 4px  (top)
-'mt-2' → 8px  (top)
-'mb-3' → 12px (bottom)
-'mb-4' → 16px (bottom)
-```
-
-## Typography System
-
-Typography is managed through semantic HTML and Tailwind's text utilities.
-
-### Font Families
-
-```typescript
-// Display/Headings (Brand Primary)
-'font-display' → Crimson Pro, serif
-  - Weight 700 (bold) for main headings
-  - Weight 600 (semibold) for subheadings
-  - Letter-spacing: -0.02em for authority
-  - Usage: h1, h2, h3, page titles, modal headers
-
-// Body/UI (Humanist Sans-Serif)
-'font-sans' → Manrope, sans-serif
-  - Weight 400 (regular) for body text
-  - Weight 500 (medium) for emphasized text
-  - Letter-spacing: -0.01em for readability
-  - Usage: Body text, buttons, form labels, descriptions
-  - Base size: 1rem (16px)
-  - Line height: 1.5 for comfortable reading
-
-// Monospace (Technical Values)
-'font-mono' → JetBrains Mono, monospace
-  - Weight 500 (medium) for technical content
-  - Usage: OAuth scopes, agent IDs, API tokens, code blocks
-  - Typically displayed with subtle background highlight
-```
-
-**Rationale:**
-
-- **Crimson Pro** conveys trust, authority, and seriousness—essential for consent UI
-- **Manrope** provides excellent readability and humanist approachability
-- **JetBrains Mono** offers clarity for technical values while maintaining visual consistency
-
-### Font Sizes & Line Heights
-
-```typescript
-// Tailwind text-* scale
-'text-xs'     → 12px  / 1rem      (overline text)
-'text-sm'     → 14px  / 1.25rem   (small/secondary)
-'text-base'   → 16px  / 1.5rem    (body text - default)
-'text-lg'     → 18px  / 1.75rem   (heading 4)
-'text-xl'     → 20px  / 1.75rem   (heading 3)
-'text-2xl'    → 24px  / 2rem      (heading 2)
-'text-3xl'    → 30px  / 2.25rem   (heading 1)
-'text-4xl'    → 36px  / 2.25rem   (display)
-```
-
-### Font Weights
-
-```typescript
-'font-normal'   → 400   (regular text)
-'font-medium'   → 500   (emphasized text)
-'font-semibold' → 600   (strong emphasis)
-'font-bold'     → 700   (headings)
-```
-
-### Typography Usage
-
-```tsx
-// Semantic HTML + Tailwind
-<h1 className="text-4xl font-bold text-trust-deep">Main Title</h1>
-<h2 className="text-2xl font-bold text-trust-deep">Section</h2>
-<h3 className="text-xl font-semibold text-trust">Subsection</h3>
-<p className="text-base font-normal text-neutral-700">Body text</p>
-<p className="text-sm text-secondary">Secondary text (neutral-600)</p>
-<span className="text-xs text-tertiary">Overline (neutral-500)</span>
-
-// Component sizing
-<Button size="sm" />    // Smaller text inside
-<Badge size="md" />     // Default text sizing
-<Heading level={2} />   // Semantic heading level
-```
-
-## Shadow System
-
-Shadows provide depth and hierarchy in the interface.
-
-```typescript
-// Tailwind shadow scale
-'shadow-sm'        // Subtle (cards, small elements)
-'shadow'           // Default (most interactive elements)
-'shadow-md'        // Medium (modals, dropdowns)
-'shadow-lg'        // Large (overlays, prominent elements)
-'shadow-lg-premium' // Custom premium shadow (design system specific)
-
-// Shadow usage
-<Card className="shadow" />           // Default card shadow
-<Modal className="shadow-lg" />       // Prominent modal
-<button className="hover:shadow-md" /> // Hover elevation
-```
-
-## Border Radius
-
-Consistent rounded corners throughout the system.
-
-```typescript
-// Tailwind radius scale
-'rounded-none'  → 0px       (sharp corners)
-'rounded-sm'    → 0.125rem  (1px - very subtle)
-'rounded'       → 0.25rem   (4px - default)
-'rounded-md'    → 0.375rem  (6px)
-'rounded-lg'    → 0.5rem    (8px - prominent)
-'rounded-xl'    → 0.75rem   (12px)
-'rounded-full'  → 9999px    (circular)
-
-// Typical usage
-<Card className="rounded" />           // 4px (default)
-<Badge className="rounded-md" />       // 6px
-<Avatar className="rounded-lg" />      // 8px
-<Button className="rounded-lg" />      // 8px
-<Checkbox className="rounded-sm" />    // 1px (checkbox)
-```
-
-## Transitions & Animations
-
-Smooth, purposeful animations that enhance usability.
-
-```typescript
-// Transition durations
-150ms   → Fast interactions (hover effects, small changes)
-300ms   → Default (most component animations)
-500ms   → Slow (page transitions, large changes)
-
-// Easing functions
-'cubic-bezier(0.4, 0, 0.2, 1)'  → Default (smooth)
-'cubic-bezier(0.4, 0, 1, 1)'     → Ease-out (enter)
-'cubic-bezier(0, 0, 0.2, 1)'     → Ease-in (exit)
-
-// Usage
-<Transition duration={300} easing="ease-out">
-  <Modal />
-</Transition>
-```
-
-## Z-Index Scale
-
-Layering strategy for overlays and stacked elements.
-
-```typescript
-// Tailwind z-index scale
-'z-0'   → 0       (default)
-'z-10'  → 10      (tooltips, popovers)
-'z-20'  → 20      (dropdowns)
-'z-30'  → 30      (modals, important overlays)
-'z-40'  → 40      (notification toasts)
-'z-50'  → 50      (full-page overlays, critical modals)
-
-// Component defaults
-Tooltip  → z-10
-Dropdown → z-50
-Modal    → z-50
-Toast    → z-40
-Popover  → z-20
-```
-
-## Using Design Tokens in Code
-
-### Via Tailwind Classes (Recommended)
-
-```tsx
-// Most common approach
-<div className="bg-primary text-neutral-700 p-4 rounded-lg shadow">
-  <h2 className="text-2xl font-bold text-trust-deep">Title</h2>
-  <p className="mt-2 text-sm text-secondary">Description</p>
-</div>
-```
-
-### Via CSS Variables
-
-```tsx
-// If needing dynamic theming
-<div
-  style={{
-    backgroundColor: 'var(--color-bg-primary)',
-    color: 'var(--color-text-primary)',
-    padding: 'var(--spacing-4)',
-    borderRadius: 'var(--radius-lg)',
-  }}
->
+<section className="space-y-4 rounded-xl border border-border-subtle bg-card p-4 text-card-foreground">
+  <h2 className="font-display text-xl font-semibold">{title}</h2>
+  <p className="text-sm text-muted-foreground">{description}</p>
   {children}
-</div>
+</section>
 ```
 
-### Via Component Props
+This snippet illustrates tokens, not a second Card implementation or observed runtime behavior.
 
-```tsx
-// Most semantic approach
-<Card padding="lg" hover="lift" backgroundColor="neutral-50">
-  <heading>Title</heading>
-  <p>Description</p>
-</Card>
+## Button variants
 
-<Stack gap="md" direction="column" align="start">
-  <Button variant="primary" size="lg" />
-  <Button variant="secondary" size="lg" />
-</Stack>
-```
+| Variant | Role |
+| --- | --- |
+| `primary` | The view's one accent action, including Connect to continue when consent is blocked |
+| `secondary` | Supporting action on a neutral surface |
+| `outline` | Visible supporting action, including row actions and consent Deny |
+| `ghost` | Tooltip-labeled icon control, never an invisible row action |
+| `destructive-outline` | Resting Revoke or Disconnect, with confirmation before mutation |
+| `destructive` | Filled destructive confirmation inside Dialog |
 
-## Token Customization
+Consent uses Allow when ready, or “Connect {Service} to continue” when a selected service needs connection.
+Tool review uses Approve once. Approval inbox decisions appear in the detail panel, not on expanding rows.
+Use 32 px outline row actions and 40 px consent actions. Primary and destructive hover shift lightness by 0.04 and press scales to 0.98.
+Do not underline a button on hover. Use semantic Button variants rather than per-page restyling.
 
-### For Application-Specific Theming
+## Typography
 
-1. **Color overrides** in `tailwind.config.ts`:
+| Token | Family | Use |
+| --- | --- | --- |
+| `--font-display` / `font-display` | Zalando Sans Variable | Titles, decision names, empty-state headings |
+| `--font-sans` / `font-sans` | Inter Variable | Body text, controls, navigation, dates, counts |
+| `--font-mono` / `font-mono` | JetBrains Mono Variable | Tool names, identifiers, scope patterns, existing scopes, raw arguments |
 
-```typescript
-export default {
-  theme: {
-    extend: {
-      colors: {
-        'brand-primary': '#0A2540', // Override trust-deep
-        'brand-accent': '#D97706', // Override cta
-      },
-    },
-  },
-};
-```
+Use normal-width Zalando Sans. Self-host the WOFF2 files and licenses in `web/public/fonts/`.
+Preload only Zalando Sans and Inter latin subsets. Load the mono face only where needed.
+Keep `font-display: swap` and system fallbacks. Do not load remote fonts.
 
-2. **CSS variable overrides**:
+| Size | Use |
+| --- | --- |
+| 12 px | Badge text and fine metadata |
+| 13 px | Supporting metadata |
+| 14 px | Console base, controls, entity titles |
+| 16 px | Agent and connection-card names, consent headings, and long-form body where needed |
+| 20 px | Semibold page titles |
+| 24 px | Large decision heading only where it fits |
 
-```css
-:root {
-  --color-trust-deep: #0a2540;
-  --color-cta: #d97706;
-}
+Set consent-card body text to 15 px. Use tabular Inter figures for dates and counts, not the mono face.
+Cap running text at `70ch`. Keep technical identifiers exact even when the visible text truncates.
+Use relative times for changed, connected, and requested metadata, with an absolute date in the tooltip. Use absolute dates for expiry.
+Keep a logical heading order and 4.5:1 text contrast in both themes.
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg-primary: #0d1829; /* Dark navy */
-    --color-text-primary: #faf9f7; /* Cream text */
-  }
-}
-```
+## Spacing, borders, and radius
 
-### Respecting User Preferences
+Use the 4 px base with only 4, 8, 12, 16, 24, 32, and 48 px steps.
+Use 4–12 px inside components, 16–24 px between components, and 32–48 px between sections.
 
-```typescript
-// Dark mode support (automatic via Tailwind)
-<div className="dark:bg-neutral-900 dark:text-white">
-  {children}
-</div>
+| Element | Radius target |
+| --- | --- |
+| Badge | 6 px |
+| Button, input, select, rounded-square avatar | 8 px |
+| Card, alert, inset permission panel | 12 px |
+| Dialog, consent card | 16 px |
 
-// Reduced motion support
-<div className="motion-safe:animate-in motion-reduce:animate-none">
-  {children}
-</div>
+People retain circular avatars. Agents and services use a rounded square, with a local fallback tint from eight deterministic ID-based hues.
+Badge height is 20 px with 12 px medium text, a leading 6 px dot or 12 px icon, and 6 px horizontal padding.
+Place at most one badge on the entity title baseline or in a fixed status slot. Do not give it a separate wrapping row.
 
-// High contrast support (automatic via semantic colors)
-```
+Center console content at a maximum width of 1120 px. Use 24 px side padding, or 16 px below 768 px.
+Within the container use a 12-column grid with 24 px gutters; detail views use an 8 + 4 split.
+Card grids use `repeat(auto-fill, minmax(320px, 1fr))` and a 16 px gap.
+Compact agent cards stay 120 px tall at supported unzoomed widths, with 12 px outer insets, 16 px semibold names, and 12 px expiry and relative change metadata. Details and Revoke are separate actions below the identity. At very narrow zoomed widths, preserve readable metadata and controls through reflow rather than clipping.
+Consent uses a 480 px card and a pinned footer. Group the full wordmark above it and a quiet Signed in as line beneath it, outside the form. Below 640 px, the card is full bleed and reserves the branding/account space while keeping the decision actions visible.
 
-## Accessibility with Design Tokens
+Use a 1 px subtle border for card containment. Keep ordinary cards flat. Use `shadow-overlay` (`--elevation-overlay`) for floating menus, popovers, dialogs, sheets, tooltips, selects, and toasts; use `shadow-focal` (`--elevation-focal`) for the consent card and sticky save bar. Both tokens have explicit light and darker-shadow dark values. The consent card adds a 1 px ring; its page alone permits a static top accent wash at 3–4% opacity under ADR 038's 2026-10-05 amendment. Do not add other decorative gradients or page-entry animation.
+At 320 px and 200% zoom, neither shell permits horizontal page scrolling. Target sizes and focus clearance take precedence over density.
 
-1. **Always verify color contrast** when using custom colors (WCAG AA: 4.5:1 for text, 3:1 for UI components)
-2. **Use semantic tokens** (trust, success, warning, error) which are pre-verified for WCAG 2.1 AA
-3. **Use warm neutrals** (neutral-\*) for text hierarchy - pre-verified contrast ratios
-4. **Avoid color-only encoding** - use icons, text, or patterns for status communication
-5. **Test with ColorSnack** or WebAIM Contrast Checker for custom combinations
-6. **Respect prefers-reduced-motion** in animations and transitions
+## Motion tokens
 
-## Token Maintenance
+[MOTION_GUIDE.md](MOTION_GUIDE.md) defines the motion behavior.
 
-Design tokens are maintained in:
+| Token | Value | Use |
+| --- | --- | --- |
+| `--motion-feedback` | `120ms` | Hover feedback |
+| `--motion-control` | `160ms` | Controls and disclosure |
+| `--motion-overlay` | `200ms` | Overlays |
+| `--motion-emphasis` | `320ms` | Success and illustrative changes |
+| `--motion-ease` | `cubic-bezier(0.2, 0, 0, 1)` | CSS and shared Motion transitions |
 
-- `tailwind.config.ts` - Tailwind configuration
-- Component CVA files - Component-specific variants
-- Storybook docs - Visual reference
-- This guide - Documentation
+Use 75% of the entry duration for an exit. The shared `consoleMotion` constants module reads these values for console Motion transitions.
+Console routes can use Motion for card and row exits. Decision routes use owned CSS animations only.
+Under reduced motion, remove movement and icon animation but preserve opacity, color feedback, focus, and announcements.
 
-When proposing new tokens:
+## Themes and layering
 
-1. Identify the design need
-2. Check if existing token works
-3. Verify accessibility compliance
-4. Document in this guide
-5. Update Tailwind config
-6. Test across components
+The preference key is `aib.theme`, with `light`, `dark`, and `system` values.
+Missing or invalid values resolve to `system`.
+Explicit light or dark takes precedence over system appearance.
+Only system mode follows later OS changes.
+The collapsed sidebar uses `aib.sidebar-collapsed`. The default view uses `aib.collection-view-default`.
+Per-page grid/list choices use `aib.collection-view.agents` and `aib.collection-view.connections`.
 
-## Summary
+The first-paint script and provider must use the same preference contract.
+CSS applies its dark fallback only to `:root:not([data-theme])`.
+Native controls, scrollbars, and portaled overlays must use the resolved theme.
+The light sidebar resolves `--sidebar` to `--muted`. Dark mode keeps the sidebar on `--background` and resolves `--console-background` to `--card`. Floating layers retain the lighter dark `--popover` surface.
 
-Design tokens provide:
+Keep stacking order in shared components rather than per-page overrides.
+Dialog and Sheet must keep their controls and focus indicators above inactive content.
+Nested menus and popovers must remain usable within the active overlay.
+Sticky draft controls must not hide focused content.
 
-- **Consistency** across all applications
-- **Accessibility** through verified color and sizing choices
-- **Flexibility** to customize for brand or context
-- **Maintainability** through centralized management
-- **Performance** via efficient CSS generation
+## Raw-palette ESLint rule
 
-By using design tokens consistently, we ensure a cohesive, accessible, and maintainable user experience.
+[COLOR_GUIDE.md](COLOR_GUIDE.md#raw-palette-enforcement) owns the detailed T046 rule contract.
+`web/eslint-rules/no-raw-palette.js` must report errors for `src/**/*.{ts,tsx}` through the existing flat ESLint configuration.
+`web-lint` and the CI web job must run it.
+
+The rule rejects raw palette utilities and arbitrary literal colors.
+It inspects JSX class strings, template literals, `cn()`, `clsx()`, and CVA base and variant values.
+Variants, opacity suffixes, and important modifiers do not exempt a class.
+Dynamic color-class construction cannot bypass the rule.
+Semantic utilities, `currentColor`, and appropriate transparent presentation remain valid.
+
+Do not add legacy exceptions or move raw values into inline styles to bypass enforcement.
+Raw color definitions belong only in tokens and local brand artwork.
+If a semantic role is missing, define it centrally before component use.
+
+## Change and verification requirements
+
+Before component work, read [DECISION_TREES.md](DECISION_TREES.md), [COMPONENT_PAIRING_GUIDE.md](COMPONENT_PAIRING_GUIDE.md), and [COMMON_MISTAKES.md](COMMON_MISTAKES.md).
+Reuse the existing design-system categories, aliases, CVA, and `cn()` utility.
+Do not create a competing component library.
+Keep Command and Motion out of barrels imported by decision routes. Import their concrete modules only in console consumers.
+
+Principle XI keeps WCAG 2.1 AA as the floor. Feature 047 targets WCAG 2.2 AA.
+Measure text at 4.5:1 and required boundaries and focus indicators at 3:1 in both themes.
+Every component story needs both-theme accessibility checks. Reviewed pixel references cover eligible light 1280 × 720 cases only, under [ADR 040](../../../../adrs/040-canonical-light-visual-reference-gate.md).
+Both accessibility and visual-regression failures must block CI.
+
+Token calculations do not prove rendered compliance.
+Browser verification must cover focus, forced colors, zoom, reduced motion, and theme precedence.
+Record results separately from the contract.
+For a change to the visual direction, obtain ADR acceptance before implementation.

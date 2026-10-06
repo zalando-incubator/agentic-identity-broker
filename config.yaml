@@ -12,8 +12,8 @@ server:
   enduser:
     port: 8000
     bind: "::" # Dual-stack (IPv6 with IPv4 fallback)
-    # Use port 3000, which points to the Vite dev server locally.
-    public_url: http://localhost:3000
+    # Native runtime serves the built frontend on the end-user port.
+    public_url: http://localhost:8000
     # Pre-auth mode trusts principals from reverse proxy headers.
     authentication:
       preauth:

@@ -100,7 +100,7 @@ AGENT_RESPONSE=$(curl -s -X POST "${ADMIN_API}/agents" \
     "description": "Test client for OAuth2 authorization flow with upstream mock server on port 9001",
     "governance_url": "https://example.com/oauth2-test/governance",
     "user_documentation_url": "https://example.com/oauth2-test/docs",
-    "agent_interface_url": "http://localhost:3000",
+    "agent_interface_url": "http://localhost:8000",
     "redirect_uris": ["http://localhost:9002/oauth2/callback"]
   }')
 

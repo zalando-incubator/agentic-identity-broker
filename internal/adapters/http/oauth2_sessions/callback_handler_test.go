@@ -57,7 +57,7 @@ func TestHandleCallback_RejectsStateFromOtherPrincipalOrService(t *testing.T) {
 	state, err := service.CreateStateToken(&oauth2session.OAuth2StateTokenClaims{
 		Principal: owner, ServiceID: serviceID,
 		PKCEVerifier: strings.Repeat("a", 43),
-		RedirectURI:  "https://broker.example.com/sessions",
+		RedirectURI:  "https://broker.example.com/connections",
 		IssuedAt:     time.Now(), ExpiresAt: time.Now().Add(time.Minute),
 	})
 	require.NoError(t, err)

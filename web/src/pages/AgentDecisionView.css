@@ -1,0 +1,7 @@
+[data-slot='decision-shell']:has(.consent-decision-surface) {
+  background-image: linear-gradient(to bottom, color-mix(in oklch, var(--primary) 4%, transparent), transparent 16rem);
+}
+
+@media (forced-colors: active) {
+  .consent-decision-surface { border: 1px solid CanvasText; }
+}

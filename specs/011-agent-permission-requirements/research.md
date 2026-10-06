@@ -145,6 +145,8 @@ func (h *OAuth2Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 
 ### 4. Consent UI Patterns for Requirement Display
 
+> **Historical visual scope**: The colors and Principle XI rationale below record this feature's original design review, not a current constitutional aesthetic mandate. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 **Question**: How should the consent screen UI display service requirements (mandatory vs optional, read-only scopes)?
 
 **Decision**: Use design system components with semantic status indicators and grouped layout

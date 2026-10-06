@@ -1,301 +1,52 @@
-/**
- * Card Component
+/*
+ * Adapted from shadcn/ui (https://github.com/shadcn-ui/ui).
+ * MIT License — Copyright (c) 2023 shadcn
  *
- * Flexible container component for displaying grouped content.
- * Follows the "Refined Trust Architecture" design system.
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * Features:
- * - Customizable padding (none, sm, md, lg)
- * - 2 border variants (subtle ring, bordered)
- * - 2 hover states (none, lift)
- * - Optional clickable/interactive state
- * - Header, body, and footer sections
- * - Customizable background colors
- * - Optional dividers between sections
- * - Icon slot in header
- * - WCAG 2.1 AA compliant
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
+import type { ComponentProps } from 'react';
+import { cn } from '@design-system/utils/cn';
 
-import React from 'react';
-import { cva, type VariantProps } from 'class-variance-authority';
-import { cn } from '@design-system/utils';
-import { Stack } from '@design-system/components/layout/Stack';
-import { Divider } from '@design-system/components/primitives/Divider';
-
-const cardVariants = cva(
-  // Base styles - applied to all variants
-  'rounded-xl transition-all duration-300',
-  {
-    variants: {
-      padding: {
-        // None: No padding - full control to content
-        none: '',
-
-        // Compact: 16px - Dense cards
-        compact: 'p-4',
-
-        // Default: 24px - Standard spacing (default)
-        default: 'p-6',
-
-        // Spacious: 32px - Generous spacing
-        spacious: 'p-8',
-      },
-      border: {
-        // Subtle: Ring-based border for softer appearance
-        subtle: 'ring-1 ring-neutral-200',
-
-        // Bordered: Solid border for stronger definition
-        bordered: 'border border-neutral-300',
-      },
-      hover: {
-        // None: Static card
-        none: '',
-
-        // Lift: Subtle shadow increase on hover
-        lift: 'hover:shadow-lg hover:-translate-y-0.5',
-      },
-      backgroundColor: {
-        // White: Pure white background (default)
-        white: 'bg-white',
-
-        // Gray-50: Subtle gray background
-        'neutral-50': 'bg-neutral-50',
-
-        // Blue-50: Light blue background for highlights
-        'blue-50': 'bg-blue-50',
-      },
-    },
-    defaultVariants: {
-      padding: 'default',
-      border: 'subtle',
-      hover: 'none',
-      backgroundColor: 'white',
-    },
-    compoundVariants: [
-      {
-        hover: 'lift',
-        className: 'shadow-sm',
-      },
-    ],
-  },
-);
-
-const headerVariants = cva('', {
-  variants: {
-    padding: {
-      none: '',
-      compact: 'pb-3',
-      default: 'pb-4',
-      spacious: 'pb-6',
-    },
-  },
-  defaultVariants: {
-    padding: 'default',
-  },
-});
-
-const footerVariants = cva('', {
-  variants: {
-    padding: {
-      none: '',
-      compact: 'pt-3',
-      default: 'pt-4',
-      spacious: 'pt-6',
-    },
-  },
-  defaultVariants: {
-    padding: 'default',
-  },
-});
-
-export interface CardProps
-  extends
-    React.HTMLAttributes<HTMLElement>,
-    Omit<VariantProps<typeof cardVariants>, 'padding'> {
-  /** Main content of the card */
-  children: React.ReactNode;
-  /** Optional header section */
-  header?: React.ReactNode;
-  /** Optional footer section */
-  footer?: React.ReactNode;
-  /** Padding size for the card */
-  padding?: 'none' | 'compact' | 'default' | 'spacious';
-  /** Whether the card is clickable/interactive */
-  clickable?: boolean;
-  /** Click handler for clickable cards */
-  onClick?: () => void;
-  /** Optional icon in the header */
-  headerIcon?: React.ReactNode;
-  /** Show dividers between sections */
-  divider?: boolean;
-  /** Use semantic HTML tag */
-  as?: 'div' | 'section' | 'article';
+export function Card({ className, ...props }: ComponentProps<'div'>) {
+  return <div data-slot="card" className={cn('flex min-w-0 flex-col gap-4 rounded-xl border border-border-subtle bg-card py-4 text-card-foreground', className)} {...props} />;
 }
 
-/**
- * Card component for displaying grouped content with consistent styling.
- * Supports headers, footers, various padding and border options, and interactive states.
- *
- * @example
- * ```tsx
- * // Simple card with content
- * <Card>
- *   <p>Card content goes here</p>
- * </Card>
- *
- * // Card with header and footer
- * <Card
- *   header={<h2>Card Title</h2>}
- *   footer={<Button>Action</Button>}
- * >
- *   <p>Card body content</p>
- * </Card>
- *
- * // Clickable card with lift effect
- * <Card hover="lift" clickable onClick={handleClick}>
- *   <p>Click me!</p>
- * </Card>
- *
- * // Card with icon and dividers
- * <Card
- *   header={<h3>Settings</h3>}
- *   headerIcon={<SettingsIcon />}
- *   divider
- *   padding="lg"
- * >
- *   <p>Configuration options</p>
- * </Card>
- *
- * // Card with custom background
- * <Card backgroundColor="blue-50" border="bordered">
- *   <p>Highlighted content</p>
- * </Card>
- * ```
- */
-export const Card = React.forwardRef<HTMLElement, CardProps>(
-  (
-    {
-      children,
-      header,
-      footer,
-      padding = 'md',
-      border,
-      hover,
-      backgroundColor,
-      clickable = false,
-      onClick,
-      headerIcon,
-      divider = false,
-      className,
-      as: Component = 'div',
-      ...props
-    },
-    ref,
-  ) => {
-    const hasHeader = Boolean(header || headerIcon);
-    const hasFooter = Boolean(footer);
-    const isInteractive = clickable || Boolean(onClick);
+export function CardHeader({ className, ...props }: ComponentProps<'div'>) {
+  return <div data-slot="card-header" className={cn('grid min-w-0 auto-rows-min items-start gap-2 px-4 has-[[data-slot=card-action]]:grid-cols-[minmax(0,1fr)_auto]', className)} {...props} />;
+}
 
-    // Apply padding 'none' to the outer card if we have header/footer with padding
-    // Otherwise, apply the padding to the card itself
-    const outerPadding = (hasHeader || hasFooter ? 'none' : padding) as
-      | 'none'
-      | 'default'
-      | 'compact'
-      | 'spacious';
-    const innerPadding = (hasHeader || hasFooter ? padding : 'none') as
-      | 'none'
-      | 'default'
-      | 'compact'
-      | 'spacious';
+export function CardTitle({ className, children, ...props }: ComponentProps<'h2'>) {
+  return <h2 data-slot="card-title" className={cn('min-w-0 font-display text-base font-semibold leading-tight [overflow-wrap:anywhere]', className)} {...props}>{children}</h2>;
+}
 
-    return (
-      <Component
-        ref={ref as React.Ref<HTMLDivElement>}
-        className={cn(
-          cardVariants({
-            padding: outerPadding,
-            border,
-            hover,
-            backgroundColor,
-          }),
-          isInteractive && 'cursor-pointer',
-          className,
-        )}
-        onClick={onClick}
-        role={isInteractive ? 'button' : undefined}
-        tabIndex={isInteractive ? 0 : undefined}
-        onKeyDown={
-          isInteractive && onClick
-            ? (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onClick();
-                }
-              }
-            : undefined
-        }
-        {...props}
-      >
-        <Stack gap="xs">
-          {/* Header Section */}
-          {hasHeader && (
-            <>
-              <div
-                className={cn(
-                  headerVariants({ padding: innerPadding }),
-                  innerPadding !== 'none' && 'px-4',
-                )}
-              >
-                {headerIcon ? (
-                  <Stack direction="row" gap="sm" align="center">
-                    <span className="flex items-center text-neutral-700">
-                      {headerIcon}
-                    </span>
-                    {header}
-                  </Stack>
-                ) : (
-                  header
-                )}
-              </div>
-              {divider && <Divider variant="subtle" />}
-            </>
-          )}
+export function CardDescription({ className, ...props }: ComponentProps<'p'>) {
+  return <p data-slot="card-description" className={cn('min-w-0 text-sm text-muted-foreground [overflow-wrap:anywhere]', className)} {...props} />;
+}
 
-          {/* Body Section */}
-          <div
-            className={cn(
-              innerPadding !== 'none' &&
-                (innerPadding === 'compact'
-                  ? 'p-4'
-                  : innerPadding === 'default'
-                    ? 'p-6'
-                    : 'p-8'),
-            )}
-          >
-            {children}
-          </div>
+export function CardAction({ className, ...props }: ComponentProps<'div'>) {
+  return <div data-slot="card-action" className={cn('col-start-2 row-span-2 row-start-1 flex flex-wrap items-center gap-2 self-start justify-self-end', className)} {...props} />;
+}
 
-          {/* Footer Section */}
-          {hasFooter && (
-            <>
-              {divider && <Divider variant="subtle" />}
-              <div
-                className={cn(
-                  footerVariants({ padding: innerPadding }),
-                  innerPadding !== 'none' && 'px-4',
-                )}
-              >
-                {footer}
-              </div>
-            </>
-          )}
-        </Stack>
-      </Component>
-    );
-  },
-);
+export function CardContent({ className, ...props }: ComponentProps<'div'>) {
+  return <div data-slot="card-content" className={cn('min-w-0 px-4 [overflow-wrap:anywhere]', className)} {...props} />;
+}
 
-Card.displayName = 'Card';
-
-export default Card;
+export function CardFooter({ className, ...props }: ComponentProps<'div'>) {
+  return <div data-slot="card-footer" className={cn('flex min-w-0 flex-wrap items-center gap-2 px-4', className)} {...props} />;
+}

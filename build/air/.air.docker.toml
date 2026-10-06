@@ -22,8 +22,7 @@ tmp_dir = "tmp"
   # Ignore these filename extensions or directories
   exclude_dir = ["assets", "tmp", "vendor", "testdata", "bin", "coverage", "node_modules", ".git"]
 
-  # Watch only backend-relevant directories; the image also contains web/, docs/, etc.
-  # Narrowing this scope avoids scanning the copied frontend workspace on startup.
+  # Vite owns frontend reloads; Air watches only backend inputs.
   include_dir = ["cmd", "internal", "scripts", "migrations", "mocks"]
 
   # Exclude files

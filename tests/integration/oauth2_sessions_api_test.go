@@ -249,7 +249,7 @@ func TestAuthorizeEndpoint_Success(t *testing.T) {
 
 	// Make request
 	principal := "user@example.com"
-	redirectURI := "https://broker.example.com/sessions"
+	redirectURI := "https://broker.example.com/connections"
 	reqURL := "/api/third-party/" + serviceUUID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(redirectURI)
 
 	req := httptest.NewRequest("GET", reqURL, nil)
@@ -493,7 +493,7 @@ func TestAuthorizeEndpoint_VerifyAuthorizationURL(t *testing.T) {
 	router := setupTestRouter(handler)
 
 	principal := "user@example.com"
-	redirectURI := "https://broker.example.com/sessions"
+	redirectURI := "https://broker.example.com/connections"
 	reqURL := "/api/third-party/" + serviceUUID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(redirectURI)
 
 	req := httptest.NewRequest("GET", reqURL, nil)
@@ -678,7 +678,7 @@ func TestCallbackEndpoint_InvalidStateToken(t *testing.T) {
 	assert.Equal(t, http.StatusFound, w.Code)
 
 	location := w.Header().Get("Location")
-	assert.True(t, strings.HasPrefix(location, "/sessions?"), "unexpected callback redirect: %s", location)
+	assert.True(t, strings.HasPrefix(location, "/connections?"), "unexpected callback redirect: %s", location)
 	assert.Contains(t, location, "error=invalid_state")
 }
 
@@ -751,7 +751,7 @@ func TestCallbackEndpoint_OAuth2Error(t *testing.T) {
 			assert.Equal(t, http.StatusFound, w.Code)
 
 			location := w.Header().Get("Location")
-			assert.True(t, strings.HasPrefix(location, "/sessions?"), "unexpected callback redirect: %s", location)
+			assert.True(t, strings.HasPrefix(location, "/connections?"), "unexpected callback redirect: %s", location)
 			assert.Contains(t, location, "error="+tt.error)
 			assert.Contains(t, location, url.QueryEscape(tt.errorDesc))
 		})
@@ -790,7 +790,7 @@ func TestCallbackEndpoint_MissingCode(t *testing.T) {
 	assert.Equal(t, http.StatusFound, w.Code)
 
 	location := w.Header().Get("Location")
-	assert.True(t, strings.HasPrefix(location, "/sessions?"), "unexpected callback redirect: %s", location)
+	assert.True(t, strings.HasPrefix(location, "/connections?"), "unexpected callback redirect: %s", location)
 	assert.Contains(t, location, "error=invalid_callback")
 }
 
@@ -825,7 +825,7 @@ func TestCallbackEndpoint_MissingState(t *testing.T) {
 	assert.Equal(t, http.StatusFound, w.Code)
 
 	location := w.Header().Get("Location")
-	assert.True(t, strings.HasPrefix(location, "/sessions?"), "unexpected callback redirect: %s", location)
+	assert.True(t, strings.HasPrefix(location, "/connections?"), "unexpected callback redirect: %s", location)
 	assert.Contains(t, location, "error=invalid_callback")
 }
 

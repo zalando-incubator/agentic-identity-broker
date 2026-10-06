@@ -243,6 +243,8 @@ server:
 
 ### Frontend/Design System Requirements
 
+> **Historical visual scope**: The token names below record this feature's original design choice, not a current constitutional aesthetic mandate; in particular, `slate-600` is not a current semantic-token recommendation. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 **Design System Compliance**:
 - All frontend changes MUST use the existing design system components.
 - The `Avatar` component from `@design-system/components/primitives/Avatar` is already in use and supports profile pictures.

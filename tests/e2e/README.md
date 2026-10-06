@@ -6,6 +6,24 @@ This directory contains comprehensive end-to-end (E2E) tests for the Agentic Ide
 
 **Test Scope**: E2E tests verify the entire system integration with a real HTTP server, production app initialization, and full request/response cycles. These are distinct from unit tests which test individual components in isolation.
 
+## Reviewed frontend reference images
+
+The stakeholder approved the refreshed canonical light-mode references at 1280 × 720 on 2026-10-06. Captures use Linux Chromium with Playwright 1.62.1. [ADR 040](../../adrs/040-canonical-light-visual-reference-gate.md) defines this reference policy; dark/responsive interaction and accessibility checks remain in CI.
+
+| Route or context | Canonical light reference |
+| --- | --- |
+| Agents `/agents` | [Reference](screenshots/agents_light.png) |
+| Consent `/agents/:id?session_token=…` | [Reference](screenshots/agent_consent_light.png) |
+| Agent detail `/agents/:id` | [Reference](screenshots/agent_detail_light.png) |
+| Connections `/connections` | [Reference](screenshots/connections_light.png) |
+| Approvals `/approvals` | [Reference](screenshots/approvals_light.png) |
+| Remembered approvals `/approvals/remembered` | [Reference](screenshots/remembered_approvals_light.png) |
+| Approval review `/approvals/:id` | [Reference](screenshots/approval_review_light.png) |
+| Appearance `/settings/appearance` | [Reference](screenshots/settings_light.png) |
+
+The [Storybook baseline directory](../../web/.storybook/__screenshots__/) contains 376 canonical references. All 403 stories still run in six theme/viewport interaction and accessibility projects; intentional dark/narrow overrides have no pixel reference. Run `just test-e2e-frontend-visual` and `just web-storybook-test` for comparisons. Neither comparison updates approved baselines.
+
+
 ## E2E vs Integration Tests
 
 | Aspect | E2E Tests | Integration Tests |

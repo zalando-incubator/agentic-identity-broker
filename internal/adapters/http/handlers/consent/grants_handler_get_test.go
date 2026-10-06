@@ -17,7 +17,7 @@ import (
 )
 
 type getGrantResponse struct {
-	Data *GrantResponse `json:"data"`
+	Data []GrantResponse `json:"data"`
 }
 
 func TestGetGrant_Success(t *testing.T) {
@@ -69,20 +69,21 @@ func TestGetGrant_Success(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if response.Data == nil {
-		t.Fatal("expected grant to be returned, got nil")
+	if len(response.Data) != 1 {
+		t.Fatalf("expected one grant to be returned, got %d", len(response.Data))
 	}
-	if response.Data.ID != grantID.String() {
-		t.Errorf("expected grant ID %q, got %s", grantID.String(), response.Data.ID)
+	grant := response.Data[0]
+	if grant.ID != grantID.String() {
+		t.Errorf("expected grant ID %q, got %s", grantID.String(), grant.ID)
 	}
-	if response.Data.Principal != principalValue {
-		t.Errorf("expected principal %s, got %s", principalValue, response.Data.Principal)
+	if grant.Principal != principalValue {
+		t.Errorf("expected principal %s, got %s", principalValue, grant.Principal)
 	}
-	if response.Data.ValidUntil == nil {
+	if grant.ValidUntil == nil {
 		t.Error("expected ValidUntil to be set")
 	}
-	if len(response.Data.GrantedPermissionSets) != 1 {
-		t.Errorf("expected 1 delegated token, got %d", len(response.Data.GrantedPermissionSets))
+	if len(grant.GrantedPermissionSets) != 1 {
+		t.Errorf("expected 1 permission set, got %d", len(grant.GrantedPermissionSets))
 	}
 }
 
@@ -93,7 +94,7 @@ func TestGetGrant_EmptyGrants(t *testing.T) {
 	agentID := id.NewAgentID()
 	mockService := &mockConsentService{
 		getUserGrantsFunc: func(ctx context.Context, p id.Principal, agID id.AgentID) ([]*storage.UserGrant, error) {
-			return []*storage.UserGrant{}, nil
+			return nil, nil
 		},
 	}
 
@@ -116,8 +117,8 @@ func TestGetGrant_EmptyGrants(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if response.Data != nil {
-		t.Errorf("expected Data to be nil for empty grants, got %v", response.Data)
+	if response.Data == nil || len(response.Data) != 0 {
+		t.Errorf("expected a non-nil empty grants array, got %v", response.Data)
 	}
 }
 

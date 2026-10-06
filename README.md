@@ -1,8 +1,8 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/docusaurus/static/img/AIB_Wordmark_White.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="assets/docusaurus/static/img/AIB_Wordmark_Black.svg" />
-    <img alt="Agentic Identity Broker Wordmark" src="assets/docusaurus/static/img/AIB_Wordmark_Black.svg" />
+    <source media="(prefers-color-scheme: dark)" srcset="web/public/brand/AIB_Wordmark_White.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="web/public/brand/AIB_Wordmark_Black.svg" />
+    <img alt="Agentic Identity Broker Wordmark" src="web/public/brand/AIB_Wordmark_Black.svg" />
   </picture>
   <div>
     <a href="https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/ci.yml">
@@ -83,10 +83,6 @@ Check out the following docs:
 
 - [Quickstart](https://agenticidentitybroker.dev/docs/get-started) — Get started with Agentic Identity Broker in minutes.
 - [agenticidentitybroker.dev](https://agenticidentitybroker.dev/docs/introduction) – Underlying concepts, guides and API specs.
-
-The [architecture overview](ARCHITECTURE.md) describes the system design, component boundaries, and domain glossary.
-
-Agentic Identity Broker has a built-in consent management UI:
 
 <p align="center">
   <img src="assets/docusaurus/static/img/teaser-browser.webp" alt="Agentic Identity Broker consent interface" width="1000" />

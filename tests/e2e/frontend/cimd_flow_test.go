@@ -121,7 +121,7 @@ var _ = Describe("CIMD Full Browser Authorization Flow", func() {
 		err = consentPage.WaitForPageLoad(ctx)
 		Expect(err).NotTo(HaveOccurred(), "consent page should fully render")
 
-		// Step 3: Assert CIMD consent UI components are rendered.
+		// Step 3: Assert the decision summary, verified origin, and loopback warning.
 		visible, err := consentPage.IsCIMDSummaryVisible(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(visible).To(BeTrue(), "CIMD consent summary should be visible")
@@ -139,12 +139,12 @@ var _ = Describe("CIMD Full Browser Authorization Flow", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(hasWarning).To(BeTrue(), "localhost redirect warning should be visible for 127.0.0.1 callback")
 
-		// Step 4: Click "Approve & Delegate".
+		// Step 4: Allow this authorization request.
 		err = consentPage.SubmitConsent(ctx)
-		Expect(err).NotTo(HaveOccurred(), "approve & delegate should succeed")
+		Expect(err).NotTo(HaveOccurred(), "Allow should continue the CIMD authorization")
 
 		// Step 5: Wait for the browser to arrive at the callback URL.
-		// Flow: frontend POST /api/consent/agent/{id}/grants?session_token=... →
+		// Flow: frontend POST /api/consent/agents/{id}/grants?session_token=... →
 		//       response {redirect_url: "/oauth2/authorize?..."} →
 		//       window.location.href = redirect_url →
 		//       broker 302 → callbackServer.URL/callback?code=...&state=...

@@ -1,715 +1,143 @@
 # Component Pairing Guide
 
-Real-world examples showing how to combine design system components with exact spacing, colors, and hierarchy. Use these as templates for common UI patterns.
+## Authority and example status
 
----
+[ADR 038](../../../../adrs/038-design-system-rebuilt-on-shadcn-radix.md) was accepted on 2026-09-27 and amended on 2026-10-04.
+This guide describes feature 047 composition targets, not completed release validation.
+Read owned source for exact props during implementation.
 
-## Button + Card Combinations
+Use the existing design-system categories. Do not create another primitive library.
+Applications obtain copy from `@copy`. Primitives receive labels and descriptions through props.
+The `labels` values in these examples represent caller-supplied copy.
 
-### Pattern 1: Card with Primary Action
+## Shell and page header
 
-**Use Case**: Single main action per card (grant permission, view details)
+| Pair | Responsibility |
+| --- | --- |
+| ConsoleShell + PageHeader | Three-item navigation, 1120 px main container, title, muted count, icon toolbar |
+| ConsoleShell + Sheet | Same navigation on mobile without a second implementation |
+| ConsoleShell + Command | Acting-user record search in an application-owned slot |
+| ConsoleShell + DropdownMenu + ThemeChoice | User menu with Settings and immediate appearance choices |
+| DecisionShell + Wordmark | Focused consent or approval, local branding, no sidebar |
 
-```tsx
-<Card padding="default" hover="lift" className="max-w-md">
-  <div className="space-y-4">
-    {/* Card Header */}
-    <div className="flex items-start justify-between">
-      <div>
-        <h3 className="text-lg font-semibold text-trust-deep">
-          Healthcare Provider Access
-        </h3>
-        <p className="text-sm text-secondary mt-1">
-          Dr. Sarah Chen, Primary Care
-        </p>
-      </div>
-      <Badge variant="success">Active</Badge>
-    </div>
+Shells fetch no data. PageHeader has no required purpose sentence and invents no page-level action.
+Consent fits a 480 px three-zone card with a pinned decision footer; standalone approval review remains sidebar-free.
+Keep Command and Motion outside decision-route import graphs and barrels.
 
-    {/* Card Body */}
-    <p className="text-neutral-700">
-      Grants read access to medical records and treatment history for
-      coordinated care between providers.
-    </p>
+## Collections, toolbar, and row actions
 
-    {/* Metadata */}
-    <div className="flex items-center justify-between text-xs text-tertiary">
-      <span>Granted: Jan 15, 2024</span>
-      <span>Expires: Jan 15, 2025</span>
-    </div>
+EntityCard and EntityRow share an icon, title, separate supporting, status and metadata slots, and at most two visible actions.
+Agents and Connections use cards or a list. Page choice wins, then an explicit Appearance default, then list above twelve items or cards otherwise. Choosing the global default clears earlier page choices and applies to both collections; later per-page choices remain local.
+Approvals use fixed-height EntityRow entries beside a separate detail panel. No decision step changes the list height.
+Approval rows stack the tool name above secondary metadata instead of splitting the narrow inbox into horizontal columns. A selected row names and controls its matching detail panel.
+Tool review keeps arguments visible and places the quiet View JSON disclosure in the Arguments heading, separate from the pinned decision actions.
 
-    {/* Single Primary Action */}
-    <Button variant="primary" className="w-full">
-      View Permission Details
-    </Button>
-  </div>
-</Card>
-```
+| Collection | Visible content | Actions |
+| --- | --- | --- |
+| Agents | Name, expiry, relative change time from `lastModifiedAt` | Whole card opens detail with one link target; Revoke opens confirmation |
+| Connections | Provider, scopes count, truthful state, relative connection age | Context action and confirmed Disconnect |
+| Pending approvals | Tool, agent, risk, and request age, or remaining minutes in the final hour | Select row; decide in pinned detail panel |
+| Remembered approvals | Tool, agent, remembered state, scope pattern | Confirmed Revoke |
 
-**Spacing Breakdown**:
+The Agents list has no permission count, status filter, or origin badge. Never fetch per-agent counts.
+Use 32 px outline row actions. Agent and connection collection actions use `destructive-quiet`, with `ShieldOff` and `Unlink`, respectively.
+The whole card uses a link layer. Action buttons sit above it and never nest inside it.
 
-- Card padding: 24px (`p-6`)
-- Content vertical spacing: 16px (`space-y-4`)
-- Heading to subtitle: 4px (`mt-1`)
-- Button takes full width for emphasis
+CollectionToolbar places 32 px search, sort, optional facet filter, and grid/list controls in PageHeader. Remembered approval controls live below the shared Pending/Remembered tabs so header geometry stays fixed.
+Search expands to 240 px. `/` focuses it and Escape clears and collapses it.
+Mirror search, sort, and filters in the URL. Persist the grid/list choice per page and expose the default in Settings.
+Render a filter control only when the page has a real facet. Put only applied facet chips below the header.
+Search collapses when focus leaves its input/clear-control area without clearing the query; the collapsed icon indicates and describes an active query. Sort shows a menu check and a tinted icon for a non-default choice.
+One-line titles use ellipsis and a tooltip only when measured as clipped. Multi-line descriptions show More only when clipped.
 
----
+## Consent card and action group
 
-### Pattern 2: Card with Multiple Actions
-
-**Use Case**: Primary + secondary actions (approve/deny, edit/delete)
-
-```tsx
-<Card padding="default" className="max-w-md">
-  <div className="space-y-4">
-    <div>
-      <h3 className="text-lg font-semibold text-trust-deep">
-        Agent Permission Request
-      </h3>
-      <p className="text-sm text-secondary mt-1">
-        Research Assistant • Requested 2 hours ago
-      </p>
-    </div>
-
-    <div className="p-3 bg-warning-light border border-warning-primary/20 rounded-md">
-      <p className="text-sm text-warning-dark">
-        This agent is requesting access to your calendar and email.
-      </p>
-    </div>
-
-    {/* Action Button Group */}
-    <div className="flex gap-3">
-      <Button variant="primary" className="flex-1">
-        Approve Access
-      </Button>
-      <Button variant="danger" className="flex-1">
-        Deny Request
-      </Button>
-    </div>
-
-    <Button variant="ghost" className="w-full">
-      Review Permissions
-    </Button>
-  </div>
-</Card>
-```
-
-**Spacing Breakdown**:
-
-- Primary actions side-by-side: 12px gap (`gap-3`)
-- Equal width for equal importance (`flex-1`)
-- Tertiary action below with full width
-- Warning callout: 12px padding (`p-3`)
-
----
-
-### Pattern 3: Card Grid with Consistent Actions
-
-**Use Case**: Multiple cards with identical action patterns
+The consent card shows who asks, what they get, and how long it lasts before the pinned decision footer.
+The 480 px card uses one inset PermissionPanel with locked required groups, editable optional groups, and a row-level Connect action for missing services.
+Keep the origin and any risk callout visible. Put client ID, redirect URI, and available raw scopes in a technical-details Dialog.
+Show the verified agent domain and the redirect host when they differ. A loopback callback or unverified origin needs a visible risk warning.
+Without CIMD metadata, show only a client ID that the API supplies. Do not invent a redirect URI or requested scopes.
+After a confirmed Allow, draw the success check for 320 ms before a validated redirect. Do not delay the redirect under reduced motion.
 
 ```tsx
-<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-  {services.map((service) => (
-    <Card key={service.id} padding="default" hover="lift">
-      <div className="flex flex-col h-full">
-        {/* Fixed-height header */}
-        <div className="mb-4">
-          <div className="flex items-center gap-3 mb-2">
-            <Avatar src={service.icon} size="sm" />
-            <h3 className="text-base font-semibold text-trust-deep">
-              {service.name}
-            </h3>
-          </div>
-          <p className="text-sm text-secondary line-clamp-2">
-            {service.description}
-          </p>
-        </div>
-
-        {/* Flexible body */}
-        <div className="flex-1 space-y-2 mb-4">
-          {service.scopes.slice(0, 3).map((scope) => (
-            <div key={scope} className="flex items-center gap-2 text-xs">
-              <CheckIcon className="w-3 h-3 text-success-primary" />
-              <span className="text-neutral-700">{scope}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Fixed-position actions */}
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="flex-1">
-            Configure
-          </Button>
-          <Button variant="primary" size="sm" className="flex-1">
-            Connect
-          </Button>
-        </div>
-      </div>
-    </Card>
-  ))}
+<div className="flex gap-3">
+  <Button variant="outline" onClick={onDeny}>{labels.deny}</Button>
+  <Button variant="primary" onClick={onContinue}>{labels.continue}</Button>
 </div>
 ```
 
-**Layout Strategy**:
+Supply Allow or “Connect {Service} to continue” as the primary label according to the existing connection state.
+Keep the current permission and duration draft across the existing provider callback. Deny does not change an existing grant.
+The buttons remain 40 px tall, with each taking half the footer width.
 
-- Grid gap: 24px (`gap-6`) for breathing room
-- Flex column ensures buttons stay at bottom
-- Fixed header, flexible body, fixed footer pattern
-- Consistent button sizes across all cards
-
----
-
-## Typography Hierarchy in Cards
-
-### Pattern: Information Card with Perfect Hierarchy
+## Input, label, and error
 
 ```tsx
-<Card padding="spacious" className="max-w-2xl">
-  {/* Primary Heading */}
-  <h1 className="text-3xl font-bold text-trust-deep mb-2">
-    Delegation Management
-  </h1>
-
-  {/* Subtitle */}
-  <p className="text-lg text-secondary mb-6">
-    Control which AI agents can access your data and perform actions on your
-    behalf
-  </p>
-
-  {/* Section Heading */}
-  <h2 className="text-xl font-semibold text-trust mb-4">Active Delegations</h2>
-
-  {/* List of Items */}
-  <div className="space-y-3 mb-6">
-    {delegations.map((delegation) => (
-      <div
-        key={delegation.id}
-        className="flex items-start gap-3 p-3 rounded-lg hover:bg-neutral-50"
-      >
-        {/* Icon */}
-        <div className="w-10 h-10 bg-success-light rounded-lg flex items-center justify-center flex-shrink-0">
-          <CheckIcon className="w-5 h-5 text-success-primary" />
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 min-w-0">
-          <h3 className="text-base font-medium text-trust-deep">
-            {delegation.agentName}
-          </h3>
-          <p className="text-sm text-neutral-700 mt-0.5">
-            {delegation.description}
-          </p>
-          <p className="text-xs text-tertiary mt-1">
-            Granted {delegation.grantedDate} • {delegation.scopeCount}{' '}
-            permissions
-          </p>
-        </div>
-
-        {/* Status */}
-        <Badge variant="success" size="sm">
-          Active
-        </Badge>
-      </div>
-    ))}
-  </div>
-
-  {/* Helper Text */}
-  <p className="text-sm text-tertiary border-t border-neutral-200 pt-4">
-    You can revoke access at any time from the delegation details page.
-  </p>
-</Card>
-```
-
-**Hierarchy Breakdown**:
-
-1. **h1** (48px, trust-deep) - Page title, maximum visual weight
-2. **Subtitle** (18px, secondary) - Context and purpose
-3. **h2** (20px, trust) - Section divider
-4. **h3** (16px, trust-deep) - Item titles
-5. **Body text** (14px, neutral-700) - Descriptions
-6. **Metadata** (12px, tertiary) - Timestamps, IDs
-7. **Helper text** (14px, tertiary) - Footer notes
-
-**Spacing Breakdown**:
-
-- Title to subtitle: 8px (`mb-2`)
-- Subtitle to section: 24px (`mb-6`)
-- Section to content: 16px (`mb-4`)
-- List item spacing: 12px (`space-y-3`)
-- Footer separator: 16px padding (`pt-4`)
-
----
-
-## Form Error States with Icon + Message
-
-### Pattern: Input with Validation
-
-```tsx
-<div className="mb-4">
-  {/* Label */}
-  <label
-    htmlFor="email"
-    className="block text-sm font-medium text-trust-deep mb-2"
-  >
-    Email Address
-    <span className="text-error-primary">*</span>
-  </label>
-
-  {/* Input */}
-  <TextInput
-    id="email"
-    type="email"
-    value={email}
-    onChange={setEmail}
-    error={!!error}
-    placeholder="you@example.com"
-    className="w-full"
+<div className="space-y-2">
+  <label htmlFor={id} className="text-foreground">{labels.label}</label>
+  <Input
+    id={id}
+    value={value}
+    onChange={onChange}
+    aria-invalid={Boolean(error)}
+    aria-describedby={error ? errorId : hintId}
   />
-
-  {/* Error Message */}
-  {error && (
-    <div className="mt-2 flex items-start gap-2">
-      <AlertCircleIcon className="w-4 h-4 text-error-primary flex-shrink-0 mt-0.5" />
-      <p className="text-sm text-error-primary">{error}</p>
-    </div>
-  )}
-
-  {/* Helper Text (when no error) */}
-  {!error && (
-    <p className="text-sm text-tertiary mt-1">
-      We'll send a verification link to this address
-    </p>
+  {error ? (
+    <p id={errorId} role="alert" className="text-status-danger-foreground">{error}</p>
+  ) : (
+    <p id={hintId} className="text-muted-foreground">{labels.hint}</p>
   )}
 </div>
 ```
 
-**Spacing Breakdown**:
+Use unique IDs. Keep a visible label even when the input has a placeholder.
+A form summary can link to invalid fields. It does not replace each field's error.
+Do not move focus for background data updates.
 
-- Label to input: 8px (`mb-2`)
-- Input to error: 8px (`mt-2`)
-- Input to helper: 4px (`mt-1`)
-- Icon to text: 8px (`gap-2`)
-- Icon vertical align: 2px offset (`mt-0.5`)
+RadioGroup represents one exclusive choice. Checkbox represents independent selections.
+URL-backed underline Tabs switch views of one object. Do not style data-changing actions as tabs.
 
----
+## Destructive action and confirmation Dialog
 
-### Pattern: Form with Multiple Fields and Error Summary
+Agent and connection collections show Revoke and Disconnect as `destructive-quiet` buttons. The agent detail header keeps `destructive-outline`.
+Use an overflow menu only when it holds at least three secondary actions; never hide a single Revoke item in a menu.
+Keep Dialog outside a menu if a menu launches the confirmation.
 
-```tsx
-<form className="space-y-6">
-  {/* Error Summary */}
-  {errors.length > 0 && (
-    <Alert variant="error">
-      <div className="flex items-start gap-3">
-        <AlertCircleIcon className="w-5 h-5 flex-shrink-0" />
-        <div>
-          <p className="font-medium mb-1">
-            Please correct the following errors:
-          </p>
-          <ul className="list-disc list-inside space-y-1 text-sm">
-            {errors.map((error, index) => (
-              <li key={index}>{error}</li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </Alert>
-  )}
+Dialog names the target and explains the effect in one sentence. Focus Cancel initially and pair it with a destructive confirmation.
+Keep the background inert. On cancellation, return focus to the trigger or a logical remaining control.
+After a confirmed operation, animate the affected card or row out in the console and announce server-confirmed success.
+Do not offer undo unless the API supports it.
 
-  {/* Form Fields */}
-  <div className="space-y-4">
-    <TextInput
-      label="Agent Name"
-      required
-      error={fieldErrors.name}
-      helperText="A descriptive name for this AI agent"
-    />
+## Status, metadata, and feedback
 
-    <TextArea
-      label="Description"
-      required
-      error={fieldErrors.description}
-      helperText="Explain what this agent will do (min 20 characters)"
-      rows={4}
-    />
+Badge uses a soft semantic background, colored text, and a 6 px dot or 12 px icon. It is 20 px tall with 6 px radius.
+Put at most one badge after the name on the title baseline or in a fixed status slot. Do not place it in a wrapping badge row.
+Use Connected, Needs sign-in, Expired, Unavailable, rated risk, Always allowed, and Always denied only in their applicable views.
+Badges do not change data. A status tooltip can use a focusable trigger for keyboard guidance. A count can use a separate labeled popover trigger.
+Every connection-state badge in the agent detail rail has an explanatory tooltip on hover and keyboard focus. Focus keeps its explanation through ancestor scrolling; Escape, blur, or an outside click dismisses it. Keep the badge informational; the separate Connect or Manage control performs the action.
 
-    <Select
-      label="Access Level"
-      required
-      error={fieldErrors.accessLevel}
-      options={accessLevels}
-    />
-  </div>
+Use Inter with tabular figures for dates and counts, relative times for recency, and absolute dates for expiry. Use JetBrains Mono for tool names, scope patterns, existing scope values, raw arguments, and IDs.
+Do not invent last-use, publisher, account, or permission-risk fields. Do not add raw scopes to permission groups.
 
-  {/* Actions */}
-  <div className="flex gap-3 pt-4 border-t border-neutral-200">
-    <Button variant="ghost" onClick={onCancel} className="flex-1">
-      Cancel
-    </Button>
-    <Button variant="primary" type="submit" className="flex-1">
-      Create Agent
-    </Button>
-  </div>
-</form>
-```
+Skeleton matches the final layout's dimensions. EmptyState has an 80 px primary-soft tile with a 40 px illustrated icon, a concept sentence, and a next step where available. Console illustrated icons play once on entry and on hover, without movement under reduced motion.
+Alert has a soft status background, subtle tinted border, 12 px padding, and a 16 px icon. Its inline form is a one-line field hint without a box.
+Sonner toasts report results after server acceptance. They do not replace persistent error text.
+Off-origin service images use local Avatar fallbacks without an external request.
 
-**Spacing Breakdown**:
+## Spacing, motion, and accessibility
 
-- Form sections: 24px (`space-y-6`)
-- Form fields: 16px (`space-y-4`)
-- Action separator: 16px padding top (`pt-4`)
-- Error list items: 4px (`space-y-1`)
+Use 4–12 px spacing inside controls, 16–24 px between components, and 32–48 px between sections.
+Use 120–200 ms feedback and at most 320 ms emphasis with shared easing. Motion is permitted only on console routes.
+Under reduced motion, remove movement and icon animation but retain opacity and color fades.
 
----
+Every composition keeps visible, unobscured focus, keyboard access, and labels at 320 px and 200% zoom.
+Every pattern and screen needs both-theme accessibility checks. Reviewed pixel references cover eligible light 1280 × 720 cases only, under [ADR 040](../../../../adrs/040-canonical-light-visual-reference-gate.md).
+Principle XI sets WCAG 2.1 AA. Feature 047 targets WCAG 2.2 AA.
 
-## Button Groups
+## Related guides
 
-### Pattern: Segmented Control (Equal Actions)
-
-```tsx
-<div className="inline-flex rounded-lg border border-neutral-300 p-1 bg-neutral-50">
-  <button
-    className={cn(
-      'px-4 py-2 text-sm font-medium rounded-md transition-colors',
-      active === 'grid'
-        ? 'bg-white text-trust-deep shadow-sm'
-        : 'text-neutral-700 hover:text-trust-deep',
-    )}
-    onClick={() => setActive('grid')}
-  >
-    <GridIcon className="w-4 h-4 inline mr-2" />
-    Grid View
-  </button>
-  <button
-    className={cn(
-      'px-4 py-2 text-sm font-medium rounded-md transition-colors',
-      active === 'list'
-        ? 'bg-white text-trust-deep shadow-sm'
-        : 'text-neutral-700 hover:text-trust-deep',
-    )}
-    onClick={() => setActive('list')}
-  >
-    <ListIcon className="w-4 h-4 inline mr-2" />
-    List View
-  </button>
-</div>
-```
-
-**Styling Details**:
-
-- Container padding: 4px (`p-1`)
-- Button padding: 16px/8px (`px-4 py-2`)
-- Icon spacing: 8px (`mr-2`)
-- Active state: white bg + shadow
-- Inactive state: transparent + hover
-
----
-
-### Pattern: Action Group (Primary + Secondary)
-
-```tsx
-<div className="flex flex-wrap gap-3">
-  {/* Primary Action */}
-  <Button variant="primary" size="md">
-    <SaveIcon className="w-5 h-5 mr-2" />
-    Save Changes
-  </Button>
-
-  {/* Secondary Actions */}
-  <Button variant="outline" size="md">
-    <PreviewIcon className="w-5 h-5 mr-2" />
-    Preview
-  </Button>
-
-  <Button variant="ghost" size="md">
-    <HistoryIcon className="w-5 h-5 mr-2" />
-    View History
-  </Button>
-
-  {/* Destructive Action (separated) */}
-  <div className="ml-auto">
-    <Button variant="danger" size="md">
-      <TrashIcon className="w-5 h-5 mr-2" />
-      Delete
-    </Button>
-  </div>
-</div>
-```
-
-**Layout Strategy**:
-
-- Gap between buttons: 12px (`gap-3`)
-- Icon to text: 8px (`mr-2`)
-- Danger button pushed right (`ml-auto`)
-- Wraps on small screens (`flex-wrap`)
-
----
-
-## Empty States with CTAs
-
-### Pattern: Empty State with Action
-
-```tsx
-<div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-  {/* Illustration */}
-  <div className="w-20 h-20 bg-neutral-100 rounded-full flex items-center justify-center mb-6">
-    <InboxIcon className="w-10 h-10 text-neutral-400" />
-  </div>
-
-  {/* Heading */}
-  <h3 className="text-xl font-semibold text-trust-deep mb-2">
-    No active permissions
-  </h3>
-
-  {/* Description */}
-  <p className="text-neutral-700 max-w-sm mb-6">
-    You haven't granted any permissions yet. Start by connecting an AI agent to
-    access your data securely.
-  </p>
-
-  {/* Primary CTA */}
-  <Button variant="primary" size="lg">
-    <PlusIcon className="w-5 h-5 mr-2" />
-    Grant First Permission
-  </Button>
-
-  {/* Secondary Action */}
-  <button className="mt-4 text-sm text-trust hover:text-trust-hover transition-colors">
-    Learn about agent permissions →
-  </button>
-</div>
-```
-
-**Spacing Breakdown**:
-
-- Container padding: 64px/24px (`py-16 px-6`)
-- Icon to heading: 24px (`mb-6`)
-- Heading to description: 8px (`mb-2`)
-- Description to CTA: 24px (`mb-6`)
-- Primary to secondary action: 16px (`mt-4`)
-- Icon in button: 8px (`mr-2`)
-
----
-
-## Status Indicators with Context
-
-### Pattern: Status Badge + Timestamp + Action
-
-```tsx
-<div className="flex items-center justify-between p-4 bg-neutral-50 rounded-lg border border-neutral-200">
-  {/* Left: Status + Info */}
-  <div className="flex items-center gap-4">
-    <Badge variant="success">Active</Badge>
-    <div>
-      <p className="text-sm font-medium text-trust-deep">Calendar Access</p>
-      <p className="text-xs text-tertiary mt-0.5">Last used 2 hours ago</p>
-    </div>
-  </div>
-
-  {/* Right: Action */}
-  <Button variant="ghost" size="sm">
-    Revoke
-  </Button>
-</div>
-```
-
-**Spacing Breakdown**:
-
-- Container padding: 16px (`p-4`)
-- Badge to text: 16px (`gap-4`)
-- Text to timestamp: 2px (`mt-0.5`)
-
----
-
-### Pattern: Multi-Status Timeline
-
-```tsx
-<div className="space-y-4">
-  {events.map((event, index) => (
-    <div key={event.id} className="relative pl-8">
-      {/* Timeline Line */}
-      {index < events.length - 1 && (
-        <div className="absolute left-2 top-8 bottom-0 w-px bg-neutral-200" />
-      )}
-
-      {/* Status Dot */}
-      <div
-        className={cn(
-          'absolute left-0 top-1 w-4 h-4 rounded-full border-2',
-          event.status === 'success' &&
-            'bg-success-primary border-success-light',
-          event.status === 'pending' &&
-            'bg-warning-primary border-warning-light',
-          event.status === 'error' && 'bg-error-primary border-error-light',
-        )}
-      />
-
-      {/* Content */}
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-sm font-medium text-trust-deep">
-            {event.title}
-          </span>
-          <Badge variant={event.status} size="sm">
-            {event.statusLabel}
-          </Badge>
-        </div>
-        <p className="text-sm text-neutral-700 mb-1">{event.description}</p>
-        <p className="text-xs text-tertiary">{event.timestamp}</p>
-      </div>
-    </div>
-  ))}
-</div>
-```
-
-**Layout Details**:
-
-- Timeline spacing: 16px (`space-y-4`)
-- Content left padding: 32px (`pl-8`)
-- Dot position: 8px left, 4px top
-- Line position: 8px left, connects dots
-- Title to badge: 8px (`gap-2`)
-
----
-
-## Modal Content Patterns
-
-### Pattern: Confirmation Modal
-
-```tsx
-<Modal isOpen={isOpen} onClose={onClose} size="sm">
-  <div className="text-center">
-    {/* Icon */}
-    <div className="w-12 h-12 bg-error-light rounded-full flex items-center justify-center mx-auto mb-4">
-      <AlertTriangleIcon className="w-6 h-6 text-error-primary" />
-    </div>
-
-    {/* Title */}
-    <h2 className="text-xl font-bold text-trust-deep mb-2">
-      Revoke Permission?
-    </h2>
-
-    {/* Description */}
-    <p className="text-neutral-700 mb-6">
-      This will immediately remove the agent's access to your calendar. This
-      action cannot be undone.
-    </p>
-
-    {/* Actions */}
-    <div className="flex gap-3">
-      <Button variant="ghost" onClick={onClose} className="flex-1">
-        Cancel
-      </Button>
-      <Button variant="danger" onClick={onConfirm} className="flex-1">
-        Revoke Access
-      </Button>
-    </div>
-  </div>
-</Modal>
-```
-
-**Spacing Breakdown**:
-
-- Icon to title: 16px (`mb-4`)
-- Title to description: 8px (`mb-2`)
-- Description to actions: 24px (`mb-6`)
-- Action gap: 12px (`gap-3`)
-
----
-
-### Pattern: Form Modal
-
-```tsx
-<Modal
-  isOpen={isOpen}
-  onClose={onClose}
-  size="md"
-  title="Edit Permission Scope"
->
-  <form onSubmit={handleSubmit} className="space-y-6">
-    {/* Section 1 */}
-    <div>
-      <h3 className="text-sm font-medium text-trust-deep mb-3">Access Level</h3>
-      <RadioGroup value={accessLevel} onChange={setAccessLevel}>
-        <div className="space-y-2">
-          {accessLevels.map((level) => (
-            <Radio key={level.value} value={level.value}>
-              <div>
-                <span className="font-medium">{level.label}</span>
-                <span className="text-sm text-secondary block">
-                  {level.description}
-                </span>
-              </div>
-            </Radio>
-          ))}
-        </div>
-      </RadioGroup>
-    </div>
-
-    {/* Section 2 */}
-    <div>
-      <h3 className="text-sm font-medium text-trust-deep mb-3">Expiration</h3>
-      <DatePicker value={expirationDate} onChange={setExpirationDate} />
-    </div>
-
-    {/* Actions in Footer */}
-    <div className="flex gap-3 pt-6 border-t border-neutral-200">
-      <Button variant="ghost" onClick={onClose} className="flex-1">
-        Cancel
-      </Button>
-      <Button variant="primary" type="submit" className="flex-1">
-        Save Changes
-      </Button>
-    </div>
-  </form>
-</Modal>
-```
-
-**Spacing Breakdown**:
-
-- Form sections: 24px (`space-y-6`)
-- Section heading to content: 12px (`mb-3`)
-- Radio options: 8px (`space-y-2`)
-- Footer separator: 24px padding top (`pt-6`)
-
----
-
-## Summary
-
-### Spacing Cheat Sheet
-
-| Context        | Gap/Margin  | Tailwind | Pixels |
-| -------------- | ----------- | -------- | ------ |
-| Label → Input  | `mb-2`      | 0.5rem   | 8px    |
-| Input → Helper | `mt-1`      | 0.25rem  | 4px    |
-| Form Fields    | `space-y-4` | 1rem     | 16px   |
-| Form Sections  | `space-y-6` | 1.5rem   | 24px   |
-| Card Content   | `space-y-4` | 1rem     | 16px   |
-| Button Group   | `gap-3`     | 0.75rem  | 12px   |
-| Grid Cards     | `gap-6`     | 1.5rem   | 24px   |
-| List Items     | `space-y-3` | 0.75rem  | 12px   |
-| Major Sections | `gap-16`    | 4rem     | 64px   |
-
-### Icon Sizing Cheat Sheet
-
-| Context            | Class       | Pixels |
-| ------------------ | ----------- | ------ |
-| Small button       | `w-4 h-4`   | 16px   |
-| Medium button      | `w-5 h-5`   | 20px   |
-| Large button       | `w-6 h-6`   | 24px   |
-| Badge/Tag          | `w-3 h-3`   | 12px   |
-| Content decoration | `w-5 h-5`   | 20px   |
-| Empty state        | `w-16 h-16` | 64px   |
-
-### Typography Hierarchy Cheat Sheet
-
-| Element         | Size        | Weight          | Color              | Spacing |
-| --------------- | ----------- | --------------- | ------------------ | ------- |
-| Page title (h1) | `text-3xl`  | `font-bold`     | `text-trust-deep`  | `mb-2`  |
-| Section (h2)    | `text-xl`   | `font-semibold` | `text-trust-deep`  | `mb-4`  |
-| Subsection (h3) | `text-lg`   | `font-semibold` | `text-trust`       | `mb-3`  |
-| Body text       | `text-base` | `font-normal`   | `text-neutral-700` | —       |
-| Secondary text  | `text-sm`   | `font-normal`   | `text-secondary`   | —       |
-| Metadata        | `text-xs`   | `font-normal`   | `text-tertiary`    | —       |
-
-Use these patterns as starting points and adapt to your specific use case while maintaining the design system's visual consistency.
+- [Composition patterns](COMPOSITION_PATTERNS.md): Route and mutation recipes
+- [Decision trees](DECISION_TREES.md): Components and action variants
+- [Color guide](COLOR_GUIDE.md): Exact semantic OKLCH contract
+- [Token guide](TOKEN_GUIDE.md): Shared visual values
+- [Accessibility guide](ACCESSIBILITY_GUIDE.md): Focus, labels, contrast, and announcements

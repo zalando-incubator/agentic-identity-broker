@@ -29,10 +29,10 @@ func refreshTestService(serviceID id.ServiceID) *model.ThirdpartyOAuth2ProviderE
 	return svc
 }
 
-var _ = Describe("Third-Party Sessions Refresh Button", func() {
+var _ = Describe("Connections Refresh Button", func() {
 	var (
-		ctx          context.Context
-		sessionsPage *pages.SessionsPage
+		ctx             context.Context
+		connectionsPage *pages.ConnectionsPage
 	)
 
 	BeforeEach(func() {
@@ -50,31 +50,35 @@ var _ = Describe("Third-Party Sessions Refresh Button", func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create refreshable third-party service")
 
 			session := fixtures.SessionForService(principal, serviceID.String())
+			// A valid refresh token with an expired access token warrants Refresh;
+			// a healthy connection exposes only Disconnect in the redesigned card.
+			expiredAccess := time.Now().Add(-time.Minute)
+			session.AccessTokenExpiresAt = &expiredAccess
 			err = GetTestStorage().UserSessions().Create(ctx, session)
 			Expect(err).NotTo(HaveOccurred(), "Failed to create refreshable session")
 		}
 
-		sessionsPage = pages.NewSessionsPage(GetTestPage(), GetFrontendURL())
+		connectionsPage = pages.NewConnectionsPage(GetTestPage(), GetFrontendURL())
 	})
 
-	// Scenario 1.2 from specs/008-thirdparty-oauth2-sessions/spec.md (extended by approved force-refresh plan)
-	It("shows Refresh for multiple refreshable sessions and refreshes the first", func() {
-		err := sessionsPage.NavigateToSessions(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to third-party sessions page")
+	// AS-11 from specs/047-redesign-consent-console/spec.md; Scenario 1.2 from specs/008-thirdparty-oauth2-sessions/spec.md.
+	It("shows Refresh for multiple refreshable connections and refreshes the first", func() {
+		err := connectionsPage.NavigateToConnections(ctx)
+		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to Connections")
 
-		count, err := sessionsPage.GetRefreshButtonCount(ctx)
+		count, err := connectionsPage.GetRefreshButtonCount(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to count refresh buttons")
-		Expect(count).To(Equal(2), "Both refreshable sessions should offer Refresh")
+		Expect(count).To(Equal(2), "Both refreshable connections should offer Refresh")
 
-		visible, err := sessionsPage.IsRefreshButtonVisible(ctx)
+		visible, err := connectionsPage.IsRefreshButtonVisible(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to check refresh button visibility")
 		Expect(visible).To(BeTrue(), "Refresh button should be visible when a refresh token exists")
 
-		err = sessionsPage.ClickRefreshButton(ctx)
+		err = connectionsPage.ClickRefreshButton(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to click refresh button")
 
-		err = sessionsPage.WaitForSuccessMessage(ctx, "Session token refreshed successfully.")
-		Expect(err).NotTo(HaveOccurred(), "Expected refresh success message after clicking Refresh")
+		err = connectionsPage.WaitForSuccessMessage(ctx, "Connection refreshed.")
+		Expect(err).NotTo(HaveOccurred(), "Expected connection refresh toast after clicking Refresh")
 
 		Eventually(func() string {
 			request := GetMockUpstream().GetLastRequest()

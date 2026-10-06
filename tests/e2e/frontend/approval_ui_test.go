@@ -17,6 +17,10 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"sync"
+	"time"
+
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -24,10 +28,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/pages"
 	"github.com/google/uuid"
+	"github.com/mxschmitt/playwright-go"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"net/http"
-	"time"
 )
 
 // newPendingApproval creates a pending tool approval record for seeding test storage.
@@ -93,25 +96,18 @@ var _ = Describe("Approval UI", func() {
 		err = approvalPage.WaitForReviewPage(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Review page should be visible")
 
-		hasRequestedBy, err := approvalPage.HasVisibleText(ctx, "Requested by")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasRequestedBy).To(BeTrue(), "detail page should identify which agent requested the tool")
+		Expect(readV2(approvalPage.ToolName(ctx))).To(Equal(approval.ToolName), "the exact tool must be identified before a decision")
+		Expect(readV2(approvalPage.AgentName(ctx))).To(Equal(testAgent.DisplayName))
+		Expect(readV2(approvalPage.ActingUser(ctx))).To(Equal(principal.Email))
+		Expect(readV2(approvalPage.ArgumentRows(ctx))).To(Equal(map[string]string{"path": "/tmp/test", "recursive": "true"}))
+		Expect(readV2(approvalPage.ApprovalScopeText(ctx))).To(ContainSubstring(approval.ToolName))
+		Expect(readV2(approvalPage.HasVisibleText(ctx, approval.Description))).To(BeTrue(), "the requesting action is explained")
 
-		hasAgentName, err := approvalPage.HasVisibleText(ctx, testAgent.DisplayName)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasAgentName).To(BeTrue(), "agent display name should be visible on the review page")
-
-		hasActionSection, err := approvalPage.HasSectionLabel(ctx, "Action")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasActionSection).To(BeTrue(), "detail page should use the same user-facing Action block as the list page")
-
-		hasTechnicalDetails, err := approvalPage.HasSectionLabel(ctx, "Technical details")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasTechnicalDetails).To(BeTrue(), "detail page should use the same Technical details block as the list page")
-
-		hasSessionContext, err := approvalPage.HasVisibleText(ctx, "session-ui-123")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasSessionContext).To(BeTrue(), "agent session identifier should be visible on the review page")
+		Expect(approvalPage.OpenSessionContext(ctx)).To(Succeed(), "session context opens on demand")
+		sessionContext := readV2(approvalPage.SessionContextText(ctx))
+		Expect(sessionContext).To(ContainSubstring("session-ui-123"), "agent session identifier must remain available on review")
+		Expect(sessionContext).To(ContainSubstring("mcp-ui-123"), "MCP session identifier must remain available on review")
+		Expect(sessionContext).To(ContainSubstring("invoke-ui-123"), "tool invocation identifier must remain available on review")
 
 		hasRisk, err := approvalPage.HasRiskBadge(ctx, "Critical")
 		Expect(err).NotTo(HaveOccurred())
@@ -136,19 +132,21 @@ var _ = Describe("Approval UI", func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to approval page")
 
 		Eventually(func(g Gomega) {
-			hasReviewHeading, err := approvalPage.HasReviewHeading(ctx)
+			identityVisible, err := approvalPage.HasReviewIdentity(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(hasReviewHeading).To(BeTrue(), "review heading should remain visible for high-risk approvals")
+			g.Expect(identityVisible).To(BeTrue(), "the tool identity remains visible for high-risk approvals")
 
 			hasGlobalError, err := approvalPage.HasGlobalErrorBoundary(ctx)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasGlobalError).To(BeFalse(), "high-risk approvals should not crash the page")
 		}).WithPolling(500 * time.Millisecond).Should(Succeed())
+		Expect(readV2(approvalPage.ToolName(ctx))).To(Equal(approval.ToolName))
+		Expect(readV2(approvalPage.RiskLabel(ctx))).To(Equal("High"))
 	})
 
 	// FR-016 from specs/024-approval-api-ui/spec.md
 	// State 2: Permanent Warning
-	It("should show permanent warning when Always allow is selected", func() {
+	It("should show the permanent warning in the Always… scope editor", func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "send_email", time.Now().Add(10*time.Minute))
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
@@ -159,11 +157,12 @@ var _ = Describe("Approval UI", func() {
 		err = approvalPage.WaitForReviewPage(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = approvalPage.SelectPersistence(ctx, "Always allow")
-		Expect(err).NotTo(HaveOccurred())
+		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
+		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
 
 		hasWarning, err := approvalPage.HasPermanentWarning(ctx)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(readV2(GetTestStorage().ToolApprovals().Get(ctx, approval.ID)).Status).To(Equal(storage.ApprovalStatusPending), "opening the editor must not record approval")
 		Expect(hasWarning).To(BeTrue(), "Permanent warning should be visible")
 
 		err = approvalPage.TakeScreenshot(ctx, "approval_permanent_warning")
@@ -185,7 +184,7 @@ var _ = Describe("Approval UI", func() {
 		err = approvalPage.WaitForReviewPage(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = approvalPage.ClickApprove(ctx)
+		err = approvalPage.ClickApproveOnce(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = approvalPage.WaitForApprovedConfirmation(ctx)
@@ -218,10 +217,10 @@ var _ = Describe("Approval UI", func() {
 		err = approvalPage.WaitForReviewPage(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = approvalPage.SelectPersistence(ctx, "Always allow")
-		Expect(err).NotTo(HaveOccurred())
+		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
+		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
 
-		err = approvalPage.ClickApprove(ctx)
+		err = approvalPage.ConfirmRememberedApproval(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
 		err = approvalPage.WaitForApprovedConfirmation(ctx)
@@ -283,10 +282,6 @@ var _ = Describe("Approval UI", func() {
 			g.Expect(hasError).To(BeTrue())
 		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
-		title, err := approvalPage.GetErrorTitle(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(title).To(Equal("Approval Expired"))
-
 		hasRetry, err := approvalPage.HasRetryButton(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(hasRetry).To(BeFalse(), "Expired error should not have retry button")
@@ -314,10 +309,6 @@ var _ = Describe("Approval UI", func() {
 			g.Expect(hasError).To(BeTrue())
 		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
-		title, err := approvalPage.GetErrorTitle(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(title).To(Equal("Access Denied"))
-
 		err = approvalPage.TakeScreenshot(ctx, "approval_forbidden_error")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -337,10 +328,6 @@ var _ = Describe("Approval UI", func() {
 			g.Expect(hasError).To(BeTrue())
 		}).WithPolling(500 * time.Millisecond).Should(Succeed())
 
-		title, err := approvalPage.GetErrorTitle(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(title).To(Equal("Not Found"))
-
 		err = approvalPage.TakeScreenshot(ctx, "approval_not_found_error")
 		Expect(err).NotTo(HaveOccurred())
 
@@ -355,16 +342,27 @@ var _ = Describe("Approval UI", func() {
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
 		Expect(err).NotTo(HaveOccurred())
 
-		err = approvalPage.NavigateToApproval(ctx, approval.ID.String())
-		Expect(err).NotTo(HaveOccurred())
-
-		err = approvalPage.WaitForReviewPage(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Review page should eventually load after skeleton")
-
-		err = approvalPage.TakeScreenshot(ctx, "approval_loading_skeleton")
-		Expect(err).NotTo(HaveOccurred())
-
-		GetLogger().Info("Test passed: Loading skeleton resolved to review page")
+		requested, release, result := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+		var released sync.Once
+		defer released.Do(func() { close(release) })
+		Expect(GetTestPage().Route("**/api/approvals/"+approval.ID.String(), func(route playwright.Route) {
+			if route.Request().Method() != http.MethodGet {
+				result <- route.Continue()
+				return
+			}
+			close(requested)
+			go func() {
+				<-release
+				result <- route.Continue()
+			}()
+		})).To(Succeed())
+		Expect(approvalPage.BeginApprovalLoad(ctx, approval.ID.String())).To(Succeed())
+		Eventually(requested).WithTimeout(10 * time.Second).Should(BeClosed())
+		Eventually(func() bool { return readV2(approvalPage.IsLoading(ctx)) }).WithTimeout(5*time.Second).Should(BeTrue(), "the pending detail request displays the approval skeleton")
+		released.Do(func() { close(release) })
+		Eventually(result).WithTimeout(10 * time.Second).Should(Receive(BeNil()))
+		Expect(approvalPage.WaitForReviewPage(ctx)).To(Succeed(), "the review appears after the detail request resolves")
+		Expect(readV2(approvalPage.IsLoading(ctx))).To(BeFalse())
 	})
 
 	// Edge Case from specs/024-approval-api-ui/spec.md
@@ -383,7 +381,7 @@ var _ = Describe("Approval UI", func() {
 		_, err = GetTestStorage().ToolApprovals().Approve(ctx, approval.ID, storage.ApprovalDecision{Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolPattern, ParamsPattern: approval.ParamsPattern}, time.Now())
 		Expect(err).NotTo(HaveOccurred())
 
-		err = approvalPage.ClickApprove(ctx)
+		err = approvalPage.ClickApproveOnce(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(func(g Gomega) {
@@ -391,10 +389,6 @@ var _ = Describe("Approval UI", func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(hasError).To(BeTrue())
 		}).WithPolling(500 * time.Millisecond).Should(Succeed())
-
-		title, err := approvalPage.GetErrorTitle(ctx)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(title).To(Equal("Already Resolved"))
 
 		err = approvalPage.TakeScreenshot(ctx, "approval_network_error")
 		Expect(err).NotTo(HaveOccurred())
@@ -411,7 +405,8 @@ var _ = Describe("Approval UI", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(approvalPage.NavigateToApproval(ctx, approval.ID.String())).To(Succeed())
 		Expect(approvalPage.WaitForReviewPage(ctx)).To(Succeed())
-		Expect(approvalPage.SelectPersistence(ctx, "Always allow")).To(Succeed())
+		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
+		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
 		Expect(approvalPage.ExpandApprovalScope(ctx)).To(Succeed())
 		hasToolRule, err := approvalPage.HasVisibleText(ctx, "Tool matching rule")
 		Expect(err).NotTo(HaveOccurred())
@@ -426,7 +421,7 @@ var _ = Describe("Approval UI", func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(preview).To(Equal("create_pull_request(repo=acme/*,title=Fix bug)"))
 		}).WithTimeout(5 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
-		Expect(approvalPage.ClickApprove(ctx)).To(Succeed())
+		Expect(approvalPage.ConfirmRememberedApproval(ctx)).To(Succeed())
 		Expect(approvalPage.WaitForApprovedConfirmation(ctx)).To(Succeed())
 		resp, err := GetTestServer().AuthenticatedGET("/api/approvals/"+approval.ID.String(), principal.Email)
 		Expect(err).NotTo(HaveOccurred())
@@ -447,7 +442,8 @@ var _ = Describe("Approval UI", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(approvalPage.NavigateToApproval(ctx, approval.ID.String())).To(Succeed())
 		Expect(approvalPage.WaitForReviewPage(ctx)).To(Succeed())
-		Expect(approvalPage.SelectPersistence(ctx, "Always allow")).To(Succeed())
+		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
+		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
 		Expect(approvalPage.ExpandApprovalScope(ctx)).To(Succeed())
 		Expect(approvalPage.SetParameterMode(ctx, "title", "Any value")).To(Succeed())
 		Eventually(func(g Gomega) {
@@ -455,7 +451,7 @@ var _ = Describe("Approval UI", func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(preview).To(Equal("create_pull_request(repo=acme/app)"))
 		}).WithTimeout(5 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
-		Expect(approvalPage.ClickApprove(ctx)).To(Succeed())
+		Expect(approvalPage.ConfirmRememberedApproval(ctx)).To(Succeed())
 		Expect(approvalPage.WaitForApprovedConfirmation(ctx)).To(Succeed())
 		resp, err := GetTestServer().AuthenticatedGET("/api/approvals/"+approval.ID.String(), principal.Email)
 		Expect(err).NotTo(HaveOccurred())

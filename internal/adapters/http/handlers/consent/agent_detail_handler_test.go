@@ -123,6 +123,7 @@ func TestGetAgentDetail_Success(t *testing.T) {
 	handler.GetAgentDetail(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	assert.NotContains(t, rr.Body.String(), `"logoUrl"`, "agent storage has no logo metadata; unavailable logos stay omitted")
 
 	var response GetAgentDetailResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&response))

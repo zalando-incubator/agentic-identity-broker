@@ -143,6 +143,12 @@ test-e2e-frontend: web-build
     set -euo pipefail
     E2E_FRONTEND_MODE=built E2E_CAPTURE_SCREENSHOTS={{E2E_CAPTURE_SCREENSHOTS}} ginkgo -v --procs={{GINKGO_FRONTEND_PROCS}} --output-interceptor-mode=none ./tests/e2e/frontend/
 
+# Compare route and state screenshots with reviewed 1280×720 light-mode references.
+# The E2E suite still exercises behavior in both themes; dark captures are ignored.
+test-e2e-frontend-visual:
+    E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend
+    go run ./tools/imgdiff gate --actual tests/e2e/frontend/coverage/screenshots --baseline tests/e2e/screenshots --required agents,agent_consent,agent_detail,connections,approvals,remembered_approvals,approval_review,settings --manifest tests/e2e/screenshots/visual-gate.txt --threshold 0.5 --out tests/e2e/frontend/coverage/visual-diff
+
 # Run the frontend E2E acceptance suite against a Vite dev server
 # NOTE: Requires 'just web-dev' running in another terminal
 test-e2e-frontend-dev:
@@ -173,17 +179,16 @@ test-e2e-watch:
     @if command -v ginkgo > /dev/null; then E2E_FRONTEND_MODE=built ginkgo watch -v --label-filter="!performance" ./tests/e2e/ ./tests/e2e/extproc/ ./tests/e2e/frontend/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
 
-# Build and run the application
-run: build
+# Build and run the backend and its current frontend
+run: build-all
     @echo "Running {{NAME}}..."
     IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` ./bin/{{NAME}}
 
-# Run with Air for hot-reload development (requires air to be installed)
-dev:
-    IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh`
+# Rebuild backend and frontend with Air (requires air to be installed)
+dev: web-ensure-deps
     @echo "Starting development server with hot reload..."
     @if command -v air > /dev/null; then \
-        air; \
+        IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` air; \
     else \
         echo "Error: air is not installed. Install it with: go install github.com/air-verse/air@latest"; \
         exit 1; \
@@ -551,7 +556,11 @@ verify: check security test web-test cdk-test mock-sample-agent-test mock-upstre
 fmt-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    unformatted="$(git ls-files -z --cached --others --exclude-standard -- '*.go' | xargs -0 gofmt -s -l)"
+    unformatted="$(git ls-files -z --cached --others --exclude-standard -- '*.go' | while IFS= read -r -d '' file; do
+        if [ -f "$file" ]; then
+            printf '%s\0' "$file"
+        fi
+    done | xargs -0 gofmt -s -l)"
     if [ -n "$unformatted" ]; then
         echo "Files need gofmt -s:"
         printf '%s\n' "$unformatted"
@@ -611,6 +620,35 @@ web-test: web-ensure-deps
 web-test-coverage: web-ensure-deps
     @echo "Running web frontend tests with coverage..."
     cd web && npm run test:coverage
+
+# Enforce frontend accessibility and semantic-token rules
+web-lint: web-ensure-deps
+    npm --prefix web run lint
+
+# Build the shared design-system documentation
+web-storybook-build: web-ensure-deps
+    npm --prefix web run build-storybook
+
+# Check interaction/a11y in both themes at 375×812, 768×1024 and 1280×720; compare only canonical light 1280×720 references.
+# Reviewed baselines require human-approved Linux Chromium captures; this recipe never updates them.
+web-storybook-test: web-ensure-deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for project in storybook-light storybook-dark storybook-light-375 storybook-dark-375 storybook-light-768 storybook-dark-768; do
+        (cd web && CI=true ./node_modules/.bin/vitest run --project "$project" --maxWorkers=1)
+    done
+
+# Generate canonical light 1280×720 candidates while exercising the full interaction/a11y matrix.
+web-storybook-visual-candidates: web-ensure-deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for project in storybook-light storybook-dark storybook-light-375 storybook-dark-375 storybook-light-768 storybook-dark-768; do
+        (cd web && ./node_modules/.bin/vitest run --project "$project" --maxWorkers=1 --update --browser.screenshotDirectory=.storybook/candidates)
+    done
+
+# Enforce compressed decision-route size and console-module isolation
+web-bundle-check: web-build
+    cd web && ./node_modules/.bin/vitest run --project bundle
 
 # Build both Go backend and web frontend in release quality
 # Produces artifacts: ./bin/{{NAME}} and ./web/dist/
@@ -685,8 +723,8 @@ compose-up: compose-env
     @echo "Generating encryption key..."
     @echo "Starting docker-compose services with hot reload..."
     @echo "Services:"
-    @echo "  - Identity Broker (8000, 14000) with Air hot reload"
-    @echo "  - Frontend (3000) with Vite HMR"
+    @echo "  - Identity Broker (internal 8000, admin 14000) with Air hot reload"
+    @echo "  - Frontend and API proxy (8000) with Vite HMR"
     @echo "  - Upstream OAuth2 (9001)"
     @echo "  - Third-Party OAuth2 (9000)"
     @echo "  - Sample Agent (9002)"
@@ -704,8 +742,7 @@ compose-up-detached: compose-env
     @just compose-health
     @echo ""
     @echo "Service URLs:"
-    @echo "  - Browser UI (Vite proxy includes development identity): http://localhost:3000/"
-    @echo "  - End-user broker (protected API requires upstream auth): http://localhost:8000/"
+    @echo "  - Browser UI and API (Vite includes development identity): http://localhost:8000/"
     @echo "  - Admin API: http://localhost:14000/api/agents"
     @echo "  - Admin health: http://localhost:14000/health"
     @echo "  - Sample OAuth2 client: http://localhost:9002/oauth2/authorize"
@@ -973,7 +1010,7 @@ mock-third-party-oauth2-setup: mock-third-party-oauth2-build
     @echo "Mock Third-Party OAuth2 Setup Complete!"
     @echo "========================================="
     @echo "Mock OAuth2 Server: http://localhost:9000"
-    @echo "Broker Consent UI: http://localhost:8000/sessions"
+    @echo "Broker Consent UI: http://localhost:8000/connections"
     @echo ""
     @echo "To stop: pkill -f mock-oauth2-server"
 

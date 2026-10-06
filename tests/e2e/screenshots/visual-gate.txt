@@ -1,0 +1,1 @@
+# Reviewed state-image stems, without _light.png or _dark.png. Add only after human approval.

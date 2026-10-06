@@ -2,6 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-09-04
+**Extended by**: [Accepted ADR 038](038-design-system-rebuilt-on-shadcn-radix.md), amended 2026-10-04. Its amendment replaces the historical `/delegations` and `/sessions` view routes with `/agents` and `/connections`, adds `/approvals/remembered` and `/settings/appearance`, and routes `/` to `/agents`. The root-mounted SPA and protocol precedence in this ADR remain in force.
 
 ---
 

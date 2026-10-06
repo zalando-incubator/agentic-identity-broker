@@ -4,99 +4,141 @@ import { Meta } from '@storybook/addon-docs/blocks';
 
 # Agentic Identity Broker Design System
 
-Welcome to the **Refined Trust Architecture** design system for the consent management frontend.
+## Authority and implementation status
 
-## Overview
+[ADR 038](../../../adrs/038-design-system-rebuilt-on-shadcn-radix.md) was accepted on 2026-09-27 and amended on 2026-10-04.
+Feature 047 targets owned shadcn/Radix components, semantic OKLCH themes, and composed screen stories.
+These are implementation targets, not claims of release validation.
 
-This design system provides a comprehensive component library optimized for capturing consent from non-technical end-users who delegate permissions to AI agents. Every component is designed to communicate **trustworthiness, clarity, and control**.
+[Design principles](./docs/DESIGN_PRINCIPLES.md) define the current direction.
+[Color guide](./docs/COLOR_GUIDE.md) gives target light and dark values.
+[Token guide](./docs/TOKEN_GUIDE.md) defines typography, shape, layout, and motion.
+[Foundations](?path=/docs/design-system-foundations--docs) renders the current theme tokens and computed contrast pairs in Storybook.
 
-## Design Philosophy
+## Start with the task
 
-### Refined Trust Architecture
+1. Read the [decision trees](./docs/DECISION_TREES.md) before selecting components or variants.
+2. Read the [pairing guide](./docs/COMPONENT_PAIRING_GUIDE.md) for related controls.
+3. Read the [composition patterns](./docs/COMPOSITION_PATTERNS.md) for shells and domain flows.
+4. Read [common mistakes](./docs/COMMON_MISTAKES.md) before styling a component.
+5. Read the owned source before selecting props.
 
-The aesthetic blends the visual gravity of a **bank vault** with the approachability of **modern SaaS**. This is where users make critical decisions about AI agent permissions, so every pixel must communicate authority and trust.
+Use the existing component categories, aliases, CVA, and `cn()`.
+Do not create a second primitive library or copy an unreviewed registry update over owned components.
+Deliver all consumers in one cutover without feature flags, compatibility aliases, or parallel presentations.
 
-**Core Principles:**
+## Component categories
 
-- **Serif Authority with Warm Humanity**: Crimson Pro (serif) for headings creates trust, Manrope (sans) for body text adds approachability
-- **Color as Semantic Signal**: Navy for authority, Emerald for success, Amber for attention
-- **Elevation Through Shadow**: Multi-layer shadows create depth without borders
-- **Motion That Guides**: Purposeful animations (150-500ms) that guide without entertaining
-- **Whitespace as Luxury**: Generous padding and spacing create a premium feel
+Import components from their concrete directories:
 
-## Typography
+| Category | Components and purpose |
+| --- | --- |
+| `primitives/` | Button, Badge, Avatar, Separator, Wordmark |
+| `inputs/` | Input, TextArea, Select, Checkbox, RadioGroup, Switch, DatePicker |
+| `data-display/` | Card, TruncatedText, and owned entity presentation |
+| `layout/` | ConsoleShell, DecisionShell, PageHeader |
+| `navigation/` | Tabs |
+| `overlays/` | Dialog, DropdownMenu, Popover, Tooltip, Sheet |
+| `feedback/` | Alert, InlineError, EmptyState, Skeleton, Toaster, and error boundaries |
+| `advanced/` | Accordion and Command |
 
-```css
-Headings: Crimson Pro (serif) - 600/700 weight
-Body: Manrope (sans-serif) - 400/500 weight
-Monospace: JetBrains Mono - 500 weight
-```
+ThemeChoice belongs in `design-system/theme/`.
+Universal patterns belong in the design system. Application components own consent, session, and approval behavior.
 
-## Color System
+## Choose a shell
 
-### Semantic Tokens
+ConsoleShell owns the three-item navigation, mobile Sheet, quiet search, user menu, and 1120 px centered main content.
+PageHeader has a title, optional muted count, and right-hand icon toolbar. Its purpose sentence is optional.
+At widths below 1012 px, ConsoleShell uses its mobile Sheet to leave room for content. Use the `console-grid` utility for 12 columns with 24 px gutters; detail views can span all 12 columns until `min-[1012px]`, then split into 8 + 4 columns.
+DecisionShell has no sidebar. Consent uses a 480 px three-zone card with a pinned footer; standalone tool review uses the focused shell.
+Shells fetch no data.
 
-- **trust-deep** (#0A2540): Primary actions, critical UI
-- **trust** (#1E4D6B): Medium authority elements
-- **trust-light** (#E8F1F5): Light backgrounds
-- **cta** (#D97706): Call-to-action buttons, warnings
-- **success-primary** (#059669): Success states, granted permissions
-- **error-primary** (#DC2626): Error states
+An authorization session selects DecisionShell for `/agents/:id`, including invalid or expired session errors.
+Without that session, agent detail uses ConsoleShell.
+`/approvals/:id` always uses DecisionShell. The console lists live at `/agents`, `/connections`, and `/approvals`.
+Remembered approvals use `/approvals/remembered`; Appearance uses `/settings/appearance`.
 
-## Component Categories
+Command and Motion are console-only dependencies. Do not import them or their barrels in a decision route.
+The decision bundle test must reject Motion imports from consent and standalone approval review.
 
-### Primitives
+## Use semantic roles and one accent action
 
-Button, Badge, Avatar, Divider, Spinner, Icon
+The example uses caller-supplied labels. Applications obtain strings from `@copy`; primitives do not import the catalogue.
 
-### Inputs
-
-TextInput, TextArea, Select, Checkbox, Radio, Switch, DatePicker
-
-### Feedback
-
-Alert, Toast, InlineError, EmptyState, Skeleton
-
-### Overlays
-
-Modal, Tooltip, Dropdown, Popover
-
-### Navigation
-
-Tabs, Breadcrumb, Pagination
-
-### Data Display
-
-Table, Card, GrantStatusBadge, ScopeList
-
-### Layout
-
-Container, Stack, Grid, AppLayout, PageTransition
-
-### Advanced
-
-Accordion, Progress
-
-## Usage
-
-Import components from the design system:
-
-```typescript
+```tsx
 import { Button } from '@design-system/components/primitives/Button';
-import { cn } from '@design-system/utils';
-import { semanticColors } from '@design-system/tokens';
+
+<div className="flex gap-3">
+  <Button variant="outline" onClick={onDeny}>{denyLabel}</Button>
+  <Button variant="primary" onClick={onContinue}>{continueLabel}</Button>
+</div>
 ```
 
-## Accessibility
+Variants are `primary`, `secondary`, `outline`, `ghost`, `destructive-outline`, and `destructive`.
+Consent uses Allow when ready, or “Connect {Service} to continue” when a selected connection is missing.
+Tool review uses Approve once. The approval inbox keeps its decision bar in a separate detail panel.
+Agents, Connections, and Settings have no page-level primary action. Dirty agent detail uses Save changes.
+Resting Revoke and Disconnect are visible `destructive-outline` buttons that open confirmation Dialogs.
 
-All components follow **WCAG 2.1 AA** guidelines:
+Use `bg-background text-foreground` for the page and `bg-card text-card-foreground border-border-subtle` for cards.
+Use `border-border` for buttons, `border-border-control` for form controls, and `bg-primary-soft` for selection.
+Soft status colors require a label and dot or icon. Do not use raw palette utilities or component-local colors.
 
-- Keyboard navigation support
-- Screen reader compatibility
-- Visible focus indicators
-- Proper ARIA labels
-- Color contrast compliance
+## Typography and local assets
 
-## Getting Started
+| Role | Font | Utility |
+| --- | --- | --- |
+| Page titles, decision names, empty-state headings | Zalando Sans Variable, normal width | `font-display` |
+| Body text and controls | Inter Variable | `font-sans` |
+| Identifiers, existing scopes, and raw arguments | JetBrains Mono | `font-mono` |
 
-Browse the component categories in the sidebar to explore interactive examples, view all variants, and experiment with the Playground stories.
+WOFF2 subsets and licenses live in `web/public/fonts/`.
+Outlined wordmarks, the favicon, and the compact mark live in `web/public/brand/`.
+Wordmark selects black artwork in light mode and white artwork in dark mode through theme CSS.
+Its accessible name comes from a required `label` prop.
+
+Asset paths are:
+
+```text
+/brand/AIB_Wordmark_Black.svg
+/brand/AIB_Wordmark_White.svg
+/brand/favicon.svg
+/brand/aib-mark.svg
+```
+
+Use the Wordmark primitive:
+
+```tsx
+<Wordmark label={brandLabel} />
+<Wordmark label={brandLabel} compact />
+```
+
+Do not load third-party fonts, scripts, or images.
+An off-origin agent or service image uses a local Avatar fallback.
+User-initiated external links and OAuth2 redirects retain their existing behavior.
+
+## Motion, stories, and accessibility
+
+Use 120, 160, and 200 ms feedback with `cubic-bezier(0.2, 0, 0, 1)` and up to 320 ms emphasis.
+Console routes can use owned lucide-animated icons and Motion for removed cards or rows.
+Decision routes use owned CSS SVG animations only. Under reduced motion, stop movement and icon animation but keep opacity and color feedback.
+Do not add unrelated page-entry animation, decorative gradients, or strong card shadows.
+
+Storybook covers three layers: foundation MDX rendered from tokens, pattern stories, and screen stories from pure `*View` components with shared fixtures.
+Patterns include EntityCard, EntityRow, CollectionToolbar, PermissionPanel, DurationSelect, approval detail, and EmptyState.
+Screens cover Consent, Agents, Agent detail, Connections, Approvals, and Settings.
+
+Screen stories require loading, empty, typical, dense, error, stale, and realistic long-content states where applicable.
+Consent adds risk, missing connection, already granted, denied, and invalid-session states.
+Approvals adds high-risk, expired, and remembered-scope states.
+Exercise each screen at 375, 768, and 1280 px in light and dark.
+
+Keep the existing `storybook-light` and `storybook-dark` accessibility projects with `parameters.a11y.test = 'error'`.
+Add `play` tests for permission selection, duration, keyboard approval, and confirmed revocation.
+Measure approval list stability and consent Allow viewport fit at 1280 × 720. Review screenshot baseline changes by hand.
+
+Principle XI requires WCAG 2.1 AA. Feature 047 targets WCAG 2.2 AA.
+Preserve keyboard operation, visible unobscured focus, state announcements, and no horizontal scroll at 320 px or 200% zoom.
+These checks are required before release, not recorded results.
+
+Browse component, pattern, and screen stories for behavior. See [web/AGENTS.md](../../AGENTS.md) for source routing and commands.

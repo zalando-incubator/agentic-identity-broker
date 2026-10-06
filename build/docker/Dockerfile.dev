@@ -18,8 +18,14 @@ COPY go.mod go.sum ./
 # Download dependencies (cached layer)
 RUN go mod download
 
-# Copy source code (will be overridden by volume mount in docker-compose)
-COPY . .
+# Copy backend inputs only; Compose serves frontend source through Vite.
+COPY cmd ./cmd
+COPY internal ./internal
+COPY configs ./configs
+COPY migrations ./migrations
+COPY scripts ./scripts
+COPY mocks ./mocks
+COPY build/air/.air.docker.toml ./build/air/.air.docker.toml
 
 # Prime the Go build cache so Air's first container build does not spend minutes compiling dependencies.
 RUN mkdir -p tmp \

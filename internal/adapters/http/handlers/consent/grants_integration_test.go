@@ -291,15 +291,15 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rr.Code)
 
 		var envelope struct {
-			Data *GrantResponse `json:"data"`
+			Data []GrantResponse `json:"data"`
 		}
 		err := json.NewDecoder(rr.Body).Decode(&envelope)
 		require.NoError(t, err)
-		require.NotNil(t, envelope.Data, "expected grant in response")
+		require.Len(t, envelope.Data, 1, "expected one grant in response")
 
-		assert.Equal(t, "alice@example.com", envelope.Data.Principal)
-		assert.Equal(t, testAgentID.String(), envelope.Data.AgentID)
-		assert.Len(t, envelope.Data.GrantedPermissionSets, 2)
+		assert.Equal(t, "alice@example.com", envelope.Data[0].Principal)
+		assert.Equal(t, testAgentID.String(), envelope.Data[0].AgentID)
+		assert.Len(t, envelope.Data[0].GrantedPermissionSets, 2)
 	})
 
 	// Test 4: Revoke grant via DELETE /grants

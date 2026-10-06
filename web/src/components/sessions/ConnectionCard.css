@@ -1,0 +1,8 @@
+@keyframes connection-border-pulse {
+  0%, 100% { border-color: var(--border-subtle); }
+  50% { border-color: var(--primary); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .connection-just-updated { animation: connection-border-pulse 320ms cubic-bezier(0.2, 0, 0, 1); }
+}

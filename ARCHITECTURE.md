@@ -18,28 +18,29 @@ This section provides a high-level overview of the project's directory and file 
 ├── web/                  # Single Page Application (Consent Frontend)
 │   ├── src/              # Main source code for React application
 │   │   ├── components/   # Reusable UI components
-│   │   │   ├── consent/  # Consent-specific components (DelegationCard, ServiceCard, etc.)
-│   │   │   ├── layout/   # Layout components (AppLayout)
-│   │   │   └── ui/       # Generic UI components (Button, Switch, DatePicker, etc.)
-│   │   ├── pages/        # Application pages/views (ConsentOverviewPage, AgentGrantDetailPage)
-│   │   ├── hooks/        # Custom React hooks (useConsent, useAgentGrants, useToggleGrant)
-│   │   ├── services/     # Frontend services
-│   │   │   ├── api/      # API client and service layer (axios-based)
-│   │   │   └── storage/  # Client-side storage utilities
+│   │   │   ├── consent/  # Decisions, grants, and provider connection prompts
+│   │   │   └── layout/   # Console composition and agent route boundary
+│   │   ├── design-system/ # Shared components, semantic themes, and tokens
+│   │   ├── pages/        # Lazy decision and console views
+│   │   ├── hooks/        # Principal-scoped reads and authoritative mutations
+│   │   ├── services/     # Frontend service ownership
+│   │   │   ├── api/      # Axios transport and normalized DTOs
+│   │   │   ├── query/    # Query lifecycle and identity boundaries
+│   │   │   └── storage/  # Bounded tab-local callback drafts
 │   │   ├── types/        # TypeScript type definitions
 │   │   ├── utils/        # Utility functions (validation, formatting)
 │   │   ├── assets/       # Images, fonts, and other static assets
 │   │   └── styles/       # Global styles (Tailwind CSS)
 │   ├── public/           # Publicly accessible assets (favicon, etc.)
 │   ├── dist/             # Build output directory (served by Go backend)
-│   ├── tests/            # Frontend unit and integration tests (Vitest)
+│   ├── .storybook/      # Component documentation, browser checks, and visual gates
 │   ├── package.json      # Frontend dependencies and scripts
 │   ├── vite.config.ts    # Vite build configuration
 │   ├── tsconfig.json     # TypeScript solution references
 │   ├── tsconfig.app.json # App TypeScript configuration
 │   ├── tsconfig.test.json # Test TypeScript configuration
 │   ├── tsconfig.build.json # Build TypeScript configuration
-│   └── tailwind.config.ts # Tailwind CSS v4.0 configuration
+│   └── vitest.config.ts # Unit, component-browser, and bundle test projects
 ├── docs/                 # Project documentation (e.g., API docs, setup guides)
 ├── ARCHITECTURE.md       # Internal system design and domain glossary
 ├── infra/                # Infrastructure as Code
@@ -135,75 +136,79 @@ Application Startup
 
 **Purpose**: User-facing web interface for managing OAuth2 consent delegations to AI agents.
 
-**Architecture**: React 18 Single Page Application with TypeScript, served from Go backend
+**Architecture**: React 19 Single Page Application with TypeScript, served from Go backend
 
 **Technology Stack**:
 
-- **Frontend Framework**: React 18.2+ with TypeScript 5.3+
-- **Build Tool**: Vite 5.0+ (fast ESM-based bundler)
-- **Styling**: Tailwind CSS v4.0 (utility-first CSS framework)
-- **UI Components**: Headless UI 1.7+ (accessible, unstyled components)
-- **HTTP Client**: Axios 1.6+ (promise-based HTTP client)
-- **Router**: React Router DOM 6.20+ (client-side routing)
-- **Testing**: Vitest 1.0+ (fast unit test framework)
-- **State Management**: React hooks + Context API (no external state library)
+- **Frontend Framework**: React 19 with TypeScript 5
+- **Build Tool**: Vite 7
+- **Styling**: Tailwind CSS 4 with CSS-first semantic OKLCH tokens
+- **UI Components**: Owned Radix-based source in the shared design system
+- **HTTP Client**: Axios
+- **Router**: React Router 7 with lazy, root-mounted routes
+- **Server State**: TanStack Query 5 with principal-scoped keys and identity-bound cleanup
+- **Local State**: React hooks and context
+- **Search, Icons, and Feedback**: cmdk, Lucide, and Sonner. Motion and owned lucide-animated icons are console-only; decision routes use CSS/SVG.
+- **Testing**: Vitest 4, Testing Library, Storybook 10, and Playwright
+
+**Consent UI (feature 047)**: [ADR 038](adrs/038-design-system-rebuilt-on-shadcn-radix.md) governs the replacement interface. The application retains React, TypeScript, Vite, Tailwind, React Router, Axios, and the root-mounted SPA. The cutover inventory records observed verification results and limitations, not a separate release-approval process.
+
+ConsoleShell and DecisionShell share tinted OKLCH light/dark tokens, local fonts and cropped brand assets. Console routes can use Motion and owned lucide-animated icons; decision routes use owned CSS/SVG animations only. The decision-bundle gate excludes Motion, Command and console-only collection code. TanStack Query owns principal-scoped server state over Axios; React owns draft and preference state.
+
+The console uses a centered 1120 px / 12-column container. Agents and Connections show shared entity cards by default, with a stored per-page list choice. Approvals uses fixed-height inbox rows beside a detail panel; Remembered decisions occupy their own route. The agent detail uses an 8 + 4 permission/connection layout without tabs. Consent uses one 480 px card with signed-in identity, permission panel and pinned decision footer. If a selected service needs a connection, Connect temporarily occupies the primary action slot. Re-consent and callbacks retain their security invariants.
+
+The active view routes are `/agents`, `/agents/:id` in decision or console context, `/connections`, `/approvals`, `/approvals/remembered`, `/approvals/:id`, and `/settings/appearance`. `/` replaces history with `/agents`. The old `/delegations`, `/sessions`, and `/settings` view paths have no aliases or redirects. Reconnect on `/connections` returns to `/connections`. Consent and agent-detail Connect return to the initiating page and keep the accepted bounded tab-local consent draft. The broker callback sends provider errors and a missing return URL to `/connections`; its parameters and state token do not change. ADR 035's root mounting and protocol precedence remain unchanged.
+
+The redesign is one cutover with no feature flags, backward-compatibility layers or older-server fallbacks. The browser refreshes the acting-user pending list every 10 seconds; ADR 014's gateway synchronization remains unchanged. The redesign adds no end-user API, response field or persistence.
+
+The feature targets WCAG 2.2 AA, zero automatic third-party resources, cold consent content within 5 seconds on Chrome Slow 4G, and each initial decision graph below 170 kB gzip. The stakeholder approved the measured-stack targets on 2026-09-28. They remain acceptance targets.
+
+See [the plan](specs/047-redesign-consent-console/plan.md), [UI contract](specs/047-redesign-consent-console/contracts/ui-and-configuration.md), and [cutover inventory](specs/047-redesign-consent-console/cutover-inventory.md) for design and dated evidence. Do not treat older runtime results as proof of the 2026-10-04 amendment.
+
+Principle XI requires one design system, semantic tokens, accessible light/dark stories, and local assets. It does not prescribe an aesthetic. [DESIGN_PRINCIPLES.md](web/src/design-system/docs/DESIGN_PRINCIPLES.md) and ADR 038 govern the accepted direction. Historical feature records retain their original scope.
+
+The following invariants apply in both layouts:
+
+- Re-consent never widens a grant beyond the user's selection.
+- Deny creates nothing, revokes nothing, and constructs no redirect.
+- An invalid or expired authorization session is a decision error, never a console fallback.
+- Console views carry no Agent Origin Label.
+- Preferences never submit or preselect a decision.
+- The browser never calls the gateway long-poll `GET /api/approvals`.
+- The Agents collection never shows `activeGrantCount` and makes no per-agent count requests. Cards or list rows exclude expired grants.
+- Revocation needs confirmation. The affected entity shows a busy state and leaves the collection only after the server accepts the request.
 
 **Directory Structure**:
 
 ```
 web/
 ├── src/
-│   ├── components/       # React components
-│   │   ├── consent/      # Consent-specific components
-│   │   │   ├── DelegationCard.tsx        # Agent delegation card
-│   │   │   ├── DelegationList.tsx        # List of delegations
-│   │   │   ├── ServiceCard.tsx           # OAuth2 service card
-│   │   │   ├── ServiceGrantList.tsx      # List of service grants
-│   │   │   ├── ScopeList.tsx             # Scope selection UI
-│   │   │   ├── GrantStatusBadge.tsx      # Grant status indicator
-│   │   │   └── GrantValidityControl.tsx  # Expiration date control
-│   │   ├── layout/       # Layout components
-│   │   │   └── AppLayout.tsx             # Main app layout
-│   │   └── ui/           # Reusable UI components
-│   │       ├── Button.tsx                # Button component
-│   │       ├── Switch.tsx                # Toggle switch
-│   │       ├── DatePicker.tsx            # Date picker
-│   │       ├── ErrorBoundary.tsx         # Error boundary
-│   │       ├── InlineError.tsx           # Error display
-│   │       ├── EmptyState.tsx            # Empty state UI
-│   │       └── Skeleton.tsx              # Loading skeleton
-│   ├── pages/            # Application pages
-│   │   ├── ConsentOverviewPage.tsx       # List of all agent delegations
-│   │   ├── AgentGrantDetailPage.tsx      # Agent-specific grant management
-│   │   └── ErrorPage.tsx                 # Error page
-│   ├── hooks/            # Custom React hooks
-│   │   ├── useConsent.ts                 # Fetch agent delegations
-│   │   ├── useAgentGrants.ts             # Fetch agent grants
-│   │   ├── useToggleGrant.ts             # Toggle grant scopes
-│   │   ├── useUpdateValidity.ts          # Update grant expiration
-│   │   └── useRetry.ts                   # Retry with exponential backoff
-│   ├── services/         # Service layer
-│   │   ├── api/          # API clients
-│   │   │   ├── client.ts                 # Axios client configuration
-│   │   │   ├── consent.ts                # Consent API methods
-│   │   │   └── index.ts                  # API exports
-│   │   └── storage/      # Client-side storage
-│   │       └── session.ts                # Session storage utilities
-│   ├── types/            # TypeScript types
-│   │   ├── consent.ts                    # Consent domain types
-│   │   └── index.ts                      # Type exports
-│   ├── utils/            # Utility functions
-│   │   └── validation.ts                 # Input validation
-│   ├── App.tsx           # Root component
-│   └── main.tsx          # Application entry point
-├── dist/                 # Build output (served by Go)
-├── vite.config.ts        # Vite configuration
-├── tsconfig.json         # TypeScript solution references
-├── tsconfig.app.json     # App TypeScript configuration
-├── tsconfig.test.json    # Test TypeScript configuration
-├── tsconfig.build.json   # Build TypeScript configuration
-├── tailwind.config.ts    # Tailwind CSS configuration
-└── package.json          # Dependencies and scripts
+│   ├── components/       # Consent, approvals, connections, animated icons, search, and layout composition
+│   ├── design-system/    # Shared primitives, shells, themes, tokens, and guides
+│   ├── pages/            # Lazy decision and console route components
+│   ├── hooks/            # Principal-scoped queries and server-confirmed actions
+│   ├── services/
+│   │   ├── api/          # Typed Axios transport clients
+│   │   └── query/        # Identity boundary, QueryClient, and query keys
+│   ├── copy/             # Shared and view-specific UI copy
+│   ├── types/            # Existing API request and response types
+│   ├── utils/            # URL safety and shared utilities
+│   ├── styles/           # Semantic Tailwind mapping and local font faces
+│   ├── App.tsx           # Route and layout boundaries
+│   └── main.tsx          # Theme, query, and notification providers
+├── public/
+│   ├── brand/            # Outlined local wordmarks and marks
+│   └── fonts/            # Licensed local variable fonts
+├── build/                # Theme script/hash and decision-module build plugins
+├── .storybook/           # Documentation, both-theme browser checks, and visual artifacts
+├── dist/                 # Build output served by Go
+├── vite.config.ts
+├── vitest.config.ts
+├── tsconfig.json
+├── tsconfig.app.json
+├── tsconfig.test.json
+├── tsconfig.build.json
+└── package.json
 ```
 
 **Build Pipeline**:
@@ -239,37 +244,34 @@ Go API Handler returns JSON
 - **History API Fallback**: Go backend serves `index.html` for all non-API view paths (SPA fallback)
 - **API Integration**: Frontend makes requests to `/api/consent/*` endpoints on same domain
 - **CSRF Protection**: All mutating requests include CSRF token from cookie
-- **Session Management**: Principal extracted from `X-Principal` header (set by reverse proxy)
+- **Session Management**: Principal comes from explicitly configured pre-authentication: a trusted proxy header or a validated JWT. No header name is assumed by default.
 - **Type Safety**: Full TypeScript coverage with strict mode enabled
 - **Responsive Design**: Tailwind CSS utilities for mobile-first responsive UI
-- **Accessibility**: Headless UI components ensure WCAG 2.1 compliance
+- **Accessibility**: Shared Radix-based components and both-theme browser checks enforce the WCAG 2.1 AA floor and feature 047's WCAG 2.2 AA target.
 - **Error Handling**: Error boundaries and retry logic for resilient UX
 
 **Component Hierarchy**:
 
 ```
 App
-├── ErrorBoundary
-│   └── AppLayout
-│       ├── ConsentOverviewPage
-│       │   └── DelegationList
-│       │       └── DelegationCard (per agent)
-│       │           └── GrantStatusBadge
-│       └── AgentGrantDetailPage
-│           ├── ServiceGrantList
-│           │   └── ServiceCard (per OAuth2 service)
-│           │       ├── Switch (toggle grant)
-│           │       └── ScopeList (scope checkboxes)
-│           └── GrantValidityControl
-│               └── DatePicker (expiration date)
+├── GlobalErrorBoundary
+├── ConsoleLayout → ConsoleShell (1120 px centered)
+│   ├── DelegationsPage → AgentsView → EntityCard / EntityRow
+│   ├── ConnectionsPage → ConnectionsView → ConnectionCard
+│   ├── ApprovalsPage → ApprovalsView: pending inbox + shared review panel, or remembered rows
+│   └── SettingsPage → SettingsView: theme + default collection view
+├── AgentRoute → restored authorization context before shell selection
+│   ├── with session_token: DecisionShell → AgentDecisionPage (480 px consent card)
+│   └── without session_token: ConsoleLayout → AgentConsolePage → PermissionPanel + Connections/About rail
+└── ApprovalPage → DecisionShell (shared ApprovalReviewPage)
 ```
 
 **State Management**:
 
 - **Local State**: React `useState` for component-level state
-- **Server State**: Custom hooks with axios for API data fetching
-- **Context**: React Context API for global UI state (theme, error messages)
-- **OAuth Redirect Selections**: `AgentGrantDetailPage` stores current-tab `ConsentSelections` and the original return URL (including `session_token`, if present) under an opaque UUID in `sessionStorage`. It sends the UUID in a same-origin form POST with a clean return path; the provider-facing JWE state seals only the UUID and that path, not nested return-page query data. A successful callback appends the verified `consent_state_id`; the page restores only the matching tab, service, and path, then replaces the URL without the ID so reloads do not replay selections. Records expire after 15 minutes, covering the maximum configurable state TTL (10 minutes by default). All provider-facing state tokens must be shorter than 6,000 bytes or initiation fails. See [ADR 037](adrs/037-consent-selection-oauth-redirect-state.md) and [Feature 008](specs/008-thirdparty-oauth2-sessions/spec.md).
+- **Server State**: TanStack Query owns principal-scoped remote state over Axios.
+- **Local State Context**: React state and context own drafts, appearance, and local operation feedback.
+- **OAuth Redirect Draft**: When the draft or return URL carries state, both agent contexts store the current draft and original same-origin return URL in tab-local `sessionStorage` under an opaque UUID. The draft includes selections, duration, and custom date. A same-origin form POST sends the UUID and clean return path; the provider-facing JWE seals no nested return-page data. Without such state, Connect uses the existing GET authorize link and stores no draft. Callback restoration validates the ID, service, origin, path, and expiry before replacing history without the ID. Records expire after 15 minutes. Provider-facing state stays shorter than 6,000 bytes or initiation fails. See [ADR 039](adrs/039-consent-selection-oauth-redirect-state.md) and [Feature …
 - **No Redux/MobX**: Hooks + Context sufficient for current requirements
 
 **API Communication**:
@@ -1316,6 +1318,18 @@ Date of Last Update: 2026-06-02
 ## 12. Glossary / Acronyms
 
 Define any project-specific terms or acronyms.)
+
+**Connection State (feature 047 presentation)**: A view of UserSession token usability derived from existing session fields, refresh results, and agent requirement status. The states are “Connected”, “Needs re-authentication” (visible label “Needs sign-in”), “Expired”, “Unavailable” (a failed read or a refresh failure without an authoritative rejection) and “No connection”. Show No connection only in the agent-detail Connections rail, when an agent requires a service and no stored session exists. `/connections` lists stored sessions only. There is no Missing scopes state, and a connection does not imply a UserGrant.
+
+**Delegation**: A principal's unexpired UserGrant to one agent, listed at `/agents` under the Agents navigation item.
+
+**Consent Draft**: Transient selections, existing active grant, duration, custom expiry, and dirty state. During provider authorization, an ephemeral tab-local record preserves the draft and original return URL under `consent_state_id`; it expires after 15 minutes and never persists API responses or changes authorization.
+
+**Agent Origin Label**: "Verified domain: host" for validated CIMD metadata, "Registered by your administrator" without CIMD metadata, or "Unverified" for a CIMD request without domain trust. It derives only from the authorization session and never claims legal publisher verification.
+
+**Delta Re-consent**: A decision on only the access that is not already in `granted_permission_sets`.
+
+**Appearance Preferences**: Per-browser theme, sidebar and default/per-page collection view choices. These never affect a consent or tool decision.
 
 ### Configuration Domain
 

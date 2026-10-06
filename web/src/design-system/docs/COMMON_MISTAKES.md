@@ -1,609 +1,127 @@
-# Common Mistakes & How to Fix Them
+# Common Mistakes and Corrections
 
-Learn from frequent pitfalls in the Refined Trust Architecture design system. Each mistake includes the reason it's wrong and the correct solution.
+## Authority and example status
 
----
+[ADR 038](../../../../adrs/038-design-system-rebuilt-on-shadcn-radix.md) was accepted on 2026-09-27 and amended on 2026-10-04.
+[DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) defines the current direction for feature 047.
+The examples are targets, not completed release validation.
 
-## Color Usage Mistakes
+Use [COLOR_GUIDE.md](COLOR_GUIDE.md) for exact light and dark values.
+Use [TOKEN_GUIDE.md](TOKEN_GUIDE.md) for typography, spacing, radius, and motion tokens.
+Do not copy obsolete runtime styling into new components.
 
-### ❌ Mistake 1: Using `text-primary` for Headings
+## Using palette values instead of semantic roles
+
+Raw palette utilities and component-local colors bypass the light/dark theme contract.
+Use semantic roles in every state, including hover, focus, error, and disabled presentation:
 
 ```tsx
-// DON'T
-<h1 className="text-primary">Dashboard</h1>
+<section className="border border-border-subtle bg-card text-card-foreground">
+  <h2 className="font-display text-foreground">{title}</h2>
+  <p className="text-muted-foreground">{description}</p>
+</section>
 ```
 
-**Why it's wrong**: `text-primary` is an alias that points to `trust-deep`, but it's confusing because "primary" could mean "primary text color" (for body text). The semantic intent is unclear.
+The caller supplies `title` and `description`; the application obtains those strings from `@copy`.
+Use `--border-subtle` for card edges and dividers, `--border` for buttons, and `--border-control` for inputs, checkboxes, and radios.
+Use `--primary-soft` for active navigation and selected rows. Soft status colors need a word or icon.
 
-**Correct solution**:
+## Showing multiple primary actions or hiding the one needed
 
-```tsx
-// DO
-<h1 className="text-trust-deep">Dashboard</h1>
-```
-
-**Rule**: Always use `text-trust-deep` or `text-trust` explicitly for headings to communicate brand authority.
-
----
-
-### ❌ Mistake 2: Using `text-neutral-900` for Headings
+Use one accent action in each decision context, not one per row or section.
+Consent uses Allow when ready. If a selected service is not connected, the primary action becomes “Connect {Service} to continue”.
 
 ```tsx
-// DON'T
-<h2 className="text-neutral-900">Section Title</h2>
-```
-
-**Why it's wrong**: Headings should use brand colors (trust family) to establish authority and visual hierarchy. Neutral colors are for body text and supporting content.
-
-**Correct solution**:
-
-```tsx
-// DO
-<h2 className="text-trust-deep">Section Title</h2>  // Major sections
-<h3 className="text-trust">Subsection Title</h3>    // Minor sections
-```
-
-**Rule**: Reserve `neutral-900` only for body text when `neutral-700` doesn't provide enough contrast.
-
----
-
-### ❌ Mistake 3: Using `gray-*` Classes
-
-```tsx
-// DON'T
-<div className="bg-gray-100 text-gray-700 border-gray-300">Content</div>
-```
-
-**Why it's wrong**: Standard Tailwind grays have been replaced with warm neutrals throughout the design system. Gray classes don't exist in this system.
-
-**Correct solution**:
-
-```tsx
-// DO
-<div className="bg-neutral-100 text-neutral-700 border-neutral-300">
-  Content
-</div>
-```
-
-**Rule**: Always use `neutral-*` scale instead of `gray-*`. Our warm neutrals (#faf9f7, #f5f1ed) convey sophistication and trust.
-
----
-
-### ❌ Mistake 4: Using Extended Color Palettes
-
-```tsx
-// DON'T
-<button className="bg-navy-700 text-white">Click Me</button>
-```
-
-**Why it's wrong**: Extended palettes (navy-50 through navy-900, emerald-_, amber-_) were removed. Only semantic tokens are available.
-
-**Correct solution**:
-
-```tsx
-// DO
-<button className="bg-trust-deep text-white">Click Me</button>
-```
-
-**Rule**: Use semantic tokens: `trust-deep`, `trust`, `success-primary`, `error-primary`, `warning-primary`, `neutral-*`.
-
----
-
-### ❌ Mistake 5: Inconsistent Text Color Usage
-
-```tsx
-// DON'T - mixing direct neutral colors with semantic aliases
-<div>
-  <p className="text-neutral-600">First paragraph</p>
-  <p className="text-secondary">Second paragraph</p>
-</div>
-```
-
-**Why it's wrong**: Inconsistency makes code harder to maintain. Pick one pattern and stick with it.
-
-**Correct solution**:
-
-```tsx
-// DO - use semantic aliases consistently
-<div>
-  <p className="text-secondary">First paragraph</p>
-  <p className="text-secondary">Second paragraph</p>
-</div>
-```
-
-**Rule**: Prefer semantic aliases (`text-secondary`, `text-tertiary`) over direct neutral colors for consistency.
-
----
-
-## Layout & Spacing Mistakes
-
-### ❌ Mistake 6: Inconsistent Padding Props
-
-```tsx
-// DON'T - mixing 'md' and 'default'
-<Card padding="default">
-  <Button size="md">Action</Button>
-</Card>
-
-<Card padding="md">
-  <Button size="default">Action</Button>
-</Card>
-```
-
-**Why it's wrong**: Documentation uses "default" but common practice uses "md". This creates confusion about which is canonical.
-
-**Correct solution**:
-
-```tsx
-// DO - stick with one convention
-<Card padding="default">
-  <Button size="md">Action</Button>
-</Card>
-```
-
-**Rule**: Use `size="sm|md|lg"` for buttons and components, but `padding="compact|default|spacious"` for cards. Different scales serve different purposes.
-
----
-
-### ❌ Mistake 7: Tight Spacing in Cards
-
-```tsx
-// DON'T
-<Card className="p-2">
-  <h3>Title</h3>
-  <p>Content with cramped padding</p>
-</Card>
-```
-
-**Why it's wrong**: Cards need generous padding to create the "luxury" feel. Cramped spacing looks cheap and rushed.
-
-**Correct solution**:
-
-```tsx
-// DO
-<Card padding="default" className="space-y-4">
-  <h3>Title</h3>
-  <p>Content with proper breathing room</p>
-</Card>
-```
-
-**Rule**: Minimum card padding is 16px (`compact`). Default is 24px (`default`). Never go below 16px.
-
----
-
-### ❌ Mistake 8: No Gap Between Elements
-
-```tsx
-// DON'T
-<div>
-  <h2>Title</h2>
-  <p>Paragraph right after title</p>
-  <Button>Action</Button>
-</div>
-```
-
-**Why it's wrong**: Elements crush together visually without vertical spacing, making the interface feel dense and hard to scan.
-
-**Correct solution**:
-
-```tsx
-// DO
-<div className="space-y-4">
-  <h2>Title</h2>
-  <p>Paragraph with proper spacing</p>
-  <Button>Action</Button>
-</div>
-```
-
-**Rule**: Always use `space-y-*` utilities for vertical stacking. Default to `space-y-4` (16px) for related content.
-
----
-
-## Animation Mistakes
-
-### ❌ Mistake 9: Animating Width/Height
-
-```tsx
-// DON'T
-<div className="transition-all duration-300 hover:w-64">Expanding div</div>
-```
-
-**Why it's wrong**: Animating layout properties (width, height, padding, margin) causes expensive reflows and janky animations.
-
-**Correct solution**:
-
-```tsx
-// DO
-<div className="transition-transform duration-300 hover:scale-105">
-  Scaling div
-</div>
-```
-
-**Rule**: Only animate transform properties (translate, scale, rotate) and opacity. Use `max-height` with overflow for height transitions if needed.
-
----
-
-### ❌ Mistake 10: Wrong Animation Duration
-
-```tsx
-// DON'T
-<Card className="transition-all duration-150 hover:shadow-lg">
-  Card content
-</Card>
-```
-
-**Why it's wrong**: Card elevation changes need **300ms**, not 150ms. The duration hierarchy exists for a reason.
-
-**Correct solution**:
-
-```tsx
-// DO
-<Card className="transition-all duration-300 hover:shadow-lg">
-  Card content
-</Card>
-```
-
-**Rule**:
-
-- 150ms → Color/opacity changes
-- 200ms → Button states
-- 300ms → Card elevation
-- 500ms → Page transitions
-
----
-
-### ❌ Mistake 11: Not Respecting `prefers-reduced-motion`
-
-```tsx
-// DON'T
-<div className="animate-bounce">Always bouncing</div>
-```
-
-**Why it's wrong**: Users with vestibular disorders can experience nausea from animations. Accessibility is mandatory.
-
-**Correct solution**:
-
-```tsx
-// DO
-<div className="motion-safe:animate-bounce">
-  Bounces only if user allows motion
-</div>
-```
-
-**Rule**: Always prefix animations with `motion-safe:` to respect user preferences.
-
----
-
-## Component Usage Mistakes
-
-### ❌ Mistake 12: Multiple Primary Buttons
-
-```tsx
-// DON'T
 <div className="flex gap-3">
-  <Button variant="primary">Save</Button>
-  <Button variant="primary">Publish</Button>
-  <Button variant="primary">Share</Button>
+  <Button variant="outline" onClick={onDeny}>{denyLabel}</Button>
+  <Button variant="primary" onClick={onAllow}>{allowLabel}</Button>
 </div>
 ```
 
-**Why it's wrong**: Multiple primary buttons create competing visual hierarchy. Users don't know which action is most important.
+The application supplies labels from `@copy`. Deny creates nothing, revokes nothing, and constructs no redirect.
+Consent actions remain visible without scrolling at 1280 × 720 with three permission groups and a risk callout.
+The approval inbox puts Approve once and Deny in a pinned detail panel; its list rows never expand.
+Use `outline` for repeated row actions. Use `destructive-quiet` with `ShieldOff` for agent revocation and `Unlink` for connection disconnect.
+Use `destructive-outline` for the single Revoke button in the agent detail header.
+Use `destructive` only for a confirmation in Dialog. Remove an overflow menu with just one action.
 
-**Correct solution**:
+## Recreating controls or keeping obsolete APIs
 
-```tsx
-// DO
-<div className="flex gap-3">
-  <Button variant="primary">Publish</Button>
-  <Button variant="secondary">Save Draft</Button>
-  <Button variant="outline">Preview</Button>
-</div>
-```
+Use the owned shadcn/Radix components in the existing design-system categories.
+Do not create another component library under application components.
 
-**Rule**: One primary button per section. Use secondary/outline for supporting actions.
+| Need | Accepted component |
+| --- | --- |
+| Confirmation | Dialog |
+| Action menu | DropdownMenu |
+| Text entry | Input |
+| Exclusive choice | RadioGroup |
+| Content separator | Separator |
+| Mobile sidebar | Sheet |
+| Result notification | Sonner-backed Toaster |
 
----
+Read the owned source before you use a prop.
+Do not preserve old size, padding, or event props through compatibility aliases.
 
-### ❌ Mistake 13: Danger Button with Primary Button
+## Replacing shells with custom page chrome
 
-```tsx
-// DON'T
-<div className="flex gap-3">
-  <Button variant="primary">Save</Button>
-  <Button variant="danger">Delete</Button>
-</div>
-```
+ConsoleShell owns the three-item navigation and centered main area. PageHeader supplies the title, optional muted count, and icon toolbar.
+Move the purpose sentence to the empty state for Agents, Connections, and Approvals.
+DecisionShell owns the focused consent card or approval review without a sidebar.
+An invalid authorization session remains a decision error, never an editable console fallback.
 
-**Why it's wrong**: Combining primary and danger creates visual confusion. Both demand attention equally, making accidents likely.
+Keep Command and Motion out of decision-route bundles. Use concrete imports to avoid bringing console-only code into decision routes.
 
-**Correct solution**:
+## Adding decorative elevation or motion
 
-```tsx
-// DO - separate dangerous actions
-<div className="space-y-6">
-  <div>
-    <Button variant="primary" className="w-full">
-      Save Changes
-    </Button>
-  </div>
+Use tinted surfaces and semantic borders, not loud card outlines or strong card shadows. Floating layers use `shadow-overlay`; consent and the sticky save bar use `shadow-focal`. Only consent permits the static 3–4% top accent wash authorized by ADR 038's 2026-10-05 amendment.
+Do not expand card or row controls under a pointer. Open detail in a panel, dialog, or reserved area.
+Console routes can use `AnimatePresence` and `layout` for a removed card or decided row. Decision routes use CSS-only SVG animation.
+Use shared 120, 160, 200, and 320 ms tokens and `cubic-bezier(0.2, 0, 0, 1)`.
+Under reduced motion, remove movement and icon animation but preserve opacity and color fades.
 
-  <div className="pt-6 border-t border-neutral-200">
-    <p className="text-sm text-error-primary mb-2">Danger zone</p>
-    <Button variant="danger">Delete Forever</Button>
-  </div>
-</div>
-```
+Use 4–12 px spacing inside components, 16–24 px between components, and 32–48 px between sections.
+Do not add generous card padding or show a toggle for text that is not clipped.
 
-**Rule**: Separate destructive actions visually. Use dividers, spacing, or different sections.
+## Loading remote identity assets
 
----
+Use local outlined artwork through Wordmark.
+Use Zalando Sans Variable for display text, Inter Variable for body text, and JetBrains Mono for technical values.
+Fonts and licenses belong in `web/public/fonts/`. Artwork belongs in `web/public/brand/`.
 
-### ❌ Mistake 14: Wrong Modal Size
+If an agent image is off-origin, show the local Avatar fallback without requesting the image.
+An external governance link or explicit OAuth2 redirect does not authorize automatic external asset loads.
 
-```tsx
-// DON'T - using xl for a simple confirmation
-<Modal size="xl">
-  <p>Are you sure you want to delete this?</p>
-  <Button variant="danger">Delete</Button>
-</Modal>
-```
+## Hiding meaning from keyboard and screen-reader users
 
-**Why it's wrong**: Modal size should match content complexity. Large modals for simple tasks waste screen space.
+Use real buttons, links, headings, and form labels. Use a linked card surface with separate buttons above the link layer.
+Do not nest an action button inside the link or use a clickable `div`.
+Keep focus visible and unobscured; use `focus-visible` on programmatically focused page wrappers.
 
-**Correct solution**:
+Connect Input errors with `aria-invalid` and `aria-describedby`.
+Give icon-only controls accessible names and tooltips. Use labeled status, not color alone.
+One-line entity names truncate with CSS ellipsis. Show the full-text tooltip only when `TruncatedText` measures clipping.
+Multi-line text gets a More toggle only when measured as clipped.
+The toggle must support keyboard input. Preserve every action at 320 px and 200% zoom.
 
-```tsx
-// DO
-<Modal size="sm">
-  <p>Are you sure you want to delete this?</p>
-  <Button variant="danger">Delete</Button>
-</Modal>
-```
+## Presenting unsupported data or results
 
-**Rule**:
+Agents cards show the agent, grant expiry, and relative change time from `lastModifiedAt`. The name is more prominent than the quiet date metadata. Cards are 120 px tall with consistent 12 px outer insets. The linked surface opens detail; Revoke is a separate action. Do not add a duplicate Details link or keyboard stop.
+`activeGrantCount` counts UserGrant records, not permission sets. Do not show a count column or fetch per-agent counts.
 
-- `sm` (400px) → Confirmations
-- `md` (600px) → Forms with 3-5 fields
-- `lg` (800px) → Complex forms/content
-- `xl` (1000px) → Data tables
+Do not invent publisher, account, last-use, or missing-scope data.
+Do not infer permission-group risk from scope names. Only tool approvals use server-provided risk.
+The consent origin line shows the available domain metadata. Do not claim that domain verification establishes legal publisher identity.
 
----
+Confirm revocation before a request. Restore the affected record on failure and announce success only after server acceptance.
+Never optimistically grant or approve access.
 
-### ❌ Mistake 15: No Shadow on Cards
+## Treating examples as accessibility evidence
 
-```tsx
-// DON'T
-<Card className="border border-neutral-200">Card without elevation</Card>
-```
-
-**Why it's wrong**: The design system uses **shadow-based elevation**, not borders. Cards need shadows to "float" above the page.
-
-**Correct solution**:
-
-```tsx
-// DO
-<Card className="shadow-sm hover:shadow-lg">Card with proper elevation</Card>
-```
-
-**Rule**: Cards use `shadow-sm` at rest, `shadow-lg` on hover. Borders are optional and subtle.
-
----
-
-## Typography Mistakes
-
-### ❌ Mistake 16: Using System Fonts
-
-```tsx
-// DON'T
-<h1 className="font-sans">Title</h1>
-```
-
-**Why it's wrong**: The design system specifies **Crimson Pro** for headings to create the "Refined Trust Architecture" aesthetic. System fonts lose brand identity.
-
-**Correct solution**:
-
-```tsx
-// DO
-<h1 className="font-display">Title</h1>
-```
-
-**Rule**:
-
-- Headings → `font-display` (Crimson Pro)
-- Body → `font-sans` (Manrope)
-- Code → `font-mono` (JetBrains Mono)
-
----
-
-### ❌ Mistake 17: Inconsistent Font Weights
-
-```tsx
-// DON'T
-<h2 className="font-medium">Section</h2>
-```
-
-**Why it's wrong**: Headings should use bold (700) or semibold (600). Medium (500) is too light for hierarchy.
-
-**Correct solution**:
-
-```tsx
-// DO
-<h2 className="font-bold">Section</h2>      // For h1, h2
-<h3 className="font-semibold">Subsection</h3>  // For h3-h6
-```
-
-**Rule**: Bold for major headings, semibold for minor headings, medium for emphasized body text.
-
----
-
-### ❌ Mistake 18: Missing Letter Spacing
-
-```tsx
-// DON'T
-<h1 className="text-4xl font-display">Cramped Display Heading</h1>
-```
-
-**Why it's wrong**: Crimson Pro needs tighter letter-spacing (-0.02em) for optimal readability at large sizes.
-
-**Correct solution**:
-
-```tsx
-// DO
-<h1 className="text-4xl font-display tracking-tight">
-  Properly Spaced Display Heading
-</h1>
-```
-
-**Rule**: Use `tracking-tight` on display headings (Crimson Pro). Body text (Manrope) has default spacing.
-
----
-
-## Accessibility Mistakes
-
-### ❌ Mistake 19: Color-Only Status Indication
-
-```tsx
-// DON'T
-<span className="text-success-primary">Active</span>
-<span className="text-error-primary">Denied</span>
-```
-
-**Why it's wrong**: Colorblind users can't distinguish status by color alone. You need additional indicators.
-
-**Correct solution**:
-
-```tsx
-// DO
-<Badge variant="success">
-  <CheckIcon className="w-3 h-3 mr-1" />
-  Active
-</Badge>
-<Badge variant="error">
-  <XIcon className="w-3 h-3 mr-1" />
-  Denied
-</Badge>
-```
-
-**Rule**: Always combine color with icons, text, or patterns for status communication.
-
----
-
-### ❌ Mistake 20: Missing Focus States
-
-```tsx
-// DON'T
-<button className="bg-trust text-white">No focus indicator</button>
-```
-
-**Why it's wrong**: Keyboard users can't see which element has focus. Violates WCAG AA.
-
-**Correct solution**:
-
-```tsx
-// DO
-<button className="bg-trust text-white focus:ring-2 focus:ring-trust focus:ring-offset-2">
-  Proper focus indicator
-</button>
-```
-
-**Rule**: All interactive elements need visible focus rings (2px, trust color, 2px offset).
-
----
-
-### ❌ Mistake 21: Insufficient Color Contrast
-
-```tsx
-// DON'T
-<p className="text-neutral-400 bg-white">Low contrast text</p>
-```
-
-**Why it's wrong**: `neutral-400` (#c4bdb3) on white doesn't meet WCAG AA (4.5:1 minimum for text).
-
-**Correct solution**:
-
-```tsx
-// DO
-<p className="text-neutral-700 bg-white">High contrast text</p>
-```
-
-**Rule**: Use `neutral-700` (#4a4137) or darker for body text. `neutral-600` (#6b6561) for secondary text. `neutral-400` only for placeholders/disabled states.
-
----
-
-## Performance Mistakes
-
-### ❌ Mistake 22: Inline Styles for Theming
-
-```tsx
-// DON'T
-<div style={{ backgroundColor: '#0A2540', color: '#ffffff' }}>
-  Inline styled
-</div>
-```
-
-**Why it's wrong**: Inline styles bypass the design token system and make theming impossible. Can't be purged by Tailwind.
-
-**Correct solution**:
-
-```tsx
-// DO
-<div className="bg-trust-deep text-white">Token-based styling</div>
-```
-
-**Rule**: Always use utility classes. Use CSS variables (`var(--color-trust-deep)`) only when dynamic theming is required.
-
----
-
-### ❌ Mistake 23: Not Using Semantic HTML
-
-```tsx
-// DON'T
-<div className="text-lg font-bold text-trust-deep" onClick={handleClick}>
-  Clickable Heading
-</div>
-```
-
-**Why it's wrong**: Screen readers can't identify headings. Buttons aren't keyboard-accessible. Hurts SEO and accessibility.
-
-**Correct solution**:
-
-```tsx
-// DO
-<h2 className="text-lg font-bold text-trust-deep">
-  Actual Heading
-</h2>
-<button onClick={handleClick} className="text-trust hover:text-trust-hover">
-  Clickable Element
-</button>
-```
-
-**Rule**: Use semantic HTML (`<button>`, `<h1>`, `<nav>`) instead of styled `<div>` elements.
-
----
-
-## Quick Reference: Most Common Mistakes
-
-| Mistake                           | Fix                                        |
-| --------------------------------- | ------------------------------------------ |
-| Using `gray-*`                    | Use `neutral-*` instead                    |
-| Using `navy-700`                  | Use `trust-deep` or `trust`                |
-| Using `text-primary` for headings | Use `text-trust-deep` explicitly           |
-| Multiple primary buttons          | One primary per section                    |
-| No spacing between elements       | Use `space-y-4` for stacking               |
-| Animating width/height            | Animate `transform` instead                |
-| Wrong font (not Crimson Pro)      | Use `font-display` for headings            |
-| Missing focus rings               | Add `focus:ring-2` to interactive elements |
-| Low contrast text                 | Use `text-neutral-700` minimum             |
-| Color-only status                 | Add icons to colors                        |
-
----
-
-## How to Avoid These Mistakes
-
-1. **Read decision trees first** - Consult [DECISION_TREES.md](./DECISION_TREES.md) before making choices
-2. **Use component pairing guide** - Reference [COMPONENT_PAIRING_GUIDE.md](./COMPONENT_PAIRING_GUIDE.md) for spacing patterns
-3. **Check accessibility guide** - Verify compliance with [ACCESSIBILITY_GUIDE.md](./ACCESSIBILITY_GUIDE.md)
-4. **Review component archetypes** - Study [COMPONENT_ARCHETYPES.md](./COMPONENT_ARCHETYPES.md) for visual specifications
-5. **Test in Storybook** - View components in isolation before integrating
-
-**Remember**: When in doubt, look at existing components in the design system. They follow these rules correctly and serve as working examples.
+Principle XI requires WCAG 2.1 AA. Feature 047 targets WCAG 2.2 AA.
+Primitives, patterns, and screens need both-theme accessibility checks. Reviewed pixel references cover eligible light 1280 × 720 cases only, under [ADR 040](../../../../adrs/040-canonical-light-visual-reference-gate.md).
+Screen stories also cover dense, long, error, stale, and decision-specific states at 375, 768, and 1280 px.
+Rendered text needs 4.5:1 contrast; required form-control boundaries and focus indicators need 3:1.
+Token targets and story examples do not prove contrast, keyboard behavior, layout stability, or focus visibility.
+Measure the approval list bounds after decisions and consent Allow at 1280 × 720 before release.
+See [ACCESSIBILITY_GUIDE.md](ACCESSIBILITY_GUIDE.md), [COMPONENT_PAIRING_GUIDE.md](COMPONENT_PAIRING_GUIDE.md), and [COMPOSITION_PATTERNS.md](COMPOSITION_PATTERNS.md).

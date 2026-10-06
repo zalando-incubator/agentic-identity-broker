@@ -28,7 +28,7 @@ binds:
             - "token-exchange-broker"
             jwks:
               url: "http://upstream-oauth2:9001/.well-known/jwks.json"
-          - issuer: "http://localhost:3000"
+          - issuer: "http://localhost:8000"
             audiences:
             - "token-exchange-broker"
             jwks:

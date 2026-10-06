@@ -2,4 +2,4 @@
  * Avatar component exports
  */
 
-export { Avatar, type AvatarProps, Avatar as default } from './Avatar';
+export { Avatar, type AvatarProps } from './Avatar';

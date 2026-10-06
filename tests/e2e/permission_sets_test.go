@@ -1102,8 +1102,12 @@ var _ = Describe("Permission Sets (019)", func() {
 			defer func() { _ = getResp.Body.Close() }()
 			Expect(getResp.StatusCode).To(Equal(http.StatusOK))
 
-			result := parsePSGrant(getResp)
-			gps, ok := result["granted_permission_sets"].(map[string]interface{})
+			var envelope struct {
+				Data []map[string]interface{} `json:"data"`
+			}
+			Expect(json.NewDecoder(getResp.Body).Decode(&envelope)).To(Succeed())
+			Expect(envelope.Data).To(HaveLen(1))
+			gps, ok := envelope.Data[0]["granted_permission_sets"].(map[string]interface{})
 			Expect(ok).To(BeTrue(), "granted_permission_sets must be present in stored grant")
 			Expect(gps).To(HaveKey(mandatoryPSID))
 			Expect(gps).To(HaveKey(optionalPSID))

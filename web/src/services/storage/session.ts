@@ -1,13 +1,12 @@
-export type ConsentSelections = Record<string, string[]>;
+import type { ConsentDraftSnapshot } from '@components/consent/consentDraft';
 
 const consentStatePrefix = 'agentic-identity-broker:consent-state:';
 const consentStateLifetimeMilliseconds = 15 * 60 * 1000;
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-interface StoredConsentSelections {
+export interface StoredConsentDraft extends ConsentDraftSnapshot {
   expiresAt: number;
-  selections: ConsentSelections;
   serviceID: string;
   returnURL: string;
 }
@@ -20,7 +19,7 @@ function getSessionStorage(): Storage | undefined {
   }
 }
 
-function isConsentSelections(value: unknown): value is ConsentSelections {
+function isConsentSelections(value: unknown): value is ConsentDraftSnapshot['selections'] {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
   }
@@ -32,9 +31,7 @@ function isConsentSelections(value: unknown): value is ConsentSelections {
   );
 }
 
-function isStoredConsentSelections(
-  value: unknown,
-): value is StoredConsentSelections {
+function isStoredConsentDraft(value: unknown): value is StoredConsentDraft {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
   }
@@ -44,11 +41,13 @@ function isStoredConsentSelections(
     Number.isFinite(record.expiresAt) &&
     typeof record.serviceID === 'string' &&
     typeof record.returnURL === 'string' &&
+    (record.duration === 'until-revoked' || record.duration === '30-days' || record.duration === 'custom') &&
+    typeof record.customDate === 'string' &&
     isConsentSelections(record.selections)
   );
 }
 
-function pruneExpiredConsentSelections(storage: Storage, now: number): void {
+function pruneExpiredConsentDrafts(storage: Storage, now: number): void {
   for (let index = storage.length - 1; index >= 0; index -= 1) {
     const key = storage.key(index);
     if (!key?.startsWith(consentStatePrefix)) {
@@ -80,8 +79,8 @@ function pruneExpiredConsentSelections(storage: Storage, now: number): void {
   }
 }
 
-export function saveConsentSelections(
-  selections: ConsentSelections,
+export function saveConsentDraft(
+  draft: ConsentDraftSnapshot,
   serviceID: string,
   returnURL: string,
 ): string | undefined {
@@ -92,14 +91,14 @@ export function saveConsentSelections(
 
   try {
     const now = Date.now();
-    pruneExpiredConsentSelections(storage, now);
+    pruneExpiredConsentDrafts(storage, now);
 
     const stateID = crypto.randomUUID();
     storage.setItem(
       `${consentStatePrefix}${stateID}`,
       JSON.stringify({
         expiresAt: now + consentStateLifetimeMilliseconds,
-        selections,
+        ...draft,
         serviceID,
         returnURL,
       }),
@@ -110,11 +109,11 @@ export function saveConsentSelections(
   }
 }
 
-export function loadConsentState(
+export function loadConsentDraft(
   stateID: string,
   serviceID: string,
   pathname: string,
-): StoredConsentSelections | undefined {
+): StoredConsentDraft | undefined {
   if (!uuidPattern.test(stateID)) {
     return undefined;
   }
@@ -132,7 +131,7 @@ export function loadConsentState(
 
     const record = JSON.parse(rawRecord) as unknown;
     if (
-      !isStoredConsentSelections(record) ||
+      !isStoredConsentDraft(record) ||
       record.expiresAt <= Date.now() ||
       record.serviceID !== serviceID
     ) {

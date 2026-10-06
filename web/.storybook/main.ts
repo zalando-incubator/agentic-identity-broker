@@ -9,11 +9,16 @@ const config: StorybookConfig = {
   stories: [
     '../src/design-system/**/*.mdx',
     '../src/design-system/**/*.stories.@(js|jsx|ts|tsx)',
+    '../src/pages/**/*.stories.@(js|jsx|ts|tsx)',
+    '../src/components/consent/**/*.stories.@(js|jsx|ts|tsx)',
+    '../src/components/approvals/**/*.stories.@(js|jsx|ts|tsx)',
+    '../src/components/icons/**/*.stories.@(js|jsx|ts|tsx)',
   ],
   addons: [
-    '@storybook/addon-a11y',          // Accessibility testing
-    '@storybook/addon-docs',          // MDX/Docs support
-    '@storybook/addon-themes',        // Theme switcher (future dark mode)
+    '@storybook/addon-a11y',
+    '@storybook/addon-docs',
+    '@storybook/addon-themes',
+    '@storybook/addon-vitest',
   ],
   framework: {
     name: '@storybook/react-vite',
@@ -27,10 +32,12 @@ const config: StorybookConfig = {
       resolve: {
         alias: {
           '@design-system': path.resolve(__dirname, '../src/design-system'),
+          '@services': path.resolve(__dirname, '../src/services'),
+          '@copy': path.resolve(__dirname, '../src/copy'),
           '@components': path.resolve(__dirname, '../src/components'),
           '@hooks': path.resolve(__dirname, '../src/hooks'),
           '@utils': path.resolve(__dirname, '../src/utils'),
-          '@types': path.resolve(__dirname, '../src/types'),
+          '@app-types': path.resolve(__dirname, '../src/types'),
           '@styles': path.resolve(__dirname, '../src/styles'),
         },
       },

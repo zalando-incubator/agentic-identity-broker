@@ -14,8 +14,8 @@ oauth2:
 
 broker:
   # Identity Broker configuration
-  base_url: "http://localhost:3000"
-  authorize_endpoint: "http://localhost:3000/oauth2/authorize"
+  base_url: "http://localhost:8000"
+  authorize_endpoint: "http://localhost:8000/oauth2/authorize"
   # Token and metadata endpoints use internal container DNS for server-to-server communication
   token_endpoint: "http://identity-broker:8000/oauth2/token"
   metadata_endpoint: "http://identity-broker:8000/.well-known/oauth-authorization-server"

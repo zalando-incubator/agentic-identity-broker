@@ -1,548 +1,195 @@
 # Consent SPA Configuration
 
-This document describes consent single-page application (SPA) configuration and its Go
-backend integration.
-
-## Table of Contents
-
-1. [Backend Configuration](#backend-configuration)
-2. [Frontend Configuration](#frontend-configuration)
-3. [Environment-Specific Configuration](#environment-specific-configuration)
-4. [CORS Configuration](#cors-configuration)
-5. [Session and Authentication](#session-and-authentication)
-6. [Examples](#examples)
+The consent console has one frontend source: `web/`. Production builds and development servers use that source.
 
 ## Backend Configuration
 
-The backend always serves the root-mounted SPA from `web/dist`, relative to the process working directory. It has no SPA-specific environment variables, YAML keys, or CLI flags.
+The broker serves the root-mounted SPA from `web/dist`, relative to its working directory.
+It has no SPA-specific environment variables, YAML keys, or CLI flags.
+The end-user server defaults to port 8000. The admin API uses port 14000.
 
-Deployments must build the frontend and make `web/dist` available relative to the broker process. The browser routes are defined in [ADR 035](../../adrs/035-root-mounted-spa.md).
+Browser routes include `/agents`, `/agents/:id`, `/connections`, `/approvals`, `/approvals/remembered`, and `/settings/appearance`.
+The root route opens Agents. API, OAuth2, discovery, and health namespaces take precedence over SPA fallback.
 
-### Server Configuration
+Configure the public browser origin and the trusted principal header through the existing server configuration:
 
-The SPA is served on the end-user server. The default port is 8080.
-
-**Environment Variables:**
-- `ENDUSER_SERVER_PORT`: Port for enduser server (default: 8080)
-- `ENDUSER_SERVER_HOST`: Host for enduser server (default: 0.0.0.0)
-
-**YAML:**
 ```yaml
-servers:
+server:
   enduser:
-    port: 8080
-    host: 0.0.0.0
-    read_timeout: 30s
-    write_timeout: 30s
-    idle_timeout: 120s
+    port: 8000
+    bind: "::"
+    public_url: https://broker.example.com
+    authentication:
+      preauth:
+        principal_header_name: X-Remote-User
 ```
+
+The corresponding environment variables are:
+
+- `IDENTITY_BROKER_SERVER_ENDUSER_PORT`
+- `IDENTITY_BROKER_SERVER_ENDUSER_BIND`
+- `IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL`
+- `IDENTITY_BROKER_SERVER_ENDUSER_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME`.
+
+The public URL determines OAuth2 callback URLs and locally issued token metadata.
+Use the same origin for the UI, API proxy, and OAuth2 callback. Consent selection drafts use tab-local storage.
+A callback on a different origin cannot restore that draft.
 
 ## Frontend Configuration
 
-Vite configures the React SPA with environment variables. Vite embeds this configuration at
-build time.
+`web/vite.config.ts` sets `base: '/'` and builds to `web/dist`.
+The build produces the asset manifest, CSP script hash, and compressed assets that the Go SPA handler serves.
 
-### API Base URL
+The Axios client uses the relative base URL `/api`. There is no `VITE_API_BASE_URL` override.
+There is no `VITE_DEV_SERVER_PORT` configuration. Native Vite listens on port 3000 and fails if that port is occupied.
 
-**Environment Variable:** `VITE_API_BASE_URL`
-**Default:** `/api`
-**Type:** string (URL path)
+Vite proxies `/api`, `/oauth2`, `/.well-known`, and `/health` to the backend.
+It preserves the browser host and supplies the development principal `dev@example.com`.
+These development server variables control that proxy and Docker HMR:
 
-**Description:** The base URL for API requests. Use a relative URL for the same origin.
+| Variable | Native default | Compose value | Purpose |
+| --- | --- | --- | --- |
+| `VITE_API_URL` | `http://localhost:8000` | `http://identity-broker:8000` | Server-side proxy target |
+| `VITE_USE_POLLING` | Disabled | `true` | Watch bind-mounted source files |
+| `VITE_HMR_HOST` | Used only in polling mode | `localhost` | Browser websocket host |
+| `VITE_HMR_CLIENT_PORT` | `3000` in polling mode | `8000` | Browser websocket port |
 
-**Usage in Code:**
-```typescript
-// src/services/api/client.ts
-const client = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
-  // ...
-});
-```
+These values do not change the production API origin.
 
-**Example:**
+## Native Runtime
+
+Native development requires Go 1.27.1, Node 24 or later, npm, OpenSSL, and just.
+
 ```bash
-# .env file (development)
-VITE_API_BASE_URL=/api
-
-# Build with custom API base URL
-VITE_API_BASE_URL=/api/v2 npm run build
-```
-
-### Development Server Port
-
-**Environment Variable:** `VITE_DEV_SERVER_PORT`
-**Default:** `3000`
-**Type:** number
-
-**Description:** The Vite development server port. This value applies only during local
-development.
-
-**Example:**
-```bash
-# .env file
-VITE_DEV_SERVER_PORT=3001
-
-# Or inline
-VITE_DEV_SERVER_PORT=3001 npm run dev
-```
-
-### Build Configuration
-
-Build settings are in `vite.config.ts`:
-
-```typescript
-export default defineConfig({
-  base: '/',                  // Root SPA path
-  build: {
-    outDir: 'dist',           // SPA build output
-    sourcemap: false,         // Disable in production
-    minify: 'terser',         // Minification strategy
-  },
-  server: {
-    port: 3000,               // Dev server port
-    proxy: {                  // Proxy API requests to backend
-      '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
-      },
-    },
-  },
-});
-```
-
-## Environment-Specific Configuration
-
-### Development
-
-**Backend:**
-```yaml
-# configs/config.dev.yaml
-
-servers:
-  enduser:
-    port: 8080
-    host: localhost
-```
-
-**Frontend:**
-```bash
-# web/.env.development
-VITE_API_BASE_URL=/api
-VITE_DEV_SERVER_PORT=3000
-```
-
-**Development Workflow:**
-```bash
-# Terminal 1: Backend
-just dev
-
-# Terminal 2: Frontend (with proxy)
-cd web && npm run dev
-```
-
-Access frontend at: http://localhost:3000 (proxies API to :8080)
-
-### Staging
-
-**Backend:**
-```yaml
-# config.staging.yaml
-servers:
-  enduser:
-    port: 8080
-    host: 0.0.0.0
-    read_timeout: 30s
-    write_timeout: 30s
-```
-
-**Frontend:**
-```bash
-# Build with production settings
-npm run build
-```
-
-**Deployment:**
-```bash
-# Build frontend
-cd web && npm run build
-
-# Build backend
-just build-release
-
-# Deploy binary with the built SPA files
-./bin/agentic-identity-broker --config=config.staging.yaml
-```
-
-Access SPA at: https://staging.example.com/
-
-### Production
-
-**Backend:**
-```yaml
-# config.production.yaml
-servers:
-  enduser:
-    port: 8080
-    host: 0.0.0.0
-    read_timeout: 60s
-    write_timeout: 60s
-    idle_timeout: 300s
-
-log:
-  level: info
-  format: json
-```
-
-**Deployment:**
-```bash
-# Build frontend
-cd web && npm run build
-
-# Build optimized backend
-just build-release
-
-# Deploy
-./bin/agentic-identity-broker --config=config.production.yaml
-```
-
-Access SPA at: https://agentic-identity-broker.example.com/
-
-## CORS Configuration
-
-The backend configures CORS for API requests.
-
-**Environment variables:**
-- `CORS_ALLOWED_ORIGINS`: Comma-separated allowed origins
-- `CORS_ALLOW_CREDENTIALS`: Cookie and authentication-header support
-- `CORS_MAX_AGE`: Preflight cache duration in seconds
-
-**YAML:**
-```yaml
-cors:
-  allowed_origins:
-    - https://agentic-identity-broker.example.com
-    - https://staging.example.com
-  allow_credentials: true
-  max_age: 3600
-```
-
-**Development:**
-```yaml
-cors:
-  allowed_origins:
-    - http://localhost:3000  # Vite dev server
-    - http://localhost:8080  # Go backend
-  allow_credentials: true
-  max_age: 3600
-```
-
-**Production (same origin):** If the SPA and API use the same origin, CORS is not required:
-```yaml
-cors:
-  allowed_origins: []  # Empty = same-origin only
-```
-
-## Session and Authentication
-
-### Principal Header Configuration
-
-**Environment Variable:** `ENDUSER_SERVER_AUTH_PRINCIPAL_HEADER_NAME`
-**YAML Key:** `servers.enduser.authentication.preauth.principal_header_name`
-**Default:** `X-Remote-User`
-
-**Description:** The HTTP header that contains the authenticated principal. The reverse proxy
-sets this header.
-
-**Example:**
-```yaml
-servers:
-  enduser:
-    authentication:
-      preauth:
-        enabled: true
-        principal_header_name: X-Remote-User
-```
-
-**Common Header Names:**
-- `X-Remote-User` (default)
-- `X-Authenticated-User`
-- `X-Forwarded-User`
-- `X-Auth-Request-User` (oauth2-proxy)
-
-### CSRF Token Configuration
-
-The backend manages CSRF tokens automatically:
-
-**Token properties:**
-- **Header name:** `X-CSRF-Token`
-- **Cookie name:** `csrf_token`
-- **Token length:** 32 bytes (base64-encoded)
-- **TTL:** 24 hours
-- **Storage:** In memory and keyed by principal
-
-**Cookie settings:**
-- **HttpOnly:** false because JavaScript reads the token
-- **Secure:** true for HTTPS production use
-- **SameSite:** Strict
-- **Path:** /
-
-**No configuration required:** CSRF is enabled for all modifying requests.
-
-### Session management
-
-The system uses a stateless session that is based on the proxy principal:
-
-1. The user authenticates with the reverse proxy.
-2. The proxy adds the configured principal header. The default is `X-Remote-User`.
-3. The Go backend gets the principal from the header.
-4. The principal identifies the session.
-
-**No backend session configuration:** The reverse proxy manages sessions.
-
-## Examples
-
-### Example 1: Default Configuration (Development)
-
-**Backend (config.yaml):**
-```yaml
-servers:
-  enduser:
-    port: 8080
-    authentication:
-      preauth:
-        enabled: true
-        principal_header_name: X-Remote-User
-```
-
-**Frontend (.env):**
-```bash
-VITE_API_BASE_URL=/api
-```
-
-**Start:**
-```bash
-# Build frontend
-cd web && npm run build
-
-# Start backend
+# Build the backend and current frontend, then start the broker
 just run
 ```
 
-**Access:** http://localhost:8080/
+Run this command from the repository root. Open `http://localhost:8000/`.
+The root `config.yaml` uses that public origin.
+Protected APIs require a trusted authentication proxy or an explicit principal header in direct API requests.
 
-### Example 2: Separate Dev Servers with Proxy
+For source changes, run Air:
 
-**Backend (running on :8080):**
 ```bash
 just dev
 ```
 
-**Frontend (vite.config.ts):**
-```typescript
-export default defineConfig({
-  server: {
-    port: 3000,
-    proxy: {
-      '/api': 'http://localhost:8080',
-    },
-  },
-});
-```
+This command requires Air. It installs missing frontend dependencies before startup.
+Air watches backend and frontend source, rebuilds both artifacts, and restarts the broker.
+Generated frontend output does not trigger another rebuild.
 
-**Start:**
+## Optional Native Vite HMR
+
+Start the native backend with callback URLs that match the Vite browser origin:
+
 ```bash
-# Terminal 1: Backend
-just dev
+# Terminal 1
+IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL=http://localhost:3000 just dev
 
-# Terminal 2: Frontend
-cd web && npm run dev
+# Terminal 2
+just web-dev
 ```
 
-**Access:** http://localhost:3000 (frontend) → proxies API to :8080 (backend)
+Open `http://localhost:3000/` for this workflow. Keep OAuth2 requests and callbacks on that origin.
+Both servers use the current frontend source, but only Vite supplies the development principal.
+Do not run this native Vite server alongside Docker Compose.
 
-### Example 3: Docker Deployment
+## Docker Compose
 
-**Dockerfile:**
-```dockerfile
-FROM node:24-alpine AS frontend-builder
-WORKDIR /app/web
-COPY web/package*.json ./
-RUN npm ci
-COPY web/ ./
-RUN npm run build
-
-FROM golang:1.27.1-alpine AS backend-builder
-WORKDIR /app
-COPY go.* ./
-RUN go mod download
-COPY . ./
-COPY --from=frontend-builder /app/web/dist ./web/dist
-RUN go build -o agentic-identity-broker ./cmd/agentic-identity-broker
-
-FROM alpine:latest
-WORKDIR /app
-COPY --from=backend-builder /app/agentic-identity-broker .
-COPY --from=backend-builder /app/web/dist ./web/dist
-COPY config.production.yaml ./config.yaml
-
-EXPOSE 8080
-CMD ["./agentic-identity-broker", "--config=config.yaml"]
-```
-
-**config.production.yaml:**
-```yaml
-servers:
-  enduser:
-    port: 8080
-    host: 0.0.0.0
-```
-
-### Example 4: Kubernetes Deployment
-
-**ConfigMap:**
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: agentic-identity-broker-config
-data:
-  config.yaml: |
-    servers:
-      enduser:
-        port: 8080
-        authentication:
-          preauth:
-            enabled: true
-            principal_header_name: X-Auth-Request-User
-
-```
-**Deployment:**
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: agentic-identity-broker
-spec:
-  replicas: 3
-  template:
-    spec:
-      containers:
-      - name: agentic-identity-broker
-        image: agentic-identity-broker:latest
-        ports:
-        - containerPort: 8080
-        volumeMounts:
-        - name: config
-          mountPath: /app/config.yaml
-          subPath: config.yaml
-      volumes:
-      - name: config
-        configMap:
-          name: agentic-identity-broker-config
-```
-
-**Ingress (with oauth2-proxy):**
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: agentic-identity-broker
-  annotations:
-    nginx.ingress.kubernetes.io/auth-url: "https://oauth2-proxy.example.com/oauth2/auth"
-    nginx.ingress.kubernetes.io/auth-signin: "https://oauth2-proxy.example.com/oauth2/start"
-    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-Request-User,X-Auth-Request-Email"
-spec:
-  rules:
-  - host: agentic-identity-broker.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: agentic-identity-broker
-            port:
-              number: 8080
-```
-
-### Example 5: CDN Deployment (Separate SPA and API)
-
-**Backend Configuration:**
-```yaml
-# Configure CORS for CDN origin
-cors:
-  allowed_origins:
-    - https://cdn.example.com
-  allow_credentials: true
-  max_age: 3600
-
-servers:
-  enduser:
-    port: 8080
-```
-
-**Frontend Build:**
 ```bash
-# Build with production API URL
-VITE_API_BASE_URL=https://api.example.com/api npm run build
-
-# Upload dist/ to CDN
-aws s3 sync web/dist/ s3://my-cdn-bucket/
+just compose-up
 ```
 
-**Access:**
-- SPA: https://cdn.example.com/
-- API: https://api.example.com/api/
+Compose publishes the frontend container's Vite port 3000 as `http://localhost:8000/`.
+That is its only browser origin. Port 3000 is not published on the host.
+Vite serves the bind-mounted `web/` source and proxies backend namespaces to `identity-broker:8000`.
+The backend's end-user port remains internal. The admin port remains available at `http://localhost:14000`.
 
-**Note:** Requires CORS configuration and careful handling of authentication cookies.
+`configs/config.docker.yaml` sets the public URL to `http://localhost:8000`.
+HMR and Sample Agent browser redirects use that origin too.
+The backend development image contains no copied frontend build, so it cannot serve a stale second UI.
+
+See [Docker Compose Development Setup](../docker-compose-setup.md) for mocks, seeding, and isolated-project instructions.
+
+## Production Deployment
+
+The production Dockerfile copies the pre-built frontend from `web/dist` into `/app/web/dist`.
+It does not install Node dependencies or build the frontend.
+The runtime image contains the pre-built architecture-specific Go binary and frontend assets from the same checkout.
+
+```bash
+# Build both backend architectures, frontend assets, and production images
+just docker-build-broker
+```
+
+This recipe validates both image architectures without loading them into the local Docker daemon.
+For a native image smoke run, use the Buildx command in the [Compose guide](../docker-compose-setup.md#production-docker-image).
+
+For a filesystem deployment, build both artifacts:
+
+```bash
+just build-all
+```
+
+Deploy `bin/agentic-identity-broker` and `web/dist` from the same checkout.
+Keep `web/dist` relative to the broker working directory. Do not mount an older frontend build over a production image.
+
+The browser UI and API share the public HTTPS origin. A trusted authentication proxy supplies the configured principal header.
+Keep the admin server on a separate trusted network. See [Kubernetes Deployment](../deployment/kubernetes.md).
+
+## Authentication and CORS
+
+The broker does not accept a client-provided identity as proof of authentication in production.
+The deployment must protect the principal header at its trusted proxy boundary.
+Vite's fixed development identity is for local development only.
+
+Same-origin production and proxied development requests do not require cross-origin API access.
+If a deployment needs CORS, configure it under `server.enduser.cors` with explicit permitted origins:
+
+```yaml
+server:
+  enduser:
+    cors:
+      allowed_origins:
+        - https://trusted-client.example.com
+```
+
+Consent writes and OAuth2 initiation retain their existing cross-origin checks.
+Do not bypass those checks to compensate for a proxy that changes the browser host.
 
 ## Troubleshooting
 
-### SPA Not Loading
+### The broker shows an old UI
 
-**Issue:** 404 error when accessing `/`
+For native runtime, restart with `just run` or `just dev` to rebuild the current frontend.
+For Docker, rebuild the production image from the current source rather than mounting host frontend output.
+For Compose, open the published Vite origin on port 8000. Recreate only your own frontend container after deployment wiring changes.
 
-**Solutions:**
-1. Ensure frontend is built: `cd web && npm run build`
-2. Verify the deployment contains `web/dist/index.html`
-3. Ensure `web/dist` is relative to the broker process working directory
-4. Check backend logs for file serving errors
+### The SPA returns 404
 
-### API requests fail
+For a filesystem deployment, make sure that `web/dist/index.html` exists relative to the broker working directory.
+For Compose, examine frontend logs with `just compose-logs-frontend`.
+The internal backend development container intentionally contains no SPA assets.
 
-**Issue:** CORS errors or 404 responses on API calls.
+### Protected API requests return 401
 
-**Solutions:**
-1. Make sure that the API base URL is `VITE_API_BASE_URL=/api`.
-2. Make sure that the backend uses the expected port.
-3. Make sure that CORS configuration includes the frontend origin.
-4. In development, make sure that the Vite proxy is configured.
+Make sure that the trusted proxy supplies the configured principal header.
+For a direct development API request, send the header explicitly:
 
-### CSRF token missing
+```bash
+curl -fsS -H 'X-Remote-User: dev@example.com' http://localhost:8000/api/me
+```
 
-**Issue:** `403 Forbidden` on POST, PUT, or DELETE requests.
+### OAuth2 returns to the wrong origin
 
-**Solutions:**
-1. First make a GET request to obtain a token.
-2. Make sure that the request includes `X-CSRF-Token`.
-3. Make sure that the `csrf_token` cookie is set and sent.
-4. Examine SameSite cookie settings.
-5. Make sure that a principal is in the context.
-
-### Principal not found
-
-**Issue:** `401 Unauthorized` on protected endpoints.
-
-**Solutions:**
-1. Make sure that the reverse proxy sends the configured principal header. The default is `X-Remote-User`.
-2. Make sure that the header name matches configuration.
-3. Use `curl -H "X-Remote-User: test@example.com"` for a direct request, or replace the header name with your configured value.
-4. Make sure that authentication middleware is enabled.
-5. Examine backend logs for principal-extraction errors.
+Make sure that `server.enduser.public_url` matches the browser URL, including its port.
+For an isolated Compose port override, also update the HMR client port and Sample Agent browser URLs.
+Keep the same browser tab and origin throughout the provider flow.
 
 ## Related Documentation
 
-- Architecture documentation: see `ARCHITECTURE.md`
-- Consent frontend development guide: see `README.md` in the repository root
-- [API Documentation](../api/consent-endpoints.md) - API reference
-- [Configuration Guide](../configuration.md) - General configuration
+- [Configuration Guide](../configuration.md)
+- [API Reference](../reference/api.md)
+- [Root-Mounted SPA Decision](../../adrs/035-root-mounted-spa.md)
+- [Docker Compose Development Setup](../docker-compose-setup.md)

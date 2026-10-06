@@ -1,11 +1,14 @@
-/**
- * Select component exports
- */
-
 export {
   Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+  SelectGroup,
+  SelectLabel,
+  SelectSeparator,
+  SelectScrollUpButton,
+  SelectScrollDownButton,
   type SelectProps,
-  type SelectOption,
-  type SelectOptionGroup,
+  type SelectTriggerProps,
 } from './Select';
-export { Select as default } from './Select';

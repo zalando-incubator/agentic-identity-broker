@@ -351,6 +351,8 @@ approvals:
 
 ### Frontend/Design System Requirements
 
+> **Historical visual scope**: The palette and token names below record this feature's original design, not a current constitutional aesthetic mandate. Current visual work follows [Principle XI](../../.specify/memory/constitution.md#xi-design-system-compliance--consistency) and [DESIGN_PRINCIPLES.md](../../web/src/design-system/docs/DESIGN_PRINCIPLES.md); changing that direction requires an accepted ADR.
+
 **Design System Compliance**:
 
 - All frontend components MUST use the design system at `web/src/design-system/`.

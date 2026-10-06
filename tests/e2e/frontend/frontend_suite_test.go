@@ -209,6 +209,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// Step 4: Launch browser
 	browserInstance, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(headless),
+		Channel:  playwright.String("chromium"),
 	})
 	if err != nil {
 		_ = pw.Stop()

@@ -47,7 +47,10 @@ The Vite proxy adds it in development mode.
 | `page.go` | `Page` | Navigation, waits, screenshots |
 | `consent_page.go` | `ConsentPage` | Consent interactions |
 | `approval_page.go` | `ApprovalPage` | Tool-approval review interactions |
-| `tool_authorizations_page.go` | `ToolAuthorizationsPage` | Tool authorization list interactions |
+| `approvals_inbox_page.go` | `ApprovalsInboxPage` | Pending inbox and remembered decisions |
+| `connections_page.go` | `ConnectionsPage` | Connections, scopes, and provider callbacks |
+| `delegations_page.go` | `DelegationsPage` | Agent cards, list view, and revocation |
+| `settings_page.go` | `SettingsPage` | Browser appearance preferences |
 
 ## Writing Frontend Tests
 
@@ -59,8 +62,8 @@ The Vite proxy adds it in development mode.
 ## Screenshots and Performance
 
 - Unless `E2E_CAPTURE_SCREENSHOTS=true`, `Page.TakeScreenshot()` does nothing.
-- The suite writes captured images to `coverage/screenshots/` relative to its working directory. The screenshot workflow copies maintained images to `tests/e2e/screenshots/`.
+- The suite writes candidates to `coverage/screenshots/`. The screenshot workflow uploads review artifacts; it never writes reviewed baselines automatically.
 - Normal verification does not capture screenshots.
-- `.github/workflows/screenshots.yml` captures tracked PNG files in serial mode.
+- `.github/workflows/screenshots.yml` captures candidates serially. Only human-approved images belong in `tests/e2e/screenshots/`.
 - Capture screenshots only for a maintained artifact or review aid.
 - Screenshot tests use the workflow's serial mode and stable, unique file names.

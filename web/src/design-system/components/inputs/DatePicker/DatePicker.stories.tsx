@@ -1,232 +1,83 @@
-/**
- * DatePicker Component Stories
- */
-
-import type { Meta, StoryObj } from '@storybook/react';
 import { useState } from 'react';
+import type { Meta, StoryObj } from '@storybook/react';
+import { expect, fireEvent, fn, userEvent, waitFor, within } from 'storybook/test';
+import { Button } from '@design-system/components/primitives/Button/Button';
 import { DatePicker } from './DatePicker';
-import { addDays, startOfToday } from 'date-fns';
 
 const meta = {
-  title: 'Design System/Inputs/DatePicker',
-  component: DatePicker,
-  parameters: {
-    layout: 'centered',
-    docs: {
-      description: {
-        component:
-          'Date input with validation states, min/max date support, and semantic styling.',
-      },
-    },
-  },
-  tags: ['autodocs'],
+  title: 'Design System/Inputs/DatePicker', component: DatePicker,
+  args: { label: 'Expiration', value: '', min: '2026-10-02', max: '2026-10-31', validationMessage: 'Choose a date from October 2 through October 31', onValueChange: () => {} },
+  parameters: { a11y: { test: 'error' } },
+  render: function Example(args) { const [value, setValue] = useState(args.value); return <DatePicker {...args} value={value} onValueChange={setValue} />; },
 } satisfies Meta<typeof DatePicker>;
-
 export default meta;
 type Story = StoryObj<typeof meta>;
+export const Default: Story = {};
+export const Hover: Story = { play: async ({ canvasElement }) => { await userEvent.hover(within(canvasElement).getByLabelText('Expiration')); } };
+export const Focus: Story = { play: async ({ canvasElement }) => { await userEvent.tab(); await expect(within(canvasElement).getByLabelText('Expiration')).toHaveFocus(); } };
+export const Disabled: Story = { args: { disabled: true, value: '2026-10-15' } };
+export const Loading: Story = { args: { disabled: true, 'aria-busy': true, description: 'Saving expiration' } };
+export const Error: Story = { args: { error: 'Expiration could not be saved' } };
+export const DateBoundaries: Story = { play: async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  const input = canvas.getByLabelText('Expiration');
+  fireEvent.change(input, { target: { value: '2026-10-01' } });
+  await expect(input).toHaveAttribute('aria-invalid', 'true');
+  await expect(input).toHaveAccessibleDescription('Choose a date from October 2 through October 31');
+  fireEvent.change(input, { target: { value: '2026-10-02' } });
+  await expect(input).toHaveValue('2026-10-02');
+  await expect(canvas.queryByRole('alert')).not.toBeInTheDocument();
+} };
 
-export const Default: Story = {
-  render: () => {
-    const [date, setDate] = useState<Date | null>(null);
-    return <DatePicker label="Select a date" value={date} onChange={setDate} />;
-  },
-};
+export const NativeDatePartsFocus: Story = {
+  args: { value: '2026-10-15', onValueChange: fn() },
+  render: (args) => (
+    <div className="space-y-4">
+      <Button variant="outline">Before expiration</Button>
+      <DatePicker {...args} />
+      <Button variant="outline">After expiration</Button>
+    </div>
+  ),
+  play: async ({ canvasElement, args }) => {
+    // vitest/browser cannot be imported statically outside its native test runner.
+    // Vite removes this branch/import from standalone Storybook; both browser
+    // test projects use test mode and exercise the real native date subcontrols.
+    if (import.meta.env.MODE !== 'test') return;
+    const { userEvent: nativeUserEvent } = await import('vitest/browser');
+    const canvas = within(canvasElement);
+    const input = canvas.getByLabelText('Expiration');
+    const after = canvas.getByRole('button', { name: 'After expiration' });
+    // Resolve the token as a color so browser serialization (0.10 versus 0.1)
+    // does not turn the dark-theme ring assertion into a formatting check.
+    const colorProbe = canvasElement.ownerDocument.createElement('span');
+    colorProbe.hidden = true;
+    colorProbe.style.color = 'var(--ring)';
+    canvasElement.append(colorProbe);
+    const ringColor = getComputedStyle(colorProbe).color;
+    colorProbe.remove();
+    const expectDateFocusRing = async () => {
+      await expect(input).toHaveFocus();
+      const style = getComputedStyle(input);
+      const ringShadow = style.boxShadow
+        .split(/,(?![^()]*\))/)
+        .find((shadow) => shadow.trim().startsWith(ringColor));
+      // Require a visible token-colored ring, not just a matching focus pseudo.
+      await expect(ringShadow).toMatch(/ 0px 0px 0px [1-9][\d.]*px$/);
+      await expect(input).toHaveValue('2026-10-15');
+      await expect(args.onValueChange).not.toHaveBeenCalled();
+    };
 
-export const Sizes: Story = {
-  render: () => {
-    const [sm, setSm] = useState<Date | null>(null);
-    const [md, setMd] = useState<Date | null>(null);
-    const [lg, setLg] = useState<Date | null>(null);
-
-    return (
-      <div className="w-96 space-y-4">
-        <DatePicker size="sm" label="Small" value={sm} onChange={setSm} />
-        <DatePicker
-          size="md"
-          label="Medium (default)"
-          value={md}
-          onChange={setMd}
-        />
-        <DatePicker size="lg" label="Large" value={lg} onChange={setLg} />
-      </div>
-    );
-  },
-};
-
-export const States: Story = {
-  render: () => {
-    const [value, setValue] = useState<Date | null>(null);
-
-    return (
-      <div className="w-96 space-y-4">
-        <DatePicker label="Default" value={value} onChange={setValue} />
-        <DatePicker
-          label="Error"
-          value={new Date('2020-01-01')}
-          onChange={() => {}}
-          variant="error"
-          errorMessage="Date cannot be in the past"
-        />
-        <DatePicker
-          label="Success"
-          value={new Date()}
-          onChange={() => {}}
-          variant="success"
-          successMessage="Valid date selected"
-        />
-        <DatePicker
-          label="Disabled"
-          value={null}
-          onChange={() => {}}
-          disabled
-        />
-      </div>
-    );
-  },
-};
-
-export const WithMinDate: Story = {
-  render: () => {
-    const [date, setDate] = useState<Date | null>(null);
-    const minDate = startOfToday();
-
-    return (
-      <DatePicker
-        label="Grant expiration"
-        value={date}
-        onChange={setDate}
-        minDate={minDate}
-        helperText="Must be today or later"
-      />
-    );
-  },
-};
-
-export const WithMaxDate: Story = {
-  render: () => {
-    const [date, setDate] = useState<Date | null>(null);
-    const maxDate = addDays(startOfToday(), 30);
-
-    return (
-      <DatePicker
-        label="Valid until"
-        value={date}
-        onChange={setDate}
-        maxDate={maxDate}
-        helperText="Must be within 30 days"
-      />
-    );
-  },
-};
-
-export const DateRange: Story = {
-  render: () => {
-    const [startDate, setStartDate] = useState<Date | null>(null);
-    const [endDate, setEndDate] = useState<Date | null>(null);
-
-    return (
-      <div className="w-96 space-y-4">
-        <DatePicker
-          label="Start date"
-          value={startDate}
-          onChange={setStartDate}
-          required
-          helperText="Select the start date"
-        />
-        <DatePicker
-          label="End date"
-          value={endDate}
-          onChange={setEndDate}
-          minDate={startDate || undefined}
-          required
-          helperText="Must be after start date"
-        />
-      </div>
-    );
-  },
-};
-
-export const RealWorldUseCases: Story = {
-  render: () => {
-    const [expiryDate, setExpiryDate] = useState<Date | null>(null);
-    const minDate = startOfToday();
-
-    return (
-      <div className="w-96 space-y-6 p-6 bg-white border border-neutral-200 rounded-lg">
-        <h3 className="text-sm font-semibold text-neutral-900">
-          Grant Configuration
-        </h3>
-
-        <DatePicker
-          label="Grant expiration date"
-          value={expiryDate}
-          onChange={setExpiryDate}
-          minDate={minDate}
-          required
-          helperText="When should this permission grant expire?"
-        />
-
-        <div className="text-xs text-neutral-600">
-          {expiryDate ? (
-            <p>
-              Grant expires on:{' '}
-              <span className="font-medium">
-                {expiryDate.toLocaleDateString()}
-              </span>
-            </p>
-          ) : (
-            <p>No expiration date selected</p>
-          )}
-        </div>
-      </div>
-    );
-  },
-};
-
-export const Playground: Story = {
-  render: () => {
-    const [date, setDate] = useState<Date | null>(null);
-
-    return (
-      <DatePicker
-        label="Pick a date"
-        value={date}
-        onChange={setDate}
-        size="md"
-        required={false}
-      />
-    );
-  },
-};
-
-export const Accessibility: Story = {
-  render: () => {
-    const [date, setDate] = useState<Date | null>(null);
-
-    return (
-      <div className="w-96">
-        <DatePicker
-          id="grant-expiry"
-          label="Grant expiration date"
-          value={date}
-          onChange={setDate}
-          required
-          helperText="Select when this permission should expire"
-          minDate={startOfToday()}
-        />
-      </div>
-    );
-  },
-  parameters: {
-    a11y: {
-      config: {
-        rules: [
-          {
-            id: 'color-contrast',
-            enabled: true,
-          },
-        ],
-      },
-    },
+    await nativeUserEvent.click(canvas.getByRole('button', { name: 'Before expiration' }));
+    // Chromium/en-US exposes month, day, year, then the native calendar button.
+    for (let part = 0; part < 4; part += 1) {
+      await nativeUserEvent.tab();
+      await waitFor(expectDateFocusRing);
+    }
+    await nativeUserEvent.tab();
+    await expect(after).toHaveFocus();
+    await expect(getComputedStyle(input).boxShadow).toBe('none');
+    // Leave the calendar button focused for the light/dark visual baseline.
+    await nativeUserEvent.tab({ shift: true });
+    await waitFor(expectDateFocusRing);
   },
 };

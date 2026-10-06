@@ -21,7 +21,8 @@ const githubIcon = `<img class="navbar__github-icon navbar__github-icon--light" 
 const config = {
   title: 'Agentic Identity Broker',
   tagline: 'OAuth2 delegation and consent for AI agents',
-  favicon: 'img/favicon.svg',
+  favicon: 'favicon.svg',
+  staticDirectories: ['static', '../../web/public/brand'],
 
   // Pin the v4 future flags that were enabled before 3.10 added new defaults.
   future: {
@@ -137,8 +138,8 @@ const config = {
       navbar: {
         logo: {
           alt: 'Agentic Identity Broker',
-          src: 'img/AIB_Wordmark_Black.svg',
-          srcDark: 'img/AIB_Wordmark_White.svg',
+          src: 'AIB_Wordmark_Black.svg',
+          srcDark: 'AIB_Wordmark_White.svg',
         },
         items: [
           {

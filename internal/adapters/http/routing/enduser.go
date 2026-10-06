@@ -51,6 +51,7 @@ type EnduserRouteConfig struct {
 //	POST   /api/third-party/{serviceId}/oauth2/authorize - Initiate auth with consent selection
 //	GET    /api/third-party/{serviceId}/oauth2/callback  - Handle callback
 //	GET    /api/third-party/{serviceId}/session       - Get session details
+//	GET    /api/third-party/{serviceId}/session/affected-agents - Get disconnect dependencies
 //	DELETE /api/third-party/{serviceId}/session       - Terminate session
 //
 //	Approval Routes (machine-facing):

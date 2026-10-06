@@ -9,7 +9,7 @@
 | Property | Value |
 |----------|-------|
 | Image | `cr.agentgateway.dev/agentgateway` |
-| Container Name | `aib-agentgateway` |
+| Container Name | Compose-generated: `<project>-agentgateway-1` |
 | Ports | `4000:4000` (MCP HTTP), `15000:15000` (Admin UI) |
 | Config Mount | `./mocks/agentgateway/config.yaml:/config.yaml:ro` |
 | Command | `agentgateway -f /config.yaml` |
@@ -23,7 +23,7 @@ The config file is at `configs/config.extproc.docker.yaml` in the project `confi
 | Property | Value |
 |----------|-------|
 | Build | `Dockerfile.mock` with `SERVICE_PATH=cmd/extproc-token-exchange` |
-| Container Name | `aib-extproc` |
+| Container Name | Compose-generated: `<project>-extproc-token-exchange-1` |
 | Ports | `50051` (gRPC, container-internal only — not exposed to Docker host) |
 | Config Mount | `./configs/config.extproc.docker.yaml:/app/config.yaml:ro` |
 | Environment | `EXTPROC_CLIENT_SECRET`, `EXTPROC_LOG_LEVEL=debug` |
@@ -37,7 +37,7 @@ The ExtProc gRPC interface is intentionally not exposed to the Docker host. Only
 | Property | Value |
 |----------|-------|
 | Build | `Dockerfile.mock` with `SERVICE_PATH=mocks/mcp-server/cmd/mcp-server` |
-| Container Name | `aib-mcp-server` |
+| Container Name | Compose-generated: `<project>-mcp-server-mock-1` |
 | Ports | `9003:9003` |
 | Config Mount | `./mocks/mcp-server/config.yaml:/app/config.yaml:ro` |
 | Network | `aib-network` |
@@ -78,31 +78,13 @@ binds:
 
 ## Network Topology
 
-```
-┌──────────────────┐      HTTP (9002)      ┌─────────────────┐
-│  Sample Agent    │ ─────────────────────► │  agentgateway   │
-│  (aib-sample-    │   MCP client call     │  (aib-agent-    │
-│   agent:9002)    │                        │   gateway:4000) │
-└──────────────────┘                        └────────┬────────┘
-                                                     │
-                                            ┌────────┴────────┐
-                                            │                 │
-                                   gRPC     ▼        HTTP     ▼
-                            ┌──────────────────┐  ┌──────────────────┐
-                            │ ExtProc Token    │  │ MCP Server Mock  │
-                            │ Exchange         │  │ (aib-mcp-        │
-                            │ (aib-extproc:    │  │  server:9003)    │
-                            │  50051)          │  └──────────────────┘
-                            └────────┬─────────┘
-                                     │
-                          ┌──────────┴──────────┐
-                          │                     │
-                HTTP      ▼             HTTP    ▼
-         ┌──────────────────┐  ┌──────────────────┐
-         │ Identity Broker  │  │ Upstream OAuth2  │
-         │ (aib-broker:     │  │ (aib-upstream-   │
-         │  8000)           │  │  oauth2:9001)    │
-         └──────────────────┘  └──────────────────┘
+```mermaid
+flowchart TD
+    sample["sample-agent:9002"] -->|MCP HTTP|gateway["agentgateway:4000"]
+    gateway -->|gRPC|extproc["extproc-token-exchange:50051"]
+    gateway -->|HTTP|mcp["mcp-server-mock:9003"]
+    extproc -->|HTTP|broker["identity-broker:8000"]
+    extproc -->|HTTP|upstream["upstream-oauth2:9001"]
 ```
 
 ## Port Allocation

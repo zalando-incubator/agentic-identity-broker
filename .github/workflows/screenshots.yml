@@ -1,14 +1,4 @@
-# Screenshots — refresh the tracked frontend E2E screenshots on a PR.
-#
-# The frontend E2E suite runs in the independent CI `e2e-frontend` job;
-# this workflow exists only to regenerate the committed screenshots
-# and embed them in the PR description. It therefore runs only when the
-# frontend or its E2E tests change, and only for same-repository PRs (a fork
-# PR cannot be pushed to).
-#
-# Screenshot-only commits use GITHUB_TOKEN. These pushes do not trigger a new
-# CI run; the source revision is tested before screenshots are published.
-
+# Screenshot candidates require human review before they become tracked baselines.
 name: Screenshots
 
 on:
@@ -31,52 +21,28 @@ concurrency:
 
 jobs:
   frontend-e2e:
-    name: Refresh screenshots
+    name: Capture screenshot review candidates
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    permissions:
-      contents: write
-      pull-requests: write
     if: github.event.pull_request.head.repo.full_name == github.repository
-
     steps:
-      - name: Checkout PR branch
+      - name: Checkout PR source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
           persist-credentials: false
-
-      - name: Skip if last commit is automated screenshot update
-        id: skip-check
-        run: |
-          LAST_MSG=$(git log -1 --format="%s" HEAD)
-          SOURCE_SHA=$(git log -1 --format='%(trailers:key=Screenshot-Source-SHA,valueonly)' HEAD)
-          PARENT_SHA=$(git rev-parse HEAD^ 2>/dev/null || true)
-          if [ "$LAST_MSG" = "Update frontend E2E screenshots" ] && [ -n "$SOURCE_SHA" ] && [ "$SOURCE_SHA" = "$PARENT_SHA" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Skipping screenshot commit sourced from parent $SOURCE_SHA"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Set up Go
-        if: steps.skip-check.outputs.skip != 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
-
       - name: Set up Node.js
-        if: steps.skip-check.outputs.skip != 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: web/package-lock.json
-
       - name: Cache Playwright browsers
-        if: steps.skip-check.outputs.skip != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -84,279 +50,55 @@ jobs:
             ~/.cache/ms-playwright-go
           key: playwright-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: playwright-${{ runner.os }}-
-
       - name: Install Ginkgo
-        if: steps.skip-check.outputs.skip != 'true'
-        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.32.1
-
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.32.2
       - name: Install Playwright browsers
-        if: steps.skip-check.outputs.skip != 'true'
-        run: go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.1 install --with-deps
-
+        run: go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.1 install --with-deps chromium
       - name: Install web dependencies
-        if: steps.skip-check.outputs.skip != 'true'
-        run: cd web && npm ci
-
+        run: npm --prefix web ci
       - name: Build frontend
-        if: steps.skip-check.outputs.skip != 'true'
-        run: cd web && npm run build
-
-      - name: Run frontend E2E tests
-        if: steps.skip-check.outputs.skip != 'true'
-        id: tests
-        run: E2E_FRONTEND_MODE=built E2E_CAPTURE_SCREENSHOTS=true ginkgo -v --procs=1 --timeout=20m --poll-progress-after=30s --show-node-events ./tests/e2e/frontend/
-      - name: Upload failed-run screenshots for diagnosis
-        if: failure() && steps.tests.outcome == 'failure'
+        run: npm --prefix web run build
+      - name: Capture frontend journeys
+        run: E2E_FRONTEND_MODE=built E2E_CAPTURE_SCREENSHOTS=true ginkgo -v --procs=1 --timeout=20m ./tests/e2e/frontend/
+      - name: Upload screenshot review candidates
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: failed-e2e-screenshots-diagnostic
-          path: tests/e2e/frontend/coverage/screenshots/*.png
-          if-no-files-found: ignore
-
-
-      - name: Check source PR head
-        id: current-head
-        if: steps.skip-check.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          live_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
-          if [ "$live_sha" != "$EXPECTED_HEAD_SHA" ]; then
-            echo "Stale screenshot capture: expected $EXPECTED_HEAD_SHA, found $live_sha"
-            echo "current=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "current=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build screenshot diff tool
-        if: steps.current-head.outputs.current == 'true'
-        run: go build -o /tmp/imgdiff ./tools/imgdiff
-
-      - name: Sync screenshots to tracked directory (threshold comparison)
-        if: steps.current-head.outputs.current == 'true'
-        id: sync-screenshots
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          SRC="tests/e2e/frontend/coverage/screenshots"
-          DEST="tests/e2e/screenshots"
-          # Pixel-difference threshold (percentage). Screenshots that differ
-          # by less than this amount are considered unchanged, which avoids
-          # noisy commits caused by sub-pixel anti-aliasing or font-rendering
-          # differences across CI runner environments.
-          THRESHOLD=0.5
-
-          if [ ! -d "$SRC" ]; then
-            echo "Screenshot source directory does not exist: $SRC"
-            exit 1
-          fi
-
-          source_files=("$SRC"/*.png)
-          if [ "${#source_files[@]}" -eq 0 ]; then
-            echo "No screenshots found in $SRC"
-            exit 1
-          fi
-
-          echo "Syncing screenshots from $SRC to $DEST (threshold ${THRESHOLD}%)"
-          mkdir -p "$DEST"
-
-          # --- copy new / update changed screenshots ----------------------
-          for src_file in "${source_files[@]}"; do
-            name=$(basename "$src_file")
-            dest_file="$DEST/$name"
-
-            if [ ! -f "$dest_file" ]; then
-              echo "  NEW   $name"
-              cp "$src_file" "$dest_file"
-              continue
-            fi
-
-            # imgdiff compares two PNGs pixel-by-pixel using Go's image/png
-            # (same approach as Playwright's pixelmatch). Exit 0 = below
-            # threshold, exit 1 = above threshold, exit 2 = error.
-            pct=$(/tmp/imgdiff "$src_file" "$dest_file" "$THRESHOLD") && rc=0 || rc=$?
-            if [ "$rc" -eq 0 ]; then
-              echo "  SKIP   $name (${pct}% changed — below threshold)"
-            elif [ "$rc" -eq 1 ]; then
-              echo "  UPDATE $name (${pct}% changed)"
-              cp "$src_file" "$dest_file"
-            else
-              echo "Screenshot comparison failed for $name (exit $rc)"
-              exit "$rc"
-            fi
-          done
-
-          # --- remove screenshots that no longer exist in source ----------
-          for dest_file in "$DEST"/*.png; do
-            [ -f "$dest_file" ] || continue
-            name=$(basename "$dest_file")
-            if [ ! -f "$SRC/$name" ]; then
-              echo "  REMOVE $name (no longer generated)"
-              rm "$dest_file"
-            fi
-          done
-
-          if [ -z "$(git status --porcelain -- "$DEST")" ]; then
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-            echo "No screenshot changes detected"
-          else
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Recheck source before uploading screenshots
-        id: artifact-head
-        if: steps.current-head.outputs.current == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          live_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
-          if [ "$live_sha" != "$EXPECTED_HEAD_SHA" ]; then
-            echo "Stale screenshot capture: expected $EXPECTED_HEAD_SHA, found $live_sha"
-            echo "current=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "current=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Upload screenshots as artifact
-        if: steps.current-head.outputs.current == 'true' && steps.artifact-head.outputs.current == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-screenshots
+          name: e2e-screenshot-candidates-${{ github.event.pull_request.head.sha }}
           path: tests/e2e/frontend/coverage/screenshots/*.png
           if-no-files-found: error
 
-      - name: Commit and push screenshot changes
-        id: publish
-        if: steps.current-head.outputs.current == 'true' && steps.artifact-head.outputs.current == 'true' && steps.sync-screenshots.outputs.has_changes == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: |
-          set -euo pipefail
-          live_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
-          if [ "$live_sha" != "$EXPECTED_HEAD_SHA" ]; then
-            echo "Stale screenshot capture: expected $EXPECTED_HEAD_SHA, found $live_sha"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$(git rev-parse HEAD)" != "$EXPECTED_HEAD_SHA" ]; then
-            echo "Checked-out HEAD differs from captured source SHA" >&2
-            exit 1
-          fi
-          git add tests/e2e/screenshots/
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
-          git commit -m "Update frontend E2E screenshots" -m "Screenshot-Source-SHA: $EXPECTED_HEAD_SHA"
-          if git push origin "HEAD:refs/heads/${HEAD_REF}"; then
-            echo "pushed_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-            echo "pushed=true" >> "$GITHUB_OUTPUT"
-          else
-            push_status=$?
-            live_sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
-            if [ "$live_sha" != "$EXPECTED_HEAD_SHA" ]; then
-              echo "Stale screenshot capture: PR head advanced to $live_sha during push"
-              echo "pushed=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            exit "$push_status"
-          fi
-
-      - name: Update PR description with screenshots
-        if: steps.publish.outputs.pushed == 'true'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+  storybook:
+    name: Capture component review candidates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout PR source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          script: |
-            const pr = context.payload.pull_request;
-
-            const pushedSha = '${{ steps.publish.outputs.pushed_sha }}';
-            const sourceSha = '${{ github.event.pull_request.head.sha }}';
-            let currentPR;
-            for (let attempt = 0; attempt < 10; attempt++) {
-              const { data } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pr.number,
-              });
-              currentPR = data;
-              if (currentPR.head.sha === pushedSha) break;
-              if (currentPR.head.sha !== sourceSha) {
-                core.info(`Skipping PR body update: head advanced to ${currentPR.head.sha} after push ${pushedSha}`);
-                return;
-              }
-              if (attempt < 9) await new Promise((resolve) => setTimeout(resolve, 2000));
-            }
-            if (currentPR.head.sha !== pushedSha) {
-              throw new Error(`PR head did not reflect pushed screenshot commit ${pushedSha}`);
-            }
-
-            // Compare base branch to head branch to find all changed screenshots in the PR
-            const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              basehead: `${pr.base.ref}...${pushedSha}`,
-            });
-
-            const changedScreenshots = (comparison.files || []).filter(
-              (f) =>
-                f.filename.startsWith("tests/e2e/screenshots/") &&
-                f.filename.endsWith(".png") &&
-                f.status !== "removed"
-            );
-
-            if (changedScreenshots.length === 0) {
-              core.info("No screenshot changes found in this PR");
-              return;
-            }
-
-            // Use github.com/.../raw/ URLs — these go through GitHub's auth layer
-            // and work for any authenticated user with repo access (unlike
-            // raw.githubusercontent.com which requires a separate token for private repos)
-            const headSha = pushedSha;
-            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            let screenshotSection = "## Screenshots\n\n";
-            screenshotSection += `> [Download all screenshots (workflow artifact) ↗](${runUrl})\n\n`;
-            for (const file of changedScreenshots) {
-              const name = file.filename.split("/").pop().replace(".png", "").replaceAll("_", " ");
-              const imgUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/raw/${headSha}/${file.filename}`;
-              screenshotSection += `### ${name}\n![${name}](${imgUrl})\n\n`;
-            }
-
-            let body = currentPR.body || "";
-
-            // Remove existing Screenshots section if present
-            const screenshotsHeader = "\n## Screenshots";
-            const screenshotsIdx = body.indexOf(screenshotsHeader);
-            if (screenshotsIdx !== -1) {
-              // Find the next ## heading after the screenshots section
-              const afterHeader = body.indexOf("\n## ", screenshotsIdx + screenshotsHeader.length);
-              if (afterHeader !== -1) {
-                body = body.substring(0, screenshotsIdx) + body.substring(afterHeader);
-              } else {
-                body = body.substring(0, screenshotsIdx);
-              }
-              body = body.trimEnd();
-            }
-
-            // Append new screenshots section
-            body += "\n\n" + screenshotSection.trimEnd();
-
-            await github.rest.pulls.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pr.number,
-              body: body,
-            });
-
-            core.info(`Updated PR #${pr.number} with ${changedScreenshots.length} screenshot(s)`);
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install just
+        uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: just
+      - name: Install web dependencies
+        run: npm --prefix web ci
+      - name: Install Chromium
+        run: ./web/node_modules/.bin/playwright install --with-deps chromium
+      - name: Capture canonical component review references
+        run: just web-storybook-visual-candidates
+      - name: Upload component review candidates
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: storybook-candidates-${{ github.event.pull_request.head.sha }}
+          path: web/.storybook/candidates/
+          if-no-files-found: error

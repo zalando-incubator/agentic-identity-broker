@@ -19,9 +19,13 @@ import type {
 } from '../../types/approval';
 
 export const approvalApi = {
-  async getApproval(approvalId: string): Promise<ToolApprovalDetail> {
+  async getApproval(
+    approvalId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<ToolApprovalDetail> {
     const response = await apiClient.get<ApprovalDetailResponse>(
       `/approvals/${encodeURIComponent(approvalId)}`,
+      { signal: options?.signal },
     );
     return response.data.data;
   },
@@ -40,10 +44,12 @@ export const approvalApi = {
   async previewApprovalScope(
     approvalId: string,
     request: ScopePreviewRequest,
+    options?: { signal?: AbortSignal },
   ): Promise<ScopePreview> {
     const response = await apiClient.post<{ data: ScopePreview }>(
       `/approvals/${encodeURIComponent(approvalId)}/scope-preview`,
       request,
+      { signal: options?.signal },
     );
     return response.data.data;
   },
@@ -59,16 +65,18 @@ export const approvalApi = {
     return response.data.data;
   },
 
-  async listPendingApprovals(): Promise<ToolApprovalDetail[]> {
+  async listPendingApprovals(options?: { signal?: AbortSignal }): Promise<ToolApprovalDetail[]> {
     const response = await apiClient.get<{ data: ToolApprovalDetail[] }>(
       '/approvals/pending',
+      { signal: options?.signal },
     );
     return response.data.data ?? [];
   },
 
-  async listPermanentApprovals(): Promise<ToolApprovalDetail[]> {
+  async listPermanentApprovals(options?: { signal?: AbortSignal }): Promise<ToolApprovalDetail[]> {
     const response = await apiClient.get<{ data: ToolApprovalDetail[] }>(
       '/approvals/permanent',
+      { signal: options?.signal },
     );
     return response.data.data ?? [];
   },

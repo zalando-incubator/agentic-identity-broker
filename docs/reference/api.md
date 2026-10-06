@@ -56,6 +56,7 @@ Successful and error responses follow a small set of consistent shapes.
 | Shape | Used by | Example |
 |---|---|---|
 | `{"data": <resource-or-array>}` | Most resource responses | `{"data": {"principal": "…"}}` |
+| `{"message": "<text>"}` | Successful third-party session termination | `{"message": "session terminated successfully"}` |
 | Bare JSON array | Admin list endpoints `GET /api/agents`, `GET /api/services` | `[{"id": "…"}]` |
 | `{"items": [ … ]}` | `GET /api/oauth2-server/signing-keys` | `{"items": [{"kid": "…"}]}` |
 | `{"error": "<code>", "message": "<text>"}` | Standard errors (end-user and admin) | `{"error": "agent not found", "message": "…"}` |
@@ -72,6 +73,7 @@ human-readable strings. OAuth2 endpoints use RFC snake_case tokens.
 | Surface | Codes |
 |---|---|
 | End-user consent / session | `session_expired`, `invalid_permission_set`, `forbidden`, `invalid_state`, `service_id_mismatch`, `unauthorized`, `bad request`, `invalid request`, `invalid scopes`, `service not found` |
+| Approval decisions | `bad_request`, `conflict`, `gone`, `not_revocable`, `invalid_pattern` |
 | Admin | `invalid request body`, `validation failed`, `agent not found`, `service not found`, `conflict`, `last_key`, `current_key` |
 | OAuth2 (`/oauth2/token`) | `invalid_request`, `invalid_client`, `invalid_grant`, `invalid_target`, `access_denied`, `server_error` |
 | OAuth2 authorize | `invalid_client`, `invalid_redirect_uri` |
@@ -93,27 +95,73 @@ The full request and response schemas for every endpoint below are in the
 |---|---|---|
 | GET | `/api/me` | The current authenticated user's profile. |
 
+The response is `{"data": {"principal": "...", "displayName": "..."}}`, with optional `email` and `pictureUrl` fields.
+The handler omits unavailable optional fields. Without an enriched profile, `displayName` equals `principal`.
+
 ### Consent
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/consent/agents` | List agents that have active delegations for the user. |
 | GET | `/api/consent/agents/{agent-id}` | Agent detail with its requested third-party services. |
-| GET | `/api/consent/agents/{agent-id}/grants` | The user's grants for an agent. |
+| GET | `/api/consent/agents/{agent-id}/grants` | List stored grants for the user and agent. An empty list means no grant exists. |
 | POST | `/api/consent/agents/{agent-id}/grants` | Create or update a grant; optionally resume an OAuth2 flow. |
 | DELETE | `/api/consent/agents/{agent-id}/grants` | Revoke all of the agent's permissions. |
+
+Consent responses use these existing wire formats:
+
+| Operation | Success response |
+|---|---|
+| List agents | `200` with `data` as an array. `activeGrantCount` counts active `UserGrant` records, not services or permission sets. |
+| Agent detail | `200` with `data.agent`, `data.services`, `data.permission_sets`, `data.active_session_service_ids`, and `data.service_requirements`. |
+| Get grants | `200` with `data` as an array. The current user-agent uniqueness rule permits zero or one grant. This lookup can return an expired grant. |
+| Create or update grant | `201` with the grant in `data`. A valid `session_token` adds a sibling `redirect_url` for authorization resumption. |
+| Delete grant | `204` with no body. Returns `404` when no grant exists. Connected third-party sessions remain intact. |
+
+Agent detail metadata uses `agentId` with snake_case fields, including `display_name`, `created_at`, and `updated_at`.
+The service entries use camelCase fields, including `serviceId`, `requiredScopes`, and `connectionStatus`.
+Agent and service metadata retain optional `logoUrl` fields. When no logo is available, the server can omit the field. The UI uses local fallbacks for off-origin images.
+The optional `cimd_metadata` object comes from a validated authorization session token and is omitted when unavailable.
+
+Grant responses omit `valid_until` for indefinite grants. The agent list omits `expiresAt` when all grants are indefinite.
+The agent list excludes expired grants, unlike the individual grant lookup.
+An empty `granted_permission_sets` object or array returns `400` on POST. Revocation requires DELETE, not an empty POST.
 
 ### Third-party sessions
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/third-party/sessions` | List third-party services and per-user session status. |
+| GET | `/api/third-party/sessions` | List the current user's stored third-party sessions. |
 | GET | `/api/third-party/{serviceId}/oauth2/authorize` | Start an authorization-code + PKCE flow to the third party. |
 | POST | `/api/third-party/{serviceId}/oauth2/authorize` | Start a PKCE flow with a tab-local `consent_state_id` and clean same-origin return path; the provider-facing state stays under 6,000 bytes. |
 | GET | `/api/third-party/{serviceId}/oauth2/callback` | Complete the third-party flow and, on success, return the sealed selection ID for same-tab restoration. |
-| GET | `/api/third-party/{serviceId}/session` | Session detail and the agents that depend on it. |
-| DELETE | `/api/third-party/{serviceId}/session` | Terminate the session and delete its stored tokens. |
-| GET | `/api/third-party/{serviceId}/session/affected-agents` | Agents that lose access when the session ends. |
+| GET | `/api/third-party/{serviceId}/session` | Raw stored session and agents that depend on it. |
+| GET | `/api/third-party/{serviceId}/session/affected-agents` | List the current user's agents affected by disconnecting this session. |
+| DELETE | `/api/third-party/{serviceId}/session` | Delete the session's stored tokens at the broker. |
+| POST | `/api/third-party/{serviceId}/session/refresh` | Refresh the access token through the existing provider flow. |
+
+The session list returns `{"data": {"sessions": [<UserSessionSummary>]}}`, with an empty `sessions` array when no stored sessions exist.
+It includes expired stored sessions but excludes services without a stored session. Refresh returns the updated summary in `data`.
+
+The summary omits `refresh_token_expires_at` when no expiry is stored. It does not return `null`.
+`GET /api/third-party/{serviceId}/session` returns the stored session in `data.session`.
+This object has `id`, `principal`, `service_id`, `token_type`, `scope`, `encryption_context`, and timestamps.
+It omits unset token-expiry timestamps and never includes encrypted access or refresh tokens.
+`data.dependent_agents` contains `{id, display_name}` records. The sibling `data.dependent_agent_count` counts them.
+Read the affected-agents list before disconnecting. `DELETE /api/third-party/{serviceId}/session` returns
+`200` with `{"message": "session terminated successfully"}`, not an affected-agent count.
+Broker disconnection does not revoke provider-side tokens.
+
+### Approval decisions
+
+`POST /api/approvals/{id}/approve` and `/deny` return `409` with
+`{"error": "conflict", "message": "approval has already been resolved"}` for an already resolved approval.
+An expired pending approval returns `410` with `{"error": "gone", "message": "approval has expired"}`.
+
+`POST /api/approvals/{id}/revoke` returns `400` with `bad_request` for an invalid approval ID.
+It returns `422` with `not_revocable` when the approval is not permanent.
+On success, `data` contains `id`, `status` (`denied`), and `denied_at`.
+The response omits `persistence` after revocation.
 
 ### OAuth2 server
 

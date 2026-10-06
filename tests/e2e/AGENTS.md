@@ -34,7 +34,8 @@ tests/e2e/
     page.go                        Base navigation and screenshot methods
     approval_page.go               Tool-approval review interactions
     consent_page.go                Consent interactions
-    tool_authorizations_page.go    Tool-authorization interactions
+    approvals_inbox_page.go        Pending inbox and remembered decisions
+    connections_page.go           Connections and provider callbacks
   extproc/                        Separate ExtProc Ginkgo suite; read `internal/extproc/AGENTS.md`
   frontend/                       Frontend E2E tests; read frontend/AGENTS.md
   screenshots/                    Maintained screenshot artifacts

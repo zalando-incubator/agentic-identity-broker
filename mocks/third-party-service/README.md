@@ -40,13 +40,13 @@ This command will:
 
 ### Manual Test Flow
 
-1. **Open Broker UI**: http://localhost:8000/sessions
-2. **Connect**: Click "Connect" on "Mock OAuth2 Service (Dev)" card
+1. **Open Broker UI**: Open the consent request or the agent detail (`http://localhost:8000/agents/:id`) of an agent that requires "Mock OAuth2 Service (Dev)"
+2. **Connect**: In consent, click "Connect Mock OAuth2 Service (Dev) to continue". In the agent detail, click "Connect" in the Connections side panel
 3. **Approve**: You'll be redirected to the mock consent page - click "Approve"
 4. **Session Created**: The mock redirects back to the broker with an authorization code
 5. **Token Exchange**: The broker exchanges the code for tokens (PKCE validated)
-6. **Session Stored**: The session appears in your sessions list
-7. **Terminate**: Click "Terminate" to revoke the session
+6. **Connection Stored**: The connection appears at http://localhost:8000/connections
+7. **Disconnect**: Click "Disconnect" and confirm to remove the stored connection. Provider-side tokens are not revoked
 
 ## Configuration
 
@@ -252,7 +252,7 @@ just test-integration
 ### Manual Testing
 
 1. **Setup**: `just mock-third-party-oauth2-setup`
-2. **Test**: Navigate to http://localhost:8000/sessions
+2. **Test**: Connect an agent's required service as described in [Manual Test Flow](#manual-test-flow), then open http://localhost:8000/connections
 3. **Cleanup**: `just mock-third-party-oauth2-clean`
 
 ### End-to-End Flow
@@ -260,7 +260,7 @@ just test-integration
 ```
 Broker UI → Redirect to Mock Authorize → User Approves →
 Mock redirects with code → Broker exchanges code (PKCE validated) →
-Session stored → Session appears in UI
+Session stored → Connection appears on /connections
 ```
 
 ## Implementation Notes

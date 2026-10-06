@@ -1,17 +1,33 @@
 /**
- * Axios-based API client for consent management backend.
- *
- * Configured with:
- * - Base URL: /api (relative, proxied by Vite dev server)
- * - Request interceptor: Adds session token to headers
- * - Response interceptor: Handles errors and redirects on auth failures
+ * Axios transport for the authenticated end-user API.
+ * Authentication remains the responsibility of the upstream proxy.
  */
 
 import axios, {
   AxiosError,
   AxiosInstance,
+  type InternalAxiosRequestConfig,
 } from 'axios';
 import type { ApiError } from '../../types/consent';
+
+type AuthLossListener = (error: ApiError) => void;
+const authLossListeners = new Set<AuthLossListener>();
+let authGeneration = 0;
+
+/** Authentication lifetime for guarding continuations across identity changes. */
+export function getAuthGeneration(): number {
+  return authGeneration;
+}
+
+/** Retire the current lifetime before its principal-owned state is cleared. */
+export function advanceAuthGeneration(): void {
+  authGeneration += 1;
+}
+
+export function subscribeAuthLoss(listener: AuthLossListener): () => void {
+  authLossListeners.add(listener);
+  return () => { authLossListeners.delete(listener); };
+}
 
 /**
  * Create and configure the axios instance with interceptors.
@@ -24,6 +40,11 @@ function createApiClient(): AxiosInstance {
       'Content-Type': 'application/json',
     },
   });
+  const requestGenerations = new WeakMap<InternalAxiosRequestConfig, number>();
+  client.interceptors.request.use((config) => {
+    requestGenerations.set(config, getAuthGeneration());
+    return config;
+  }, undefined, { synchronous: true });
 
   // Response interceptor: Handle errors with enhanced error messages
   client.interceptors.response.use(
@@ -31,7 +52,9 @@ function createApiClient(): AxiosInstance {
       // Success response - return as-is
       return response;
     },
-    (error: AxiosError<ApiError>) => {
+    (error: AxiosError<{ error?: string; message?: string }>) => {
+      if (axios.isCancel(error)) return Promise.reject(error);
+
       // Handle error responses
       if (error.response) {
         const { status, data } = error.response;
@@ -46,12 +69,17 @@ function createApiClient(): AxiosInstance {
             ? 'Authentication failed. Vite proxy should inject X-Remote-User header automatically.'
             : 'Authentication failed. Please contact your administrator.';
 
-          return Promise.reject({
+          const authError: ApiError & { retryable: boolean } = {
             status,
             code: 'UNAUTHORIZED',
             message: errorMsg,
             retryable: false,
-          } as ApiError & { retryable: boolean });
+          };
+          if (error.config && requestGenerations.get(error.config) === getAuthGeneration()) {
+            advanceAuthGeneration();
+            for (const listener of authLossListeners) listener(authError);
+          }
+          return Promise.reject(authError);
         }
 
         // 403 Forbidden - User doesn't have permission
@@ -103,9 +131,13 @@ function createApiClient(): AxiosInstance {
           } as ApiError & { retryable: boolean });
         }
 
-        // Return structured error from backend
-        if (data && typeof data === 'object') {
-          return Promise.reject(data as ApiError);
+        // The end-user API returns { error, message }; consumers receive ApiError.
+        if (data && typeof data === 'object' && typeof data.error === 'string' && data.error) {
+          return Promise.reject({
+            status,
+            code: data.error,
+            message: typeof data.message === 'string' && data.message ? data.message : error.message || 'An unexpected error occurred',
+          } as ApiError);
         }
       }
 

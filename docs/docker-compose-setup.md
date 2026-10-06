@@ -13,7 +13,7 @@ Compose. It includes hot reload for the backend and frontend.
 ### Step 1: Start All Services
 
 ```bash
-just dev-docker
+just compose-up
 ```
 
 This command does the following:
@@ -30,8 +30,7 @@ the broker health check.
 
 Open in your browser:
 
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
+- **Frontend and backend API**: http://localhost:8000
 - **Admin API**: http://localhost:14000
 - **Upstream OAuth2**: http://localhost:9001
 - **Third-Party OAuth2**: http://localhost:9000
@@ -66,13 +65,15 @@ just compose-down
 
 | Service | Port | Purpose | Notes |
 |---------|------|---------|-------|
-| `identity-broker` | 8000, 14000 | Main backend API | Hot reload with Air |
-| `frontend` | 3000 | React UI (Vite dev server) | HMR enabled |
+| `identity-broker` | Internal 8000, published 14000 | Backend APIs | Hot reload with Air |
+| `frontend` | Published 8000 → container 3000 | React UI and backend proxy | HMR enabled |
 | `upstream-oauth2` | 9001 | Mock upstream OAuth2 provider | Fixed build |
 | `third-party-oauth2` | 9000 | Mock third-party service | Fixed build |
 | `sample-agent` | 9002 | Sample OAuth2 client | Fixed build |
-| `seed-broker-data` | - | Runs seed script once | Auto-seed agents/services |
-| `seed-third-party` | - | Registers mock service once | Auto-seed mock OAuth2 service |
+
+Compose exposes one browser origin: `http://localhost:8000`. Vite serves the current `web/` source and proxies `/api`, `/oauth2`, `/.well-known`, and `/health` to the broker.
+The backend image contains no copied frontend build. Port 3000 remains internal to the frontend container.
+OAuth2 callbacks and HMR use the published port 8000. The Vite proxy preserves the browser host and adds the development principal.
 
 ---
 
@@ -107,7 +108,7 @@ oauth2_authorization_server:
   upstream_token_endpoint: http://upstream-oauth2:9001/oauth/token
 ```
 
-Use it with `just dev-docker` or `just compose-up`. `docker-compose.yml` sets
+Use it with `just compose-up`. `docker-compose.yml` sets
 `IDENTITY_BROKER_CONFIG_PATH=configs/config.docker.yaml`.
 
 ### Why the files differ
@@ -173,40 +174,24 @@ just compose-restart-frontend   # For Vite config changes
 
 ## Seed Data
 
-The docker-compose setup automatically seeds sample data on startup:
+The broker startup wrapper runs `scripts/setup-dev-data.sh` after the admin API becomes ready.
+Air runs the wrapper again after backend rebuilds. There are no separate seed-service containers.
 
-### Seed Broker Data (seed-broker-data service)
+The script creates Weather Assistant, Task Manager Pro, Sample Agent, Local Research Agent, and CIMD Demo Agent.
+It also creates Mock OAuth2, Weather, Calendar, and Email services with their permission sets.
 
-Creates sample agents and services via `tests/fixtures/seed-sample-data.sh`:
-- **Weather Assistant** agent
-- **Task Manager Pro** agent
-- **OAuth2 Test Client** agent
-- **Weather API** service
-- **Calendar API** service
-- **Email API** service
+List the agents through the admin API:
 
-Access via Admin API:
 ```bash
-curl http://localhost:14000/api/agents
+curl -fsS -H 'X-Remote-User: dev@example.com' http://localhost:14000/api/agents
 ```
 
-### Seed Third-Party Service (seed-third-party service)
-
-Registers the mock OAuth2 service via `scripts/register-mock-thirdparty-service.sh`:
-- Registers mock OAuth2 service with identity broker
-- Creates OAuth2 endpoints for testing
-- Registers scopes (profile, email, read, write)
-
-### Manual Seed Execution
-
-If automatic seeding fails, or you want to seed the stack again, run:
+If automatic seeding fails, run the script inside your broker container:
 
 ```bash
-# Seed broker data
-just compose-seed-data
-
-# Register third-party service
-just compose-register-third-party
+docker compose --env-file .env.compose exec \
+  -e MOCK_SERVER_TOKEN_URL=http://third-party-oauth2:9000 \
+  identity-broker bash scripts/setup-dev-data.sh
 ```
 
 ---
@@ -266,25 +251,35 @@ just compose-clean
 
 ### "Address already in use" Error
 
-One or more ports (8000, 3000, 9000, 9001, 9002) are already in use.
+One or more published ports (8000, 14000, 9000, 9001, 9002, or 9004) are already in use.
 
-**Solution 1: Stop conflicting processes**
+Find the service that owns the port:
+
 ```bash
-# Find what's using port 8000
-lsof -i :8000
-
-# Kill the process (example PID 12345)
-kill -9 12345
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+docker ps
 ```
 
-**Solution 2: Use different ports**
-Edit `docker-compose.yml` and change port mappings:
+Do not stop another person's service. Use a separate Compose project and override its ports and container names.
+When you change the browser port, change the broker public URL and HMR client port to match:
+
 ```yaml
-identity-broker:
-  ports:
-    - "8001:8000"    # Maps container 8000 to host 8001
-    - "14001:14000"
+services:
+  frontend:
+    ports: !override
+      - "8001:3000"
+    environment:
+      - VITE_HMR_CLIENT_PORT=8001
+  identity-broker:
+    ports: !override
+      - "14001:14000"
+    environment:
+      - IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL=http://localhost:8001
 ```
+
+Also set `broker.base_url` and `broker.authorize_endpoint` in the Sample Agent configuration to the matching browser origin.
+
+The `!override` tag requires Docker Compose 2.24.4 or later. Also give the project unique container names and nonconflicting mock ports.
 
 ### Frontend cannot access the backend
 
@@ -305,27 +300,18 @@ just compose-logs-frontend  # Look for proxy errors
 
 **Examine the proxy:**
 ```bash
-curl -s http://localhost:3000/api/health  # Should proxy to backend
+curl -fsS http://localhost:8000/health  # Vite proxies this request to the broker
 ```
 
 ### Seed data did not start
 
-Seed services can fail when the broker is unhealthy.
+The startup wrapper reports seed errors in the backend logs.
 
-**Read seed logs:**
 ```bash
-# In one terminal:
-just compose-logs-service seed-broker-data
-
-# In another terminal:
-just compose-logs-service seed-third-party
+just compose-logs-backend
 ```
 
-**Manual reseed:**
-```bash
-just compose-seed-data
-just compose-register-third-party
-```
+If the broker is healthy, use the manual command in [Seed Data](#seed-data).
 
 ### File changes are not detected
 
@@ -371,43 +357,35 @@ just compose-logs
 
 ---
 
-## VS Code Devcontainer
+## Native Development
 
-For unified development experience inside a container:
-
-### Setup
-
-1. Install **Remote - Containers** extension in VS Code
-2. Open project: `code .`
-3. Click **"Reopen in Container"** (notification bottom right)
-4. Wait for devcontainer to build (~2 min first time)
-
-### Usage
-
-Inside devcontainer:
+Native development requires Go 1.27.1, Node 24 or later, npm, OpenSSL, and just. Hot reload also requires Air.
 
 ```bash
-# All commands work the same
-just dev-docker     # Start all services
-just compose-logs   # View logs
-just compose-health # Check health
-just verify         # Run the full verification gate
-just fmt            # Format code
+# Build both artifacts and serve the current UI on port 8000
+just run
+
+# Or rebuild the backend and frontend after source changes
+just dev
 ```
 
-### Port Forwarding
+The broker serves `web/dist` from the repository root. `just run` builds that directory before startup.
+Native Air rebuilds it before each backend restart and watches frontend source files. Docker Air does not build the frontend because Vite owns it.
+Protected APIs require a trusted reverse proxy that supplies `X-Remote-User`. A direct native browser request does not supply that principal.
 
-All ports (8000, 3000, 9000-9002) auto-forward to host:
+For optional native Vite HMR, use two terminals:
 
-- From host browser: `http://localhost:3000` (works)
-- From devcontainer terminal: `http://identity-broker:3000` (inside container network)
+```bash
+# Terminal 1: callback URLs point to the Vite browser origin
+IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL=http://localhost:3000 just dev
 
-### Benefits
+# Terminal 2: Vite proxies API requests to the native broker on port 8000
+just web-dev
+```
 
-- No local setup needed (Go, Node.js, tools all in container)
-- Consistent environment across team
-- Services defined in `docker-compose.yml` auto-start
-- Full terminal access inside container
+In this mode, open `http://localhost:3000/`. Vite supplies the development identity.
+Keep the browser on that origin throughout OAuth2. Selection drafts use tab-local storage and cannot cross origins.
+Do not start native Vite alongside Compose. Compose already provides the frontend and its proxy on port 8000.
 
 ---
 
@@ -423,12 +401,17 @@ IDENTITY_BROKER_STATE_TOKEN_TTL=10m          # Token lifetime
 IDENTITY_BROKER_STORAGE_BACKEND=memory       # memory or postgres
 ```
 
-### Frontend (.env.compose)
+### Frontend (docker-compose.yml)
 
 ```bash
-VITE_API_URL=http://localhost:8000           # Backend URL
-VITE_LOG_LEVEL=debug                          # Vite logging
+VITE_API_URL=http://identity-broker:8000     # Server-side proxy target
+VITE_USE_POLLING=true                       # Bind-mounted source changes
+VITE_HMR_HOST=localhost                     # Browser websocket host
+VITE_HMR_CLIENT_PORT=8000                   # Published browser websocket port
 ```
+
+Compose sets these values on the frontend service. They are not production API configuration.
+Native Vite defaults its proxy target to `http://localhost:8000`.
 
 ### Seed Scripts (.env.compose)
 
@@ -447,9 +430,16 @@ For production deployment (not for development):
 ### Build Production Image
 
 ```bash
-just build-all           # Build Go backend + React frontend
-just docker-build-prod   # Create production Docker image
+# Build release binaries and frontend assets before Docker packaging
+just build-linux-amd64 build-linux-arm64 web-build
+
+# Build and load the native image (use linux/amd64 on an x86_64 host)
+docker buildx build --load --platform linux/arm64 \
+  -f build/docker/Dockerfile -t agentic-identity-broker:local .
 ```
+
+The Dockerfile copies the pre-built architecture-specific binary and `web/dist` into the image. It does not install Node dependencies or build the frontend.
+The `just docker-build-broker` recipe builds both binaries and the frontend before image packaging. It validates both image architectures without loading a local image.
 
 The `just` broker and ExtProc build recipes use `-trimpath` and strip debug
 symbols by default. To keep DWARF, run `LDFLAGS="" just build` (or set the
@@ -461,11 +451,20 @@ creation timestamp against that commit.
 
 ### Run Production Image
 
+For a local image smoke run, use the native configuration and fresh development keys:
+
 ```bash
-just docker-run-prod
-# Runs at http://localhost:8000
-# Frontend at http://localhost:8000/
+export IDENTITY_BROKER_JWE_SIGNING_KEY="$(./scripts/generate-jwe-key.sh)"
+export IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(./scripts/generate-jwe-key.sh)"
+docker run --rm --name aib-production-review \
+  -p 8000:8000 -p 14000:14000 \
+  -v "$PWD/config.yaml:/app/config.yaml:ro" \
+  -e IDENTITY_BROKER_JWE_SIGNING_KEY -e IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY \
+  agentic-identity-broker:local
 ```
+
+Open `http://localhost:8000/`. Do not mount host frontend assets over the image.
+For deployment, provide your production configuration, secrets, public HTTPS URL, and trusted authentication proxy.
 
 ### Key Differences from Dev
 
@@ -481,8 +480,8 @@ just docker-run-prod
 ### Quick Local Testing
 
 ```bash
-# Full test: build, start, verify health, cleanup
-just quick-test
+# Build the current frontend and backend before a native smoke run
+just run
 ```
 
 ### Monitor All Logs
@@ -499,7 +498,7 @@ just compose-logs
 
 ```bash
 # Get into running container
-docker exec -it aib-broker /bin/sh
+docker compose --env-file .env.compose exec identity-broker /bin/sh
 
 # Then run commands directly
 curl http://localhost:8000/health
@@ -518,53 +517,43 @@ cat .env.compose | grep -v "^#"
 
 ### Network Isolation Testing
 
-All services are on custom bridge network `aib-network`:
+Application services share the project-scoped bridge network `<project>_aib-network`. Docker allocates a free subnet automatically to prevent address-range collisions between checkouts.
+
+Compose also assigns project-scoped container names. Run commands through Compose service names, not fixed container names.
+Published host ports remain fixed. Simultaneous stacks need distinct port mappings and matching application URLs.
+
+If startup failed with `Pool overlaps with other one on this address space`, retry `just compose-up-detached`. Existing networks from other projects do not need removal.
 
 ```bash
-# List network
-docker network inspect aib-network
+# List project-scoped application networks
+docker network ls --filter label=com.docker.compose.network=aib-network
 
 # Test service DNS resolution
-docker exec aib-broker ping upstream-oauth2  # Should work
+docker compose --env-file .env.compose exec identity-broker getent hosts upstream-oauth2
 ```
 
 ---
 
 ## Architecture Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Host Machine                             │
-│  http://localhost:3000  http://localhost:8000                   │
-│            ↓                        ↓                             │
-├─────────────────────────────────────────────────────────────────┤
-│                      Docker Compose Network                      │
-│                        (aib-network)                              │
-│                                                                   │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
-│  │  Frontend (3000) │  │  Backend (8000)  │  │  Upstream    │  │
-│  │  - React + Vite  │  │  - Go + Air       │  │  OAuth2      │  │
-│  │  - HMR enabled   │  │  - Hot reload    │  │  (9001)      │  │
-│  │                  │  │                  │  │              │  │
-│  └──────────────────┘  └──────────────────┘  └──────────────┘  │
-│         ↑                        ↑                                │
-│         │ Vite proxy            │ API calls                      │
-│         └────────────────────────┘                               │
-│                                                                   │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │
-│  │ Third-Party      │  │  Sample Agent    │  │  Seed        │  │
-│  │ OAuth2 (9000)    │  │  (9002)          │  │  Services    │  │
-│  │                  │  │                  │  │  (one-shot)  │  │
-│  └──────────────────┘  └──────────────────┘  └──────────────┘  │
-│                                                                   │
-└─────────────────────────────────────────────────────────────────┘
+```text
+Browser: http://localhost:8000
+  │
+  ▼
+frontend:3000 (Vite, bind-mounted web source, HMR)
+  │
+  ├── SPA routes and current source assets
+  │
+  └── /api, /oauth2, /.well-known, /health
+        │
+        ▼
+      identity-broker:8000 (Go API, Air hot reload)
+        │
+        ├── upstream-oauth2:9001
+        └── third-party-oauth2:9000
 
-Key Features:
-  ✓ Hot reload: Go changes rebuild in 1-2s (Air)
-  ✓ HMR: React changes apply in ~500ms (Vite)
-  ✓ Auto-seed: Sample data created on startup
-  ✓ Service DNS: Services communicate via names
-  ✓ Port mapping: All ports forwarded to host
+Admin: http://localhost:14000 → identity-broker:14000
+Sample client: http://localhost:9002 → frontend on port 8000
 ```
 
 ---
@@ -574,5 +563,5 @@ Key Features:
 
 - **Edit code:** Edit a `.go` or `.tsx` file. The relevant service rebuilds.
 - **View logs:** Use `just compose-logs` to debug.
-- **Run tests:** Use `just verify` in the devcontainer or on the host.
-- **Build for production:** Use `just docker-build-prod`.
+- **Run tests:** Use `just verify` on the host.
+- **Build for production:** Use `just docker-build-broker` or the native Buildx command in this guide.
