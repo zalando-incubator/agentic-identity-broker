@@ -134,12 +134,15 @@ it.each(['decision', 'console'] as const)('toggles a permission through its name
   const user = userEvent.setup();
   const services: ServiceRequirement[] = ['mail', 'drive'].map((id) => ({ kind: 'requirement', serviceId: id, serviceName: id, requirementType: 'optional', requiredScopes: [], connectionStatus: 'connected' }));
   function Editor() {
-    const [draft, setDraft] = useState(() => createConsentDraft({ context: mode, permissionSets: [{ requirement_type: 'optional', permission_set: { id: 'documents', name: 'Documents', description: 'Access documents.', service_scopes: services.map((service) => ({ service_id: service.serviceId, requirement_type: 'optional' })) } }] }));
+    const [draft, setDraft] = useState(() => createConsentDraft({ context: mode, permissionSets: [
+      { requirement_type: 'mandatory', permission_set: { id: 'base', name: 'Base access', description: 'Always selected.', service_scopes: [{ service_id: 'mail', requirement_type: 'mandatory' }] } },
+      { requirement_type: 'optional', permission_set: { id: 'documents', name: 'Documents', description: 'Access documents.', service_scopes: services.map((service) => ({ service_id: service.serviceId, requirement_type: 'optional' })) } },
+    ] }));
     return <PermissionPanel draft={draft} services={services} mode={mode} onChange={setDraft} />;
   }
   render(<Editor />);
   const checkbox = screen.getByRole('checkbox', { name: 'Documents' });
-  await user.click(screen.getByTestId('permission-group-name'));
+  await user.click(within(checkbox.closest('li')!).getByTestId('permission-group-name'));
   expect(checkbox).toBeChecked();
   if (mode === 'decision') expect(screen.getByRole('button', { name: 'Choose services for Documents' })).toHaveAttribute('aria-expanded', 'false');
   await user.click(screen.getByText('Access documents.'));
@@ -168,4 +171,33 @@ it('expands a clipped description from the keyboard without changing the permiss
     scroll.mockRestore();
     height.mockRestore();
   }
+});
+
+it.each(['decision', 'console'] as const)('explains and prevents empty %s selections without treating optional access as required', async (mode) => {
+  const user = userEvent.setup();
+  const services: ServiceRequirement[] = ['mail', 'drive'].map((id) => ({ kind: 'requirement', serviceId: id, serviceName: id, requirementType: 'optional', requiredScopes: [], connectionStatus: 'connected' }));
+  function Editor() {
+    const [draft, setDraft] = useState(() => createConsentDraft({ context: mode, permissionSets: [{ requirement_type: 'optional', permission_set: { id: 'documents', name: 'Documents', description: 'Access documents.', service_scopes: services.map((service) => ({ service_id: service.serviceId, requirement_type: 'optional' })) } }] }));
+    return <><PermissionPanel draft={draft} services={services} mode={mode} onChange={setDraft} /><output aria-label="Grant selection">{JSON.stringify(draft.toGrantRequest().granted_permission_sets)}</output></>;
+  }
+  render(<Editor />);
+  const group = screen.getByRole('checkbox', { name: 'Documents' });
+  await user.click(group);
+  expect(group).toBeChecked();
+  expect(group).toBeDisabled();
+  expect(group).toHaveAccessibleDescription(/at least one permission group/);
+  expect(screen.queryByText('Required')).not.toBeInTheDocument();
+  if (mode === 'decision') await user.click(screen.getByRole('button', { name: 'Choose services for Documents' }));
+  const mail = screen.getByRole(mode === 'console' ? 'button' : 'checkbox', { name: 'mail' });
+  const drive = screen.getByRole(mode === 'console' ? 'button' : 'checkbox', { name: 'drive' });
+  await user.click(mail);
+  expect(drive).toBeDisabled();
+  expect(drive).toHaveAccessibleDescription(/at least one service/);
+  await user.click(drive);
+  expect(screen.getByLabelText('Grant selection')).toHaveTextContent('{"documents":["drive"]}');
+  if (mode === 'console') expect(screen.getByText(/Revoke access/)).toBeVisible();
+  await user.click(mail);
+  expect(drive).toBeEnabled();
+  await user.click(drive);
+  expect(screen.getByLabelText('Grant selection')).toHaveTextContent('{"documents":["mail"]}');
 });

@@ -38,6 +38,10 @@ A grant has one validity. Re-consent starts from an unexpired grant: Until revok
 
 Custom expiry is a local calendar date. Submission serializes local midnight, and reopening restores the same local date from the timestamp. Cards and detail headers show expiry in local time. The console previews saved access against the changed duration before Save. Dirty console drafts require explicit discard before internal navigation. Document departure uses the browser warning, except for deliberate draft-preserving provider navigation.
 
+The editor prevents removing the final selected permission group or the final selected service within a group. These minimum-selection constraints do not make optional access required: optional choices remain removable when another selection remains. Console guidance points to Revoke access for removing all agent access. Save-time validation still rejects empty restored drafts.
+
+Required service status is explicit beside each service name wherever it constrains editing. In the console, Granted describes saved access, not the checkbox state. Unsaved group selection changes show Removal pending or Addition pending. Service-only edits keep Granted while the group remains selected. A successful save adopts the accepted grant; a failed save leaves saved badges and pending edits unchanged.
+
 ## ConnectionState: derived presentation
 
 The UI derives this value object from existing session fields, refresh responses in the current page, and the agent requirement `connectionStatus`. It adds no response field, stored column, or backend state.

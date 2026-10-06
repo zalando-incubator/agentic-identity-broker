@@ -66,6 +66,8 @@ export function PermissionPanel({ draft, services, disabled, onChange, mode = 'd
           const nameId = `${headingId}-${group.id}-name`;
           const descriptionId = `${headingId}-${group.id}-description`;
           const checkboxId = `${headingId}-${group.id}-checkbox`;
+          const minimumId = `${headingId}-${group.id}-minimum`;
+          const removalBlocked = group.removalBlocked && !group.readOnly;
           const Label = mode === 'console' && group.readOnly ? 'span' : 'label';
           const canChooseServices = group.services.length > 1 && (!group.readOnly || group.services.some((service) => !service.readOnly));
           const showConsoleServices = mode === 'console' && (group.services.length > 1 || group.services.some((service) => !service.required));
@@ -76,13 +78,14 @@ export function PermissionPanel({ draft, services, disabled, onChange, mode = 'd
             <div className="flex min-w-0 items-start gap-2">
               {mode === 'console' && group.readOnly
                 ? <LockKeyhole aria-hidden="true" className="mt-0.5 size-5 shrink-0 p-0.5 text-muted-foreground" />
-                : <Checkbox id={checkboxId} aria-labelledby={nameId} aria-describedby={descriptionId} checked={group.selected} disabled={disabled || group.readOnly} className={mode === 'console' ? 'size-5' : undefined} onCheckedChange={(checked) => onChange(draft.setPermissionSet(group.id, checked === true))} />}
+                : <Checkbox id={checkboxId} aria-labelledby={nameId} aria-describedby={[descriptionId, removalBlocked ? minimumId : undefined].filter(Boolean).join(' ')} checked={group.selected} disabled={disabled || group.readOnly || group.removalBlocked} className={mode === 'console' ? 'size-5' : undefined} onCheckedChange={(checked) => onChange(draft.setPermissionSet(group.id, checked === true))} />}
               <div className="min-w-0 flex-1">
                 <Label id={nameId} htmlFor={Label === 'label' ? checkboxId : undefined} data-testid="permission-group-name" className={cn('block font-medium text-foreground [overflow-wrap:anywhere]', Label === 'label' && 'cursor-pointer')}>{group.name}</Label>
+                {mode === 'console' && group.selected !== group.alreadyGranted && <p className="text-xs text-muted-foreground">{group.alreadyGranted ? consentCopy.removalPending : consentCopy.additionPending}</p>}
                 {group.required && <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">{mode === 'decision' && <LockKeyhole aria-hidden="true" className="size-3" />}{consentCopy.required}</span>}
                 {mode === 'console' ? <Label id={descriptionId} htmlFor={Label === 'label' ? checkboxId : undefined} data-testid="permission-group-description" className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">{group.description}</Label> : <TruncatedText id={descriptionId} data-testid="permission-group-description" as={Label} htmlFor={Label === 'label' ? checkboxId : undefined} text={group.description} lines={2} expandLabel={consentCopy.more} collapseLabel={consentCopy.less} className="text-xs text-muted-foreground [&>label]:cursor-pointer [&>button]:h-auto [&>button]:border-0 [&>button]:bg-transparent [&>button]:p-0 [&>button]:text-xs [&>button]:underline" />}
                 {group.alreadyGranted && <span data-testid="permission-group-granted" className="inline-flex items-center gap-0.5 text-xs text-muted-foreground"><Check aria-hidden="true" className="size-3" />{consentCopy.granted}</span>}
-                {mode === 'console' && group.services.length === 1 && !showConsoleServices && <p data-testid="permission-service-name" className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{serviceNames.get(group.services[0]!.id) ?? group.services[0]!.id}</p>}
+                {mode === 'console' && group.services.length === 1 && !showConsoleServices && <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]"><span data-testid="permission-service-name">{serviceNames.get(group.services[0]!.id) ?? group.services[0]!.id}</span> — {consentCopy.required}</p>}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
                 <div className="flex items-center gap-1">
@@ -101,6 +104,7 @@ export function PermissionPanel({ draft, services, disabled, onChange, mode = 'd
               </div>
             </div>
             {showConsoleServices && <div className="mt-2 pl-7"><PermissionServiceList {...serviceListProps} /></div>}
+            {removalBlocked && <p id={minimumId} className="mt-1 pl-7 text-xs text-muted-foreground">{consentCopy.keepPermission}{mode === 'console' && <> {consentCopy.revokeToRemoveAll}</>}</p>}
             {error && errorGroupId === group.id && <p role="alert" className="mt-1 pl-7 text-xs text-status-danger-foreground">{error}</p>}
           </li>;
         })}

@@ -20,6 +20,7 @@ export interface DraftService {
   required: boolean;
   selected: boolean;
   readOnly: boolean;
+  removalBlocked: boolean;
 }
 export interface DraftPermissionGroup {
   id: string;
@@ -29,6 +30,7 @@ export interface DraftPermissionGroup {
   selected: boolean;
   alreadyGranted: boolean;
   readOnly: boolean;
+  removalBlocked: boolean;
   collapsed: boolean;
   services: DraftService[];
 }
@@ -108,6 +110,7 @@ export class ConsentDraft {
   }
 
   get groups(): DraftPermissionGroup[] {
+    const selectedGroupCount = Object.keys(this.selections).length;
     return this.definition.groups.map((entry) => {
       const id = entry.permission_set.id;
       const required = entry.requirement_type === 'mandatory';
@@ -122,6 +125,7 @@ export class ConsentDraft {
         selected,
         alreadyGranted,
         readOnly: required || priorLocked,
+        removalBlocked: selected && selectedGroupCount === 1,
         collapsed: priorLocked,
         services: servicesFor(this.definition, entry).map((service) => {
           const serviceRequired = service.requirement_type === 'mandatory'
@@ -131,6 +135,7 @@ export class ConsentDraft {
             required: serviceRequired,
             selected: selected && this.selections[id]!.includes(service.service_id),
             readOnly: priorLocked || serviceRequired || !selected,
+            removalBlocked: selected && this.selections[id]!.length === 1 && this.selections[id]!.includes(service.service_id),
           };
         }),
       };
@@ -149,7 +154,7 @@ export class ConsentDraft {
 
   setPermissionSet(id: string, selected: boolean): ConsentDraft {
     const group = this.groups.find((entry) => entry.id === id);
-    if (!group || group.readOnly || group.selected === selected) return this;
+    if (!group || group.readOnly || group.selected === selected || (!selected && group.removalBlocked)) return this;
     const selections = { ...this.selections };
     if (selected) selections[id] = group.services.map((service) => service.id);
     else delete selections[id];
@@ -159,7 +164,7 @@ export class ConsentDraft {
   setService(permissionSetId: string, serviceId: string, selected: boolean): ConsentDraft {
     const group = this.groups.find((entry) => entry.id === permissionSetId);
     const service = group?.services.find((entry) => entry.id === serviceId);
-    if (!service || service.readOnly || service.selected === selected) return this;
+    if (!service || service.readOnly || service.selected === selected || (!selected && service.removalBlocked)) return this;
     const current = this.selections[permissionSetId]!;
     const services = selected ? [...current, serviceId] : current.filter((id) => id !== serviceId);
     return new ConsentDraft(this.definition, this.initial, {

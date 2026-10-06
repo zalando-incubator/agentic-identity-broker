@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { saveConsentDraft } from '@services/storage/session';
 import { agentDetail, grant, renderApplication, type HttpReply } from './applicationIntegrationTestSupport';
 
 const grantPath = '/consent/agents/agent/grants';
@@ -109,19 +110,17 @@ describe('consent routes through HTTP and principal-scoped Query', () => {
     expect(screen.queryByRole('button', { name: 'Allow' })).not.toBeInTheDocument();
   });
 
-  it('validates a selected permission group with no services before issuing a grant request', async () => {
+  it('validates an empty restored service selection before issuing a grant request', async () => {
     const user = userEvent.setup();
     const permissionSets = agentDetail.permission_sets.filter(entry => entry.permission_set.id === 'prior');
-    const { requests } = renderApplication('/agents/agent?session_token=authorization', config => {
+    const stateId = saveConsentDraft({ selections: { prior: [] }, duration: 'until-revoked', customDate: '' }, 'drive', `${window.location.origin}/agents/agent?session_token=authorization`);
+    expect(stateId).toBeDefined();
+    const { requests } = renderApplication(`/agents/agent?success=true&service_id=drive&consent_state_id=${stateId}`, config => {
       if (config.url === '/consent/agents/agent?session_token=authorization') return { body: { data: { ...agentDetail, permission_sets: permissionSets, service_requirements: [] } } };
       if (config.url === grantPath) return { body: { data: [] } };
     });
 
-    await user.click(await screen.findByRole('checkbox', { name: 'Existing access' }));
-    await user.click(screen.getByRole('button', { name: 'Choose services for Existing access' }));
-    const services = await screen.findByTestId('permission-services-popover');
-    await user.click(within(services).getByRole('checkbox', { name: 'Drive' }));
-    await user.click(within(services).getByRole('checkbox', { name: 'Mail' }));
+    expect(await screen.findByRole('checkbox', { name: 'Existing access' })).toBeChecked();
     await user.click(screen.getByRole('button', { name: 'Allow' }));
     expect(screen.getByTestId('consent-validation-summary')).toBeVisible();
     expect(within(screen.getByTestId('permission-group')).getByRole('alert')).toHaveTextContent('Select at least one service in each permission group.');

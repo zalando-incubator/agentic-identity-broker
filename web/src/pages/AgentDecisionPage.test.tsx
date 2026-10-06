@@ -133,16 +133,12 @@ describe('focused consent decisions', () => {
     expect(screen.getByText('Returns to different.example')).toBeVisible();
   });
 
-  it('marks a missing selected service in its row and footer without submitting', async () => {
+  it('marks an empty restored service selection in its row and footer without submitting', async () => {
     const permissionSets = detail.agent.permission_sets.filter((entry) => entry.permission_set.id === 'prior');
     vi.mocked(consentApi.getAgentDetail).mockResolvedValue({ ...detail, agent: { ...detail.agent, permission_sets: permissionSets, service_requirements: [] } });
     vi.mocked(consentApi.getAgentGrants).mockResolvedValue([]);
-    open();
-    await userEvent.click(await screen.findByRole('checkbox', { name: 'Existing access' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Choose services for Existing access' }));
-    const popover = await screen.findByTestId('permission-services-popover');
-    await userEvent.click(within(popover).getByRole('checkbox', { name: 'Drive' }));
-    await userEvent.click(within(popover).getByRole('checkbox', { name: 'Mail' }));
+    renderAgentPage(<AgentDecisionPage restoredDraft={{ selections: { prior: [] }, duration: 'until-revoked', customDate: '' }} />, '?session_token=authorization');
+    await screen.findByRole('checkbox', { name: 'Existing access' });
     await userEvent.click(screen.getByRole('button', { name: 'Allow', exact: true }));
     expect(within(screen.getByTestId('permission-group')).getByText('Select at least one service in each permission group.')).toBeVisible();
     expect(screen.getByTestId('consent-validation-summary')).toBeVisible();

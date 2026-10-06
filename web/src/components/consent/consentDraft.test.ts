@@ -26,8 +26,8 @@ describe('consent draft', () => {
     expect(draft.toGrantRequest(now).granted_permission_sets).toEqual({ base: ['profile', 'mail'] });
     expect(draft.groups[0]).toMatchObject({ required: true, readOnly: true, selected: true });
     expect(draft.groups[0]?.services).toEqual([
-      { id: 'profile', required: true, selected: true, readOnly: true },
-      { id: 'mail', required: true, selected: true, readOnly: true },
+      { id: 'profile', required: true, selected: true, readOnly: true, removalBlocked: false },
+      { id: 'mail', required: true, selected: true, readOnly: true, removalBlocked: false },
     ]);
   });
 
@@ -59,6 +59,20 @@ describe('consent draft', () => {
     expect(changed.reset().dirty).toBe(false);
     expect(loaded.setService('extra', 'calendar', false).setService('extra', 'calendar', true).dirty).toBe(false);
     expect(loaded.setPermissionSet('extra', false).toGrantRequest(now).granted_permission_sets).toEqual({ base: ['profile', 'mail'] });
+  });
+
+  it.each(['decision', 'console'] as const)('preserves a nonempty %s selection while allowing optional replacements', (context) => {
+    const optional = [permissionSets[0]!];
+    const draft = createConsentDraft({ permissionSets: optional, context }).setPermissionSet('extra', true);
+    const reduced = draft.setService('extra', 'calendar', false);
+    expect(reduced.toGrantRequest(now).granted_permission_sets).toEqual({ extra: ['mail'] });
+    expect(reduced.setService('extra', 'mail', false).toGrantRequest(now).granted_permission_sets).toEqual({ extra: ['mail'] });
+    expect(reduced.setPermissionSet('extra', false).toGrantRequest(now).granted_permission_sets).toEqual({ extra: ['mail'] });
+    expect(reduced.setService('extra', 'calendar', true).setService('extra', 'mail', false).toGrantRequest(now).granted_permission_sets).toEqual({ extra: ['calendar'] });
+    const replacement = { ...optional[0]!, permission_set: { ...optional[0]!.permission_set, id: 'replacement' } };
+    const switched = createConsentDraft({ permissionSets: [...optional, replacement], context })
+      .setPermissionSet('extra', true).setPermissionSet('replacement', true).setPermissionSet('extra', false);
+    expect(switched.toGrantRequest(now).granted_permission_sets).toEqual({ replacement: ['mail', 'calendar'] });
   });
 
   it('preserves the exact existing expiry unless the user changes the duration', () => {
@@ -97,8 +111,7 @@ describe('consent draft', () => {
     expect(restored.toGrantRequest(now).granted_permission_sets).toEqual({ base: ['profile', 'mail'], extra: ['mail'] });
     const optionalOnly = [permissionSets[0]!];
     const loaded = { permissionSets: optionalOnly, existingGrant: { ...existingGrant, granted_permission_sets: { extra: ['mail'] } }, context: 'console' as const };
-    const draft = createConsentDraft(loaded).setPermissionSet('extra', false);
-    expect(createConsentDraft({ ...loaded, restoredDraft: draft.snapshot() }).selections).toEqual({});
+    expect(createConsentDraft({ ...loaded, restoredDraft: { selections: {}, duration: 'until-revoked', customDate: '' } }).selections).toEqual({});
   });
 
   it('normalizes callback selections without allowing an unknown group to erase locked prior access', () => {
