@@ -163,6 +163,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -187,15 +189,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Cache Storybook Chromium
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: storybook-chromium-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
       - name: Install web dependencies
         run: npm --prefix web ci
-      - name: Install Storybook Chromium
-        run: ./web/node_modules/.bin/playwright install --with-deps chromium
       - name: Build shared component documentation
         if: matrix.project == 'storybook-light'
         run: npm --prefix web run build-storybook

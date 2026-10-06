@@ -71,6 +71,8 @@ jobs:
   storybook:
     name: Capture component review candidates
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
     timeout-minutes: 30
     if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
@@ -91,8 +93,6 @@ jobs:
           tool: just
       - name: Install web dependencies
         run: npm --prefix web ci
-      - name: Install Chromium
-        run: ./web/node_modules/.bin/playwright install --with-deps chromium
       - name: Capture canonical component review references
         run: just web-storybook-visual-candidates
       - name: Upload component review candidates

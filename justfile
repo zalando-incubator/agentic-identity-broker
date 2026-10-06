@@ -295,11 +295,6 @@ verify-unit-junit:
     (cd mocks/upstream-oauth2-server && go test -json ./internal/handlers/...) \
         > test-results/mock-oauth2-output.json 2> test-results/mock-oauth2-stderr.log &
     MOCK_OAUTH2_PID=$!
-    if [ "$WEB_INSTALL_EXIT" -eq 0 ]; then
-        (cd web && npm test --silent -- --run --reporter=junit) \
-            > test-results/web-unit-junit.xml 2> test-results/web-unit.log &
-        WEB_UNIT_PID=$!
-    fi
 
     TEST_FAILED=0
     go_pids=("$FAST_PID" "$CDK_PID" "$MOCK_AGENT_PID" "$MOCK_OAUTH2_PID")
@@ -317,7 +312,8 @@ verify-unit-junit:
         TEST_FAILED=1
         echo "--- Web dependency installation (FAILED) ---"
         cat test-results/web-unit-install.log
-    elif ! wait "$WEB_UNIT_PID"; then
+    elif ! (cd web && npm test --silent -- --run --reporter=junit --outputFile=../test-results/web-unit-junit.xml) \
+        > test-results/web-unit.log 2>&1; then
         TEST_FAILED=1
         echo "--- Web unit tests (FAILED) ---"
         cat test-results/web-unit.log test-results/web-unit-junit.xml

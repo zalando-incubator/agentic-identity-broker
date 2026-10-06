@@ -119,6 +119,8 @@ export function MyComponent() {
 - Coverage summary for fast Go/package tests: `just test-coverage-summary`
 - Frontend coverage report: `just web-test-coverage`
 
+The CI unit recipe, `just verify-unit-junit`, completes the Go, CDK, and mock suites before it starts frontend tests. This prevents Go compilation from competing with frontend tests. Vitest writes JUnit XML directly to `test-results/web-unit-junit.xml`. Command diagnostics go to `test-results/web-unit.log`.
+
 The [Coverage workflow](https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/scheduled-coverage.yml) runs manually from the GitHub Actions UI and weekly on `main`. It sends coverage from the Go unit, integration, and functional backend, ExtProc, and frontend E2E suites, plus Vitest and instrumented Playwright browser runs, to [Coveralls](https://coveralls.io/github/zalando-incubator/agentic-identity-broker?branch=main). Go coverage measures `cmd/` and `internal/`; browser coverage measures `web/src/`. The separate performance measurement is excluded. The README badge shows the latest main-branch result.
 
 To reproduce the frontend report locally after installing the test tools, run:

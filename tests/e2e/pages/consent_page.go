@@ -743,7 +743,7 @@ func (cp *ConsentPage) PermissionGroups(ctx context.Context) ([]PermissionGroup,
 			const required = [...name.parentElement.children].some(element =>
 				element !== name && element.textContent.trim() === 'Required');
 			const descriptionText = description.cloneNode(true);
-			descriptionText.querySelectorAll('[aria-hidden="true"],button').forEach(node => node.remove());
+			descriptionText.querySelectorAll('[aria-hidden="true"],button,[data-testid="permission-group-granted"]').forEach(node => node.remove());
 			const disclosure = group.querySelector('button[aria-expanded]');
 			return {Name: name.innerText.trim(), Description: descriptionText.textContent.trim(),
 				Required: required, AlreadyGranted: !!group.querySelector('[data-testid="permission-group-granted"]'),

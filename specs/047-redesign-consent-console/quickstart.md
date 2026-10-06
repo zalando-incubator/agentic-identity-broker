@@ -210,7 +210,9 @@ just web-storybook-build
 just web-storybook-test
 ```
 
-`web-storybook-build` wraps `npm --prefix web run build-storybook`. The local test and candidate recipes run six browser projects serially: light and dark at 375 × 812, 768 × 1024, and 1280 × 720. GitHub CI runs those projects as six parallel Storybook matrix jobs, independently of Unit tests. Each runner executes only its selected project, and the final CI gate requires the complete matrix. Shared component documentation builds once in the canonical light project. CI installs Chromium and the same Storybook addon versions as the app.
+`web-storybook-build` wraps `npm --prefix web run build-storybook`. The local test and candidate recipes run six browser projects serially: light and dark at 375 × 812, 768 × 1024, and 1280 × 720. GitHub CI runs those projects as six parallel Storybook matrix jobs, independently of Unit tests. Each runner executes only its selected project, and the final CI gate requires the complete matrix. Shared component documentation builds once in the canonical light project. CI installs the same Storybook addon versions as the app.
+
+CI and component-candidate captures use the same digest-pinned `mcr.microsoft.com/playwright:v1.62.1-noble` image. It fixes Chromium and system fallback fonts, including the Command-key glyph. Local PNG comparisons require the same image. `PLAYWRIGHT_WS_ENDPOINT` can connect Vitest to a Playwright server in that image.
 
 Expected result: all six projects run. An intentional inaccessible fixture fails the gate during gate development. Production stories use `parameters.a11y.test = 'error'`. Do not suppress failures with `todo`.
 
