@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { approvalApi } from '@services/api/approvals';
 import { accessCopy } from '@copy';
 import { approvalCopy } from '@copy/approvals';
 import { ApprovalReviewPage } from './ApprovalReviewPage';
-import type { ToolApprovalDetail } from '../../types/approval';
+import type { ScopePreview, ToolApprovalDetail } from '../../types/approval';
 
 vi.mock('@services/api/approvals', () => ({ approvalApi: { previewApprovalScope: vi.fn() } }));
 const approval: ToolApprovalDetail = {
@@ -146,19 +146,49 @@ describe('ApprovalReviewPage', () => {
     expect(screen.queryByRole('radio')).not.toBeInTheDocument();
   });
 
-  it.each([['session', 'For this session', 'Approve for this session'], ['permanent', 'Always…', 'Always approve']] as const)('selects %s without opening its editor until the main action is clicked', async (persistence, option, action) => {
+  it.each([['session', 'For this session', 'Approve for this session'], ['permanent', 'Always…', 'Always approve']] as const)('previews %s on selection and submits only through its validated main action', async (persistence, option, action) => {
     const user = userEvent.setup();
+    const preview = Promise.withResolvers<ScopePreview>();
+    vi.mocked(approvalApi.previewApprovalScope).mockReturnValue(preview.promise);
     const callbacks = props();
     render(<ApprovalReviewPage {...callbacks} />);
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: option }));
+    expect(await screen.findByRole('button', { name: /approval scope/i })).toBeVisible();
+    const submit = screen.getByRole('button', { name: action });
+    expect(submit).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Confirm approval' })).not.toBeInTheDocument();
-    expect(approvalApi.previewApprovalScope).not.toHaveBeenCalled();
+    await user.click(submit);
     expect(callbacks.onApprove).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: action }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: 'Confirm approval' }));
+    await act(async () => preview.resolve({ tool_pattern: approval.tool_pattern, params_pattern: approval.params_pattern, preview: approval.pattern_preview }));
+    await waitFor(() => expect(submit).toBeEnabled());
+    expect(callbacks.onApprove).not.toHaveBeenCalled();
+    await user.click(submit);
     expect(callbacks.onApprove).toHaveBeenCalledWith({ persistence, params_pattern: approval.params_pattern });
+  });
+
+  it('invalidates remembered-scope validation when switching options and ignores the abandoned preview', async () => {
+    const user = userEvent.setup();
+    const first = Promise.withResolvers<ScopePreview>();
+    const second = Promise.withResolvers<ScopePreview>();
+    vi.mocked(approvalApi.previewApprovalScope).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const callbacks = props();
+    render(<ApprovalReviewPage {...callbacks} />);
+    await user.click(screen.getByRole('button', { name: 'Approve options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
+    await waitFor(() => expect(approvalApi.previewApprovalScope).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole('button', { name: 'Approve options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'For this session' }));
+    await waitFor(() => expect(approvalApi.previewApprovalScope).toHaveBeenCalledTimes(2));
+    const submit = screen.getByRole('button', { name: 'Approve for this session' });
+    await act(async () => first.resolve({ tool_pattern: approval.tool_pattern, params_pattern: approval.params_pattern, preview: approval.pattern_preview }));
+    expect(submit).toBeDisabled();
+    await user.click(submit);
+    expect(callbacks.onApprove).not.toHaveBeenCalled();
+    await act(async () => second.resolve({ tool_pattern: approval.tool_pattern, params_pattern: approval.params_pattern, preview: approval.pattern_preview }));
+    await waitFor(() => expect(submit).toBeEnabled());
+    await user.click(submit);
+    expect(callbacks.onApprove).toHaveBeenCalledWith({ persistence: 'session', params_pattern: approval.params_pattern });
   });
 
   it('selects permanent denial without opening confirmation and can switch back to deny once', async () => {
@@ -177,16 +207,19 @@ describe('ApprovalReviewPage', () => {
     expect(callbacks.onDeny).toHaveBeenCalledWith();
   });
 
-  it('does not reopen a decision menu when returning from the scope editor', async () => {
+  it('returns to approve once through the split menu without recording remembered approval', async () => {
     const user = userEvent.setup();
-    render(<ApprovalReviewPage {...props()} />);
+    const callbacks = props();
+    render(<ApprovalReviewPage {...callbacks} />);
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'For this session' }));
-    await user.click(screen.getByRole('button', { name: 'Approve for this session' }));
-    await user.click(screen.getByRole('button', { name: 'Back' }));
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Approve for this session' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Deny options' })).toBeVisible();
+    await screen.findByRole('button', { name: /approval scope/i });
+    await user.click(screen.getByRole('button', { name: 'Approve options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Approve once' }));
+    expect(screen.queryByRole('button', { name: /approval scope/i })).not.toBeInTheDocument();
+    expect(callbacks.onApprove).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Approve once' }));
+    expect(callbacks.onApprove).toHaveBeenCalledWith({ persistence: 'once' });
   });
 
   it('keeps rejected patterns editable and blocks confirmation until server validation succeeds', async () => {
@@ -196,9 +229,8 @@ describe('ApprovalReviewPage', () => {
     render(<ApprovalReviewPage {...callbacks} errorCode="INVALID_PATTERN" />);
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'For this session' }));
-    await user.click(screen.getByRole('button', { name: 'Approve for this session' }));
     await waitFor(() => expect(approvalApi.previewApprovalScope).toHaveBeenCalled());
-    expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Approve for this session' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: /approval scope/i }));
     expect(screen.getByRole('combobox', { name: 'Path match mode' })).toBeEnabled();
     expect(callbacks.onApprove).not.toHaveBeenCalled();
@@ -210,20 +242,17 @@ describe('ApprovalReviewPage', () => {
     const { rerender } = render(<ApprovalReviewPage {...callbacks} />);
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
-    await user.click(screen.getByRole('button', { name: 'Always approve' }));
     await user.click(screen.getByRole('button', { name: /approval scope/i }));
     await user.click(screen.getByRole('combobox', { name: 'Path match mode' }));
     await user.click(screen.getByRole('option', { name: 'Any value' }));
     const next = { ...approval, id: 'approval-2', params_pattern: { path: '/new' } };
     rerender(<ApprovalReviewPage {...callbacks} approval={next} onPreview={(pattern, signal) => approvalApi.previewApprovalScope(next.id, { params_pattern: pattern }, { signal })} />);
-    expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Approve once' }));
     expect(callbacks.onApprove).toHaveBeenCalledWith({ persistence: 'once' });
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'For this session' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve for this session' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: 'Approve for this session' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeEnabled());
-    await user.click(screen.getByRole('button', { name: 'Confirm approval' }));
     expect(callbacks.onApprove).toHaveBeenLastCalledWith({ persistence: 'session', params_pattern: { path: '/new' } });
   });
 

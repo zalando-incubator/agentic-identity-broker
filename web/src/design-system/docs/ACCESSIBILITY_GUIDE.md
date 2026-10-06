@@ -109,7 +109,7 @@ The expanded CollectionToolbar search has a label. `/` focuses it, and Escape cl
 The Agents collection shows identity, grant expiry, a Last updated date, and confirmed Revoke, with no count column or per-agent count requests.
 Connections show only stored services. A missing required service appears only in an agent or consent context.
 Approval inbox shortcuts `J`, `K`, `A`, `D`, and Enter require focus inside the pending inbox or its review panel. They do nothing from the page body or unrelated controls and must not override text entry or an open overlay.
-The `A` and `D` hints also work from the main decision buttons and activate their currently selected action. Menu choices only change that action; the user activates the main button before scope review or permanent-denial confirmation opens. Neither shortcut bypasses those checks.
+The `A` and `D` hints work from main decision buttons outside scope editing. Selecting session or permanent approval reveals scope review without submitting; the selected main button submits only after server validation, with no second approval button. Shortcuts remain inactive during scope editing and overlays. Permanent denial still requires its confirmation dialog.
 Pending and Remembered tab labels include their loaded, principal-scoped totals, independent of remembered filters. Do not present an unavailable count as zero.
 Approval-row text does not participate in native Shift-click range selection. Request details and full-scope popovers remain copyable; selected-row styling and visible keyboard focus are unchanged.
 Selecting an approval must update and name its detail panel without changing the list's height.

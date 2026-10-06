@@ -94,19 +94,6 @@ it('honors the displayed decision shortcut when focus is on its main button', as
   await waitFor(() => expect(approve).toHaveBeenCalledWith(pending.id, { persistence: 'once' }));
 });
 
-it('uses the selected approval action for its shortcut instead of bypassing remembered-scope review', async () => {
-  const approve = vi.spyOn(approvalApi, 'approveApproval');
-  const user = userEvent.setup();
-  renderPage();
-  await user.click(await screen.findByRole('button', { name: 'Approve options' }));
-  await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
-  expect(screen.queryByRole('button', { name: 'Confirm approval' })).not.toBeInTheDocument();
-  screen.getByRole('button', { name: pending.tool_name }).focus();
-  await user.keyboard('a');
-  expect(await screen.findByRole('button', { name: 'Confirm approval' })).toBeInTheDocument();
-  expect(approve).not.toHaveBeenCalled();
-});
-
 it('keeps the header and tabs mounted while remembered controls stay in their panel and pending decisions disappear immediately', async () => {
   vi.mocked(approvalApi.listPermanentApprovals).mockResolvedValue([{ ...pending, id: 'allowed', status: 'approved', persistence: 'permanent' }]);
   const approve = vi.spyOn(approvalApi, 'approveApproval');
@@ -263,9 +250,8 @@ it.each([['For this session', 'session'], ['Always…', 'permanent']] as const)(
   await waitFor(() => expect(list).toHaveStyle({ minHeight: '188px' }));
   await user.click(screen.getByRole('button', { name: 'Approve options' }));
   await user.click(await screen.findByRole('menuitem', { name: label }));
-  await user.click(screen.getByRole('button', { name: persistence === 'session' ? 'Approve for this session' : 'Always approve' }));
   expect(screen.getByTestId('pending-approvals')).toBe(list);
-  const confirm = screen.getByRole('button', { name: 'Confirm approval' });
+  const confirm = screen.getByRole('button', { name: persistence === 'session' ? 'Approve for this session' : 'Always approve' });
   await waitFor(() => expect(confirm).toBeEnabled());
   expect(approve).not.toHaveBeenCalled();
   fireEvent.click(confirm);
@@ -329,9 +315,8 @@ it('expires an open editor at the server deadline without submitting a decision'
     await vi.advanceTimersByTimeAsync(0);
   });
   fireEvent.click(screen.getByRole('menuitem', { name: 'For this session' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Approve for this session' }));
   await act(async () => { await vi.advanceTimersByTimeAsync(251); });
-  expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Approve for this session' })).toBeEnabled();
   await act(async () => { await vi.advanceTimersByTimeAsync(expiresAt - Date.now()); });
   expect(screen.getByTestId('approval-outcome')).toBeVisible();
   const rowControl = screen.getByRole('button', { name: pending.tool_name });
@@ -444,15 +429,15 @@ it('ignores decision shortcuts in the remembered editor and permanent-denial dia
   await screen.findByTestId('approval-review-panel');
   await user.click(screen.getByRole('button', { name: 'Approve options' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
-  await user.click(screen.getByRole('button', { name: 'Always approve' }));
-  await screen.findByRole('button', { name: 'Confirm approval' });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Always approve' })).toBeEnabled());
   panel().focus();
   await user.keyboard('adjk{Enter}');
   expect(panel()).toHaveFocus();
   expect(within(panel()).getByRole('heading', { name: pending.tool_name, exact: true })).toBeInTheDocument();
   expect(approve).not.toHaveBeenCalled();
   expect(deny).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Back' }));
+  await user.click(screen.getByRole('button', { name: 'Approve options' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Approve once' }));
   const reviewPanel = panel();
   await user.click(screen.getByRole('button', { name: 'Deny options' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Always deny…' }));
@@ -619,9 +604,8 @@ it('rejects a remembered scope when authoritative preview fails without posting 
   await screen.findByTestId('approval-review-panel');
   await user.click(screen.getByRole('button', { name: 'Approve options' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
-  await user.click(screen.getByRole('button', { name: 'Always approve' }));
   await waitFor(() => expect(approvalApi.previewApprovalScope).toHaveBeenCalledWith('pending', { params_pattern: pending.params_pattern }, expect.anything()));
-  expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Always approve' })).toBeDisabled();
   expect(approve).not.toHaveBeenCalled();
 });
 

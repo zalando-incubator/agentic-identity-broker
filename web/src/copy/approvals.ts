@@ -27,7 +27,6 @@ export const approvalCopy = {
   permanent: 'Always allow',
   permanentWarning: 'This grants permanent access. You can revoke it from Approvals.',
   rememberDescription: 'Review how long this decision lasts and the scope it covers. Only your confirmation records this approval.',
-  confirmApproval: 'Confirm approval',
   denyPermanentDescription: 'This blocks future requests for this tool from this agent. You can revoke the decision from Approvals.',
   confirmPermanentDeny: 'Confirm permanent denial',
   scope: 'Approval scope',

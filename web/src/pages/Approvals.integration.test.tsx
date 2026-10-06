@@ -66,10 +66,10 @@ describe('approval routes with real review actions and HTTP state', () => {
     await user.click(screen.getByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Always…' }));
     expect(screen.queryByRole('button', { name: 'Confirm approval' })).not.toBeInTheDocument();
-    expect(requests.mock.calls.filter(([config]) => config.method === 'post')).toHaveLength(0);
-    await user.click(screen.getByRole('button', { name: 'Always approve' }));
-    const confirm = screen.getByRole('button', { name: 'Confirm approval' });
+    const confirm = screen.getByRole('button', { name: 'Always approve' });
     expect(confirm).toBeDisabled();
+    await user.click(confirm);
+    expect(requests.mock.calls.filter(([config]) => config.url === `${detailPath}/approve`)).toHaveLength(0);
     expect(screen.getByText('This grants permanent access. You can revoke it from Approvals.')).toBeVisible();
     await waitFor(() => expect(requests).toHaveBeenCalledWith(expect.objectContaining({ method: 'post', url: `${detailPath}/scope-preview` })));
     expect(requests.mock.calls.filter(([config]) => config.url === `${detailPath}/approve`)).toHaveLength(0);
@@ -117,13 +117,13 @@ describe('approval routes with real review actions and HTTP state', () => {
     });
     await user.click(await screen.findByRole('button', { name: 'Approve options' }));
     await user.click(await screen.findByRole('menuitem', { name: 'For this session' }));
-    await user.click(screen.getByRole('button', { name: 'Approve for this session' }));
     expect(await screen.findByText('The broker could not validate this scope. Adjust the scope or try the preview again.')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Confirm approval' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Approve for this session' })).toBeDisabled();
     expect(requests.mock.calls.filter(([config]) => config.url === `${detailPath}/approve`)).toHaveLength(0);
     expect(screen.queryByTestId('approval-outcome')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Back' }));
-    expect(screen.getByRole('button', { name: 'Approve for this session' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Approve options' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Approve once' }));
+    expect(screen.getByRole('button', { name: 'Approve once' })).toBeEnabled();
     expect(requests.mock.calls.filter(([config]) => config.method === 'post')).toHaveLength(1);
   });
 

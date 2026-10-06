@@ -27,7 +27,6 @@ export const approvalQueueCopy = {
   expiresIn: (minutes: number) => `Expires in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`,
   expiresSoon: (minutes: number) => `${minutes} min left`,
   selectedRequest: 'Selected request',
-  back: 'Back',
   always: 'Always…',
   approveSession: 'Approve for this session',
   approveAlways: 'Always approve',

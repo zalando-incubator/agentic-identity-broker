@@ -207,8 +207,7 @@ export const PermanentScopeEditor: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Approve options' }));
     // The decision menu mounts after a lazy import; await its accessible item before selecting it.
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'Always…' }));
-    await userEvent.click(await canvas.findByRole('button', { name: 'Always approve' }));
-    const confirm = canvas.getByRole('button', { name: 'Confirm approval' });
+    const confirm = await canvas.findByRole('button', { name: 'Always approve' });
     await waitFor(() => expect(confirm).toBeEnabled());
     await expect(args.onPreview).toHaveBeenCalled();
     await expect(canvas.getByTestId('approval-scope-preview')).toHaveTextContent(approval.pattern_preview);
@@ -221,8 +220,7 @@ export const SessionScopeEditor: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Approve options' }));
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'For this session' }));
-    await userEvent.click(await canvas.findByRole('button', { name: 'Approve for this session' }));
-    await waitFor(() => expect(canvas.getByRole('button', { name: 'Confirm approval' })).toBeEnabled());
+    await waitFor(() => expect(canvas.getByRole('button', { name: 'Approve for this session' })).toBeEnabled());
     await expect(args.onPreview).toHaveBeenCalled();
     await expect(canvas.getByTestId('approval-scope-preview')).toHaveTextContent(approval.pattern_preview);
   },
@@ -236,9 +234,8 @@ export const InvalidScope: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Approve options' }));
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'For this session' }));
-    await userEvent.click(await canvas.findByRole('button', { name: 'Approve for this session' }));
     await waitFor(() => expect(args.onPreview).toHaveBeenCalled());
-    await waitFor(() => expect(canvas.getByRole('button', { name: 'Confirm approval' })).toBeDisabled());
+    await waitFor(() => expect(canvas.getByRole('button', { name: 'Approve for this session' })).toBeDisabled());
     await waitFor(() => expect(canvas.getByText(/could not validate this scope/i)).toBeVisible());
   },
 };

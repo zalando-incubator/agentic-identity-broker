@@ -47,8 +47,7 @@ func (ap *ApprovalPage) HasStaleReviewActions(ctx context.Context) (bool, error)
 	err := ap.evaluateJSON(ctx, ap.pwPage().Locator("html"), `root =>
 		[...root.querySelectorAll('[data-exiting="true"] [data-testid="approval-review-panel"]')].some(panel =>
 			[...panel.querySelectorAll('button')].some(button => !button.disabled &&
-				['Approve once', 'Approve options', 'Confirm approval', 'Deny', 'Deny options'].some(label =>
-					(button.getAttribute('aria-label') || button.innerText).trim().startsWith(label))))`, &stale)
+				(button.hasAttribute('data-approval-action') || ['Approve options', 'Deny options'].includes(button.getAttribute('aria-label')))))`, &stale)
 	return stale, err
 }
 
@@ -182,7 +181,6 @@ func (ap *ApprovalPage) HasRiskBadge(ctx context.Context, level string) (bool, e
 
 // --- Persistence selector ---
 
-// Menu choices select the main action without opening a review step or submitting.
 func (ap *ApprovalPage) OpenApproveOptions(ctx context.Context) error {
 	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Approve options", Exact: playwright.Bool(true)}), "open approval options")
 }
@@ -214,7 +212,6 @@ func (ap *ApprovalPage) HasPermanentWarning(ctx context.Context) (bool, error) {
 	}), "permanent approval warning")
 }
 
-// Decisions are submitted only by their explicit once or confirm buttons.
 func (ap *ApprovalPage) ClickDeny(ctx context.Context) error {
 	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{
 		Name: "Deny", Exact: playwright.Bool(true),
@@ -401,12 +398,8 @@ func (ap *ApprovalPage) ClickApproveOnce(ctx context.Context) error {
 	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Approve once", Exact: playwright.Bool(true)}), "approve tool call once")
 }
 
-func (ap *ApprovalPage) ChooseRememberDuration(ctx context.Context, label string) error {
-	return ap.locatorClick(ctx, ap.pwPage().GetByRole("menuitem", playwright.PageGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "select approval duration "+label)
-}
-
-func (ap *ApprovalPage) BackFromScopeEditor(ctx context.Context) error {
-	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Back", Exact: playwright.Bool(true)}), "return from approval scope editor")
+func (ap *ApprovalPage) ChooseApprovalOption(ctx context.Context, label string) error {
+	return ap.locatorClick(ctx, ap.pwPage().GetByRole("menuitem", playwright.PageGetByRoleOptions{Name: label, Exact: playwright.Bool(true)}), "select approval option "+label)
 }
 
 func (ap *ApprovalPage) HasDecisionActions(ctx context.Context) (bool, error) {
@@ -418,7 +411,7 @@ func (ap *ApprovalPage) HasDecisionActions(ctx context.Context) (bool, error) {
 		return buttons.some(button => {
 			if (button.disabled || button.closest('[inert]') || button.getClientRects().length === 0) return false;
 			const label = (button.getAttribute('aria-label') || button.innerText).trim();
-			return button.hasAttribute('data-approval-action') || label === 'Confirm approval' || label === 'Confirm permanent denial';
+			return button.hasAttribute('data-approval-action') || label === 'Confirm permanent denial';
 		});
 	}`, &actions)
 	return actions, err
@@ -451,10 +444,6 @@ func (ap *ApprovalPage) HasApproveOptionsAndDeny(ctx context.Context) (bool, err
 		return false, err
 	}
 	return ap.locatorVisible(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Deny", Exact: playwright.Bool(true)}), "deny approval")
-}
-
-func (ap *ApprovalPage) ConfirmRememberedApproval(ctx context.Context) error {
-	return ap.locatorClick(ctx, ap.reviewPanel().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Confirm approval", Exact: playwright.Bool(true)}), "confirm remembered approval")
 }
 
 func (ap *ApprovalPage) PanelHasFocus(ctx context.Context) (bool, error) {

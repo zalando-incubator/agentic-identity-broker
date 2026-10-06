@@ -208,14 +208,13 @@ export const RememberedScopeEditor: Story = {
     const before = list.getBoundingClientRect();
     await userEvent.click(canvas.getByRole('button', { name: 'Approve options' }));
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'Always…' }));
-    await userEvent.click(await canvas.findByRole('button', { name: 'Always approve' }));
-    await waitFor(() => expect(canvas.getByRole('button', { name: 'Confirm approval' })).toBeEnabled());
+    await waitFor(() => expect(canvas.getByRole('button', { name: 'Always approve' })).toBeEnabled());
     await expect(args.review?.onPreview).toHaveBeenCalled();
-    await userEvent.click(canvas.getByRole('button', { name: 'Confirm approval' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Always approve' }));
     await expect(args.review?.onApprove).toHaveBeenCalledWith({ persistence: 'permanent', params_pattern: calendarRequest.params_pattern });
     const after = list.getBoundingClientRect();
     await expect([after.x, after.y, after.width, after.height]).toEqual([before.x, before.y, before.width, before.height]);
-    await expect(canvas.getByRole('button', { name: 'Back' })).toBeVisible();
+    await expect(canvas.getByRole('button', { name: 'Approve options' })).toBeEnabled();
   },
 };
 export const RememberedTab: Story = {
@@ -384,8 +383,7 @@ export const KeyboardAndListStability: Story = {
     await expect(selectedDetail()).toHaveFocus();
     await userEvent.click(canvas.getByRole('button', { name: 'Approve options' }));
     await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'Always…' }));
-    await userEvent.click(await canvas.findByRole('button', { name: 'Always approve' }));
-    await waitFor(() => expect(canvas.getByRole('button', { name: 'Confirm approval' })).toBeEnabled());
+    await waitFor(() => expect(canvas.getByRole('button', { name: 'Always approve' })).toBeEnabled());
     selectedDetail().focus();
     await userEvent.keyboard('adjk{Enter}');
     await expect(args.review?.onApprove).toHaveBeenCalledOnce();

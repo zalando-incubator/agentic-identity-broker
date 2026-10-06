@@ -275,10 +275,9 @@ var _ = Describe("Consent UI v2", func() {
 							label, persistence = "Always…", storage.ApprovalPersistencePermanent
 						}
 						Expect(review.OpenApproveOptions(ctx)).To(Succeed())
-						Expect(review.ChooseRememberDuration(ctx, label)).To(Succeed())
+						Expect(review.ChooseApprovalOption(ctx, label)).To(Succeed())
 						Expect(readV2(GetTestStorage().ToolApprovals().Get(ctx, item.ID)).Status).To(Equal(storage.ApprovalStatusPending))
 						Expect(review.ClickSelectedApproval(ctx)).To(Succeed())
-						Expect(review.ConfirmRememberedApproval(ctx)).To(Succeed())
 					case 3:
 						status = storage.ApprovalStatusDenied
 						Expect(review.ClickDeny(ctx)).To(Succeed())
@@ -610,19 +609,17 @@ var _ = Describe("Consent UI v2", func() {
 			rowBounds := readV2(queue.PendingRowBounds(ctx, f.pending.ToolName))
 			Expect(queue.SelectPendingRow(ctx, f.pending.ToolName)).To(Succeed())
 			Expect(queue.OpenApproveOptions(ctx)).To(Succeed())
-			Expect(queue.ChooseRememberDuration(ctx, "For this session")).To(Succeed())
-			Expect(readV2(GetTestStorage().ToolApprovals().Get(ctx, f.pending.ID)).Status).To(Equal(storage.ApprovalStatusPending))
-			Expect(queue.ClickSelectedApproval(ctx)).To(Succeed())
+			Expect(queue.ChooseApprovalOption(ctx, "For this session")).To(Succeed())
 			Expect(readV2(queue.ApprovalScopeText(ctx))).To(Equal(consentV2Scope(f.pending)))
 			Expect(readV2(GetTestStorage().ToolApprovals().Get(ctx, f.pending.ID)).Status).To(Equal(storage.ApprovalStatusPending))
 			Expect(readV2(queue.PendingListBounds(ctx))).To(Equal(bounds), "scope editor must replace panel content, never expand the list")
 			Expect(readV2(queue.PendingRowBounds(ctx, f.pending.ToolName))).To(Equal(rowBounds), "persistence editing cannot resize a pending row")
-			Expect(queue.BackFromScopeEditor(ctx)).To(Succeed())
+			Expect(queue.OpenApproveOptions(ctx)).To(Succeed())
+			Expect(queue.ChooseApprovalOption(ctx, "Approve once")).To(Succeed())
 			Expect(readV2(GetTestStorage().ToolApprovals().Get(ctx, f.pending.ID)).Status).To(Equal(storage.ApprovalStatusPending))
 			Expect(queue.OpenApproveOptions(ctx)).To(Succeed())
-			Expect(queue.ChooseRememberDuration(ctx, "For this session")).To(Succeed())
+			Expect(queue.ChooseApprovalOption(ctx, "For this session")).To(Succeed())
 			Expect(queue.ClickSelectedApproval(ctx)).To(Succeed())
-			Expect(queue.ConfirmRememberedApproval(ctx)).To(Succeed())
 			persistence := storage.ApprovalPersistenceSession
 			consentV2EventuallyDecision(ctx, f.pending, storage.ApprovalStatusApproved, &persistence)
 			Expect(consentV2ApprovalSnapshot(ctx, f, f.pending.ID)).To(Equal(before))
@@ -632,12 +629,11 @@ var _ = Describe("Consent UI v2", func() {
 
 			Expect(queue.SelectPendingRow(ctx, f.decisions[2].ToolName)).To(Succeed())
 			Expect(queue.OpenApproveOptions(ctx)).To(Succeed())
-			Expect(queue.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
-			Expect(queue.ClickSelectedApproval(ctx)).To(Succeed())
+			Expect(queue.ChooseApprovalOption(ctx, "Always…")).To(Succeed())
 			Expect(readV2(queue.ApprovalScopeText(ctx))).To(Equal(consentV2Scope(f.decisions[2])))
 			Expect(readV2(GetTestStorage().ToolApprovals().Get(ctx, f.decisions[2].ID)).Status).To(Equal(storage.ApprovalStatusPending))
 			Expect(readV2(queue.PendingListBounds(ctx))).To(Equal(bounds))
-			Expect(queue.ConfirmRememberedApproval(ctx)).To(Succeed())
+			Expect(queue.ClickSelectedApproval(ctx)).To(Succeed())
 			permanent := storage.ApprovalPersistencePermanent
 			consentV2EventuallyDecision(ctx, f.decisions[2], storage.ApprovalStatusApproved, &permanent)
 
@@ -852,8 +848,7 @@ var _ = Describe("Consent UI v2", func() {
 			Expect(readV2(base.ResolvedTheme(ctx))).To(Equal("dark"))
 			Expect(readV2(approval.HasApproveOptionsAndDeny(ctx))).To(BeTrue())
 			Expect(approval.OpenApproveOptions(ctx)).To(Succeed())
-			Expect(approval.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
-			Expect(approval.ClickSelectedApproval(ctx)).To(Succeed())
+			Expect(approval.ChooseApprovalOption(ctx, "Always…")).To(Succeed())
 			Expect(readV2(approval.ApprovalScopeText(ctx))).To(Equal(consentV2Scope(f.pending)))
 			Eventually(func() bool { return readV2(approval.HasDecisionActions(ctx)) }).Should(BeTrue())
 			Expect(consentV2ApprovalSnapshot(ctx, f, id.ApprovalID{})).To(Equal(before), "appearance and persistence selection must never submit a decision")

@@ -158,13 +158,14 @@ var _ = Describe("Approval UI", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
-		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
-		Expect(approvalPage.ClickSelectedApproval(ctx)).To(Succeed())
+		Expect(approvalPage.ChooseApprovalOption(ctx, "Always…")).To(Succeed())
 
-		hasWarning, err := approvalPage.HasPermanentWarning(ctx)
-		Expect(err).NotTo(HaveOccurred())
+		Eventually(func(g Gomega) {
+			hasWarning, err := approvalPage.HasPermanentWarning(ctx)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(hasWarning).To(BeTrue(), "Permanent warning should be visible")
+		}).Should(Succeed())
 		Expect(readV2(GetTestStorage().ToolApprovals().Get(ctx, approval.ID)).Status).To(Equal(storage.ApprovalStatusPending), "opening the editor must not record approval")
-		Expect(hasWarning).To(BeTrue(), "Permanent warning should be visible")
 
 		err = approvalPage.TakeScreenshot(ctx, "approval_permanent_warning")
 		Expect(err).NotTo(HaveOccurred())
@@ -219,11 +220,8 @@ var _ = Describe("Approval UI", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
-		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
+		Expect(approvalPage.ChooseApprovalOption(ctx, "Always…")).To(Succeed())
 		Expect(approvalPage.ClickSelectedApproval(ctx)).To(Succeed())
-
-		err = approvalPage.ConfirmRememberedApproval(ctx)
-		Expect(err).NotTo(HaveOccurred())
 
 		err = approvalPage.WaitForApprovedConfirmation(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Approved confirmation should be visible")
@@ -408,8 +406,7 @@ var _ = Describe("Approval UI", func() {
 		Expect(approvalPage.NavigateToApproval(ctx, approval.ID.String())).To(Succeed())
 		Expect(approvalPage.WaitForReviewPage(ctx)).To(Succeed())
 		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
-		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
-		Expect(approvalPage.ClickSelectedApproval(ctx)).To(Succeed())
+		Expect(approvalPage.ChooseApprovalOption(ctx, "Always…")).To(Succeed())
 		Expect(approvalPage.ExpandApprovalScope(ctx)).To(Succeed())
 		hasToolRule, err := approvalPage.HasVisibleText(ctx, "Tool matching rule")
 		Expect(err).NotTo(HaveOccurred())
@@ -424,7 +421,7 @@ var _ = Describe("Approval UI", func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(preview).To(Equal("create_pull_request(repo=acme/*,title=Fix bug)"))
 		}).WithTimeout(5 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
-		Expect(approvalPage.ConfirmRememberedApproval(ctx)).To(Succeed())
+		Expect(approvalPage.ClickSelectedApproval(ctx)).To(Succeed())
 		Expect(approvalPage.WaitForApprovedConfirmation(ctx)).To(Succeed())
 		resp, err := GetTestServer().AuthenticatedGET("/api/approvals/"+approval.ID.String(), principal.Email)
 		Expect(err).NotTo(HaveOccurred())
@@ -446,8 +443,7 @@ var _ = Describe("Approval UI", func() {
 		Expect(approvalPage.NavigateToApproval(ctx, approval.ID.String())).To(Succeed())
 		Expect(approvalPage.WaitForReviewPage(ctx)).To(Succeed())
 		Expect(approvalPage.OpenApproveOptions(ctx)).To(Succeed())
-		Expect(approvalPage.ChooseRememberDuration(ctx, "Always…")).To(Succeed())
-		Expect(approvalPage.ClickSelectedApproval(ctx)).To(Succeed())
+		Expect(approvalPage.ChooseApprovalOption(ctx, "Always…")).To(Succeed())
 		Expect(approvalPage.ExpandApprovalScope(ctx)).To(Succeed())
 		Expect(approvalPage.SetParameterMode(ctx, "title", "Any value")).To(Succeed())
 		Eventually(func(g Gomega) {
@@ -455,7 +451,7 @@ var _ = Describe("Approval UI", func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(preview).To(Equal("create_pull_request(repo=acme/app)"))
 		}).WithTimeout(5 * time.Second).WithPolling(100 * time.Millisecond).Should(Succeed())
-		Expect(approvalPage.ConfirmRememberedApproval(ctx)).To(Succeed())
+		Expect(approvalPage.ClickSelectedApproval(ctx)).To(Succeed())
 		Expect(approvalPage.WaitForApprovedConfirmation(ctx)).To(Succeed())
 		resp, err := GetTestServer().AuthenticatedGET("/api/approvals/"+approval.ID.String(), principal.Email)
 		Expect(err).NotTo(HaveOccurred())

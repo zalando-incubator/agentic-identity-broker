@@ -42,8 +42,8 @@ export function ApprovalReviewPage(props: ApprovalReviewPageProps) {
 }
 
 function ApprovalReview({ approval, actingPrincipal, inboxSelected = false, decisionEnabled = true, submitting, submittingAction, errorCode, errorMessage, approveResult, denyResult, onApprove, onDeny, onPreview, onRetry }: ApprovalReviewPageProps) {
-  const [persistence, setPersistence] = useState<Extract<ApprovalPersistence, 'session' | 'permanent'> | null>(null);
   const [approveChoice, setApproveChoice] = useState<ApprovalPersistence>('once');
+  const persistence = approveChoice === 'once' ? null : approveChoice;
   const [denyPermanent, setDenyPermanent] = useState(false);
   const [paramsPattern, setParamsPattern] = useState(approval.params_pattern);
   const [scopeValid, setScopeValid] = useState(false);
@@ -80,17 +80,16 @@ function ApprovalReview({ approval, actingPrincipal, inboxSelected = false, deci
   if (!Number.isFinite(expiresAt) || expiresAt <= Math.max(now, Date.now()) || errorCode === 'EXPIRED') return <ApprovalErrorBanner errorCode="EXPIRED" />;
   if (errorCode === 'ALREADY_ACTIONED' || errorCode === 'FORBIDDEN' || errorCode === 'NOT_FOUND') return <ApprovalErrorBanner errorCode={errorCode} message={errorMessage} />;
 
-  function openEditor(value: 'session' | 'permanent') {
-    setDenyMenuRequested(false);
-    setApproveMenuRequested(false);
-    setPersistence(value);
+  function selectApproval(value: ApprovalPersistence) {
+    if (value === approveChoice) return;
+    setApproveChoice(value);
     setParamsPattern(approval.params_pattern);
     setScopeValid(false);
   }
 
   function approveSelected() {
     if (approveChoice === 'once') void onApprove({ persistence: 'once' });
-    else openEditor(approveChoice);
+    else if (scopeValid) void onApprove({ persistence: approveChoice, params_pattern: paramsPattern });
   }
 
   function denySelected() {
@@ -135,24 +134,19 @@ function ApprovalReview({ approval, actingPrincipal, inboxSelected = false, deci
       </div> : <ToolCallCard approval={approval} actingPrincipal={inboxSelected ? undefined : actingPrincipal} inboxSelected={inboxSelected} showExpiry={!inboxSelected} />}
       {errorCode && <div className="mt-4"><ApprovalErrorBanner errorCode={errorCode} message={errorMessage} onRetry={onRetry} outcome={false} /></div>}
     </div>
-    <footer className={`shrink-0 border-t border-border-subtle bg-card p-3 ${persistence ? 'flex items-center justify-between gap-2 sm:gap-3' : 'grid grid-cols-2 items-center gap-2 sm:flex sm:justify-between sm:gap-3'}`}>
-      {persistence ? <>
-        <Button variant="outline" disabled={decisionDisabled} onClick={() => { setPersistence(null); setScopeValid(false); }}>{approvalQueueCopy.back}</Button>
-        <Button variant="primary" disabled={decisionDisabled || !scopeValid} isLoading={submittingAction === 'approve'} onClick={() => { if (scopeValid) void onApprove({ persistence, params_pattern: paramsPattern }); }}>{approvalCopy.confirmApproval}</Button>
-      </> : <>
-        <div className="flex min-w-0 items-stretch rounded-lg border border-border bg-background">
-          <Button ref={permanentDenyTrigger} data-approval-action="deny" variant="outline" disabled={decisionDisabled} isLoading={submittingAction === 'deny'} className="min-w-0 flex-1 rounded-r-none border-0 gap-1 whitespace-normal px-1 py-0 sm:gap-2 sm:px-4" onClick={denySelected}><span className="min-w-0 whitespace-normal leading-4">{denyPermanent ? approvalQueueCopy.denyAlways : accessCopy.deny}</span>{inboxSelected && <kbd aria-hidden="true" className="shrink-0 rounded border border-current/25 px-1 font-mono text-[10px] leading-4">D</kbd>}</Button>
-          {denyMenuRequested && decisionEnabled ? <Suspense fallback={<Button variant="outline" size="icon" aria-label={approvalQueueCopy.denyOptions} aria-haspopup="menu" aria-busy="true" disabled className="rounded-l-none border-0 border-l border-border"><ChevronDown aria-hidden="true" /></Button>}>
-            <ApprovalDecisionOptions kind="deny" disabled={submitting} selected={denyPermanent} onSelect={setDenyPermanent} />
-          </Suspense> : <Button variant="outline" size="icon" aria-label={approvalQueueCopy.denyOptions} aria-haspopup="menu" disabled={decisionDisabled} className="rounded-l-none border-0 border-l border-border" onClick={() => setDenyMenuRequested(true)}><ChevronDown aria-hidden="true" /></Button>}
-        </div>
-        <div className="flex min-w-0 items-stretch rounded-lg border border-primary bg-primary">
-          <Button data-approval-action="approve" variant="primary" disabled={decisionDisabled} isLoading={submittingAction === 'approve'} className="min-w-0 flex-1 rounded-r-none border-0 gap-1 whitespace-normal px-1 py-0 sm:gap-2 sm:px-4" onClick={approveSelected}><span className="min-w-0 whitespace-normal leading-4">{approveLabels[approveChoice]}</span>{inboxSelected && <kbd aria-hidden="true" className="shrink-0 rounded border border-current/25 px-1 font-mono text-[10px] leading-4">A</kbd>}</Button>
-          {approveMenuRequested && decisionEnabled ? <Suspense fallback={<Button variant="primary" size="icon" aria-label={approvalQueueCopy.approveOptions} aria-haspopup="menu" aria-busy="true" disabled className="rounded-l-none border-0 border-l border-primary-foreground/30"><ChevronDown aria-hidden="true" /></Button>}>
-            <ApprovalDecisionOptions kind="approve" disabled={submitting} selected={approveChoice} onSelect={setApproveChoice} />
-          </Suspense> : <Button variant="primary" size="icon" aria-label={approvalQueueCopy.approveOptions} aria-haspopup="menu" disabled={decisionDisabled} className="rounded-l-none border-0 border-l border-primary-foreground/30" onClick={() => setApproveMenuRequested(true)}><ChevronDown aria-hidden="true" /></Button>}
-        </div>
-      </>}
+    <footer className="shrink-0 border-t border-border-subtle bg-card p-3 grid grid-cols-2 items-center gap-2 sm:flex sm:justify-between sm:gap-3">
+      <div className="flex min-w-0 items-stretch rounded-lg border border-border bg-background">
+        <Button ref={permanentDenyTrigger} data-approval-action="deny" variant="outline" disabled={decisionDisabled} isLoading={submittingAction === 'deny'} className="min-w-0 flex-1 rounded-r-none border-0 gap-1 whitespace-normal px-1 py-0 sm:gap-2 sm:px-4" onClick={denySelected}><span className="min-w-0 whitespace-normal leading-4">{denyPermanent ? approvalQueueCopy.denyAlways : accessCopy.deny}</span>{inboxSelected && !persistence && <kbd aria-hidden="true" className="shrink-0 rounded border border-current/25 px-1 font-mono text-[10px] leading-4">D</kbd>}</Button>
+        {denyMenuRequested && decisionEnabled ? <Suspense fallback={<Button variant="outline" size="icon" aria-label={approvalQueueCopy.denyOptions} aria-haspopup="menu" aria-busy="true" disabled className="rounded-l-none border-0 border-l border-border"><ChevronDown aria-hidden="true" /></Button>}>
+          <ApprovalDecisionOptions kind="deny" disabled={submitting} selected={denyPermanent} onSelect={setDenyPermanent} />
+        </Suspense> : <Button variant="outline" size="icon" aria-label={approvalQueueCopy.denyOptions} aria-haspopup="menu" disabled={decisionDisabled} className="rounded-l-none border-0 border-l border-border" onClick={() => setDenyMenuRequested(true)}><ChevronDown aria-hidden="true" /></Button>}
+      </div>
+      <div className="flex min-w-0 items-stretch rounded-lg border border-primary bg-primary">
+        <Button data-approval-action="approve" variant="primary" disabled={decisionDisabled || (persistence !== null && !scopeValid)} isLoading={submittingAction === 'approve'} className="min-w-0 flex-1 rounded-r-none border-0 gap-1 whitespace-normal px-1 py-0 sm:gap-2 sm:px-4" onClick={approveSelected}><span className="min-w-0 whitespace-normal leading-4">{approveLabels[approveChoice]}</span>{inboxSelected && !persistence && <kbd aria-hidden="true" className="shrink-0 rounded border border-current/25 px-1 font-mono text-[10px] leading-4">A</kbd>}</Button>
+        {approveMenuRequested && decisionEnabled ? <Suspense fallback={<Button variant="primary" size="icon" aria-label={approvalQueueCopy.approveOptions} aria-haspopup="menu" aria-busy="true" disabled className="rounded-l-none border-0 border-l border-primary-foreground/30"><ChevronDown aria-hidden="true" /></Button>}>
+          <ApprovalDecisionOptions kind="approve" disabled={submitting} selected={approveChoice} onSelect={selectApproval} />
+        </Suspense> : <Button variant="primary" size="icon" aria-label={approvalQueueCopy.approveOptions} aria-haspopup="menu" disabled={decisionDisabled} className="rounded-l-none border-0 border-l border-primary-foreground/30" onClick={() => setApproveMenuRequested(true)}><ChevronDown aria-hidden="true" /></Button>}
+      </div>
     </footer>
     {denyPermanentOpen && decisionEnabled && <Suspense fallback={<p role="status">{commonCopy.loading}</p>}>
       <PermanentDenialDialog approval={approval} submitting={submitting} submittingAction={submittingAction} onCancel={() => setDenyPermanentOpen(false)} onConfirm={() => { setDenyPermanentOpen(false); void onDeny(true); }} onReturnFocus={() => permanentDenyTrigger.current?.focus()} />
