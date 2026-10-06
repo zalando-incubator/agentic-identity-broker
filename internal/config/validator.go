@@ -176,11 +176,11 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 
 	if prefix == "server.admin" {
 		u, err := url.Parse(sic.PublicURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.HasSuffix(u.Host, ":") {
 			return formatValidationError(
 				prefix+".public_url",
 				sic.PublicURL,
-				"valid HTTP/HTTPS URL with hostname and no userinfo",
+				"valid HTTP/HTTPS URL with hostname, no userinfo, and no empty explicit port",
 				nil,
 			)
 		}

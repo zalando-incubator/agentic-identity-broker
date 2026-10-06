@@ -224,7 +224,11 @@ func TestValidateAdminPublicURL(t *testing.T) {
 		{name: "malformed URL", publicURL: "https://[::1"},
 		{name: "missing host", publicURL: "https:///admin"},
 		{name: "port without hostname", publicURL: "https://:14000"},
+		{name: "empty explicit DNS port", publicURL: "https://admin.example.com:"},
+		{name: "empty explicit IPv6 port with path", publicURL: "https://[2001:db8::1]:/admin"},
 		{name: "userinfo", publicURL: "https://admin:secret@admin.example.com"},
+		{name: "valid HTTPS DNS without port", publicURL: "https://admin.example.com", wantValid: true},
+		{name: "valid HTTPS IPv6 without port", publicURL: "https://[2001:db8::1]", wantValid: true},
 		{name: "valid HTTPS DNS", publicURL: "https://admin.example.com:14000", wantValid: true},
 		{name: "valid HTTPS IPv6", publicURL: "https://[2001:db8::1]:14000", wantValid: true},
 	}

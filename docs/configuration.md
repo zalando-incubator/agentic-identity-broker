@@ -282,7 +282,7 @@ The Identity Broker runs two independent HTTP servers on separate ports:
 | `server.enduser.public_url` | URL | `http://localhost:8000` | HTTP or HTTPS URL | Yes | `IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL` | `--server.enduser.public-url` | Public URL for callbacks, broker metadata, and CIMD service documents. CIMD confidential services require HTTPS. |
 | `server.admin.port` | integer | `14000` | 1-65535 | No | `IDENTITY_BROKER_SERVER_ADMIN_PORT` | `--server.admin.port` | Port for admin server. Must differ from end-user port. |
 | `server.admin.bind` | string | `::` | IPv4/IPv6 address or hostname | No | `IDENTITY_BROKER_SERVER_ADMIN_BIND` | `--server.admin.bind` | Bind address for admin server. In production, restrict to private network (for example `10.0.1.0`) or use firewall rules. |
-| `server.admin.public_url` | URL | `http://localhost:14000` | HTTP or HTTPS URL with a hostname and no userinfo | Yes | `IDENTITY_BROKER_SERVER_ADMIN_PUBLIC_URL` | N/A | Public admin URL. All admin `/api` requests must match its Host authority. Reverse proxies must preserve this Host. |
+| `server.admin.public_url` | URL | `http://localhost:14000` | HTTP or HTTPS URL with a hostname, no userinfo, and no empty explicit port | Yes | `IDENTITY_BROKER_SERVER_ADMIN_PUBLIC_URL` | N/A | Public admin URL. All admin `/api` requests must match its Host authority. Reverse proxies must preserve this Host. |
 | `server.shutdown.timeout` | duration | `30s` | 1s-5m | No | `IDENTITY_BROKER_SERVER_SHUTDOWN_TIMEOUT` | `--server.shutdown.timeout` | Maximum time to wait for in-flight requests to complete during graceful shutdown. Use longer timeouts (60s) in production. |
 
 **Server configuration notes:**
@@ -294,6 +294,7 @@ The Identity Broker runs two independent HTTP servers on separate ports:
 - Graceful shutdown waits for active requests until the configured timeout.
 - Admin `/api` validates Host against `server.admin.public_url`, including its port.
   Hostnames are case-insensitive and default HTTP/HTTPS ports may be omitted.
+  The broker rejects URLs with an empty explicit port, such as `https://admin.example.com:`, at startup.
   `Forwarded` and `X-Forwarded-Host` do not override this check. Configure the public
   admin URL before exposing the API through an ingress or reverse proxy.
 - Admin `/api` rejects cross-origin browser mutations with 403, including origins
