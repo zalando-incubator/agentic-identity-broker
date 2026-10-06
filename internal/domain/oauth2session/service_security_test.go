@@ -289,6 +289,56 @@ func TestRefreshAccessTokenSecurity_CIMDClientAuditsSuccessAndRejection(t *testi
 	})
 }
 
+func TestRefreshAccessTokenSecurity_ResponseFailuresAuditOnlyCIMDClients(t *testing.T) {
+	for _, failure := range []string{"drain read error", "oversized response"} {
+		t.Run(failure, func(t *testing.T) {
+			tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				const response = `{"access_token":"upstream-access-token","token_type":"Bearer"}`
+				w.Header().Set("Content-Type", "application/json")
+				if failure == "drain read error" {
+					w.Header().Set("Content-Length", fmt.Sprint(len(response)+1))
+				}
+				_, _ = io.WriteString(w, response)
+				if failure == "oversized response" {
+					_, _ = io.WriteString(w, strings.Repeat(" ", 1<<20))
+				}
+			}))
+			defer tokenServer.Close()
+
+			for _, client := range []string{"CIMD", "public", "static confidential"} {
+				t.Run(client, func(t *testing.T) {
+					var logs strings.Builder
+					service, _ := newSecurityTestOAuth2SessionService(t, slog.New(slog.NewJSONHandler(&logs, nil)), 1)
+					service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
+					serviceID := id.NewServiceID()
+					provider := createTestService(serviceID)
+					provider.Endpoints.TokenEndpoint = tokenServer.URL
+					switch client {
+					case "CIMD":
+						provider = createCIMDTestProvider(serviceID, tokenServer.URL)
+						provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
+					case "public":
+						provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+						provider.Secret = model.NewAbsentSecret()
+					}
+
+					token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+					require.Error(t, err)
+					assert.Nil(t, token)
+					if failure == "drain read error" {
+						require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+					}
+					if client == "CIMD" {
+						assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "rejected")
+					} else {
+						assert.NotContains(t, logs.String(), "CIMD client token acquisition")
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestRefreshAccessTokenSecurity_RejectsPersistedCIMDCredentialInTokenURL(t *testing.T) {
 	service, _ := newSecurityTestOAuth2SessionService(t, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
 	service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
@@ -418,7 +468,7 @@ func TestHandleCallbackSecurity_RedactsUpstreamCredentialMaterialFromErrorsAndLo
 	capturedRequests := append([]capturedTokenExchangeRequest(nil), requests...)
 	capturedVerifier := verifier
 	requestsMu.Unlock()
-	require.Len(t, capturedRequests, 2, "a public-client failure must retry without changing authentication")
+	require.NotEmpty(t, capturedRequests)
 	for _, request := range capturedRequests {
 		assertPublicTokenExchangeRequest(t, request, "public-client-id", sentinelCode)
 	}

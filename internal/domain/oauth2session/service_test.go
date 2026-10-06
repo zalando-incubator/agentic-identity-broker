@@ -420,6 +420,22 @@ func TestRefreshAccessToken_CIMDClientFailsClosedBeforeTokenRequestWhenSigningUn
 	}
 }
 
+func TestRefreshAccessToken_RejectsOversizedResponse(t *testing.T) {
+	service, _, _ := setupService(t)
+	provider := createTestService(id.NewServiceID())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"token","token_type":"Bearer"}`)
+		_, _ = io.WriteString(w, strings.Repeat(" ", 1<<20))
+	}))
+	defer server.Close()
+	provider.Endpoints.TokenEndpoint = server.URL
+
+	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	require.Nil(t, token)
+	require.ErrorContains(t, err, "exceeds")
+}
+
 func TestInitiateOAuth2Flow_ServiceNotFound(t *testing.T) {
 	ctx := context.Background()
 	service, _, _ := setupService(t)

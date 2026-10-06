@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -222,6 +223,108 @@ func TestBuilderMinimalConfiguration(t *testing.T) {
 	if app.EnduserHandlers.UserInfo == nil {
 		t.Error("expected UserInfo handler to be created")
 	}
+}
+
+func TestBuilderUpstreamClientReusesConcurrentConnections(t *testing.T) {
+	const parallel = 8
+	var connections atomic.Int32
+	var closed atomic.Int32
+	var arrived [2]atomic.Int32
+	released := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		burst := 0
+		if r.Form.Get("refresh_token") == "second" {
+			burst = 1
+		}
+		if arrived[burst].Add(1) == parallel {
+			close(released[burst])
+		}
+		select {
+		case <-released[burst]:
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"token","token_type":"Bearer"}`)
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			connections.Add(1)
+		case http.StateClosed:
+			closed.Add(1)
+		}
+	}
+	server.Start()
+	defer server.Close()
+
+	cfg := &ports.Config{
+		Server: ports.ServerConfig{
+			EndUser: ports.ServerInstanceConfig{
+				Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
+				Authentication: ports.AuthenticationConfig{Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"}},
+			},
+			Admin: ports.ServerInstanceConfig{
+				Port: 14000, Bind: "::1", PublicURL: "http://localhost:14000",
+				Authentication: ports.AuthenticationConfig{Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"}},
+			},
+			Shutdown: ports.ShutdownConfig{Timeout: 5 * time.Second},
+		},
+		Storage: ports.StorageConfig{
+			Backend: "memory", Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
+		},
+		ThirdPartyOAuth2: ports.ThirdPartyOAuth2Config{
+			JWESigningKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+		},
+		Encryption:       ports.EncryptionConfig{Memory: &ports.MemoryConfig{RawKey: testutil.TestKEKBase64}},
+		OAuth2AuthServer: ports.OAuth2AuthServerConfig{Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour}},
+	}
+	store, err := storage.NewAdapter(&cfg.Storage)
+	require.NoError(t, err)
+	app, err := NewBuilder().WithConfig(cfg).WithStorage(store).
+		WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))).Build()
+	require.NoError(t, err)
+	shutdown := false
+	t.Cleanup(func() {
+		if !shutdown {
+			require.NoError(t, app.Shutdown(context.Background()))
+		}
+	})
+
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: id.NewServiceID(), ClientID: id.ClientID("client"),
+		Secret: model.NewAbsentSecret(), TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		Endpoints: model.OAuth2Endpoints{TokenEndpoint: server.URL},
+	}
+	runBurst := func(refreshToken string) {
+		results := make(chan error, parallel)
+		for range parallel {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				_, err := app.OAuth2SessionService.RefreshAccessToken(ctx, provider, refreshToken)
+				results <- err
+			}()
+		}
+		for range parallel {
+			require.NoError(t, <-results)
+		}
+	}
+
+	runBurst("first")
+	firstConnections := connections.Load()
+	require.Equal(t, int32(parallel), firstConnections)
+	runBurst("second")
+	require.Equal(t, firstConnections, connections.Load(), "idle connections must serve the next burst")
+	require.Zero(t, closed.Load(), "connections should remain idle before shutdown")
+	require.NoError(t, app.Shutdown(context.Background()))
+	shutdown = true
+	require.Eventually(t, func() bool { return closed.Load() == int32(parallel) }, time.Second, 10*time.Millisecond,
+		"app shutdown must close idle upstream connections")
 }
 
 // TestBuilderMissingRequiredDependency validates that the builder rejects invalid configurations.

@@ -563,6 +563,50 @@ func TestOAuth2TokenHandler_ProxyToUpstream_MultiAgentVerifier(t *testing.T) {
 	}
 }
 
+func TestOAuth2TokenHandler_ProxyToUpstream_OversizedResponse(t *testing.T) {
+	agentID := id.NewAgentID()
+	agentRepo := newStubAgentRepo(agentID, "test-upstream-client")
+	upstreamBody := `{"access_token":"upstream-secret","token_type":"Bearer"}` + strings.Repeat(" ", 1<<20)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, upstreamBody)
+	}))
+	defer upstream.Close()
+
+	for _, tt := range []struct {
+		name       string
+		verifier   ports.MultiAgentVerifier
+		wantStatus int
+	}{
+		{"verified response fails closed", &mockMultiAgentVerifier{verifyFn: func(_ context.Context, _ []byte, _ id.AgentID) error { return nil }}, http.StatusInternalServerError},
+		{"unverified response streams unchanged", nil, http.StatusOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := &OAuth2TokenHandler{
+				GrantHandler:  newProxyTokenGrantStrategyForTest(upstream.URL, tt.verifier),
+				OAuth2Service: newResolvingOAuth2Service(agentRepo.agent),
+			}
+			req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader("grant_type=authorization_code&code=abc123&client_id="+agentID.String()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			if tt.verifier == nil {
+				assert.Equal(t, upstreamBody, w.Body.String())
+				return
+			}
+			var failure struct {
+				Error string `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &failure))
+			assert.Equal(t, "server_error", failure.Error)
+			assert.NotContains(t, w.Body.String(), "upstream-secret")
+		})
+	}
+}
+
 // TestOAuth2TokenHandler_ServeHTTP_ResponseStreaming tests response is streamed properly
 func TestOAuth2TokenHandler_ServeHTTP_ResponseStreaming(t *testing.T) {
 	agentID := id.NewAgentID()
