@@ -3,12 +3,9 @@ package tokenexchange
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v4/jwk"
@@ -82,20 +79,25 @@ func NewJWTValidatorWithPolicies(
 ) (*JWTValidator, error) {
 	normalizedSubjectPolicy, err := normalizeValidationPolicy("subject_token", subjectTokenPolicy)
 	if err != nil {
-		return nil, err
+		return nil, NewServerErrorWithCause("subject token validation policy is invalid", err).
+			WithDiagnostic(NewDiagnostic(StageSubjectValidation, DetailJWTConfiguration))
 	}
 	normalizedClientAssertionPolicy, err := normalizeValidationPolicy("client_assertion", clientAssertionPolicy)
 	if err != nil {
-		return nil, err
+		return nil, NewServerErrorWithCause("client assertion validation policy is invalid", err).
+			WithDiagnostic(NewDiagnostic(StageClientValidation, DetailJWTConfiguration))
 	}
 	if brokerAudience == "" {
-		return nil, fmt.Errorf("expected_audience cannot be empty")
+		return nil, NewServerError("JWT validation audience is not configured").
+			WithDiagnostic(NewDiagnostic(StageSubjectValidation, DetailJWTConfiguration))
 	}
 	if clockSkewSeconds < 0 {
-		return nil, fmt.Errorf("clock_skew_seconds cannot be negative")
+		return nil, NewServerError("JWT validation clock skew cannot be negative").
+			WithDiagnostic(NewDiagnostic(StageSubjectValidation, DetailJWTConfiguration))
 	}
 	if clockSkewSeconds > MaxClockSkewTolerance {
-		return nil, fmt.Errorf("clock_skew_seconds (%d) cannot exceed max tolerance (%d)", clockSkewSeconds, MaxClockSkewTolerance)
+		return nil, NewServerError("JWT validation clock skew exceeds the maximum tolerance").
+			WithDiagnostic(NewDiagnostic(StageSubjectValidation, DetailJWTConfiguration))
 	}
 
 	return &JWTValidator{
@@ -117,28 +119,36 @@ func NewJWTValidatorWithPolicies(
 //   - Expiration verification (with configurable clock skew tolerance)
 //
 // Per spec SR-006: Validation failure always denies the request.
-// Per spec SR-005: Error messages do NOT expose token content (only metadata like issuer).
+// Error descriptions and diagnostics do not expose claims, JOSE headers, or configured URLs.
 //
 // Returns:
 //   - The parsed and validated JWT token on success
-//   - InvalidClientError if signature validation fails (per spec SR-001)
-//   - InvalidGrantError if token is expired or malformed
-//   - InvalidGrantError if issuer/audience verification fails
+//   - InvalidGrantError if the supplied credential fails parsing, signature, or claim validation
+//   - InvalidRequestError if the required subject token is absent
 //   - ServerError if JWKS fetch fails
 func (v *JWTValidator) ValidateSubjectToken(ctx context.Context, tokenString string) (jwt.Token, error) {
 	if tokenString == "" {
-		return nil, NewInvalidGrantError("subject_token is empty or missing")
+		return nil, NewInvalidRequestError("subject_token is required").
+			WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 	}
 
 	// Fetch JWKS and get the specific key
 	keyset, err := v.subjectTokenPolicy.JWKSProvider.GetKeySet(ctx)
 	if err != nil {
-		return nil, NewServerErrorWithCause("failed to fetch JWKS for token validation", err)
+		detail := DetailJWKSUnavailable
+		if callerErr := ctx.Err(); callerErr != nil {
+			detail = DetailCallerCanceled
+			if !errors.Is(err, callerErr) {
+				err = errors.Join(err, callerErr)
+			}
+		}
+		return nil, NewServerErrorWithCause("failed to fetch JWKS for token validation", err).
+			WithDiagnostic(NewDiagnostic(StageSubjectValidation, detail))
 	}
 
 	token, err := v.parseWithPolicy(tokenString, keyset, v.subjectTokenPolicy)
 	if err != nil {
-		return nil, v.mapParseError(err, "subject_token", tokenString)
+		return nil, v.mapParseError(err)
 	}
 
 	return token, nil
@@ -158,245 +168,62 @@ func (v *JWTValidator) ValidateSubjectToken(ctx context.Context, tokenString str
 //
 // Returns:
 //   - The parsed and validated JWT token on success
+//   - InvalidRequestError if the required client assertion is absent
 //   - InvalidClientError if signature validation or claims verification fails
 //   - ServerError if JWKS fetch fails
 func (v *JWTValidator) ValidateClientAssertion(ctx context.Context, tokenString string) (jwt.Token, error) {
 	if tokenString == "" {
-		return nil, NewInvalidClientError("client_assertion is empty or missing")
+		return nil, NewInvalidRequestError("client_assertion is required").
+			WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 	}
 
 	// Fetch JWKS and get the specific key
 	keyset, err := v.clientAssertionPolicy.JWKSProvider.GetKeySet(ctx)
 	if err != nil {
-		return nil, NewServerErrorWithCause("failed to fetch JWKS for client_assertion validation", err)
+		detail := DetailJWKSUnavailable
+		if callerErr := ctx.Err(); callerErr != nil {
+			detail = DetailCallerCanceled
+			if !errors.Is(err, callerErr) {
+				err = errors.Join(err, callerErr)
+			}
+		}
+		return nil, NewServerErrorWithCause("failed to fetch JWKS for client assertion validation", err).
+			WithDiagnostic(NewDiagnostic(StageClientValidation, detail))
 	}
 
 	token, err := v.parseWithPolicy(tokenString, keyset, v.clientAssertionPolicy)
 	if err != nil {
-		return nil, v.mapClientAssertionParseError(err, tokenString)
+		return nil, v.mapClientAssertionParseError(err)
 	}
 
 	return token, nil
 }
 
-// mapParseError maps JWT parsing and validation errors to appropriate domain errors for subject tokens.
-//
-// parseWithPolicy returns parsing or signature errors from jwt.ParseString and claim validation
-// errors from jwt.Validate. Specific validation sentinels (InvalidAudienceError, InvalidIssuerError,
-// etc.) are reachable through the error chain via Unwrap(). Therefore, specific checks MUST
-// appear before the generic ParseError check to avoid misclassifying validation failures as
-// parse/signature errors.
-//
-// Per spec SR-005: Error messages do NOT expose token content (only metadata like issuer).
-// The underlying library error is attached as a cause for internal logging only.
-// Diagnostic details (expected vs actual claim values, sub claim) are included in the
-// details field for structured logging and OTel error events to aid troubleshooting.
-func (v *JWTValidator) mapParseError(err error, tokenType string, tokenString string) error {
+// mapParseError classifies rejection of a supplied subject credential independently
+// of malformed OAuth request parameters. Library causes remain inspectable, not serialized.
+func (v *JWTValidator) mapParseError(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, jwt.InvalidIssuerError{}):
-		return NewInvalidGrantError(
-			fmt.Sprintf("%s issuer validation failed: expected %s", tokenType, formatExpectedIssuers(v.subjectTokenPolicy.ExpectedIssuers)),
-		).WithCause(err).WithDetails(v.extractDiagnostics(tokenString, v.subjectTokenPolicy.ExpectedIssuers))
-	case errors.Is(err, jwt.InvalidAudienceError{}):
-		return NewInvalidGrantError(
-			fmt.Sprintf("%s audience validation failed: expected aud=%q", tokenType, v.brokerAudience),
-		).WithCause(err).WithDetails(v.extractDiagnostics(tokenString, v.subjectTokenPolicy.ExpectedIssuers))
-	case errors.Is(err, jwt.TokenExpiredError{}):
-		return NewInvalidGrantError(tokenType + " has expired").WithCause(err).WithDetails(v.extractDiagnostics(tokenString, v.subjectTokenPolicy.ExpectedIssuers))
-	case errors.Is(err, jwt.TokenNotYetValidError{}):
-		return NewInvalidGrantError(tokenType + " is not yet valid (nbf)").WithCause(err).WithDetails(v.extractDiagnostics(tokenString, v.subjectTokenPolicy.ExpectedIssuers))
-	case errors.Is(err, jwt.ParseError{}):
-		return NewInvalidRequestError(tokenType + " is malformed or signature verification failed").WithCause(err).WithDetails(diagnoseTokenShape(tokenString))
-	default:
-		return NewInvalidGrantError(tokenType + " validation failed").WithCause(err)
+	detail := DetailSubjectInvalid
+	if errors.Is(err, jwt.TokenExpiredError{}) {
+		detail = DetailSubjectExpired
 	}
+	return NewInvalidGrantError("subject_token validation failed").WithCause(err).
+		WithDiagnostic(NewDiagnostic(StageSubjectValidation, detail))
 }
 
-// mapClientAssertionParseError maps JWT parsing and validation errors to InvalidClientError for client assertions.
-//
-// Client assertion failures always result in InvalidClientError per RFC 7523.
-// Specific validation sentinels MUST be checked before ParseError (see mapParseError comment).
-// The underlying library error is attached as a cause for internal logging only.
-// Diagnostic details (expected vs actual claim values) are included in the
-// details field for structured logging and OTel error events to aid troubleshooting.
-func (v *JWTValidator) mapClientAssertionParseError(err error, tokenString string) error {
+// mapClientAssertionParseError classifies rejection of a supplied client credential.
+func (v *JWTValidator) mapClientAssertionParseError(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, jwt.InvalidIssuerError{}):
-		return NewInvalidClientError(
-			fmt.Sprintf("client_assertion issuer validation failed: expected %s", formatExpectedIssuers(v.clientAssertionPolicy.ExpectedIssuers)),
-		).WithCause(err).WithDetails(v.extractDiagnostics(tokenString, v.clientAssertionPolicy.ExpectedIssuers))
-	case errors.Is(err, jwt.InvalidAudienceError{}):
-		return NewInvalidClientError(
-			fmt.Sprintf("client_assertion audience validation failed: expected aud=%q", v.brokerAudience),
-		).WithCause(err).WithDetails(v.extractDiagnostics(tokenString, v.clientAssertionPolicy.ExpectedIssuers))
-	case errors.Is(err, jwt.TokenExpiredError{}):
-		return NewInvalidClientError("client_assertion has expired").WithCause(err).WithDetails(v.extractDiagnostics(tokenString, v.clientAssertionPolicy.ExpectedIssuers))
-	case errors.Is(err, jwt.TokenNotYetValidError{}):
-		return NewInvalidClientError("client_assertion is not yet valid (nbf)").WithCause(err).WithDetails(v.extractDiagnostics(tokenString, v.clientAssertionPolicy.ExpectedIssuers))
-	case errors.Is(err, jwt.ParseError{}):
-		return NewInvalidClientError("client_assertion is malformed or signature verification failed").WithCause(err)
-	default:
-		return NewInvalidClientError("client_assertion validation failed").WithCause(err)
+	detail := DetailClientInvalid
+	if errors.Is(err, jwt.TokenExpiredError{}) {
+		detail = DetailClientExpired
 	}
-}
-
-// extractDiagnostics attempts to parse the token without verification to extract
-// actual claim values for troubleshooting. Returns a formatted string with expected
-// vs actual values for iss, aud, sub, exp, and nbf. If parsing fails, returns an
-// empty string. Per SR-005, this never includes the raw JWT string, signature, or
-// full payload, but it may include specific claim values extracted from the payload.
-func (v *JWTValidator) extractDiagnostics(tokenString string, expectedIssuers []string) string {
-	if tokenString == "" {
-		return ""
-	}
-	tok, parseErr := jwt.ParseInsecure([]byte(tokenString))
-	if parseErr != nil {
-		return ""
-	}
-
-	var parts []string
-
-	if sub, _ := tok.Subject(); sub != "" {
-		parts = append(parts, fmt.Sprintf("sub=%q", sub))
-	}
-
-	actualIss, _ := tok.Issuer()
-	parts = append(parts, fmt.Sprintf("expected_iss=%s actual_iss=%q", formatExpectedIssuersForDiagnostics(expectedIssuers), actualIss))
-
-	actualAud, _ := tok.Audience()
-	quotedAud := make([]string, len(actualAud))
-	for i, a := range actualAud {
-		quotedAud[i] = fmt.Sprintf("%q", a)
-	}
-	parts = append(parts, fmt.Sprintf("expected_aud=%q actual_aud=[%s]", v.brokerAudience, strings.Join(quotedAud, ",")))
-
-	if exp, _ := tok.Expiration(); !exp.IsZero() {
-		parts = append(parts, fmt.Sprintf("exp=%d", exp.Unix()))
-	}
-	if nbf, _ := tok.NotBefore(); !nbf.IsZero() {
-		parts = append(parts, fmt.Sprintf("nbf=%d", nbf.Unix()))
-	}
-
-	return fmt.Sprintf("[%s]", strings.Join(parts, " "))
-}
-
-// maxHeaderValueLen bounds each surfaced JOSE header value so a hostile or oversized
-// header cannot bloat structured logs.
-const maxHeaderValueLen = 64
-
-// diagnoseTokenShape produces non-reversible structural diagnostics for a token that
-// failed compact/JSON parsing (the jwt.ParseError branch). Per SR-005 it never emits
-// raw token bytes, the payload, or the signature. It reports only:
-//   - overall length and dot/segment counts
-//   - a coarse classification of the first byte (never the byte itself)
-//   - per-segment base64url decodability and decoded byte length
-//   - allowlisted JOSE header metadata (alg/enc/typ/cty/kid) decoded from the
-//     protected header segment of a compact JWS (3 segments) or JWE (5 segments)
-//
-// This is enough to distinguish an encrypted JWE, a signed-but-unverifiable JWS, an
-// opaque token, and a misrouted JSON document without exposing credential material.
-func diagnoseTokenShape(tokenString string) string {
-	if tokenString == "" {
-		return ""
-	}
-
-	segments := strings.Split(tokenString, ".")
-	parts := []string{
-		fmt.Sprintf("len=%d", len(tokenString)),
-		fmt.Sprintf("dot_count=%d", len(segments)-1),
-		fmt.Sprintf("segments=%d", len(segments)),
-		"first_byte_class=" + classifyFirstByte(tokenString),
-	}
-
-	b64 := make([]string, len(segments))
-	for i, seg := range segments {
-		if decoded, err := base64.RawURLEncoding.DecodeString(seg); err == nil {
-			b64[i] = fmt.Sprintf("ok(%d)", len(decoded))
-		} else {
-			b64[i] = "bad"
-		}
-	}
-	parts = append(parts, fmt.Sprintf("seg_b64url=[%s]", strings.Join(b64, ",")))
-
-	// Compact JWS (3 segments) and JWE (5 segments) both carry the protected JOSE
-	// header in segment 0; surface allowlisted metadata to identify the algorithm.
-	if len(segments) == 3 || len(segments) == 5 {
-		if header := decodeJOSEHeader(segments[0]); header != "" {
-			parts = append(parts, "header="+header)
-		}
-	}
-
-	return "[" + strings.Join(parts, " ") + "]"
-}
-
-// classifyFirstByte returns a coarse, non-reversible class of the leading byte so
-// logs can distinguish a JSON document, a base64url compact token, and garbage
-// without ever recording the byte value itself.
-func classifyFirstByte(s string) string {
-	if s == "" {
-		return "empty"
-	}
-	switch c := s[0]; {
-	case c == '{':
-		return "json_open_brace"
-	case c == ' ' || c == '\t' || c == '\n' || c == '\r':
-		return "whitespace"
-	case (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_':
-		return "base64url"
-	default:
-		return "other"
-	}
-}
-
-// decodeJOSEHeader base64url-decodes a compact-serialization protected header segment
-// and returns allowlisted metadata fields only. Returns an empty string when the
-// segment is not base64url-encoded JSON or carries none of the allowlisted fields.
-// The payload, signature, and any non-allowlisted header parameters are never emitted.
-func decodeJOSEHeader(segment string) string {
-	raw, err := base64.RawURLEncoding.DecodeString(segment)
-	if err != nil {
-		return ""
-	}
-	var hdr struct {
-		Alg string `json:"alg"`
-		Enc string `json:"enc"`
-		Typ string `json:"typ"`
-		Cty string `json:"cty"`
-		Kid string `json:"kid"`
-	}
-	if err := json.Unmarshal(raw, &hdr); err != nil {
-		return ""
-	}
-
-	var fields []string
-	for _, f := range []struct{ name, value string }{
-		{"alg", hdr.Alg},
-		{"enc", hdr.Enc},
-		{"typ", hdr.Typ},
-		{"cty", hdr.Cty},
-		{"kid", hdr.Kid},
-	} {
-		if f.value != "" {
-			fields = append(fields, fmt.Sprintf("%s=%q", f.name, truncateHeaderValue(f.value)))
-		}
-	}
-	if len(fields) == 0 {
-		return ""
-	}
-	return "{" + strings.Join(fields, " ") + "}"
-}
-
-func truncateHeaderValue(s string) string {
-	if len(s) <= maxHeaderValueLen {
-		return s
-	}
-	return s[:maxHeaderValueLen] + "..."
+	return NewInvalidClientError("client_assertion validation failed").WithCause(err).
+		WithDiagnostic(NewDiagnostic(StageClientValidation, detail))
 }
 
 func (v *JWTValidator) parseWithPolicy(tokenString string, keyset jwk.Set, policy JWTValidationPolicy) (jwt.Token, error) {
@@ -461,28 +288,4 @@ func normalizeValidationPolicy(name string, policy JWTValidationPolicy) (JWTVali
 		JWKSProvider:    policy.JWKSProvider,
 		ExpectedIssuers: issuers,
 	}, nil
-}
-
-func formatExpectedIssuers(issuers []string) string {
-	quoted := quoteStrings(issuers)
-	if len(quoted) == 1 {
-		return fmt.Sprintf(`iss=%s`, quoted[0])
-	}
-	return fmt.Sprintf("iss in [%s]", strings.Join(quoted, ","))
-}
-
-func formatExpectedIssuersForDiagnostics(issuers []string) string {
-	quoted := quoteStrings(issuers)
-	if len(quoted) == 1 {
-		return quoted[0]
-	}
-	return fmt.Sprintf("[%s]", strings.Join(quoted, ","))
-}
-
-func quoteStrings(values []string) []string {
-	quoted := make([]string, len(values))
-	for i, value := range values {
-		quoted[i] = fmt.Sprintf("%q", value)
-	}
-	return quoted
 }

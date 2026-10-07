@@ -1,6 +1,11 @@
 package impersonation
 
-import "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
+import (
+	"context"
+	"errors"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
+)
 
 // Impersonation reuses the RFC 8693 TokenExchangeError envelope so the HTTP layer maps codes and
 // statuses uniformly. Token values, key material, and trust internals are never placed in errors
@@ -10,24 +15,28 @@ import "github.com/agentic-identity-broker/agentic-identity-broker/internal/doma
 // wrong type parameters, present resource, requested_token_type mismatch, or invalid actor/subject
 // credentials (FR-011).
 func invalidRequest(description, details string) *tokenexchange.TokenExchangeError {
-	return tokenexchange.NewInvalidRequestErrorWithDetails(description, details)
+	return tokenexchange.NewInvalidRequestErrorWithDetails(description, details).
+		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
 }
 
 // invalidScope builds an invalid_scope (400) error without exposing the requested scope value.
 func invalidScope(description, details string) *tokenexchange.TokenExchangeError {
-	return tokenexchange.NewInvalidScopeErrorWithDetails(description, details)
+	return tokenexchange.NewInvalidScopeErrorWithDetails(description, details).
+		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
 }
 
 // invalidClient builds an invalid_client (401) error for a client assertion that fails
 // validation or that no rule trusts (FR-011).
 func invalidClient(description, details string) *tokenexchange.TokenExchangeError {
-	return tokenexchange.NewInvalidClientErrorWithDetails(description, details)
+	return tokenexchange.NewInvalidClientErrorWithDetails(description, details).
+		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageClientValidation, tokenexchange.DetailClientInvalid))
 }
 
 // accessDenied builds an access_denied (403) error for a request that validated all credentials
 // but that no rule's authorization predicate permitted (FR-011).
 func accessDenied(description, details string) *tokenexchange.TokenExchangeError {
-	return tokenexchange.NewAccessDeniedErrorWithDetails(description, details)
+	return tokenexchange.NewAccessDeniedErrorWithDetails(description, details).
+		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageClientAuthorization, tokenexchange.DetailClientPolicyDenied))
 }
 
 const consentRequiredDescription = "user delegation is required before impersonation"
@@ -40,7 +49,20 @@ func consentRequired(consentURL, details string) *tokenexchange.TokenExchangeErr
 
 // serverError builds a server_error (500) for fail-closed internal failures (FR-011).
 func serverError(description, details string) *tokenexchange.TokenExchangeError {
-	return tokenexchange.NewServerErrorWithDetails(description, details)
+	return tokenexchange.NewServerErrorWithDetails(description, details).
+		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified))
+}
+
+func impersonationDiagnostic(stage tokenexchange.FailureStage, detail tokenexchange.FailureDetail) tokenexchange.Diagnostic {
+	return tokenexchange.NewDiagnostic(stage, detail).WithExchangeKind(tokenexchange.ExchangeImpersonation)
+}
+
+func originError(ctx context.Context, envelope *tokenexchange.TokenExchangeError, cause error, stage tokenexchange.FailureStage, detail tokenexchange.FailureDetail) *tokenexchange.TokenExchangeError {
+	if ctx.Err() != nil {
+		detail = tokenexchange.DetailCallerCanceled
+		cause = errors.Join(cause, ctx.Err())
+	}
+	return envelope.WithCause(cause).WithDiagnostic(impersonationDiagnostic(stage, detail))
 }
 
 // noMatchPrecedence is the deterministic, order-independent precedence applied when no rule

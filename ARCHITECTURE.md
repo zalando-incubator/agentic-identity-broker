@@ -340,32 +340,58 @@ The composite shutdown function is stored as `App.ShutdownTelemetry func(context
 
 **Token exchange span attributes and logs**:
 
-The `tokenexchange.exchange` span records `token_exchange.service.id` (service UUID) and `token_exchange.service.name` (`DisplayName`) after resource resolution.
-These attributes accompany successful exchanges and every subsequent failure, including failures without a classified reason.
-Failures before provider resolution omit both attributes.
+`TokenExchangeError` carries an immutable, credential-free `Diagnostic` value. Enrichment returns a copy and does not mutate shared singleflight failures.
+Wrapped causes remain available through `errors.Is` and `errors.As`. Exchange telemetry never serializes these causes.
 
-Classified `Token exchange failed` logs include `failure_reason`, with the same values as the span attribute.
-The existing `resource` field identifies the target. Logs do not add service ID or name fields.
-Successes and unclassified failures omit `failure_reason`.
-Log messages, levels, and existing fields remain unchanged.
+Logs and spans share these bounded attributes:
 
-The optional `token_exchange.failure_reason` attribute uses these stable values:
-
-| Value | Meaning |
+| Attribute | Values |
 |---|---|
-| `no_grant` | The grant does not authorize this agent for the third-party service, including missing agents and stale permission sets. |
-| `no_session` | The user has no session for the third-party service. |
-| `access_token_expired` | The access token expired and no refresh token exists. |
-| `refresh_token_expired` | The stored refresh-token expiry passed, or the third-party service returned OAuth `invalid_grant` during refresh. |
-| `insufficient_scope` | The session lacks scopes required by the grant. |
-| `service_rejected` | The refresh endpoint returned a non-2xx status without OAuth `invalid_grant`. |
+| `token_exchange.outcome` | `success`, `authorization_denied`, `authentication_failed`, `reauth_required`, `invalid_request`, `configuration_error`, `infrastructure_error`, `canceled` |
+| `token_exchange.failure_stage` | `request_validation`, `exchange_routing`, `subject_validation`, `client_validation`, `identity_resolution`, `client_authorization`, `resource_resolution`, `grant_authorization`, `session_lookup`, `refresh`, `scope_validation`, `response_write` |
+| `token_exchange.failure_detail` | Typed origin detail; unknown failures use `internal_unclassified` at the known stage |
+| `token_exchange.recovery_action` | `reconsent`, `reauthenticate`, `fix_configuration`, `retry`, `none` |
+| `token_exchange.recovery_target` | `consent`, `subject_identity`, `calling_client`, `provider_session`, `broker_configuration`, `none` |
+| `token_exchange.exchange_kind` | `third_party`, `impersonation`. ExtProc uses `unknown` when the broker profile is not observable. |
 
-Transport, decode, decrypt, storage, CIMD, and cancellation errors have no failure reason.
-Refresh rejection classification checks the HTTP status before decoding the body.
-The broker does not populate stored refresh-token expiry, so the third-party service's `invalid_grant` identifies refresh expiry in production.
-A parsed HTTP 400 `invalid_grant` refresh rejection returns client-visible `invalid_grant` with a broker-generated re-authentication `error_uri`; other refresh failures return `server_error`.
-Service metadata stays outside response JSON and contains no client secrets.
-Refresh rejection logs and spans include the third-party HTTP status and an allowlisted OAuth error code; provider-controlled descriptions, URIs, headers, and bodies are omitted.
+Successful logs and spans omit failure-only stage/detail fields. Successful metric observations use `none` for those fields.
+Recovery values are diagnostic recommendations, not automatic retry instructions.
+
+Missing resources are malformed requests. Rejected subject/client credentials are authentication failures.
+CEL false is authorization denial. CEL compilation or configuration failure is a configuration error.
+Missing agents and ambiguous registered resources are configuration errors. Unavailable repositories and JWKS retrieval are infrastructure failures.
+
+Missing or unusable consent grants remain authorization denial with `reconsent` targeting `consent`.
+They return `access_denied` and the agent consent-management `error_uri` before token-vault access.
+Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
+Their OAuth response is `invalid_grant` with a broker-generated provider authorization URI.
+Provider refresh rejection and recorded local expiry are distinct causes.
+Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
+Provider client-authentication rejection instead indicates broker configuration failure.
+
+Session `OperationError` carries immutable operation/detail/kind/dependency/status/allowlisted-code metadata.
+Origin metadata maps to exchange diagnostics without inspecting error text.
+Individual caller cancellation is `canceled` at its current stage. Detached shared-operation and dependency deadlines remain infrastructure failures.
+
+After resource resolution, telemetry records `token_exchange.service.id`, not the requested URI or service display name.
+Session failures additionally record bounded `token_exchange.session.*` metadata.
+Telemetry excludes descriptions, causes, unvalidated JWT claims, JOSE headers, provider bodies/headers, endpoint URLs, resource paths, and recovery URIs.
+Established authenticated actor and calling-peer audit fields remain unchanged.
+Span status descriptions are static. Raw errors never become exception events.
+
+`internal/telemetryhttp` supplies credential-free outbound client spans for the broker and standalone ExtProc.
+It propagates trace context and preserves the actual request URL, body, and headers for the dependency.
+Instrumentation records only bounded method/status/error kind.
+Token-endpoint inbound instrumentation uses a credential-free request view, then restores the original request before handling it.
+HTTP method telemetry uses the standard-method allowlist. Extension methods become `_OTHER` without changing request routing.
+Token-endpoint panic logs also use bounded summaries, not panic values or stacks.
+OTel resources exclude process command arguments and command lines, including configured overrides.
+
+ExtProc retains recovery data for direct protocol responses, but excludes broker descriptions and nested errors from telemetry.
+Its standalone metadata preserves inspectable causes without importing broker domain packages.
+ExtProc records only observed stages and uses `unknown` for unreported broker exchange profiles.
+OPA audit data retains bounded action, result code, protocol, allowlisted MCP method, and duration.
+It excludes policy reasons and request-derived tool or target-server names.
 
 #### 3.1.4. End-to-End Testing Architecture
 
@@ -1110,7 +1136,7 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 - Initialize logger
 - Initialize telemetry provider (if enabled; bounded by exporter timeout, interruptible by signal)
 - Wire slog-to-OTel bridge (if telemetry + logs enabled)
-- Create TokenExchanger (acquires client assertion; otelhttp wraps outbound HTTP)
+- Create TokenExchanger (acquires client assertion; credential-free transport traces outbound HTTP)
 - Create gRPC server
 - Register ExternalProcessorServer
 - Listen on configured bind/port
@@ -1501,9 +1527,11 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
 
-**ServiceRef**: Third-party service identity for token exchange, with the service ID and display name only. It contains no credentials and is excluded from response JSON.
+**ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
 
-**FailureReason**: Stable classification of a token exchange failure after third-party service resolution. It adds telemetry context without changing the RFC 8693 error response.
+**Diagnostic**: Immutable token-exchange classification: outcome, failure stage/detail, recovery recommendation/target, and exchange kind. It contains no credentials or free-form errors.
+
+**Session Operation Metadata**: Immutable classification at a session-operation origin, with bounded operation, detail, kind, dependency, HTTP status, and allowlisted OAuth code. Exchange diagnostics derive from this metadata, not error descriptions.
 
 **ClientAssertion**: JWT authenticating the privileged client (API gateway or reverse proxy) making the token exchange request. Contains privileged client identifier in the `sub` claim. Validated against the external client-assertion trust anchor's JWKS, not against broker-minted credentials. Represents the privileged client's identity and authorization to perform token exchange.
 

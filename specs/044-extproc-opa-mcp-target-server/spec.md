@@ -89,7 +89,7 @@ An operator upgrades agentgateway routes to this feature, but a route is misconf
 
 ### Security Requirements *(mandatory for security-critical features)*
 
-- **SR-001**: The `mcp.target_server_name` value MUST be treated as non-sensitive operational metadata (a configuration-supplied server name, not a credential or user-identifying attribute) and MAY be logged and passed unredacted, consistent with existing ExtProc structured logging practices.
+- **SR-001**: ExtProc MUST pass `mcp.target_server_name` unchanged to policy evaluation but MUST omit it from logs, traces, and metrics. Metadata can contain credential-bearing values.
 - **SR-002**: The existing fail-closed baseline from spec 020 (SR-001: default deny when no policy rule matches) is extended by this feature: absent or empty `mcp_server` metadata on an MCP request MUST itself cause a 403 rejection at the headers phase (FR-004), rather than being left to the configured policy's own rules.
 
 ### Key Entities
@@ -103,7 +103,7 @@ An operator upgrades agentgateway routes to this feature, but a route is misconf
 - **SC-001**: Policy authors can write a single Rego rule referencing `input.mcp.target_server_name` to apply different tool-call decisions across MCP servers, without deploying separate ExtProc instances or policy bundles per server.
 - **SC-002**: 100% of existing OPA policies that do not reference `input.mcp.target_server_name` produce identical allow/deny decisions before and after this feature ships (zero regression).
 - **SC-003**: Requests through agentgateway routes that have not been configured to send `mcp_server` metadata are rejected with HTTP 403 at the headers phase, with no OPA evaluation attempted, so misconfigured routes fail closed rather than silently authorizing without target-server context.
-- **SC-004**: An operator can distinguish MCP-target-server-specific authorization failures from other denials by inspecting the `target_server_name` field surfaced in structured OPA decision logs and trace spans.
+- **SC-004**: Operators can diagnose authorization failures through bounded action, result code, protocol, and allowlisted method attributes. Request-derived target-server names never appear in telemetry.
 
 ## Assumptions
 

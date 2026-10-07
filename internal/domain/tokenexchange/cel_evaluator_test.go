@@ -1,6 +1,7 @@
 package tokenexchange
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -379,37 +380,160 @@ func TestAuthorizePrivilegedClientComplexExpressionFailsAdminCheck(t *testing.T)
 	assert.True(t, IsTokenExchangeError(err))
 }
 
-// TestAuthorizePrivilegedClientWithTimeout tests authorization evaluation with timeout.
-func TestAuthorizePrivilegedClientWithTimeout(t *testing.T) {
+func TestCELEvaluatorFailureDiagnostics(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		configure func(*CELEvaluatorConfig)
+		evaluate  func(*CELEvaluator) error
+		outcome   Outcome
+		stage     FailureStage
+		detail    FailureDetail
+	}{
+		{"principal syntax", func(c *CELEvaluatorConfig) { c.PrincipalExpression = "secret-expression-credential !" }, nil, OutcomeConfigurationError, StageIdentityResolution, DetailCELConfiguration},
+		{"agent syntax", func(c *CELEvaluatorConfig) { c.AgentIDExpression = "secret-expression-credential !" }, nil, OutcomeConfigurationError, StageIdentityResolution, DetailCELConfiguration},
+		{"authorization syntax", func(c *CELEvaluatorConfig) { c.AuthorizationExpression = "secret-expression-credential !" }, nil, OutcomeConfigurationError, StageClientAuthorization, DetailCELConfiguration},
+		{"compile type", func(c *CELEvaluatorConfig) { c.AuthorizationExpression = "1 + true" }, nil, OutcomeConfigurationError, StageClientAuthorization, DetailCELConfiguration},
+		{"principal result type", func(c *CELEvaluatorConfig) { c.PrincipalExpression = "subject_token.secret_claim" }, func(e *CELEvaluator) error {
+			_, err := e.ExtractPrincipal(map[string]any{"secret_claim": int64(42)})
+			return err
+		}, OutcomeConfigurationError, StageIdentityResolution, DetailCELConfiguration},
+		{"agent result type", func(c *CELEvaluatorConfig) { c.AgentIDExpression = "subject_token.secret_claim" }, func(e *CELEvaluator) error {
+			_, err := e.ExtractAgentID(map[string]any{"secret_claim": int64(42)})
+			return err
+		}, OutcomeConfigurationError, StageIdentityResolution, DetailCELConfiguration},
+		{"authorization result type", func(c *CELEvaluatorConfig) { c.AuthorizationExpression = "client_assertion.secret_claim" }, func(e *CELEvaluator) error {
+			_, err := e.AuthorizePrivilegedClient(map[string]any{"secret_claim": "secret-claim-value"}, nil, CELRequestContext{})
+			return err
+		}, OutcomeConfigurationError, StageClientAuthorization, DetailCELConfiguration},
+		{"empty principal", nil, func(e *CELEvaluator) error { _, err := e.ExtractPrincipal(map[string]any{"sub": ""}); return err }, OutcomeConfigurationError, StageIdentityResolution, DetailCELConfiguration},
+		{"empty agent", nil, func(e *CELEvaluator) error { _, err := e.ExtractAgentID(map[string]any{"azp": ""}); return err }, OutcomeConfigurationError, StageIdentityResolution, DetailCELConfiguration},
+		{"principal evaluation", func(c *CELEvaluatorConfig) { c.PrincipalExpression = "subject_token['secret-claim-key']" }, func(e *CELEvaluator) error { _, err := e.ExtractPrincipal(nil); return err }, OutcomeInfrastructureError, StageIdentityResolution, DetailCELEvaluationFailed},
+		{"agent evaluation", func(c *CELEvaluatorConfig) { c.AgentIDExpression = "subject_token['secret-claim-key']" }, func(e *CELEvaluator) error { _, err := e.ExtractAgentID(nil); return err }, OutcomeInfrastructureError, StageIdentityResolution, DetailCELEvaluationFailed},
+		{"authorization evaluation", func(c *CELEvaluatorConfig) {
+			c.AuthorizationExpression = "client_assertion['secret-claim-key'] == 'secret-claim-value'"
+		}, func(e *CELEvaluator) error {
+			_, err := e.AuthorizePrivilegedClient(nil, nil, CELRequestContext{Resource: "https://secret-resource.example/private?credential=secret-url-value"})
+			return err
+		}, OutcomeInfrastructureError, StageClientAuthorization, DetailCELEvaluationFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			config := validTokenExchangeConfig(t)
+			if tc.configure != nil {
+				tc.configure(&config)
+			}
+			evaluator, err := NewCELEvaluator(config)
+			if tc.evaluate != nil {
+				require.NoError(t, err)
+				err = tc.evaluate(evaluator)
+			} else {
+				assert.Nil(t, evaluator)
+			}
+			tokenErr := assertOriginDiagnostic(t, err, "server_error", tc.outcome, tc.stage, tc.detail)
+			if tc.evaluate == nil || tc.detail == DetailCELEvaluationFailed {
+				assert.NotNil(t, tokenErr.Unwrap(), "compile and evaluation failures preserve their causes")
+			}
+			for _, secret := range []string{"secret-expression-credential", "secret-claim-key", "secret-claim-value", "secret-resource", "secret-url-value"} {
+				assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.Diagnostic()), secret)
+			}
+		})
+	}
+}
+
+func TestCELEvaluatorFalseIsPolicyDenial(t *testing.T) {
 	t.Parallel()
 	config := validTokenExchangeConfig(t)
-	config.EvaluationTimeout = 1 * time.Millisecond // Very short timeout
-	config.AuthorizationExpression = "true"
+	config.AuthorizationExpression = "false"
 	evaluator, err := NewCELEvaluator(config)
 	require.NoError(t, err)
+	authorized, err := evaluator.AuthorizePrivilegedClient(nil, nil, CELRequestContext{})
+	assert.False(t, authorized)
+	tokenErr := assertOriginDiagnostic(t, err, "access_denied", OutcomeAuthorizationDenied, StageClientAuthorization, DetailClientPolicyDenied)
+	assert.Equal(t, RecoveryNone, tokenErr.Diagnostic().RecoveryAction())
+	assert.Equal(t, TargetNone, tokenErr.Diagnostic().RecoveryTarget())
+}
 
-	clientAssertion := map[string]any{
-		"sub": "privileged-client-1",
+func TestCELEvaluatorResolverPreservesCauses(t *testing.T) {
+	t.Parallel()
+	secretCause := &originTestError{value: "https://secret-resolver.example/private?credential=secret-resolver-token"}
+	for _, tc := range []struct {
+		name    string
+		origin  error
+		outcome Outcome
+		detail  FailureDetail
+	}{
+		{"agent missing", NewServerErrorWithCause("agent lookup failed", secretCause).WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailAgentMissing)), OutcomeConfigurationError, DetailAgentMissing},
+		{"agent invalid", NewServerErrorWithCause("agent configuration failed", secretCause).WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailAgentInvalid)), OutcomeConfigurationError, DetailAgentInvalid},
+		{"repository unavailable", NewServerErrorWithCause("agent repository failed", secretCause).WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailAgentRepositoryUnavailable)), OutcomeInfrastructureError, DetailAgentRepositoryUnavailable},
+		{"detached deadline", context.DeadlineExceeded, OutcomeInfrastructureError, DetailCELEvaluationFailed},
+		{"unclassified dependency", secretCause, OutcomeInfrastructureError, DetailCELEvaluationFailed},
+		{"unclassified typed dependency", NewServerErrorWithCause("unclassified resolver failure", secretCause), OutcomeInfrastructureError, DetailCELEvaluationFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			config := validTokenExchangeConfig(t)
+			config.AgentIDExpression = "resolveAgentIdByClientId(subject_token.azp)"
+			config.ResolveAgentIDByClientID = func(string) (string, error) { return "", tc.origin }
+			evaluator, err := NewCELEvaluator(config)
+			require.NoError(t, err)
+			_, err = evaluator.ExtractAgentID(map[string]any{"azp": "secret-client-id"})
+			tokenErr := assertOriginDiagnostic(t, err, "server_error", tc.outcome, StageIdentityResolution, tc.detail)
+			assert.ErrorIs(t, err, tc.origin)
+			if tc.origin != context.DeadlineExceeded {
+				var dependencyErr *originTestError
+				require.ErrorAs(t, err, &dependencyErr)
+				assert.Same(t, secretCause, dependencyErr)
+			}
+			for _, secret := range []string{"secret-resolver", "secret-client-id"} {
+				assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.Diagnostic()), secret)
+			}
+		})
 	}
-	subjectToken := map[string]any{
-		"sub": "user123",
-	}
-	request := CELRequestContext{
-		Resource:  "https://api.example.com",
-		GrantType: TokenExchangeGrantType,
-		Principal: "user123",
-		AgentID:   "agent-app-1",
-	}
+}
 
-	// Even a simple true expression might timeout with 1ms limit
-	// But true should be fast enough - this is a relaxed test
-	authorized, err := evaluator.AuthorizePrivilegedClient(clientAssertion, subjectToken, request)
-
-	// Either succeeds quickly or times out - both are valid outcomes
-	if err != nil {
-		assert.True(t, IsTokenExchangeError(err))
-	} else {
-		assert.True(t, authorized)
+func TestCELEvaluatorTimeoutIsInfrastructure(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	config := validTokenExchangeConfig(t)
+	config.EvaluationTimeout = time.Second
+	config.AuthorizationExpression = "resolveAgentIdByClientId(client_assertion.sub) == 'agent'"
+	config.ResolveAgentIDByClientID = func(string) (string, error) {
+		close(started)
+		<-release
+		close(finished)
+		return "agent", nil
+	}
+	evaluator, err := NewCELEvaluator(config)
+	require.NoError(t, err)
+	result := make(chan error, 1)
+	go func() {
+		_, err := evaluator.AuthorizePrivilegedClient(map[string]any{"sub": "secret-client-id"}, nil, CELRequestContext{})
+		result <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("CEL resolver was not reached")
+	}
+	t.Cleanup(func() {
+		close(release)
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Error("CEL resolver did not stop after release")
+		}
+	})
+	select {
+	case err := <-result:
+		tokenErr := assertOriginDiagnostic(t, err, "server_error", OutcomeInfrastructureError, StageClientAuthorization, DetailCELEvaluationFailed)
+		assert.NotContains(t, tokenErr.Error(), "secret-client-id")
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(5 * time.Second):
+		t.Fatal("CEL evaluation did not return at its configured deadline")
 	}
 }
 

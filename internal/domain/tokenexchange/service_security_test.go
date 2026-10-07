@@ -195,7 +195,8 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 			assert.Nil(t, response)
 			var tokenErr *TokenExchangeError
 			require.ErrorAs(t, err, &tokenErr)
-			assert.Equal(t, "invalid_grant", tokenErr.Code())
+			assert.Equal(t, "access_denied", tokenErr.Code())
+			assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
 			assert.Equal(t, "https://broker.example.com/agents/"+agentID.String(), tokenErr.ErrorURI())
 			assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "undeclared permission sets must be rejected before token-vault lookup")
 		})
@@ -256,7 +257,8 @@ func TestResolveEffectiveScopes_RejectsRemovedDeclaration(t *testing.T) {
 	assert.Nil(t, scopes)
 	var tokenErr *TokenExchangeError
 	if assert.ErrorAs(t, err, &tokenErr) {
-		assert.Equal(t, "invalid_grant", tokenErr.Code())
+		assert.Equal(t, "access_denied", tokenErr.Code())
+		assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
 		assert.Equal(t, "https://broker.example.com/agents/"+agent.ID.String(), tokenErr.ErrorURI())
 	}
 }

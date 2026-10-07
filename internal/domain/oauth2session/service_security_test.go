@@ -353,7 +353,7 @@ func TestRefreshAccessTokenSecurity_RejectsPersistedCIMDCredentialInTokenURL(t *
 	provider := createCIMDTestProvider(id.NewServiceID(), tokenServer.URL+"?client_secret=stale-secret")
 	provider.ClientID = id.ClientID(cimdClientIDForService(provider.ID))
 	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
-	require.ErrorContains(t, err, "client_secret")
+	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailConfiguration)
 	assert.Nil(t, token)
 	assert.Zero(t, requests.Load(), "an invalid persisted CIMD configuration must not send a token request")
 }
@@ -385,7 +385,7 @@ func TestHandleCallbackSecurity_RejectsPersistedCIMDCredentialBeforeCodeExchange
 	result, err := service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
 		ServiceID: serviceID, Code: "authorization-code", State: flow.StateToken,
 	})
-	require.ErrorContains(t, err, "client_secret")
+	assertOperationMetadata(t, err, oauth2session.OperationCodeExchange, oauth2session.DetailConfiguration)
 	assert.Nil(t, result)
 	assert.Zero(t, requests.Load(), "invalid persisted CIMD configuration must stop before code exchange")
 }
@@ -485,7 +485,12 @@ func TestHandleCallbackSecurity_RedactsUpstreamCredentialMaterialFromErrorsAndLo
 		assert.NotContains(t, err.Error(), sentinel)
 		assert.NotContains(t, logs, sentinel)
 	}
-	assert.Contains(t, logs, `"error":"token exchange failed: invalid_grant"`)
+	assert.Contains(t, logs, `"oauth_error_code":"invalid_grant"`)
+	assert.NotContains(t, logs, `"error":`)
+	assert.NotContains(t, logs, tokenServer.URL)
+	for _, field := range []string{`"token_endpoint":`, `"callback_url":`, `"client_id":`, `"description":`} {
+		assert.NotContains(t, logs, field)
+	}
 
 	assertSecurityEventsMarkPublicClient(t, logs,
 		"session.oauth2.flow_initiated",

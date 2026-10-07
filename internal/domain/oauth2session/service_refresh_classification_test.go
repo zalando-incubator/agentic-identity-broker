@@ -26,12 +26,19 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 		storedExpired  bool
 		refreshExpired bool
 		oauthError     string
+		detail         oauth2session.ErrorDetail
 	}{
-		{name: "service answers invalid_grant", status: 400, contentType: "application/json", body: `{"error":"invalid_grant"}`, hasRefresh: true, refreshExpired: true, oauthError: "invalid_grant"},
-		{name: "service answers invalid_client", status: 401, contentType: "application/json", body: `{"error":"invalid_client"}`, hasRefresh: true, oauthError: "invalid_client"},
-		{name: "service answers non-JSON 503", status: 503, contentType: "text/html", body: "<html>unavailable</html>", hasRefresh: true},
-		{name: "stored refresh token expired", hasRefresh: true, storedExpired: true, refreshExpired: true},
-		{name: "no refresh token stored"},
+		{name: "service answers invalid_grant", status: 400, contentType: "application/json", body: `{"error":"invalid_grant"}`, hasRefresh: true, oauthError: "invalid_grant", detail: oauth2session.DetailRefreshRejected},
+		{name: "service answers invalid_client", status: 401, contentType: "application/json", body: `{"error":"invalid_client"}`, hasRefresh: true, oauthError: "invalid_client", detail: oauth2session.DetailProviderClientRejected},
+		{name: "service answers unauthorized_client", status: 400, contentType: "application/json", body: `{"error":"unauthorized_client"}`, hasRefresh: true, oauthError: "unauthorized_client", detail: oauth2session.DetailProviderClientRejected},
+		{name: "service answers invalid_scope", status: 400, contentType: "application/json", body: `{"error":"invalid_scope"}`, hasRefresh: true, oauthError: "invalid_scope", detail: oauth2session.DetailProviderRejected},
+		{name: "service answers non-JSON 503", status: 503, contentType: "text/html", body: "<html>unavailable</html>", hasRefresh: true, detail: oauth2session.DetailProviderUnavailable},
+		{name: "service answers 429", status: 429, contentType: "application/json", body: `{"error":"slow_down"}`, hasRefresh: true, detail: oauth2session.DetailProviderUnavailable},
+		{name: "service answers 500 with invalid_grant", status: 500, contentType: "application/json", body: `{"error":"invalid_grant"}`, hasRefresh: true, oauthError: "invalid_grant", detail: oauth2session.DetailProviderUnavailable},
+		{name: "service answers 503 with invalid_client", status: 503, contentType: "application/json", body: `{"error":"invalid_client"}`, hasRefresh: true, oauthError: "invalid_client", detail: oauth2session.DetailProviderUnavailable},
+		{name: "service answers 429 with invalid_grant", status: 429, contentType: "application/json", body: `{"error":"invalid_grant"}`, hasRefresh: true, oauthError: "invalid_grant", detail: oauth2session.DetailProviderUnavailable},
+		{name: "stored refresh token expired", hasRefresh: true, storedExpired: true, refreshExpired: true, detail: oauth2session.DetailRefreshTokenExpired},
+		{name: "no refresh token stored", detail: oauth2session.DetailAccessTokenExpired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -74,6 +81,18 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 			require.NoError(t, sessions.Create(ctx, session))
 
 			_, _, err = service.GetValidAccessToken(ctx, principal, serviceID)
+			metadata := assertOperationMetadata(t, err, oauth2session.OperationRefresh, tc.detail)
+			assert.Equal(t, tc.status, metadata.StatusCode())
+			wantMetadataCode := tc.oauthError
+			if tc.status == 429 && tc.oauthError == "" {
+				wantMetadataCode = "unknown"
+			}
+			assert.Equal(t, wantMetadataCode, metadata.OAuthCode())
+			if tc.detail == oauth2session.DetailRefreshRejected {
+				assert.ErrorIs(t, err, oauth2session.ErrRefreshRejected)
+			} else {
+				assert.NotErrorIs(t, err, oauth2session.ErrRefreshRejected)
+			}
 			if tc.status != 0 {
 				assert.ErrorIs(t, err, oauth2session.ErrRefreshFailed)
 				var rejected *oauth2session.RefreshRejectedError
@@ -91,4 +110,13 @@ func TestGetValidAccessToken_ClassifiesUnusableSessions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertOperationMetadata(t *testing.T, err error, operation oauth2session.Operation, detail oauth2session.ErrorDetail) oauth2session.ErrorMetadata {
+	t.Helper()
+	var failure *oauth2session.OperationError
+	require.ErrorAs(t, err, &failure)
+	assert.Equal(t, operation, failure.Metadata().Operation())
+	assert.Equal(t, detail, failure.Metadata().Detail())
+	return failure.Metadata()
 }

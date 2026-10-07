@@ -11,6 +11,7 @@ import (
 
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/telemetryhttp"
 )
 
 // LoggingMiddleware logPrefixes defines a whitelist of path prefixes that should be logged (e.g. "/api/").
@@ -47,8 +48,12 @@ func LoggingMiddleware(logger *slog.Logger, logPrefixes ...string) func(next htt
 			// Log after the request completes
 			duration := time.Since(start)
 			clientIP := clientIPFromContext(r.Context(), r.RemoteAddr)
+			method := r.Method
+			if r.URL.Path == "/oauth2/token" {
+				method = telemetryhttp.MethodName(method)
+			}
 			logger.InfoContext(r.Context(), "HTTP request",
-				"method", r.Method,
+				"method", method,
 				"path", r.URL.Path,
 				"status", wrapped.statusCode,
 				"duration_ms", duration.Milliseconds(),
@@ -68,17 +73,20 @@ func RecoveryMiddleware(logger *slog.Logger, traceResponseEnabled bool) func(nex
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if err := recover(); err != nil {
-					stack := debug.Stack()
-					clientIP := clientIPFromContext(r.Context(), r.RemoteAddr)
 					writeTraceResponseHeaderIfPresent(w, r.Context(), traceResponseEnabled)
-					logger.ErrorContext(r.Context(), "Panic recovered",
-						"error", err,
-						"method", r.Method,
-						"path", r.URL.Path,
-						"remote_addr", clientIP,
-						"client_ip", clientIP,
-						"stack", string(stack),
-					)
+					if r.URL.Path == "/oauth2/token" {
+						logger.ErrorContext(r.Context(), "Panic recovered", "error_kind", "internal_unclassified", "operation", "token_endpoint")
+					} else {
+						clientIP := clientIPFromContext(r.Context(), r.RemoteAddr)
+						logger.ErrorContext(r.Context(), "Panic recovered",
+							"error", err,
+							"method", r.Method,
+							"path", r.URL.Path,
+							"remote_addr", clientIP,
+							"client_ip", clientIP,
+							"stack", string(debug.Stack()),
+						)
+					}
 
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				}

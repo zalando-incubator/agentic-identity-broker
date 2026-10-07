@@ -1,0 +1,180 @@
+package tokenexchange
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"testing"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/singleflight"
+)
+
+func TestDiagnosticClassificationContract(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		detail  FailureDetail
+		stage   FailureStage
+		outcome Outcome
+		action  RecoveryAction
+		target  RecoveryTarget
+	}{
+		{DetailResourceMissing, StageRequestValidation, OutcomeInvalidRequest, RecoveryNone, TargetNone},
+		{DetailRequestMalformed, StageRequestValidation, OutcomeInvalidRequest, RecoveryNone, TargetNone},
+		{DetailSubjectInvalid, StageSubjectValidation, OutcomeAuthenticationFailed, RecoveryReauthenticate, TargetSubjectIdentity},
+		{DetailSubjectExpired, StageSubjectValidation, OutcomeAuthenticationFailed, RecoveryReauthenticate, TargetSubjectIdentity},
+		{DetailClientInvalid, StageClientValidation, OutcomeAuthenticationFailed, RecoveryReauthenticate, TargetCallingClient},
+		{DetailClientExpired, StageClientValidation, OutcomeAuthenticationFailed, RecoveryReauthenticate, TargetCallingClient},
+		{DetailJWKSUnavailable, StageSubjectValidation, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailJWKSUnavailable, StageClientValidation, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailJWTConfiguration, StageSubjectValidation, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
+		{DetailJWTConfiguration, StageClientValidation, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
+		{DetailClientPolicyDenied, StageClientAuthorization, OutcomeAuthorizationDenied, RecoveryNone, TargetNone},
+		{DetailCELConfiguration, StageClientAuthorization, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
+		{DetailCELConfiguration, StageIdentityResolution, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
+		{DetailCELEvaluationFailed, StageClientAuthorization, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailAgentMissing, StageIdentityResolution, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
+		{DetailAgentInvalid, StageIdentityResolution, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
+		{DetailAgentRepositoryUnavailable, StageIdentityResolution, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailResourceUnregistered, StageResourceResolution, OutcomeInvalidRequest, RecoveryNone, TargetNone},
+		{DetailResourceAmbiguous, StageResourceResolution, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
+		{DetailResourceRepositoryUnavailable, StageResourceResolution, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailGrantMissing, StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
+		{DetailGrantExpired, StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
+		{DetailGrantInsufficient, StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
+		{DetailGrantRepositoryUnavailable, StageGrantAuthorization, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailSessionMissing, StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
+		{DetailAccessTokenExpired, StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
+		{DetailRefreshTokenExpired, StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
+		{DetailRefreshUnavailable, StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
+		{DetailAccessTokenExpired, StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
+		{DetailRefreshTokenExpired, StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
+		{DetailRefreshUnavailable, StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
+		{DetailRefreshRejected, StageRefresh, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
+		{DetailProviderClientRejected, StageRefresh, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
+		{DetailProviderRejected, StageRefresh, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailProviderUnavailable, StageRefresh, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailProviderResponseInvalid, StageRefresh, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailSessionRepositoryUnavailable, StageSessionLookup, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailSessionDecryptionFailed, StageSessionLookup, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailSessionDecryptionFailed, StageRefresh, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailSessionEncryptionFailed, StageRefresh, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailSessionPersistenceFailed, StageRefresh, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailSessionConfiguration, StageRefresh, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration},
+		{DetailSessionScopeInsufficient, StageScopeValidation, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
+		{DetailResponseWriteFailed, StageResponseWrite, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailInternalUnclassified, StageIdentityResolution, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
+		{DetailCallerCanceled, StageRefresh, OutcomeCanceled, RecoveryNone, TargetNone},
+	} {
+		t.Run(string(tc.detail)+"/"+string(tc.stage), func(t *testing.T) {
+			d := NewDiagnostic(tc.stage, tc.detail)
+			assert.Equal(t, tc.detail, d.Detail())
+			assert.Equal(t, tc.stage, d.Stage())
+			assert.Equal(t, tc.outcome, d.Outcome())
+			assert.Equal(t, tc.action, d.RecoveryAction())
+			assert.Equal(t, tc.target, d.RecoveryTarget())
+		})
+	}
+	unknown := NewDiagnostic(FailureStage("SECRET"), FailureDetail("SECRET"))
+	assert.Equal(t, DetailInternalUnclassified, unknown.Detail())
+	assert.Equal(t, StageExchangeRouting, unknown.Stage())
+	success := SuccessDiagnostic(ExchangeThirdParty)
+	assert.Equal(t, OutcomeSuccess, success.Outcome())
+	assert.Equal(t, StageNone, success.Stage())
+	assert.Equal(t, DetailNone, success.Detail())
+	assert.Equal(t, RecoveryNone, success.RecoveryAction())
+	assert.Equal(t, TargetNone, success.RecoveryTarget())
+}
+
+func TestSessionDiagnosticPreservesOriginAndCause(t *testing.T) {
+	for _, tc := range []struct {
+		detail oauth2session.ErrorDetail
+		stage  FailureStage
+		want   FailureDetail
+	}{
+		{oauth2session.DetailSessionMissing, StageSessionLookup, DetailSessionMissing},
+		{oauth2session.DetailAccessTokenExpired, StageSessionLookup, DetailAccessTokenExpired},
+		{oauth2session.DetailRefreshTokenExpired, StageSessionLookup, DetailRefreshTokenExpired},
+		{oauth2session.DetailRefreshUnavailable, StageSessionLookup, DetailRefreshUnavailable},
+		{oauth2session.DetailRefreshRejected, StageRefresh, DetailRefreshRejected},
+		{oauth2session.DetailProviderClientRejected, StageRefresh, DetailProviderClientRejected},
+		{oauth2session.DetailProviderRejected, StageRefresh, DetailProviderRejected},
+		{oauth2session.DetailProviderUnavailable, StageRefresh, DetailProviderUnavailable},
+		{oauth2session.DetailProviderResponseInvalid, StageRefresh, DetailProviderResponseInvalid},
+		{oauth2session.DetailRepositoryUnavailable, StageRefresh, DetailSessionRepositoryUnavailable},
+		{oauth2session.DetailDecryptionFailed, StageRefresh, DetailSessionDecryptionFailed},
+		{oauth2session.DetailEncryptionFailed, StageRefresh, DetailSessionEncryptionFailed},
+		{oauth2session.DetailPersistenceFailed, StageRefresh, DetailSessionPersistenceFailed},
+		{oauth2session.DetailConfiguration, StageRefresh, DetailSessionConfiguration},
+		{oauth2session.DetailCallerCanceled, StageRefresh, DetailCallerCanceled},
+		{oauth2session.DetailInternalUnclassified, StageRefresh, DetailInternalUnclassified},
+	} {
+		t.Run(string(tc.detail), func(t *testing.T) {
+			op := oauth2session.OperationRefresh
+			if tc.stage == StageSessionLookup {
+				op = oauth2session.OperationSessionLookup
+			}
+			cause := errors.New("nested credential SECRET")
+			sessionErr := oauth2session.NewOperationError(oauth2session.NewErrorMetadata(op, tc.detail), cause)
+			exchangeErr := NewServerErrorWithCause("exchange failed", sessionErr).WithDiagnostic(sessionDiagnostic(sessionErr))
+			assert.Equal(t, tc.want, exchangeErr.Diagnostic().Detail())
+			assert.Equal(t, tc.stage, exchangeErr.Diagnostic().Stage())
+			assert.ErrorIs(t, exchangeErr, cause)
+			var recovered *oauth2session.OperationError
+			require.ErrorAs(t, exchangeErr, &recovered)
+			assert.Equal(t, sessionErr, recovered)
+		})
+	}
+}
+
+func TestSharedExchangeErrorEnrichmentIsImmutable(t *testing.T) {
+	const callers = 32
+	cause := errors.New("dependency error")
+	base := NewServerErrorWithCause("exchange failed", cause).WithDiagnostic(NewDiagnostic(StageRefresh, DetailProviderUnavailable))
+	var group singleflight.Group
+	started, release := make(chan struct{}), make(chan struct{})
+	results := make([]<-chan singleflight.Result, callers)
+	results[0] = group.DoChan("same-session", func() (any, error) { close(started); <-release; return nil, base })
+	<-started
+	for i := 1; i < callers; i++ {
+		results[i] = group.DoChan("same-session", func() (any, error) { return nil, base })
+	}
+	var workers sync.WaitGroup
+	for i, result := range results {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			shared := <-result
+			original := shared.Err.(*TokenExchangeError)
+			service := ServiceRef{ID: id.NewServiceID()}
+			uri := fmt.Sprintf("https://broker.example/agents/%d", i)
+			enriched := original.WithService(service).WithErrorURI(uri).WithDiagnostic(NewDiagnostic(StageRefresh, DetailCallerCanceled)).WithCause(context.Canceled)
+			assert.Equal(t, service, enriched.Service())
+			assert.Equal(t, uri, enriched.ErrorURI())
+			assert.Equal(t, OutcomeCanceled, enriched.Diagnostic().Outcome())
+			assert.ErrorIs(t, enriched, context.Canceled)
+			assert.ErrorIs(t, original, cause)
+		}()
+	}
+	close(release)
+	workers.Wait()
+	assert.Empty(t, base.ErrorURI())
+	assert.True(t, base.Service().ID.IsZero())
+	assert.Equal(t, OutcomeInfrastructureError, base.Diagnostic().Outcome())
+	assert.ErrorIs(t, base, cause)
+}
+
+func TestResourceCauseDoesNotDependOnDescription(t *testing.T) {
+	missing := NewResourceUnregisteredError()
+	ambiguous := NewResourceAmbiguousError()
+	assert.ErrorIs(t, missing, ErrResourceUnregistered)
+	assert.ErrorIs(t, ambiguous, ErrResourceAmbiguous)
+	assert.True(t, IsResourceNotConfigured(fmt.Errorf("wrapped: %w", missing)))
+	assert.True(t, IsResourceAmbiguous(fmt.Errorf("wrapped: %w", ambiguous)))
+	assert.False(t, IsResourceNotConfigured(NewInvalidTargetError(missing.Description())))
+	assert.False(t, IsResourceAmbiguous(NewInvalidTargetError(ambiguous.Description())))
+}

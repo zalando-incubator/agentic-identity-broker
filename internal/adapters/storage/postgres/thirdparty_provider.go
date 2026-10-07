@@ -303,7 +303,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) FindByProtectedResource(ctx
 	defer cancel()
 	record, err := scanProvider(r.adapter.db.QueryRowContext(queryCtx, `SELECT `+providerColumns+` FROM thirdparty_oauth2_services s JOIN service_protected_resources pr ON pr.service_id=s.id WHERE pr.resource_uri=$1`, resourceURI))
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, tokenexchange.NewInvalidTargetError("no service configured for the requested resource")
+		return nil, tokenexchange.NewResourceUnregisteredError()
 	}
 	if err != nil {
 		return nil, providerStorageError("FindByProtectedResource", err, "failed to find provider")

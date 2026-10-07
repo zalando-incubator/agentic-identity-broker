@@ -223,18 +223,18 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) FindByProtectedResource(ctx
 	default:
 	}
 	if resourceURI == "" {
-		return nil, tokenexchange.NewInvalidTargetError("resource parameter cannot be empty")
+		return nil, tokenexchange.NewInvalidRequestError("resource parameter cannot be empty").WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailResourceMissing))
 	}
 	resource, err := model.NormalizeAndValidateProtectedResource(resourceURI)
 	if err != nil {
-		return nil, tokenexchange.NewInvalidTargetError("resource parameter is invalid")
+		return nil, tokenexchange.NewInvalidRequestError("resource parameter is invalid").WithCause(err).WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
 	}
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	owner, found := r.resourceOwners[resource]
 	if !found {
-		return nil, tokenexchange.NewInvalidTargetError("no service configured for the requested resource")
+		return nil, tokenexchange.NewResourceUnregisteredError()
 	}
 	return providerRecordToEntity(r.providers[owner], r.resources[owner]), nil
 }

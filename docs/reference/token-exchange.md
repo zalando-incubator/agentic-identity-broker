@@ -166,17 +166,17 @@ curl -X POST http://localhost:8000/oauth2/token \
 
 ## Third-party token exchange errors
 
-Third-party token-exchange errors use the OAuth2 error format. The format contains `error`
-and optional `error_description`.
+Third-party token-exchange errors use the OAuth2 `error`, `error_description`, and optional `error_uri` fields.
+Descriptions are credential-free summaries, not stable diagnostic identifiers. Clients use the code and recovery URI, not description text.
 
 | HTTP status | `error` | When it occurs |
 |---|---|---|
 | 400 | `invalid_request` | The request is malformed or missing a required parameter. |
 | 400 | `invalid_target` | The `resource` matches no configured service. |
-| 400 | `invalid_grant` | The user has no active session with the target service. |
+| 400 | `invalid_grant` | Rejected subject credentials, or a missing or unusable provider session. |
 | 401 | `invalid_client` | The `client_assertion` (or broker credentials) cannot be verified. |
-| 403 | `access_denied` | The user has not granted the agent access, or a CEL policy denied it. |
-| 500 | `server_error` | An unexpected server error. |
+| 403 | `access_denied` | Missing, expired, or insufficient consent, or CEL policy denial. |
+| 500 | `server_error` | Configuration or infrastructure failure, including ambiguous registered resources. |
 
 ### 400 invalid_request
 
@@ -187,9 +187,8 @@ and optional `error_description`.
 }
 ```
 
-Common causes include a missing `subject_token`, `client_assertion`, or `resource`. Other
-causes include an invalid token format or signature, an invalid resource URI, or a missing
-claim such as `sub`.
+Common causes include a missing `subject_token`, `client_assertion`, or `resource`, or an invalid resource URI.
+A supplied subject credential that fails format, signature, or claim validation returns `invalid_grant`, not `invalid_request`.
 
 ### 400 invalid_target
 
@@ -211,8 +210,11 @@ No service has the requested URI in its `protected_resources`.
 }
 ```
 
-The user has no session for the service. Or, both stored access and refresh tokens expired
-and cannot be refreshed.
+Rejected subject credentials do not require provider-session recovery.
+A missing, expired, scope-deficient, or provider-rejected session includes a broker-generated provider authorization `error_uri`.
+The client can direct the user to this URI for reauthentication.
+Provider refresh rejection and locally recorded refresh-token expiry remain distinct diagnostic causes.
+Provider 5xx/429 responses remain infrastructure errors, regardless of their OAuth error code.
 
 ### 401 invalid_client
 
@@ -235,8 +237,9 @@ can also be expired or have no broker audience.
 }
 ```
 
-The user has no active grant for the agent and service. The grant can be revoked or expired.
-A CEL authorization expression can also be false.
+Missing, revoked, expired, empty, stale, or insufficient grants return `access_denied` with the agent consent-management `error_uri`.
+The broker denies these requests before token-vault access. A false CEL policy also returns `access_denied`, without a consent recovery URI.
+CEL compilation or configuration failure instead returns `server_error`.
 
 ### 500 server_error
 
@@ -246,6 +249,16 @@ A CEL authorization expression can also be false.
   "error_description": "An unexpected error occurred"
 }
 ```
+
+### Diagnostic attributes
+
+Logs and spans carry bounded `token_exchange.outcome`, `failure_stage`, `failure_detail`, `recovery_action`, `recovery_target`, and `exchange_kind` attributes.
+Each attribute uses the `token_exchange.` prefix. Successful logs and spans omit failure-only fields.
+Successful metric observations use `none` for failure stage and detail.
+Recovery values are diagnostic recommendations, not instructions for automatic retries.
+
+Telemetry identifies registered services by ID. It excludes URLs, resource paths, JWT claims, provider descriptions, request headers and bodies, and wrapped error messages.
+Caller cancellation remains distinct from shared-operation and dependency deadlines. The classification contract is documented in [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
 ## User impersonation
 

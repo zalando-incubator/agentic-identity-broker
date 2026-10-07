@@ -1429,14 +1429,14 @@ paths:
         - resource parameter must match a protected_resource on ThirdpartyOAuth2Service
         - URIs are normalized (trailing slashes removed) before matching
         - Missing match returns 400 invalid_target error
+        - Ambiguous registered resource configuration returns 500 `server_error`.
 
         **User Grant Verification:**
         - User must have active (non-revoked, non-expired) grant to agent+service
-        - Missing grant returns 403 access_denied error
-        - A grant that is empty, does not cover the requested service, or references a
-          permission set that is undeclared or no longer exists returns 400 `invalid_grant`
-          with `error_uri` set to the agent consent-management page
-          (`<public URL>/agents/{agent-id}`). The broker denies before any token-vault lookup.
+        - A missing, expired, or unusable grant returns 403 `access_denied` with
+          `error_uri` set to the agent consent-management page
+          (`<public URL>/agents/{agent-id}`). This includes empty grants, uncovered services,
+          and undeclared or removed permission sets. The broker denies before any token-vault lookup.
 
         **Session Recovery:**
         - A missing session, or an expired session without a usable refresh token, returns
@@ -1449,6 +1449,10 @@ paths:
           an unparseable provider response, or a transport, storage, or decryption failure)
           returns 500 `server_error` without `error_uri`. Provider error descriptions are never
           returned.
+        - Invalid subject credentials return 400 `invalid_grant`; invalid client assertions
+          return 401 `invalid_client`. Neither is a provider-session recovery request.
+        - Descriptions are credential-free protocol summaries, not stable diagnostic identifiers.
+          Clients use `error` and the optional `error_uri` to choose the recovery flow.
 
         ### Token Exchange Grant (RFC 8693) — User Impersonation (local mode only)
         Mints a locally issued access token representing a subject user and attributing the acting

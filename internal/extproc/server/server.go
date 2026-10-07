@@ -102,7 +102,7 @@ type requestState struct {
 	agentID               string
 	agentSessionID        string
 	requestContext        context.Context
-	finishObservation     func(outcome, resourceURI, errorType string)
+	finishObservation     func(Diagnostic)
 }
 
 type tokenExchangeInput struct {
@@ -113,6 +113,15 @@ type tokenExchangeInput struct {
 type inputRejection struct {
 	code   string
 	reason string
+	detail FailureDetail
+}
+
+func (r *inputRejection) Diagnostic() Diagnostic {
+	detail := r.detail
+	if detail == "" {
+		detail = DetailRequestMalformed
+	}
+	return NewDiagnostic(StageRequestValidation, detail)
 }
 
 type requestLoggerKey struct{}
@@ -129,13 +138,13 @@ func NewServer(cfg *extprocconfig.Config, exchanger Exchanger, logger *slog.Logg
 	requestCounter, err := meter.Int64Counter("extproc.token_exchange.requests",
 		metric.WithDescription("Total number of token exchange requests processed by ExtProc"))
 	if err != nil {
-		logger.Warn("failed to create request counter instrument", "error", err)
+		logger.Warn("failed to create request counter instrument")
 	}
 	requestDuration, err := meter.Float64Histogram("extproc.token_exchange.duration",
 		metric.WithDescription("Duration of token exchange requests in seconds"),
 		metric.WithUnit("s"))
 	if err != nil {
-		logger.Warn("failed to create request duration instrument", "error", err)
+		logger.Warn("failed to create request duration instrument")
 	}
 	return &Server{
 		cfg:             cfg,
@@ -227,13 +236,9 @@ func normalizeTraceparentHeaders(headers *extprocv3.HttpHeaders) {
 	headers.Headers.Headers = normalized
 }
 
-func (s *Server) withRequestLogger(ctx context.Context, actor, callingPeer string) (context.Context, *slog.Logger) {
+func (s *Server) withRequestLogger(ctx context.Context) (context.Context, *slog.Logger) {
 	if logger, ok := ctx.Value(requestLoggerKey{}).(*slog.Logger); ok && logger != nil {
 		return ctx, logger
-	}
-
-	if actor == "" {
-		actor = "anonymous"
 	}
 
 	traceID := traceIDFromContext(ctx)
@@ -243,10 +248,7 @@ func (s *Server) withRequestLogger(ctx context.Context, actor, callingPeer strin
 
 	ctx = context.WithValue(ctx, requestTraceIDKey{}, traceID)
 
-	logger := s.logger.With("trace_id", traceID, "actor", actor)
-	if callingPeer != "" {
-		logger = logger.With("calling_peer", callingPeer)
-	}
+	logger := s.logger.With("trace_id", traceID, "actor", "anonymous")
 
 	ctx = context.WithValue(ctx, requestLoggerKey{}, logger)
 	return ctx, logger
@@ -282,46 +284,40 @@ func generateFallbackTraceID() string {
 	return hex.EncodeToString(traceID[:])
 }
 
-func (s *Server) beginTokenExchangeObservation(ctx context.Context) (context.Context, func(outcome, resourceURI, errorType string)) {
+func (s *Server) beginTokenExchangeObservation(ctx context.Context) (context.Context, func(Diagnostic)) {
 	start := time.Now()
-	telemetryEnabled := s.cfg.Telemetry.Enabled
-	tracesEnabled := telemetryEnabled && s.cfg.Telemetry.Traces.Enabled
-	metricsEnabled := telemetryEnabled && s.cfg.Telemetry.Metrics.Enabled
-
+	tracesEnabled := s.cfg.Telemetry.Enabled && s.cfg.Telemetry.Traces.Enabled
+	metricsEnabled := s.cfg.Telemetry.Enabled && s.cfg.Telemetry.Metrics.Enabled
 	var span trace.Span
 	if tracesEnabled {
 		ctx, span = otel.Tracer("extproc").Start(ctx, "extproc.token_exchange")
 	}
-
 	finished := false
-	return ctx, func(outcome, resourceURI, errorType string) {
+	return ctx, func(diagnostic Diagnostic) {
 		if finished {
 			return
 		}
 		finished = true
-
+		attrs := diagnostic.metricAttributes()
 		if tracesEnabled {
-			if resourceURI != "" {
-				span.SetAttributes(attribute.String("resource.uri", sanitizeURIForTelemetry(resourceURI)))
+			n := len(attrs)
+			if diagnostic.Outcome() == OutcomeSuccess {
+				n = 4
 			}
-			if errorType != "" {
-				span.SetAttributes(attribute.String("error.type", errorType))
-			}
-			span.SetAttributes(attribute.String("outcome", outcome))
-			if outcome != "success" {
-				span.SetStatus(otelcodes.Error, outcome)
+			span.SetAttributes(attrs[:n]...)
+			if diagnostic.Outcome() != OutcomeSuccess {
+				span.SetStatus(otelcodes.Error, "token exchange failed")
 			}
 			span.End()
 		}
-
 		if metricsEnabled {
-			outcomeAttr := metric.WithAttributes(attribute.String("outcome", outcome))
+			options := metric.WithAttributes(attrs[:]...)
 			metricCtx := context.WithoutCancel(ctx)
 			if s.requestCounter != nil {
-				s.requestCounter.Add(metricCtx, 1, outcomeAttr)
+				s.requestCounter.Add(metricCtx, 1, options)
 			}
 			if s.requestDuration != nil {
-				s.requestDuration.Record(metricCtx, time.Since(start).Seconds(), outcomeAttr)
+				s.requestDuration.Record(metricCtx, time.Since(start).Seconds(), options)
 			}
 		}
 	}
@@ -348,7 +344,7 @@ func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error
 			if status.Code(err) == codes.Canceled {
 				return nil
 			}
-			loggerFromContext(activeCtx, s.logger).DebugContext(activeCtx, "stream recv error", "error", err)
+			logDiagnostic(activeCtx, loggerFromContext(activeCtx, s.logger), slog.LevelDebug, "stream recv error", NewDiagnostic(StageRequestValidation, DetailInternalUnclassified))
 			return err
 		}
 
@@ -357,7 +353,7 @@ func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error
 		switch msg := req.Request.(type) {
 		case *extprocv3.ProcessingRequest_RequestHeaders:
 			activeCtx = s.extractTraceContext(stream.Context(), msg.RequestHeaders)
-			activeCtx, _ = s.withRequestLogger(activeCtx, "", "")
+			activeCtx, _ = s.withRequestLogger(activeCtx)
 			if s.authorizer != nil {
 				resp, state = s.processRequestHeadersOPA(activeCtx, msg.RequestHeaders.EndOfStream, req, msg.RequestHeaders)
 				if state != nil && msg.RequestHeaders.EndOfStream {
@@ -365,19 +361,16 @@ func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error
 					// (JSON-RPC) are valid transports. POST without a body is malformed (400).
 					// All other methods are unsupported (405).
 					if state.protocol == "mcp" && !isMCPHeaderOnlyMethod(state.headers[":method"]) {
-						outcome := "invalid_request"
-						errorType := "invalid_method"
 						if isBodyBearingMethod(state.headers[":method"]) {
 							resp = immediateResponse(httpv3.StatusCode_BadRequest,
 								`{"error":"invalid_request","error_description":"MCP request must have a body"}`)
-							errorType = "missing_body"
 						} else {
 							resp = immediateResponseWithHeaders(httpv3.StatusCode_MethodNotAllowed,
 								`{"error":"invalid_request","error_description":"method not supported for MCP"}`,
 								map[string]string{"allow": "GET, POST"})
 						}
 						if state.finishObservation != nil {
-							state.finishObservation(outcome, state.resourceURI, errorType)
+							state.finishObservation(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 						}
 						state = nil
 					} else {
@@ -426,7 +419,11 @@ func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error
 		}
 
 		if err := stream.Send(resp); err != nil {
-			loggerFromContext(activeCtx, s.logger).InfoContext(activeCtx, "stream send error", "error", err)
+			diagnostic := NewDiagnostic(StageResponseWrite, DetailResponseWriteFailed)
+			if stream.Context().Err() != nil {
+				diagnostic = NewDiagnostic(StageResponseWrite, DetailCallerCanceled)
+			}
+			logDiagnostic(activeCtx, loggerFromContext(activeCtx, s.logger), slog.LevelInfo, "stream send error", diagnostic)
 			return err
 		}
 
@@ -439,69 +436,28 @@ func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error
 
 // processRequestHeaders implements the primary ExtProc processing phase when OPA is disabled.
 func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.ProcessingRequest, headers *extprocv3.HttpHeaders) *extprocv3.ProcessingResponse {
-	start := time.Now()
-	outcome := "success"
-
-	telemetryEnabled := s.cfg.Telemetry.Enabled
-	tracesEnabled := telemetryEnabled && s.cfg.Telemetry.Traces.Enabled
-	metricsEnabled := telemetryEnabled && s.cfg.Telemetry.Metrics.Enabled
-
 	ctx = s.extractTraceContext(ctx, headers)
-	var span trace.Span
-	if tracesEnabled {
-		ctx, span = otel.Tracer("extproc").Start(ctx, "extproc.token_exchange")
-	}
-	ctx, logger := s.withRequestLogger(ctx, "", "")
-	defer func() {
-		if tracesEnabled {
-			span.SetAttributes(attribute.String("outcome", outcome))
-			if outcome != "success" {
-				span.SetStatus(otelcodes.Error, outcome)
-			}
-			span.End()
-		}
-		if metricsEnabled {
-			outcomeAttr := metric.WithAttributes(attribute.String("outcome", outcome))
-			metricCtx := context.WithoutCancel(ctx)
-			if s.requestCounter != nil {
-				s.requestCounter.Add(metricCtx, 1, outcomeAttr)
-			}
-			if s.requestDuration != nil {
-				s.requestDuration.Record(metricCtx, time.Since(start).Seconds(), outcomeAttr)
-			}
-		}
-	}()
-
+	ctx, finishObservation := s.beginTokenExchangeObservation(ctx)
+	ctx, logger := s.withRequestLogger(ctx)
+	diagnostic := SuccessDiagnostic(ExchangeUnknown)
+	defer func() { finishObservation(diagnostic) }()
 	input, rejection := extractTokenExchangeInput(req)
 	if rejection != nil {
-		outcome = rejection.code
-		logger.WarnContext(ctx, "extproc: token-exchange metadata rejected", "reason", rejection.reason)
-		if tracesEnabled {
-			span.SetAttributes(attribute.String("error.type", rejection.code))
-		}
+		diagnostic = rejection.Diagnostic()
+		logDiagnostic(ctx, logger, slog.LevelWarn, "extproc: token-exchange metadata rejected", diagnostic)
 		return inputRejectionResponse(rejection)
 	}
-
-	sanitizedURI := sanitizeURIForTelemetry(input.resourceURI)
-	if tracesEnabled {
-		span.SetAttributes(attribute.String("resource.uri", sanitizedURI))
-	}
-
 	protocol, _ := extractProtocolFromMetadata(req)
 	if protocol == "" {
 		protocol = "mcp"
 	}
-
 	result, err := s.exchanger.Exchange(ctx, input.subjectToken, input.resourceURI)
 	if err != nil {
-		resp, mappedOutcome, mappedErrorType := s.exchangeErrorResponse(ctx, "", protocol, input.resourceURI, err)
-		outcome = mappedOutcome
-		if tracesEnabled {
-			span.SetAttributes(attribute.String("error.type", mappedErrorType))
-		}
-		return resp
+		var response *extprocv3.ProcessingResponse
+		response, diagnostic = s.exchangeErrorResponse(ctx, protocol, err)
+		return response
 	}
-	logger.DebugContext(ctx, "token exchanged successfully", "resource", sanitizedURI)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "token exchanged successfully", diagnostic)
 	return replaceAuthorizationHeader("Bearer " + result.Token)
 }
 
@@ -509,40 +465,34 @@ func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.Proce
 func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool, req *extprocv3.ProcessingRequest, headers *extprocv3.HttpHeaders) (*extprocv3.ProcessingResponse, *requestState) {
 	ctx = s.extractTraceContext(ctx, headers)
 	ctx, finishObservation := s.beginTokenExchangeObservation(ctx)
-	ctx, logger := s.withRequestLogger(ctx, "", "")
+	ctx, logger := s.withRequestLogger(ctx)
 	finishNow := true
-	outcome := "success"
-	errorType := ""
-	resourceURI := ""
+	diagnostic := SuccessDiagnostic(ExchangeUnknown)
 	defer func() {
 		if finishNow {
-			finishObservation(outcome, resourceURI, errorType)
+			finishObservation(diagnostic)
 		}
 	}()
 
 	input, rejection := extractTokenExchangeInput(req)
 	if rejection != nil {
-		outcome = rejection.code
-		errorType = rejection.code
-		logger.WarnContext(ctx, "extproc OPA: token-exchange metadata rejected", "reason", rejection.reason)
+		diagnostic = rejection.Diagnostic()
+		logDiagnostic(ctx, logger, slog.LevelWarn, "extproc OPA: token-exchange metadata rejected", diagnostic)
 		return inputRejectionResponse(rejection), nil
 	}
-	resourceURI = input.resourceURI
+	resourceURI := input.resourceURI
 
 	protocol, ok := extractProtocolFromMetadata(req)
 	if !ok {
-		outcome = "authorization_denied"
-		errorType = "missing_protocol_metadata"
-		logger.WarnContext(ctx, "OPA: protocol metadata absent — rejecting with 403 (misconfiguration)",
-			"resource", sanitizeURIForTelemetry(resourceURI))
+		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyConfiguration)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: protocol metadata absent — rejecting with 403 (misconfiguration)", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"protocol metadata is required when authorization is enabled"}`), nil
 	}
 
 	headerMap := extractAllHeaders(headers)
 	if protocol == "mcp" && !isMCPHeaderOnlyMethod(headerMap[":method"]) && !isBodyBearingMethod(headerMap[":method"]) {
-		outcome = "invalid_request"
-		errorType = "invalid_method"
+		diagnostic = NewDiagnostic(StageRequestValidation, DetailRequestMalformed)
 		return immediateResponseWithHeaders(httpv3.StatusCode_MethodNotAllowed,
 			`{"error":"invalid_request","error_description":"method not supported for MCP"}`,
 			map[string]string{"allow": "GET, POST"}), nil
@@ -553,10 +503,8 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	// since it is never populated for those requests either way (FR-005).
 	targetServerName, mcpServerOK := extractMCPServerFromMetadata(req)
 	if protocol == "mcp" && !mcpServerOK {
-		outcome = "authorization_denied"
-		errorType = "missing_target_server_metadata"
-		logger.WarnContext(ctx, "OPA: mcp_server metadata absent — rejecting with 403 (misconfiguration)",
-			"resource", sanitizeURIForTelemetry(resourceURI))
+		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyConfiguration)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: mcp_server metadata absent — rejecting with 403 (misconfiguration)", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"mcp_server metadata is required when authorization is enabled for MCP requests"}`), nil
 	}
@@ -579,16 +527,14 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 
 	exchangeResult, exchErr := s.exchanger.Exchange(ctx, input.subjectToken, resourceURI)
 	if exchErr != nil {
-		resp, mappedOutcome, mappedErrorType := s.exchangeErrorResponse(ctx, "OPA: headers-phase", protocol, resourceURI, exchErr)
-		outcome = mappedOutcome
-		errorType = mappedErrorType
-		return resp, nil
+		response, failure := s.exchangeErrorResponse(ctx, protocol, exchErr)
+		diagnostic = failure
+		return response, nil
 	}
 	state.grantedPermissionSets = exchangeResult.GrantedPermissionSets
 	state.principal = exchangeResult.Principal
 	state.agentID = exchangeResult.AgentID
-	logger.DebugContext(ctx, "OPA: token exchanged in headers phase, buffering body for OPA evaluation",
-		"resource", sanitizeURIForTelemetry(resourceURI))
+	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA: token exchanged in headers phase, buffering body for OPA evaluation", diagnostic)
 	return requestBodyBufferingResponseWithAuth("Bearer " + exchangeResult.Token), state
 }
 
@@ -598,12 +544,11 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 //   - allow: echo the request body unchanged (Authorization was already set)
 //   - deny: 403 ImmediateResponse with JSON access_denied body
 func (s *Server) processRequestBody(ctx context.Context, state *requestState, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
-	ctx, logger := s.withRequestLogger(ctx, "", "")
+	ctx, logger := s.withRequestLogger(ctx)
 	var bodyBytes []byte
 	if body != nil {
 		bodyBytes = body.Body
 	}
-	sanitizedURI := sanitizeURIForTelemetry(state.resourceURI)
 
 	if state.protocol == "mcp" && isMCPHeaderOnlyMethod(state.headers[":method"]) {
 		return immediateResponseWithHeaders(httpv3.StatusCode_MethodNotAllowed,
@@ -613,8 +558,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 
 	maxSize := s.cfg.Authorization.MaxBodySize
 	if maxSize > 0 && len(bodyBytes) > maxSize {
-		logger.WarnContext(ctx, "OPA: request body exceeds max_body_size — rejecting",
-			"resource", sanitizedURI, "body_size", len(bodyBytes), "max_body_size", maxSize)
+		logDiagnostic(ctx, logger.With("body_size", len(bodyBytes), "max_body_size", maxSize), slog.LevelWarn, "OPA: request body exceeds max_body_size — rejecting", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"request_too_large","error_description":"request body exceeds maximum allowed size"}`)
 	}
@@ -627,32 +571,32 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 
 	builder, buildErr := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
 	if buildErr != nil {
-		logger.WarnContext(ctx, "OPA: failed to build request input — denying", "resource", sanitizedURI, "error", buildErr)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build request input — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
 	opaInput, buildErr := builder.Build(bodyBytes, decodeJSONBody(bodyBytes, state.protocol == "mcp"))
 	if buildErr != nil {
-		logger.WarnContext(ctx, "OPA: failed to parse request body — denying", "resource", sanitizedURI, "error", buildErr)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to parse request body — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
 
 	decision, err := s.authorizer.Evaluate(ctx, opaInput)
 	if err != nil {
-		logger.ErrorContext(ctx, "OPA evaluation error — denying", "resource", sanitizedURI, "error", err)
+		logDiagnostic(ctx, logger, slog.LevelError, "OPA evaluation error — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"authorization evaluation failed"}`)
 	}
 
 	if decision.Action == authorization.ActionApprovalRequired && s.approvalGate != nil {
 		if state.protocol != "mcp" {
-			logger.WarnContext(ctx, "OPA approval-required action is not an MCP tool call", "protocol", state.protocol, "resource", sanitizedURI)
+			logDiagnostic(ctx, logger, slog.LevelWarn, "OPA approval-required action is not an MCP tool call", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
 		invocation, rawID, invocationErr := approvalInvocation(opaInput["parsed_body"].(map[string]any), state, decision)
 		if invocationErr != nil {
-			logger.WarnContext(ctx, "OPA approval-required request is not a standalone tool call", "error", invocationErr)
+			logDiagnostic(ctx, logger, slog.LevelWarn, "OPA approval-required request is not a standalone tool call", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
 		outcome := s.approvalGate.Evaluate(ctx, invocation)
@@ -668,10 +612,10 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		return accessDeniedResponse([]string{"approval_required is not yet supported"})
 	}
 	if decision.Action != authorization.ActionAllow {
-		logger.InfoContext(ctx, "OPA denied request", "reasons", decision.Reasons, "resource", sanitizedURI)
+		logDiagnostic(ctx, logger, slog.LevelInfo, "OPA denied request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 		return accessDeniedResponse(decision.Reasons)
 	}
-	logger.DebugContext(ctx, "OPA allowed request, echoing body", "resource", sanitizedURI)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed request, echoing body", SuccessDiagnostic(ExchangeUnknown))
 	return echoRequestBody(body)
 }
 
@@ -680,21 +624,18 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 // body and performs token exchange, returning a headers-phase response on success.
 // Deny and exchange errors return ImmediateResponse, identical to the body path.
 func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState) *extprocv3.ProcessingResponse {
-	ctx, logger := s.withRequestLogger(ctx, "", "")
-	outcome := "success"
-	errorType := ""
+	ctx, logger := s.withRequestLogger(ctx)
+	diagnostic := SuccessDiagnostic(ExchangeUnknown)
 	if state.finishObservation != nil {
 		defer func() {
-			state.finishObservation(outcome, state.resourceURI, errorType)
+			state.finishObservation(diagnostic)
 		}()
 	}
-	sanitizedURI := sanitizeURIForTelemetry(state.resourceURI)
 
 	opaInput, buildErr := authorization.BuildOPAInputHeadersOnly(state.protocol, state.headers, state.targetServerName)
 	if buildErr != nil {
-		outcome = "authorization_denied"
-		errorType = "invalid_request"
-		logger.WarnContext(ctx, "OPA: failed to build input for header-only request — denying", "resource", sanitizedURI, "error", buildErr)
+		diagnostic = NewDiagnostic(StageRequestValidation, DetailRequestMalformed)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build input for header-only request — denying", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
@@ -705,50 +646,46 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 
 	decision, err := s.authorizer.Evaluate(ctx, opaInput)
 	if err != nil {
-		outcome = "authorization_denied"
-		errorType = "evaluation_error"
-		logger.ErrorContext(ctx, "OPA evaluation error — denying", "resource", sanitizedURI, "error", err)
+		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed)
+		logDiagnostic(ctx, logger, slog.LevelError, "OPA evaluation error — denying", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"authorization evaluation failed"}`)
 	}
 
 	if decision.Action != "allow" {
-		outcome = "authorization_denied"
-		errorType = "access_denied"
-		logger.InfoContext(ctx, "OPA denied header-only request", "reasons", decision.Reasons, "resource", sanitizedURI)
+		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyDenied)
+		logDiagnostic(ctx, logger, slog.LevelInfo, "OPA denied header-only request", diagnostic)
 		return accessDeniedResponse(decision.Reasons)
 	}
 
 	exchangeResult, exchErr := s.exchanger.Exchange(ctx, state.subjectToken, state.resourceURI)
 	if exchErr != nil {
-		resp, mappedOutcome, mappedErrorType := s.exchangeErrorResponse(ctx, "OPA: header-only", state.protocol, state.resourceURI, exchErr)
-		outcome = mappedOutcome
-		errorType = mappedErrorType
-		return resp
+		response, failure := s.exchangeErrorResponse(ctx, state.protocol, exchErr)
+		diagnostic = failure
+		return response
 	}
-	logger.DebugContext(ctx, "OPA allowed header-only request, token exchanged successfully", "resource", sanitizedURI)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed header-only request, token exchanged successfully", diagnostic)
 	return replaceAuthorizationHeader("Bearer " + exchangeResult.Token)
 }
 
 // processRequestBodyBatch evaluates each JSON-RPC batch element independently.
 // A malformed envelope denies the whole batch before any policy evaluation.
 func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestState, bodyBytes []byte, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
-	ctx, logger := s.withRequestLogger(ctx, "", "")
-	sanitizedURI := sanitizeURIForTelemetry(state.resourceURI)
+	ctx, logger := s.withRequestLogger(ctx)
 	messages, err := decodeJSONBatch(bodyBytes)
 	if err != nil {
-		logger.WarnContext(ctx, "OPA: failed to parse batch body — denying", "resource", sanitizedURI, "error", err)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to parse batch body — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse batch request"}`)
 	}
 	if len(messages) == 0 {
-		logger.WarnContext(ctx, "OPA: empty batch body — rejecting as malformed", "resource", sanitizedURI)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: empty batch body — rejecting as malformed", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"empty batch is not valid JSON-RPC 2.0"}`)
 	}
 	builder, err := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
 	if err != nil {
-		logger.WarnContext(ctx, "OPA: failed to build input for batch — denying", "resource", sanitizedURI, "error", err)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build input for batch — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse batch request"}`)
 	}
@@ -759,21 +696,21 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 	)
 	for i, message := range messages {
 		if _, err := authorization.ParseMCPMessage(message.parsed); err != nil {
-			logger.WarnContext(ctx, "OPA: invalid batch element — denying", "resource", sanitizedURI, "index", i, "error", err)
+			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "OPA: invalid batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			denied = true
 			denyReasons = append(denyReasons, "batch element could not be evaluated")
 			continue
 		}
 		opaInput, buildErr := builder.Build(message.raw, message.parsed)
 		if buildErr != nil {
-			logger.WarnContext(ctx, "OPA: failed to build input for batch element — denying", "resource", sanitizedURI, "index", i, "error", buildErr)
+			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "OPA: failed to build input for batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			denied = true
 			denyReasons = append(denyReasons, "failed to parse batch element")
 			continue
 		}
 		decision, evalErr := s.authorizer.Evaluate(ctx, opaInput)
 		if evalErr != nil {
-			logger.ErrorContext(ctx, "OPA evaluation error for batch element — denying", "resource", sanitizedURI, "index", i, "error", evalErr)
+			logDiagnostic(ctx, logger.With("index", i), slog.LevelError, "OPA evaluation error for batch element — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
 			denied = true
 			denyReasons = append(denyReasons, "authorization evaluation failed")
 			continue
@@ -793,11 +730,11 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 	}
 
 	if denied {
-		logger.InfoContext(ctx, "OPA denied batch request", "reasons", denyReasons, "resource", sanitizedURI)
+		logDiagnostic(ctx, logger, slog.LevelInfo, "OPA denied batch request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 		return accessDeniedResponse(denyReasons)
 	}
 
-	logger.DebugContext(ctx, "OPA allowed batch, echoing body", "resource", sanitizedURI)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed batch, echoing body", SuccessDiagnostic(ExchangeUnknown))
 	return echoRequestBody(body)
 }
 
@@ -923,22 +860,21 @@ func decodeJSONBatch(body []byte) ([]decodedBatchMessage, error) {
 // tokenExchangeErrorResponse maps a token exchange error to the appropriate ImmediateResponse.
 // Handles ErrAssertionExpired (503), ErrCircuitOpen (503), and generic failures (500).
 // BrokerExchangeError with error_uri is handled by callers before reaching this function.
-func (s *Server) tokenExchangeErrorResponse(ctx context.Context, err error, resourceURI string) *extprocv3.ProcessingResponse {
+func (s *Server) tokenExchangeErrorResponse(ctx context.Context, err error) *extprocv3.ProcessingResponse {
 	logger := loggerFromContext(ctx, s.logger)
-	sanitizedURI := sanitizeURIForTelemetry(resourceURI)
+	metadata := metadataFromError(ctx, err)
+	diagnostic := diagnosticFromError(ctx, err)
 	if errors.Is(err, ErrAssertionExpired) {
-		logger.ErrorContext(ctx, "token exchange failed: client assertion expired — background refresh may have failed",
-			"resource", sanitizedURI)
+		logOperationError(ctx, logger, slog.LevelError, "token exchange failed: client assertion expired", metadata, diagnostic)
 		return immediateResponse(httpv3.StatusCode_ServiceUnavailable,
 			`{"error":"service_unavailable","error_description":"client assertion expired"}`)
 	}
 	if errors.Is(err, ErrCircuitOpen) {
-		logger.WarnContext(ctx, "token exchange rejected: circuit breaker is open",
-			"resource", sanitizedURI)
+		logOperationError(ctx, logger, slog.LevelWarn, "token exchange rejected: circuit breaker is open", metadata, diagnostic)
 		return immediateResponse(httpv3.StatusCode_ServiceUnavailable,
 			`{"error":"service_unavailable","error_description":"circuit breaker is open"}`)
 	}
-	logger.ErrorContext(ctx, "token exchange failed", "resource", sanitizedURI, "error", err)
+	logOperationError(ctx, logger, slog.LevelError, "token exchange failed", metadata, diagnostic)
 	return immediateResponse(httpv3.StatusCode_InternalServerError,
 		`{"error":"token_exchange_failed","error_description":"token exchange request failed"}`)
 }
@@ -951,53 +887,37 @@ func accessDeniedResponse(reasons []string) *extprocv3.ProcessingResponse {
 	return immediateResponse(httpv3.StatusCode_Forbidden, string(body403))
 }
 
-func (s *Server) exchangeErrorResponse(ctx context.Context, phase, protocol, resourceURI string, err error) (*extprocv3.ProcessingResponse, string, string) {
+func (s *Server) exchangeErrorResponse(ctx context.Context, protocol string, err error) (*extprocv3.ProcessingResponse, Diagnostic) {
+	metadata := metadataFromError(ctx, err)
+	diagnostic := diagnosticFromError(ctx, err)
 	var brokerErr *BrokerExchangeError
 	hasBrokerError := errors.As(err, &brokerErr)
-	if hasBrokerError && s.cfg.Telemetry.Enabled && s.cfg.Telemetry.Traces.Enabled {
-		code := brokerErr.Code
-		switch code {
-		case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope", "invalid_target", "access_denied", "server_error":
-		default:
-			code = "unknown"
-		}
-		trace.SpanFromContext(ctx).SetAttributes(
-			attribute.Int("token_exchange.broker_status_code", brokerErr.StatusCode),
-			attribute.String("token_exchange.broker_error_code", code),
+	if s.cfg.Telemetry.Enabled && s.cfg.Telemetry.Traces.Enabled {
+		span := trace.SpanFromContext(ctx)
+		span.SetAttributes(
+			attribute.String("operation", string(metadata.Operation())),
+			attribute.String("error.kind", string(metadata.Kind())),
+			attribute.String("dependency", string(metadata.Dependency())),
 		)
+		if hasBrokerError {
+			span.SetAttributes(
+				attribute.Int("token_exchange.broker_status_code", metadata.StatusCode()),
+				attribute.String("token_exchange.broker_error_code", metadata.OAuthCode()),
+			)
+		}
 	}
 	logger := loggerFromContext(ctx, s.logger)
-	sanitizedURI := sanitizeURIForTelemetry(resourceURI)
 	if hasBrokerError && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
 		if protocol == "mcp" {
-			msg := "token exchange requires re-authentication — returning URLElicitationRequiredError"
-			if phase != "" {
-				msg = phase + " token exchange requires re-auth — returning URLElicitationRequiredError"
-			}
-			logger.InfoContext(ctx, msg,
-				"resource", sanitizedURI,
-				"code", brokerErr.Code,
-				"error_uri", brokerErr.ErrorURI)
-			return urlElicitationResponse(brokerErr.ErrorURI, brokerErr.Description, nil), "exchange_failure", brokerErr.Code
+			logOperationError(ctx, logger, slog.LevelInfo, "token exchange requires re-authentication — returning URLElicitationRequiredError", metadata, diagnostic)
+			return urlElicitationResponse(brokerErr.ErrorURI, brokerErr.Description, nil), diagnostic
 		}
-
-		msg := "token exchange requires re-authentication but protocol is non-MCP — returning 503"
-		if phase != "" {
-			msg = phase + " token exchange requires re-auth but protocol is non-MCP — returning 503"
-		}
-		logger.WarnContext(ctx, msg, "resource", sanitizedURI, "protocol", protocol)
+		logOperationError(ctx, logger, slog.LevelWarn, "token exchange requires re-authentication but protocol is non-MCP — returning 503", metadata, diagnostic)
 		return immediateResponse(httpv3.StatusCode_ServiceUnavailable,
-			`{"error":"service_unavailable","error_description":"token exchange requires re-authentication"}`), "exchange_failure", brokerErr.Code
+			`{"error":"service_unavailable","error_description":"token exchange requires re-authentication"}`), diagnostic
 	}
 
-	switch {
-	case errors.Is(err, ErrAssertionExpired):
-		return s.tokenExchangeErrorResponse(ctx, err, resourceURI), "assertion_expired", "assertion_expired"
-	case errors.Is(err, ErrCircuitOpen):
-		return s.tokenExchangeErrorResponse(ctx, err, resourceURI), "circuit_open", "circuit_open"
-	default:
-		return s.tokenExchangeErrorResponse(ctx, err, resourceURI), "exchange_failure", "exchange_failure"
-	}
+	return s.tokenExchangeErrorResponse(ctx, err), diagnostic
 }
 
 func extractTokenExchangeInput(req *extprocv3.ProcessingRequest) (tokenExchangeInput, *inputRejection) {
@@ -1023,10 +943,14 @@ func extractTokenExchangeInput(req *extprocv3.ProcessingRequest) (tokenExchangeI
 
 	resourceURI, reason := metadataStringField(metadata.Fields, resourceURIFieldKey)
 	if reason != "" {
-		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: reason}
+		detail := DetailRequestMalformed
+		if metadata.Fields[resourceURIFieldKey] == nil {
+			detail = DetailResourceMissing
+		}
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: reason, detail: detail}
 	}
 	if strings.TrimSpace(resourceURI) == "" {
-		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: "resource URI is blank"}
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: "resource URI is blank", detail: DetailResourceMissing}
 	}
 	if err := validateResourceURI(resourceURI); err != nil {
 		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: status.Convert(err).Message()}
@@ -1287,19 +1211,6 @@ func (c mdCarrier) Keys() []string {
 		keys = append(keys, k)
 	}
 	return keys
-}
-
-// sanitizeURIForTelemetry removes caller-controlled credentials, query strings, and
-// fragments before recording a URI in telemetry or logs.
-func sanitizeURIForTelemetry(resourceURI string) string {
-	u, err := url.ParseRequestURI(resourceURI)
-	if err != nil {
-		return "[invalid resource URI]"
-	}
-	u.User = nil
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String()
 }
 
 // replaceAuthorizationHeader builds a ProcessingResponse that replaces the

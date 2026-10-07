@@ -131,7 +131,7 @@ func TestNewService_RequiresCanonicalIDResolution(t *testing.T) {
 
 func TestNewService_CompilesRules(t *testing.T) {
 	svc, _ := newTestService(t, testImpersonationConfig())
-	assert.Equal(t, "https://broker/impersonation", svc.AudiencePrefix())
+	assert.Equal(t, "https://broker/impersonation", svc.audiencePrefix)
 }
 
 func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
@@ -171,9 +171,10 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 		name    string
 		status  ports.UserDelegationStatus
 		details string
+		detail  tokenexchange.FailureDetail
 	}{
-		{name: "missing delegation", status: ports.UserDelegationMissing, details: "user_grant_missing"},
-		{name: "expired delegation", status: ports.UserDelegationExpired, details: "user_grant_expired"},
+		{name: "missing delegation", status: ports.UserDelegationMissing, details: "user_grant_missing", detail: tokenexchange.DetailGrantMissing},
+		{name: "expired delegation", status: ports.UserDelegationExpired, details: "user_grant_expired", detail: tokenexchange.DetailGrantExpired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			verifier := &recordingDelegationVerifier{status: tc.status}
@@ -185,6 +186,11 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 			assert.Equal(t, "https://broker.example.com/agents/"+target.Agent.ID.String(), tokenErr.ErrorURI())
 			assert.Equal(t, tc.details, tokenErr.Details())
 			assert.Equal(t, tc.details, outcome.Audit.FailureCategory)
+			assert.Equal(t, tokenexchange.StageGrantAuthorization, tokenErr.Diagnostic().Stage())
+			assert.Equal(t, tc.detail, tokenErr.Diagnostic().Detail())
+			assert.Equal(t, tokenexchange.RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
+			assert.Equal(t, tokenexchange.TargetConsent, tokenErr.Diagnostic().RecoveryTarget())
+			assert.Equal(t, tokenexchange.ExchangeImpersonation, tokenErr.Diagnostic().ExchangeKind())
 			assert.False(t, issuer.called)
 			assert.Equal(t, 1, verifier.calls)
 		})
@@ -198,6 +204,12 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 		assert.Equal(t, tokenexchange.ServerErrorCode, tokenErr.Code())
 		assert.Empty(t, tokenErr.ErrorURI())
 		assert.Equal(t, "user_grant_lookup_failed", outcome.Audit.FailureCategory)
+		assert.ErrorIs(t, err, assert.AnError)
+		assert.Equal(t, tokenexchange.StageGrantAuthorization, tokenErr.Diagnostic().Stage())
+		assert.Equal(t, tokenexchange.DetailGrantRepositoryUnavailable, tokenErr.Diagnostic().Detail())
+		assert.Equal(t, tokenexchange.OutcomeInfrastructureError, tokenErr.Diagnostic().Outcome())
+		assert.Equal(t, tokenexchange.RecoveryRetry, tokenErr.Diagnostic().RecoveryAction())
+		assert.Equal(t, tokenexchange.ExchangeImpersonation, tokenErr.Diagnostic().ExchangeKind())
 		assert.False(t, issuer.called)
 		assert.Equal(t, 1, verifier.calls)
 	})
@@ -209,6 +221,9 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 		require.ErrorAs(t, err, &tokenErr)
 		assert.Equal(t, tokenexchange.AccessDeniedError, tokenErr.Code())
 		assert.Equal(t, "authorization_denied", outcome.Audit.FailureCategory)
+		assert.Equal(t, tokenexchange.StageClientAuthorization, tokenErr.Diagnostic().Stage())
+		assert.Equal(t, tokenexchange.DetailClientPolicyDenied, tokenErr.Diagnostic().Detail())
+		assert.Equal(t, tokenexchange.RecoveryNone, tokenErr.Diagnostic().RecoveryAction())
 		assert.False(t, issuer.called)
 		assert.Zero(t, verifier.calls)
 	})
@@ -258,7 +273,7 @@ func unverifiedSubjectConfig() *ports.ImpersonationConfig {
 // FR-003d/007a: an unverified subject rule that binds subject_token compiles successfully.
 func TestNewService_CompilesUnverifiedSubjectRule(t *testing.T) {
 	svc, _ := newTestService(t, unverifiedSubjectConfig())
-	assert.Equal(t, "https://broker/impersonation", svc.AudiencePrefix())
+	assert.Equal(t, "https://broker/impersonation", svc.audiencePrefix)
 }
 
 // FR-007a/CR-005a: an unverified subject rule whose predicate does not reference subject_token

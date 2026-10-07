@@ -108,6 +108,19 @@ If exchange fails, the sidecar does not forward the original credential to the t
 
 If a nontransient broker error contains `error_uri`, MCP receives JSON-RPC code `-32042` URL elicitation. Non-MCP traffic receives the 503 re-authentication response. Expired assertions and open circuits also return their defined 503 responses.
 
+### Diagnostic telemetry
+
+Exchange logs, spans, and metrics use the bounded `token_exchange.*` classification contract in [ARCHITECTURE.md](../../ARCHITECTURE.md).
+ExtProc records the operation stage that it observes. It does not guess an unreported broker stage or exchange profile.
+Its exchange kind is `unknown` when the broker profile is not observable.
+Successful metric observations use `none` for failure stage and detail. Successful logs and spans omit these failure-only fields.
+
+Telemetry excludes resource paths, endpoint URLs, broker descriptions, nested errors, credentials, request headers and bodies, and process command arguments.
+Outbound spans preserve trace propagation and the real network request without recording these values.
+OPA audit data uses bounded actions, result codes, protocols, and allowlisted MCP methods. It excludes policy reasons and request-derived tool or server names.
+Direct protocol recovery responses still contain the recovery URI. Recovery telemetry values do not instruct ExtProc to retry automatically.
+
+
 ## Configure the sidecar
 
 This is ExtProc sidecar configuration. It does not configure Agentgateway `jwtAuth`, JWKS, `preserveToken`, or `metadataContext`.

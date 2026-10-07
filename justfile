@@ -551,7 +551,7 @@ verify: check security test web-test cdk-test mock-sample-agent-test mock-upstre
 fmt-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    unformatted="$(git ls-files -z --cached --others --exclude-standard -- '*.go' | xargs -0 gofmt -s -l)"
+    unformatted="$(git ls-files -z --cached --others --exclude-standard -- '*.go' | while IFS= read -r -d '' file; do if [[ -f "$file" ]]; then printf '%s\0' "$file"; fi; done | xargs -0 gofmt -s -l)"
     if [ -n "$unformatted" ]; then
         echo "Files need gofmt -s:"
         printf '%s\n' "$unformatted"

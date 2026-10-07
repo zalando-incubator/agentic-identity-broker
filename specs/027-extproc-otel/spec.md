@@ -110,7 +110,7 @@ As an operator, I need structured log entries emitted by the ExtProc service to 
 - Q: Should OTel spans be created at stream level (one span per gRPC stream via StreamServerInterceptor) or at request level (one span per RequestHeaders message)? → A: Request-level — one span per `RequestHeaders` message, created manually inside `processRequestHeaders`, not via a stream interceptor.
 - Q: What is the maximum time to wait for telemetry flush during graceful shutdown (FR-007)? → A: 5 seconds — a fixed 5s context deadline for `telemetryShutdown(ctx)`, applied after `GracefulStop()` completes.
 - Q: Where should the mapping from extproc's `TelemetryConfig` to `ports.TelemetryConfig` live? → A: Mirror type defined in `internal/extproc/config`; mapper function lives in `cmd/extproc-token-exchange/root.go`, keeping the config package free of `internal/ports` imports.
-- Q: What span attributes should token-exchange spans carry? → A: `resource.uri` (full URI, query string excluded), `outcome` (success/exchange_failure/circuit_open/invalid_resource/assertion_expired/passthrough), and `error.type` on failure. The `passthrough` outcome is recorded when a request bypasses token exchange. Token values must never appear as span attributes (SR-001).
+- Q: What span attributes should token-exchange spans carry? → A: Bounded `token_exchange.outcome`, failure stage/detail, recovery action/target, and exchange kind. Success logs/spans omit failure-only fields; successful metric observations use `none`. Requested resource URIs and credential-bearing text are never recorded.
 
 ## Requirements *(mandatory)*
 
@@ -192,7 +192,7 @@ telemetry:
 
 ### Security Requirements
 
-- **SR-001**: Telemetry data MUST NOT contain sensitive information. Prohibited attribute categories include: Bearer tokens (subject or exchanged), client secrets, encryption key material, and personally identifiable information beyond standard OTel HTTP semantic conventions. Token-exchange spans MUST include `resource.uri` (full URI, query string excluded), `outcome`, and `error.type` (on failure) — token values must never appear as span attributes. Enforcement is by code review against this documented list.
+- **SR-001**: Telemetry data MUST NOT contain credentials, provider or broker descriptions, nested error messages, URLs or resource paths, headers, bodies, or process command arguments. Exchange spans, logs, and metrics use the bounded `token_exchange.*` classification contract in `ARCHITECTURE.md`. No exception event or span status can serialize an arbitrary error. ExtProc uses `unknown` exchange kind when the broker's selected exchange profile is not observable.
 - **SR-002**: Exporter authentication headers MUST support environment variable substitution (`${ENV_VAR}`) to avoid storing secrets in configuration files.
 - **SR-003**: TLS MUST be enabled by default for OTLP gRPC exporter connections. Disabling TLS (`insecure: true`) MUST log a warning at startup.
 - **SR-004**: Telemetry export failures MUST NOT expose internal system state or error details beyond what is necessary to diagnose the export failure itself.

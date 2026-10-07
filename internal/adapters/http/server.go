@@ -163,11 +163,11 @@ func NewHandler(config ServerConfig, routeSetup func(chi.Router), logger *slog.L
 		if name == "" {
 			name = "http"
 		}
-		router.Use(otelchi.Middleware(name,
+		router.Use(tokenEndpointTelemetry(otelchi.Middleware(name,
 			otelchi.WithChiRoutes(router),
 			otelchi.WithRequestMethodInSpanName(true),
 			otelchi.WithPropagators(otel.GetTextMapPropagator()),
-		))
+		)))
 	}
 	router.Use(middleware.OptionalPrincipalMiddleware(config.Authentication, config.JWTAuthenticator, logger))
 	router.Use(middleware.SecurityContextMiddleware(requestContext, config.Telemetry.Enabled && config.Telemetry.Traces.Enabled))

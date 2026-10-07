@@ -187,7 +187,7 @@ func TestHandleImpersonation_TargetScopes(t *testing.T) {
 		assert.NotContains(t, body, "scope")
 		assert.False(t, issuer.called)
 		var event map[string]any
-		require.NoError(t, json.Unmarshal(logBuffer.Bytes(), &event))
+		require.NoError(t, json.NewDecoder(&logBuffer).Decode(&event))
 		assert.NotContains(t, event, "scope")
 	})
 
@@ -231,7 +231,7 @@ func TestLogImpersonationDecision_WhitelistAndCorrelation(t *testing.T) {
 	assert.Equal(t, "550e8400-e29b-41d4-a716-446655440000", event["target_agent_id"])
 	assert.Equal(t, "req-123", event["request_id"])
 
-	for _, forbidden := range []string{"client_assertion", "actor_token", "subject_token", "access_token", "signing_key", "token"} {
+	for _, forbidden := range []string{"client_assertion", "actor_token", "subject_token", "access_token", "signing_key", "token", "audience", "issuer_identifiers", "failure_category"} {
 		_, present := event[forbidden]
 		assert.Falsef(t, present, "audit event must not contain %q", forbidden)
 	}
@@ -277,7 +277,7 @@ func TestHandleImpersonation_SetsNoStoreHeaders(t *testing.T) {
 	assert.Contains(t, response.Body.String(), `"error":"invalid_request"`)
 	assert.False(t, issuer.called)
 	var event map[string]any
-	require.NoError(t, json.Unmarshal(logBuffer.Bytes(), &event))
+	require.NoError(t, json.NewDecoder(&logBuffer).Decode(&event))
 	assert.Equal(t, target.ID.String(), event["target_agent_id"])
 }
 

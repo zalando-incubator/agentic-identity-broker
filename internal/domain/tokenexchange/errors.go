@@ -23,12 +23,10 @@ type TokenExchangeError struct {
 	// httpStatus is the HTTP status code for this error response (per RFC 8693 Section 5.2)
 	httpStatus int
 
-	// cause is the underlying error for debugging/logging context (may be nil)
+	// Causes remain inspectable with errors.Is/As, but must not be serialized into telemetry.
 	cause error
 
-	// details contains optional structured context for logging without exposing sensitive data.
-	// Examples: "principal_missing", "grant_expired", "resource_ambiguous"
-	// MUST NOT contain token values.
+	// Internal context is separate from the bounded diagnostic telemetry contract.
 	details string
 
 	// errorURI is the RFC 6749 §5.2 error_uri — a URI pointing to a human-readable page
@@ -37,25 +35,20 @@ type TokenExchangeError struct {
 	// May be empty when no re-authentication URL is available.
 	errorURI string
 
-	failureReason FailureReason
-	service       ServiceRef
+	diagnostic Diagnostic
+	service    ServiceRef
 }
 
-// FailureReason classifies why an exchange failed after its resource resolved to a third-party service.
-// Values are stable telemetry identifiers.
-type FailureReason string
-
-const (
-	FailureReasonNoGrant             FailureReason = "no_grant"
-	FailureReasonNoSession           FailureReason = "no_session"
-	FailureReasonAccessTokenExpired  FailureReason = "access_token_expired"
-	FailureReasonRefreshTokenExpired FailureReason = "refresh_token_expired"
-	FailureReasonInsufficientScope   FailureReason = "insufficient_scope"
-	FailureReasonServiceRejected     FailureReason = "service_rejected"
+var (
+	ErrResourceUnregistered = errors.New("requested resource is not registered")
+	ErrResourceAmbiguous    = errors.New("registered resource configuration is ambiguous")
 )
 
-func (e *TokenExchangeError) FailureReason() FailureReason {
-	return e.failureReason
+func (e *TokenExchangeError) Diagnostic() Diagnostic {
+	if e.diagnostic.outcome == "" {
+		return NewDiagnostic(StageExchangeRouting, DetailInternalUnclassified)
+	}
+	return e.diagnostic
 }
 
 func (e *TokenExchangeError) Service() ServiceRef {
@@ -100,9 +93,7 @@ func (e *TokenExchangeError) HTTPStatus() int {
 	return e.httpStatus
 }
 
-// Details returns optional structured context for logging (no token values).
-// Examples: "principal_missing", "grant_expired", "resource_ambiguous"
-// Useful for structured logging and debugging without exposing sensitive data.
+// Details returns internal context. Only Diagnostic is suitable for telemetry.
 func (e *TokenExchangeError) Details() string {
 	return e.details
 }
@@ -227,35 +218,22 @@ func NewInvalidTargetErrorWithDetails(description, details string) *TokenExchang
 	}
 }
 
-const (
-	invalidTargetResourceNotFoundDescription  = "no service configured for the requested resource"
-	invalidTargetResourceAmbiguousDescription = "multiple services configured for the same resource"
-	invalidTargetResourceNotFoundDetails      = "resource_not_found"
-	invalidTargetResourceAmbiguousDetails     = "resource_ambiguous"
-)
+func NewResourceUnregisteredError() *TokenExchangeError {
+	return NewInvalidTargetError("no service configured for the requested resource").
+		WithCause(ErrResourceUnregistered).WithDiagnostic(NewDiagnostic(StageResourceResolution, DetailResourceUnregistered))
+}
 
-// IsResourceNotConfigured reports whether err means no service matched the requested resource.
+func NewResourceAmbiguousError() *TokenExchangeError {
+	return NewServerError("registered resource configuration is ambiguous").
+		WithCause(ErrResourceAmbiguous).WithDiagnostic(NewDiagnostic(StageResourceResolution, DetailResourceAmbiguous))
+}
+
 func IsResourceNotConfigured(err error) bool {
-	return hasInvalidTargetDetails(err, invalidTargetResourceNotFoundDetails, invalidTargetResourceNotFoundDescription)
+	return errors.Is(err, ErrResourceUnregistered)
 }
 
-// IsResourceAmbiguous reports whether err means multiple services matched the requested resource.
 func IsResourceAmbiguous(err error) bool {
-	return hasInvalidTargetDetails(err, invalidTargetResourceAmbiguousDetails, invalidTargetResourceAmbiguousDescription)
-}
-
-func hasInvalidTargetDetails(err error, details, description string) bool {
-	var tokenErr *TokenExchangeError
-	if !errors.As(err, &tokenErr) {
-		return false
-	}
-	if tokenErr.Code() != "invalid_target" {
-		return false
-	}
-	if tokenErr.Details() == details {
-		return true
-	}
-	return tokenErr.Details() == "" && tokenErr.Description() == description
+	return errors.Is(err, ErrResourceAmbiguous)
 }
 
 // NewAccessDeniedError creates an error for authorization failures.
@@ -332,7 +310,7 @@ func IsTokenExchangeError(err error) bool {
 }
 
 // WithCause returns a copy of the error with the given underlying cause attached.
-// The cause is available via errors.Unwrap() for logging and error chain inspection.
+// The cause is available for error chain inspection, not telemetry serialization.
 // The cause is NOT included in the RFC 8693 error response to the client.
 func (e *TokenExchangeError) WithCause(cause error) *TokenExchangeError {
 	clone := *e
@@ -340,7 +318,7 @@ func (e *TokenExchangeError) WithCause(cause error) *TokenExchangeError {
 	return &clone
 }
 
-// WithDetails returns a copy of the error with the given structured details for logging.
+// WithDetails returns a copy with internal context attached.
 func (e *TokenExchangeError) WithDetails(details string) *TokenExchangeError {
 	clone := *e
 	clone.details = details
@@ -359,9 +337,9 @@ func (e *TokenExchangeError) WithErrorURI(uri string) *TokenExchangeError {
 	return &clone
 }
 
-func (e *TokenExchangeError) WithFailureReason(reason FailureReason) *TokenExchangeError {
+func (e *TokenExchangeError) WithDiagnostic(diagnostic Diagnostic) *TokenExchangeError {
 	clone := *e
-	clone.failureReason = reason
+	clone.diagnostic = diagnostic
 	return &clone
 }
 

@@ -5,12 +5,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jws"
 	"github.com/lestrrat-go/jwx/v4/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,7 +52,6 @@ func TestNewJWTValidator(t *testing.T) {
 		brokerAudience   string
 		clockSkewSeconds int64
 		expectError      bool
-		errorContains    string
 	}{
 		{
 			name: "valid parameters",
@@ -79,7 +80,6 @@ func TestNewJWTValidator(t *testing.T) {
 			brokerAudience:   "broker-id",
 			clockSkewSeconds: 60,
 			expectError:      true,
-			errorContains:    "cannot be nil",
 		},
 		{
 			name: "empty issuer",
@@ -90,7 +90,6 @@ func TestNewJWTValidator(t *testing.T) {
 			brokerAudience:   "broker-id",
 			clockSkewSeconds: 60,
 			expectError:      true,
-			errorContains:    "cannot be empty",
 		},
 		{
 			name: "empty audience",
@@ -101,7 +100,6 @@ func TestNewJWTValidator(t *testing.T) {
 			brokerAudience:   "",
 			clockSkewSeconds: 60,
 			expectError:      true,
-			errorContains:    "cannot be empty",
 		},
 		{
 			name: "negative clock skew",
@@ -112,7 +110,6 @@ func TestNewJWTValidator(t *testing.T) {
 			brokerAudience:   "broker-id",
 			clockSkewSeconds: -1,
 			expectError:      true,
-			errorContains:    "cannot be negative",
 		},
 		{
 			name: "clock skew exceeds max",
@@ -123,7 +120,6 @@ func TestNewJWTValidator(t *testing.T) {
 			brokerAudience:   "broker-id",
 			clockSkewSeconds: MaxClockSkewTolerance + 1,
 			expectError:      true,
-			errorContains:    "cannot exceed max tolerance",
 		},
 	}
 
@@ -138,11 +134,8 @@ func TestNewJWTValidator(t *testing.T) {
 			)
 
 			if tt.expectError {
-				assert.Error(t, err)
+				_ = assertOriginDiagnostic(t, err, "server_error", OutcomeConfigurationError, StageSubjectValidation, DetailJWTConfiguration)
 				assert.Nil(t, validator)
-				if tt.errorContains != "" {
-					assert.ErrorContains(t, err, tt.errorContains)
-				}
 			} else {
 				require.NoError(t, err)
 				require.NotNil(t, validator)
@@ -169,7 +162,7 @@ func TestNewJWTValidatorWithPolicies(t *testing.T) {
 		subjectTokenPolicy    JWTValidationPolicy
 		clientAssertionPolicy JWTValidationPolicy
 		expectError           bool
-		errorContains         string
+		stage                 FailureStage
 	}{
 		{
 			name:                  "valid distinct policies",
@@ -183,7 +176,7 @@ func TestNewJWTValidatorWithPolicies(t *testing.T) {
 			},
 			clientAssertionPolicy: validClientPolicy,
 			expectError:           true,
-			errorContains:         "subject_token jwks_provider cannot be nil",
+			stage:                 StageSubjectValidation,
 		},
 		{
 			name:               "client assertion policy requires jwks provider",
@@ -191,8 +184,8 @@ func TestNewJWTValidatorWithPolicies(t *testing.T) {
 			clientAssertionPolicy: JWTValidationPolicy{
 				ExpectedIssuers: []string{"https://upstream.example.com"},
 			},
-			expectError:   true,
-			errorContains: "client_assertion jwks_provider cannot be nil",
+			expectError: true,
+			stage:       StageClientValidation,
 		},
 		{
 			name: "subject policy requires issuer",
@@ -201,7 +194,7 @@ func TestNewJWTValidatorWithPolicies(t *testing.T) {
 			},
 			clientAssertionPolicy: validClientPolicy,
 			expectError:           true,
-			errorContains:         "subject_token expected_issuer cannot be empty",
+			stage:                 StageSubjectValidation,
 		},
 	}
 
@@ -217,9 +210,8 @@ func TestNewJWTValidatorWithPolicies(t *testing.T) {
 			)
 
 			if tt.expectError {
-				require.Error(t, err)
+				_ = assertOriginDiagnostic(t, err, "server_error", OutcomeConfigurationError, tt.stage, DetailJWTConfiguration)
 				assert.Nil(t, validator)
-				assert.ErrorContains(t, err, tt.errorContains)
 				return
 			}
 
@@ -241,8 +233,7 @@ func TestValidateSubjectToken_EmptyToken(t *testing.T) {
 	ctx := context.Background()
 	_, err = validator.ValidateSubjectToken(ctx, "")
 
-	assert.Error(t, err)
-	assert.ErrorContains(t, err, "empty or missing")
+	_ = assertOriginDiagnostic(t, err, "invalid_request", OutcomeInvalidRequest, StageRequestValidation, DetailRequestMalformed)
 }
 
 // TestValidateSubjectToken_MalformedToken tests handling of malformed token
@@ -255,8 +246,7 @@ func TestValidateSubjectToken_MalformedToken(t *testing.T) {
 	ctx := context.Background()
 	_, err = validator.ValidateSubjectToken(ctx, "not.a.jwt")
 
-	assert.Error(t, err)
-	assert.ErrorContains(t, err, "malformed")
+	_ = assertOriginDiagnostic(t, err, "invalid_grant", OutcomeAuthenticationFailed, StageSubjectValidation, DetailSubjectInvalid)
 }
 
 // TestValidateSubjectToken_JWKSFetchError tests handling of JWKS fetch error
@@ -271,8 +261,7 @@ func TestValidateSubjectToken_JWKSFetchError(t *testing.T) {
 	// The test will fail at JWKS fetch step
 	_, err = validator.ValidateSubjectToken(ctx, "eyJhbGciOiJIUzI1NiIsImtpZCI6InRlc3Qta2lkIn0.eyJzdWIiOiJ0ZXN0In0.test")
 
-	assert.Error(t, err)
-	assert.ErrorContains(t, err, "failed to fetch JWKS")
+	_ = assertOriginDiagnostic(t, err, "server_error", OutcomeInfrastructureError, StageSubjectValidation, DetailJWKSUnavailable)
 }
 
 // TestValidateClientAssertion_EmptyToken tests handling of empty client_assertion
@@ -285,8 +274,7 @@ func TestValidateClientAssertion_EmptyToken(t *testing.T) {
 	ctx := context.Background()
 	_, err = validator.ValidateClientAssertion(ctx, "")
 
-	assert.Error(t, err)
-	assert.ErrorContains(t, err, "empty or missing")
+	_ = assertOriginDiagnostic(t, err, "invalid_request", OutcomeInvalidRequest, StageRequestValidation, DetailRequestMalformed)
 }
 
 // TestValidateClientAssertion_MalformedToken tests handling of malformed client_assertion
@@ -299,141 +287,117 @@ func TestValidateClientAssertion_MalformedToken(t *testing.T) {
 	ctx := context.Background()
 	_, err = validator.ValidateClientAssertion(ctx, "not.a.jwt")
 
-	assert.Error(t, err)
-	assert.ErrorContains(t, err, "malformed")
+	_ = assertOriginDiagnostic(t, err, "invalid_client", OutcomeAuthenticationFailed, StageClientValidation, DetailClientInvalid)
 }
 
-// TestMapParseError_WrapsUnderlyingCause verifies that JWT validation errors include the
-// underlying library error as a cause so operators can log full details internally.
-func TestMapParseError_WrapsUnderlyingCause(t *testing.T) {
+func assertOriginDiagnostic(t *testing.T, err error, code string, outcome Outcome, stage FailureStage, detail FailureDetail) *TokenExchangeError {
+	t.Helper()
+	require.Error(t, err)
+	var tokenErr *TokenExchangeError
+	require.ErrorAs(t, err, &tokenErr)
+	assert.Equal(t, code, tokenErr.Code())
+	assert.Equal(t, outcome, tokenErr.Diagnostic().Outcome())
+	assert.Equal(t, stage, tokenErr.Diagnostic().Stage())
+	assert.Equal(t, detail, tokenErr.Diagnostic().Detail())
+	assert.Empty(t, tokenErr.Details())
+	return tokenErr
+}
+
+func TestJWTValidationPreservesTypedCauses(t *testing.T) {
 	t.Parallel()
-	mockProvider := &MockJWKSProvider{keySet: jwk.NewSet()}
-	validator, err := NewJWTValidator(mockProvider, "https://auth.example.com", "broker-id", 60)
+	validator, err := NewJWTValidator(&MockJWKSProvider{keySet: jwk.NewSet()}, "https://issuer.example", "broker", 60)
 	require.NoError(t, err)
-
-	tests := []struct {
-		name            string
-		rawErr          error
-		wantErrContains string
+	for _, tc := range []struct {
+		name    string
+		cause   error
+		expired bool
 	}{
-		{name: "parse/signature error mapped via ParseError sentinel", rawErr: jwt.ParseError{}, wantErrContains: "malformed"},
-		{name: "issuer error includes expected iss value", rawErr: jwt.InvalidIssuerError{}, wantErrContains: `expected iss="https://auth.example.com"`},
-		{name: "audience error includes expected aud value", rawErr: jwt.InvalidAudienceError{}, wantErrContains: `expected aud="broker-id"`},
-		{name: "expired token mapped", rawErr: jwt.TokenExpiredError{}, wantErrContains: "expired"},
-		{name: "not-yet-valid token mapped", rawErr: jwt.TokenNotYetValidError{}, wantErrContains: "not yet valid"},
-		{name: "unknown error falls through to default case", rawErr: fmt.Errorf("some totally unknown jwt failure"), wantErrContains: "validation failed"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		{"parse", jwt.ParseError{}, false},
+		{"issuer", jwt.InvalidIssuerError{}, false},
+		{"audience", jwt.InvalidAudienceError{}, false},
+		{"expired", jwt.TokenExpiredError{}, true},
+		{"not yet valid", jwt.TokenNotYetValidError{}, false},
+		{"unknown", errors.New("secret-cause-credential"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			domErr := validator.mapParseError(tt.rawErr, "subject_token", "")
-			require.Error(t, domErr)
-
-			// The domain error should contain the expected user-facing description
-			assert.ErrorContains(t, domErr, tt.wantErrContains)
-
-			// The underlying cause must be wrapped for internal logging
-			tokenErr, ok := domErr.(*TokenExchangeError)
-			require.True(t, ok, "expected *TokenExchangeError")
-			require.NotNil(t, tokenErr.Unwrap(), "expected underlying cause to be set for logging")
-			assert.Equal(t, tt.rawErr, tokenErr.Unwrap())
+			subjectDetail, clientDetail := DetailSubjectInvalid, DetailClientInvalid
+			if tc.expired {
+				subjectDetail, clientDetail = DetailSubjectExpired, DetailClientExpired
+			}
+			subjectErr := validator.mapParseError(tc.cause)
+			clientErr := validator.mapClientAssertionParseError(tc.cause)
+			_ = assertOriginDiagnostic(t, subjectErr, "invalid_grant", OutcomeAuthenticationFailed, StageSubjectValidation, subjectDetail)
+			_ = assertOriginDiagnostic(t, clientErr, "invalid_client", OutcomeAuthenticationFailed, StageClientValidation, clientDetail)
+			assert.ErrorIs(t, subjectErr, tc.cause)
+			assert.ErrorIs(t, clientErr, tc.cause)
+			assert.NotContains(t, subjectErr.Error(), "secret-cause-credential")
+			assert.NotContains(t, clientErr.Error(), "secret-cause-credential")
 		})
 	}
 }
 
-// TestMapClientAssertionParseError_WrapsUnderlyingCause verifies that client assertion validation
-// errors include the underlying library error as a cause for internal logging.
-func TestMapClientAssertionParseError_WrapsUnderlyingCause(t *testing.T) {
-	t.Parallel()
-	mockProvider := &MockJWKSProvider{keySet: jwk.NewSet()}
-	validator, err := NewJWTValidator(mockProvider, "https://auth.example.com", "broker-id", 60)
-	require.NoError(t, err)
+type originTestError struct{ value string }
 
-	tests := []struct {
-		name            string
-		rawErr          error
-		wantErrContains string
+func (e *originTestError) Error() string { return e.value }
+
+func TestJWTKeyFetchDiagnostic(t *testing.T) {
+	t.Parallel()
+	secretCause := &originTestError{value: "https://secret-expected:secret-actual@example.test/private?credential=secret-token"}
+	for _, role := range []struct {
+		name     string
+		stage    FailureStage
+		validate func(*JWTValidator, context.Context, string) (jwt.Token, error)
 	}{
-		{name: "parse/signature error mapped via ParseError sentinel", rawErr: jwt.ParseError{}, wantErrContains: "malformed"},
-		{name: "issuer error includes expected iss value", rawErr: jwt.InvalidIssuerError{}, wantErrContains: `expected iss="https://auth.example.com"`},
-		{name: "audience error includes expected aud value", rawErr: jwt.InvalidAudienceError{}, wantErrContains: `expected aud="broker-id"`},
-		{name: "expired token mapped", rawErr: jwt.TokenExpiredError{}, wantErrContains: "expired"},
-		{name: "not-yet-valid token mapped", rawErr: jwt.TokenNotYetValidError{}, wantErrContains: "not yet valid"},
-		{name: "unknown error falls through to default case", rawErr: fmt.Errorf("some totally unknown jwt failure"), wantErrContains: "validation failed"},
+		{"subject", StageSubjectValidation, (*JWTValidator).ValidateSubjectToken},
+		{"client", StageClientValidation, (*JWTValidator).ValidateClientAssertion},
+	} {
+		for _, tc := range []struct {
+			name        string
+			cause       error
+			callerError error
+			outcome     Outcome
+			detail      FailureDetail
+		}{
+			{"dependency failure", secretCause, nil, OutcomeInfrastructureError, DetailJWKSUnavailable},
+			{"shared deadline", context.DeadlineExceeded, nil, OutcomeInfrastructureError, DetailJWKSUnavailable},
+			{"detached cancellation", context.Canceled, nil, OutcomeInfrastructureError, DetailJWKSUnavailable},
+			{"caller canceled", context.Canceled, context.Canceled, OutcomeCanceled, DetailCallerCanceled},
+			{"caller deadline", context.DeadlineExceeded, context.DeadlineExceeded, OutcomeCanceled, DetailCallerCanceled},
+			{"caller canceled with dependency cause", secretCause, context.Canceled, OutcomeCanceled, DetailCallerCanceled},
+		} {
+			t.Run(role.name+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				var ctx context.Context
+				var cancel context.CancelFunc
+				if tc.callerError == context.DeadlineExceeded {
+					ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+				} else {
+					ctx, cancel = context.WithCancel(context.Background())
+					if tc.callerError != nil {
+						cancel()
+					}
+				}
+				defer cancel()
+				validator, err := NewJWTValidator(&MockJWKSProvider{err: tc.cause}, "https://issuer.example", "broker", 60)
+				require.NoError(t, err)
+				_, err = role.validate(validator, ctx, "secret-raw-credential")
+				tokenErr := assertOriginDiagnostic(t, err, "server_error", tc.outcome, role.stage, tc.detail)
+				assert.ErrorIs(t, err, tc.cause)
+				if tc.callerError != nil {
+					assert.ErrorIs(t, err, tc.callerError)
+				}
+				if tc.cause == secretCause {
+					var dependencyErr *originTestError
+					require.ErrorAs(t, err, &dependencyErr)
+					assert.Same(t, secretCause, dependencyErr)
+				}
+				for _, secret := range []string{"secret-expected", "secret-actual", "secret-raw-credential"} {
+					assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.Diagnostic()), secret)
+				}
+			})
+		}
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			domErr := validator.mapClientAssertionParseError(tt.rawErr, "")
-			require.Error(t, domErr)
-
-			assert.ErrorContains(t, domErr, tt.wantErrContains)
-
-			tokenErr, ok := domErr.(*TokenExchangeError)
-			require.True(t, ok, "expected *TokenExchangeError")
-			require.NotNil(t, tokenErr.Unwrap(), "expected underlying cause to be set for logging")
-			assert.Equal(t, tt.rawErr, tokenErr.Unwrap())
-		})
-	}
-}
-
-// TestExtractDiagnostics verifies that extractDiagnostics returns expected vs actual
-// claim values when given a parseable JWT, and empty string for unparseable input.
-func TestExtractDiagnostics(t *testing.T) {
-	t.Parallel()
-	mockProvider := &MockJWKSProvider{keySet: jwk.NewSet()}
-	validator, err := NewJWTValidator(mockProvider, "https://auth.example.com", "broker-id", 60)
-	require.NoError(t, err)
-
-	t.Run("empty token returns empty string", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, "", validator.extractDiagnostics("", validator.subjectTokenPolicy.ExpectedIssuers))
-	})
-
-	t.Run("unparseable token returns empty string", func(t *testing.T) {
-		t.Parallel()
-		assert.Equal(t, "", validator.extractDiagnostics("not-a-jwt", validator.subjectTokenPolicy.ExpectedIssuers))
-	})
-
-	t.Run("parseable token returns expected vs actual claims", func(t *testing.T) {
-		t.Parallel()
-		tok, buildErr := jwt.NewBuilder().
-			Subject("user@example.com").
-			Issuer("https://wrong-issuer.com").
-			Audience([]string{"wrong-audience"}).
-			Build()
-		require.NoError(t, buildErr)
-		serialized, signErr := jwt.Sign(tok, jwt.WithInsecureNoSignature())
-		require.NoError(t, signErr)
-
-		diag := validator.extractDiagnostics(string(serialized), validator.subjectTokenPolicy.ExpectedIssuers)
-		assert.Contains(t, diag, `sub="user@example.com"`)
-		assert.Contains(t, diag, `expected_iss="https://auth.example.com"`)
-		assert.Contains(t, diag, `actual_iss="https://wrong-issuer.com"`)
-		assert.Contains(t, diag, `expected_aud="broker-id"`)
-		assert.Contains(t, diag, `actual_aud=["wrong-audience"]`)
-	})
-
-	t.Run("diagnostics included in mapParseError details", func(t *testing.T) {
-		t.Parallel()
-		tok, buildErr := jwt.NewBuilder().
-			Subject("debug-user").
-			Issuer("https://wrong-issuer.com").
-			Audience([]string{"wrong-aud"}).
-			Build()
-		require.NoError(t, buildErr)
-		serialized, signErr := jwt.Sign(tok, jwt.WithInsecureNoSignature())
-		require.NoError(t, signErr)
-
-		domErr := validator.mapParseError(jwt.InvalidAudienceError{}, "subject_token", string(serialized))
-		tokenErr, ok := domErr.(*TokenExchangeError)
-		require.True(t, ok)
-		assert.Contains(t, tokenErr.Details(), `sub="debug-user"`)
-		assert.Contains(t, tokenErr.Details(), `expected_aud="broker-id"`)
-		assert.Contains(t, tokenErr.Details(), `actual_aud=["wrong-aud"]`)
-	})
 }
 
 // newTestKeyPair creates an ECDSA P-256 key pair for testing.
@@ -559,238 +523,70 @@ func TestJWTValidatorWithSeparatePolicies(t *testing.T) {
 
 		_, err := validator.ValidateClientAssertion(context.Background(), tokenString)
 
-		require.Error(t, err)
-		assert.ErrorContains(t, err, "malformed or signature verification failed")
-
-		tokenErr, ok := err.(*TokenExchangeError)
-		require.True(t, ok)
-		assert.Equal(t, "invalid_client", tokenErr.Code())
+		_ = assertOriginDiagnostic(t, err, "invalid_client", OutcomeAuthenticationFailed, StageClientValidation, DetailClientInvalid)
 	})
 }
 
-// TestMapParseError_RealLibraryErrors verifies that validation errors produced by the actual
-// jwt.ParseString library function are correctly classified as specific error types (audience,
-// issuer, expired) rather than falling into the generic "malformed or signature verification
-// failed" bucket. The jwx library wraps all validation failures inside a ParseError, so
-// without correct ordering of error checks, specific failures would be misclassified.
-func TestMapParseError_RealLibraryErrors(t *testing.T) {
+func TestJWTValidatorRejectedCredentials(t *testing.T) {
 	t.Parallel()
-	privKey, keySet := newTestKeyPair(t)
-
-	const expectedIssuer = "https://auth.example.com"
-	const expectedAudience = "broker-id"
-
-	tests := []struct {
-		name             string
-		tokenIssuer      string
-		tokenAudience    []string
-		tokenExpiration  time.Time
-		tokenNBF         time.Time
-		wantErrContains  string
-		wantCode         string
-		wantHasDetails   bool
-		wantDetailsField string
+	privateKey, keySet := newTestKeyPair(t)
+	untrustedKey, _ := newTestKeyPair(t)
+	const expectedIssuer = "https://issuer.example/secret-config-issuer"
+	const expectedAudience = "secret-config-audience"
+	for _, role := range []struct {
+		name     string
+		code     string
+		stage    FailureStage
+		invalid  FailureDetail
+		expired  FailureDetail
+		target   RecoveryTarget
+		validate func(*JWTValidator, context.Context, string) (jwt.Token, error)
 	}{
-		{
-			name:             "audience mismatch produces specific audience error with diagnostics",
-			tokenIssuer:      expectedIssuer,
-			tokenAudience:    []string{"wrong-audience"},
-			tokenExpiration:  time.Now().Add(time.Hour),
-			wantErrContains:  "audience validation failed",
-			wantCode:         "invalid_grant",
-			wantHasDetails:   true,
-			wantDetailsField: `actual_aud=["wrong-audience"]`,
-		},
-		{
-			name:             "issuer mismatch produces specific issuer error with diagnostics",
-			tokenIssuer:      "https://wrong-issuer.com",
-			tokenAudience:    []string{expectedAudience},
-			tokenExpiration:  time.Now().Add(time.Hour),
-			wantErrContains:  "issuer validation failed",
-			wantCode:         "invalid_grant",
-			wantHasDetails:   true,
-			wantDetailsField: `actual_iss="https://wrong-issuer.com"`,
-		},
-		{
-			name:             "expired token produces specific expiry error with diagnostics",
-			tokenIssuer:      expectedIssuer,
-			tokenAudience:    []string{expectedAudience},
-			tokenExpiration:  time.Now().Add(-time.Hour),
-			wantErrContains:  "has expired",
-			wantCode:         "invalid_grant",
-			wantHasDetails:   true,
-			wantDetailsField: "exp=",
-		},
-		{
-			name:             "not-yet-valid token produces specific nbf error with diagnostics",
-			tokenIssuer:      expectedIssuer,
-			tokenAudience:    []string{expectedAudience},
-			tokenExpiration:  time.Now().Add(time.Hour),
-			tokenNBF:         time.Now().Add(time.Hour),
-			wantErrContains:  "not yet valid",
-			wantCode:         "invalid_grant",
-			wantHasDetails:   true,
-			wantDetailsField: "nbf=",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			builder := jwt.NewBuilder().
-				Issuer(tt.tokenIssuer).
-				Audience(tt.tokenAudience).
-				Subject("test-user@example.com").
-				Expiration(tt.tokenExpiration)
-			if !tt.tokenNBF.IsZero() {
-				builder = builder.NotBefore(tt.tokenNBF)
-			}
-			tok, err := builder.Build()
-			require.NoError(t, err)
-
-			signed, err := jwt.Sign(tok, jwt.WithKey(jwa.ES256(), privKey))
-			require.NoError(t, err)
-
-			// Parse with the same options as the production validator so the test
-			// exercises the identical error-wrapping codepath.
-			_, parseErr := jwt.ParseString(string(signed),
-				jwt.WithVerify(true),
-				jwt.WithKeySet(keySet),
-				jwt.WithValidate(true),
-				jwt.WithIssuer(expectedIssuer),
-				jwt.WithAudience(expectedAudience),
-				jwt.WithAcceptableSkew(60*time.Second),
-			)
-			require.Error(t, parseErr, "expected library to reject the token")
-
-			// Now map the error through our domain mapper
-			mockProvider := &MockJWKSProvider{keySet: keySet}
-			validator, valErr := NewJWTValidator(mockProvider, expectedIssuer, expectedAudience, 60)
-			require.NoError(t, valErr)
-
-			domErr := validator.mapParseError(parseErr, "subject_token", string(signed))
-			require.Error(t, domErr)
-
-			// Verify the error is classified correctly (not as generic "malformed")
-			assert.Contains(t, domErr.Error(), tt.wantErrContains,
-				"error should be classified as specific validation failure, not generic parse error")
-			assert.NotContains(t, domErr.Error(), "malformed",
-				"specific validation failures must NOT be classified as malformed/signature errors")
-
-			tokenErr, ok := domErr.(*TokenExchangeError)
-			require.True(t, ok)
-			assert.Equal(t, tt.wantCode, tokenErr.Code())
-
-			// Verify diagnostics are present
-			if tt.wantHasDetails {
-				assert.NotEmpty(t, tokenErr.Details(),
-					"specific validation errors must include diagnostics for troubleshooting")
-				assert.Contains(t, tokenErr.Details(), tt.wantDetailsField)
-			}
-
-			// Verify the underlying cause is preserved for logging
-			assert.NotNil(t, tokenErr.Unwrap(), "cause must be preserved for internal logging")
-		})
-	}
-}
-
-// TestMapClientAssertionParseError_RealLibraryErrors verifies the same fix for client assertions.
-func TestMapClientAssertionParseError_RealLibraryErrors(t *testing.T) {
-	t.Parallel()
-	privKey, keySet := newTestKeyPair(t)
-
-	const expectedIssuer = "https://auth.example.com"
-	const expectedAudience = "broker-id"
-
-	tests := []struct {
-		name             string
-		tokenIssuer      string
-		tokenAudience    []string
-		tokenExpiration  time.Time
-		wantErrContains  string
-		wantCode         string
-		wantHasDetails   bool
-		wantDetailsField string
-	}{
-		{
-			name:             "audience mismatch produces specific audience error with diagnostics",
-			tokenIssuer:      expectedIssuer,
-			tokenAudience:    []string{"wrong-audience"},
-			tokenExpiration:  time.Now().Add(time.Hour),
-			wantErrContains:  "audience validation failed",
-			wantCode:         "invalid_client",
-			wantHasDetails:   true,
-			wantDetailsField: `actual_aud=["wrong-audience"]`,
-		},
-		{
-			name:             "issuer mismatch produces specific issuer error with diagnostics",
-			tokenIssuer:      "https://wrong-issuer.com",
-			tokenAudience:    []string{expectedAudience},
-			tokenExpiration:  time.Now().Add(time.Hour),
-			wantErrContains:  "issuer validation failed",
-			wantCode:         "invalid_client",
-			wantHasDetails:   true,
-			wantDetailsField: `actual_iss="https://wrong-issuer.com"`,
-		},
-		{
-			name:             "expired token produces specific expiry error with diagnostics",
-			tokenIssuer:      expectedIssuer,
-			tokenAudience:    []string{expectedAudience},
-			tokenExpiration:  time.Now().Add(-time.Hour),
-			wantErrContains:  "has expired",
-			wantCode:         "invalid_client",
-			wantHasDetails:   true,
-			wantDetailsField: "exp=",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			tok, err := jwt.NewBuilder().
-				Issuer(tt.tokenIssuer).
-				Audience(tt.tokenAudience).
-				Subject("test-client").
-				Expiration(tt.tokenExpiration).
-				Build()
-			require.NoError(t, err)
-
-			signed, err := jwt.Sign(tok, jwt.WithKey(jwa.ES256(), privKey))
-			require.NoError(t, err)
-
-			_, parseErr := jwt.ParseString(string(signed),
-				jwt.WithVerify(true),
-				jwt.WithKeySet(keySet),
-				jwt.WithValidate(true),
-				jwt.WithIssuer(expectedIssuer),
-				jwt.WithAudience(expectedAudience),
-				jwt.WithAcceptableSkew(60*time.Second),
-			)
-			require.Error(t, parseErr)
-
-			mockProvider := &MockJWKSProvider{keySet: keySet}
-			validator, valErr := NewJWTValidator(mockProvider, expectedIssuer, expectedAudience, 60)
-			require.NoError(t, valErr)
-
-			domErr := validator.mapClientAssertionParseError(parseErr, string(signed))
-			require.Error(t, domErr)
-
-			assert.Contains(t, domErr.Error(), tt.wantErrContains)
-			assert.NotContains(t, domErr.Error(), "malformed")
-
-			tokenErr, ok := domErr.(*TokenExchangeError)
-			require.True(t, ok)
-			assert.Equal(t, tt.wantCode, tokenErr.Code())
-
-			if tt.wantHasDetails {
-				assert.NotEmpty(t, tokenErr.Details())
-				assert.Contains(t, tokenErr.Details(), tt.wantDetailsField)
-			}
-
-			assert.NotNil(t, tokenErr.Unwrap())
-		})
+		{"subject", "invalid_grant", StageSubjectValidation, DetailSubjectInvalid, DetailSubjectExpired, TargetSubjectIdentity, (*JWTValidator).ValidateSubjectToken},
+		{"client", "invalid_client", StageClientValidation, DetailClientInvalid, DetailClientExpired, TargetCallingClient, (*JWTValidator).ValidateClientAssertion},
+	} {
+		for _, tc := range []struct {
+			name       string
+			issuer     string
+			audience   []string
+			expiration time.Time
+			nbf        time.Time
+			key        jwk.Key
+			cause      error
+			isExpired  bool
+		}{
+			{"issuer", "https://untrusted.example/secret-token-issuer", []string{expectedAudience}, time.Now().Add(time.Hour), time.Time{}, privateKey, jwt.InvalidIssuerError{}, false},
+			{"audience", expectedIssuer, []string{"secret-token-audience"}, time.Now().Add(time.Hour), time.Time{}, privateKey, jwt.InvalidAudienceError{}, false},
+			{"expiration", expectedIssuer, []string{expectedAudience}, time.Now().Add(-time.Hour), time.Time{}, privateKey, jwt.TokenExpiredError{}, true},
+			{"not before", expectedIssuer, []string{expectedAudience}, time.Now().Add(time.Hour), time.Now().Add(time.Hour), privateKey, jwt.TokenNotYetValidError{}, false},
+			{"signature", expectedIssuer, []string{expectedAudience}, time.Now().Add(time.Hour), time.Time{}, untrustedKey, jwt.ParseError{}, false},
+		} {
+			t.Run(role.name+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				builder := jwt.NewBuilder().Issuer(tc.issuer).Audience(tc.audience).Subject("secret-token-subject").Expiration(tc.expiration)
+				if !tc.nbf.IsZero() {
+					builder = builder.NotBefore(tc.nbf)
+				}
+				token, err := builder.Build()
+				require.NoError(t, err)
+				signed, err := jwt.Sign(token, jwt.WithKey(jwa.ES256(), tc.key))
+				require.NoError(t, err)
+				validator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, expectedIssuer, expectedAudience, 60)
+				require.NoError(t, err)
+				_, err = role.validate(validator, context.Background(), string(signed))
+				detail := role.invalid
+				if tc.isExpired {
+					detail = role.expired
+				}
+				tokenErr := assertOriginDiagnostic(t, err, role.code, OutcomeAuthenticationFailed, role.stage, detail)
+				assert.ErrorIs(t, err, tc.cause)
+				assert.Equal(t, RecoveryReauthenticate, tokenErr.Diagnostic().RecoveryAction())
+				assert.Equal(t, role.target, tokenErr.Diagnostic().RecoveryTarget())
+				for _, secret := range []string{string(signed), expectedIssuer, expectedAudience, "secret-token-subject", "secret-token-issuer", "secret-token-audience"} {
+					assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.ErrorURI(), tokenErr.Diagnostic()), secret)
+				}
+			})
+		}
 	}
 }
 
@@ -812,16 +608,16 @@ func TestJWTValidator_MultipleIssuersVerifyOnlyOnce(t *testing.T) {
 	const audience = "broker-id"
 	privateKey, keySet := newTestKeyPair(t)
 	for _, tc := range []struct {
-		name      string
-		issuer    string
-		audience  []string
-		expires   time.Time
-		wantError string
+		name       string
+		issuer     string
+		audience   []string
+		expires    time.Time
+		wantDetail FailureDetail
 	}{
 		{"second issuer accepted", secondIssuer, []string{audience}, time.Now().Add(time.Hour), ""},
-		{"untrusted issuer rejected", "https://other.example.com", []string{audience}, time.Now().Add(time.Hour), "issuer validation failed"},
-		{"expired second issuer rejected", secondIssuer, []string{audience}, time.Now().Add(-time.Hour), "has expired"},
-		{"wrong audience rejected", secondIssuer, []string{"other-audience"}, time.Now().Add(time.Hour), "audience validation failed"},
+		{"untrusted issuer rejected", "https://other.example.com", []string{audience}, time.Now().Add(time.Hour), DetailSubjectInvalid},
+		{"expired second issuer rejected", secondIssuer, []string{audience}, time.Now().Add(-time.Hour), DetailSubjectExpired},
+		{"wrong audience rejected", secondIssuer, []string{"other-audience"}, time.Now().Add(time.Hour), DetailSubjectInvalid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			countingSet := &countingVerificationKeySet{verificationKeySet: keySet}
@@ -833,10 +629,10 @@ func TestJWTValidator_MultipleIssuersVerifyOnlyOnce(t *testing.T) {
 			require.NoError(t, err)
 			signed := newSignedToken(t, privateKey, tc.issuer, tc.audience, "subject", tc.expires)
 			_, err = validator.ValidateSubjectToken(context.Background(), signed)
-			if tc.wantError == "" {
+			if tc.wantDetail == "" {
 				require.NoError(t, err)
 			} else {
-				require.ErrorContains(t, err, tc.wantError)
+				_ = assertOriginDiagnostic(t, err, "invalid_grant", OutcomeAuthenticationFailed, StageSubjectValidation, tc.wantDetail)
 			}
 			assert.Equal(t, 1, countingSet.lookups, "each credential needs only one cryptographic verification")
 		})
@@ -852,7 +648,41 @@ func TestJWTValidator_MultipleIssuersVerifyOnlyOnce(t *testing.T) {
 		require.NoError(t, err)
 		credential := newSignedToken(t, untrustedKey, secondIssuer, []string{audience}, "subject", time.Now().Add(time.Hour))
 		_, err = validator.ValidateSubjectToken(context.Background(), credential)
-		require.ErrorContains(t, err, "malformed or signature verification failed")
+		_ = assertOriginDiagnostic(t, err, "invalid_grant", OutcomeAuthenticationFailed, StageSubjectValidation, DetailSubjectInvalid)
 		assert.Equal(t, 1, countingSet.lookups)
 	})
+}
+
+func TestJWTValidatorNeverSerializesJOSEHeaders(t *testing.T) {
+	t.Parallel()
+	key, _ := newTestKeyPairWithID(t, "secret-jose-kid")
+	_, trustedSet := newTestKeyPair(t)
+	headers := jws.NewHeaders()
+	require.NoError(t, headers.Set(jws.TypeKey, "secret-jose-typ"))
+	require.NoError(t, headers.Set(jws.ContentTypeKey, "secret-jose-cty"))
+	token, err := jwt.NewBuilder().Subject("secret-claim-sub").Issuer("https://secret-claim-issuer.example/private").Audience([]string{"secret-claim-aud"}).Expiration(time.Now().Add(time.Hour)).Build()
+	require.NoError(t, err)
+	signed, err := jwt.Sign(token, jwt.WithKey(jwa.ES256(), key, jws.WithProtectedHeaders(headers)))
+	require.NoError(t, err)
+	validator, err := NewJWTValidator(&MockJWKSProvider{keySet: trustedSet}, "https://secret-config-issuer.example/private", "secret-config-aud", 60)
+	require.NoError(t, err)
+	for _, role := range []struct {
+		name     string
+		code     string
+		stage    FailureStage
+		detail   FailureDetail
+		validate func(*JWTValidator, context.Context, string) (jwt.Token, error)
+	}{
+		{"subject", "invalid_grant", StageSubjectValidation, DetailSubjectInvalid, (*JWTValidator).ValidateSubjectToken},
+		{"client", "invalid_client", StageClientValidation, DetailClientInvalid, (*JWTValidator).ValidateClientAssertion},
+	} {
+		t.Run(role.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := role.validate(validator, context.Background(), string(signed))
+			tokenErr := assertOriginDiagnostic(t, err, role.code, OutcomeAuthenticationFailed, role.stage, role.detail)
+			for _, secret := range []string{string(signed), "secret-jose-kid", "secret-jose-typ", "secret-jose-cty", "secret-claim", "secret-config"} {
+				assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.ErrorURI(), tokenErr.Diagnostic()), secret)
+			}
+		})
+	}
 }

@@ -73,25 +73,6 @@ func TestValidateResourceURI_UsesSourceNeutralErrors(t *testing.T) {
 	}
 }
 
-func TestSanitizeURIForTelemetry_RedactsCredentialsAndParseFailures(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"userinfo stripped", "https://user:secret@example.com/resource?access_token=SECRET", "https://example.com/resource"},
-		{"unparsable userinfo redacted", "https://user:secret@example.com/%zz", "[invalid resource URI]"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeURIForTelemetry(tt.in)
-			assert.Equal(t, tt.want, got)
-			assert.NotContains(t, got, "user:secret")
-			assert.NotContains(t, got, "SECRET")
-		})
-	}
-}
-
 func TestExtractTraceContext_SelectsFirstValidDuplicateTraceparent(t *testing.T) {
 	previousPropagator := otel.GetTextMapPropagator()
 	otel.SetTextMapPropagator(propagation.TraceContext{})

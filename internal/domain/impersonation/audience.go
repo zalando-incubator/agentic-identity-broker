@@ -56,12 +56,12 @@ func (s *Service) ResolveTarget(ctx context.Context, audiences []string) (*Targe
 	}
 	if lookupErr != nil {
 		if ports.IsNotFoundErr(lookupErr) {
-			return nil, true, tokenexchange.NewInvalidTargetErrorWithDetails("audience target agent was not found", "target_agent_not_found")
+			return nil, true, originError(ctx, tokenexchange.NewInvalidTargetErrorWithDetails("audience target agent was not found", "target_agent_not_found"), lookupErr, tokenexchange.StageIdentityResolution, tokenexchange.DetailAgentMissing)
 		}
-		return nil, true, serverError("audience target agent lookup failed", "target_agent_lookup_failed")
+		return nil, true, originError(ctx, serverError("audience target agent lookup failed", "target_agent_lookup_failed"), lookupErr, tokenexchange.StageIdentityResolution, tokenexchange.DetailAgentRepositoryUnavailable)
 	}
 	if agent == nil || agent.ID.IsZero() {
-		return nil, true, serverError("audience target agent lookup returned an invalid agent", "target_agent_lookup_failed")
+		return nil, true, originError(ctx, serverError("audience target agent lookup returned an invalid agent", "target_agent_lookup_failed"), nil, tokenexchange.StageIdentityResolution, tokenexchange.DetailAgentInvalid)
 	}
 	return &Target{Agent: agent}, true, nil
 }

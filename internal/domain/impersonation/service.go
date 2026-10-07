@@ -2,10 +2,13 @@ package impersonation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/lestrrat-go/jwx/v4/jwt"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
@@ -82,11 +85,6 @@ func NewService(
 	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, delegationVerifier: delegationVerifier, consentBaseURL: consentBaseURL, logger: logger}, nil
 }
 
-// AudiencePrefix returns the configured routing prefix for audit fallback only.
-func (s *Service) AudiencePrefix() string {
-	return s.audiencePrefix
-}
-
 // AuditRecord is the credential-free decision record emitted for every impersonation attempt
 // (FR-012). It never contains credential values, key material, or wholesale claims (SC-005).
 type AuditRecord struct {
@@ -112,7 +110,8 @@ type Outcome struct {
 
 func (s *Service) Impersonate(ctx context.Context, req *Request, target *Target) (*Outcome, error) {
 	if target == nil || target.Agent == nil || target.Agent.ID.IsZero() {
-		err := serverError("impersonation target agent is required", "target_agent_missing")
+		err := serverError("impersonation target agent is required", "target_agent_missing").
+			WithDiagnostic(impersonationDiagnostic(tokenexchange.StageIdentityResolution, tokenexchange.DetailAgentInvalid))
 		return &Outcome{Audit: failureAudit(s.audiencePrefix, "", nil, err)}, err
 	}
 	request := requestContext{Scope: req.Scope, GrantType: GrantType, AgentID: target.Agent.ID.String()}
@@ -170,14 +169,14 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 
 	clientClaims, clientIssuer, err := s.validateCredential(ctx, rule, ports.CredentialRoleClientAssertion, req.ClientAssertion, validationCache)
 	if err != nil {
-		res.failure = invalidClient("client assertion validation failed", "client_assertion_invalid")
+		res.failure = credentialError(ctx, invalidClient("client assertion validation failed", "client_assertion_invalid"), err, tokenexchange.StageClientValidation)
 		return res
 	}
 	res.recordIssuer(clientIssuer, ports.CredentialRoleClientAssertion)
 
 	actorClaims, actorIssuer, err := s.validateCredential(ctx, rule, ports.CredentialRoleActor, req.ActorToken, validationCache)
 	if err != nil {
-		res.failure = invalidRequest("actor token validation failed", "actor_token_invalid")
+		res.failure = credentialError(ctx, invalidRequest("actor token validation failed", "actor_token_invalid"), err, tokenexchange.StageSubjectValidation)
 		return res
 	}
 	res.recordIssuer(actorIssuer, ports.CredentialRoleActor)
@@ -196,14 +195,14 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		// signed JWS fails here and the rule falls through.
 		claims, err := parseUnverifiedSubject(req.SubjectToken)
 		if err != nil {
-			res.failure = invalidRequest("unverified subject token is invalid", "subject_token_invalid")
+			res.failure = credentialError(ctx, invalidRequest("unverified subject token is invalid", "subject_token_invalid"), err, tokenexchange.StageSubjectValidation)
 			return res
 		}
 		subjectClaims = claims
 	} else {
 		claims, subjectIssuer, err := s.validateCredential(ctx, rule, ports.CredentialRoleSubject, req.SubjectToken, validationCache)
 		if err != nil {
-			res.failure = invalidRequest("subject token validation failed", "subject_token_invalid")
+			res.failure = credentialError(ctx, invalidRequest("subject token validation failed", "subject_token_invalid"), err, tokenexchange.StageSubjectValidation)
 			return res
 		}
 		res.recordIssuer(subjectIssuer, ports.CredentialRoleSubject)
@@ -212,21 +211,21 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 
 	clientID, err := rule.roles[ports.CredentialRoleClientAssertion].principal.extract(ctx, clientClaims)
 	if err != nil || clientID == "" {
-		res.failure = invalidRequest("could not extract privileged client identity", "client_identity_extraction_failed")
+		res.failure = originError(ctx, invalidRequest("could not extract privileged client identity", "client_identity_extraction_failed"), err, tokenexchange.StageIdentityResolution, tokenexchange.DetailCELEvaluationFailed)
 		return res
 	}
 	res.client = clientID
 
 	actorID, err := rule.roles[ports.CredentialRoleActor].principal.extract(ctx, actorClaims)
 	if err != nil || actorID == "" {
-		res.failure = invalidRequest("could not extract actor identity", "actor_identity_extraction_failed")
+		res.failure = originError(ctx, invalidRequest("could not extract actor identity", "actor_identity_extraction_failed"), err, tokenexchange.StageIdentityResolution, tokenexchange.DetailCELEvaluationFailed)
 		return res
 	}
 	res.actor = actorID
 
 	subjectID, err := subjectRole.principal.extract(ctx, subjectClaims)
 	if err != nil || subjectID == "" {
-		res.failure = invalidRequest("could not extract subject identity", "subject_identity_extraction_failed")
+		res.failure = originError(ctx, invalidRequest("could not extract subject identity", "subject_identity_extraction_failed"), err, tokenexchange.StageIdentityResolution, tokenexchange.DetailCELEvaluationFailed)
 		return res
 	}
 	res.subject = subjectID
@@ -239,7 +238,7 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		if !subjectUnverified || rule.authz.Binds(celSubjectToken, "email") {
 			value, err := extractor.extract(ctx, subjectClaims)
 			if err != nil {
-				res.failure = invalidRequest("could not extract subject email", "subject_email_extraction_failed")
+				res.failure = originError(ctx, invalidRequest("could not extract subject email", "subject_email_extraction_failed"), err, tokenexchange.StageIdentityResolution, tokenexchange.DetailCELEvaluationFailed)
 				return res
 			}
 			if value != "" {
@@ -250,7 +249,7 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 
 	authorized, err := rule.authz.evaluate(ctx, clientClaims, actorClaims, subjectClaims, subjectUnverified, request)
 	if err != nil {
-		res.abort = serverError("authorization evaluation failed", "authorization_error")
+		res.abort = originError(ctx, serverError("authorization evaluation failed", "authorization_error"), err, tokenexchange.StageClientAuthorization, tokenexchange.DetailCELEvaluationFailed)
 		return res
 	}
 	if !authorized {
@@ -260,19 +259,21 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 
 	delegationStatus, err := s.delegationVerifier.VerifyUserDelegation(ctx, id.Principal(subjectID), targetAgent.ID)
 	if err != nil {
-		res.abort = serverError("user delegation verification failed", "user_grant_lookup_failed")
+		res.abort = originError(ctx, serverError("user delegation verification failed", "user_grant_lookup_failed"), err, tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantRepositoryUnavailable)
 		return res
 	}
 	switch delegationStatus {
 	case ports.UserDelegationActive:
 	case ports.UserDelegationMissing:
-		res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/")+"/agents/"+targetAgent.ID.String(), "user_grant_missing")
+		res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/")+"/agents/"+targetAgent.ID.String(), "user_grant_missing").
+			WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing))
 		return res
 	case ports.UserDelegationExpired:
-		res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/")+"/agents/"+targetAgent.ID.String(), "user_grant_expired")
+		res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/")+"/agents/"+targetAgent.ID.String(), "user_grant_expired").
+			WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantExpired))
 		return res
 	default:
-		res.abort = serverError("user delegation verification returned an unknown status", "user_grant_lookup_failed")
+		res.abort = originError(ctx, serverError("user delegation verification returned an unknown status", "user_grant_lookup_failed"), nil, tokenexchange.StageGrantAuthorization, tokenexchange.DetailInternalUnclassified)
 		return res
 	}
 
@@ -285,7 +286,7 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		Scopes:      req.Scopes,
 	})
 	if err != nil {
-		res.abort = serverError("failed to mint impersonation token", "mint_failed")
+		res.abort = originError(ctx, serverError("failed to mint impersonation token", "mint_failed"), err, tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified)
 		return res
 	}
 
@@ -294,6 +295,24 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 	response.Scope = strings.Join(req.Scopes, " ")
 	res.response = response
 	return res
+}
+
+func credentialError(ctx context.Context, envelope *tokenexchange.TokenExchangeError, cause error, stage tokenexchange.FailureStage) *tokenexchange.TokenExchangeError {
+	detail := tokenexchange.DetailSubjectInvalid
+	if stage == tokenexchange.StageClientValidation {
+		detail = tokenexchange.DetailClientInvalid
+	}
+	if errors.Is(cause, jwt.TokenExpiredError{}) {
+		detail = tokenexchange.DetailSubjectExpired
+		if stage == tokenexchange.StageClientValidation {
+			detail = tokenexchange.DetailClientExpired
+		}
+	}
+	var dependencyErr *tokenexchange.TokenExchangeError
+	if errors.As(cause, &dependencyErr) && dependencyErr.Diagnostic().Detail() == tokenexchange.DetailJWKSUnavailable {
+		detail = tokenexchange.DetailJWKSUnavailable
+	}
+	return originError(ctx, envelope, cause, stage, detail)
 }
 
 // validateCredential selects the trusted issuer matching the credential's iss and role, then

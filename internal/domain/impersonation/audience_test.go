@@ -73,6 +73,18 @@ func TestResolveTarget(t *testing.T) {
 			}
 			require.Error(t, err)
 			assert.Equal(t, tc.code, codeOf(t, err))
+			var exchangeErr *tokenexchange.TokenExchangeError
+			require.ErrorAs(t, err, &exchangeErr)
+			assert.Equal(t, tokenexchange.ExchangeImpersonation, exchangeErr.Diagnostic().ExchangeKind())
+			switch tc.code {
+			case tokenexchange.InvalidRequestError:
+				assert.Equal(t, tokenexchange.DetailRequestMalformed, exchangeErr.Diagnostic().Detail())
+			case tokenexchange.InvalidTargetError:
+				assert.Equal(t, tokenexchange.DetailAgentMissing, exchangeErr.Diagnostic().Detail())
+			default:
+				assert.ErrorIs(t, err, lookupErr)
+				assert.Equal(t, tokenexchange.DetailAgentRepositoryUnavailable, exchangeErr.Diagnostic().Detail())
+			}
 			assert.Nil(t, target)
 		})
 	}

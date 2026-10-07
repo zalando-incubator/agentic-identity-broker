@@ -1491,10 +1491,7 @@ func TestExchange_AgentLookup_UsesGetNotGetByClientID(t *testing.T) {
 	assert.False(t, tracker.getByClientIDCalled, "agentRepository.GetByClientID must NOT be called after T030")
 }
 
-// TestExchange_AgentLookup_InvalidUUIDReturnsInvalidRequest verifies that when the CEL
-// expression returns a non-UUID string, the service returns an invalid_request error.
-// [T029] Written before T030 — fails until T030 adds id.ParseAgentID and returns invalid_request.
-func TestExchange_AgentLookup_InvalidUUIDReturnsInvalidRequest(t *testing.T) {
+func TestExchange_AgentLookup_InvalidUUIDIsConfigurationError(t *testing.T) {
 	privateKey, keySet := generateTestRSAKeySet(t)
 
 	tracker := &trackingAgentRepository{}
@@ -1534,8 +1531,10 @@ func TestExchange_AgentLookup_InvalidUUIDReturnsInvalidRequest(t *testing.T) {
 	require.Error(t, err)
 	tokenErr, ok := err.(*TokenExchangeError)
 	require.True(t, ok, "error must be a *TokenExchangeError, got %T: %v", err, err)
-	assert.Equal(t, "invalid_request", tokenErr.Code(),
-		"non-UUID agentClientID must return invalid_request (not access_denied)")
+	assert.Equal(t, "server_error", tokenErr.Code())
+	assert.Equal(t, OutcomeConfigurationError, tokenErr.Diagnostic().Outcome())
+	assert.Equal(t, StageIdentityResolution, tokenErr.Diagnostic().Stage())
+	assert.Equal(t, DetailAgentInvalid, tokenErr.Diagnostic().Detail())
 }
 
 // singleAgentRepo is a minimal ports.AgentRepository that returns one fixed agent.
@@ -1689,10 +1688,9 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 	require.Error(t, exchErr)
 	tokenErr, ok := exchErr.(*TokenExchangeError)
 	require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", exchErr, exchErr)
-	assert.Equal(t, "invalid_grant", tokenErr.Code(),
-		"empty-grant guard must fire for PS-backed agent with no SRs and empty grant")
-	assert.Contains(t, tokenErr.Description(), "re-consent",
-		"error description must mention re-consent")
+	assert.Equal(t, "access_denied", tokenErr.Code())
+	assert.Equal(t, OutcomeAuthorizationDenied, tokenErr.Diagnostic().Outcome())
+	assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
 }
 
 // TestExchange_UncoveredServiceDeniedBeforeSessionLookup verifies that an agent
@@ -1705,12 +1703,11 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 		name            string
 		coverage        grantCoverage
 		callbackBaseURL string
-		wantDescription string
 	}{
-		{name: "grant excludes requested service", coverage: grantCoversOtherService, callbackBaseURL: "https://broker.example.com", wantDescription: "not authorized by any permission set"},
-		{name: "trailing-slash callback base", coverage: grantCoversOtherService, callbackBaseURL: "https://broker.example.com/", wantDescription: "not authorized by any permission set"},
-		{name: "empty grant", coverage: grantEmpty, callbackBaseURL: "https://broker.example.com", wantDescription: "grant has no permission set entries"},
-		{name: "stale permission set", coverage: grantStalePermissionSet, callbackBaseURL: "https://broker.example.com/", wantDescription: "no longer exists"},
+		{name: "grant excludes requested service", coverage: grantCoversOtherService, callbackBaseURL: "https://broker.example.com"},
+		{name: "trailing-slash callback base", coverage: grantCoversOtherService, callbackBaseURL: "https://broker.example.com/"},
+		{name: "empty grant", coverage: grantEmpty, callbackBaseURL: "https://broker.example.com"},
+		{name: "stale permission set", coverage: grantStalePermissionSet, callbackBaseURL: "https://broker.example.com/"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1732,8 +1729,10 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 			require.Error(t, err)
 			tokenErr, ok := err.(*TokenExchangeError)
 			require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
-			assert.Equal(t, "invalid_grant", tokenErr.Code())
-			assert.Contains(t, tokenErr.Description(), tt.wantDescription)
+			assert.Equal(t, "access_denied", tokenErr.Code())
+			assert.Equal(t, OutcomeAuthorizationDenied, tokenErr.Diagnostic().Outcome())
+			assert.Equal(t, StageGrantAuthorization, tokenErr.Diagnostic().Stage())
+			assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
 			assert.Equal(t, "https://broker.example.com/agents/"+fixture.agentID.String(), tokenErr.ErrorURI())
 			assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "uncovered service must be rejected before token-vault lookup")
 		})

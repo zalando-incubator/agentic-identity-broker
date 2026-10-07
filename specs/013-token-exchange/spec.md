@@ -48,7 +48,7 @@ A privileged client (API gateway or reverse proxy) needs to exchange a token iss
 3. **Given** service is found, user has active session with stored tokens, and user has granted the agent access to this service, **When** system retrieves tokens, **Then** system returns the third-party access_token in RFC 8693 response format with token_type and issued_token_type fields
 4. **Given** stored third-party access_token has expired but refresh_token is valid, **When** system processes exchange, **Then** system automatically refreshes the token using the refresh_token, stores the new token, and returns the fresh access_token
 5. **Given** privileged client sends request without valid client_assertion, **When** system validates request, **Then** system returns 401 Unauthorized with error=invalid_client
-6. **Given** privileged client sends request with invalid or expired subject_token, **When** system validates request, **Then** system returns 400 Bad Request with error=invalid_request and error_description explaining the issue
+6. **Given** privileged client sends request with invalid or expired subject_token, **When** system validates request, **Then** system returns 400 Bad Request with error=invalid_grant and a credential-free description; diagnostic outcome is authentication_failed at subject_validation
 
 ---
 
@@ -66,7 +66,7 @@ The system needs to determine which third-party service to exchange tokens for b
 2. **Given** token exchange request contains resource parameter, **When** system processes request, **Then** system normalizes the resource URI (removes trailing slashes) and searches services where protected_resources contains the normalized URI
 3. **Given** multiple services exist but only one matches the resource, **When** system performs lookup, **Then** system returns tokens for the matching service
 4. **Given** no service matches the resource parameter, **When** system processes request, **Then** system returns 400 Bad Request with error=invalid_target and error_description="No service configured for the requested resource"
-5. **Given** multiple services match the same resource URI (misconfiguration), **When** system performs lookup, **Then** system returns 400 Bad Request with error=invalid_target and error_description indicating ambiguous configuration
+5. **Given** multiple services match the same resource URI (misconfiguration), **When** system performs lookup, **Then** system returns 500 Internal Server Error with error=server_error and credential-free description; diagnostic outcome is configuration_error at resource_resolution
 
 ---
 
@@ -84,7 +84,7 @@ The system must verify that the user (identified by subject_token 'sub' claim) h
 2. **Given** user has NOT granted the agent access to the target service, **When** privileged client requests token exchange, **Then** system returns 403 Forbidden with error=access_denied and error_description="User has not granted this agent access to the requested service"
 3. **Given** user's grant for the agent+service has been revoked, **When** privileged client requests token exchange, **Then** system returns 403 Forbidden with error=access_denied
 4. **Given** user's grant exists but has expired, **When** privileged client requests token exchange, **Then** system returns 403 Forbidden with error=access_denied and error_description="User grant has expired"
-5. **Given** user has an active UserGrant for the agent whose permission-set entries do not include the requested service, **When** privileged client requests token exchange, **Then** system denies the request before any token-vault lookup and returns 400 Bad Request with error=invalid_grant and error_uri set to the agent consent-management page (`<public URL>/agents/{agent-id}`); no token or credential is forwarded
+5. **Given** user has an active UserGrant for the agent whose permission-set entries do not include the requested service, **When** privileged client requests token exchange, **Then** system denies the request before any token-vault lookup and returns 403 Forbidden with error=access_denied and error_uri set to the agent consent-management page (`<public URL>/agents/{agent-id}`); no token or credential is forwarded
 
 ---
 

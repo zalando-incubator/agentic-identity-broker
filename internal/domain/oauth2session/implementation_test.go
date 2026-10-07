@@ -232,7 +232,7 @@ func TestImplementation_InitiateOAuth2Flow_ServiceNotFound(t *testing.T) {
 
 	assert.Error(t, err, "should return error for non-existent service")
 	assert.Nil(t, result, "result should be nil on error")
-	assert.Contains(t, err.Error(), "service not found", "error should indicate service not found")
+	assert.ErrorIs(t, err, oauth2session.ErrServiceNotFound)
 }
 
 func TestImplementation_StateToken_RoundTrip(t *testing.T) {

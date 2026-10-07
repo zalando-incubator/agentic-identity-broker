@@ -143,7 +143,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 		})
 
 		// Scenario 1.2 from specs/027-extproc-otel/spec.md
-		It("US1-S2: span carries resource.uri and outcome attributes", func() {
+		It("US1-S2: span carries outcome without caller-controlled resource attributes", func() {
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
 
@@ -152,20 +152,19 @@ var _ = Describe("ExtProc Telemetry", func() {
 			exchangeSpan := findSpan(spanRecorder, "extproc.token_exchange")
 			Expect(exchangeSpan).NotTo(BeNil(), "expected extproc.token_exchange span")
 
-			// Verify resource.uri attribute is set (without query string per SR-001)
-			var resourceURI, outcome string
+			// Resources are protocol inputs, not registered telemetry identities.
+			var outcome string
 			for _, attr := range exchangeSpan.Attributes() {
 				switch string(attr.Key) {
 				case "resource.uri":
-					resourceURI = attr.Value.AsString()
-				case "outcome":
+					Fail("caller-controlled resource URI must not be exported")
+				case "token_exchange.failure_stage", "token_exchange.failure_detail":
+					Fail("successful spans must omit failure stage and detail")
+				case "token_exchange.outcome":
 					outcome = attr.Value.AsString()
 				}
 			}
-			Expect(resourceURI).NotTo(BeEmpty(), "resource.uri attribute must be set")
-			Expect(resourceURI).To(Equal("https://example.com/api/resource"),
-				"resource.uri must be the full absolute URI without query string")
-			Expect(outcome).NotTo(BeEmpty(), "outcome attribute must be set")
+			Expect(outcome).To(Equal("success"), "outcome uses the common bounded taxonomy")
 		})
 
 		// Scenario 1.3 from specs/027-extproc-otel/spec.md
@@ -180,19 +179,19 @@ var _ = Describe("ExtProc Telemetry", func() {
 			sendExchangeRequest(client, headers)
 
 			// Verify the mock token exchange server received a W3C traceparent header
-			// injected by otelhttp.NewTransport wrapping the broker HTTP client.
+			// injected by the credential-free outbound HTTP transport.
 			lastHeaders := env.MockTokenExchange.LastRequestHeaders()
 			Expect(lastHeaders).NotTo(BeNil(),
 				"token exchange must reach mock broker")
 			traceparentHeader := lastHeaders.Get("Traceparent")
 			Expect(traceparentHeader).NotTo(BeEmpty(),
-				"otelhttp.NewTransport must inject a W3C traceparent header into outbound HTTP requests")
+				"safe HTTP transport must inject W3C trace context into outbound requests")
 			Expect(traceparentHeader).To(HavePrefix("00-"+traceID),
 				"injected traceparent must carry the incoming trace ID")
 
 			// Verify parent-child linkage: the outbound traceparent's parent-id must differ
 			// from the inbound span-id, proving child spans were created (not verbatim
-			// forwarding). The outbound parent-id is the otelhttp transport's span ID
+			// forwarding). The outbound parent-id is the safe transport's span ID
 			// (child of the ExtProc span), so we verify hierarchy, not exact span identity.
 			// traceparent format: version-traceId-parentId-flags
 			parts := strings.Split(traceparentHeader, "-")
@@ -207,7 +206,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 			Expect(exchangeSpan.Parent().SpanID().String()).To(Equal(parentSpanID),
 				"ExtProc span must be a child of the inbound traceparent's span")
 
-			// Verify the outbound HTTP client span (created by otelhttp.NewTransport) is
+			// Verify the outbound HTTP client span created by the safe transport is
 			// a child of the ExtProc span, proving full trace hierarchy:
 			// inbound → extproc.token_exchange → HTTP client → outbound traceparent
 			var httpClientSpan sdktrace.ReadOnlySpan
@@ -218,9 +217,9 @@ var _ = Describe("ExtProc Telemetry", func() {
 				}
 			}
 			Expect(httpClientSpan).NotTo(BeNil(),
-				"otelhttp must create an HTTP client span as child of extproc.token_exchange")
+				"safe transport must create an HTTP client span as child of extproc.token_exchange")
 			Expect(outboundParentID).To(Equal(httpClientSpan.SpanContext().SpanID().String()),
-				"outbound traceparent parent-id must be the otelhttp client span's span ID")
+				"outbound traceparent parent-id must be the HTTP client span's span ID")
 		})
 
 		// Scenario 1.4 from specs/027-extproc-otel/spec.md
@@ -238,13 +237,18 @@ var _ = Describe("ExtProc Telemetry", func() {
 			exchangeSpan := findSpan(spanRecorder, "extproc.token_exchange")
 			Expect(exchangeSpan).NotTo(BeNil(), "expected extproc.token_exchange span even on failure")
 			Expect(exchangeSpan.Status().Code).To(Equal(otelcodes.Error))
-			Expect(exchangeSpan.Status().Description).To(Equal("exchange_failure"))
+			Expect(exchangeSpan.Status().Description).To(Equal("token exchange failed"))
 
 			attrs := map[string]attribute.Value{}
 			for _, attr := range exchangeSpan.Attributes() {
 				attrs[string(attr.Key)] = attr.Value
 			}
-			Expect(attrs["outcome"].AsString()).To(Equal("exchange_failure"))
+			Expect(attrs["token_exchange.outcome"].AsString()).To(Equal("authentication_failed"))
+			Expect(attrs["token_exchange.failure_stage"].AsString()).To(Equal("exchange_routing"))
+			Expect(attrs["token_exchange.failure_detail"].AsString()).To(Equal("credential_rejected"))
+			Expect(attrs["token_exchange.recovery_action"].AsString()).To(Equal("none"))
+			Expect(attrs["token_exchange.recovery_target"].AsString()).To(Equal("none"))
+			Expect(attrs["token_exchange.exchange_kind"].AsString()).To(Equal("unknown"))
 			Expect(attrs["token_exchange.broker_status_code"].Type()).To(Equal(attribute.INT64))
 			Expect(attrs["token_exchange.broker_status_code"].AsInt64()).To(Equal(int64(400)))
 			Expect(attrs["token_exchange.broker_error_code"].AsString()).To(Equal("invalid_grant"))
@@ -252,7 +256,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 
 		// Scenario 1.5 from specs/027-extproc-otel/spec.md
 		It("US1-S5: incurs no overhead when telemetry is disabled (no spans recorded)", func() {
-			// BeforeEach already recorded spans (e.g., from the otelhttp-wrapped HTTP client
+			// BeforeEach already recorded spans (e.g., from the safe HTTP client
 			// assertion fetch). Capture the count before switching to noop so we can assert
 			// that the noop provider adds nothing new.
 			spansFromSetup := len(spanRecorder.Ended())
@@ -521,9 +525,21 @@ telemetry:
 				for _, m := range sm.Metrics {
 					if m.Name == "extproc.token_exchange.requests" {
 						foundCounter = true
+						data, ok := m.Data.(metricdata.Sum[int64])
+						Expect(ok).To(BeTrue())
+						Expect(data.DataPoints).NotTo(BeEmpty())
+						for _, point := range data.DataPoints {
+							assertSuccessfulExchangeMetricLabels(point.Attributes)
+						}
 					}
 					if m.Name == "extproc.token_exchange.duration" {
 						foundHistogram = true
+						data, ok := m.Data.(metricdata.Histogram[float64])
+						Expect(ok).To(BeTrue())
+						Expect(data.DataPoints).NotTo(BeEmpty())
+						for _, point := range data.DataPoints {
+							assertSuccessfulExchangeMetricLabels(point.Attributes)
+						}
 					}
 				}
 			}
@@ -913,3 +929,18 @@ telemetry:
 		})
 	})
 })
+
+func assertSuccessfulExchangeMetricLabels(attributes attribute.Set) {
+	fields := make(map[string]string)
+	for _, attr := range attributes.ToSlice() {
+		fields[string(attr.Key)] = attr.Value.AsString()
+	}
+	Expect(fields).To(Equal(map[string]string{
+		"token_exchange.outcome":         "success",
+		"token_exchange.failure_stage":   "none",
+		"token_exchange.failure_detail":  "none",
+		"token_exchange.recovery_action": "none",
+		"token_exchange.recovery_target": "none",
+		"token_exchange.exchange_kind":   "unknown",
+	}))
+}
