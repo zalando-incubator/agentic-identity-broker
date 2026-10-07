@@ -22,7 +22,6 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	adaptercmd "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/cimd"
 	awsencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/aws"
 	encryptionnoop "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/enduser"
@@ -35,6 +34,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/oauth2_sessions"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/jwks"
 	jwtauthadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/jwtauth"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/outboundhttp"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	postgresstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/postgres"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
@@ -527,16 +527,16 @@ func (b *Builder) Build() (*App, error) {
 		if ov.cimdEnabled {
 			activeFetcher := b.cimdFetcher
 			if activeFetcher == nil {
-				var concreteFetcher *adaptercmd.Fetcher
+				var concreteFetcher *outboundhttp.Fetcher
 				var fetchErr error
 				if b.config.Security.SkipCIMDSSRFValidation {
 					b.logger.Warn("CIMD SSRF validation disabled — dev/test only, never use in production")
-					concreteFetcher, fetchErr = adaptercmd.NewFetcherInsecure(
+					concreteFetcher, fetchErr = outboundhttp.NewFetcherInsecure(
 						ov.cimdConfig.FetchTimeout,
 						int64(ov.cimdConfig.MaxResponseBytes),
 					)
 				} else {
-					concreteFetcher, fetchErr = adaptercmd.NewFetcher(
+					concreteFetcher, fetchErr = outboundhttp.NewFetcher(
 						ov.cimdConfig.FetchTimeout,
 						int64(ov.cimdConfig.MaxResponseBytes),
 						ov.cimdConfig.SSRF.ExtraBlockedCIDRs,
