@@ -6,18 +6,18 @@ description: "Task list for protected-resource OAuth2 discovery"
 
 **Input**: `specs/050-oauth2-protected-resource-discovery/{spec.md,plan.md,research.md,data-model.md,quickstart.md,contracts/}`.
 
-**Tests**: Constitution Principles VIII and XIII require test-first development and one Ginkgo `It()` per acceptance scenario. Write all 39 functional cases and the separate SC-006 performance case before feature behavior. Each red test must compile and fail on an observable result, not a broken fixture or placeholder assertion. Keep manual and direct-`metadata_url` behavior.
+**Tests**: Constitution Principles VIII and XIII require test-first development and one Ginkgo `It()` per acceptance scenario. Write all 41 functional cases and the separate SC-006 performance case before feature behavior. Each red test must compile and fail on an observable result, not a broken fixture or placeholder assertion. Keep manual and direct-`metadata_url` behavior.
 
-**Order**: Complete Phase 0 as a separate behavior-neutral PR with matching `ARCHITECTURE.md` updates. Complete Phase 2, including API review, the Builder test seam, and the 39-case plus SC-006 semantic-red gates, before Phase 2.5 or any user story. The feature extends the existing service aggregate. Do not add a new entity, table, frontend, or End-user route.
+**Order**: Complete Phase 0 as a separate behavior-neutral PR with matching `ARCHITECTURE.md` updates. Complete Phase 2, including API review, the Builder test seam, and the 41-case plus SC-006 semantic-red gates, before Phase 2.5 or any user story. The feature extends the existing service aggregate. Do not add a new entity, table, frontend, or End-user route. The latest specification also requires a broker-wide DCR client name, a new configuration key, and Helm support; do not use the outdated no-new-key assumption.
 
 ## Phase 0: Pre-implementation Refactoring
 
 **Goal**: Share the existing CIMD outbound safety boundary without changing CIMD behavior. Submit this phase as a separate PR before feature code.
 
-- [ ] T001 Draft and obtain acceptance of `adrs/038-protected-resource-discovery-and-dcr.md` before relocating the ADR 015 adapter; record the new outbound port boundary and supersede ADR 036 decision 2 only for DCR-issued `client_secret_basic` and `client_secret_post`.
-- [ ] T002 Relocate `internal/domain/oauth2/cimd/blocklist.go` and its tests to `internal/domain/netpolicy/`; migrate imports without aliases or behavior changes. Retain special-range and operator-CIDR coverage. In the same Phase 0 PR, update the "New Domain Packages" paragraph in the CIMD Subsystem and the `SSRFBlocklist` glossary entry in `ARCHITECTURE.md`. Name `internal/domain/netpolicy/` as the new location.
-- [ ] T003 Relocate `internal/adapters/cimd/fetcher.go` and its tests to `internal/adapters/outboundhttp/`; migrate imports and Builder construction without behavior changes. Keep its dedicated timeout and body limit. Do not pass Builder's shared `upstreamClient` to a CIMD constructor that changes `CheckRedirect`. Remove the old adapter package. In the same Phase 0 PR, update the `CIMDFetcher` glossary entry in `ARCHITECTURE.md` to name `internal/adapters/outboundhttp/`.
-- [ ] T004 Run `just verify` for the Phase 0 refactor. Confirm that `ARCHITECTURE.md` names both new packages and no longer places the blocklist or fetcher in their old packages. Submit these code and documentation changes together, with no protected-resource behavior.
+- [X] T001 Draft and obtain acceptance of `adrs/038-protected-resource-discovery-and-dcr.md` before relocating the ADR 015 adapter; record the new outbound port boundary and supersede ADR 036 decision 2 only for DCR-issued `client_secret_basic` and `client_secret_post`.
+- [X] T002 Relocate `internal/domain/oauth2/cimd/blocklist.go` and its tests to `internal/domain/netpolicy/`; migrate imports without aliases or behavior changes. Retain special-range and operator-CIDR coverage. In the same Phase 0 PR, update the "New Domain Packages" paragraph in the CIMD Subsystem and the `SSRFBlocklist` glossary entry in `ARCHITECTURE.md`. Name `internal/domain/netpolicy/` as the new location.
+- [X] T003 Relocate `internal/adapters/cimd/fetcher.go` and its tests to `internal/adapters/outboundhttp/`; migrate imports and Builder construction without behavior changes. Keep its dedicated timeout and body limit. Do not pass Builder's shared `upstreamClient` to a CIMD constructor that changes `CheckRedirect`. Remove the old adapter package. In the same Phase 0 PR, update the `CIMDFetcher` glossary entry in `ARCHITECTURE.md` to name `internal/adapters/outboundhttp/`.
+- [X] T004 Run `just verify` for the Phase 0 refactor and record its result. The 2026-10-07 stakeholder exception defers unchanged npm advisory remediation until after this feature: the security scanner stopped the full gate, but `just check`, focused Go tests, and 101 existing CIMD E2E cases passed. Confirm `ARCHITECTURE.md` names both new packages and no longer places the blocklist or fetcher in their old packages. Submit the behavior-neutral code and documentation in a separate PR before feature behavior. Do not claim the full gate passed. Phase 0 PR: https://github.com/zalando-incubator/agentic-identity-broker/pull/190.
 
 **Checkpoint**: The existing CIMD scenarios still pass. ADR 038 is accepted before the shared adapter changes.
 
@@ -27,7 +27,7 @@ description: "Task list for protected-resource OAuth2 discovery"
 
 - [ ] T005 [P] Add a per-scenario TLS provider double in `tests/e2e/helpers/mock_protected_resource_provider.go` for challenges, both RFC 9728 locations, root/path issuer metadata, DCR, authorization, and token endpoints; capture request order, DCR count, PKCE, resource parameters, and auth forms without capturing secrets in logs.
 - [ ] T006 [P] Define compile-only `ports.OAuthDiscoveryClient` probe/GET-JSON/POST-JSON signatures in `internal/ports/oauth_discovery.go`. Add `Builder.WithOAuthDiscoveryClient(ports.OAuthDiscoveryClient)` and `Builder.WithDiscoveryTokenHTTPClient(*http.Client)` in `internal/app/builder.go` before T024. Add the minimal token-client setter in `internal/domain/oauth2session/service.go` and a compile-only `outboundhttp.NewDiscoveryClientWithClient` constructor. In `tests/e2e/bootstrap/protected_resource.go`, wrap one per-scenario fake-host TLS client in the outbound discovery adapter and pass that port and client to Builder. The fake client maps only synthetic public hosts to TLS test servers and rejects other hosts. It skips dial-time IP blocking to reach loopback, so it must never be selected through runtime configuration. Do not change the default production dialer or manual token calls.
-- [ ] T007 [P] Add isolated CIMD-only, CIMD-plus-DCR, confidential/public DCR, multi-issuer, and rejection configurations in `tests/e2e/fixtures/protected_resource.go`; keep provider state and service IDs independent per `It()`.
+- [ ] T007 [P] Add isolated CIMD-only, CIMD-plus-DCR, confidential/public DCR, multi-issuer, and rejection configurations in `tests/e2e/fixtures/protected_resource.go`; keep provider state and service IDs independent per `It()`. Set a broker-wide client name for DCR scenarios and leave it absent in US3-S13.
 
 ## Phase 2: Design Preconditions (Blocking)
 
@@ -41,17 +41,17 @@ description: "Task list for protected-resource OAuth2 discovery"
 
 ### Phase 2b: Configuration Design (Principle VII)
 
-- [ ] T011 [P] Document that discovery adds no new runtime configuration key and has fixed 15-second/256-KiB limits in `docs/configuration.md`. Hosted CIMD still requires HTTPS `server.enduser.public_url` and a broker-generated key managed through the existing Admin API.
-- [ ] T012 [P] Add a protected-resource setup example using existing configuration keys in `examples/config/protected-resource-discovery.yaml`; include the HTTPS hosted-CIMD public URL and no insecure bypass or new flag.
+- [ ] T011 [P] Document the optional deployment-wide `third_party_oauth2.client_name` in `docs/configuration.md`, its environment and CLI forms, and its DCR-only non-blank requirement. Document fixed 15-second/256-KiB limits. Hosted CIMD still requires HTTPS `server.enduser.public_url` and a broker-generated key managed through the existing Admin API. Startup, manual services, and CIMD work without the new name.
+- [ ] T012 [P] Add a protected-resource setup example in `examples/config/protected-resource-discovery.yaml`; include the optional DCR broker client name and HTTPS hosted-CIMD public URL, with no insecure bypass.
 - [ ] T013 Reference `examples/config/protected-resource-discovery.yaml` from `examples/config/README.md` and distinguish broker configuration from each service's `discovery.resource_url` request field.
-- [ ] T014 Confirm that `charts/agentic-identity-broker/templates/configmap.yaml` already forwards `broker.server.enduser.publicUrl` to `server.enduser.public_url` and that `charts/agentic-identity-broker/values.yaml` needs no new key; record this no-change conclusion in `specs/050-oauth2-protected-resource-discovery/plan.md`.
+- [ ] T014 Add optional `broker.thirdPartyOauth2.clientName` in `charts/agentic-identity-broker/values.yaml`, `values.schema.json`, `templates/configmap.yaml`, and chart README. Retain the existing `broker.server.enduser.publicUrl` mapping and document the Helm change in `specs/050-oauth2-protected-resource-discovery/plan.md`.
 
 ### Phase 2c: API Design (Principles IV and X)
 
-- [ ] T015 Apply `specs/050-oauth2-protected-resource-discovery/contracts/admin-api.md` to `api/admin/openapi.yaml`: request exclusivity, derived/explicit resource, read-only `discovery.client_method`, DCR response-only auth modes, status GET with `PreAuthProxy`, nullable fields, examples, ETags, safe failure codes, and optional `ErrorResponse.authorization_servers` only on `issuer_selection_required`; leave `api/enduser/openapi.yaml` unchanged.
+- [X] T015 Apply `specs/050-oauth2-protected-resource-discovery/contracts/admin-api.md` to `api/admin/openapi.yaml`: request exclusivity, derived/explicit resource, read-only `discovery.client_method`, DCR response-only auth modes, status GET with `PreAuthProxy`, nullable fields, examples, ETags, safe failure codes, and optional `ErrorResponse.authorization_servers` only on `issuer_selection_required`; leave `api/enduser/openapi.yaml` unchanged.
 - [ ] T016 Obtain written stakeholder review of `api/admin/openapi.yaml` response method values, `discovery.client_method`, and failure-code/status mappings; link the review in the PR before implementation. Reference the core-field confirmation and the 2026-10-06 `authorization_servers` feedback in `specs/050-oauth2-protected-resource-discovery/spec.md`.
 - [ ] T017 [P] Document the confirmed administrative create/update/status API and correct the stale `ErrorResponse.message` requirement in `docs/reference/api.md`; describe authentication, examples, and 400/404/409/504 results. Show `authorization_servers` on `issuer_selection_required` and retry with one value as `issuer_uri`.
-- [ ] T018 [P] Document hosted CIMD, DCR, resource override, status, and failed-refresh operator journeys in `docs/guides/manage-agents-and-services.md` from the confirmed `api/admin/openapi.yaml` contract. Show `POST /api/cimd-client-keys` for an absent signing key, distinguish it from the OAuth-state JWE key, and trace DCR `client_name` to service `display_name`.
+- [ ] T018 [P] Document hosted CIMD, DCR, resource override, status, and failed-refresh operator journeys in `docs/guides/manage-agents-and-services.md` from the confirmed `api/admin/openapi.yaml` contract. Show `POST /api/cimd-client-keys` for an absent signing key, distinguish it from the OAuth-state JWE key, and trace DCR `client_name` to deployment-wide `third_party_oauth2.client_name`, not the service `display_name`.
 
 ### Phase 2d: Database Design (Principle IX)
 
@@ -66,12 +66,12 @@ No task applies: `spec.md` and `plan.md` exclude React, administrative UI, Playw
 Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Describe` → `Context` → `It`, and a nearby `// USx-Sy from specs/050-oauth2-protected-resource-discovery/spec.md` comment for every block. Each block asserts observable HTTP/provider behavior, not a placeholder. Mark every block `Label("protected-resource-discovery")`.
 
 - [ ] T020 [P] Write 10 semantic-red `It()` blocks for US1-S1–S10 in `tests/e2e/thirdparty_protected_resource_discovery_test.go`: issuer selection, CIMD-over-DCR, resource plus PKCE, a single `401` Bearer/DPoP `resource_metadata` value, path/root fallback order, and the derived service response.
-- [ ] T021 [P] Write nine semantic-red `It()` blocks for US2-S1–S9 in `tests/e2e/thirdparty_protected_resource_dcr_test.go`: public/confidential DCR, exact auth/resource requests, override visibility, issuer-scoped identities, and US2-S3 renewal after PostgreSQL restart with a provider-issued refresh token and valid credential. Label US2-S3 `docker`.
-- [ ] T022 [P] Write 12 semantic-red `It()` blocks for US3-S1–S12 in `tests/e2e/thirdparty_protected_resource_rejection_test.go`: missing/mismatched metadata, no downgrade or broader retry, invalid/conflicting request, failed confidential DCR, and same-issuer duplicate. For US3-S3, build without either T006 injection option and assert that the production dialer blocks a private IP before connect.
+- [ ] T021 [P] Write ten semantic-red `It()` blocks for US2-S1–S10 in `tests/e2e/thirdparty_protected_resource_dcr_test.go`: public/confidential DCR, exact auth/resource requests, override visibility, issuer-scoped identities, and broker-wide DCR `client_name` distinct from the service display name. Label US2-S3 `docker` and renew after PostgreSQL restart.
+- [ ] T022 [P] Write 13 semantic-red `It()` blocks for US3-S1–S13 in `tests/e2e/thirdparty_protected_resource_rejection_test.go`: missing/mismatched metadata, no downgrade or broader retry, invalid/conflicting request, failed confidential DCR, same-issuer duplicate, and missing/blank broker client name with no DCR request or service. For US3-S3, build without either T006 injection option and assert that the production dialer blocks a private IP before connect.
 - [ ] T023 [P] Write eight semantic-red `It()` blocks for US4-S1–S8 in `tests/e2e/thirdparty_protected_resource_status_test.go`: ready/failed/not-applicable status, unchanged active integration and ETag, durable PostgreSQL restart for US4-S5 with `Label("docker")`, and derived/explicit override transitions.
-- [ ] T024 Add the separate SC-006 case in `tests/e2e/thirdparty_protected_resource_performance_test.go` before production behavior. Create 20 independent providers. Delay four responses by one second for each registration. Use one Ginkgo process. Require 19 of 20 registrations within five seconds. Label the block `protected-resource-discovery` and `performance`. Run `ginkgo -v --label-filter="protected-resource-discovery && !performance" ./tests/e2e/` and record exactly 39 compiling semantic failures. Run `ginkgo -v --procs=1 --label-filter="protected-resource-discovery && performance" ./tests/e2e/` and record the separate semantic-red measurement. Neither red gate may fail because of missing Builder symbols, unreachable test hosts, or a fixture error.
+- [ ] T024 Add the separate SC-006 case in `tests/e2e/thirdparty_protected_resource_performance_test.go` before production behavior. Create 20 independent providers. Delay four responses by one second for each registration. Use one Ginkgo process. Require 19 of 20 registrations within five seconds. Label the block `protected-resource-discovery` and `performance`. Run `ginkgo -v --label-filter="protected-resource-discovery && !performance" ./tests/e2e/` and record exactly 41 compiling semantic failures. Run `ginkgo -v --procs=1 --label-filter="protected-resource-discovery && performance" ./tests/e2e/` and record the separate semantic-red measurement. Neither red gate may fail because of missing Builder symbols, unreachable test hosts, or a fixture error.
 
-**Checkpoint**: ADR 038 is accepted, the Admin OpenAPI delta is reviewed, migration 036 is specified, and 39 functional scenarios plus SC-006 fail semantically. The Phase 1 Builder seam compiles before these gates.
+**Checkpoint**: ADR 038 is accepted, the Admin OpenAPI delta is reviewed, migration 036 is specified, and 41 functional scenarios plus SC-006 fail semantically. The Phase 1 Builder seam compiles before these gates.
 
 ## Phase 2.5: Foundational Infrastructure
 
@@ -127,28 +127,28 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 
 **Goal**: Register one compatible DCR client when CIMD does not apply, preserve its issuer-scoped credential, and connect/renew with the selected auth method and resource.
 
-**Independent test**: Register a DCR-only provider, connect, restart against the same PostgreSQL database, renew with the original client, and inspect exact public/basic/post wire forms. Run US2-S1–S9.
+**Independent test**: Register a DCR-only provider, connect, restart against the same PostgreSQL database, renew with the original client, and inspect exact public/basic/post wire forms and broker-wide client name. Run US2-S1–S10.
 
 ### Tests first (Principles VIII and XIII)
 
 - [ ] T054 [P] [US2] Write semantic-red method/secret validation and redaction tests in `internal/domain/model/token_endpoint_auth_method_test.go` and `internal/domain/model/thirdparty_oauth2_provider_security_test.go`; preserve manual confidential auto-detection.
-- [ ] T055 [P] [US2] Write semantic-red DCR selection, response-validation, no-reregistration, and encrypted-secret tests in `internal/domain/thirdparty/protected_resource_discovery_test.go` and `internal/domain/thirdparty/service_test.go`. Accept a response without `refresh_token`. Reject every non-zero `client_secret_expires_at`, including a future time, without saving a service or retrying public registration. Accept omitted or zero expiry.
+- [ ] T055 [P] [US2] Write semantic-red DCR selection, response-validation, no-reregistration, and encrypted-secret tests in `internal/domain/thirdparty/protected_resource_discovery_test.go` and `internal/domain/thirdparty/service_test.go`. Assert that DCR uses the global broker name, not `display_name`, and rejects an absent or blank name before registration without breaking CIMD or manual services. Accept a response without `refresh_token`. Reject every non-zero `client_secret_expires_at`, including a future time, without saving a service or retrying public registration. Accept omitted or zero expiry.
 - [ ] T056 [P] [US2] Write semantic-red wire tests in `internal/domain/oauth2session/service_test.go` for public, Basic, POST, CIMD, one resource on exchange/refresh, and issuer-bound credentials. Cover terminal renewal without a refresh token and provider credential rejection on connection or renewal. Require no new registration, broader retry, or auth-style probing.
 - [ ] T057 [P] [US2] Write semantic-red issuer-scoped duplicate and secret-at-rest tests in `internal/adapters/storage/memory/thirdparty_provider_test.go` and `tests/integration/storage/infra/thirdparty_service_test.go`; permit equal client IDs only across different issuers.
 
 ### Model, service, adapter, and integration
 
 - [ ] T058 [US2] Extend `internal/domain/model/token_endpoint_auth_method.go` and `internal/domain/model/thirdparty_oauth2_provider.go`: `TokenEndpointAuthMethod` — "`private_key_jwt` for hosted CIMD; `client_secret_basic` or `client_secret_post` for confidential DCR; `none` for public DCR. Existing null/manual confidential behavior remains unchanged." `Secret` — "Absent for CIMD/public DCR. Confidential DCR has encrypted ciphertext at rest under the existing `service_id` encryption context." Reject DCR-only methods in manual input.
-- [ ] T059 [US2] Send one bounded DCR POST through `internal/adapters/outboundhttp/discovery_client.go`; request fields `redirect_uris`, `grant_types`, `response_types`, `token_endpoint_auth_method` — "Exact existing callback, authorization code, refresh token, code response, and one selected method." Send `application_type: web`, `client_name` from the administrator-supplied service `display_name`, and no initial access token.
+- [ ] T059 [US2] Send one bounded DCR POST through `internal/adapters/outboundhttp/discovery_client.go`; request fields `redirect_uris`, `client_name`, `grant_types`, `response_types`, `token_endpoint_auth_method` contain the exact callback, configured global broker name, authorization code, refresh token, code response, and one selected method. Send `application_type: web` and no initial access token. Never use the service `display_name` for `client_name`.
 - [ ] T060 [US2] Validate a 201 DCR result in `internal/domain/thirdparty/protected_resource_discovery.go`. Reject missing ID, incompatible callback, mismatched method, missing required secret, and any non-zero `client_secret_expires_at` with `client_registration_invalid`. Do not retry public DCR after a selected confidential registration fails. Permit a response without `refresh_token` while making no promise of renewal. Discard management tokens and URLs.
 - [ ] T061 [US2] For creation only, select compatible CIMD first, then `client_secret_basic`, `client_secret_post`, or public `none` with PKCE S256 in `internal/domain/thirdparty/protected_resource_discovery.go`. Apply the RFC 8414 basic default. Never retry public after a chosen confidential registration fails. On updates, do not re-run this preference order; T086 pins the stored methods.
-- [ ] T062 [US2] Register once, encrypt a confidential DCR secret with the existing `EncryptionPort` and exactly one `service_id` context, persist the issuer/client pair, and discard management credentials in `internal/domain/thirdparty/service.go`.
+- [ ] T062 [US2] Add optional `third_party_oauth2.client_name` to `internal/ports/config.go`, loader environment bindings, and broker CLI flag; validate its non-blank value at DCR selection only. Register once using this configured broker name, encrypt a confidential DCR secret with the existing `EncryptionPort` and exactly one `service_id` context, persist the issuer/client pair, and discard management credentials in `internal/domain/thirdparty/service.go`. Add configuration and chart tests without blocking startup, manual services, or CIMD.
 - [ ] T063 [US2] Pin DCR code exchange to `AuthStyleInHeader` for Basic or `AuthStyleInParams` for POST/public, and preserve the CIMD assertion path in `internal/domain/oauth2session/service.go`; never probe another style.
 - [ ] T064 [US2] Send only the selected Basic header or POST body secret on refresh, one stored `resource`, and no secret for public DCR in `internal/domain/oauth2session/service.go`. Load credentials by service ID and verify issuer. If no refresh token exists or the provider rejects a credential, fail without re-registering or probing another method.
 - [ ] T065 [US2] Enforce issuer-scoped DCR uniqueness under the adapter lock and copy absent/encrypted secrets correctly in `internal/adapters/storage/memory/thirdparty_provider.go`; preserve manual uniqueness.
 - [ ] T066 [US2] Persist confidential/public DCR fields using migration 036's partial unique index and conflict mapping in `internal/adapters/storage/postgres/thirdparty_provider.go`; verify encrypted secret survives a fresh adapter and deletes with the service.
 - [ ] T067 [US2] Return `discovery.client_method`, explicit DCR auth method, issuer and client ID, and effective override without a DCR secret in `internal/adapters/http/handlers/admin/services_handler.go`.
-- [ ] T068 [US2] Run US2-S1–S9 in `tests/e2e/thirdparty_protected_resource_dcr_test.go` to green; use a new PostgreSQL adapter after restart for US2-S3 and assert registration count stays one.
+- [ ] T068 [US2] Run US2-S1–S10 in `tests/e2e/thirdparty_protected_resource_dcr_test.go` to green; use a new PostgreSQL adapter after restart for US2-S3 and assert registration count stays one. Assert that US2-S10 uses only the configured broker name.
 
 **Checkpoint**: DCR-only providers work without manual credentials. The selected identity, token audience, and client authentication survive a restart.
 
@@ -156,7 +156,7 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 
 **Goal**: Reject invalid resource/issuer claims, unsafe destinations, incompatible registration, and failed resource-scoped tokens without creating a partial service or downgrading.
 
-**Independent test**: Send invalid metadata/private-IP/conflicting-source requests, then reject `resource` at token exchange. Observe no stored service or broader retry. Run US3-S1–S12.
+**Independent test**: Send invalid metadata/private-IP/conflicting-source requests, then reject `resource` at token exchange. Reject an absent broker client name before DCR. Observe no stored service or broader retry. Run US3-S1–S13.
 
 ### Tests first (Principles VIII and XIII)
 
@@ -173,7 +173,7 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 - [ ] T076 [US3] Treat `invalid_target` as terminal, send no token request without the stored `resource`, and store no replacement token on failure in `internal/domain/oauth2session/service.go`.
 - [ ] T077 [US3] Map only the approved safe failure codes to 400/409/504 or storage/encryption 500 in `internal/domain/thirdparty/service.go` and `internal/adapters/http/handlers/admin/services_handler.go`; include `authorization_servers` only on `issuer_selection_required` from validated matching resource metadata. Audit service ID, operation, outcome, issuer, method, and code without issuer lists, URL queries, raw bodies, assertions, or secrets.
 - [ ] T078 [US3] Reject a same-issuer DCR duplicate without overwriting either credential in `internal/adapters/storage/memory/thirdparty_provider.go` and `internal/adapters/storage/postgres/thirdparty_provider.go`; ensure a rejected create leaves no service row or local credential.
-- [ ] T079 [US3] Run US3-S1–S12 in `tests/e2e/thirdparty_protected_resource_rejection_test.go` to green. For US3-S3, use Builder without the fake-host discovery port or token client and prove the production transport rejects the private destination before connect. For US3-S6, assert the full `authorization_servers` error list, then retry with one candidate and observe only that issuer's metadata request. Confirm no fallback registration.
+- [ ] T079 [US3] Run US3-S1–S13 in `tests/e2e/thirdparty_protected_resource_rejection_test.go` to green. For US3-S3, use Builder without the fake-host discovery port or token client and prove the production transport rejects the private destination before connect. For US3-S6, assert the full `authorization_servers` error list, then retry with one candidate and observe only that issuer's metadata request. For US3-S13, require zero DCR requests and no new service with a blank broker name. Confirm no fallback registration.
 
 **Checkpoint**: No unsafe discovery request or rejected resource token request produces a broader authorization path.
 
@@ -210,10 +210,10 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 ### Design Phase Verification (Principles II, IV, V, VII, IX, X, XIII)
 
 - [ ] T094 Confirm the glossary, outbound trust flow, accepted ADR 038, and the precise ADR 036/015 relationship in `ARCHITECTURE.md` and `adrs/038-protected-resource-discovery-and-dcr.md`. Confirm that the full SC-006 target and the 15-second/256-KiB limits appear in `ARCHITECTURE.md` (Principles II and V).
-- [ ] T095 Confirm the HTTPS public-URL precondition and no-new-key Helm boundary in `docs/configuration.md`, `examples/config/protected-resource-discovery.yaml`, `examples/config/README.md`, and `charts/agentic-identity-broker/templates/configmap.yaml` (Principle VII).
+- [ ] T095 Confirm the HTTPS public-URL precondition and optional broker-wide DCR client name in `docs/configuration.md`, `examples/config/protected-resource-discovery.yaml`, `examples/config/README.md`, `internal/ports/config.go`, loader and CLI, `charts/agentic-identity-broker/values.yaml`, `values.schema.json`, `templates/configmap.yaml`, and chart README (Principle VII). Verify missing name blocks DCR only.
 - [ ] T096 Confirm the stakeholder review record and exact request/response/security/error examples in `api/admin/openapi.yaml` against `specs/050-oauth2-protected-resource-discovery/contracts/admin-api.md` (Principles IV and X).
 - [ ] T097 Confirm migration design, guarded down rule, and preservation of manual rows in `specs/050-oauth2-protected-resource-discovery/data-model.md` and `migrations/036_add_protected_resource_discovery.up.sql` (Principle IX).
-- [ ] T098 Confirm exactly 39 scenario IDs map to `Describe` → `Context` → `It()` blocks with labels and spec references in `tests/e2e/thirdparty_protected_resource_discovery_test.go`, `tests/e2e/thirdparty_protected_resource_dcr_test.go`, `tests/e2e/thirdparty_protected_resource_rejection_test.go`, and `tests/e2e/thirdparty_protected_resource_status_test.go` (Principle XIII); record semantic red/green and reject skipped, placeholder, or weakened assertions.
+- [ ] T098 Confirm exactly 41 scenario IDs map to `Describe` → `Context` → `It()` blocks with labels and spec references in `tests/e2e/thirdparty_protected_resource_discovery_test.go`, `tests/e2e/thirdparty_protected_resource_dcr_test.go`, `tests/e2e/thirdparty_protected_resource_rejection_test.go`, and `tests/e2e/thirdparty_protected_resource_status_test.go` (Principle XIII); record semantic red/green and reject skipped, placeholder, or weakened assertions.
 
 ### Implementation Phase Verification (Principles I–XIII, as applicable)
 
@@ -222,8 +222,8 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 - [ ] T101 Confirm both adapters preserve same-row success/failure isolation, issuer-scoped DCR uniqueness, encrypted secrets, guarded version ordering, and migration apply/rollback/replay in `tests/integration/storage/infra/thirdparty_service_test.go` and `tests/integration/migrations/migrations_test.go` (Principle IX).
 - [ ] T102 Confirm focused tests in `internal/domain/model/thirdparty_oauth2_provider_test.go`, `internal/domain/thirdparty/protected_resource_discovery_test.go`, `internal/domain/oauth2session/service_test.go`, and `internal/adapters/outboundhttp/discovery_client_test.go` failed semantically before implementation and now pass without weaker assertions (Principle VIII).
 - [ ] T103 Re-run the unchanged SC-006 case from T024 in one Ginkgo process. Require at least 19 of 20 concurrent registrations within five seconds. Compare its green result with the recorded semantic-red result; do not weaken the threshold (Principles VIII and XIII).
-- [ ] T104 Run the 39-case functional filter and the one-process SC-006 filter from `specs/050-oauth2-protected-resource-discovery/quickstart.md`; confirm all functional cases turn green, including both `docker` restart cases, with no test-order dependence (Principle XIII).
-- [ ] T105 Run `just check`, `just test`, `just test-integration`, `just test-integration-infra`, and `just docs-build` as listed in `specs/050-oauth2-protected-resource-discovery/quickstart.md`; run `just verify` as the final gate (Principles II, VIII, IX, XIII).
+- [ ] T104 Run the 41-case functional filter and the one-process SC-006 filter from `specs/050-oauth2-protected-resource-discovery/quickstart.md`; confirm all functional cases turn green, including both `docker` restart cases, with no test-order dependence (Principle XIII).
+- [ ] T105 Run `just check`, `just test`, `just test-integration`, `just test-integration-infra`, and `just docs-build` as listed in `specs/050-oauth2-protected-resource-discovery/quickstart.md`; run `just verify` as the final gate. If the unchanged npm advisories remain, report that full-gate failure under the recorded stakeholder deferral rather than claiming success (Principles II, VIII, IX, XIII).
 - [ ] T106 Exercise the CIMD, DCR, resource rejection, failed refresh, PostgreSQL restart, and manual-service smoke scenarios in `specs/050-oauth2-protected-resource-discovery/quickstart.md`; compare Admin HTTP behavior with the approved `api/admin/openapi.yaml` and reconcile `docs/reference/api.md` and `docs/guides/manage-agents-and-services.md` (Principles IV and X).
 
 **Frontend**: Principle XI and frontend portions of XIII do not apply. This feature changes no React UI, design-system component, Playwright test, or screenshot.
@@ -236,7 +236,7 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 Phase 0 (accepted ADR 038; behavior-neutral refactor, separate PR)
     → Phase 1 (provider, TLS seam, fixtures)
     → Phase 2a–2d (model/glossary, configuration, approved Admin API, DB design)
-    → Phase 2f (39 functional plus SC-006 semantic-red cases through the Phase 1 Builder seam)
+    → Phase 2f (41 functional plus SC-006 semantic-red cases through the Phase 1 Builder seam)
     → Phase 2.5 (focused tests → safe HTTP/ports/migration/storage)
     → US1 → US2 → US3
                 ↘ US4 (after US1 and US2)
@@ -251,7 +251,7 @@ Phase 2e is not applicable. Phase 2.7 entity boilerplate is not applicable: `mod
 - **US2 (P1)**: Starts after US1 because DCR shares validated resource/issuer metadata and the effective resource path. It remains independently testable with a DCR-only provider.
 - **US3 (P1)**: Starts after US2 because its rejection scenarios exercise both CIMD and DCR, including duplicate issuer/client identities. It remains independently testable with invalid requests and token rejection.
 - **US4 (P2)**: Starts after US1 and US2 because refresh and PostgreSQL restart must preserve an active DCR client. It can run in parallel with US3 only with explicit ownership of shared `internal/domain/thirdparty/service.go` and storage files; otherwise serialize those edits.
-- **Phase N**: Starts after all four stories. Re-run the performance case written in T024 with its own label; it does not increase the 39-case functional count.
+- **Phase N**: Starts after all four stories. Re-run the performance case written in T024 with its own label; it does not increase the 41-case functional count.
 
 ### Parallel examples
 
@@ -263,7 +263,7 @@ Phase 2e is not applicable. Phase 2.7 entity boilerplate is not applicable: `mod
 ## Implementation Strategy
 
 1. Complete the separate Phase 0 refactor PR with accepted ADR 038 and unchanged CIMD behavior.
-2. Complete setup, design preconditions, written Admin API review, the Builder test seam, and all 39 functional plus SC-006 semantic-red cases.
+2. Complete setup, design preconditions, written Admin API review, the Builder test seam, and all 41 functional plus SC-006 semantic-red cases.
 3. Complete the shared foundation with test-first adapter and migration work.
 4. Deliver US1 alone as the MVP. Run its 10 scenarios and the existing CIMD/manual flows.
 5. Add US2, then US3. Run each story's scenarios without changing earlier expectations.

@@ -12,19 +12,20 @@ See [data-model.md](./data-model.md) for stored state. See [admin-api.md](./cont
 - Start Docker or Podman for PostgreSQL migration and restart validation.
 - Set `server.enduser.public_url` to a stable public HTTPS URL for hosted CIMD.
 - Configure the admin reverse proxy to send an operator principal.
+- Set `third_party_oauth2.client_name` to a non-blank broker or platform name for DCR. CIMD and manual services do not need this setting.
 - For manual validation, use a public HTTPS protected resource and authorization server.
 
 Do not use private, loopback, or redirected URLs for production validation. The broker must reject them.
 
 ## Run the automated validation
 
-1. Run the 39 functional acceptance scenarios.
+1. Run the 41 functional acceptance scenarios.
 
    ```sh
    ginkgo -v --label-filter="protected-resource-discovery && !performance" ./tests/e2e/
    ```
 
-   The command must select exactly 39 `It()` blocks. Each block must have one `USx-Sy from specs/050-oauth2-protected-resource-discovery/spec.md` reference.
+   The command must select exactly 41 `It()` blocks. Each block must have one `USx-Sy from specs/050-oauth2-protected-resource-discovery/spec.md` reference.
 
 2. Run the SC-006 performance measurement.
 
@@ -78,6 +79,7 @@ The service must use the hosted client ID and `private_key_jwt`. Its `discovery.
 4. Read the service and the provider registration log.
 
 The broker must send one registration request for `client_secret_basic`. The service must show `discovery.client_method: dcr`, the returned `client_id`, and `client_secret_basic`. The response must not contain `client_secret`.
+The DCR request must send the deployment-wide broker client name. It must not send the service display name. Without a non-blank name, DCR must fail before registration and leave no service; manual and CIMD modes remain available.
 
 Repeat with only public DCR and `S256`. The service must use `none`, store no secret, and send no secret during token requests.
 

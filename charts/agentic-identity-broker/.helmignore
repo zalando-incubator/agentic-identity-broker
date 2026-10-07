@@ -32,3 +32,9 @@ LICENSE
 docs/
 examples/
 *.test.yaml
+*.secret.yaml
+secrets/
+.kube/
+kubeconfig*
+*.key
+*.crt
