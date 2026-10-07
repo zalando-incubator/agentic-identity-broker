@@ -294,6 +294,24 @@ func TestGetKeySet_InvalidJSON(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestGetKeySet_RejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"keys":[]}`)
+		_, _ = io.WriteString(w, strings.Repeat(" ", 1<<20))
+	}))
+	defer server.Close()
+
+	adapter, err := NewJWKSAdapter(server.URL, server.Client(), 15*time.Minute, time.Hour, testLogger())
+	require.NoError(t, err)
+	defer func() { _ = adapter.Shutdown(context.Background()) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = adapter.GetKeySet(ctx)
+	require.ErrorContains(t, err, "exceeds")
+}
+
 func TestGetKeySet_RecordsSpanErrorOnFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

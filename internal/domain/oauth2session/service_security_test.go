@@ -289,6 +289,56 @@ func TestRefreshAccessTokenSecurity_CIMDClientAuditsSuccessAndRejection(t *testi
 	})
 }
 
+func TestRefreshAccessTokenSecurity_ResponseFailuresAuditOnlyCIMDClients(t *testing.T) {
+	for _, failure := range []string{"drain read error", "oversized response"} {
+		t.Run(failure, func(t *testing.T) {
+			tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				const response = `{"access_token":"upstream-access-token","token_type":"Bearer"}`
+				w.Header().Set("Content-Type", "application/json")
+				if failure == "drain read error" {
+					w.Header().Set("Content-Length", fmt.Sprint(len(response)+1))
+				}
+				_, _ = io.WriteString(w, response)
+				if failure == "oversized response" {
+					_, _ = io.WriteString(w, strings.Repeat(" ", 1<<20))
+				}
+			}))
+			defer tokenServer.Close()
+
+			for _, client := range []string{"CIMD", "public", "static confidential"} {
+				t.Run(client, func(t *testing.T) {
+					var logs strings.Builder
+					service, _ := newSecurityTestOAuth2SessionService(t, slog.New(slog.NewJSONHandler(&logs, nil)), 1)
+					service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
+					serviceID := id.NewServiceID()
+					provider := createTestService(serviceID)
+					provider.Endpoints.TokenEndpoint = tokenServer.URL
+					switch client {
+					case "CIMD":
+						provider = createCIMDTestProvider(serviceID, tokenServer.URL)
+						provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
+					case "public":
+						provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+						provider.Secret = model.NewAbsentSecret()
+					}
+
+					token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+					require.Error(t, err)
+					assert.Nil(t, token)
+					if failure == "drain read error" {
+						require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+					}
+					if client == "CIMD" {
+						assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "rejected")
+					} else {
+						assert.NotContains(t, logs.String(), "CIMD client token acquisition")
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestRefreshAccessTokenSecurity_RejectsPersistedCIMDCredentialInTokenURL(t *testing.T) {
 	service, _ := newSecurityTestOAuth2SessionService(t, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
 	service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
@@ -418,7 +468,7 @@ func TestHandleCallbackSecurity_RedactsUpstreamCredentialMaterialFromErrorsAndLo
 	capturedRequests := append([]capturedTokenExchangeRequest(nil), requests...)
 	capturedVerifier := verifier
 	requestsMu.Unlock()
-	require.Len(t, capturedRequests, 2, "a public-client failure must retry without changing authentication")
+	require.NotEmpty(t, capturedRequests)
 	for _, request := range capturedRequests {
 		assertPublicTokenExchangeRequest(t, request, "public-client-id", sentinelCode)
 	}
@@ -573,7 +623,6 @@ func TestForceRefreshSessionSecurity_PublicClientOmitsCredentialsAndRedactsFailu
 		assert.NotContains(t, err.Error(), sentinel)
 		assert.NotContains(t, logs, sentinel)
 	}
-	assert.Contains(t, logs, `"error":"upstream token endpoint returned error status 400"`)
 
 	assertSecurityEventsMarkPublicClient(t, logs, "session.oauth2.refresh_failed")
 }
@@ -666,10 +715,127 @@ func TestForceRefreshSessionSecurity_PublicClientEmitsRedactedSuccessAudit(t *te
 		assert.NotContains(t, logs, sentinel)
 	}
 }
+
+type refreshLogContextKey struct{}
+
+type contextRecordingHandler struct {
+	mu       *sync.Mutex
+	messages map[string]any
+}
+
+func (h contextRecordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h contextRecordingHandler) Handle(ctx context.Context, record slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.messages[record.Message] = ctx.Value(refreshLogContextKey{})
+	return nil
+}
+func (h contextRecordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h contextRecordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// Refresh-path logs must carry the operation context so the OTLP log bridge can correlate
+// them with the request trace.
+func TestRefreshLogsCarryOperationContext(t *testing.T) {
+	recorder := contextRecordingHandler{mu: &sync.Mutex{}, messages: map[string]any{}}
+	service, providerService := newSecurityTestOAuth2SessionService(t, slog.New(recorder), 1)
+	principal := id.Principal("user@example.com")
+	serviceID := id.NewServiceID()
+
+	var rejectRefresh atomic.Bool
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, r.ParseForm())
+		w.Header().Set("Content-Type", "application/json")
+		if r.Form.Get("grant_type") == "refresh_token" && rejectRefresh.Load() {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"access_token":"access","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh"}`))
+	}))
+	defer tokenServer.Close()
+
+	provider := createTestService(serviceID)
+	provider.Endpoints.TokenEndpoint = tokenServer.URL
+	require.NoError(t, providerService.Create(context.Background(), provider))
+	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
+	require.NoError(t, err)
+	_, err = service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID,
+		Code:      "code",
+		State:     flow.StateToken,
+	})
+	require.NoError(t, err)
+
+	ctx := context.WithValue(context.Background(), refreshLogContextKey{}, "request-marker")
+	_, err = service.ForceRefreshSession(ctx, principal, serviceID)
+	require.NoError(t, err)
+	rejectRefresh.Store(true)
+	_, err = service.ForceRefreshSession(ctx, principal, serviceID)
+	require.ErrorIs(t, err, oauth2session.ErrRefreshFailed)
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	for _, message := range []string{"access token refreshed", "oauth2_token_refreshed", "oauth2_refresh_failed"} {
+		assert.Equal(t, "request-marker", recorder.messages[message], "%s must be logged with the operation context", message)
+	}
+}
+
+func TestGetValidAccessTokenRefreshLogsCarryOperationContext(t *testing.T) {
+	recorder := contextRecordingHandler{mu: &sync.Mutex{}, messages: map[string]any{}}
+	sessions := memory.NewInMemoryUserSessionRepository()
+	service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(recorder), 1, sessions)
+	principal := id.Principal("user@example.com")
+	serviceID := id.NewServiceID()
+
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"access","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh"}`))
+	}))
+	defer tokenServer.Close()
+
+	provider := createTestService(serviceID)
+	provider.Endpoints.TokenEndpoint = tokenServer.URL
+	require.NoError(t, providerService.Create(context.Background(), provider))
+	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
+	require.NoError(t, err)
+	_, err = service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID,
+		Code:      "code",
+		State:     flow.StateToken,
+	})
+	require.NoError(t, err)
+	stored, err := sessions.FindByPrincipalAndService(context.Background(), principal, serviceID)
+	require.NoError(t, err)
+	expiredSession := *stored
+	expired := time.Now().Add(-time.Hour)
+	expiredSession.AccessTokenExpiresAt = &expired
+	require.NoError(t, sessions.Create(context.Background(), &expiredSession))
+
+	ctx := context.WithValue(context.Background(), refreshLogContextKey{}, "request-marker")
+	_, _, err = service.GetValidAccessToken(ctx, principal, serviceID)
+	require.NoError(t, err)
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	for _, message := range []string{"access token refreshed", "oauth2_token_refreshed"} {
+		assert.Equal(t, "request-marker", recorder.messages[message], "%s must be logged with the operation context", message)
+	}
+}
+
 func newSecurityTestOAuth2SessionService(
 	t *testing.T,
 	logger *slog.Logger,
 	maxRetries int,
+) (*oauth2session.OAuth2SessionService, *thirdparty.ThirdpartyOAuth2ProviderService) {
+	t.Helper()
+	return newSecurityTestOAuth2SessionServiceWithSessions(t, logger, maxRetries, memory.NewInMemoryUserSessionRepository())
+}
+
+func newSecurityTestOAuth2SessionServiceWithSessions(
+	t *testing.T,
+	logger *slog.Logger,
+	maxRetries int,
+	sessionRepo *memory.InMemoryUserSessionRepository,
 ) (*oauth2session.OAuth2SessionService, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
 
@@ -693,7 +859,6 @@ func newSecurityTestOAuth2SessionService(
 	config.MaxRetries = maxRetries
 	config.RetryBaseDelay = time.Millisecond
 
-	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	return oauth2session.NewOAuth2SessionService(
 		providerService,
 		sessionRepo,

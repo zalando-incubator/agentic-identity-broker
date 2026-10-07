@@ -95,7 +95,8 @@ func run(cmd *cobra.Command, args []string) error {
 	// Create route setup function for admin server
 	adminRouteSetup := func(r chi.Router) {
 		routing.SetupAdminRoutes(r, application.AdminHandlers, routing.AdminRouteConfig{
-			CORS: cfg.Server.Admin.CORS,
+			CORS:      cfg.Server.Admin.CORS,
+			PublicURL: cfg.Server.Admin.PublicURL,
 		})
 	}
 
@@ -190,6 +191,13 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Wait for both binds to complete
 	if err := g.Wait(); err != nil {
+		select {
+		case listener := <-enduserListenerCh:
+			_ = listener.Close()
+		case listener := <-adminListenerCh:
+			_ = listener.Close()
+		default:
+		}
 		logger.Error("Atomic startup failed during bind phase", "error", err)
 		return err
 	}
