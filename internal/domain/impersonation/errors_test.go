@@ -12,9 +12,9 @@ import (
 )
 
 func TestSelectNoMatchError_Precedence(t *testing.T) {
-	ad := accessDenied("denied", "authorization_denied")
-	ic := invalidClient("bad client", "client_assertion_invalid")
-	ir := invalidRequest("bad actor", "actor_token_invalid")
+	ad := accessDenied("denied")
+	ic := invalidClient("bad client")
+	ir := invalidRequest("bad actor")
 
 	// access_denied outranks invalid_client and invalid_request, order-independently.
 	assert.Equal(t, tokenexchange.AccessDeniedError, selectNoMatchError([]*tokenexchange.TokenExchangeError{ir, ic, ad}).Code())
@@ -37,11 +37,11 @@ func TestImpersonationErrorDiagnostics(t *testing.T) {
 		stage  tokenexchange.FailureStage
 		detail tokenexchange.FailureDetail
 	}{
-		{"request", invalidRequest("description", "details"), tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed},
-		{"scope", invalidScope("description", "details"), tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed},
-		{"client", invalidClient("description", "details"), tokenexchange.StageClientValidation, tokenexchange.DetailClientInvalid},
-		{"policy", accessDenied("description", "details"), tokenexchange.StageClientAuthorization, tokenexchange.DetailClientPolicyDenied},
-		{"unclassified", serverError("description", "details"), tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified},
+		{"request", invalidRequest("description"), tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed},
+		{"scope", invalidScope("description"), tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed},
+		{"client", invalidClient("description"), tokenexchange.StageClientValidation, tokenexchange.DetailClientInvalid},
+		{"policy", accessDenied("description"), tokenexchange.StageClientAuthorization, tokenexchange.DetailClientPolicyDenied},
+		{"unclassified", serverError("description"), tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			diagnostic := test.err.Diagnostic()
@@ -54,7 +54,7 @@ func TestImpersonationErrorDiagnostics(t *testing.T) {
 
 func TestImpersonationOriginErrorPreservesCauseAndCallerCancellation(t *testing.T) {
 	cause := errors.New("SECRET_CAUSE_SENTINEL")
-	base := serverError("description", "details")
+	base := serverError("description")
 	err := originError(context.Background(), base, cause, tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantRepositoryUnavailable)
 	assert.ErrorIs(t, err, cause)
 	assert.Equal(t, tokenexchange.DetailGrantRepositoryUnavailable, err.Diagnostic().Detail())
@@ -83,9 +83,9 @@ func TestImpersonationCredentialDiagnosticsPreserveOrigins(t *testing.T) {
 		{"client keys unavailable", tokenexchange.StageClientValidation, tokenexchange.NewServerError("keys unavailable").WithDiagnostic(impersonationDiagnostic(tokenexchange.StageSubjectValidation, tokenexchange.DetailJWKSUnavailable)), tokenexchange.DetailJWKSUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			envelope := invalidRequest("description", "details")
+			envelope := invalidRequest("description")
 			if test.stage == tokenexchange.StageClientValidation {
-				envelope = invalidClient("description", "details")
+				envelope = invalidClient("description")
 			}
 			err := credentialError(context.Background(), envelope, test.cause, test.stage)
 			assert.ErrorIs(t, err, test.cause)

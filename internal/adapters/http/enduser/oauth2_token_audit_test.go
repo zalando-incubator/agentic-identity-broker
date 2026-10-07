@@ -211,10 +211,8 @@ func TestLogImpersonationDecision_WhitelistAndCorrelation(t *testing.T) {
 	ctx := httpctx.WithRequestID(context.Background(), "req-123")
 	handler.logImpersonationDecision(ctx, impersonation.AuditRecord{
 		Outcome:                  "success",
-		Audience:                 "https://broker/impersonation",
 		TargetAgentID:            "550e8400-e29b-41d4-a716-446655440000",
 		SelectedRule:             "internal-gateway",
-		IssuerIdentifiers:        []string{"https://idp.example.com"},
 		IssuerRoles:              []string{"client_assertion", "actor", "subject"},
 		PrivilegedClientIdentity: "gateway-prod",
 		ActorIdentity:            "actor-1",
@@ -242,10 +240,8 @@ func TestLogImpersonationDecision_FailureOmitsUnavailableIdentities(t *testing.T
 	handler := &OAuth2TokenHandler{Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
 
 	handler.logImpersonationDecision(context.Background(), impersonation.AuditRecord{
-		Outcome:         "invalid_client",
-		Audience:        "https://broker/impersonation",
-		OAuthErrorCode:  "invalid_client",
-		FailureCategory: "client_assertion_invalid",
+		Outcome:        "invalid_client",
+		OAuthErrorCode: "invalid_client",
 	})
 
 	var event map[string]any

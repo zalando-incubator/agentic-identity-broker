@@ -14,28 +14,28 @@ import (
 // invalidRequest builds an invalid_request (400) error for malformed/missing/repeated parameters,
 // wrong type parameters, present resource, requested_token_type mismatch, or invalid actor/subject
 // credentials (FR-011).
-func invalidRequest(description, details string) *tokenexchange.TokenExchangeError {
-	return tokenexchange.NewInvalidRequestErrorWithDetails(description, details).
+func invalidRequest(description string) *tokenexchange.TokenExchangeError {
+	return tokenexchange.NewInvalidRequestError(description).
 		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
 }
 
 // invalidScope builds an invalid_scope (400) error without exposing the requested scope value.
-func invalidScope(description, details string) *tokenexchange.TokenExchangeError {
-	return tokenexchange.NewInvalidScopeErrorWithDetails(description, details).
+func invalidScope(description string) *tokenexchange.TokenExchangeError {
+	return tokenexchange.NewInvalidScopeError(description).
 		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
 }
 
 // invalidClient builds an invalid_client (401) error for a client assertion that fails
 // validation or that no rule trusts (FR-011).
-func invalidClient(description, details string) *tokenexchange.TokenExchangeError {
-	return tokenexchange.NewInvalidClientErrorWithDetails(description, details).
+func invalidClient(description string) *tokenexchange.TokenExchangeError {
+	return tokenexchange.NewInvalidClientError(description).
 		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageClientValidation, tokenexchange.DetailClientInvalid))
 }
 
 // accessDenied builds an access_denied (403) error for a request that validated all credentials
 // but that no rule's authorization predicate permitted (FR-011).
-func accessDenied(description, details string) *tokenexchange.TokenExchangeError {
-	return tokenexchange.NewAccessDeniedErrorWithDetails(description, details).
+func accessDenied(description string) *tokenexchange.TokenExchangeError {
+	return tokenexchange.NewAccessDeniedError(description).
 		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageClientAuthorization, tokenexchange.DetailClientPolicyDenied))
 }
 
@@ -43,13 +43,13 @@ const consentRequiredDescription = "user delegation is required before impersona
 
 // consentRequired builds a credential-free access_denied error directing the user to the
 // existing consent-management page for the target agent.
-func consentRequired(consentURL, details string) *tokenexchange.TokenExchangeError {
-	return accessDenied(consentRequiredDescription, details).WithErrorURI(consentURL)
+func consentRequired(consentURL string) *tokenexchange.TokenExchangeError {
+	return accessDenied(consentRequiredDescription).WithErrorURI(consentURL)
 }
 
 // serverError builds a server_error (500) for fail-closed internal failures (FR-011).
-func serverError(description, details string) *tokenexchange.TokenExchangeError {
-	return tokenexchange.NewServerErrorWithDetails(description, details).
+func serverError(description string) *tokenexchange.TokenExchangeError {
+	return tokenexchange.NewServerError(description).
 		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified))
 }
 
@@ -88,7 +88,7 @@ func selectNoMatchError(failures []*tokenexchange.TokenExchangeError) *tokenexch
 		}
 	}
 	if best == nil {
-		return serverError("impersonation request could not be authorized", "no_rule_matched")
+		return serverError("impersonation request could not be authorized")
 	}
 	return best
 }

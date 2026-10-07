@@ -94,14 +94,6 @@ func NewOperationError(metadata ErrorMetadata, cause error) *OperationError {
 func (e *OperationError) Metadata() ErrorMetadata { return e.metadata }
 func (e *OperationError) Unwrap() error           { return e.cause }
 func (e *OperationError) Diagnostic() Diagnostic  { return e.diagnostic }
-func (e *OperationError) WithDiagnostic(d Diagnostic) *OperationError {
-	if d.Outcome() == OutcomeSuccess {
-		d = SuccessDiagnostic(d.ExchangeKind())
-	} else {
-		d = NewDiagnostic(d.Stage(), d.Detail()).WithExchangeKind(d.ExchangeKind())
-	}
-	return &OperationError{metadata: e.metadata, cause: e.cause, diagnostic: d}
-}
 func (e *OperationError) Error() string {
 	m := e.metadata
 	return fmt.Sprintf("extproc %s failed: %s (%s, status=%d, code=%s)", m.operation, m.kind, m.dependency, m.statusCode, m.oauthCode)

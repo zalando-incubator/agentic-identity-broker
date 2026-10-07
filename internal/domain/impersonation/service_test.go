@@ -2,6 +2,7 @@ package impersonation
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -168,13 +169,12 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 	})
 
 	for _, tc := range []struct {
-		name    string
-		status  ports.UserDelegationStatus
-		details string
-		detail  tokenexchange.FailureDetail
+		name   string
+		status ports.UserDelegationStatus
+		detail tokenexchange.FailureDetail
 	}{
-		{name: "missing delegation", status: ports.UserDelegationMissing, details: "user_grant_missing", detail: tokenexchange.DetailGrantMissing},
-		{name: "expired delegation", status: ports.UserDelegationExpired, details: "user_grant_expired", detail: tokenexchange.DetailGrantExpired},
+		{name: "missing delegation", status: ports.UserDelegationMissing, detail: tokenexchange.DetailGrantMissing},
+		{name: "expired delegation", status: ports.UserDelegationExpired, detail: tokenexchange.DetailGrantExpired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			verifier := &recordingDelegationVerifier{status: tc.status}
@@ -182,10 +182,8 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 			var tokenErr *tokenexchange.TokenExchangeError
 			require.ErrorAs(t, err, &tokenErr)
 			assert.Equal(t, tokenexchange.AccessDeniedError, tokenErr.Code())
-			assert.Equal(t, "user delegation is required before impersonation", tokenErr.Description())
 			assert.Equal(t, "https://broker.example.com/agents/"+target.Agent.ID.String(), tokenErr.ErrorURI())
-			assert.Equal(t, tc.details, tokenErr.Details())
-			assert.Equal(t, tc.details, outcome.Audit.FailureCategory)
+			assert.Nil(t, outcome.Response)
 			assert.Equal(t, tokenexchange.StageGrantAuthorization, tokenErr.Diagnostic().Stage())
 			assert.Equal(t, tc.detail, tokenErr.Diagnostic().Detail())
 			assert.Equal(t, tokenexchange.RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
@@ -203,7 +201,7 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 		require.ErrorAs(t, err, &tokenErr)
 		assert.Equal(t, tokenexchange.ServerErrorCode, tokenErr.Code())
 		assert.Empty(t, tokenErr.ErrorURI())
-		assert.Equal(t, "user_grant_lookup_failed", outcome.Audit.FailureCategory)
+		assert.Nil(t, outcome.Response)
 		assert.ErrorIs(t, err, assert.AnError)
 		assert.Equal(t, tokenexchange.StageGrantAuthorization, tokenErr.Diagnostic().Stage())
 		assert.Equal(t, tokenexchange.DetailGrantRepositoryUnavailable, tokenErr.Diagnostic().Detail())
@@ -220,7 +218,7 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 		var tokenErr *tokenexchange.TokenExchangeError
 		require.ErrorAs(t, err, &tokenErr)
 		assert.Equal(t, tokenexchange.AccessDeniedError, tokenErr.Code())
-		assert.Equal(t, "authorization_denied", outcome.Audit.FailureCategory)
+		assert.Nil(t, outcome.Response)
 		assert.Equal(t, tokenexchange.StageClientAuthorization, tokenErr.Diagnostic().Stage())
 		assert.Equal(t, tokenexchange.DetailClientPolicyDenied, tokenErr.Diagnostic().Detail())
 		assert.Equal(t, tokenexchange.RecoveryNone, tokenErr.Diagnostic().RecoveryAction())
@@ -306,7 +304,7 @@ func TestImpersonate_MalformedClientAssertionFailsClosed(t *testing.T) {
 	assert.Equal(t, tokenexchange.InvalidClientError, codeOf(t, err))
 	assert.Equal(t, tokenexchange.InvalidClientError, outcome.Audit.Outcome)
 	// SC-005: the audit record must never carry credential values.
-	assert.NotContains(t, outcome.Audit.FailureCategory, "not-a-jwt")
+	assert.NotContains(t, fmt.Sprint(outcome.Audit), "not-a-jwt")
 	assert.Empty(t, outcome.Audit.SubjectIdentity)
 }
 func TestImpersonate_DispatchesCredentialsByRole(t *testing.T) {
@@ -380,27 +378,27 @@ func TestImpersonate_DispatchesCredentialsByRole(t *testing.T) {
 		name     string
 		mutate   func(*Request)
 		wantCode string
-		details  string
+		detail   tokenexchange.FailureDetail
 	}{
 		{"accepts distinct issuers and audiences", nil, "", ""},
 		{"rejects client assertion signed by actor issuer", func(req *Request) {
 			req.ClientAssertion = credential(ports.CredentialRoleActor, signers[ports.CredentialRoleClientAssertion].audience)
-		}, tokenexchange.InvalidClientError, "client_assertion_invalid"},
+		}, tokenexchange.InvalidClientError, tokenexchange.DetailClientInvalid},
 		{"rejects actor token signed by subject issuer", func(req *Request) {
 			req.ActorToken = credential(ports.CredentialRoleSubject, signers[ports.CredentialRoleActor].audience)
-		}, tokenexchange.InvalidRequestError, "actor_token_invalid"},
+		}, tokenexchange.InvalidRequestError, tokenexchange.DetailSubjectInvalid},
 		{"rejects subject token signed by client issuer", func(req *Request) {
 			req.SubjectToken = credential(ports.CredentialRoleClientAssertion, signers[ports.CredentialRoleSubject].audience)
-		}, tokenexchange.InvalidRequestError, "subject_token_invalid"},
+		}, tokenexchange.InvalidRequestError, tokenexchange.DetailSubjectInvalid},
 		{"rejects client assertion with actor audience", func(req *Request) {
 			req.ClientAssertion = credential(ports.CredentialRoleClientAssertion, signers[ports.CredentialRoleActor].audience)
-		}, tokenexchange.InvalidClientError, "client_assertion_invalid"},
+		}, tokenexchange.InvalidClientError, tokenexchange.DetailClientInvalid},
 		{"rejects actor token with subject audience", func(req *Request) {
 			req.ActorToken = credential(ports.CredentialRoleActor, signers[ports.CredentialRoleSubject].audience)
-		}, tokenexchange.InvalidRequestError, "actor_token_invalid"},
+		}, tokenexchange.InvalidRequestError, tokenexchange.DetailSubjectInvalid},
 		{"rejects subject token with client audience", func(req *Request) {
 			req.SubjectToken = credential(ports.CredentialRoleSubject, signers[ports.CredentialRoleClientAssertion].audience)
-		}, tokenexchange.InvalidRequestError, "subject_token_invalid"},
+		}, tokenexchange.InvalidRequestError, tokenexchange.DetailSubjectInvalid},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -416,7 +414,6 @@ func TestImpersonate_DispatchesCredentialsByRole(t *testing.T) {
 				require.NotNil(t, outcome.Response)
 				assert.Equal(t, 1, issuer.calls)
 				assert.Equal(t, signers[ports.CredentialRoleActor].issuer, issuer.input.ActorIssuer)
-				assert.Equal(t, []string{signers[ports.CredentialRoleClientAssertion].issuer, signers[ports.CredentialRoleActor].issuer, signers[ports.CredentialRoleSubject].issuer}, outcome.Audit.IssuerIdentifiers)
 				assert.Equal(t, []string{"client_assertion", "actor", "subject"}, outcome.Audit.IssuerRoles)
 				return
 			}
@@ -424,7 +421,9 @@ func TestImpersonate_DispatchesCredentialsByRole(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, tc.wantCode, codeOf(t, err))
 			assert.Nil(t, outcome.Response)
-			assert.Equal(t, tc.details, outcome.Audit.FailureCategory)
+			var tokenErr *tokenexchange.TokenExchangeError
+			require.ErrorAs(t, err, &tokenErr)
+			assert.Equal(t, tc.detail, tokenErr.Diagnostic().Detail())
 			assert.Zero(t, issuer.calls)
 		})
 	}
@@ -493,14 +492,13 @@ func TestImpersonate_TargetScopeValidation(t *testing.T) {
 	var tokenErr *tokenexchange.TokenExchangeError
 	require.ErrorAs(t, err, &tokenErr)
 	assert.Equal(t, "invalid_scope", tokenErr.Code())
-	assert.Equal(t, "requested scope is not permitted", tokenErr.Description())
-	assert.Equal(t, "scope_not_permitted", tokenErr.Details())
+	assert.Equal(t, tokenexchange.StageRequestValidation, tokenErr.Diagnostic().Stage())
+	assert.Equal(t, tokenexchange.DetailRequestMalformed, tokenErr.Diagnostic().Detail())
 	assert.False(t, issuer.called, "no token should be minted")
 	assert.Nil(t, outcome.Response)
 	assert.Equal(t, target.Agent.ID.String(), outcome.Audit.TargetAgentID)
 	assert.Empty(t, outcome.Audit.SelectedRule)
-	assert.Empty(t, outcome.Audit.IssuerIdentifiers)
-	assert.NotContains(t, outcome.Audit.FailureCategory, "admin")
+	assert.NotContains(t, fmt.Sprint(outcome.Audit), "admin")
 }
 
 // No-match precedence is order independent across rules (FR-004a): a false predicate anywhere

@@ -26,9 +26,6 @@ type TokenExchangeError struct {
 	// Causes remain inspectable with errors.Is/As, but must not be serialized into telemetry.
 	cause error
 
-	// Internal context is separate from the bounded diagnostic telemetry contract.
-	details string
-
 	// errorURI is the RFC 6749 §5.2 error_uri — a URI pointing to a human-readable page
 	// with more information about the error. For session-not-found / session-expired errors
 	// this is the re-authentication URL the user must visit (e.g. third-party authorize endpoint).
@@ -93,11 +90,6 @@ func (e *TokenExchangeError) HTTPStatus() int {
 	return e.httpStatus
 }
 
-// Details returns internal context. Only Diagnostic is suitable for telemetry.
-func (e *TokenExchangeError) Details() string {
-	return e.details
-}
-
 // NewInvalidRequestError creates an error for malformed token exchange requests.
 // RFC 8693 Section 5.2: invalid_request (400)
 // Used when required parameters are missing, malformed, or invalid.
@@ -113,33 +105,12 @@ func NewInvalidRequestError(description string) *TokenExchangeError {
 	}
 }
 
-// NewInvalidRequestErrorWithDetails creates an error for malformed token exchange requests
-// with additional structured context for logging.
-func NewInvalidRequestErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "invalid_request",
-		description: description,
-		httpStatus:  400,
-		details:     details,
-	}
-}
-
 // NewInvalidScopeError creates an error for a requested scope that is not permitted.
 func NewInvalidScopeError(description string) *TokenExchangeError {
 	return &TokenExchangeError{
 		code:        InvalidScopeError,
 		description: description,
 		httpStatus:  400,
-	}
-}
-
-// NewInvalidScopeErrorWithDetails creates an invalid_scope error with structured logging details.
-func NewInvalidScopeErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        InvalidScopeError,
-		description: description,
-		httpStatus:  400,
-		details:     details,
 	}
 }
 
@@ -152,17 +123,6 @@ func NewInvalidClientError(description string) *TokenExchangeError {
 		code:        "invalid_client",
 		description: description,
 		httpStatus:  401,
-	}
-}
-
-// NewInvalidClientErrorWithDetails creates an error for invalid client authentication
-// with additional structured context for logging.
-func NewInvalidClientErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "invalid_client",
-		description: description,
-		httpStatus:  401,
-		details:     details,
 	}
 }
 
@@ -181,17 +141,6 @@ func NewInvalidGrantError(description string) *TokenExchangeError {
 	}
 }
 
-// NewInvalidGrantErrorWithDetails creates an error when no valid tokens exist
-// with additional structured context for logging.
-func NewInvalidGrantErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "invalid_grant",
-		description: description,
-		httpStatus:  400,
-		details:     details,
-	}
-}
-
 // NewInvalidTargetError creates an error when resource cannot be resolved to a service.
 // RFC 8693 Section 5.2: invalid_target (400)
 // Used when:
@@ -204,17 +153,6 @@ func NewInvalidTargetError(description string) *TokenExchangeError {
 		code:        "invalid_target",
 		description: description,
 		httpStatus:  400,
-	}
-}
-
-// NewInvalidTargetErrorWithDetails creates an error when resource cannot be resolved
-// with additional structured context for logging.
-func NewInvalidTargetErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "invalid_target",
-		description: description,
-		httpStatus:  400,
-		details:     details,
 	}
 }
 
@@ -254,17 +192,6 @@ func NewAccessDeniedError(description string) *TokenExchangeError {
 	}
 }
 
-// NewAccessDeniedErrorWithDetails creates an error for authorization failures
-// with additional structured context for logging.
-func NewAccessDeniedErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "access_denied",
-		description: description,
-		httpStatus:  403,
-		details:     details,
-	}
-}
-
 // NewServerError creates an error for internal server errors.
 // RFC 8693 Section 5.2: server_error (500)
 // Used when unexpected errors occur:
@@ -277,17 +204,6 @@ func NewServerError(description string) *TokenExchangeError {
 		code:        "server_error",
 		description: description,
 		httpStatus:  500,
-	}
-}
-
-// NewServerErrorWithDetails creates an error for internal server errors
-// with additional structured context for logging.
-func NewServerErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "server_error",
-		description: description,
-		httpStatus:  500,
-		details:     details,
 	}
 }
 
@@ -315,13 +231,6 @@ func IsTokenExchangeError(err error) bool {
 func (e *TokenExchangeError) WithCause(cause error) *TokenExchangeError {
 	clone := *e
 	clone.cause = cause
-	return &clone
-}
-
-// WithDetails returns a copy with internal context attached.
-func (e *TokenExchangeError) WithDetails(details string) *TokenExchangeError {
-	clone := *e
-	clone.details = details
 	return &clone
 }
 

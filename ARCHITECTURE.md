@@ -342,6 +342,7 @@ The composite shutdown function is stored as `App.ShutdownTelemetry func(context
 
 `TokenExchangeError` carries an immutable, credential-free `Diagnostic` value. Enrichment returns a copy and does not mutate shared singleflight failures.
 Wrapped causes remain available through `errors.Is` and `errors.As`. Exchange telemetry never serializes these causes.
+Typed diagnostics are the only internal failure-classification channel. Errors do not carry separate free-form details for audit records.
 
 Logs and spans share these bounded attributes:
 
@@ -371,6 +372,7 @@ Provider client-authentication rejection instead indicates broker configuration 
 
 Session `OperationError` carries immutable operation/detail/kind/dependency/status/allowlisted-code metadata.
 Origin metadata maps to exchange diagnostics without inspecting error text.
+ExtProc `OperationError` captures its diagnostic once at construction. Callers cannot override that snapshot.
 Individual caller cancellation is `canceled` at its current stage. Detached shared-operation and dependency deadlines remain infrastructure failures.
 
 After resource resolution, telemetry records `token_exchange.service.id`, not the requested URI or service display name.

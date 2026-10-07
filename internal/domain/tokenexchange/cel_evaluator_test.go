@@ -435,7 +435,7 @@ func TestCELEvaluatorFailureDiagnostics(t *testing.T) {
 				assert.NotNil(t, tokenErr.Unwrap(), "compile and evaluation failures preserve their causes")
 			}
 			for _, secret := range []string{"secret-expression-credential", "secret-claim-key", "secret-claim-value", "secret-resource", "secret-url-value"} {
-				assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.Diagnostic()), secret)
+				assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Diagnostic()), secret)
 			}
 		})
 	}
@@ -486,7 +486,7 @@ func TestCELEvaluatorResolverPreservesCauses(t *testing.T) {
 				assert.Same(t, secretCause, dependencyErr)
 			}
 			for _, secret := range []string{"secret-resolver", "secret-client-id"} {
-				assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.Diagnostic()), secret)
+				assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Diagnostic()), secret)
 			}
 		})
 	}

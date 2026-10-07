@@ -161,7 +161,7 @@ func TestTokenExchangeFailureTelemetryAndProtocol(t *testing.T) {
 			handler := &OAuth2TokenHandler{Logger: slog.New(logs)}
 			diagnostic := tokenexchange.NewDiagnostic(test.stage, test.detail)
 			cause := errors.Join(errors.New("NESTED_CAUSE_SENTINEL"), providerCause)
-			err := test.makeError("DOMAIN_DESCRIPTION_SENTINEL").WithDetails("DOMAIN_DETAILS_SENTINEL").WithCause(cause).WithDiagnostic(diagnostic)
+			err := test.makeError("DOMAIN_DESCRIPTION_SENTINEL").WithCause(cause).WithDiagnostic(diagnostic)
 			if test.recovery {
 				err = err.WithErrorURI(recoveryURI)
 			}
@@ -187,7 +187,7 @@ func TestTokenExchangeFailureTelemetryAndProtocol(t *testing.T) {
 			require.Len(t, *logs.records, 1)
 			require.Len(t, spans.Ended(), 1)
 			assertTokenExchangeDiagnostic(t, (*logs.records)[0], spans.Ended()[0], diagnostic)
-			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "DOMAIN_DESCRIPTION_SENTINEL", "DOMAIN_DETAILS_SENTINEL", "NESTED_CAUSE_SENTINEL", "OUTER_CAUSE_SENTINEL", "PROVIDER_STATUS_SENTINEL", "PROVIDER_BODY_SENTINEL", "PROVIDER_DESCRIPTION_SENTINEL", "PROVIDER_HOST_SENTINEL", "PROVIDER_PATH_SENTINEL", "PROVIDER_QUERY_SENTINEL", "RECOVERY_URI_SENTINEL")
+			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "DOMAIN_DESCRIPTION_SENTINEL", "NESTED_CAUSE_SENTINEL", "OUTER_CAUSE_SENTINEL", "PROVIDER_STATUS_SENTINEL", "PROVIDER_BODY_SENTINEL", "PROVIDER_DESCRIPTION_SENTINEL", "PROVIDER_HOST_SENTINEL", "PROVIDER_PATH_SENTINEL", "PROVIDER_QUERY_SENTINEL", "RECOVERY_URI_SENTINEL")
 		})
 	}
 }
@@ -241,7 +241,7 @@ func (s *diagnosticImpersonationService) ResolveTarget(context.Context, []string
 }
 
 func (s *diagnosticImpersonationService) Impersonate(context.Context, *impersonation.Request, *impersonation.Target) (*impersonation.Outcome, error) {
-	return &impersonation.Outcome{Response: s.response, Audit: impersonation.AuditRecord{Outcome: "success", Audience: "https://AUDIENCE_HOST_SENTINEL.example/AUDIENCE_PATH_SENTINEL", IssuerIdentifiers: []string{"https://ISSUER_HOST_SENTINEL.example/ISSUER_PATH_SENTINEL"}}}, s.exchangeErr
+	return &impersonation.Outcome{Response: s.response, Audit: impersonation.AuditRecord{Outcome: "success"}}, s.exchangeErr
 }
 
 func diagnosticImpersonationForm() url.Values {
@@ -292,11 +292,11 @@ func TestOAuth2TokenHandler_ImpersonationTelemetryAndResponseWrites(t *testing.T
 			diagnostic := tokenexchange.SuccessDiagnostic(tokenexchange.ExchangeImpersonation)
 			if test.resolveFailure {
 				diagnostic = tokenexchange.NewDiagnostic(tokenexchange.StageExchangeRouting, tokenexchange.DetailRequestMalformed).WithExchangeKind(tokenexchange.ExchangeImpersonation)
-				service.resolveErr = tokenexchange.NewInvalidRequestError("DESCRIPTION_SENTINEL").WithDetails("DETAILS_SENTINEL").WithCause(errors.New("CAUSE_SENTINEL")).WithDiagnostic(diagnostic)
+				service.resolveErr = tokenexchange.NewInvalidRequestError("DESCRIPTION_SENTINEL").WithCause(errors.New("CAUSE_SENTINEL")).WithDiagnostic(diagnostic)
 			}
 			if test.exchangeFailure {
 				diagnostic = tokenexchange.NewDiagnostic(tokenexchange.StageSubjectValidation, tokenexchange.DetailSubjectInvalid).WithExchangeKind(tokenexchange.ExchangeImpersonation)
-				service.exchangeErr = tokenexchange.NewInvalidGrantError("DESCRIPTION_SENTINEL").WithDetails("DETAILS_SENTINEL").WithCause(errors.New("CAUSE_SENTINEL")).WithDiagnostic(diagnostic)
+				service.exchangeErr = tokenexchange.NewInvalidGrantError("DESCRIPTION_SENTINEL").WithCause(errors.New("CAUSE_SENTINEL")).WithDiagnostic(diagnostic)
 			}
 			form := diagnosticImpersonationForm()
 			if test.parseFailure {
@@ -334,7 +334,7 @@ func TestOAuth2TokenHandler_ImpersonationTelemetryAndResponseWrites(t *testing.T
 			} else {
 				assert.NotContains(t, response.Body.String(), "DESCRIPTION_SENTINEL")
 			}
-			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "DESCRIPTION_SENTINEL", "DETAILS_SENTINEL", "CAUSE_SENTINEL", "RESPONSE_WRITE_SENTINEL", "AUDIENCE_HOST_SENTINEL", "AUDIENCE_PATH_SENTINEL", "ISSUER_HOST_SENTINEL", "ISSUER_PATH_SENTINEL", "RESOURCE_HOST_SENTINEL", "RESOURCE_PATH_SENTINEL", "ASSERTION_SENTINEL", "ACTOR_TOKEN_SENTINEL", "SUBJECT_TOKEN_SENTINEL", "ACCESS_TOKEN_SENTINEL")
+			assertTokenExchangeTelemetryContainsNoSecrets(t, *logs.records, spans.Ended(), "DESCRIPTION_SENTINEL", "CAUSE_SENTINEL", "RESPONSE_WRITE_SENTINEL", "RESOURCE_HOST_SENTINEL", "RESOURCE_PATH_SENTINEL", "ASSERTION_SENTINEL", "ACTOR_TOKEN_SENTINEL", "SUBJECT_TOKEN_SENTINEL", "ACCESS_TOKEN_SENTINEL")
 		})
 	}
 }

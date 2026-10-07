@@ -878,7 +878,7 @@ func TestTokenExchangeAgentIDResolverFailureDiagnostics(t *testing.T) {
 					assert.Same(t, storageCause, preserved)
 				}
 				for _, secret := range []string{tc.rawIdentifier, "secret-store", "secret-missing-value", "secret-dependency-value"} {
-					assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.Diagnostic()), secret)
+					assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Diagnostic()), secret)
 				}
 			}
 			_, err := resolve(tc.rawIdentifier)

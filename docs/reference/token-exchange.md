@@ -350,11 +350,10 @@ rejected scopes.
 
 ### Audit events
 
-Each impersonation decision records a credential-free structured log event. The event name
-is `impersonation_decision`. It contains the routing audience, target, selected rule, issuer
-identifiers, credential roles, safe identities, OAuth error or failure category, and
-`request_id`. It does not contain client assertions, actor or subject tokens, issued access
-tokens, or signing keys. Use this audit record to investigate a rejected request.
+Each impersonation decision records a credential-free structured log event named `impersonation_decision`.
+The event contains the target, selected rule, validated credential roles, safe identities, OAuth error code, outcome, and `request_id`.
+Separate token-exchange diagnostic fields distinguish missing and expired grants.
+The event excludes routing audiences, issuer URLs, free-form failure categories, credentials, issued access tokens, and signing keys.
 
 See [Configuration](/docs/configuration) and
 `examples/config/impersonation.yaml` for operator setup and examples.

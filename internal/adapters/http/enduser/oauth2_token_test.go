@@ -1643,7 +1643,7 @@ func TestHandleTokenExchange_WrappedTokenExchangeErrorMapsCorrectly(t *testing.T
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
 	wrapped := fmt.Errorf("context: %w",
-		tokenexchange.NewInvalidRequestErrorWithDetails("bad token", "details about the failure"))
+		tokenexchange.NewInvalidRequestError("bad token"))
 
 	h := &OAuth2TokenHandler{Logger: logger}
 	w := httptest.NewRecorder()

@@ -112,7 +112,6 @@ type tokenExchangeInput struct {
 
 type inputRejection struct {
 	code   string
-	reason string
 	detail FailureDetail
 }
 
@@ -922,55 +921,55 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, protocol string, err
 
 func extractTokenExchangeInput(req *extprocv3.ProcessingRequest) (tokenExchangeInput, *inputRejection) {
 	if req == nil || req.MetadataContext == nil {
-		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token", reason: "metadata context is missing"}
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token"}
 	}
 
 	metadata, ok := req.MetadataContext.FilterMetadata[tokenExchangeMetadataNamespace]
 	if !ok || metadata == nil || metadata.Fields == nil {
-		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token", reason: "token-exchange namespace is missing"}
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token"}
 	}
 
-	subjectToken, reason := metadataStringField(metadata.Fields, subjectTokenFieldKey)
-	if reason != "" {
-		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token", reason: reason}
+	subjectToken, ok := metadataStringField(metadata.Fields, subjectTokenFieldKey)
+	if !ok {
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token"}
 	}
 	if strings.TrimSpace(subjectToken) == "" {
-		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token", reason: "subject token is blank"}
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token"}
 	}
 	if len(subjectToken) >= len("bearer ") && strings.EqualFold(subjectToken[:len("bearer ")], "bearer ") {
-		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token", reason: "subject token has a bearer scheme"}
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_subject_token"}
 	}
 
-	resourceURI, reason := metadataStringField(metadata.Fields, resourceURIFieldKey)
-	if reason != "" {
+	resourceURI, ok := metadataStringField(metadata.Fields, resourceURIFieldKey)
+	if !ok {
 		detail := DetailRequestMalformed
 		if metadata.Fields[resourceURIFieldKey] == nil {
 			detail = DetailResourceMissing
 		}
-		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: reason, detail: detail}
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", detail: detail}
 	}
 	if strings.TrimSpace(resourceURI) == "" {
-		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: "resource URI is blank", detail: DetailResourceMissing}
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", detail: DetailResourceMissing}
 	}
-	if err := validateResourceURI(resourceURI); err != nil {
-		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource", reason: status.Convert(err).Message()}
+	if !validateResourceURI(resourceURI) {
+		return tokenExchangeInput{}, &inputRejection{code: "invalid_resource"}
 	}
 
 	return tokenExchangeInput{subjectToken: subjectToken, resourceURI: resourceURI}, nil
 }
 
-func metadataStringField(fields map[string]*structpb.Value, key string) (string, string) {
+func metadataStringField(fields map[string]*structpb.Value, key string) (string, bool) {
 	value, ok := fields[key]
 	if !ok || value == nil {
-		return "", "field is missing"
+		return "", false
 	}
 
 	stringValue, ok := value.GetKind().(*structpb.Value_StringValue)
 	if !ok {
-		return "", "field is not a string"
+		return "", false
 	}
 
-	return stringValue.StringValue, ""
+	return stringValue.StringValue, true
 }
 
 // extractProtocolFromMetadata extracts the agentgateway protocol value from the
@@ -1112,21 +1111,9 @@ func extractHeader(headers *extprocv3.HttpHeaders, name string) string {
 
 // validateResourceURI checks that resourceURI is a non-empty absolute URI with
 // an HTTP or HTTPS scheme and a non-empty host.
-func validateResourceURI(resourceURI string) error {
-	if strings.TrimSpace(resourceURI) == "" {
-		return status.Error(codes.InvalidArgument, "empty resource URI")
-	}
+func validateResourceURI(resourceURI string) bool {
 	u, err := url.ParseRequestURI(resourceURI)
-	if err != nil {
-		return status.Error(codes.InvalidArgument, "invalid resource URI: parse error")
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return status.Error(codes.InvalidArgument, "resource URI must have http or https scheme")
-	}
-	if u.Host == "" {
-		return status.Error(codes.InvalidArgument, "resource URI must have a non-empty host")
-	}
-	return nil
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // headerCarrier adapts ExtProc headers to the OTel TextMapCarrier interface.

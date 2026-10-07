@@ -299,7 +299,6 @@ func assertOriginDiagnostic(t *testing.T, err error, code string, outcome Outcom
 	assert.Equal(t, outcome, tokenErr.Diagnostic().Outcome())
 	assert.Equal(t, stage, tokenErr.Diagnostic().Stage())
 	assert.Equal(t, detail, tokenErr.Diagnostic().Detail())
-	assert.Empty(t, tokenErr.Details())
 	return tokenErr
 }
 
@@ -393,7 +392,7 @@ func TestJWTKeyFetchDiagnostic(t *testing.T) {
 					assert.Same(t, secretCause, dependencyErr)
 				}
 				for _, secret := range []string{"secret-expected", "secret-actual", "secret-raw-credential"} {
-					assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.Diagnostic()), secret)
+					assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Diagnostic()), secret)
 				}
 			})
 		}
@@ -583,7 +582,7 @@ func TestJWTValidatorRejectedCredentials(t *testing.T) {
 				assert.Equal(t, RecoveryReauthenticate, tokenErr.Diagnostic().RecoveryAction())
 				assert.Equal(t, role.target, tokenErr.Diagnostic().RecoveryTarget())
 				for _, secret := range []string{string(signed), expectedIssuer, expectedAudience, "secret-token-subject", "secret-token-issuer", "secret-token-audience"} {
-					assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.ErrorURI(), tokenErr.Diagnostic()), secret)
+					assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.ErrorURI(), tokenErr.Diagnostic()), secret)
 				}
 			})
 		}
@@ -681,7 +680,7 @@ func TestJWTValidatorNeverSerializesJOSEHeaders(t *testing.T) {
 			_, err := role.validate(validator, context.Background(), string(signed))
 			tokenErr := assertOriginDiagnostic(t, err, role.code, OutcomeAuthenticationFailed, role.stage, role.detail)
 			for _, secret := range []string{string(signed), "secret-jose-kid", "secret-jose-typ", "secret-jose-cty", "secret-claim", "secret-config"} {
-				assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Details(), tokenErr.ErrorURI(), tokenErr.Diagnostic()), secret)
+				assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.ErrorURI(), tokenErr.Diagnostic()), secret)
 			}
 		})
 	}

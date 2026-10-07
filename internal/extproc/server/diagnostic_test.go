@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
-	"sync/atomic"
 	"testing"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -129,26 +127,6 @@ func TestBrokerDiagnosticUsesOnlyStatusCodeAndRecoveryPresence(t *testing.T) {
 			assert.Equal(t, ExchangeUnknown, d.ExchangeKind())
 		})
 	}
-}
-
-func TestOperationErrorEnrichmentReturnsIndependentCopies(t *testing.T) {
-	cause := errors.New("cause-secret-sentinel")
-	original := NewOperationError(NewErrorMetadata(OperationExchange, KindInternal, DependencyLocal, 0, ""), cause)
-	var workers sync.WaitGroup
-	var mismatches atomic.Int32
-	for _, stage := range []FailureStage{StageRefresh, StageResponseWrite, StageClientAuthorization} {
-		workers.Go(func() {
-			for range 100 {
-				enriched := original.WithDiagnostic(NewDiagnostic(stage, DetailCallerCanceled).WithExchangeKind(ExchangeImpersonation))
-				if enriched == original || enriched.Diagnostic().Stage() != stage || enriched.Diagnostic().Outcome() != OutcomeCanceled || !errors.Is(enriched, cause) || original.Diagnostic().Stage() != StageExchangeRouting || original.Diagnostic().Detail() != DetailInternalUnclassified {
-					mismatches.Add(1)
-				}
-			}
-		})
-	}
-	workers.Wait()
-	assert.Zero(t, mismatches.Load())
-	assert.Equal(t, DetailInternalUnclassified, original.WithDiagnostic(Diagnostic{}).Diagnostic().Detail())
 }
 
 func TestCommonExchangeFieldsMatchLogsSpansAndExistingMetrics(t *testing.T) {
@@ -272,18 +250,6 @@ func TestMetadataResourceAbsenceIsClassifiedAtRequestValidation(t *testing.T) {
 		assert.Equal(t, DetailResourceMissing, rejection.Diagnostic().Detail())
 		assert.Equal(t, OutcomeInvalidRequest, rejection.Diagnostic().Outcome())
 	}
-}
-
-func TestCallerCancellationPreservesKnownEnrichedStage(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	err := NewOperationError(NewErrorMetadata(OperationExchange, KindCallerCanceled, DependencyLocal, 0, ""), context.Canceled).
-		WithDiagnostic(NewDiagnostic(StageResponseWrite, DetailResponseWriteFailed))
-	d := diagnosticFromError(ctx, err)
-	assert.Equal(t, StageResponseWrite, d.Stage())
-	assert.Equal(t, OutcomeCanceled, d.Outcome())
-	assert.Equal(t, DetailCallerCanceled, d.Detail())
-	assert.Equal(t, RecoveryNone, d.RecoveryAction())
 }
 
 func TestDependencyDeadlineClassificationSurvivesLaterCallerCancellation(t *testing.T) {

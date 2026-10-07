@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -13,65 +12,9 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 )
-
-// SR-001 regression: validateResourceURI must not echo raw URI (including
-// sensitive query parameters) in its error message.
-func TestValidateResourceURI_DoesNotLeakQueryParams(t *testing.T) {
-	err := validateResourceURI("https://example.com/%zz?access_token=secret123")
-	require.Error(t, err, "malformed URI must fail validation")
-	assert.NotContains(t, err.Error(), "secret123",
-		"SR-001: parse error must not echo raw URI with sensitive query parameters")
-	assert.Contains(t, err.Error(), "parse error",
-		"error should use the generic sanitized message")
-}
-
-// SR-001 regression: validateResourceURI must not echo the parsed URI scheme
-// for unexpected scheme types (e.g. data:, javascript:, ftp:).
-func TestValidateResourceURI_DoesNotLeakScheme(t *testing.T) {
-	tests := []struct {
-		uri    string
-		scheme string // the scheme that must NOT appear in the error
-	}{
-		{"data:text/plain,hello", "data"},
-		{"javascript:alert(1)", "javascript"},
-		{"ftp://files.example.com/secret.txt", "ftp"},
-	}
-	for _, tc := range tests {
-		err := validateResourceURI(tc.uri)
-		require.Error(t, err, "non-http(s) scheme URI %q must fail validation", tc.uri)
-		assert.Contains(t, err.Error(), "http or https scheme",
-			"error should use generic scheme message")
-		// Check the error does not contain the scheme in any case form.
-		errLower := strings.ToLower(err.Error())
-		assert.NotContains(t, errLower, tc.scheme,
-			"SR-001: error must not contain the parsed scheme %q in any form", tc.scheme)
-	}
-}
-
-func TestValidateResourceURI_UsesSourceNeutralErrors(t *testing.T) {
-	tests := []struct {
-		name string
-		uri  string
-		want string
-	}{
-		{name: "empty", uri: "", want: "empty resource URI"},
-		{name: "malformed", uri: "https://example.com/%zz", want: "invalid resource URI: parse error"},
-		{name: "unsupported scheme", uri: "ftp://example.com/mcp", want: "resource URI must have http or https scheme"},
-		{name: "missing host", uri: "https:/mcp", want: "resource URI must have a non-empty host"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateResourceURI(tt.uri)
-			require.Error(t, err)
-			assert.Equal(t, tt.want, status.Convert(err).Message())
-		})
-	}
-}
 
 func TestExtractTraceContext_SelectsFirstValidDuplicateTraceparent(t *testing.T) {
 	previousPropagator := otel.GetTextMapPropagator()
