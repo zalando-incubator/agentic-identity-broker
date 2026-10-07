@@ -13,11 +13,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	adaptercmd "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/cimd"
 	httpAdapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/routing"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/outboundhttp"
 	brokerapp "github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
-	domaincimd "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/netpolicy"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -53,11 +53,11 @@ func NewCIMDTestFetcher(server *httptest.Server, fakeHostname string, maxRespons
 // NewCIMDTestFetcherFromClient builds a CIMDFetcher from a pre-configured *http.Client.
 // Use with CIMDTestHTTPClient when custom client configuration is needed (e.g., Timeout).
 func NewCIMDTestFetcherFromClient(client *http.Client, maxResponseBytes int64) (ports.CIMDFetcher, error) {
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	if err != nil {
 		return nil, err
 	}
-	return adaptercmd.NewFetcherWithClient(client, bl, maxResponseBytes), nil
+	return outboundhttp.NewFetcherWithClient(client, bl, maxResponseBytes), nil
 }
 
 // NewCIMDEndUserTestServer creates a production-built end-user server for CIMD tests.
