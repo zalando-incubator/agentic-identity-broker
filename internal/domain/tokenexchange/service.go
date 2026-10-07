@@ -344,7 +344,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		diagnostic := sessionDiagnostic(err)
 		if diagnostic.Outcome() == OutcomeReauthRequired {
 			return nil, NewInvalidGrantError("provider session is missing or unusable; re-authentication required").
-				WithCause(err).WithErrorURI(s.oauth2SessionService.ServiceAuthorizeURL(service.ID)).WithDiagnostic(diagnostic)
+				WithCause(err).WithErrorURI(s.oauth2SessionService.SessionRecoveryURL()).WithDiagnostic(diagnostic)
 		}
 		return nil, NewServerErrorWithCause("failed to get valid access token", err).WithDiagnostic(diagnostic)
 	}
@@ -365,7 +365,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		}
 		if len(missingScopes) > 0 {
 			return nil, NewInvalidGrantError("provider session does not cover required scopes; re-authentication required").
-				WithErrorURI(s.oauth2SessionService.ServiceAuthorizeURL(service.ID)).WithDiagnostic(NewDiagnostic(stage, DetailSessionScopeInsufficient))
+				WithErrorURI(s.oauth2SessionService.SessionRecoveryURL()).WithDiagnostic(NewDiagnostic(stage, DetailSessionScopeInsufficient))
 		}
 	}
 

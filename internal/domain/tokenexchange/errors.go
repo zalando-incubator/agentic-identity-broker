@@ -28,7 +28,7 @@ type TokenExchangeError struct {
 
 	// errorURI is the RFC 6749 §5.2 error_uri — a URI pointing to a human-readable page
 	// with more information about the error. For session-not-found / session-expired errors
-	// this is the re-authentication URL the user must visit (e.g. third-party authorize endpoint).
+	// this is the sessions landing page where the user can inspect the session.
 	// May be empty when no re-authentication URL is available.
 	errorURI string
 

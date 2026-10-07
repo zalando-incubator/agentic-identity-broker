@@ -1440,11 +1440,11 @@ paths:
 
         **Session Recovery:**
         - A missing session, or an expired session without a usable refresh token, returns
-          400 `invalid_grant` with `error_uri` set to the provider re-authentication URL
-          (`<public URL>/api/third-party/{service-id}/oauth2/authorize`).
+          400 `invalid_grant` with `error_uri` set to the sessions landing page
+          (`<public URL>/sessions`). This is a browser landing page, not an automatic login redirect.
         - When the provider rejects the stored refresh token with HTTP 400 and OAuth error
-          `invalid_grant`, the broker returns 400 `invalid_grant` with the same provider
-          re-authentication `error_uri`. The stored session is left unchanged.
+          `invalid_grant`, the broker returns 400 `invalid_grant` with the same sessions
+          landing-page `error_uri`. The stored session is left unchanged.
         - Any other refresh failure (for example provider `invalid_client`, a provider 5xx,
           an unparseable provider response, or a transport, storage, or decryption failure)
           returns 500 `server_error` without `error_uri`. Provider error descriptions are never
@@ -1620,13 +1620,13 @@ paths:
                   value:
                     error: "invalid_grant"
                     error_description: "User has no active session with the requested service"
-                    error_uri: "https://broker.example.com/api/third-party/11111111-1111-1111-1111-111111111111/oauth2/authorize"
+                    error_uri: "https://broker.example.com/sessions"
                 refresh_rejected:
                   summary: Provider rejected the stored refresh token
                   value:
                     error: "invalid_grant"
                     error_description: "User session refresh was rejected by the requested service. Service: 11111111-1111-1111-1111-111111111111. Please re-authenticate to GitHub."
-                    error_uri: "https://broker.example.com/api/third-party/11111111-1111-1111-1111-111111111111/oauth2/authorize"
+                    error_uri: "https://broker.example.com/sessions"
                 service_not_granted:
                   summary: Grant does not cover the requested service
                   value:

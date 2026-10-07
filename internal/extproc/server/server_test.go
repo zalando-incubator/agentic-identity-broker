@@ -1738,7 +1738,7 @@ func TestServer_Process_StreamHandledCleanly(t *testing.T) {
 // returns HTTP 200 with JSON-RPC -32042 URLElicitationRequiredError. id is null because
 // the request body has not been read yet; this is correct per JSON-RPC 2.0 §5.
 func TestServer_Process_BrokerErrorWithURI_ReturnsElicitationFromHeadersPhase(t *testing.T) {
-	reAuthURL := "https://broker.example.com/api/third-party/svc-123/oauth2/authorize"
+	reAuthURL := "https://broker.example.com/sessions"
 	const description = "User session has expired. Please re-authenticate."
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
@@ -1801,7 +1801,7 @@ func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_ReturnsElicita
 				StatusCode:  401,
 				Code:        "invalid_grant",
 				Description: "session expired",
-				ErrorURI:    "https://broker.example.com/api/third-party/svc-123/oauth2/authorize",
+				ErrorURI:    "https://broker.example.com/sessions",
 			}
 		},
 	}
@@ -1827,7 +1827,7 @@ func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_DefaultsToMCP(
 				StatusCode:  401,
 				Code:        "invalid_grant",
 				Description: "session expired",
-				ErrorURI:    "https://broker.example.com/api/third-party/svc-999/oauth2/authorize",
+				ErrorURI:    "https://broker.example.com/sessions",
 			}
 		},
 	}
@@ -1853,7 +1853,7 @@ func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_DirectClientDe
 				StatusCode:  401,
 				Code:        "invalid_grant",
 				Description: "session expired",
-				ErrorURI:    "https://broker.example.com/api/third-party/svc-123/oauth2/authorize",
+				ErrorURI:    "https://broker.example.com/sessions",
 			}
 		},
 	}

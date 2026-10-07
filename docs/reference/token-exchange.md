@@ -211,8 +211,9 @@ No service has the requested URI in its `protected_resources`.
 ```
 
 Rejected subject credentials do not require provider-session recovery.
-A missing, expired, scope-deficient, or provider-rejected session includes a broker-generated provider authorization `error_uri`.
-The client can direct the user to this URI for reauthentication.
+A missing, expired, scope-deficient, or provider-rejected session includes `error_uri` pointing to `<end-user public URL>/sessions`.
+This URI opens the existing session-management page. It does not automatically start provider login.
+The page's Refresh action uses an existing refresh token. It cannot replace a missing or rejected token.
 Provider refresh rejection and locally recorded refresh-token expiry remain distinct diagnostic causes.
 Provider 5xx/429 responses remain infrastructure errors, regardless of their OAuth error code.
 
@@ -273,7 +274,7 @@ Missing agents and ambiguous registered resources are configuration errors. Unav
 Missing or unusable consent grants remain authorization denial with `reconsent` targeting `consent`.
 They return `access_denied` and the agent consent-management `error_uri` before token-vault access.
 Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
-Their OAuth response is `invalid_grant` with a broker-generated provider authorization URI.
+Their OAuth response is `invalid_grant` with the sessions landing page as `error_uri`.
 Provider refresh rejection and recorded local expiry are distinct causes.
 Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
 Provider client-authentication rejection instead indicates broker configuration failure.

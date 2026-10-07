@@ -267,29 +267,3 @@ func TestImplementation_StateToken_RoundTrip(t *testing.T) {
 	assert.True(t, originalClaims.IssuedAt.Equal(decryptedClaims.IssuedAt))
 	assert.True(t, originalClaims.ExpiresAt.Equal(decryptedClaims.ExpiresAt))
 }
-
-func TestOAuth2SessionService_ServiceAuthorizeURL(t *testing.T) {
-	service, _ := setupImplementedService(t) // CallbackBaseURL = "https://broker.example.com"
-
-	tests := []struct {
-		name      string
-		serviceID id.ServiceID
-		expected  string
-	}{
-		{
-			name:      "produces correct authorize URL for a service",
-			serviceID: id.MustParseServiceID("f47ac10b-58cc-4372-a567-0e02b2c3d479"),
-			expected:  "https://broker.example.com/api/third-party/f47ac10b-58cc-4372-a567-0e02b2c3d479/oauth2/authorize",
-		},
-		{
-			name:      "different service ID produces different URL",
-			serviceID: id.MustParseServiceID("00000000-0000-0000-0000-000000000001"),
-			expected:  "https://broker.example.com/api/third-party/00000000-0000-0000-0000-000000000001/oauth2/authorize",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, service.ServiceAuthorizeURL(tt.serviceID))
-		})
-	}
-}

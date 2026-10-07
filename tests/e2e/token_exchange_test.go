@@ -901,6 +901,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
+			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
 		})
 
 		// Spec Reference: US5-S2 from specs/013-token-exchange/spec.md
@@ -932,6 +933,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
+			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
 		})
 
 		// Spec Reference: US5-S3 from specs/013-token-exchange/spec.md
@@ -1017,7 +1019,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			var errorResponse map[string]interface{}
 			Expect(json.Unmarshal(rawBody, &errorResponse)).To(Succeed())
 			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
-			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/api/third-party/" + githubServiceID.String() + "/oauth2/authorize"))
+			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
 			Expect(errorResponse).NotTo(HaveKey("access_token"))
 			Expect(string(rawBody)).NotTo(ContainSubstring("sentinel-provider-secret"))
 			Expect(logBuf.String()).NotTo(ContainSubstring("sentinel-provider-secret"))

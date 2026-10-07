@@ -107,6 +107,7 @@ The response is a 503 JSON immediate response. Diagnostics never contain the sub
 If exchange fails, the sidecar does not forward the original credential to the third-party service. Generic exchange errors, broker 4xx errors without `error_uri`, transient 429 or 5xx errors, network errors, and timeouts return HTTP 500 with `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`.
 
 If a nontransient broker error contains `error_uri`, MCP receives JSON-RPC code `-32042` URL elicitation. Non-MCP traffic receives the 503 re-authentication response. Expired assertions and open circuits also return their defined 503 responses.
+For provider-session recovery, the URL opens `/sessions`. It does not automatically start an OAuth2 authorization flow.
 
 ### Diagnostic telemetry
 

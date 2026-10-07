@@ -1814,7 +1814,7 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 			assert.Equal(t, tt.wantCode, tokenErr.Code())
 			if tt.wantReauthURI {
 				assert.Equal(t, 400, tokenErr.HTTPStatus())
-				assert.Equal(t, "https://broker.example.com/api/third-party/"+fixture.serviceID.String()+"/oauth2/authorize", tokenErr.ErrorURI())
+				assert.Equal(t, "https://broker.example.com/sessions", tokenErr.ErrorURI())
 			} else {
 				assert.Equal(t, 500, tokenErr.HTTPStatus())
 				assert.Empty(t, tokenErr.ErrorURI())
