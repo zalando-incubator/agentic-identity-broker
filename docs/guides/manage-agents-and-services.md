@@ -285,7 +285,8 @@ Google requires two `authorization_params` to support token refresh:
   token.
 
 If either parameter is absent, the broker stores no refresh token. After the access token expires, token exchange returns `invalid_grant`.
-The response includes a provider authorization `error_uri`. The user must authenticate again.
+The response’s `error_uri` points to the broker sessions page at the public URL’s `/sessions` path.
+There, the user can authenticate again with the provider.
 
 :::tip
 After you add or change `authorization_params`, existing sessions do not change. A user

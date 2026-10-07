@@ -1619,20 +1619,14 @@ paths:
                   summary: No Valid Session
                   value:
                     error: "invalid_grant"
-                    error_description: "User has no active session with the requested service"
+                    error_description: "User session is unavailable. Please re-authenticate."
                     error_uri: "https://broker.example.com/sessions"
                 refresh_rejected:
                   summary: Provider rejected the stored refresh token
                   value:
                     error: "invalid_grant"
-                    error_description: "User session refresh was rejected by the requested service. Service: 11111111-1111-1111-1111-111111111111. Please re-authenticate to GitHub."
+                    error_description: "User session is unavailable. Please re-authenticate."
                     error_uri: "https://broker.example.com/sessions"
-                service_not_granted:
-                  summary: Grant does not cover the requested service
-                  value:
-                    error: "invalid_grant"
-                    error_description: "service 11111111-1111-1111-1111-111111111111 is not authorized by any permission set in the grant; re-consent required"
-                    error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
                 missing_upstream_client_id:
                   summary: Agent has no upstream client_id (proxy mode)
                   value:
@@ -1682,6 +1676,12 @@ paths:
                   value:
                     error: "access_denied"
                     error_description: "User has not granted this agent access to the requested service"
+                service_not_granted:
+                  summary: Grant does not cover the requested service
+                  value:
+                    error: "access_denied"
+                    error_description: "User authorization is insufficient. Please re-consent."
+                    error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
                 impersonation_access_denied:
                   summary: Impersonation - no rule permits the request
                   value:
