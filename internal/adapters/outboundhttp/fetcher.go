@@ -1,5 +1,5 @@
-// Package cimd implements the SSRF-hardened HTTP fetcher for Client ID Metadata Documents.
-package cimd
+// Package outboundhttp implements the SSRF-hardened HTTP fetcher for Client ID Metadata Documents.
+package outboundhttp
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	domaincimd "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/netpolicy"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -23,7 +23,7 @@ var _ ports.CIMDFetcher = (*Fetcher)(nil)
 // Fetcher implements ports.CIMDFetcher with SSRF protection, timeout, and size limits.
 type Fetcher struct {
 	client           *http.Client
-	blocklist        domaincimd.SSRFBlocklist
+	blocklist        netpolicy.SSRFBlocklist
 	maxResponseBytes int64
 }
 
@@ -32,7 +32,7 @@ type Fetcher struct {
 // maxResponseBytes is the maximum allowed response body size.
 // extraBlockedCIDRs are operator-configured additional blocked CIDR ranges.
 func NewFetcher(fetchTimeout time.Duration, maxResponseBytes int64, extraBlockedCIDRs []string) (*Fetcher, error) {
-	blocklist, err := domaincimd.NewSSRFBlocklist(extraBlockedCIDRs)
+	blocklist, err := netpolicy.NewSSRFBlocklist(extraBlockedCIDRs)
 	if err != nil {
 		return nil, fmt.Errorf("building SSRF blocklist: %w", err)
 	}
@@ -68,7 +68,7 @@ func NewFetcher(fetchTimeout time.Duration, maxResponseBytes int64, extraBlocked
 // self-signed certificates. NEVER use in production.
 func NewFetcherInsecure(fetchTimeout time.Duration, maxResponseBytes int64) (*Fetcher, error) {
 	// Empty blocklist: allow all IPs including RFC 1918 ranges.
-	blocklist := domaincimd.SSRFBlocklist{}
+	blocklist := netpolicy.SSRFBlocklist{}
 
 	dialer := &net.Dialer{
 		Timeout:   fetchTimeout,
@@ -92,7 +92,7 @@ func NewFetcherInsecure(fetchTimeout time.Duration, maxResponseBytes int64) (*Fe
 
 // NewFetcherWithClient creates a Fetcher with an injected HTTP client, for testing.
 // The no-redirect policy is always enforced regardless of the client's CheckRedirect setting.
-func NewFetcherWithClient(client *http.Client, blocklist domaincimd.SSRFBlocklist, maxResponseBytes int64) *Fetcher {
+func NewFetcherWithClient(client *http.Client, blocklist netpolicy.SSRFBlocklist, maxResponseBytes int64) *Fetcher {
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
@@ -155,7 +155,7 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (*ports.CIMDFetchRes
 // buildSSRFControl returns a net.Dialer.Control function that rejects connections
 // to any IP address in the blocklist. The control callback fires after DNS
 // resolution and before TCP connect, so blocked addresses never receive a packet.
-func buildSSRFControl(blocklist domaincimd.SSRFBlocklist) func(string, string, syscall.RawConn) error {
+func buildSSRFControl(blocklist netpolicy.SSRFBlocklist) func(string, string, syscall.RawConn) error {
 	return func(network, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
 		if err != nil {

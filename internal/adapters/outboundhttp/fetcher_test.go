@@ -1,4 +1,4 @@
-package cimd
+package outboundhttp
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	domaincimd "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/netpolicy"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,7 +44,7 @@ func TestFetcher_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 
 	fetcher := NewFetcherWithClient(srv.Client(), bl, 5120)
@@ -65,7 +65,7 @@ func TestFetcher_NonJSONContentType(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 
 	fetcher := NewFetcherWithClient(srv.Client(), bl, 5120)
@@ -80,7 +80,7 @@ func TestFetcher_Non200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 
 	fetcher := NewFetcherWithClient(srv.Client(), bl, 5120)
@@ -98,7 +98,7 @@ func TestFetcher_OversizedResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 
 	fetcher := NewFetcherWithClient(srv.Client(), bl, 5120)
@@ -115,7 +115,7 @@ func TestFetcher_Redirect_Blocked(t *testing.T) {
 	srvURL = srv.URL
 	defer srv.Close()
 
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 
 	fetcher := NewFetcherWithClient(srv.Client(), bl, 5120)
@@ -132,7 +132,7 @@ func TestFetcher_ContextCanceled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 
 	fetcher := NewFetcherWithClient(srv.Client(), bl, 5120)
@@ -162,7 +162,7 @@ func (s *dialSpy) control(network, address string, c syscall.RawConn) error {
 // packet was sent to the blocked destination.
 
 func TestFetcher_SSRF_BlocksLoopback(t *testing.T) {
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 	spy := &dialSpy{inner: buildSSRFControl(bl)}
 
@@ -174,7 +174,7 @@ func TestFetcher_SSRF_BlocksLoopback(t *testing.T) {
 }
 
 func TestFetcher_SSRF_BlocksLoopbackIPv6(t *testing.T) {
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 	spy := &dialSpy{inner: buildSSRFControl(bl)}
 
@@ -186,7 +186,7 @@ func TestFetcher_SSRF_BlocksLoopbackIPv6(t *testing.T) {
 }
 
 func TestFetcher_SSRF_BlocksPrivateRFC1918(t *testing.T) {
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 	control := buildSSRFControl(bl)
 
@@ -198,7 +198,7 @@ func TestFetcher_SSRF_BlocksPrivateRFC1918(t *testing.T) {
 }
 
 func TestFetcher_SSRF_BlocksLinkLocal(t *testing.T) {
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 	control := buildSSRFControl(bl)
 
@@ -209,7 +209,7 @@ func TestFetcher_SSRF_BlocksLinkLocal(t *testing.T) {
 }
 
 func TestFetcher_SSRF_BlocksLinkLocalIPv6(t *testing.T) {
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 	control := buildSSRFControl(bl)
 
@@ -219,7 +219,7 @@ func TestFetcher_SSRF_BlocksLinkLocalIPv6(t *testing.T) {
 }
 
 func TestFetcher_SSRF_BlocksIPv4TranslationBeforeConnect(t *testing.T) {
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 	control := buildSSRFControl(bl)
 
@@ -253,7 +253,7 @@ func TestFetcher_SSRF_BlockedURLNeverReachesServer(t *testing.T) {
 }
 
 func TestFetcher_SSRF_AllowsPublicIP(t *testing.T) {
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 	control := buildSSRFControl(bl)
 
@@ -262,7 +262,7 @@ func TestFetcher_SSRF_AllowsPublicIP(t *testing.T) {
 }
 
 func TestFetcher_SSRF_OperatorExtraCIDRBlocked(t *testing.T) {
-	bl, err := domaincimd.NewSSRFBlocklist([]string{"203.0.113.0/24"})
+	bl, err := netpolicy.NewSSRFBlocklist([]string{"203.0.113.0/24"})
 	require.NoError(t, err)
 	control := buildSSRFControl(bl)
 
@@ -272,7 +272,7 @@ func TestFetcher_SSRF_OperatorExtraCIDRBlocked(t *testing.T) {
 }
 
 func TestFetcher_WrapTransport(t *testing.T) {
-	bl, err := domaincimd.NewSSRFBlocklist(nil)
+	bl, err := netpolicy.NewSSRFBlocklist(nil)
 	require.NoError(t, err)
 
 	type sentinelTransport struct{ http.RoundTripper }
@@ -289,7 +289,7 @@ func TestFetcher_WrapTransport(t *testing.T) {
 }
 
 func TestFetcher_SSRF_OperatorExtraCIDRDoesNotBlockOthers(t *testing.T) {
-	bl, err := domaincimd.NewSSRFBlocklist([]string{"203.0.113.0/24"})
+	bl, err := netpolicy.NewSSRFBlocklist([]string{"203.0.113.0/24"})
 	require.NoError(t, err)
 	control := buildSSRFControl(bl)
 
