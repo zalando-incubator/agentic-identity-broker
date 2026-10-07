@@ -292,6 +292,13 @@ The Identity Broker runs two independent HTTP servers on separate ports:
 - Both servers provide `/health`.
 - Graceful shutdown waits for active requests until the configured timeout.
 
+**CORS origin restrictions:** `server.enduser.cors.allowed_origins` and
+`server.admin.cors.allowed_origins` default to empty lists, which disable CORS
+headers. Any origin containing `*`, including `"*"`, `"https://*"`, and
+`"https://*.example.com"`, is rejected at startup, even when mixed with specific
+origins. Use explicit origins such as `"http://localhost:3000"` for the local Vite
+development server.
+
 **CIMD confidential third-party services:** This outbound client mode adds no
 configuration parameter. The existing `server.enduser.public_url` must be a
 stable, public HTTPS URL. The broker derives each service's client ID from
@@ -858,6 +865,10 @@ DB_PASSWORD=mypassword
 ```
 
 The startup summary and audit logs show both values as `***REDACTED***`.
+
+PostgreSQL connection URL validation errors redact the entire rejected value as
+`***REDACTED***`, including malformed URLs that may contain credentials. The error
+still identifies `storage.postgres.connection_url` and the expected URL format.
 
 ### Do not commit secrets
 

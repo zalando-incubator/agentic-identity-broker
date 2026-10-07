@@ -18,10 +18,10 @@ server:
     authentication:
       preauth:
         principal_header_name: X-Remote-User
-    # CORS configuration for local development (allows all origins)
+    # Allow the local Vite development server.
     cors:
       allowed_origins:
-        - "*"
+        - "http://localhost:3000"
 
   # Admin server (internal management API)
   admin:

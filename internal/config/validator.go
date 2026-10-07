@@ -209,13 +209,20 @@ func validateCORSConfig(cfg *ports.CORSConfig, prefix string) error {
 		return nil
 	}
 
-	// When CORS is enabled, validate that no entry is an empty string.
 	for i, origin := range cfg.AllowedOrigins {
 		if origin == "" {
 			return formatValidationError(
 				fmt.Sprintf("%s.allowed_origins[%d]", prefix, i),
 				"",
 				"non-empty origin value",
+				nil,
+			)
+		}
+		if strings.Contains(origin, "*") {
+			return formatValidationError(
+				fmt.Sprintf("%s.allowed_origins[%d]", prefix, i),
+				origin,
+				"specific origin instead of wildcard '*'",
 				nil,
 			)
 		}
@@ -298,7 +305,7 @@ func validatePostgresConfig(pc *ports.PostgresConfig) error {
 
 	// Validate connection URL format
 	if !isValidPostgresURL(pc.ConnectionURL) {
-		return formatValidationError("storage.postgres.connection_url", pc.ConnectionURL, "valid postgresql:// URL", nil)
+		return formatValidationError("storage.postgres.connection_url", RedactedValue, "valid postgresql:// URL", nil)
 	}
 
 	return nil
