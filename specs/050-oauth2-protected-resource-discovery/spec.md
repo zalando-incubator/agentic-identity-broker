@@ -15,6 +15,15 @@
 - Q: Should two dynamically registered services be allowed to share a client ID when their authorization servers have different issuers? → A: Yes. Dynamic client identity is the issuer and client ID together. Reject a duplicate pair under one issuer and leave existing manual-service uniqueness rules unchanged.
 - Q: Should discovery status use the proposed read-only `GET /api/services/{service-id}/discovery-status` resource and its listed fields? → A: Yes. Use the authenticated status resource with `status`, `resource_url`, `issuer_uri`, `client_method`, `last_attempt_at`, `last_success_at`, and a safe `failure_reason`.
 
+### Session 2026-10-06
+
+- Q: What should happen when the broker's global DCR client name is not configured? → A: Reject DCR setup without `third_party_oauth2.client_name`. Manual services and CIMD remain available. DCR uses this global broker name, never the service `display_name`.
+
+### Session 2026-10-07
+
+- Q: Are the proposed ADR 038 decisions accepted, including the shared outbound security boundary, DCR-only Basic/POST methods, and optional deployment-wide DCR name with Helm support? → A: Yes. Accept ADR 038.
+- Q: Is the canonical Admin OpenAPI delta approved, including response methods, `discovery.client_method`, discovery status, failure-code mappings, and `client_name_unconfigured` as a `400` error? → A: Yes. Approve the API contract.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Connect a service that supports CIMD (Priority: P1)
@@ -42,6 +51,8 @@ An administrator enters the URL of a protected third-party service. The broker d
 
 The broker uses `server.enduser.public_url` as the public CIMD document base. `third_party_oauth2.jwe_signing_key` protects OAuth2 state, not CIMD assertions. An administrator generates the CIMD signing key through the Admin API.
 
+The same broker configuration sets `third_party_oauth2.client_name` for DCR. It identifies the broker or its platform, not a third-party service.
+
 ```yaml
 # broker.yaml (relevant entries)
 server:
@@ -49,6 +60,7 @@ server:
     public_url: "https://broker.example.com"
 third_party_oauth2:
   jwe_signing_key: "${IDENTITY_BROKER_JWE_SIGNING_KEY}"
+  client_name: "Example Platform"
 ```
 
 Given no usable CIMD key, the administrator generates the first one before service creation. The broker stores the private key. The API receives no key bytes and returns metadata only. An existing usable key needs no new request.
@@ -175,11 +187,12 @@ An administrator enters a protected resource URL whose authorization server does
 7. **Given** an authorization server offers confidential and public DCR, **When** an administrator registers its resource, **Then** the broker selects confidential registration.
 8. **Given** an authorization server offers only public DCR, **When** an administrator registers its resource, **Then** the broker selects a public client with PKCE.
 9. **Given** two authorization servers issue the same DCR client ID, **When** an administrator registers both services, **Then** both remain usable under their distinct issuers.
+10. **Given** `third_party_oauth2.client_name` is `Example Platform` and a service's `display_name` is `Files MCP`, **When** an administrator creates a DCR-backed service, **Then** the registration sends `client_name: Example Platform` and the service keeps `display_name: Files MCP`.
 
 **Example — confidential DCR, explicit audience, and renewal (US2-S1, S3, S5, S7).** This is a separate provider from the CIMD example. It uses the same broker configuration and requires no new discovery setting.
 
 Given a provider with no compatible CIMD and both confidential and public registration, the administrator supplies a distinct token audience. The broker tries path-specific metadata first and uses root metadata only after `404`.
-The administrator's `display_name` (`Files MCP`) supplies the DCR `client_name`. The protected resource does not supply that name.
+The global broker setting `third_party_oauth2.client_name` (`Example Platform`) supplies the DCR `client_name`. The service `display_name` remains `Files MCP`.
 
 ```http
 # Administrator -> broker Admin API
@@ -225,7 +238,7 @@ POST /register HTTP/1.1
 Host: login.example.com
 Content-Type: application/json
 
-{"redirect_uris":["https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440003/oauth2/callback"],"client_name":"Files MCP","application_type":"web","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"client_secret_basic"}
+{"redirect_uris":["https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440003/oauth2/callback"],"client_name":"Example Platform","application_type":"web","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"client_secret_basic"}
 
 HTTP/1.1 201 Created
 Content-Type: application/json
@@ -308,6 +321,7 @@ If the URL does not identify a valid protected resource or safe client identity,
 10. **Given** both `discovery.resource_url` and `discovery.metadata_url`, **When** an administrator registers a service, **Then** the broker rejects conflicting discovery sources.
 11. **Given** an advertised confidential DCR registration rejects the broker, **When** an administrator creates the service, **Then** creation fails without a public retry.
 12. **Given** a DCR client ID already belongs to a service at the same issuer, **When** another service registers it, **Then** creation fails without changing either credential.
+13. **Given** no non-blank global DCR client name and an authorization server that offers only DCR, **When** an administrator creates a discovery-backed service, **Then** registration fails before a DCR request and creates no service. Manual services and CIMD remain available.
 
 **Example — select one advertised issuer (US3-S6, US1-S4).** Given two issuers and no `issuer_uri`, the first create fails. Neither issuer receives a metadata or registration request.
 The Admin API repeats the validated issuer URLs from the protected resource in its error response. The administrator can select one without tracing the broker's upstream requests.
@@ -540,6 +554,7 @@ Content-Type: application/json
 - If all applicable OAuth2 and OpenID Connect metadata locations are absent, the broker rejects registration. A returned document with an invalid issuer or endpoints fails without fallback.
 - If the authorization server does not accept RFC 8707 `resource`, account connection or renewal fails. Successful metadata discovery does not guarantee token issuance.
 - If DCR requires an initial access token or returns an unsupported client authentication method, the broker rejects automatic registration.
+- If `third_party_oauth2.client_name` is absent or blank, the broker rejects DCR setup before contacting the registration endpoint. It does not use the service `display_name` as a fallback.
 - If a challenge has duplicate, malformed, or unsupported `resource_metadata`, the broker fails without a well-known fallback. A `resource_metadata` value on a response other than `401` also fails.
 - If the provider issues no refresh token, a connection can succeed but later renewal fails without re-registration or authentication downgrade.
 - If DCR returns a non-zero `client_secret_expires_at`, the broker rejects registration even when the expiry is in the future. It stores no local service or credential and does not retry with another client method.
@@ -559,7 +574,7 @@ Content-Type: application/json
 - **FR-006**: A successful discovery MUST save the configured resource, selected issuer, discovered authorization and token endpoints, selected client identity, and chosen bootstrap method. These values MUST remain available after a restart.
 - **FR-007**: The broker MUST prefer its existing hosted CIMD confidential client when the chosen authorization server advertises CIMD and supports the broker's authentication method. It MUST NOT invoke DCR when compatible CIMD succeeds.
 - **FR-008**: If no compatible CIMD option exists, the broker MUST prefer DCR with a compatible confidential client method. It MUST use public DCR with PKCE only when confidential DCR is not offered or has no compatible method. If neither DCR option is usable, creation MUST fail. A failed selected confidential registration MUST NOT trigger a public retry.
-- **FR-009**: DCR MUST register the broker's actual callback and obtain a client identity usable with its authorization-code flow. Its `client_name` MUST equal the administrator-supplied service `display_name`. It MUST reject an empty client identifier, incompatible callback, a returned authentication mode that differs from the selected mode, or any non-zero `client_secret_expires_at`. A failed selected registration MUST NOT trigger another client method.
+- **FR-009**: DCR MUST register the broker's actual callback and obtain a client identity usable with its authorization-code flow. Its `client_name` MUST equal the deployment-wide `third_party_oauth2.client_name`, which identifies the broker or its platform, never the service `display_name`. If this setting is absent or blank, the broker MUST reject setup before sending a DCR request; broker startup, manual services, and CIMD MUST remain available. It MUST reject an empty client identifier, incompatible callback, a returned authentication mode that differs from the selected mode, or any non-zero `client_secret_expires_at`. A failed selected registration MUST NOT trigger another client method.
 - **FR-010**: A DCR-created client MUST retain its returned identifier and required credential for subsequent connections. If the provider issues a refresh token and accepts the credential, renewal MUST use the same registered identity. If it issues no refresh token or rejects the credential, renewal MUST fail without re-registration, an authentication downgrade, or a broader retry. Ordinary account connections MUST NOT create a new registration.
 - **FR-011**: Discovery-backed connections MUST keep authorization-code and PKCE safeguards. Every authorization request and token request, including code exchange and refresh, MUST contain exactly one RFC 8707 `resource` parameter. Its value MUST equal the persisted `authorization_params.resource`. If the authorization server rejects it, connection or renewal MUST fail. The broker MUST NOT retry without `resource` or store a replacement token from that failed request.
 - **FR-012**: A failed create MUST leave no usable service or stored client credential. A failed update MUST preserve the previous active issuer, endpoints, client identity, and user sessions.
@@ -576,6 +591,7 @@ Content-Type: application/json
 - **Protected Resource Metadata** is a claim by a resource about its own identity and accepted authorization servers. Its resource identifier must match the configured URL.
 - **Authorization Server Metadata** describes one advertised issuer and the capabilities required for OAuth2 account connection.
 - **Client Registration** is the selected client identity for one service. It is either the broker's hosted CIMD identity or a DCR-created identity, not both. A DCR identity includes its issuer, client ID, and public or confidential mode.
+- **Broker client name** is one deployment-wide `third_party_oauth2.client_name` value sent as DCR `client_name`. It is not a per-service field and does not identify the protected service.
 - **Discovery Status** records the last attempt, last successful setup, chosen issuer, and chosen client method. A failed refresh does not replace the service's active configuration.
 - **User Session** remains the existing connection between a user and a service. This feature does not change its ownership or retention rules.
 
@@ -632,12 +648,14 @@ Content-Type: application/json
 - **SC-010**: In 100% of tested discovery-backed service responses, `authorization_params.resource` shows the value used for token requests, whether derived or administrator-supplied.
 - **SC-011**: In 100% of tested setups with both public and confidential DCR, the broker registers a confidential client. Rejected confidential registration never causes a public retry.
 - **SC-012**: Two tested DCR services with identical client IDs from different issuers can each connect with their own credentials. Same-issuer duplicates create no service.
+- **SC-013**: All tested DCR registrations send the configured global broker name rather than the service display name. Without a non-blank name, no DCR request or new service is created; manual services and CIMD remain available.
 
 ## Assumptions
 
 - The administrator supplies a protected resource identifier, such as an MCP service URL, not the authorization server's metadata URL. This feature follows the resource's published metadata to its authorization server.
 - This feature extends [outbound CIMD client authentication](../046-cimd-upstream-client/spec.md). A compatible provider accepts the existing hosted confidential client method. This feature does not add a CIMD public-client mode.
 - Automatic DCR applies to registration endpoints that accept a broker-initiated registration without a separate initial access token. A provider that needs prior approval remains eligible for the existing manual service setup.
+- DCR `client_name` has no per-service override. A change to the broker setting affects future DCR registrations, not existing client identities.
 - The broker requests a supported confidential client through DCR before it considers a public client. Public DCR requires PKCE and applies only when compatible confidential registration is not offered. New client authentication methods and automatic credential rotation are outside this feature.
 - A DCR response with a non-zero secret expiry is not supported because this feature has no automatic credential rotation. A provider that revokes a non-expiring secret can still reject later connection or renewal; the broker does not re-register automatically.
 - Client IDs issued through DCR are scoped to the selected issuer. Manual service registration keeps its existing client-ID uniqueness behavior.

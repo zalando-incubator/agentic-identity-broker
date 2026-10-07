@@ -9,6 +9,7 @@ Add these terms to `ARCHITECTURE.md` before implementation:
 - **Client bootstrap method:** The source of a discovery-backed client's identity. `cimd` uses the broker-hosted document. `dcr` uses an RFC 7591 registration.
 - **DCR client identity:** The pair `(issuer_uri, client_id)`. One client ID can exist at two different issuers.
 - **Effective resource:** The single persisted RFC 8707 `authorization_params.resource` value. It is derived from a verified resource URL or supplied by an administrator.
+- **Broker client name:** The optional deployment-wide `third_party_oauth2.client_name` used in DCR requests. Its absence blocks DCR only. It never comes from a service display name.
 - **Discovery status:** The latest attempt and latest successful configuration for one service. A failed refresh does not replace the active configuration.
 
 The discovery resource, the effective token resource, and the service's `protected_resources` ownership set are distinct concepts. The last set supports RFC 8693 token exchange under [ADR 030](../../adrs/030-normalize-protected-resources.md).
@@ -73,7 +74,7 @@ The status response reads the active `ResourceURL`, `IssuerURI`, and `ClientMeth
 |---|---|---|
 | Protected Resource Metadata | `resource`, `authorization_servers` | Exact resource match; at least one non-empty issuer; use only a selected advertised issuer. |
 | Authorization Server Metadata | `issuer`, `authorization_endpoint`, `token_endpoint`; optional `registration_endpoint`, `jwks_uri`, `client_id_metadata_document_supported`, `token_endpoint_auth_methods_supported`, `token_endpoint_auth_signing_alg_values_supported` | Exact issuer match; safe public HTTPS endpoints; choose the first non-404 metadata location; no fallback after an invalid response. |
-| DCR request | `redirect_uris`, `grant_types`, `response_types`, `token_endpoint_auth_method` | Exact existing callback, authorization code, refresh token, code response, and one selected method. |
+| DCR request | `redirect_uris`, `client_name`, `grant_types`, `response_types`, `token_endpoint_auth_method` | Exact existing callback, configured non-blank broker client name, authorization code, refresh token, code response, and one selected method. No DCR request occurs without the broker client name. |
 | DCR result | `client_id`, returned redirect URIs, authentication method, optional client secret | Reject missing ID, incompatible callback, mismatched method, missing required secret, or any non-zero `client_secret_expires_at`. An optional `grant_types` response can omit `refresh_token`. Discard unused management credentials. |
 | Hosted CIMD identity | `<server.enduser.public_url>/.well-known/oauth-client/<service-id>` | Reuse the existing ES256 key domain and public document. No DCR call after CIMD selection. |
 
