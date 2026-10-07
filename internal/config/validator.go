@@ -305,7 +305,7 @@ func validatePostgresConfig(pc *ports.PostgresConfig) error {
 
 	// Validate connection URL format
 	if !isValidPostgresURL(pc.ConnectionURL) {
-		return formatValidationError("storage.postgres.connection_url", pc.ConnectionURL, "valid postgresql:// URL", nil)
+		return formatValidationError("storage.postgres.connection_url", RedactedValue, "valid postgresql:// URL", nil)
 	}
 
 	return nil
