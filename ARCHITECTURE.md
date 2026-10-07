@@ -338,62 +338,9 @@ HTTP servers drain → tp.Shutdown(ctx) → mp.Shutdown(ctx) → lp.Shutdown(ctx
 
 The composite shutdown function is stored as `App.ShutdownTelemetry func(context.Context) error` and called after HTTP servers have drained all in-flight requests.
 
-**Token exchange span attributes and logs**:
+**Token exchange diagnostic boundary**:
 
-`TokenExchangeError` carries an immutable, credential-free `Diagnostic` value. Enrichment returns a copy and does not mutate shared singleflight failures.
-Wrapped causes remain available through `errors.Is` and `errors.As`. Exchange telemetry never serializes these causes.
-Typed diagnostics are the only internal failure-classification channel. Errors do not carry separate free-form details for audit records.
-
-Logs and spans share these bounded attributes:
-
-| Attribute | Values |
-|---|---|
-| `token_exchange.outcome` | `success`, `authorization_denied`, `authentication_failed`, `reauth_required`, `invalid_request`, `configuration_error`, `infrastructure_error`, `canceled` |
-| `token_exchange.failure_stage` | `request_validation`, `exchange_routing`, `subject_validation`, `client_validation`, `identity_resolution`, `client_authorization`, `resource_resolution`, `grant_authorization`, `session_lookup`, `refresh`, `scope_validation`, `response_write` |
-| `token_exchange.failure_detail` | Typed origin detail; unknown failures use `internal_unclassified` at the known stage |
-| `token_exchange.recovery_action` | `reconsent`, `reauthenticate`, `fix_configuration`, `retry`, `none` |
-| `token_exchange.recovery_target` | `consent`, `subject_identity`, `calling_client`, `provider_session`, `broker_configuration`, `none` |
-| `token_exchange.exchange_kind` | `third_party`, `impersonation`. ExtProc uses `unknown` when the broker profile is not observable. |
-
-Successful logs and spans omit failure-only stage/detail fields. Successful metric observations use `none` for those fields.
-Recovery values are diagnostic recommendations, not automatic retry instructions.
-
-Missing resources are malformed requests. Rejected subject/client credentials are authentication failures.
-CEL false is authorization denial. CEL compilation or configuration failure is a configuration error.
-Missing agents and ambiguous registered resources are configuration errors. Unavailable repositories and JWKS retrieval are infrastructure failures.
-
-Missing or unusable consent grants remain authorization denial with `reconsent` targeting `consent`.
-They return `access_denied` and the agent consent-management `error_uri` before token-vault access.
-Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
-Their OAuth response is `invalid_grant` with a broker-generated provider authorization URI.
-Provider refresh rejection and recorded local expiry are distinct causes.
-Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
-Provider client-authentication rejection instead indicates broker configuration failure.
-
-Session `OperationError` carries immutable operation/detail/kind/dependency/status/allowlisted-code metadata.
-Origin metadata maps to exchange diagnostics without inspecting error text.
-ExtProc `OperationError` captures its diagnostic once at construction. Callers cannot override that snapshot.
-Individual caller cancellation is `canceled` at its current stage. Detached shared-operation and dependency deadlines remain infrastructure failures.
-
-After resource resolution, telemetry records `token_exchange.service.id`, not the requested URI or service display name.
-Session failures additionally record bounded `token_exchange.session.*` metadata.
-Telemetry excludes descriptions, causes, unvalidated JWT claims, JOSE headers, provider bodies/headers, endpoint URLs, resource paths, and recovery URIs.
-Established authenticated actor and calling-peer audit fields remain unchanged.
-Span status descriptions are static. Raw errors never become exception events.
-
-`internal/telemetryhttp` supplies credential-free outbound client spans for the broker and standalone ExtProc.
-It propagates trace context and preserves the actual request URL, body, and headers for the dependency.
-Instrumentation records only bounded method/status/error kind.
-Token-endpoint inbound instrumentation uses a credential-free request view, then restores the original request before handling it.
-HTTP method telemetry uses the standard-method allowlist. Extension methods become `_OTHER` without changing request routing.
-Token-endpoint panic logs also use bounded summaries, not panic values or stacks.
-OTel resources exclude process command arguments and command lines, including configured overrides.
-
-ExtProc retains recovery data for direct protocol responses, but excludes broker descriptions and nested errors from telemetry.
-Its standalone metadata preserves inspectable causes without importing broker domain packages.
-ExtProc records only observed stages and uses `unknown` for unreported broker exchange profiles.
-OPA audit data retains bounded action, result code, protocol, allowlisted MCP method, and duration.
-It excludes policy reasons and request-derived tool or target-server names.
+Domain errors expose immutable, typed, credential-free diagnostics. Telemetry excludes wrapped causes and sensitive request data. Recovery URLs remain in direct protocol responses, not telemetry. ExtProc derives its own diagnostics without importing broker domain packages. The [token-exchange reference](docs/reference/token-exchange.md#diagnostic-attributes) defines attribute values and classification rules.
 
 #### 3.1.4. End-to-End Testing Architecture
 

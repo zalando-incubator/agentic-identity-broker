@@ -252,13 +252,52 @@ CEL compilation or configuration failure instead returns `server_error`.
 
 ### Diagnostic attributes
 
-Logs and spans carry bounded `token_exchange.outcome`, `failure_stage`, `failure_detail`, `recovery_action`, `recovery_target`, and `exchange_kind` attributes.
-Each attribute uses the `token_exchange.` prefix. Successful logs and spans omit failure-only fields.
-Successful metric observations use `none` for failure stage and detail.
+Logs, spans, and metrics use the following bounded attributes:
+
+| Attribute | Values |
+|---|---|
+| `token_exchange.outcome` | `success`, `authorization_denied`, `authentication_failed`, `reauth_required`, `invalid_request`, `configuration_error`, `infrastructure_error`, `canceled` |
+| `token_exchange.failure_stage` | `request_validation`, `exchange_routing`, `subject_validation`, `client_validation`, `identity_resolution`, `client_authorization`, `resource_resolution`, `grant_authorization`, `session_lookup`, `refresh`, `scope_validation`, `response_write` |
+| `token_exchange.failure_detail` | Typed origin detail; unknown failures use `internal_unclassified` at the known stage |
+| `token_exchange.recovery_action` | `reconsent`, `reauthenticate`, `fix_configuration`, `retry`, `none` |
+| `token_exchange.recovery_target` | `consent`, `subject_identity`, `calling_client`, `provider_session`, `broker_configuration`, `none` |
+| `token_exchange.exchange_kind` | `third_party`, `impersonation`. ExtProc uses `unknown` when the broker profile is not observable. |
+
+Successful logs and spans omit failure-only stage/detail fields. Successful metric observations use `none` for those fields.
 Recovery values are diagnostic recommendations, not instructions for automatic retries.
 
-Telemetry identifies registered services by ID. It excludes URLs, resource paths, JWT claims, provider descriptions, request headers and bodies, and wrapped error messages.
-Caller cancellation remains distinct from shared-operation and dependency deadlines. The classification contract is documented in [ARCHITECTURE.md](../../ARCHITECTURE.md).
+Missing resources are malformed requests. Rejected subject/client credentials are authentication failures.
+CEL false is authorization denial. CEL compilation or configuration failure is a configuration error.
+Missing agents and ambiguous registered resources are configuration errors. Unavailable repositories and JWKS retrieval are infrastructure failures.
+
+Missing or unusable consent grants remain authorization denial with `reconsent` targeting `consent`.
+They return `access_denied` and the agent consent-management `error_uri` before token-vault access.
+Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
+Their OAuth response is `invalid_grant` with a broker-generated provider authorization URI.
+Provider refresh rejection and recorded local expiry are distinct causes.
+Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
+Provider client-authentication rejection instead indicates broker configuration failure.
+
+Session `OperationError` carries immutable operation/detail/kind/dependency/status/allowlisted-code metadata.
+Origin metadata maps to exchange diagnostics without inspecting error text.
+ExtProc `OperationError` captures its diagnostic once at construction. Callers cannot override that snapshot.
+Individual caller cancellation is `canceled` at its current stage. Shared-operation and dependency deadlines remain infrastructure failures.
+
+Telemetry identifies registered services with `token_exchange.service.id`, not requested URIs or service display names.
+Session failures also carry bounded `token_exchange.session.*` metadata.
+Telemetry excludes descriptions, causes, unvalidated JWT claims, JOSE headers, provider bodies/headers, endpoint URLs, resource paths, and recovery URIs.
+Established authenticated actor and calling-peer audit fields remain unchanged.
+Span status descriptions are static. Raw errors never become exception events.
+
+ExtProc records only observed stages and uses `unknown` for unreported broker exchange profiles.
+OPA audit data retains bounded action, result code, protocol, allowlisted MCP method, and duration.
+It excludes policy reasons and request-derived tool or target-server names.
+
+Outbound instrumentation propagates trace context and preserves the actual request URL, body, and headers for the dependency.
+It records only bounded method/status/error kind. Token-endpoint inbound instrumentation uses a credential-free request view, then restores the original request before handling it.
+HTTP method telemetry uses the standard-method allowlist. Extension methods become `_OTHER` without changing request routing.
+Token-endpoint panic logs use bounded summaries, not panic values or stacks.
+OTel resources exclude process command arguments and command lines, including configured overrides.
 
 ## User impersonation
 

@@ -110,7 +110,7 @@ If a nontransient broker error contains `error_uri`, MCP receives JSON-RPC code 
 
 ### Diagnostic telemetry
 
-Exchange logs, spans, and metrics use the bounded `token_exchange.*` classification contract in [ARCHITECTURE.md](../../ARCHITECTURE.md).
+Exchange logs, spans, and metrics use the bounded `token_exchange.*` classification contract in the [token-exchange reference](../reference/token-exchange.md#diagnostic-attributes).
 ExtProc records the operation stage that it observes. It does not guess an unreported broker stage or exchange profile.
 Its exchange kind is `unknown` when the broker profile is not observable.
 Successful metric observations use `none` for failure stage and detail. Successful logs and spans omit these failure-only fields.
