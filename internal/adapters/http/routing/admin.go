@@ -2,6 +2,8 @@
 package routing
 
 import (
+	"net/http"
+
 	"github.com/go-chi/chi/v5"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
@@ -9,9 +11,10 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
-// AdminRouteConfig provides optional configuration for admin route setup.
+// AdminRouteConfig provides configuration for admin route setup.
 type AdminRouteConfig struct {
-	CORS ports.CORSConfig
+	CORS      ports.CORSConfig
+	PublicURL string
 }
 
 // SetupAdminRoutes registers all administrative API routes.
@@ -33,6 +36,9 @@ type AdminRouteConfig struct {
 func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig) {
 
 	r.Route("/api", func(r chi.Router) {
+		r.Use(middleware.RequireAdminHost(cfg.PublicURL))
+		r.Use(http.NewCrossOriginProtection().Handler)
+		r.Use(middleware.RequireAdminJSON)
 		// Apply CORS middleware (no-op if AllowedOrigins empty)
 		r.Use(middleware.CORSMiddleware(cfg.CORS))
 

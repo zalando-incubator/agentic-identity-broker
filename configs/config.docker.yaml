@@ -28,7 +28,7 @@ server:
   admin:
     port: 14000
     bind: "::" # Dual-stack (IPv6 with IPv4 fallback)
-    # Optional for the admin server in local development.
+    # Required public authority for admin API Host validation.
     public_url: http://localhost:14000
     # Pre-auth mode trusts principals from reverse proxy headers.
     authentication:

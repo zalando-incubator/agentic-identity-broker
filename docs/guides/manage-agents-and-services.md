@@ -241,6 +241,7 @@ with `POST /api/agents/{agent-id}/client-credentials`. Use the agent UUID in the
 
 ```bash
 curl -X POST http://localhost:14000/api/agents/550e8400-e29b-41d4-a716-446655440000/client-credentials \
+  -H "Content-Type: application/json" \
   -H "X-Remote-User: admin@example.com"
 ```
 

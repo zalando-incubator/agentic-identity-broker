@@ -543,6 +543,16 @@ Admin Server (Port 14000):
       └── DELETE /{id}
 ```
 
+**Admin browser boundary**: All admin `/api` routes validate the request Host
+against the required `server.admin.public_url` authority before CORS handling.
+Hostname comparison is case-insensitive, default HTTP/HTTPS ports are equivalent,
+and forwarded Host headers are ignored. This blocks DNS-rebinding requests,
+including same-origin reads. Reverse proxies must preserve the public Host.
+Go's `http.CrossOriginProtection` rejects cross-origin mutations without trusted
+origin exceptions. POST, PUT, and PATCH require `application/json` even without
+a body; any other request carrying a body also requires JSON. Host/cross-origin
+rejections return 403; media-type rejections return 415. `/health` is excluded.
+
 **Usage**:
 
 - Import specifications into Swagger UI, Redoc, or other OpenAPI tooling
