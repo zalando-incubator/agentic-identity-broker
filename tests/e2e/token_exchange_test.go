@@ -556,6 +556,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("access_denied"))
+			Expect(errorResponse["error_uri"]).To(Equal(strings.TrimRight(config.Server.EndUser.PublicURL, "/") + "/agents/" + agent.ID.String()))
 		})
 
 		// Spec Reference: US3-S3 from specs/013-token-exchange/spec.md
@@ -678,6 +679,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("access_denied"))
+			Expect(errorResponse["error_uri"]).To(Equal(strings.TrimRight(config.Server.EndUser.PublicURL, "/") + "/agents/" + agent.ID.String()))
 		})
 	})
 
