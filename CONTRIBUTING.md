@@ -97,6 +97,8 @@ export function MyComponent() {
 
 - Tests live next to source files (`*_test.go` or `*.test.tsx`)
 - Fast Go/package tests: `just test`
+- ExtProc unit tests with race detection: `just extproc-test`. These include checks that
+  disabled local tracing neither creates child spans nor modifies inherited spans.
 - Integration suites: `just test-integration`
 - All E2E suites: `just test-e2e`
 - Dedicated E2E performance measurement: `just test-e2e-performance` (manual; normal E2E commands exclude performance-labelled specs)
@@ -105,7 +107,17 @@ export function MyComponent() {
 - Coverage summary for fast Go/package tests: `just test-coverage-summary`
 - Frontend coverage report: `just web-test-coverage`
 
-The weekly [Coverage workflow](https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/scheduled-coverage.yml) sends Go and frontend coverage to [Coveralls](https://coveralls.io/github/zalando-incubator/agentic-identity-broker?branch=main). The README badge shows the latest main-branch result.
+The [Coverage workflow](https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/scheduled-coverage.yml) runs manually from the GitHub Actions UI and weekly on `main`. It sends coverage from the Go unit, integration, and functional backend, ExtProc, and frontend E2E suites, plus Vitest and instrumented Playwright browser runs, to [Coveralls](https://coveralls.io/github/zalando-incubator/agentic-identity-broker?branch=main). Go coverage measures `cmd/` and `internal/`; browser coverage measures `web/src/`. The separate performance measurement is excluded. The README badge shows the latest main-branch result.
+
+To reproduce the frontend report locally after installing the test tools, run:
+
+```bash
+npm run test:coverage --prefix web
+VITE_COVERAGE=1 E2E_WEB_COVERAGE_DIR="$PWD/web/coverage/browser" just test-e2e-frontend-coverage
+E2E_WEB_COVERAGE_DIR="$PWD/web/coverage/browser" npm run coverage:merge --prefix web
+```
+
+The last command writes the combined browser and Vitest report to `web/coverage/lcov.info`. The Go E2E coverage recipes produce separate profiles; Coveralls merges them with the Go unit/integration profile across flagged uploads.
 
 ## Pull Request Process
 

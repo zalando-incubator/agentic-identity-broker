@@ -338,6 +338,35 @@ HTTP servers drain → tp.Shutdown(ctx) → mp.Shutdown(ctx) → lp.Shutdown(ctx
 
 The composite shutdown function is stored as `App.ShutdownTelemetry func(context.Context) error` and called after HTTP servers have drained all in-flight requests.
 
+**Token exchange span attributes and logs**:
+
+The `tokenexchange.exchange` span records `token_exchange.service.id` (service UUID) and `token_exchange.service.name` (`DisplayName`) after resource resolution.
+These attributes accompany successful exchanges and every subsequent failure, including failures without a classified reason.
+Failures before provider resolution omit both attributes.
+
+Classified `Token exchange failed` logs include `failure_reason`, with the same values as the span attribute.
+The existing `resource` field identifies the target. Logs do not add service ID or name fields.
+Successes and unclassified failures omit `failure_reason`.
+Log messages, levels, and existing fields remain unchanged.
+
+The optional `token_exchange.failure_reason` attribute uses these stable values:
+
+| Value | Meaning |
+|---|---|
+| `no_grant` | The grant does not authorize this agent for the third-party service, including missing agents and stale permission sets. |
+| `no_session` | The user has no session for the third-party service. |
+| `access_token_expired` | The access token expired and no refresh token exists. |
+| `refresh_token_expired` | The stored refresh-token expiry passed, or the third-party service returned OAuth `invalid_grant` during refresh. |
+| `insufficient_scope` | The session lacks scopes required by the grant. |
+| `service_rejected` | The refresh endpoint returned a non-2xx status without OAuth `invalid_grant`. |
+
+Transport, decode, decrypt, storage, CIMD, and cancellation errors have no failure reason.
+Refresh rejection classification checks the HTTP status before decoding the body.
+The broker does not populate stored refresh-token expiry, so the third-party service's `invalid_grant` identifies refresh expiry in production.
+A parsed HTTP 400 `invalid_grant` refresh rejection returns client-visible `invalid_grant` with a broker-generated re-authentication `error_uri`; other refresh failures return `server_error`.
+Service metadata stays outside response JSON and contains no client secrets.
+Refresh rejection logs and spans include the third-party HTTP status and an allowlisted OAuth error code; provider-controlled descriptions, URIs, headers, and bodies are omitted.
+
 #### 3.1.4. End-to-End Testing Architecture
 
 **Purpose**: Comprehensive E2E acceptance tests that validate the complete OAuth2 Authorization Server functionality through real HTTP requests and production code paths.
@@ -705,6 +734,8 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
 - **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Provider metadata is loaded before the session lock, then automatic and explicit refresh re-read the latest session under that lock. PostgreSQL holds a row lock through the provider exchange and commits rotated encrypted tokens before releasing it; database acquisition, reads, and writes have separate configured timeouts. The in-memory adapter serializes refresh, upsert, and deletion per session while holding its map mutex only for lookup and commit. Replicas therefore use the latest refresh token without racing on a stale one.
 - **Refresh cancellation and audit**: Automatic refresh has an operation deadline covering the configured upstream HTTP timeout and storage work. Caller cancellation stops that caller's wait without aborting a shared refresh that may already have rotated the provider token. Success audit events are emitted only after session persistence succeeds.
+- **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.
+- **Upstream response limits and retries**: The OAuth2 library already limits code-exchange responses to 1 MiB. The broker also rejects JWKS, refresh, and buffered proxy responses over 1 MiB. Unverified proxied responses stream unchanged. Authorization-code exchange retries network failures and HTTP 5xx, but not permanent OAuth errors.
 - **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of confidential provider `client_secret` values via the `Secret` value object. Public services have no client secret. No other layer touches `EncryptionPort` for provider secrets.
 - Protected-resource resolution leaves confidential provider secrets encrypted and public-provider secrets absent. Token exchange uses only the provider ID and display name; a refresh retrieves credentials separately through `ThirdpartyOAuth2ProviderService.Get()`. Successful secret decryption is logged at Debug.
 - No manual encryption steps required in calling code - encryption is transparent
@@ -861,6 +892,8 @@ Authorization-code exchange after PKCE, or token refresh
 ```
 
 The assertion has `iss` and `sub` equal to the broker-hosted client ID URL. Its sole `aud` equals the configured token endpoint. It expires within five minutes and has a new `jti` for every attempt. Authorization-code exchange uses `AuthStyleInParams`, an empty client secret, and a fresh assertion pair inside the existing retry loop. Refresh uses the manual form-post path and adds a fresh assertion pair. No CIMD request sends a shared secret or HTTP Basic credential. A metadata, key, assertion, or provider-validation error fails the affected operation closed without an authentication downgrade.
+
+CIMD token refresh emits a credential-free token-acquisition audit record with the service ID, operation `refresh`, and outcome `rejected` on failure, including response-drain read errors and responses over the 1 MiB limit. Other client modes do not emit CIMD token-acquisition events.
 
 **Public documents**: The anonymous metadata route returns the broker-hosted Client ID Metadata Document only for an existing CIMD confidential service with a usable published key. Its JWK route publishes public CIMD verification keys only. Both routes use `Cache-Control: public, max-age=300`. All unavailable service states return the existing JSON `404` response without a redirect, partial document, or key material.
 
@@ -1467,6 +1500,10 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **TokenExchangeRequest**: RFC 8693 token exchange request containing grant_type, subject_token, client_assertion, and resource parameters. Parsed from form-urlencoded POST body to /oauth2/token endpoint. Immutable value object after parsing.
 
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
+
+**ServiceRef**: Third-party service identity for token exchange, with the service ID and display name only. It contains no credentials and is excluded from response JSON.
+
+**FailureReason**: Stable classification of a token exchange failure after third-party service resolution. It adds telemetry context without changing the RFC 8693 error response.
 
 **ClientAssertion**: JWT authenticating the privileged client (API gateway or reverse proxy) making the token exchange request. Contains privileged client identifier in the `sub` claim. Validated against the external client-assertion trust anchor's JWKS, not against broker-minted credentials. Represents the privileged client's identity and authorization to perform token exchange.
 
