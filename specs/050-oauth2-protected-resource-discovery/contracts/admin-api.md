@@ -2,7 +2,7 @@
 
 **Feature**: `050-oauth2-protected-resource-discovery` | **Date**: 2026-10-06
 **Canonical source**: [`api/admin/openapi.yaml`](../../../api/admin/openapi.yaml)
-**Status**: Confirmed core fields and route; representation details require review in the canonical OpenAPI file before implementation.
+**Status**: The stakeholder approved the canonical OpenAPI response methods, discovery method, status route, and failure-code mappings on 2026-10-07.
 
 This document is the delta for `api/admin/openapi.yaml`. The root OpenAPI file remains the administrative contract. The `PreAuthProxy` security scheme, `ServiceId` parameter, ETag behavior, and service resource names remain unchanged.
 
@@ -60,6 +60,8 @@ A protected-resource request must satisfy these rules before network access:
 | `scopes`, `protected_resources`, `canonical_id`, `display_name` | Existing rules apply. |
 
 An omitted `token_endpoint_auth_method` does not mean static confidential mode when `resource_url` is present. Existing manual and direct-metadata requests keep their present meaning. Their accepted request method values remain `none`, `private_key_jwt`, omitted, or `null`.
+
+The broker takes the DCR `client_name` from deployment-wide `third_party_oauth2.client_name`, never `display_name`. An absent or blank setting stops DCR before registration. It does not block startup, manual services, or hosted CIMD. The name is not an Admin API request field.
 
 ### 1.2 Create example
 
@@ -253,6 +255,7 @@ Extend `ErrorResponse` with optional `authorization_servers`. `error` remains re
 | Invalid or conflicting request fields | `400` | `validation failed` | Existing field-level text. |
 | Metadata, issuer, or destination failure | `400` | `discovery failed` | One failure code from section 4.1. |
 | CIMD or DCR selection or registration failure | `400` | `client registration failed` | One failure code from section 4.1. |
+| DCR selected without a configured broker client name | `400` | `client registration failed` | `client_name_unconfigured` |
 | Discovery or registration deadline exceeded | `504` | `discovery failed` | `timeout` |
 | Same-issuer DCR identity already exists | `409` | `conflict` | `duplicate_client_identity` |
 | Explicit issuer change while user sessions exist | `409` | `conflict` | `issuer_change_requires_no_sessions` |
@@ -301,6 +304,7 @@ Discovery error messages, `failure_reason` values, and audit records use only th
 | `no_compatible_client_method` | No compatible CIMD or DCR method exists. |
 | `cimd_unavailable` | The selected hosted CIMD identity or signing key is not usable. |
 | `client_registration_rejected` | The selected DCR registration returned an error. |
+| `client_name_unconfigured` | DCR needs a non-blank deployment-wide broker client name. No registration request occurs. |
 | `client_registration_invalid` | DCR returned an empty ID, incompatible callback, missing secret, another method, or a non-zero `client_secret_expires_at`. |
 | `client_method_changed` | An update would change `discovery.client_method` or the exact `token_endpoint_auth_method`, including confidential/public mode. |
 | `duplicate_client_identity` | The DCR client ID already exists for the same issuer. |
@@ -311,4 +315,4 @@ No response includes a provider response body, URL query, secret, assertion, cod
 
 Update `api/admin/openapi.yaml` before implementation. Then update `docs/reference/api.md` and `docs/guides/manage-agents-and-services.md` from that root contract. Correct the stale reference that says `ErrorResponse.message` is always required.
 
-The stakeholder confirmation in [spec.md](../spec.md) covers the request field, effective resource, status route and fields, and the `authorization_servers` error field confirmed on 2026-10-06. The PR must record review of the remaining new response values in sections 2 and 4.
+The stakeholder confirmation in [spec.md](../spec.md) covers the request field, effective resource, status route and fields, and the `authorization_servers` error field confirmed on 2026-10-06. On 2026-10-07, the stakeholder also approved the drafted `api/admin/openapi.yaml` response methods (`client_secret_basic` and `client_secret_post` for DCR only), read-only `discovery.client_method`, and failure-code/status mappings. The approval includes `client_name_unconfigured` as a safe `400` response. Link this review record from the implementation PR.

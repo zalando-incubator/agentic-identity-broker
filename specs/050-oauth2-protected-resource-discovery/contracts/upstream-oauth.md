@@ -103,7 +103,7 @@ The broker sends one `POST` with `Content-Type: application/json` to `registrati
   "redirect_uris": [
     "https://broker.example.com/api/third-party/6c84fb90-12c4-11e1-840d-7b25c5ee775a/oauth2/callback"
   ],
-  "client_name": "Example MCP",
+  "client_name": "Example Platform",
   "application_type": "web",
   "grant_types": ["authorization_code", "refresh_token"],
   "response_types": ["code"],
@@ -112,7 +112,7 @@ The broker sends one `POST` with `Content-Type: application/json` to `registrati
 ```
 
 `token_endpoint_auth_method` is the one selected method from section 3.2.
-`client_name` is the administrator-supplied service `display_name`, not a name from the protected resource or authorization server.
+`client_name` is the non-blank deployment-wide `third_party_oauth2.client_name`, not the service `display_name` or a name from the resource. If the setting is absent or blank, DCR stops before registration. Startup, manual services, and hosted CIMD remain available.
 
 ### 4.2 Response validation
 
