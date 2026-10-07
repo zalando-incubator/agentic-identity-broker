@@ -937,7 +937,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US5-S3 from specs/013-token-exchange/spec.md
-		It("[US5-S3] should include sufficient info in error_description for re-auth flow", func() {
+		It("[US5-S3] should direct session recovery to the sessions page", func() {
 			// Given: Request that will fail with invalid_grant (no session exists)
 			ctx := context.Background()
 			anotherPrincipal := fixtures.AdminPrincipal().String()
@@ -974,15 +974,13 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
-			// Then: Error includes actionable description for re-auth
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
 
 			var errorResponse map[string]interface{}
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
-			Expect(errorResponse).To(HaveKey("error_description"))
-			Expect(errorResponse["error_description"]).NotTo(BeEmpty())
+			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
 		})
 
 		// Spec Reference: US5-S4 from specs/013-token-exchange/spec.md

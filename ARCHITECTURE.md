@@ -648,7 +648,7 @@ A last-resort net in `LoggingMiddleware` finalizes any still-open holder after t
 - **SR-004 / FR-006**: security-relevant logs carry `trace_id`, `actor`, and optional `calling_peer`.
 - **SR-005 / FR-012**: credentials, cookies, authorization codes, and query strings are not copied into the security context or its logs.
 - **SR-006 / FR-010**: forwarding headers are ignored unless trusted proxy mode is explicitly enabled; when enabled, the broker treats the right-most configured forwarded-header entry as authoritative.
-- **Log-forging protection**: access and recovery middleware remove line-break characters from logged methods, paths, client addresses, and panic messages. This includes CR, LF, vertical tab, form feed, NEL, and Unicode line and paragraph separators. Requests and diagnostic stack traces remain unchanged.
+- **Log-forging protection**: access and recovery middleware escape line-break characters and literal backslashes in logged methods, paths, client addresses, and panic messages. Escapes preserve distinct values for CR, LF, vertical tab, form feed, NEL, and Unicode line and paragraph separators. Ordinary values use an unchanged, allocation-free fast path. Requests and diagnostic stack traces remain unchanged.
 - **SC-008**: the design budget is under 1 ms median per-request overhead with no additional heap allocations beyond one context value and one response header on the hot path.
 
 #### 3.1.5. Encryption Vault for OAuth Tokens (Feature 012)
