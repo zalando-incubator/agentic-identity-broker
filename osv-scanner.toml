@@ -21,3 +21,8 @@ reason = "Indirectly introduced by golang-migrate's PostgreSQL-driver external t
 [[IgnoredVulns]]
 id = "GO-2026-5932"
 reason = "The repository does not import the unmaintained golang.org/x/crypto/openpgp packages affected by this advisory."
+
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2026-11-07T00:00:00Z
+reason = "No patched braces release exists. Docusaurus requires Chokidar 3 glob support; patterns come only from repository-controlled documentation paths and plugin configuration, not HTTP input. The deployed site contains static assets only. Reassess when this exception expires."
