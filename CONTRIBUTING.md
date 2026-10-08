@@ -52,6 +52,16 @@ just verify   # Security scanning plus test, integration, and E2E checks
 `just security` runs the focused gosec, govulncheck, and OSV-Scanner scans.
 `just verify` runs security scanning before the existing test, integration, and E2E gate.
 
+The frontend and documentation-site manifests use npm overrides for transitive security fixes.
+Commit the corresponding lockfile when changing an override. Verify both site builds and the
+instrumented frontend build (`VITE_COVERAGE=1 npm run build --prefix web`). The frontend's
+js-yaml 4 override removes the unpatched sprintf-js dependency from coverage tooling.
+
+The root `osv-scanner.toml` temporarily excludes `GHSA-vfj7-8cjw-p6xm` until 2026-11-07.
+No patched braces release exists, and Docusaurus requires Chokidar 3's glob support. Its
+patterns are repository-controlled; the deployed documentation is static. Reassess this
+exception at expiry or if documentation tooling starts accepting untrusted patterns.
+
 Both commands must pass before you open a pull request.
 
 ## Making Changes
