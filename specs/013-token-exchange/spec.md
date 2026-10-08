@@ -102,6 +102,20 @@ Recovery remains `reconsent` targeting `consent`.
 No upstream token or refresh request occurs.
 Observations exclude credentials, raw JWTs, unprojected claims, raw errors, sensitive URIs, and provider response material.
 
+### Grant Observation Context
+
+**GD-O1**: Each scenario uses fresh production memory storage, signed token-exchange requests, and real HTTP observation logs and spans. State is seeded directly, without lifecycle audit actions.
+
+- A missing-grant denial records the resolved service and registered agent ID, but no grant metadata.
+- A successful exchange using an encrypted, unexpired session records the registered agent ID, found grant ID, and stored grant timestamps. The established token response identity and granted-permission-set provenance remain unchanged.
+- An expired-grant denial retains the found grant ID and timestamps without permitting access.
+- A missing-session failure retains the previously resolved agent, service, and grant metadata.
+- An unregistered agent candidate records the resolved service, but does not export the candidate ID or any grant metadata.
+
+Both JSON logs and spans use `token_exchange.agent.id`, `token_exchange.grant.id`, `token_exchange.grant.updated_at`, and, for a grant with an expiry, `token_exchange.grant.valid_until`. Timestamps use UTC RFC3339Nano and match the stored grant. An indefinite grant omits `token_exchange.grant.valid_until`.
+Authorization observation context is excluded from the HTTP JSON schema and metric labels. Existing OAuth status, fixed denial description, configured-public-URL recovery links, and authorization decisions stay unchanged.
+Observations preserve authenticated actor and calling-peer correlation and exclude credentials, raw JWTs, unprojected claims, raw errors, sensitive URIs, and provider response material.
+
 ---
 
 ### User Story 4 - Privileged Client Authorization via CEL (Priority: P2)

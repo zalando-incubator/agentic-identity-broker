@@ -169,6 +169,8 @@ func NewTokenExchangeService(
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
 func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (_ *TokenExchangeResponse, err error) {
 	var serviceRef ServiceRef
+	var registeredAgentID id.AgentID
+	var grant *storage.UserGrant
 	stage := StageRequestValidation
 	defer func() {
 		if err == nil {
@@ -186,7 +188,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) && !errors.As(err, &sessionErr) {
 			diagnostic = NewDiagnostic(diagnostic.Stage(), DetailCallerCanceled)
 		}
-		err = tokenErr.WithDiagnostic(diagnostic).WithService(serviceRef)
+		err = tokenErr.WithObservation(diagnostic, serviceRef, authorizationRef(registeredAgentID, grant))
 	}()
 	if ctx.Err() != nil {
 		return nil, NewServerErrorWithCause("token exchange canceled", ctx.Err()).WithDiagnostic(NewDiagnostic(stage, DetailCallerCanceled))
@@ -286,6 +288,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		}
 		return nil, NewServerErrorWithCause("failed to lookup agent", err).WithDiagnostic(NewDiagnostic(stage, DetailAgentRepositoryUnavailable))
 	}
+	registeredAgentID = agent.ID
 	// T061-T065: Delegate grant verification to ConsentService using internal agent UUID
 	// ConsentService.VerifyAgentAccess checks:
 	// - T061: Query UserGrant by principal + agent UUID
@@ -294,7 +297,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// - T064: Return error for revoked grant
 	// - T065: Return error for expired grant
 	stage = StageGrantAuthorization
-	grant, err := s.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
+	grant, err = s.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
 	if err != nil {
 		// Map ConsentService errors to TokenExchange errors
 		if errors.Is(err, consent.ErrAgentAccessDenied) {
@@ -401,8 +404,23 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	response.Principal = principal
 	response.AgentID = agent.ID.String()
 	response.Service = serviceRef
+	response.Authorization = authorizationRef(registeredAgentID, grant)
 
 	return response, nil
+}
+
+func authorizationRef(agentID id.AgentID, grant *storage.UserGrant) AuthorizationRef {
+	ref := AuthorizationRef{AgentID: agentID}
+	if grant == nil {
+		return ref
+	}
+	ref.GrantID = grant.ID
+	ref.GrantUpdatedAt = grant.UpdatedAt
+	if grant.ValidUntil != nil {
+		ref.GrantValidUntil = *grant.ValidUntil
+		ref.GrantHasValidUntil = true
+	}
+	return ref
 }
 
 func (s *TokenExchangeService) agentConsentURL(agentID id.AgentID) string {

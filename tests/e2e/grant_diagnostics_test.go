@@ -174,6 +174,11 @@ func (f *grantDiagnosticsFixture) Exchange(service *model.ThirdpartyOAuth2Provid
 	return response
 }
 
+func (f *grantDiagnosticsFixture) SeedSession(service *model.ThirdpartyOAuth2ProviderEntity, scopes []string) {
+	session := fixtures.SessionForServiceWithScopes(f.Principal.String(), service.ID.String(), scopes)
+	Expect(f.Storage.UserSessions().Create(context.Background(), session)).To(Succeed())
+}
+
 func (f *grantDiagnosticsFixture) ExchangeRecords() []map[string]any {
 	records, err := f.Logs.Records()
 	Expect(err).NotTo(HaveOccurred())
@@ -197,6 +202,56 @@ func (f *grantDiagnosticsFixture) ExchangeSpans() []sdktrace.ReadOnlySpan {
 		}
 	}
 	return observations
+}
+
+func (f *grantDiagnosticsFixture) ExchangeObservationFields() []map[string]any {
+	records := f.ExchangeRecords()
+	Expect(len(records)).To(Equal(1), "one exchange observation must describe the HTTP request")
+	Eventually(func() int { return len(f.ExchangeSpans()) }).Should(Equal(1))
+	span := f.ExchangeSpans()[0]
+	spanFields := make(map[string]any, len(span.Attributes()))
+	for _, attr := range span.Attributes() {
+		spanFields[string(attr.Key)] = attr.Value.AsInterface()
+	}
+	f.AssertPrivateObservation(records[0])
+	f.AssertPrivateObservation(spanFields)
+	f.AssertPrivateObservation(map[string]any{"span_status": span.Status().Description})
+	for _, event := range span.Events() {
+		eventFields := map[string]any{"span_event": event.Name}
+		for _, attr := range event.Attributes {
+			eventFields[string(attr.Key)] = attr.Value.AsInterface()
+		}
+		f.AssertPrivateObservation(eventFields)
+	}
+	Expect(records[0]["actor"]).To(Equal(f.Principal.String()))
+	Expect(records[0]["calling_peer"]).To(Equal("grant-diagnostics-gateway"))
+	Expect(span.SpanContext().IsValid()).To(BeTrue())
+	Expect(records[0]["trace_id"]).To(Equal(span.SpanContext().TraceID().String()))
+	return []map[string]any{records[0], spanFields}
+}
+
+func (f *grantDiagnosticsFixture) AssertAuthorizationContext(observation map[string]any, agentID id.AgentID, grant *storagedomain.UserGrant) {
+	if agentID.IsZero() {
+		_, present := observation["token_exchange.agent.id"]
+		Expect(present).To(BeFalse(), "an unregistered candidate must not become observed agent identity")
+	} else {
+		Expect(observation["token_exchange.agent.id"]).To(Equal(agentID.String()))
+	}
+	if grant == nil {
+		for _, key := range []string{"token_exchange.grant.id", "token_exchange.grant.updated_at", "token_exchange.grant.valid_until"} {
+			_, present := observation[key]
+			Expect(present).To(BeFalse(), key+" must be omitted without a found grant")
+		}
+		return
+	}
+	Expect(observation["token_exchange.grant.id"]).To(Equal(grant.ID.String()))
+	Expect(observation["token_exchange.grant.updated_at"]).To(Equal(grant.UpdatedAt.UTC().Format(time.RFC3339Nano)))
+	if grant.ValidUntil == nil {
+		_, present := observation["token_exchange.grant.valid_until"]
+		Expect(present).To(BeFalse(), "an indefinite grant must omit expiry rather than inventing a sentinel")
+	} else {
+		Expect(observation["token_exchange.grant.valid_until"]).To(Equal(grant.ValidUntil.UTC().Format(time.RFC3339Nano)))
+	}
 }
 
 func (f *grantDiagnosticsFixture) AssertPrivateObservation(observation map[string]any) {
@@ -254,30 +309,14 @@ var _ = Describe("Grant Denial Classification", func() {
 			Expect(fixture.Upstream.GetTokenCalled()).To(BeFalse(), "authorization denial must not contact the provider token endpoint")
 			Expect(len(fixture.Upstream.GetTokenRequests())).To(BeZero())
 
-			records := fixture.ExchangeRecords()
-			Expect(len(records)).To(Equal(1), "one exchange observation must describe the denied HTTP request")
-			Eventually(func() int { return len(fixture.ExchangeSpans()) }).Should(Equal(1))
-			span := fixture.ExchangeSpans()[0]
-			spanFields := make(map[string]any, len(span.Attributes()))
-			for _, attr := range span.Attributes() {
-				spanFields[string(attr.Key)] = attr.Value.AsInterface()
-			}
-			fixture.AssertPrivateObservation(records[0])
-			fixture.AssertPrivateObservation(spanFields)
-			fixture.AssertPrivateObservation(map[string]any{"span_status": span.Status().Description})
-			for _, event := range span.Events() {
-				eventFields := map[string]any{"span_event": event.Name}
-				for _, attr := range event.Attributes {
-					eventFields[string(attr.Key)] = attr.Value.AsInterface()
-				}
-				fixture.AssertPrivateObservation(eventFields)
-			}
-			for _, observation := range []map[string]any{records[0], spanFields} {
+			for _, observation := range fixture.ExchangeObservationFields() {
 				Expect(observation["token_exchange.failure_detail"]).To(Equal(detail))
 				Expect(observation["token_exchange.outcome"]).To(Equal("authorization_denied"))
 				Expect(observation["token_exchange.failure_stage"]).To(Equal("grant_authorization"))
 				Expect(observation["token_exchange.recovery_action"]).To(Equal("reconsent"))
 				Expect(observation["token_exchange.recovery_target"]).To(Equal("consent"))
+				Expect(observation["token_exchange.service.id"]).To(Equal(fixture.S2.ID.String()))
+				fixture.AssertAuthorizationContext(observation, fixture.Agent.ID, fixture.Grant)
 			}
 		},
 		Entry("when consent omits S2", func(f *grantDiagnosticsFixture) {
@@ -292,5 +331,117 @@ var _ = Describe("Grant Denial Classification", func() {
 			f.PermissionSet.ServiceScopes[1].Scopes = []string{"write"}
 			Expect(f.Storage.PermissionSets().Update(context.Background(), f.PermissionSet)).To(Succeed())
 		}, "grant_scope_intersection_empty"),
+	)
+})
+
+var _ = Describe("Grant Observation Context", func() {
+	var fixture *grantDiagnosticsFixture
+
+	BeforeEach(func() {
+		fixture = newGrantDiagnosticsFixture()
+	})
+
+	// GD-O1 from specs/013-token-exchange/spec.md.
+	DescribeTable("[GD-O1] observes only resolved agent and found-grant metadata without changing the wire response",
+		func(configure func(*grantDiagnosticsFixture), status int, detail string, registeredAgent, foundGrant bool) {
+			configure(fixture)
+			var expectedAgentID id.AgentID
+			if registeredAgent {
+				expectedAgentID = fixture.Agent.ID
+			}
+			var storedGrant *storagedomain.UserGrant
+			if foundGrant {
+				var err error
+				storedGrant, err = fixture.Storage.UserGrants().Get(context.Background(), fixture.Grant.ID)
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			response := fixture.Exchange(fixture.S1)
+			defer func() { _ = response.Body.Close() }()
+			Expect(response.StatusCode).To(Equal(status))
+			var body map[string]any
+			Expect(json.NewDecoder(response.Body).Decode(&body)).To(Succeed())
+			outcome := "success"
+			switch status {
+			case http.StatusOK:
+				keys := make([]string, 0, len(body))
+				for key := range body {
+					keys = append(keys, key)
+				}
+				Expect(keys).To(ConsistOf("access_token", "token_type", "issued_token_type", "expires_in", "scope", "principal", "agent_id", "granted_permission_sets"), "authorization context must not add fields to the established JSON response")
+				accessToken, ok := body["access_token"].(string)
+				Expect(ok && accessToken == "token-"+fixture.S1.ID.String()).To(BeTrue(), "the existing encrypted session token must be returned without printing it")
+				Expect(body["token_type"]).To(Equal("Bearer"))
+				Expect(body["issued_token_type"]).To(Equal("urn:ietf:params:oauth:token-type:access_token"))
+				Expect(body["expires_in"]).To(BeNumerically(">", 0))
+				Expect(body["scope"]).To(Equal("read"))
+				Expect(body["principal"]).To(Equal(fixture.Principal.String()))
+				Expect(body["agent_id"]).To(Equal(fixture.Agent.ID.String()))
+				Expect(body["granted_permission_sets"]).To(Equal(map[string]any{
+					fixture.PermissionSet.ID.String(): []any{fixture.S1.ID.String(), fixture.S2.ID.String(), fixture.S0.ID.String()},
+				}))
+			case http.StatusForbidden:
+				outcome = "authorization_denied"
+				Expect(len(body)).To(Equal(3), "denial JSON must retain only the established OAuth fields")
+				Expect(body["error"]).To(Equal("access_denied"))
+				Expect(body["error_description"]).To(Equal("User authorization is insufficient. Please re-consent."))
+				Expect(body["error_uri"]).To(Equal(fixture.Config.Server.EndUser.PublicURL + "/agents/" + fixture.Agent.ID.String()))
+			case http.StatusBadRequest:
+				outcome = "reauth_required"
+				Expect(len(body)).To(Equal(3), "missing-session JSON must retain only the established OAuth fields")
+				Expect(body["error"]).To(Equal("invalid_grant"))
+				Expect(body["error_description"]).To(Equal("User session is unavailable. Please re-authenticate."))
+				Expect(body["error_uri"]).To(Equal(fixture.Config.Server.EndUser.PublicURL + "/sessions"))
+			case http.StatusInternalServerError:
+				outcome = "configuration_error"
+				Expect(len(body)).To(Equal(2), "an unregistered candidate must not add identity or recovery fields to the OAuth error")
+				Expect(body["error"]).To(Equal("server_error"))
+			}
+			Expect(fixture.Upstream.GetTokenCalled()).To(BeFalse(), "no scenario needs provider refresh or token issuance")
+			Expect(len(fixture.Upstream.GetTokenRequests())).To(BeZero())
+
+			for _, observation := range fixture.ExchangeObservationFields() {
+				Expect(observation["token_exchange.outcome"]).To(Equal(outcome))
+				Expect(observation["token_exchange.service.id"]).To(Equal(fixture.S1.ID.String()))
+				if detail == "" {
+					_, present := observation["token_exchange.failure_detail"]
+					Expect(present).To(BeFalse(), "success must not acquire a failure detail")
+				} else {
+					Expect(observation["token_exchange.failure_detail"]).To(Equal(detail))
+				}
+				fixture.AssertAuthorizationContext(observation, expectedAgentID, storedGrant)
+			}
+		},
+		Entry("missing grant retains registered agent and service but no grant metadata", func(f *grantDiagnosticsFixture) {
+			Expect(f.Storage.UserGrants().Delete(context.Background(), f.Grant.ID)).To(Succeed())
+		}, http.StatusForbidden, "grant_missing", true, false),
+		Entry("successful exchange retains stored nanosecond timestamps and existing identity/provenance", func(f *grantDiagnosticsFixture) {
+			zone := time.FixedZone("grant-fixture", 2*60*60)
+			f.Grant.UpdatedAt = time.Date(2026, time.October, 7, 11, 12, 13, 123456789, zone)
+			validUntil := f.Grant.ValidUntil.In(zone)
+			f.Grant.ValidUntil = &validUntil
+			Expect(f.Storage.UserGrants().Update(context.Background(), f.Grant)).To(Succeed())
+			f.SeedSession(f.S1, []string{"read"})
+		}, http.StatusOK, "", true, true),
+		Entry("successful indefinite grant omits expiry rather than emitting a sentinel", func(f *grantDiagnosticsFixture) {
+			f.Grant.ValidUntil = nil
+			Expect(f.Storage.UserGrants().Update(context.Background(), f.Grant)).To(Succeed())
+			f.SeedSession(f.S1, []string{"read"})
+		}, http.StatusOK, "", true, true),
+		Entry("expired grant denial retains metadata for the grant actually found", func(f *grantDiagnosticsFixture) {
+			validUntil := time.Now().Add(-time.Hour).In(time.FixedZone("grant-fixture", -3*60*60))
+			f.Grant.ValidUntil = &validUntil
+			Expect(f.Storage.UserGrants().Update(context.Background(), f.Grant)).To(Succeed())
+		}, http.StatusForbidden, "grant_expired", true, true),
+		Entry("missing session retains all previously resolved grant context", func(f *grantDiagnosticsFixture) {
+			sessions, err := f.Storage.UserSessions().ListByPrincipal(context.Background(), f.Principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(sessions)).To(BeZero())
+		}, http.StatusBadRequest, "session_missing", true, true),
+		Entry("unregistered subject-token candidate is not exported despite a stored grant", func(f *grantDiagnosticsFixture) {
+			Expect(f.Storage.Agents().Delete(context.Background(), f.Agent.ID)).To(Succeed())
+			_, err := f.Storage.UserGrants().Get(context.Background(), f.Grant.ID)
+			Expect(err).NotTo(HaveOccurred(), "the candidate must not expose even a still-stored grant")
+		}, http.StatusInternalServerError, "agent_missing", false, false),
 	)
 })

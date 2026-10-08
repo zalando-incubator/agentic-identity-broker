@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/stretchr/testify/require"
 )
 
@@ -535,5 +537,37 @@ func TestTokenExchangeResponse_OptionalApprovalIdentity(t *testing.T) {
 				require.Equal(t, expected, actual)
 			}
 		})
+	}
+}
+
+func TestTokenExchangeResponse_ObservationContextExcludedFromJSON(t *testing.T) {
+	t.Parallel()
+	response := NewTokenExchangeResponse("access-token", BearerTokenType, AccessTokenType)
+	response.Principal = "user@example.com"
+	response.AgentID = id.NewAgentID().String()
+	permissionSetID := id.NewPermissionSetID().String()
+	serviceID := id.NewServiceID()
+	response.GrantedPermissionSets = map[string][]string{permissionSetID: {serviceID.String()}}
+	response.Service = ServiceRef{ID: serviceID}
+	response.Authorization = AuthorizationRef{
+		AgentID:            id.NewAgentID(),
+		GrantID:            id.NewGrantID(),
+		GrantUpdatedAt:     time.Date(2026, time.January, 1, 2, 3, 4, 123456789, time.UTC),
+		GrantValidUntil:    time.Date(2026, time.February, 1, 2, 3, 4, 987654321, time.UTC),
+		GrantHasValidUntil: true,
+	}
+	for _, marshal := range []func() ([]byte, error){response.ToJSON, func() ([]byte, error) { return json.Marshal(response) }} {
+		body, err := marshal()
+		require.NoError(t, err)
+		var decoded map[string]any
+		require.NoError(t, json.Unmarshal(body, &decoded))
+		require.Equal(t, map[string]any{
+			"access_token":            "access-token",
+			"token_type":              BearerTokenType,
+			"issued_token_type":       AccessTokenType,
+			"principal":               response.Principal,
+			"agent_id":                response.AgentID,
+			"granted_permission_sets": map[string]any{permissionSetID: []any{serviceID.String()}},
+		}, decoded)
 	}
 }
