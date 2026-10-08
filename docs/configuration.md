@@ -212,6 +212,7 @@ Flags:
   -c, --config string       config file path (overrides IDENTITY_BROKER_CONFIG_PATH)
       --log-level string    log level: debug, info, warn, error
       --log-format string   log format: text, json
+      --third_party_oauth2.client_name string   broker/platform name for DCR only
   -h, --help               help for agentic-identity-broker
 ```
 
@@ -279,7 +280,7 @@ The Identity Broker runs two independent HTTP servers on separate ports:
 |--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
 | `server.enduser.port` | integer | `8000` | 1-65535 | No | `IDENTITY_BROKER_SERVER_ENDUSER_PORT` | `--server.enduser.port` | Port for end-user server. Must differ from admin port. |
 | `server.enduser.bind` | string | `::` | IPv4/IPv6 address or hostname | No | `IDENTITY_BROKER_SERVER_ENDUSER_BIND` | `--server.enduser.bind` | Bind address for end-user server. Use `::` for dual-stack (IPv6+IPv4), `0.0.0.0` for IPv4 only, or `127.0.0.1` for localhost only. |
-| `server.enduser.public_url` | URL | `http://localhost:8000` | HTTP or HTTPS URL | Yes | `IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL` | `--server.enduser.public-url` | Public URL for callbacks, broker metadata, and CIMD service documents. CIMD confidential services require HTTPS. |
+| `server.enduser.public_url` | URL | `http://localhost:8000` | HTTP or HTTPS URL | Yes | `IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL` | N/A | Public URL for callbacks and broker metadata. Hosted CIMD and DCR require a stable, public HTTPS URL. |
 | `server.admin.port` | integer | `14000` | 1-65535 | No | `IDENTITY_BROKER_SERVER_ADMIN_PORT` | `--server.admin.port` | Port for admin server. Must differ from end-user port. |
 | `server.admin.bind` | string | `::` | IPv4/IPv6 address or hostname | No | `IDENTITY_BROKER_SERVER_ADMIN_BIND` | `--server.admin.bind` | Bind address for admin server. In production, restrict to private network (for example `10.0.1.0`) or use firewall rules. |
 | `server.admin.public_url` | URL | `http://localhost:14000` | HTTP or HTTPS URL with a hostname, no userinfo, and no empty explicit port | Yes | `IDENTITY_BROKER_SERVER_ADMIN_PUBLIC_URL` | N/A | Public admin URL. All admin `/api` requests must match its Host authority. Reverse proxies must preserve this Host. |
@@ -324,6 +325,28 @@ a fallback metadata URL.
 To restore service, restore the original public URL and keep it externally
 reachable. Re-registration or identity migration requires a separately
 approved migration flow.
+
+#### Protected-Resource Discovery Configuration
+
+`third_party_oauth2.client_name` identifies the broker or its platform for dynamic client registration (DCR). It does not identify a third-party service.
+
+| Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
+|--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
+| `third_party_oauth2.client_name` | string | Unset | Non-blank name for DCR | For DCR only | `IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CLIENT_NAME` | `--third_party_oauth2.client_name` | Broker-wide `client_name` sent in DCR requests, never the service `display_name`. |
+
+If DCR is selected, an absent or whitespace-only name stops the attempt before registration. Startup, manual services, and hosted CIMD do not require this name. A service's `display_name` cannot replace it.
+
+The YAML key, environment variable, and CLI flag supply the same client name. The CLI flag overrides the environment variable, which overrides YAML. The example uses YAML.
+
+Hosted CIMD and DCR require a stable, public HTTPS `server.enduser.public_url`. DCR uses it to build the OAuth2 callback URL. The broker reads this value from YAML or `IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL`. There is no public-URL CLI flag. Helm maps `broker.server.enduser.publicUrl` to the same broker key.
+
+If you select hosted CIMD without a usable client-authentication key, generate an ES256 key through `POST /api/cimd-client-keys` on the Admin API. The broker stores its private key. `third_party_oauth2.jwe_signing_key` protects OAuth2 state, not CIMD client assertions.
+
+Set `discovery.resource_url` to a public HTTPS URL in a service create or update request to the Admin API. It is not a broker configuration key. The service's `display_name` and optional `authorization_params.resource` also belong in that request. If no resource override is present, the broker derives the effective token resource from the verified discovery URL.
+
+One fixed 15-second deadline covers each protected-resource discovery and registration attempt. Each remote discovery or registration response has a fixed 256-KiB limit. These are not configuration keys. CIMD document fetches, OAuth code exchange, and token refresh keep their separate limits.
+
+See [the protected-resource configuration example](../examples/config/protected-resource-discovery.yaml) and the [Admin API service contract](../api/admin/openapi.yaml) for the separate broker and service fields.
 
 #### Storage Configuration
 
@@ -517,7 +540,7 @@ request_context:
 
 - All configuration options have built-in defaults and are optional unless marked "Required"
 - Environment variables follow the pattern: `IDENTITY_BROKER_{SECTION}_{KEY}` (uppercased)
-- CLI flags follow the pattern: `--{section}-{key}` (lowercase with hyphens)
+- CLI flags use the exact spelling shown in each option's table; some nested flags contain dots and underscores.
 - See [Precedence Rules](#precedence-rules) for how values from different sources are resolved
 - For YAML configuration syntax, see [YAML Configuration](#yaml-configuration)
 
@@ -559,8 +582,8 @@ The configuration system follows consistent naming patterns across all sources:
 
 1. **YAML Paths**: Use dot notation with lowercase keys (e.g., `log.level`, `server.tls.enabled`)
 2. **Environment Variables**: Prefix + uppercase + underscores (e.g., `IDENTITY_BROKER_LOG_LEVEL`, `IDENTITY_BROKER_SERVER_TLS_ENABLED`)
-3. **CLI Flags**: Lowercase with hyphens (e.g., `--log-level`, `--server-tls-enabled`)
-4. **Nested Config**: Each level adds a separator (`.` in YAML, `_` in env vars, `-` in flags)
+3. **CLI Flags**: Use the exact documented spelling (for example, `--log-level` or `--third_party_oauth2.client_name`).
+4. **Nested Config**: YAML paths use dots, environment variables use underscores, and CLI flags use their documented spelling.
 
 ### Configuration by Use Case
 

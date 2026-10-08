@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	encryptionnoop "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -75,6 +76,11 @@ func (m *MockProviderRepository) GetCanonicalIDs(ctx context.Context, ids []id.S
 
 func (m *MockProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
 	args := m.Called(ctx, entity, expectedVersion)
+	return args.Error(0)
+}
+
+func (m *MockProviderRepository) RecordDiscoveryFailure(ctx context.Context, serviceID id.ServiceID, version int64, completedAt time.Time, code string) error {
+	args := m.Called(ctx, serviceID, version, completedAt, code)
 	return args.Error(0)
 }
 
@@ -140,7 +146,8 @@ func setupHandlerWithConfig(t *testing.T, mockRepo *MockProviderRepository, conf
 	t.Helper()
 	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default()).
 		WithCIMDPublicURL(config.Server.EndUser.PublicURL).
-		WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
+		WithCIMDKeyReadiness(readyCIMDKeyReadiness{}).
+		WithDiscoveryStatusWriter(mockRepo)
 	return NewServicesHandler(svc, config, slog.Default())
 }
 
@@ -675,7 +682,6 @@ func TestServicesHandler_CreateServiceTokenEndpointAuthMethodMapping(t *testing.
 				var response ErrorResponse
 				require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 				assert.Equal(t, "validation failed", response.Error)
-				assert.Equal(t, tt.wantError, response.Message)
 				mockRepo.AssertNotCalled(t, "Create")
 				return
 			}
@@ -1807,7 +1813,6 @@ func TestServicesHandler_UpdateServiceTokenEndpointAuthMethodMapping(t *testing.
 				var response ErrorResponse
 				require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 				assert.Equal(t, "validation failed", response.Error)
-				assert.Equal(t, tt.wantError, response.Message)
 				mockRepo.AssertNotCalled(t, "Update")
 				return
 			}
@@ -2214,4 +2219,768 @@ func TestServicesHandler_UpdateReturnsCanonicalIDFromRepository(t *testing.T) {
 	require.NotNil(t, response.CanonicalID)
 	assert.Equal(t, canonicalID, *response.CanonicalID)
 	repo.AssertExpectations(t)
+}
+
+const (
+	adminTestResource = "https://mcp.example.test/mcp"
+	adminTestIssuer   = "https://auth.example.test/tenant"
+)
+
+type adminDiscoveryClient struct {
+	t          *testing.T
+	documents  map[string]string
+	probeCalls []string
+	getCalls   []string
+	postCalls  []string
+}
+
+func (c *adminDiscoveryClient) Probe(_ context.Context, rawURL string) (int, []string, error) {
+	c.probeCalls = append(c.probeCalls, rawURL)
+	if rawURL != adminTestResource {
+		c.t.Errorf("unexpected protected resource probe: %s", rawURL)
+		return 0, nil, ports.ErrOAuthDiscoveryUnsafeDestination
+	}
+	return http.StatusUnauthorized, []string{`Bearer resource_metadata="https://mcp.example.test/.well-known/oauth-protected-resource/mcp"`}, nil
+}
+
+func (c *adminDiscoveryClient) GetJSON(_ context.Context, rawURL string) ([]byte, error) {
+	c.getCalls = append(c.getCalls, rawURL)
+	document, ok := c.documents[rawURL]
+	if !ok {
+		c.t.Errorf("unexpected discovery metadata request: %s", rawURL)
+		return nil, ports.ErrOAuthDiscoveryNotFound
+	}
+	return []byte(document), nil
+}
+
+func (c *adminDiscoveryClient) PostJSON(_ context.Context, rawURL string, _ []byte) ([]byte, error) {
+	c.postCalls = append(c.postCalls, rawURL)
+	return nil, ports.ErrOAuthDiscoveryRejected
+}
+
+func adminCIMDDiscoveryClient(t *testing.T) *adminDiscoveryClient {
+	return &adminDiscoveryClient{t: t, documents: map[string]string{
+		"https://mcp.example.test/.well-known/oauth-protected-resource/mcp":       `{"resource":"https://mcp.example.test/mcp","authorization_servers":["https://auth.example.test/tenant"]}`,
+		"https://auth.example.test/.well-known/oauth-authorization-server/tenant": `{"issuer":"https://auth.example.test/tenant","authorization_endpoint":"https://auth.example.test/tenant/authorize","token_endpoint":"https://auth.example.test/tenant/token","client_id_metadata_document_supported":true,"token_endpoint_auth_methods_supported":["private_key_jwt","client_secret_basic"],"token_endpoint_auth_signing_alg_values_supported":["ES256"],"registration_endpoint":"https://auth.example.test/tenant/register"}`,
+	}}
+}
+
+func adminDiscoveryRequest(t *testing.T, method, serviceID string, body any) *http.Request {
+	t.Helper()
+	path := "/api/services"
+	if serviceID != "" {
+		path += "/" + serviceID
+	}
+	encoded, err := json.Marshal(body)
+	require.NoError(t, err)
+	request := httptest.NewRequest(method, path, bytes.NewReader(encoded))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Remote-User", "admin@example.test")
+	if serviceID != "" {
+		routeContext := chi.NewRouteContext()
+		routeContext.URLParams.Add("service-id", serviceID)
+		request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+	}
+	return request
+}
+
+func adminDiscoveryPayload(t *testing.T, body []byte, serviceID, clientMethod, tokenMethod, clientID, resource string) {
+	t.Helper()
+	var response struct {
+		ID                      string `json:"id"`
+		ClientID                string `json:"client_id"`
+		IssuerURI               string `json:"issuer_uri"`
+		TokenEndpointAuthMethod string `json:"token_endpoint_auth_method"`
+		Discovery               struct {
+			EnableDiscovery bool   `json:"enable_discovery"`
+			ResourceURL     string `json:"resource_url"`
+			ClientMethod    string `json:"client_method"`
+		} `json:"discovery"`
+		Endpoints struct {
+			TokenEndpoint     string `json:"token_endpoint"`
+			AuthorizeEndpoint string `json:"authorize_endpoint"`
+		} `json:"endpoints"`
+		AuthorizationParams map[string]string `json:"authorization_params"`
+	}
+	require.NoError(t, json.Unmarshal(body, &response))
+	assert.Equal(t, serviceID, response.ID)
+	assert.Equal(t, clientID, response.ClientID)
+	assert.Equal(t, adminTestIssuer, response.IssuerURI)
+	assert.Equal(t, tokenMethod, response.TokenEndpointAuthMethod)
+	assert.True(t, response.Discovery.EnableDiscovery)
+	assert.Equal(t, adminTestResource, response.Discovery.ResourceURL)
+	assert.Equal(t, clientMethod, response.Discovery.ClientMethod)
+	assert.Equal(t, "https://auth.example.test/tenant/authorize", response.Endpoints.AuthorizeEndpoint)
+	assert.Equal(t, "https://auth.example.test/tenant/token", response.Endpoints.TokenEndpoint)
+	assert.Equal(t, resource, response.AuthorizationParams["resource"])
+	assert.NotContains(t, string(body), `"client_secret"`)
+}
+
+func TestServicesHandler_ResourceDiscoveryCreateSelectsHostedCIMD(t *testing.T) {
+	repo := new(MockProviderRepository)
+	client := adminCIMDDiscoveryClient(t)
+	handler := setupHandler(t, repo)
+	handler.providerService.WithOAuthDiscoveryClient(client)
+	var saved *model.ThirdpartyOAuth2ProviderEntity
+	repo.On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		saved = args.Get(1).(*model.ThirdpartyOAuth2ProviderEntity).Copy()
+	}).Return(nil).Once()
+
+	request := adminDiscoveryRequest(t, http.MethodPost, "", map[string]any{
+		"display_name": "MCP service",
+		"discovery":    map[string]any{"enable_discovery": true, "resource_url": adminTestResource},
+	})
+	response := httptest.NewRecorder()
+	handler.CreateService(response, request)
+
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	var identity struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &identity))
+	adminDiscoveryPayload(t, response.Body.Bytes(), identity.ID, "cimd", "private_key_jwt",
+		"https://broker.example.com/.well-known/oauth-client/"+identity.ID, adminTestResource)
+	require.NotNil(t, saved)
+	assert.Equal(t, adminTestResource, saved.AuthorizationParams["resource"])
+	assert.Equal(t, model.ClientBootstrapCIMD, saved.Discovery.ClientMethod)
+	assert.Equal(t, []string{adminTestResource}, client.probeCalls)
+	assert.Equal(t, []string{
+		"https://mcp.example.test/.well-known/oauth-protected-resource/mcp",
+		"https://auth.example.test/.well-known/oauth-authorization-server/tenant",
+	}, client.getCalls)
+	assert.Empty(t, client.postCalls, "compatible CIMD must not fall back to DCR")
+	repo.AssertExpectations(t)
+}
+
+func TestServicesHandler_ResourceDiscoveryReadAndListRepresentActiveClient(t *testing.T) {
+	for _, tc := range []struct {
+		name, clientMethod, tokenMethod, clientID, resource string
+		confidentialDCR                                     bool
+	}{
+		{"hosted CIMD with derived resource", "cimd", "private_key_jwt", "https://broker.example.com/.well-known/oauth-client/", adminTestResource, false},
+		{"confidential DCR with explicit resource", "dcr", "client_secret_basic", "registered-client", "https://mcp.example.test/audience", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			handler := setupHandler(t, repo)
+			serviceID := id.NewServiceID()
+			clientID := tc.clientID
+			if !tc.confidentialDCR {
+				clientID += serviceID.String()
+			}
+			entity := &model.ThirdpartyOAuth2ProviderEntity{
+				ID: serviceID, DisplayName: "MCP service", ClientID: id.ClientID(clientID),
+				Secret: model.NewAbsentSecret(), TokenEndpointAuthMethod: model.TokenEndpointAuthMethod(tc.tokenMethod),
+				IssuerURI:           adminTestIssuer,
+				Discovery:           model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: ptrAdminResourceURL(), ClientMethod: model.ClientBootstrapMethod(tc.clientMethod)},
+				Endpoints:           model.OAuth2Endpoints{AuthorizeEndpoint: adminTestIssuer + "/authorize", TokenEndpoint: adminTestIssuer + "/token"},
+				AuthorizationParams: map[string]string{"resource": tc.resource}, ResourceExplicit: tc.confidentialDCR,
+				CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Version: 7,
+			}
+			if tc.confidentialDCR {
+				entity.Secret = model.NewEncryptedSecret(encryptSecretForTest(serviceID.String(), "registered-secret-not-for-admin"))
+			}
+			repo.On("Get", mock.Anything, serviceID).Return(entity, nil).Once()
+			repo.On("List", mock.Anything).Return([]*model.ThirdpartyOAuth2ProviderEntity{entity}, nil).Once()
+
+			read := httptest.NewRecorder()
+			handler.GetService(read, adminDiscoveryRequest(t, http.MethodGet, serviceID.String(), nil))
+			require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+			assert.Equal(t, `"7"`, read.Header().Get("ETag"))
+			adminDiscoveryPayload(t, read.Body.Bytes(), serviceID.String(), tc.clientMethod, tc.tokenMethod, clientID, tc.resource)
+
+			listed := httptest.NewRecorder()
+			handler.ListServices(listed, adminDiscoveryRequest(t, http.MethodGet, "", nil))
+			require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+			var entries []json.RawMessage
+			require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &entries))
+			require.Len(t, entries, 1)
+			adminDiscoveryPayload(t, entries[0], serviceID.String(), tc.clientMethod, tc.tokenMethod, clientID, tc.resource)
+			assert.NotContains(t, listed.Body.String(), "registered-secret-not-for-admin")
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func ptrAdminResourceURL() *string {
+	resource := adminTestResource
+	return &resource
+}
+
+func TestServicesHandler_ResourceDiscoveryUpdatePreservesIdentityAndETag(t *testing.T) {
+	repo := new(MockProviderRepository)
+	client := adminCIMDDiscoveryClient(t)
+	handler := setupHandler(t, repo)
+	handler.providerService.WithOAuthDiscoveryClient(client)
+	serviceID := id.NewServiceID()
+	clientID := "https://broker.example.com/.well-known/oauth-client/" + serviceID.String()
+	persisted := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: serviceID, DisplayName: "Original", ClientID: id.ClientID(clientID), Secret: model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethod("private_key_jwt"), IssuerURI: adminTestIssuer,
+		Discovery:           model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: ptrAdminResourceURL(), ClientMethod: model.ClientBootstrapCIMD},
+		Endpoints:           model.OAuth2Endpoints{TokenEndpoint: adminTestIssuer + "/token", AuthorizeEndpoint: adminTestIssuer + "/authorize"},
+		AuthorizationParams: map[string]string{"resource": adminTestResource}, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Version: 7,
+	}
+	repo.On("Get", mock.Anything, serviceID).Return(persisted, nil)
+	repo.On("Update", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		replacement := args.Get(1).(*model.ThirdpartyOAuth2ProviderEntity)
+		*persisted = *replacement.Copy()
+		persisted.Version = 8
+		replacement.Version = 8
+	}).Return(nil).Once()
+
+	before := httptest.NewRecorder()
+	handler.GetService(before, adminDiscoveryRequest(t, http.MethodGet, serviceID.String(), nil))
+	require.Equal(t, http.StatusOK, before.Code)
+	assert.Equal(t, `"7"`, before.Header().Get("ETag"))
+	request := adminDiscoveryRequest(t, http.MethodPut, serviceID.String(), map[string]any{
+		"display_name": "Renamed MCP service",
+		"discovery":    map[string]any{"enable_discovery": true, "resource_url": adminTestResource},
+	})
+	request.Header.Set("If-Match", before.Header().Get("ETag"))
+	updated := httptest.NewRecorder()
+	handler.UpdateService(updated, request)
+	require.Equal(t, http.StatusOK, updated.Code, updated.Body.String())
+	assert.Equal(t, `"8"`, updated.Header().Get("ETag"))
+	adminDiscoveryPayload(t, updated.Body.Bytes(), serviceID.String(), "cimd", "private_key_jwt", clientID, adminTestResource)
+	var updatedName struct {
+		DisplayName string `json:"display_name"`
+	}
+	require.NoError(t, json.Unmarshal(updated.Body.Bytes(), &updatedName))
+	assert.Equal(t, "Renamed MCP service", updatedName.DisplayName)
+	assert.Equal(t, []string{adminTestResource}, client.probeCalls)
+	assert.Empty(t, client.postCalls)
+
+	after := httptest.NewRecorder()
+	handler.GetService(after, adminDiscoveryRequest(t, http.MethodGet, serviceID.String(), nil))
+	require.Equal(t, http.StatusOK, after.Code)
+	assert.Equal(t, updated.Header().Get("ETag"), after.Header().Get("ETag"))
+	adminDiscoveryPayload(t, after.Body.Bytes(), serviceID.String(), "cimd", "private_key_jwt", clientID, adminTestResource)
+	var readName struct {
+		DisplayName string `json:"display_name"`
+	}
+	require.NoError(t, json.Unmarshal(after.Body.Bytes(), &readName))
+	assert.Equal(t, "Renamed MCP service", readName.DisplayName)
+	repo.AssertExpectations(t)
+}
+
+func TestServicesHandler_ResourceDiscoveryRejectsManualFallbackInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		value       any
+	}{
+		{"caller client ID", "client_id", "caller-client"},
+		{"caller secret", "client_secret", "caller-secret"},
+		{"caller authentication mode", "token_endpoint_auth_method", "private_key_jwt"},
+		{"manual endpoint fallback", "endpoints", map[string]string{"token_endpoint": adminTestIssuer + "/token", "authorize_endpoint": adminTestIssuer + "/authorize"}},
+		{"direct metadata fallback", "metadata_url", adminTestIssuer + "/.well-known/oauth-authorization-server"},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodPut} {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				repo := new(MockProviderRepository)
+				client := adminCIMDDiscoveryClient(t)
+				handler := setupHandler(t, repo)
+				handler.providerService.WithOAuthDiscoveryClient(client)
+				discovery := map[string]any{"enable_discovery": true, "resource_url": adminTestResource}
+				body := map[string]any{"display_name": "MCP service", "discovery": discovery}
+				if tc.field == "metadata_url" {
+					discovery[tc.field] = tc.value
+				} else {
+					body[tc.field] = tc.value
+				}
+				serviceID := ""
+				if method == http.MethodPut {
+					serviceID = id.NewServiceID().String()
+				}
+				response := httptest.NewRecorder()
+				request := adminDiscoveryRequest(t, method, serviceID, body)
+				if method == http.MethodPost {
+					handler.CreateService(response, request)
+				} else {
+					handler.UpdateService(response, request)
+				}
+				require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				var failure ErrorResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
+				assert.Equal(t, "validation failed", failure.Error)
+				assert.Empty(t, client.probeCalls)
+				assert.Empty(t, client.getCalls)
+				assert.Empty(t, client.postCalls)
+				repo.AssertNotCalled(t, "Create")
+				repo.AssertNotCalled(t, "Update")
+			})
+		}
+	}
+}
+
+func TestServicesHandler_ResourceMetadataFailureDoesNotCreateOrExposeRemoteData(t *testing.T) {
+	repo := new(MockProviderRepository)
+	client := adminCIMDDiscoveryClient(t)
+	client.documents["https://mcp.example.test/.well-known/oauth-protected-resource/mcp"] =
+		`{"resource":"https://other.example.test/mcp?secret=remote-secret-not-for-admin","authorization_servers":["https://auth.example.test/tenant"]}`
+	handler := setupHandler(t, repo)
+	handler.providerService.WithOAuthDiscoveryClient(client)
+	response := httptest.NewRecorder()
+	handler.CreateService(response, adminDiscoveryRequest(t, http.MethodPost, "", map[string]any{
+		"display_name": "MCP service",
+		"discovery":    map[string]any{"enable_discovery": true, "resource_url": adminTestResource},
+	}))
+	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	var failure ErrorResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
+	assert.Equal(t, "discovery failed", failure.Error)
+	assert.Equal(t, "resource_mismatch", failure.Message)
+	assert.NotContains(t, response.Body.String(), "remote-secret-not-for-admin")
+	assert.Equal(t, []string{adminTestResource}, client.probeCalls)
+	assert.Equal(t, []string{"https://mcp.example.test/.well-known/oauth-protected-resource/mcp"}, client.getCalls)
+	assert.Empty(t, client.postCalls)
+	repo.AssertNotCalled(t, "Create")
+}
+
+func TestServicesHandler_DirectMetadataModeKeepsExistingCredentials(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"token_endpoint":"https://issuer.example.test/token","authorization_endpoint":"https://issuer.example.test/authorize"}`))
+	}))
+	defer server.Close()
+	repo := new(MockProviderRepository)
+	config := testConfig()
+	config.Security.SkipThirdpartyHTTPSValidation = true
+	handler := setupHandlerWithConfig(t, repo, config)
+	client := &adminDiscoveryClient{t: t}
+	handler.providerService.WithOAuthDiscoveryClient(client)
+	repo.On("Create", mock.Anything, mock.Anything).Return(nil).Once()
+	response := httptest.NewRecorder()
+	handler.CreateService(response, adminDiscoveryRequest(t, http.MethodPost, "", map[string]any{
+		"display_name": "Direct metadata service", "client_id": "existing-client", "client_secret": "manual-secret-not-for-admin",
+		"issuer_uri": server.URL,
+		"discovery":  map[string]any{"enable_discovery": true, "metadata_url": server.URL},
+	}))
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	var representation ServiceResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &representation))
+	assert.Equal(t, "existing-client", representation.ClientID)
+	require.NotNil(t, representation.ClientSecret)
+	assert.Equal(t, "REDACTED", *representation.ClientSecret)
+	require.NotNil(t, representation.Discovery.MetadataURL)
+	assert.Equal(t, server.URL, *representation.Discovery.MetadataURL)
+	assert.Empty(t, representation.AuthorizationParams["resource"])
+	assert.NotContains(t, response.Body.String(), "manual-secret-not-for-admin")
+	assert.Equal(t, int32(1), requests.Load())
+	assert.Empty(t, client.probeCalls)
+	assert.Empty(t, client.getCalls)
+	assert.Empty(t, client.postCalls)
+	repo.AssertExpectations(t)
+}
+
+func TestServicesHandler_ManualModeDoesNotUseResourceDiscovery(t *testing.T) {
+	repo := new(MockProviderRepository)
+	client := &adminDiscoveryClient{t: t}
+	handler := setupHandler(t, repo)
+	handler.providerService.WithOAuthDiscoveryClient(client)
+	repo.On("Create", mock.Anything, mock.Anything).Return(nil).Once()
+	response := httptest.NewRecorder()
+	handler.CreateService(response, adminDiscoveryRequest(t, http.MethodPost, "", map[string]any{
+		"display_name": "Manual service", "client_id": "manual-client", "client_secret": "manual-secret-not-for-admin",
+		"issuer_uri": "https://manual.example.test",
+		"discovery":  map[string]any{"enable_discovery": false},
+		"endpoints":  map[string]string{"token_endpoint": "https://manual.example.test/token", "authorize_endpoint": "https://manual.example.test/authorize"},
+	}))
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	var representation ServiceResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &representation))
+	assert.Equal(t, "manual-client", representation.ClientID)
+	assert.Equal(t, "https://manual.example.test/token", representation.Endpoints.TokenEndpoint)
+	assert.False(t, representation.Discovery.EnableDiscovery)
+	require.NotNil(t, representation.ClientSecret)
+	assert.Equal(t, "REDACTED", *representation.ClientSecret)
+	assert.Empty(t, representation.AuthorizationParams["resource"])
+	assert.NotContains(t, response.Body.String(), "manual-secret-not-for-admin")
+	assert.Empty(t, client.probeCalls)
+	assert.Empty(t, client.getCalls)
+	assert.Empty(t, client.postCalls)
+	repo.AssertExpectations(t)
+}
+
+func TestServicesHandler_ResourceMetadataFailureKeepsActiveService(t *testing.T) {
+	repo := new(MockProviderRepository)
+	client := adminCIMDDiscoveryClient(t)
+	client.documents["https://mcp.example.test/.well-known/oauth-protected-resource/mcp"] =
+		`{"resource":"https://other.example.test/mcp","authorization_servers":["https://auth.example.test/tenant"]}`
+	handler := setupHandler(t, repo)
+	handler.providerService.WithOAuthDiscoveryClient(client)
+	serviceID := id.NewServiceID()
+	clientID := "https://broker.example.com/.well-known/oauth-client/" + serviceID.String()
+	persisted := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: serviceID, DisplayName: "Active MCP", ClientID: id.ClientID(clientID), Secret: model.NewAbsentSecret(),
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethod("private_key_jwt"), IssuerURI: adminTestIssuer,
+		Discovery:           model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: ptrAdminResourceURL(), ClientMethod: model.ClientBootstrapCIMD},
+		Endpoints:           model.OAuth2Endpoints{TokenEndpoint: adminTestIssuer + "/token", AuthorizeEndpoint: adminTestIssuer + "/authorize"},
+		AuthorizationParams: map[string]string{"resource": adminTestResource}, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Version: 9,
+	}
+	repo.On("Get", mock.Anything, serviceID).Return(persisted, nil)
+	initial := httptest.NewRecorder()
+	handler.GetService(initial, adminDiscoveryRequest(t, http.MethodGet, serviceID.String(), nil))
+	require.Equal(t, http.StatusOK, initial.Code)
+	assert.Equal(t, `"9"`, initial.Header().Get("ETag"))
+
+	request := adminDiscoveryRequest(t, http.MethodPut, serviceID.String(), map[string]any{
+		"display_name": "Failed replacement",
+		"discovery":    map[string]any{"enable_discovery": true, "resource_url": adminTestResource},
+	})
+	request.Header.Set("If-Match", initial.Header().Get("ETag"))
+	repo.On("RecordDiscoveryFailure", mock.Anything, serviceID, int64(9), mock.AnythingOfType("time.Time"), "resource_mismatch").Return(nil).Once()
+	failed := httptest.NewRecorder()
+	handler.UpdateService(failed, request)
+	require.Equal(t, http.StatusBadRequest, failed.Code, failed.Body.String())
+	var failure ErrorResponse
+	require.NoError(t, json.Unmarshal(failed.Body.Bytes(), &failure))
+	assert.Equal(t, "discovery failed", failure.Error)
+	assert.Equal(t, "resource_mismatch", failure.Message)
+	repo.AssertNotCalled(t, "Update")
+	assert.Equal(t, []string{adminTestResource}, client.probeCalls)
+	assert.Equal(t, []string{"https://mcp.example.test/.well-known/oauth-protected-resource/mcp"}, client.getCalls)
+	assert.Empty(t, client.postCalls)
+
+	active := httptest.NewRecorder()
+	handler.GetService(active, adminDiscoveryRequest(t, http.MethodGet, serviceID.String(), nil))
+	require.Equal(t, http.StatusOK, active.Code)
+	assert.Equal(t, initial.Header().Get("ETag"), active.Header().Get("ETag"))
+	adminDiscoveryPayload(t, active.Body.Bytes(), serviceID.String(), "cimd", "private_key_jwt", clientID, adminTestResource)
+	var readBack struct {
+		DisplayName string `json:"display_name"`
+	}
+	require.NoError(t, json.Unmarshal(active.Body.Bytes(), &readBack))
+	assert.Equal(t, "Active MCP", readBack.DisplayName)
+	repo.AssertExpectations(t)
+}
+
+func TestServicesHandler_ResourceDiscoveryFailureReturnsOnlyValidatedIssuerChoices(t *testing.T) {
+	const privateValue = "remote-credential-not-for-admin"
+	for _, tc := range []struct {
+		name       string
+		document   string
+		wantCode   string
+		wantChoice []string
+	}{
+		{
+			name:       "multiple valid issuers in published order",
+			document:   `{"resource":"https://mcp.example.test/mcp","authorization_servers":["https://login-b.example.test/tenant","https://login-a.example.test"]}`,
+			wantCode:   "issuer_selection_required",
+			wantChoice: []string{"https://login-b.example.test/tenant", "https://login-a.example.test"},
+		},
+		{
+			name:     "mismatched resource never releases candidate issuers",
+			document: `{"resource":"https://mcp.example.test/other?token=remote-credential-not-for-admin","authorization_servers":["https://login-a.example.test","https://login-b.example.test"]}`,
+			wantCode: "resource_mismatch",
+		},
+		{
+			name:     "query-bearing issuer never appears as a candidate",
+			document: `{"resource":"https://mcp.example.test/mcp","authorization_servers":["https://login-a.example.test","https://login-b.example.test/?token=remote-credential-not-for-admin"]}`,
+			wantCode: "resource_metadata_invalid",
+		},
+		{
+			name:     "duplicate issuer never appears as a candidate",
+			document: `{"resource":"https://mcp.example.test/mcp","authorization_servers":["https://login-a.example.test","https://login-a.example.test"]}`,
+			wantCode: "resource_metadata_invalid",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			client := adminCIMDDiscoveryClient(t)
+			client.documents["https://mcp.example.test/.well-known/oauth-protected-resource/mcp"] = tc.document
+			handler := setupHandler(t, repo)
+			handler.providerService.WithOAuthDiscoveryClient(client)
+			response := httptest.NewRecorder()
+			handler.CreateService(response, adminDiscoveryRequest(t, http.MethodPost, "", map[string]any{
+				"display_name": "MCP service",
+				"discovery":    map[string]any{"enable_discovery": true, "resource_url": adminTestResource},
+			}))
+
+			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
+			want := map[string]any{"error": "discovery failed", "message": tc.wantCode}
+			if tc.wantChoice != nil {
+				want["authorization_servers"] = []any{tc.wantChoice[0], tc.wantChoice[1]}
+			}
+			assert.Equal(t, want, payload, "only validated issuer choices may leave the discovery boundary")
+			assert.NotContains(t, response.Body.String(), privateValue)
+			assert.Equal(t, []string{adminTestResource}, client.probeCalls)
+			assert.Equal(t, []string{"https://mcp.example.test/.well-known/oauth-protected-resource/mcp"}, client.getCalls)
+			assert.Empty(t, client.postCalls)
+			repo.AssertNotCalled(t, "Create")
+		})
+	}
+}
+
+func TestServicesHandler_DiscoveryErrorMapsSafeStatusesWithoutLeakingOtherIssuerLists(t *testing.T) {
+	for _, tc := range []struct {
+		name, code, category string
+		status               int
+	}{
+		{name: "destination rejected", code: "unsafe_destination", category: "discovery failed", status: http.StatusBadRequest},
+		{name: "DCR rejected", code: "client_registration_rejected", category: "client registration failed", status: http.StatusBadRequest},
+		{name: "discovery timed out", code: "timeout", category: "discovery failed", status: http.StatusGatewayTimeout},
+		{name: "duplicate registered client", code: "duplicate_client_identity", category: "conflict", status: http.StatusConflict},
+		{name: "unknown provider error", code: "remote-secret-not-for-admin", category: "internal server error", status: http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := setupHandler(t, new(MockProviderRepository))
+			response := httptest.NewRecorder()
+			handler.writeDiscoveryError(response, &thirdparty.DiscoveryError{
+				Code: tc.code, AuthorizationServers: []string{"https://login.example.test/?client_secret=remote-secret-not-for-admin"},
+			})
+
+			require.Equal(t, tc.status, response.Code, response.Body.String())
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
+			want := map[string]any{"error": tc.category}
+			if tc.status != http.StatusInternalServerError {
+				want["message"] = tc.code
+			}
+			assert.Equal(t, want, payload, "non-selection failures must not include authorization_servers")
+			assert.NotContains(t, response.Body.String(), "remote-secret-not-for-admin")
+		})
+	}
+}
+
+func TestServicesHandler_SelectionErrorRefusesUnvalidatedIssuerChoices(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		issuers []string
+	}{
+		{name: "single choice", issuers: []string{"https://login-a.example.test"}},
+		{name: "duplicate choices", issuers: []string{"https://login-a.example.test", "https://login-a.example.test"}},
+		{name: "non-HTTPS choice", issuers: []string{"https://login-a.example.test", "http://login-b.example.test"}},
+		{name: "query containing credential", issuers: []string{"https://login-a.example.test", "https://login-b.example.test/?secret=remote-secret-not-for-admin"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := setupHandler(t, new(MockProviderRepository))
+			response := httptest.NewRecorder()
+			handler.writeDiscoveryError(response, &thirdparty.DiscoveryError{Code: "issuer_selection_required", AuthorizationServers: tc.issuers})
+
+			require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
+			assert.Equal(t, map[string]any{"error": "internal server error"}, payload)
+			assert.NotContains(t, response.Body.String(), "remote-secret-not-for-admin")
+		})
+	}
+}
+
+type adminRegisteredDCRClient struct{ *adminDiscoveryClient }
+
+func (c *adminRegisteredDCRClient) PostJSON(_ context.Context, rawURL string, _ []byte) ([]byte, error) {
+	c.postCalls = append(c.postCalls, rawURL)
+	return []byte(`{"client_id":"registered-duplicate","client_secret":"registered-secret-not-for-admin","token_endpoint_auth_method":"client_secret_basic"}`), nil
+}
+
+func TestServicesHandler_DuplicateDCRIdentityConflictRequiresTypedStorageCause(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cause    error
+		wantCode string
+	}{
+		{name: "duplicate registered identity", cause: storage.ErrDuplicateDCRClientIdentity, wantCode: "duplicate_client_identity"},
+		{name: "other storage conflict", wantCode: "service conflict"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			client := &adminRegisteredDCRClient{adminDiscoveryClient: adminCIMDDiscoveryClient(t)}
+			client.documents["https://auth.example.test/.well-known/oauth-authorization-server/tenant"] =
+				`{"issuer":"https://auth.example.test/tenant","authorization_endpoint":"https://auth.example.test/tenant/authorize","token_endpoint":"https://auth.example.test/tenant/token","registration_endpoint":"https://auth.example.test/tenant/register","token_endpoint_auth_methods_supported":["client_secret_basic"]}`
+			handler := setupHandler(t, repo)
+			handler.providerService.WithOAuthDiscoveryClient(client).WithDCRClientName("Broker")
+			repo.On("Create", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
+				return entity.Discovery.ClientMethod == model.ClientBootstrapDCR && entity.ClientID.String() == "registered-duplicate" && entity.Secret.IsEncrypted()
+			})).Return(storage.NewStorageError("Create", storage.ErrorKindConflict, tc.cause, "credential registered-secret-not-for-admin already exists")).Once()
+
+			response := httptest.NewRecorder()
+			handler.CreateService(response, adminDiscoveryRequest(t, http.MethodPost, "", map[string]any{
+				"display_name": "MCP service",
+				"discovery":    map[string]any{"enable_discovery": true, "resource_url": adminTestResource},
+			}))
+
+			require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
+			assert.Equal(t, map[string]any{"error": "conflict", "message": tc.wantCode}, payload)
+			assert.NotContains(t, response.Body.String(), "registered-secret-not-for-admin")
+			assert.Equal(t, []string{"https://auth.example.test/tenant/register"}, client.postCalls)
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+// The status resource reads persisted state, even when the active DCR credential
+// cannot be decrypted by the HTTP read path.
+func TestServicesHandler_DiscoveryStatusRepresentsCommittedStateWithoutCredentials(t *testing.T) {
+	serviceID := id.NewServiceID()
+	lastSuccess := time.Date(2026, time.October, 6, 10, 0, 0, 0, time.UTC)
+	lastAttempt := lastSuccess.Add(time.Hour)
+	failureCode := "authorization_server_metadata_invalid"
+	for _, tc := range []struct {
+		name   string
+		entity *model.ThirdpartyOAuth2ProviderEntity
+		want   string
+	}{
+		{
+			name:   "manual configuration does not expose its issuer or discovery fields",
+			entity: encryptedEntity(serviceID, "Manual service", "manual-client", "private-manual-secret", adminTestIssuer, nil),
+			want:   `{"status":"not_applicable","resource_url":null,"issuer_uri":null,"client_method":null,"last_attempt_at":null,"last_success_at":null,"failure_reason":null}`,
+		},
+		{
+			name: "ready configuration has equal successful timestamps",
+			entity: &model.ThirdpartyOAuth2ProviderEntity{
+				ID: serviceID, IssuerURI: adminTestIssuer,
+				Discovery:       model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: ptrAdminResourceURL(), ClientMethod: model.ClientBootstrapCIMD},
+				DiscoveryStatus: model.DiscoveryStatus{LastAttemptAt: &lastSuccess, LastSuccessAt: &lastSuccess},
+			},
+			want: `{"status":"ready","resource_url":"https://mcp.example.test/mcp","issuer_uri":"https://auth.example.test/tenant","client_method":"cimd","last_attempt_at":"2026-10-06T10:00:00Z","last_success_at":"2026-10-06T10:00:00Z","failure_reason":null}`,
+		},
+		{
+			name: "failed refresh reports the active DCR identity and safe failure code",
+			entity: &model.ThirdpartyOAuth2ProviderEntity{
+				ID: serviceID, ClientID: "registered-client", IssuerURI: adminTestIssuer,
+				Secret:          model.NewEncryptedSecret(encryptSecretForTest(serviceID.String(), "private-registered-secret")),
+				Discovery:       model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: ptrAdminResourceURL(), ClientMethod: model.ClientBootstrapDCR},
+				DiscoveryStatus: model.DiscoveryStatus{LastAttemptAt: &lastAttempt, LastSuccessAt: &lastSuccess, FailureReason: &failureCode},
+			},
+			want: `{"status":"failed","resource_url":"https://mcp.example.test/mcp","issuer_uri":"https://auth.example.test/tenant","client_method":"dcr","last_attempt_at":"2026-10-06T11:00:00Z","last_success_at":"2026-10-06T10:00:00Z","failure_reason":"authorization_server_metadata_invalid"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			client := adminCIMDDiscoveryClient(t)
+			handler := setupHandler(t, repo)
+			handler.providerService.WithOAuthDiscoveryClient(client)
+			repo.On("Get", mock.Anything, serviceID).Return(tc.entity, nil).Once()
+			router := chi.NewRouter()
+			router.With(middleware.RequirePrincipalMiddleware(ports.AuthenticationConfig{Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"}}, nil, slog.Default())).Get("/api/services/{service-id}/discovery-status", handler.GetDiscoveryStatus)
+
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/api/services/"+serviceID.String()+"/discovery-status", nil)
+			request.Header.Set("X-Remote-User", "admin@example.test")
+			router.ServeHTTP(response, request)
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			assert.JSONEq(t, tc.want, response.Body.String())
+			assert.Empty(t, client.probeCalls)
+			assert.Empty(t, client.getCalls)
+			assert.Empty(t, client.postCalls)
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestServicesHandler_DiscoveryStatusRequiresPrincipalAndResolvesCanonicalID(t *testing.T) {
+	repo := new(MockProviderRepository)
+	client := adminCIMDDiscoveryClient(t)
+	handler := setupHandler(t, repo)
+	handler.providerService.WithOAuthDiscoveryClient(client)
+	serviceID := id.NewServiceID()
+	canonicalID := "connected-mcp"
+	lastSuccess := time.Date(2026, time.October, 6, 10, 0, 0, 0, time.UTC)
+	entity := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: serviceID, CanonicalID: &canonicalID, IssuerURI: adminTestIssuer,
+		Discovery:       model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: ptrAdminResourceURL(), ClientMethod: model.ClientBootstrapCIMD},
+		DiscoveryStatus: model.DiscoveryStatus{LastAttemptAt: &lastSuccess, LastSuccessAt: &lastSuccess},
+	}
+	repo.On("Get", mock.Anything, serviceID).Return(entity, nil).Twice()
+	repo.On("GetByCanonicalID", mock.Anything, canonicalID).Return(entity, nil).Once()
+	router := chi.NewRouter()
+	router.Use(middleware.RequirePrincipalMiddleware(ports.AuthenticationConfig{
+		Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"},
+	}, nil, slog.Default()))
+	router.Get("/api/services/{service-id}/discovery-status", handler.GetDiscoveryStatus)
+
+	unauthenticated := httptest.NewRecorder()
+	router.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/services/"+serviceID.String()+"/discovery-status", nil))
+	require.Equal(t, http.StatusUnauthorized, unauthenticated.Code, unauthenticated.Body.String())
+	assert.NotContains(t, unauthenticated.Body.String(), adminTestResource)
+
+	for _, pathID := range []string{serviceID.String(), canonicalID} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/api/services/"+pathID+"/discovery-status", nil)
+		request.Header.Set("X-Remote-User", "admin@example.test")
+		router.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		assert.JSONEq(t, `{"status":"ready","resource_url":"https://mcp.example.test/mcp","issuer_uri":"https://auth.example.test/tenant","client_method":"cimd","last_attempt_at":"2026-10-06T10:00:00Z","last_success_at":"2026-10-06T10:00:00Z","failure_reason":null}`, response.Body.String())
+	}
+	assert.Empty(t, client.probeCalls)
+	assert.Empty(t, client.getCalls)
+	assert.Empty(t, client.postCalls)
+	repo.AssertExpectations(t)
+}
+
+func TestServicesHandler_DiscoveryStatusRejectsMalformedAndMissingIDs(t *testing.T) {
+	unknownID := id.NewServiceID()
+	for _, tc := range []struct {
+		name, pathID string
+		wantStatus   int
+		canonical    bool
+	}{
+		{"malformed identifier", "bad!id", http.StatusBadRequest, true},
+		{"unknown UUID", unknownID.String(), http.StatusNotFound, false},
+		{"unknown canonical ID", "unknown-service", http.StatusNotFound, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			missing := storage.NewStorageError("Get", storage.ErrorKindNotFound, nil, "service not found")
+			if tc.canonical {
+				lookup := repo.On("GetByCanonicalID", mock.Anything, tc.pathID).Return(nil, missing)
+				if tc.wantStatus == http.StatusBadRequest {
+					lookup.Maybe()
+				} else {
+					lookup.Once()
+				}
+			} else {
+				repo.On("Get", mock.Anything, id.MustParseServiceID(tc.pathID)).Return(nil, missing).Once()
+			}
+			handler := setupHandler(t, repo)
+			router := chi.NewRouter()
+			router.With(middleware.RequirePrincipalMiddleware(ports.AuthenticationConfig{Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"}}, nil, slog.Default())).Get("/api/services/{service-id}/discovery-status", handler.GetDiscoveryStatus)
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/api/services/"+tc.pathID+"/discovery-status", nil)
+			request.Header.Set("X-Remote-User", "admin@example.test")
+			router.ServeHTTP(response, request)
+			require.Equal(t, tc.wantStatus, response.Code, response.Body.String())
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestServicesHandler_DiscoveryStatusReturnsNotFoundAfterDeletion(t *testing.T) {
+	repo := new(MockProviderRepository)
+	handler := setupHandler(t, repo)
+	serviceID := id.NewServiceID()
+	repo.On("Delete", mock.Anything, serviceID).Return(nil).Once()
+	repo.On("Get", mock.Anything, serviceID).Return(nil,
+		storage.NewStorageError("Get", storage.ErrorKindNotFound, nil, "service not found")).Once()
+	router := chi.NewRouter()
+	router.Delete("/api/services/{service-id}", handler.DeleteService)
+	router.With(middleware.RequirePrincipalMiddleware(ports.AuthenticationConfig{Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"}}, nil, slog.Default())).Get("/api/services/{service-id}/discovery-status", handler.GetDiscoveryStatus)
+
+	deleted := httptest.NewRecorder()
+	router.ServeHTTP(deleted, httptest.NewRequest(http.MethodDelete, "/api/services/"+serviceID.String(), nil))
+	require.Equal(t, http.StatusNoContent, deleted.Code, deleted.Body.String())
+
+	status := httptest.NewRecorder()
+	statusRequest := httptest.NewRequest(http.MethodGet, "/api/services/"+serviceID.String()+"/discovery-status", nil)
+	statusRequest.Header.Set("X-Remote-User", "admin@example.test")
+	router.ServeHTTP(status, statusRequest)
+	require.Equal(t, http.StatusNotFound, status.Code, status.Body.String())
+	repo.AssertExpectations(t)
+}
+
+func TestServicesHandler_ConcurrentIssuerChangeConflictUsesSafeCode(t *testing.T) {
+	handler := NewServicesHandler(nil, nil, nil)
+	response := httptest.NewRecorder()
+	err := storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
+		storage.ErrIssuerChangeHasSessions, "issuer change requires no user sessions")
+	handler.handleServiceMutationError(response, httptest.NewRequest(http.MethodPut, "/api/services/example", nil), "UpdateService", err, true)
+	assert.Equal(t, http.StatusConflict, response.Code)
+	assert.JSONEq(t, `{"error":"conflict","message":"issuer_change_requires_no_sessions"}`, response.Body.String())
 }

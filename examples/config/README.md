@@ -146,6 +146,20 @@ export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"
 **Security Note:** The JWE signing key MUST be kept secret. It protects OAuth2 state
 tokens during the authorization flow. Compromise allows state token forgery and CSRF attacks.
 
+### `protected-resource-discovery.yaml`
+
+This [broker configuration example](protected-resource-discovery.yaml) uses PostgreSQL and AWS KMS. Supply `IDENTITY_BROKER_STORAGE_POSTGRES_URL`, `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_KEY_ARN`, and `IDENTITY_BROKER_JWE_SIGNING_KEY` from secure environment sources. Run the broker behind an authenticating reverse proxy.
+
+```bash
+./agentic-identity-broker --config ./examples/config/protected-resource-discovery.yaml
+```
+
+The optional `third_party_oauth2.client_name` names the broker or its platform. DCR requires a non-blank value. Startup, manual services, and hosted CIMD do not require it. A service's `display_name` does not supply the DCR name.
+
+Hosted CIMD and DCR require a stable, public HTTPS `server.enduser.public_url`. DCR uses this URL for its OAuth2 callback. If no usable CIMD key exists, generate an ES256 client-authentication key with `POST /api/cimd-client-keys` on the Admin API. This key is separate from the JWE key for OAuth2 state.
+
+Send a public HTTPS `discovery.resource_url` with `discovery.enable_discovery: true` in each service's Admin API create or update request. These are service request fields, not broker configuration keys. Discovery and registration share a fixed 15-second attempt deadline and a fixed 256-KiB limit per remote response. See the [configuration reference](../../docs/configuration.md#protected-resource-discovery-configuration) for the client-name environment variable and CLI flag.
+
 ### `jwt-preauth.yaml`
 
 JWT Pre-Authentication configuration. Demonstrates:

@@ -76,14 +76,20 @@ func (r *PostgresUserSessionRepository) Create(ctx context.Context, session *sto
 		session.ID = id.NewSessionID()
 	}
 
+	// The share lock serializes this issuer check and the upsert with provider
+	// updates, which take the service row's exclusive lock before counting sessions.
 	query := `
 		INSERT INTO user_sessions (
 			id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
 			token_type, access_token_expires_at, refresh_token_expires_at, scope,
 			encryption_context, initiated_at, created_at, updated_at
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 		)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+		FROM thirdparty_oauth2_services AS service
+		WHERE service.id = $3
+			AND ((service.resource_url IS NULL AND $14::text = '')
+				OR (service.resource_url IS NOT NULL AND $14::text <> '' AND service.issuer_uri = $14::text))
+		FOR SHARE OF service
 		ON CONFLICT (principal, service_id) DO UPDATE SET
 			encrypted_access_token = EXCLUDED.encrypted_access_token,
 			encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
@@ -95,16 +101,22 @@ func (r *PostgresUserSessionRepository) Create(ctx context.Context, session *sto
 			updated_at = NOW()
 	`
 
-	_, err := r.adapter.db.ExecContext(ctx, query,
+	result, err := r.adapter.db.ExecContext(ctx, query,
 		session.ID, session.Principal, session.ServiceID,
 		session.EncryptedAccessToken, session.EncryptedRefreshToken,
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
 		pq.Array(session.Scope), session.EncryptionContext,
-		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
+		session.InitiatedAt, session.CreatedAt, session.UpdatedAt, session.ExpectedIssuerURI,
 	)
-
 	if err != nil {
 		return r.wrapError(err, "Create")
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return r.wrapError(err, "Create")
+	}
+	if rows == 0 {
+		return storage.NewStorageError("Create", storage.ErrorKindConflict, nil, "service issuer or source changed")
 	}
 	return nil
 }

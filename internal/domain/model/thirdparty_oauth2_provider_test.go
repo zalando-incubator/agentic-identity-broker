@@ -708,14 +708,6 @@ func TestThirdpartyOAuth2ProviderEntity_AuthorizationParams(t *testing.T) {
 	}
 }
 
-func TestThirdpartyOAuth2ProviderEntity_CopyAuthorizationParams(t *testing.T) {
-	entity := &ThirdpartyOAuth2ProviderEntity{AuthorizationParams: map[string]string{"business_partner_id": "12345"}}
-	copy := entity.Copy()
-
-	entity.AuthorizationParams["business_partner_id"] = "changed"
-	assert.Equal(t, "12345", copy.AuthorizationParams["business_partner_id"])
-}
-
 func TestThirdpartyOAuth2ProviderEntity_ValidateForCreate_ValidatesProtectedResources(t *testing.T) {
 	t.Parallel()
 
@@ -835,12 +827,6 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateVersion(t *testing.T) {
 	require.ErrorContains(t, entity.Validate(), "version cannot be negative")
 }
 
-func TestThirdpartyOAuth2ProviderEntity_CopyPreservesVersion(t *testing.T) {
-	entity := &ThirdpartyOAuth2ProviderEntity{Version: 1}
-
-	assert.Equal(t, int64(1), entity.Copy().Version)
-}
-
 func TestThirdpartyOAuth2ProviderCanonicalIDValidationAndCopy(t *testing.T) {
 	canonicalID := "github-service"
 	entity := &ThirdpartyOAuth2ProviderEntity{
@@ -857,4 +843,423 @@ func TestThirdpartyOAuth2ProviderCanonicalIDValidationAndCopy(t *testing.T) {
 	require.NotNil(t, copy.CanonicalID)
 	*copy.CanonicalID = "other-service"
 	assert.Equal(t, canonicalID, *entity.CanonicalID)
+}
+
+// discoveryEntity is a discovered CIMD configuration before the broker assigns
+// its hosted client ID. The issuer, resource, and token audience are distinct.
+func discoveryEntity() *ThirdpartyOAuth2ProviderEntity {
+	resourceURL := "https://mcp.example.test/mcp"
+	return &ThirdpartyOAuth2ProviderEntity{
+		ID:                      id.NewServiceID(),
+		DisplayName:             "Example MCP",
+		Secret:                  NewAbsentSecret(),
+		TokenEndpointAuthMethod: TokenEndpointAuthMethodPrivateKeyJWT,
+		IssuerURI:               "https://auth.example.test/tenant",
+		Discovery: DiscoveryConfig{
+			EnableDiscovery: true,
+			ResourceURL:     &resourceURL,
+			ClientMethod:    ClientBootstrapCIMD,
+		},
+		Endpoints: OAuth2Endpoints{
+			AuthorizeEndpoint: "https://auth.example.test/tenant/authorize",
+			TokenEndpoint:     "https://auth.example.test/tenant/token",
+			JWKsURI:           "https://auth.example.test/tenant/jwks",
+		},
+		AuthorizationParams: map[string]string{"resource": resourceURL},
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_DiscoveredIssuerAndEndpoints(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		change  func(*ThirdpartyOAuth2ProviderEntity)
+		wantErr string
+	}{
+		{name: "valid discovered issuer and endpoints", change: func(*ThirdpartyOAuth2ProviderEntity) {}},
+		{name: "selected issuer is required", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.IssuerURI = ""
+		}, wantErr: "issuer_uri"},
+		{name: "issuer may not be a lookalike with a query", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.IssuerURI += "?tenant=other"
+		}, wantErr: "issuer_uri"},
+		{name: "issuer may not include userinfo", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.IssuerURI = "https://admin@auth.example.test/tenant"
+		}, wantErr: "issuer_uri"},
+		{name: "issuer may not include a fragment", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.IssuerURI += "#tenant"
+		}, wantErr: "issuer_uri"},
+		{name: "issuer must be public HTTPS even in test mode", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.IssuerURI = "http://auth.example.test/tenant"
+		}, wantErr: "issuer_uri"},
+		{name: "issuer cannot point at a private address", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.IssuerURI = "https://192.168.1.10/tenant"
+		}, wantErr: "issuer_uri"},
+		{name: "authorization endpoint is required", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.AuthorizeEndpoint = ""
+		}, wantErr: "authorize_endpoint"},
+		{name: "authorization endpoint must be HTTPS", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.AuthorizeEndpoint = "http://auth.example.test/authorize"
+		}, wantErr: "authorize_endpoint"},
+		{name: "authorization endpoint cannot point at a private address", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.AuthorizeEndpoint = "https://192.168.1.10/authorize"
+		}, wantErr: "authorize_endpoint"},
+		{name: "authorization endpoint cannot contain userinfo", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.AuthorizeEndpoint = "https://user@auth.example.test/authorize"
+		}, wantErr: "authorize_endpoint"},
+		{name: "authorization endpoint cannot contain a fragment", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.AuthorizeEndpoint += "#fragment"
+		}, wantErr: "authorize_endpoint"},
+		{name: "token endpoint is required", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.TokenEndpoint = ""
+		}, wantErr: "token_endpoint"},
+		{name: "token endpoint must be HTTPS", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.TokenEndpoint = "http://auth.example.test/token"
+		}, wantErr: "token_endpoint"},
+		{name: "token endpoint cannot point at a private address", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.TokenEndpoint = "https://192.168.1.10/token"
+		}, wantErr: "token_endpoint"},
+		{name: "token endpoint cannot include a resource query", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.TokenEndpoint += "?resource=https%3A%2F%2Fother.example.test"
+		}, wantErr: "resource"},
+		{name: "token endpoint cannot contain a fragment", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.TokenEndpoint += "#fragment"
+		}, wantErr: "token_endpoint"},
+		{name: "JWKs URI is optional", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.JWKsURI = ""
+		}},
+		{name: "JWKs URI must be HTTPS when present", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.JWKsURI = "http://auth.example.test/jwks"
+		}, wantErr: "jwks_uri"},
+		{name: "JWKs URI cannot contain userinfo", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.JWKsURI = "https://user@auth.example.test/jwks"
+		}, wantErr: "jwks_uri"},
+		{name: "JWKs URI cannot point at loopback", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.JWKsURI = "https://127.0.0.1/jwks"
+		}, wantErr: "jwks_uri"},
+		{name: "JWKs URI cannot contain a fragment", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Endpoints.JWKsURI += "#fragment"
+		}, wantErr: "jwks_uri"},
+	}
+	for _, operation := range []struct {
+		name     string
+		validate func(*ThirdpartyOAuth2ProviderEntity) error
+	}{
+		{name: "create", validate: func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForCreate(true) }},
+		{name: "update", validate: func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForUpdate(true) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range tests {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					e := discoveryEntity()
+					tc.change(e)
+					err := operation.validate(e)
+					if tc.wantErr != "" {
+						require.ErrorContains(t, err, tc.wantErr)
+						return
+					}
+					require.NoError(t, err)
+				})
+			}
+		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_DiscoveryResourceState(t *testing.T) {
+	t.Parallel()
+	resourceURL := "https://mcp.example.test/mcp"
+	tests := []struct {
+		name    string
+		change  func(*ThirdpartyOAuth2ProviderEntity)
+		wantErr string
+	}{
+		{name: "derived resource is the verified discovery URL", change: func(*ThirdpartyOAuth2ProviderEntity) {}},
+		{name: "derived resource cannot silently target another audience", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.AuthorizationParams["resource"] = "https://other.example.test/api"
+		}, wantErr: "resource"},
+		{name: "selected discovery must have an effective resource", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			delete(e.AuthorizationParams, "resource")
+		}, wantErr: "resource"},
+		{name: "explicit resource can differ from the discovery source", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.ResourceExplicit = true
+			e.AuthorizationParams["resource"] = "https://api.example.test/data"
+		}},
+		{name: "explicit absolute non-HTTP URI is permitted", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.ResourceExplicit = true
+			e.AuthorizationParams["resource"] = "urn:example:audience:42"
+		}},
+		{name: "explicit resource cannot be relative", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.ResourceExplicit = true
+			e.AuthorizationParams["resource"] = "/data"
+		}, wantErr: "resource"},
+		{name: "explicit resource cannot contain a fragment", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.ResourceExplicit = true
+			e.AuthorizationParams["resource"] = "https://api.example.test/data#section"
+		}, wantErr: "resource"},
+		{name: "explicit resource cannot be blank", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.ResourceExplicit = true
+			e.AuthorizationParams["resource"] = "\t"
+		}, wantErr: "blank"},
+	}
+	for _, operation := range []struct {
+		name     string
+		validate func(*ThirdpartyOAuth2ProviderEntity) error
+	}{
+		{name: "create", validate: func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForCreate(false) }},
+		{name: "update", validate: func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForUpdate(false) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			t.Parallel()
+			for _, tc := range tests {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					e := discoveryEntity()
+					e.ProtectedResources = []string{"https://owned.example.test/records"}
+					e.AuthorizationParams["locale"] = "en"
+					tc.change(e)
+					err := operation.validate(e)
+					if tc.wantErr != "" {
+						require.ErrorContains(t, err, tc.wantErr)
+						return
+					}
+					require.NoError(t, err)
+					assert.Equal(t, resourceURL, *e.Discovery.ResourceURL)
+					assert.Equal(t, "en", e.AuthorizationParams["locale"])
+					assert.Equal(t, []string{"https://owned.example.test/records"}, e.ProtectedResources)
+				})
+			}
+		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_ManualAndDirectMetadataCompatibility(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		change func(*ThirdpartyOAuth2ProviderEntity)
+	}{
+		{name: "manual endpoints keep existing resource parameter behavior", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.AuthorizationParams = map[string]string{"resource": "provider-specific-resource"}
+		}},
+		{name: "direct authorization-server metadata needs no resource or explicit endpoints", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			metadataURL := "https://auth.example.test/.well-known/oauth-authorization-server/tenant"
+			e.Discovery = DiscoveryConfig{EnableDiscovery: true, MetadataURL: &metadataURL}
+			e.Endpoints = OAuth2Endpoints{}
+		}},
+		{name: "legacy issuer-based discovery needs no resource", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Discovery.EnableDiscovery = true
+			e.Endpoints = OAuth2Endpoints{}
+		}},
+		{name: "direct metadata retains existing localhost test-mode allowance", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			metadataURL := "http://localhost:9080/.well-known/oauth-authorization-server"
+			e.Discovery = DiscoveryConfig{EnableDiscovery: true, MetadataURL: &metadataURL}
+			e.Endpoints = OAuth2Endpoints{}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, operation := range []struct {
+				name     string
+				validate func(*ThirdpartyOAuth2ProviderEntity) error
+			}{
+				{name: "create", validate: func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForCreate(true) }},
+				{name: "update", validate: func(e *ThirdpartyOAuth2ProviderEntity) error { return e.ValidateForUpdate(true) }},
+			} {
+				t.Run(operation.name, func(t *testing.T) {
+					t.Parallel()
+					e := &ThirdpartyOAuth2ProviderEntity{
+						ID:          id.NewServiceID(),
+						DisplayName: "Manual provider",
+						ClientID:    "existing-client",
+						Secret:      NewPlaintextSecret("existing-secret"),
+						IssuerURI:   "https://auth.example.test/tenant",
+						Endpoints: OAuth2Endpoints{
+							AuthorizeEndpoint: "https://auth.example.test/tenant/authorize",
+							TokenEndpoint:     "https://auth.example.test/tenant/token",
+						},
+					}
+					tc.change(e)
+					require.NoError(t, operation.validate(e))
+				})
+			}
+		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_CopyDiscoveryValues(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		change func(*ThirdpartyOAuth2ProviderEntity)
+	}{
+		{name: "derived discovery resource", change: func(*ThirdpartyOAuth2ProviderEntity) {}},
+		{name: "explicit audience separate from resource source and ownership", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.ResourceExplicit = true
+			e.AuthorizationParams["resource"] = "https://api.example.test/data"
+			e.ProtectedResources = []string{"https://owned.example.test/records"}
+		}},
+		{name: "direct metadata URL", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			metadataURL := "https://auth.example.test/.well-known/oauth-authorization-server/tenant"
+			e.Discovery = DiscoveryConfig{EnableDiscovery: true, MetadataURL: &metadataURL}
+			e.ResourceExplicit = false
+			e.AuthorizationParams = nil
+		}},
+		{name: "nullable fields stay nil", change: func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.Discovery = DiscoveryConfig{}
+			e.DiscoveryStatus = DiscoveryStatus{}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			attempt := time.Date(2026, time.October, 7, 10, 0, 0, 0, time.UTC)
+			success := attempt.Add(-time.Hour)
+			reason := "authorization_server_metadata_invalid"
+			e := discoveryEntity()
+			e.DiscoveryStatus = DiscoveryStatus{
+				LastAttemptAt: &attempt, LastSuccessAt: &success, FailureReason: &reason,
+			}
+			tc.change(e)
+			original := e.Copy()
+			copied := e.Copy()
+			require.Equal(t, original.Discovery, copied.Discovery)
+			require.Equal(t, original.DiscoveryStatus, copied.DiscoveryStatus)
+			assert.Equal(t, original.ResourceExplicit, copied.ResourceExplicit)
+			assert.Equal(t, original.AuthorizationParams, copied.AuthorizationParams)
+			assert.Equal(t, original.ProtectedResources, copied.ProtectedResources)
+
+			if e.Discovery.ResourceURL != nil {
+				*e.Discovery.ResourceURL = "https://mcp.example.test/changed"
+				assert.Equal(t, *original.Discovery.ResourceURL, *copied.Discovery.ResourceURL)
+				*copied.Discovery.ResourceURL = "https://mcp.example.test/copied"
+				assert.Equal(t, "https://mcp.example.test/changed", *e.Discovery.ResourceURL)
+			} else {
+				assert.Nil(t, copied.Discovery.ResourceURL)
+			}
+			if e.Discovery.MetadataURL != nil {
+				*e.Discovery.MetadataURL = "https://auth.example.test/changed"
+				assert.Equal(t, *original.Discovery.MetadataURL, *copied.Discovery.MetadataURL)
+				*copied.Discovery.MetadataURL = "https://auth.example.test/copied"
+				assert.Equal(t, "https://auth.example.test/changed", *e.Discovery.MetadataURL)
+			} else {
+				assert.Nil(t, copied.Discovery.MetadataURL)
+			}
+			if e.DiscoveryStatus.LastAttemptAt != nil {
+				*e.DiscoveryStatus.LastAttemptAt = e.DiscoveryStatus.LastAttemptAt.Add(time.Minute)
+				*e.DiscoveryStatus.LastSuccessAt = e.DiscoveryStatus.LastSuccessAt.Add(time.Minute)
+				*e.DiscoveryStatus.FailureReason = "resource_mismatch"
+				assert.Equal(t, *original.DiscoveryStatus.LastAttemptAt, *copied.DiscoveryStatus.LastAttemptAt)
+				assert.Equal(t, *original.DiscoveryStatus.LastSuccessAt, *copied.DiscoveryStatus.LastSuccessAt)
+				assert.Equal(t, *original.DiscoveryStatus.FailureReason, *copied.DiscoveryStatus.FailureReason)
+				*copied.DiscoveryStatus.FailureReason = "issuer_mismatch"
+				assert.Equal(t, "resource_mismatch", *e.DiscoveryStatus.FailureReason)
+			} else {
+				assert.Nil(t, copied.DiscoveryStatus.LastAttemptAt)
+				assert.Nil(t, copied.DiscoveryStatus.LastSuccessAt)
+				assert.Nil(t, copied.DiscoveryStatus.FailureReason)
+			}
+			if e.AuthorizationParams != nil {
+				copied.AuthorizationParams["resource"] = "https://new.example.test/audience"
+				assert.Equal(t, original.AuthorizationParams["resource"], e.AuthorizationParams["resource"])
+			}
+			if e.ProtectedResources != nil {
+				copied.ProtectedResources[0] = "https://new.example.test/owned"
+				assert.Equal(t, original.ProtectedResources, e.ProtectedResources)
+			}
+		})
+	}
+}
+
+// A persisted public DCR service avoids the pre-registration CIMD state used by
+// discoveryEntity, so the repository validator can check stored state.
+func storedDiscoveryEntity() *ThirdpartyOAuth2ProviderEntity {
+	e := discoveryEntity()
+	e.ClientID = "registered-client"
+	e.Discovery.ClientMethod = ClientBootstrapDCR
+	e.TokenEndpointAuthMethod = TokenEndpointAuthMethodNone
+	success := time.Date(2026, time.October, 7, 10, 0, 0, 0, time.UTC)
+	e.DiscoveryStatus = DiscoveryStatus{LastAttemptAt: &success, LastSuccessAt: &success}
+	return e
+}
+
+func TestThirdpartyOAuth2ProviderEntity_StoredDiscoveryStatusInvariants(t *testing.T) {
+	t.Parallel()
+	success := time.Date(2026, time.October, 7, 10, 0, 0, 0, time.UTC)
+	later := success.Add(time.Hour)
+	earlier := success.Add(-time.Minute)
+	reason := "authorization_server_metadata_invalid"
+	unsafeReason := "provider returned secret=credential"
+
+	for _, tc := range []struct {
+		name    string
+		manual  bool
+		status  DiscoveryStatus
+		wantErr bool
+	}{
+		{name: "manual service has nullable timestamps and reason", manual: true},
+		{name: "discovery success has equal timestamps", status: DiscoveryStatus{LastAttemptAt: &success, LastSuccessAt: &success}},
+		{name: "failed refresh retains earlier success", status: DiscoveryStatus{LastAttemptAt: &later, LastSuccessAt: &success, FailureReason: &reason}},
+		{name: "manual service cannot retain discovery status", manual: true, status: DiscoveryStatus{LastAttemptAt: &success, LastSuccessAt: &success}, wantErr: true},
+		{name: "discovered service needs attempt timestamp", status: DiscoveryStatus{LastSuccessAt: &success}, wantErr: true},
+		{name: "discovered service needs last success timestamp", status: DiscoveryStatus{LastAttemptAt: &success}, wantErr: true},
+		{name: "successful attempt cannot be newer than last success", status: DiscoveryStatus{LastAttemptAt: &later, LastSuccessAt: &success}, wantErr: true},
+		{name: "failed attempt must strictly follow last success", status: DiscoveryStatus{LastAttemptAt: &success, LastSuccessAt: &success, FailureReason: &reason}, wantErr: true},
+		{name: "failed attempt cannot precede last success", status: DiscoveryStatus{LastAttemptAt: &earlier, LastSuccessAt: &success, FailureReason: &reason}, wantErr: true},
+		{name: "failure reason must be a safe code", status: DiscoveryStatus{LastAttemptAt: &later, LastSuccessAt: &success, FailureReason: &unsafeReason}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := storedDiscoveryEntity()
+			if tc.manual {
+				e.Discovery = DiscoveryConfig{}
+			}
+			e.DiscoveryStatus = tc.status
+			err := e.ValidateStoredClientAuthentication()
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_EffectiveResourceAfterSourceChange(t *testing.T) {
+	t.Parallel()
+
+	newURL := "https://mcp.example.test/new-resource"
+	override := "https://api.example.test/audience"
+	for _, tc := range []struct {
+		name        string
+		wasExplicit bool
+		explicit    bool
+		resource    string
+		wantErr     bool
+	}{
+		{name: "derived audience follows the newly verified source", resource: newURL},
+		{name: "stale derived audience cannot target the old source", resource: "https://mcp.example.test/mcp", wantErr: true},
+		{name: "explicit audience survives a source change", explicit: true, resource: override},
+		{name: "clearing override restores the newly verified source", wasExplicit: true, resource: newURL},
+		{name: "cleared override cannot retain the former audience", wasExplicit: true, resource: override, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := storedDiscoveryEntity()
+			if tc.wasExplicit || tc.explicit {
+				e.ResourceExplicit = true
+				e.AuthorizationParams["resource"] = override
+			}
+			require.NoError(t, e.Validate(), "previous active configuration must be valid")
+			e.Discovery.ResourceURL = &newURL
+			e.ResourceExplicit = tc.explicit
+			e.AuthorizationParams["resource"] = tc.resource
+			err := e.Validate()
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }

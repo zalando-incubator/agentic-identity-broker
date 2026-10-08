@@ -9,14 +9,17 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/canonical"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
@@ -62,6 +65,8 @@ type ServiceRequest struct {
 type DiscoveryConfigRequest struct {
 	EnableDiscovery bool    `json:"enable_discovery"`
 	MetadataURL     *string `json:"metadata_url,omitempty"`
+	ResourceURL     *string `json:"resource_url,omitempty"`
+	ClientMethod    *string `json:"client_method,omitempty"` // Read-only; reject when supplied for resource discovery.
 }
 
 // OAuth2EndpointsRequest represents OAuth2 endpoints in requests.
@@ -100,6 +105,8 @@ type ServiceResponse struct {
 type DiscoveryConfigResponse struct {
 	EnableDiscovery bool    `json:"enable_discovery"`
 	MetadataURL     *string `json:"metadata_url,omitempty"`
+	ResourceURL     *string `json:"resource_url,omitempty"`
+	ClientMethod    *string `json:"client_method"`
 }
 
 // OAuth2EndpointsResponse represents OAuth2 endpoints in responses.
@@ -115,6 +122,21 @@ type OAuthScopeResponse struct {
 }
 
 func serviceClientAuthentication(req ServiceRequest) (model.TokenEndpointAuthMethod, model.Secret, error) {
+	if req.Discovery.ResourceURL != nil {
+		if req.TokenEndpointAuthMethod != nil {
+			return "", model.Secret{}, errors.New("token_endpoint_auth_method must be absent for protected-resource discovery")
+		}
+		if req.Endpoints != nil {
+			return "", model.Secret{}, errors.New("endpoints must be absent for protected-resource discovery")
+		}
+		if req.Discovery.ClientMethod != nil {
+			return "", model.Secret{}, errors.New("discovery.client_method must be selected by the broker")
+		}
+		if req.ClientSecret != "" {
+			return "", model.NewPlaintextSecret(req.ClientSecret), nil
+		}
+		return "", model.NewAbsentSecret(), nil
+	}
 	if req.TokenEndpointAuthMethod != nil && *req.TokenEndpointAuthMethod == "" {
 		return "", model.Secret{}, errors.New(`token_endpoint_auth_method: only "none" and "private_key_jwt" are accepted`)
 	}
@@ -187,7 +209,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		TokenEndpointAuthMethod: tokenEndpointAuthMethod,
 		Flavor:                  flavor,
 		IssuerURI:               req.IssuerURI,
-		Discovery:               model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL},
+		Discovery:               model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL, ResourceURL: req.Discovery.ResourceURL},
 		ProtectedResources:      req.ProtectedResources,
 		AuthorizationParams:     req.AuthorizationParams,
 		CreatedAt:               now,
@@ -207,7 +229,12 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if err := entity.ValidateForCreate(skipHTTPSValidation); err != nil {
+	if req.Discovery.ResourceURL != nil {
+		if err := entity.ValidateDiscoveryRequest(); err != nil {
+			h.writeDiscoveryRequestError(w, err)
+			return
+		}
+	} else if err := entity.ValidateForCreate(skipHTTPSValidation); err != nil {
 		h.logger.Warn("service validation failed",
 			"client_id", entity.ClientID,
 			"error", err)
@@ -215,7 +242,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if flavor != model.OAuth2FlavorGoogle && req.Discovery.EnableDiscovery {
+	if flavor != model.OAuth2FlavorGoogle && req.Discovery.EnableDiscovery && req.Discovery.ResourceURL == nil {
 		endpoints, err := storage.DiscoverOAuth2Endpoints(ctx, req.IssuerURI, req.Discovery.MetadataURL, skipHTTPSValidation)
 		if err != nil {
 			h.logger.Warn("OAuth2 endpoint discovery failed, falling back to manual endpoints",
@@ -243,16 +270,17 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Defense-in-depth: normalize and validate protected_resources here so the duplicate
-	// check below operates on canonical URIs. The domain service repeats this
-	// authoritatively before persistence.
+	// Normalize protected resources for duplicate ownership checks. The domain
+	// validates discovery requests before network access; retain legacy manual validation here.
 	entity.NormalizeProtectedResources()
-	if err := entity.ValidateProtectedResources(); err != nil {
-		h.logger.Warn("protected_resources validation failed",
-			"service_id", entity.ID,
-			"error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
-		return
+	if req.Discovery.ResourceURL == nil {
+		if err := entity.ValidateProtectedResources(); err != nil {
+			h.logger.Warn("protected_resources validation failed",
+				"service_id", entity.ID,
+				"error", err)
+			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+			return
+		}
 	}
 
 	if !h.checkProtectedResourceConflicts(ctx, w, r, entity, id.ServiceID{}, "CreateService") {
@@ -261,7 +289,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 
 	// Create service (branch key provisioning and encryption handled by domain service)
 	if err := h.providerService.Create(ctx, entity); err != nil {
-		h.handleStorageError(w, r, "CreateService", err)
+		h.handleServiceMutationError(w, r, "CreateService", err, req.Discovery.ResourceURL != nil)
 		return
 	}
 
@@ -297,6 +325,44 @@ func (h *ServicesHandler) GetService(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", strongETag(entity.Version))
 	resp := h.toResponse(entity.RedactedCopy())
 	h.writeJSON(w, http.StatusOK, resp)
+}
+
+// GetDiscoveryStatus reads committed state without contacting the provider.
+func (h *ServicesHandler) GetDiscoveryStatus(w http.ResponseWriter, r *http.Request) {
+	if subject, ok := principal.FromContext(r.Context()); !ok || subject == "" {
+		h.writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	serviceID := chi.URLParam(r, "service-id")
+	if serviceID == "" {
+		h.writeError(w, http.StatusBadRequest, "invalid service ID", "service ID is required")
+		return
+	}
+	if _, err := id.ParseServiceID(serviceID); err != nil {
+		if canonical.Validate(&serviceID) != nil {
+			h.writeError(w, http.StatusBadRequest, "invalid service ID", "service ID is invalid")
+			return
+		}
+	}
+	parsedID, err := h.providerService.ResolveID(r.Context(), serviceID)
+	if err != nil {
+		h.handleStorageError(w, r, "GetDiscoveryStatus", err)
+		return
+	}
+	status, err := h.providerService.GetDiscoveryStatus(r.Context(), parsedID)
+	if err != nil {
+		h.handleStorageError(w, r, "GetDiscoveryStatus", err)
+		return
+	}
+	h.writeJSON(w, http.StatusOK, struct {
+		Status        string     `json:"status"`
+		ResourceURL   *string    `json:"resource_url"`
+		IssuerURI     *string    `json:"issuer_uri"`
+		ClientMethod  *string    `json:"client_method"`
+		LastAttemptAt *time.Time `json:"last_attempt_at"`
+		LastSuccessAt *time.Time `json:"last_success_at"`
+		FailureReason *string    `json:"failure_reason"`
+	}{status.Status, status.ResourceURL, status.IssuerURI, status.ClientMethod, status.LastAttemptAt, status.LastSuccessAt, status.FailureReason})
 }
 
 // UpdateService handles PUT /api/services/{service-id}
@@ -369,7 +435,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		TokenEndpointAuthMethod: tokenEndpointAuthMethod,
 		Flavor:                  flavor,
 		IssuerURI:               req.IssuerURI,
-		Discovery:               model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL},
+		Discovery:               model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL, ResourceURL: req.Discovery.ResourceURL},
 		ProtectedResources:      req.ProtectedResources,
 		AuthorizationParams:     req.AuthorizationParams,
 		UpdatedAt:               time.Now().UTC(),
@@ -388,7 +454,12 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if err := entity.ValidateForUpdate(skipHTTPSValidation); err != nil {
+	if req.Discovery.ResourceURL != nil {
+		if err := entity.ValidateDiscoveryRequest(); err != nil {
+			h.writeDiscoveryRequestError(w, err)
+			return
+		}
+	} else if err := entity.ValidateForUpdate(skipHTTPSValidation); err != nil {
 		h.logger.Warn("service validation failed",
 			"client_id", entity.ClientID,
 			"error", err)
@@ -396,7 +467,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if flavor != model.OAuth2FlavorGoogle && req.Discovery.EnableDiscovery {
+	if flavor != model.OAuth2FlavorGoogle && req.Discovery.EnableDiscovery && req.Discovery.ResourceURL == nil {
 		endpoints, err := storage.DiscoverOAuth2Endpoints(ctx, req.IssuerURI, req.Discovery.MetadataURL, skipHTTPSValidation)
 		if err != nil {
 			h.logger.Warn("OAuth2 endpoint discovery failed, falling back to manual endpoints",
@@ -433,10 +504,12 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		}
 		expectedVersion = &parsedVersion
 		entity.NormalizeProtectedResources()
-		if err := entity.ValidateProtectedResources(); err != nil {
-			h.logger.Warn("protected_resources validation failed", "service_id", entity.ID, "error", err)
-			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
-			return
+		if req.Discovery.ResourceURL == nil {
+			if err := entity.ValidateProtectedResources(); err != nil {
+				h.logger.Warn("protected_resources validation failed", "service_id", entity.ID, "error", err)
+				h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+				return
+			}
 		}
 		if !h.checkProtectedResourceConflicts(ctx, w, r, entity, entity.ID, "UpdateService") {
 			return
@@ -449,13 +522,15 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 			h.writeError(w, http.StatusPreconditionFailed, "precondition failed", storageErr.Message)
 			return
 		}
-		h.handleStorageError(w, r, "UpdateService", err)
+		h.handleServiceMutationError(w, r, "UpdateService", err, req.Discovery.ResourceURL != nil)
 		return
 	}
 
-	h.logger.Info("OAuth2 service updated",
-		"service_id", entity.ID,
-		"client_id", entity.ClientID)
+	if req.Discovery.ResourceURL == nil {
+		h.logger.Info("OAuth2 service updated",
+			"service_id", entity.ID,
+			"client_id", entity.ClientID)
+	}
 
 	resp := h.toResponse(entity.RedactedCopy())
 	w.Header().Set("ETag", strongETag(entity.Version))
@@ -497,28 +572,34 @@ func (h *ServicesHandler) checkProtectedResourceConflicts(
 		case err == nil && existing.ID == excludeServiceID:
 			continue
 		case err == nil:
-			h.logger.Warn("duplicate protected resource",
-				"resource", resource,
-				"service_id", existing.ID)
+			if entity.Discovery.ResourceURL == nil {
+				h.logger.Warn("duplicate protected resource",
+					"resource", resource,
+					"service_id", existing.ID)
+			}
 			h.writeError(w, http.StatusConflict, "conflict", "protected resource URI already configured for another service")
 			return false
 		case tokenexchange.IsResourceNotConfigured(err):
 			continue
 		case tokenexchange.IsResourceAmbiguous(err):
-			h.logger.Warn("protected resource lookup is ambiguous",
-				"resource", resource,
-				"error", err)
+			if entity.Discovery.ResourceURL == nil {
+				h.logger.Warn("protected resource lookup is ambiguous",
+					"resource", resource,
+					"error", err)
+			}
 			h.writeError(w, http.StatusConflict, "conflict", "protected resource URI already configured for another service")
 			return false
 		default:
 			var storageErr *storage.StorageError
 			if errors.As(err, &storageErr) {
-				h.handleStorageError(w, r, operation+"DuplicateCheck", err)
+				h.handleServiceMutationError(w, r, operation+"DuplicateCheck", err, entity.Discovery.ResourceURL != nil)
 				return false
 			}
-			h.logger.Error("protected resource duplicate check failed",
-				"resource", resource,
-				"error", err)
+			if entity.Discovery.ResourceURL == nil {
+				h.logger.Error("protected resource duplicate check failed",
+					"resource", resource,
+					"error", err)
+			}
 			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 			return false
 		}
@@ -612,6 +693,7 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		Discovery: DiscoveryConfigResponse{
 			EnableDiscovery: entity.Discovery.EnableDiscovery,
 			MetadataURL:     entity.Discovery.MetadataURL,
+			ResourceURL:     entity.Discovery.ResourceURL,
 		},
 		Endpoints: OAuth2EndpointsResponse{
 			TokenEndpoint:     entity.Endpoints.TokenEndpoint,
@@ -623,12 +705,16 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		CreatedAt:           entity.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:           entity.UpdatedAt.Format(time.RFC3339),
 	}
+	if entity.Discovery.ClientMethod != "" {
+		clientMethod := string(entity.Discovery.ClientMethod)
+		response.Discovery.ClientMethod = &clientMethod
+	}
 
 	if !entity.TokenEndpointAuthMethod.IsAbsent() {
 		tokenEndpointAuthMethod := string(entity.TokenEndpointAuthMethod)
 		response.TokenEndpointAuthMethod = &tokenEndpointAuthMethod
 	}
-	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
+	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() && entity.Discovery.ClientMethod != model.ClientBootstrapDCR {
 		clientSecret := entity.Secret.Redacted()
 		response.ClientSecret = &clientSecret
 	}
@@ -636,8 +722,48 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 	return response
 }
 
+func (h *ServicesHandler) writeDiscoveryRequestError(w http.ResponseWriter, err error) {
+	if errors.Is(err, model.ErrUnsafeDiscoveryResourceURL) {
+		h.writeDiscoveryError(w, &thirdparty.DiscoveryError{Code: "unsafe_destination"})
+		return
+	}
+	h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+}
+
+// handleServiceMutationError keeps remote discovery and registration errors out of handler logs.
+func (h *ServicesHandler) handleServiceMutationError(w http.ResponseWriter, r *http.Request, operation string, err error, resourceDiscovery bool) {
+	if !resourceDiscovery {
+		h.handleStorageError(w, r, operation, err)
+		return
+	}
+	var discoveryErr *thirdparty.DiscoveryError
+	if errors.As(err, &discoveryErr) {
+		h.writeDiscoveryError(w, discoveryErr)
+		return
+	}
+	var storageErr *storage.StorageError
+	if errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindConflict {
+		if errors.Is(storageErr, storage.ErrDuplicateDCRClientIdentity) {
+			h.writeError(w, http.StatusConflict, "conflict", "duplicate_client_identity")
+			return
+		}
+		if errors.Is(storageErr, storage.ErrIssuerChangeHasSessions) {
+			h.writeError(w, http.StatusConflict, "conflict", "issuer_change_requires_no_sessions")
+			return
+		}
+		h.writeError(w, http.StatusConflict, "conflict", "service conflict")
+		return
+	}
+	h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+}
+
 // handleStorageError converts storage errors to HTTP responses.
 func (h *ServicesHandler) handleStorageError(w http.ResponseWriter, r *http.Request, operation string, err error) {
+	var discoveryErr *thirdparty.DiscoveryError
+	if errors.As(err, &discoveryErr) {
+		h.writeDiscoveryError(w, discoveryErr)
+		return
+	}
 	var storageErr *storage.StorageError
 	if !errors.As(err, &storageErr) {
 		h.logger.Error("unexpected error type", "operation", operation, "error", err)
@@ -663,6 +789,56 @@ func (h *ServicesHandler) handleStorageError(w http.ResponseWriter, r *http.Requ
 		h.logger.Error("storage operation failed", "operation", operation, "kind", storageErr.Kind, "error", storageErr)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 	}
+}
+
+// writeDiscoveryError returns only approved failure codes, never remote response text.
+func (h *ServicesHandler) writeDiscoveryError(w http.ResponseWriter, discoveryErr *thirdparty.DiscoveryError) {
+	status, category := http.StatusBadRequest, "discovery failed"
+	switch discoveryErr.Code {
+	case "resource_metadata_not_found", "resource_metadata_unavailable", "resource_metadata_invalid",
+		"resource_mismatch", "authorization_server_missing", "issuer_selection_required",
+		"issuer_not_advertised", "authorization_server_metadata_not_found",
+		"authorization_server_metadata_unavailable", "authorization_server_metadata_invalid",
+		"issuer_mismatch", "unsafe_destination", "response_too_large":
+	case "no_compatible_client_method", "cimd_unavailable", "client_registration_rejected",
+		"client_name_unconfigured", "client_registration_invalid", "client_method_changed":
+		category = "client registration failed"
+	case "timeout":
+		status = http.StatusGatewayTimeout
+	case "duplicate_client_identity", "issuer_change_requires_no_sessions":
+		status, category = http.StatusConflict, "conflict"
+	default:
+		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		return
+	}
+
+	if discoveryErr.Code == "issuer_selection_required" {
+		if len(discoveryErr.AuthorizationServers) < 2 {
+			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+			return
+		}
+		seen := make(map[string]struct{}, len(discoveryErr.AuthorizationServers))
+		for _, issuer := range discoveryErr.AuthorizationServers {
+			parsed, err := url.Parse(issuer)
+			if err != nil || model.ValidatePublicHTTPSURL(issuer) != nil || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(issuer, "#") {
+				h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+				return
+			}
+			if _, exists := seen[issuer]; exists {
+				h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+				return
+			}
+			seen[issuer] = struct{}{}
+		}
+		h.writeJSON(w, status, struct {
+			Error                string   `json:"error"`
+			Message              string   `json:"message"`
+			AuthorizationServers []string `json:"authorization_servers"`
+		}{category, discoveryErr.Code, discoveryErr.AuthorizationServers})
+		return
+	}
+
+	h.writeError(w, status, category, discoveryErr.Code)
 }
 
 // writeJSON writes a JSON response.

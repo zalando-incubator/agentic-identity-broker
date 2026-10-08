@@ -20,7 +20,9 @@ import (
 
 const providerColumns = `
 	s.id, s.canonical_id, s.display_name, s.client_id, s.client_secret_encrypted, s.token_endpoint_auth_method, s.oauth2_flavor, s.issuer_uri,
-	s.enable_discovery, s.metadata_url, s.token_endpoint, s.authorize_endpoint, s.scopes,
+	s.enable_discovery, s.metadata_url, s.resource_url, s.client_method, s.resource_explicit,
+	s.discovery_last_attempt_at, s.discovery_last_success_at, s.discovery_failure_reason,
+	s.token_endpoint, s.authorize_endpoint, s.scopes,
 	COALESCE((SELECT array_agg(pr.resource_uri ORDER BY pr.resource_uri)
 	          FROM service_protected_resources pr WHERE pr.service_id = s.id), ARRAY[]::text[]),
 	s.authorization_params, s.created_at, s.updated_at, s.version`
@@ -51,12 +53,14 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Create(ctx context.Context,
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(execCtx, `INSERT INTO thirdparty_oauth2_services (
 		id, canonical_id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method, oauth2_flavor, issuer_uri,
-		enable_discovery, metadata_url, token_endpoint, authorize_endpoint, scopes,
-		authorization_params, created_at, updated_at, version
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1)`,
+		enable_discovery, metadata_url, resource_url, client_method, resource_explicit,
+		discovery_last_attempt_at, discovery_last_success_at, discovery_failure_reason,
+		token_endpoint, authorize_endpoint, scopes, authorization_params, created_at, updated_at, version
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,1)`,
 		record.ID, record.CanonicalID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
-		record.EnableDiscovery, record.MetadataURL, record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes,
-		record.AuthorizationParams, record.CreatedAt, record.UpdatedAt)
+		record.EnableDiscovery, record.MetadataURL, record.ResourceURL, record.ClientMethod, record.ResourceExplicit,
+		record.DiscoveryLastAttemptAt, record.DiscoveryLastSuccessAt, record.DiscoveryFailureReason,
+		record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes, record.AuthorizationParams, record.CreatedAt, record.UpdatedAt)
 	if err != nil {
 		return providerStorageError("CreateThirdpartyOAuth2Provider", err, "failed to create provider")
 	}
@@ -154,34 +158,59 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 		return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to begin transaction")
 	}
 	defer func() { _ = tx.Rollback() }()
+	var previousIssuerURI string
+	var previousResourceURL sql.NullString
+	err = tx.QueryRowContext(execCtx, `SELECT issuer_uri, resource_url FROM thirdparty_oauth2_services WHERE id=$1 FOR UPDATE`, record.ID).
+		Scan(&previousIssuerURI, &previousResourceURL)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
+	}
+	if err != nil {
+		return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to lock provider")
+	}
+	if previousIssuerURI != record.IssuerURI && (previousResourceURL.Valid || record.ResourceURL != nil) {
+		var sessionCount int
+		if err := tx.QueryRowContext(execCtx, `SELECT COUNT(*) FROM user_sessions WHERE service_id=$1`, record.ID).Scan(&sessionCount); err != nil {
+			return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to count provider sessions")
+		}
+		if sessionCount != 0 {
+			return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrIssuerChangeHasSessions, "issuer change requires no user sessions")
+		}
+	}
 	paramsOmitted := entity.AuthorizationParams == nil
 	canonicalIDOmitted := !entity.ClearCanonicalID && record.CanonicalID == nil
 	query := `UPDATE thirdparty_oauth2_services SET display_name=$2, client_id=$3, client_secret_encrypted=$4,
 		token_endpoint_auth_method=$5, oauth2_flavor=$6, issuer_uri=$7, enable_discovery=$8, metadata_url=$9,
-		token_endpoint=$10, authorize_endpoint=$11, scopes=$12, authorization_params=CASE WHEN $13 THEN authorization_params ELSE $14 END,
-		canonical_id=CASE WHEN $15 THEN NULL WHEN $16 THEN canonical_id ELSE $17 END,
-		updated_at=$18, version=version+1 WHERE id=$1`
+		resource_url=$10, client_method=$11, resource_explicit=CASE WHEN $10::text IS NULL THEN FALSE WHEN $19 THEN resource_explicit ELSE $12 END,
+		discovery_last_attempt_at=$13, discovery_last_success_at=$14, discovery_failure_reason=$15,
+		token_endpoint=$16, authorize_endpoint=$17, scopes=$18, authorization_params=CASE WHEN $19 THEN authorization_params ELSE $20 END,
+		canonical_id=CASE WHEN $21 THEN NULL WHEN $22 THEN canonical_id ELSE $23 END,
+		updated_at=$24, version=version+1 WHERE id=$1
+		AND ($10::text IS NULL OR resource_url IS NULL OR discovery_last_attempt_at <= $13)`
 	args := []any{record.ID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
-		record.EnableDiscovery, record.MetadataURL, record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes,
+		record.EnableDiscovery, record.MetadataURL, record.ResourceURL, record.ClientMethod, record.ResourceExplicit,
+		record.DiscoveryLastAttemptAt, record.DiscoveryLastSuccessAt, record.DiscoveryFailureReason,
+		record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes,
 		paramsOmitted, record.AuthorizationParams, entity.ClearCanonicalID, canonicalIDOmitted, record.CanonicalID, record.UpdatedAt}
 	if expectedVersion != nil {
-		query += ` AND version=$19`
+		query += ` AND version=$25`
 		args = append(args, *expectedVersion)
 	}
-	query += ` RETURNING created_at, authorization_params, version, canonical_id`
+	query += ` RETURNING created_at, authorization_params, version, canonical_id, resource_explicit`
 	var createdAt time.Time
 	var authorizationParams providerAuthorizationParams
 	var version int64
 	var canonicalID *string
-	err = tx.QueryRowContext(execCtx, query, args...).Scan(&createdAt, &authorizationParams, &version, &canonicalID)
+	var resourceExplicit bool
+	err = tx.QueryRowContext(execCtx, query, args...).Scan(&createdAt, &authorizationParams, &version, &canonicalID, &resourceExplicit)
 	if errors.Is(err, sql.ErrNoRows) {
-		if expectedVersion != nil {
+		if expectedVersion != nil || record.ResourceURL != nil {
 			var exists bool
 			if existsErr := tx.QueryRowContext(execCtx, `SELECT EXISTS(SELECT 1 FROM thirdparty_oauth2_services WHERE id=$1)`, record.ID).Scan(&exists); existsErr != nil {
 				return providerStorageError("UpdateThirdpartyOAuth2Provider", existsErr, "failed to check provider")
 			}
 			if exists {
-				return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider version is stale")
+				return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider version or discovery attempt is stale")
 			}
 		}
 		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
@@ -203,6 +232,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	entity.CreatedAt, entity.UpdatedAt, entity.Version = createdAt, record.UpdatedAt, version
 	entity.CanonicalID = canonicalID
 	entity.AuthorizationParams = maps.Clone(map[string]string(authorizationParams))
+	entity.ResourceExplicit = resourceExplicit
 	return nil
 }
 
@@ -451,7 +481,15 @@ type providerResourceQuerier interface {
 
 func scanProvider(scanner providerRowScanner) (*ThirdpartyOAuth2ProviderRecord, error) {
 	var record ThirdpartyOAuth2ProviderRecord
-	err := scanner.Scan(&record.ID, &record.CanonicalID, &record.DisplayName, &record.ClientID, &record.SecretCiphertext, &record.TokenEndpointAuthMethod, &record.Flavor, &record.IssuerURI, &record.EnableDiscovery, &record.MetadataURL, &record.TokenEndpoint, &record.AuthorizeEndpoint, &record.Scopes, pq.Array(&record.ProtectedResources), &record.AuthorizationParams, &record.CreatedAt, &record.UpdatedAt, &record.Version)
+	err := scanner.Scan(
+		&record.ID, &record.CanonicalID, &record.DisplayName, &record.ClientID,
+		&record.SecretCiphertext, &record.TokenEndpointAuthMethod, &record.Flavor, &record.IssuerURI,
+		&record.EnableDiscovery, &record.MetadataURL, &record.ResourceURL, &record.ClientMethod,
+		&record.ResourceExplicit, &record.DiscoveryLastAttemptAt, &record.DiscoveryLastSuccessAt,
+		&record.DiscoveryFailureReason, &record.TokenEndpoint, &record.AuthorizeEndpoint,
+		&record.Scopes, pq.Array(&record.ProtectedResources), &record.AuthorizationParams,
+		&record.CreatedAt, &record.UpdatedAt, &record.Version,
+	)
 	return &record, err
 }
 func protectedResources(ctx context.Context, db providerResourceQuerier, serviceID id.ServiceID) ([]string, error) {
@@ -489,8 +527,41 @@ func providerStorageError(operation string, err error, message string) error {
 		return storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation exceeded timeout")
 	}
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && (pgErr.Code == "23505" || pgErr.Code == "23503") {
-		return storage.NewStorageError(operation, storage.ErrorKindConflict, err, message)
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23505" && pgErr.ConstraintName == "ux_thirdparty_oauth2_services_dcr_issuer_client_id" {
+			return storage.NewStorageError(operation, storage.ErrorKindConflict, fmt.Errorf("%w: %w", storage.ErrDuplicateDCRClientIdentity, err), message)
+		}
+		if pgErr.Code == "23505" || pgErr.Code == "23503" {
+			return storage.NewStorageError(operation, storage.ErrorKindConflict, err, message)
+		}
 	}
 	return storage.NewStorageError(operation, storage.ErrorKindConnection, err, message)
+}
+
+func (r *PostgresThirdpartyOAuth2ProviderRepository) RecordDiscoveryFailure(ctx context.Context, serviceID id.ServiceID, expectedVersion int64, completedAt time.Time, failureCode string) error {
+	const operation = "RecordDiscoveryFailure"
+	if err := r.requireDB(operation); err != nil {
+		return err
+	}
+	if serviceID.IsZero() || expectedVersion <= 0 || completedAt.IsZero() || !model.ValidDiscoveryFailureCode(failureCode) {
+		return storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "invalid discovery failure status")
+	}
+	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+	result, err := r.adapter.db.ExecContext(execCtx, `UPDATE thirdparty_oauth2_services
+		SET discovery_last_attempt_at=$1, discovery_failure_reason=$2
+		WHERE id=$3 AND version=$4 AND resource_url IS NOT NULL
+		AND discovery_last_attempt_at < $1 AND discovery_last_success_at < $1`,
+		completedAt, failureCode, serviceID, expectedVersion)
+	if err != nil {
+		return providerStorageError(operation, err, "failed to record discovery failure")
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return providerStorageError(operation, err, "failed to check discovery failure status")
+	}
+	if rows == 0 {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "provider discovery attempt is stale or provider was deleted")
+	}
+	return nil
 }

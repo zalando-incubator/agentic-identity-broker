@@ -11,10 +11,12 @@ import (
 
 // InMemoryUserSessionRepository is an in-memory implementation for testing/development.
 type InMemoryUserSessionRepository struct {
-	mu       sync.RWMutex
-	sessions map[id.SessionID]*storage.UserSession // Key: session ID
-	index    map[string]*storage.UserSession       // Key: "{principal}#{serviceID}"
-	locks    map[string]*sessionLock
+	mu                sync.RWMutex
+	issuerSessionGate *sync.RWMutex
+	provider          *InMemoryThirdpartyOAuth2ProviderRepository
+	sessions          map[id.SessionID]*storage.UserSession // Key: session ID
+	index             map[string]*storage.UserSession       // Key: "{principal}#{serviceID}"
+	locks             map[string]*sessionLock
 }
 
 type sessionLock struct {
@@ -39,6 +41,13 @@ func (r *InMemoryUserSessionRepository) Create(ctx context.Context, session *sto
 	if err := session.Validate(); err != nil {
 		return err
 	}
+	if r.issuerSessionGate != nil {
+		r.issuerSessionGate.RLock()
+		defer r.issuerSessionGate.RUnlock()
+	}
+	if !r.matchesCurrentIssuer(session) {
+		return storage.NewStorageError("Create", storage.ErrorKindConflict, nil, "provider issuer is no longer current")
+	}
 
 	key := principalServiceKey(session.Principal, session.ServiceID)
 	gate, err := r.lockSession(ctx, key)
@@ -56,9 +65,28 @@ func (r *InMemoryUserSessionRepository) Create(ctx context.Context, session *sto
 		delete(r.sessions, existing.ID)
 	}
 
-	r.sessions[session.ID] = session
-	r.index[key] = session
+	stored := *session
+	stored.ExpectedIssuerURI = ""
+	r.sessions[stored.ID] = &stored
+	r.index[key] = &stored
 	return nil
+}
+
+func (r *InMemoryUserSessionRepository) matchesCurrentIssuer(session *storage.UserSession) bool {
+	if r.provider == nil {
+		return session.ExpectedIssuerURI == ""
+	}
+	r.provider.mu.RLock()
+	defer r.provider.mu.RUnlock()
+
+	current := r.provider.providers[session.ServiceID]
+	if current == nil {
+		return false
+	}
+	if current.entity.Discovery.ResourceURL != nil {
+		return session.ExpectedIssuerURI != "" && session.ExpectedIssuerURI == current.entity.IssuerURI
+	}
+	return session.ExpectedIssuerURI == ""
 }
 
 // Get retrieves a session by ID.

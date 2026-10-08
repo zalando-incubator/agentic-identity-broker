@@ -31,6 +31,7 @@ type AdminRouteConfig struct {
 //	POST   /api/services               - Create service
 //	GET    /api/services               - List services
 //	GET    /api/services/{service-id}  - Get service details
+//	GET    /api/services/{service-id}/discovery-status - Read stored discovery status
 //	PUT    /api/services/{service-id}  - Update service
 //	DELETE /api/services/{service-id}  - Delete service
 func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig) {
@@ -53,11 +54,12 @@ func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig) 
 
 		// Services management routes
 		r.Route("/services", func(r chi.Router) {
-			r.Post("/", h.Services.CreateService)               // POST /api/services
-			r.Get("/", h.Services.ListServices)                 // GET /api/services
-			r.Get("/{service-id}", h.Services.GetService)       // GET /api/services/:service-id
-			r.Put("/{service-id}", h.Services.UpdateService)    // PUT /api/services/:service-id
-			r.Delete("/{service-id}", h.Services.DeleteService) // DELETE /api/services/:service-id
+			r.Post("/", h.Services.CreateService)                                  // POST /api/services
+			r.Get("/", h.Services.ListServices)                                    // GET /api/services
+			r.Get("/{service-id}", h.Services.GetService)                          // GET /api/services/:service-id
+			r.Get("/{service-id}/discovery-status", h.Services.GetDiscoveryStatus) // GET /api/services/:service-id/discovery-status
+			r.Put("/{service-id}", h.Services.UpdateService)                       // PUT /api/services/:service-id
+			r.Delete("/{service-id}", h.Services.DeleteService)                    // DELETE /api/services/:service-id
 			// Protected-resource member routes use a catch-all matcher so encoded slashes
 			// remain addressable as one escaped URI segment; the handler validates it.
 			r.Route("/{service-id}/protected-resources", func(r chi.Router) {
