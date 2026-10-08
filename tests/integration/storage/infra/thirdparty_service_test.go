@@ -116,7 +116,7 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 	t.Helper()
 
 	sharedPostgres := bootstrap.RequireSharedPostgres(t)
-	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_035", func(t *testing.T, dbName string) {
+	dbName, connStr, cleanupDB := sharedPostgres.SetupDatabaseFromTemplate(t, "thirdparty_provider_migrations_036", func(t *testing.T, dbName string) {
 		projectRoot, err := bootstrap.FindProjectRoot()
 		require.NoError(t, err)
 		migrationsDir, err := filepath.Abs(filepath.Join(projectRoot, "migrations"))
@@ -126,7 +126,7 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 		require.NoError(t, err)
 		defer func() { _, _ = migrationRunner.Close() }()
 
-		err = migrationRunner.Migrate(35)
+		err = migrationRunner.Migrate(36)
 		if err != nil && err != migrate.ErrNoChange {
 			require.NoError(t, err)
 		}
@@ -147,7 +147,7 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 
 	encryption := newTestEncryption(t)
 	repo := postgres.NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
-	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(repo, encryption, &noop.BranchKeyManager{}, nil, false, slog.Default())
+	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(repo, encryption, &noop.BranchKeyManager{}, nil, false, slog.Default()).WithDiscoveryStatusWriter(repo)
 
 	cleanup := func() {
 		require.NoError(t, adapter.Close(ctx))
@@ -699,4 +699,451 @@ func TestStaticToCIMDUpdateClearsCiphertext(t *testing.T) {
 	assert.Equal(t, cimdPrivateKeyJWTAuthMethod, stored.TokenEndpointAuthMethod)
 	assert.Equal(t, cimdClientIDForService(staticService.ID), stored.ClientID)
 	assert.True(t, stored.Secret.IsAbsent())
+}
+
+func testDCRPersistenceEntity(name, issuer string, method model.TokenEndpointAuthMethod, secret model.Secret) *model.ThirdpartyOAuth2ProviderEntity {
+	entity := createTestService(name, name, nil)
+	resourceURL := "https://resource.example.com/" + entity.ID.String()
+	completedAt := time.Date(2026, time.October, 7, 10, 0, 0, 0, time.UTC)
+	entity.ClientID = "shared-dcr-client"
+	entity.IssuerURI = issuer
+	entity.Secret = secret
+	entity.TokenEndpointAuthMethod = method
+	entity.Discovery = model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: &resourceURL, ClientMethod: model.ClientBootstrapDCR}
+	entity.AuthorizationParams = map[string]string{"resource": resourceURL}
+	entity.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
+	entity.Endpoints = model.OAuth2Endpoints{AuthorizeEndpoint: issuer + "/authorize", TokenEndpoint: issuer + "/token"}
+	return entity
+}
+
+func TestDCRIssuerScopedCredentialsSurviveNewPostgresAdapter(t *testing.T) {
+	ctx, repo, _, sharedPostgres, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+	encryption := newTestEncryption(t)
+
+	first := testDCRPersistenceEntity("dcr-first-issuer", "https://first.example.com", model.TokenEndpointAuthMethodClientSecretBasic, model.NewAbsentSecret())
+	second := testDCRPersistenceEntity("dcr-second-issuer", "https://second.example.com", model.TokenEndpointAuthMethodClientSecretPost, model.NewAbsentSecret())
+	firstSecret := "first-issued-secret"
+	secondSecret := "second-issued-secret"
+	for _, tc := range []struct {
+		entity    *model.ThirdpartyOAuth2ProviderEntity
+		plaintext string
+	}{
+		{first, firstSecret},
+		{second, secondSecret},
+	} {
+		ciphertext, err := encryption.Encrypt(ctx, []byte(tc.plaintext), map[string]string{"service_id": tc.entity.ID.String()})
+		require.NoError(t, err)
+		tc.entity.Secret = model.NewEncryptedSecret(ciphertext)
+		require.NoError(t, repo.Create(ctx, tc.entity))
+	}
+
+	encodedCiphertext := func(serviceID id.ServiceID) string {
+		return sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`SELECT encode(client_secret_encrypted, 'hex') FROM thirdparty_oauth2_services WHERE id = '%s';`, serviceID))
+	}
+	firstBefore, secondBefore := encodedCiphertext(first.ID), encodedCiphertext(second.ID)
+	require.NotEmpty(t, firstBefore)
+	require.NotEmpty(t, secondBefore)
+	assert.NotEqual(t, fmt.Sprintf("%x", firstSecret), firstBefore)
+	assert.NotEqual(t, fmt.Sprintf("%x", secondSecret), secondBefore)
+
+	duplicate := testDCRPersistenceEntity("dcr-rejected-duplicate", first.IssuerURI, model.TokenEndpointAuthMethodClientSecretBasic, model.NewAbsentSecret())
+	duplicateCiphertext, err := encryption.Encrypt(ctx, []byte("rejected-issued-secret"), map[string]string{"service_id": duplicate.ID.String()})
+	require.NoError(t, err)
+	duplicate.Secret = model.NewEncryptedSecret(duplicateCiphertext)
+	err = repo.Create(ctx, duplicate)
+	var storageErr *storage.StorageError
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+	require.ErrorIs(t, err, storage.ErrDuplicateDCRClientIdentity)
+	assert.Equal(t, "0", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`SELECT count(*) FROM thirdparty_oauth2_services WHERE id = '%s';`, duplicate.ID)))
+
+	replacement := first.Copy()
+	replacement.IssuerURI = second.IssuerURI
+	replacement.Endpoints = second.Endpoints
+	replacementCiphertext, err := encryption.Encrypt(ctx, []byte("updated-issued-secret"), map[string]string{"service_id": first.ID.String()})
+	require.NoError(t, err)
+	replacement.Secret = model.NewEncryptedSecret(replacementCiphertext)
+	err = repo.Update(ctx, replacement, nil)
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+	require.ErrorIs(t, err, storage.ErrDuplicateDCRClientIdentity)
+	assert.Equal(t, firstBefore, encodedCiphertext(first.ID))
+	assert.Equal(t, secondBefore, encodedCiphertext(second.ID))
+
+	adapter, err := postgres.NewAdapter(&ports.StorageConfig{
+		Backend:  "postgres",
+		Postgres: ports.PostgresConfig{ConnectionURL: sharedPostgres.ConnectionString(dbName)},
+	})
+	require.NoError(t, err)
+	require.NoError(t, adapter.Initialize(ctx))
+	defer func() { require.NoError(t, adapter.Close(ctx)) }()
+	freshRepo := postgres.NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	freshService := thirdparty.NewThirdpartyOAuth2ProviderService(freshRepo, newTestEncryption(t), &noop.BranchKeyManager{}, nil, false, slog.Default())
+	for _, tc := range []struct {
+		entity    *model.ThirdpartyOAuth2ProviderEntity
+		plaintext string
+	}{
+		{first, firstSecret},
+		{second, secondSecret},
+	} {
+		stored, err := freshRepo.Get(ctx, tc.entity.ID)
+		require.NoError(t, err)
+		assert.Equal(t, tc.entity.IssuerURI, stored.IssuerURI)
+		assert.Equal(t, tc.entity.ClientID, stored.ClientID)
+		assert.Equal(t, tc.entity.TokenEndpointAuthMethod, stored.TokenEndpointAuthMethod)
+		assert.Equal(t, model.ClientBootstrapDCR, stored.Discovery.ClientMethod)
+		assert.EqualValues(t, 1, stored.Version)
+		ciphertext, err := stored.Secret.GetCiphertext()
+		require.NoError(t, err)
+		plaintext, err := encryption.Decrypt(ctx, ciphertext, map[string]string{"service_id": tc.entity.ID.String()})
+		require.NoError(t, err)
+		assert.Equal(t, tc.plaintext, string(plaintext))
+		decrypted, err := freshService.Get(ctx, tc.entity.ID)
+		require.NoError(t, err)
+		usableSecret, err := decrypted.Secret.GetPlaintext()
+		require.NoError(t, err)
+		assert.Equal(t, tc.plaintext, usableSecret)
+		if tc.entity.ID == first.ID {
+			_, err = encryption.Decrypt(ctx, ciphertext, map[string]string{"service_id": second.ID.String()})
+			require.Error(t, err, "a credential bound to one service must not decrypt as another")
+		}
+	}
+
+	require.NoError(t, freshRepo.Delete(ctx, first.ID))
+	assert.Equal(t, "0", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`SELECT count(*) FROM thirdparty_oauth2_services WHERE id = '%s';`, first.ID)))
+	_, err = freshRepo.Get(ctx, first.ID)
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+	remaining, err := freshService.Get(ctx, second.ID)
+	require.NoError(t, err)
+	remainingSecret, err := remaining.Secret.GetPlaintext()
+	require.NoError(t, err)
+	assert.Equal(t, secondSecret, remainingSecret)
+}
+
+func TestPublicDCRPersistsWithoutCredential(t *testing.T) {
+	ctx, repo, _, sharedPostgres, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+	public := testDCRPersistenceEntity("dcr-public-client", "https://public.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
+	require.NoError(t, repo.Create(ctx, public))
+
+	assert.Equal(t, "t", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`SELECT client_secret_encrypted IS NULL FROM thirdparty_oauth2_services WHERE id = '%s';`, public.ID)))
+	stored, err := repo.Get(ctx, public.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ClientBootstrapDCR, stored.Discovery.ClientMethod)
+	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
+	assert.True(t, stored.Secret.IsAbsent())
+
+	adapter, err := postgres.NewAdapter(&ports.StorageConfig{
+		Backend:  "postgres",
+		Postgres: ports.PostgresConfig{ConnectionURL: sharedPostgres.ConnectionString(dbName)},
+	})
+	require.NoError(t, err)
+	require.NoError(t, adapter.Initialize(ctx))
+	defer func() { require.NoError(t, adapter.Close(ctx)) }()
+	freshRepo := postgres.NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	reloaded, err := freshRepo.Get(ctx, public.ID)
+	require.NoError(t, err)
+	assert.True(t, reloaded.Secret.IsAbsent())
+	assert.Equal(t, model.ClientBootstrapDCR, reloaded.Discovery.ClientMethod)
+	require.NoError(t, freshRepo.Delete(ctx, public.ID))
+	assert.Equal(t, "0", sharedPostgres.QuerySQL(t, dbName, fmt.Sprintf(`SELECT count(*) FROM thirdparty_oauth2_services WHERE id = '%s';`, public.ID)))
+}
+
+// unavailableResourceDiscovery makes a refresh fail after it starts remote discovery.
+// The failure-only writer must persist the outcome without replacing the active client.
+type unavailableResourceDiscovery struct{}
+
+func (unavailableResourceDiscovery) Probe(context.Context, string) (int, []string, error) {
+	return 0, nil, ports.ErrOAuthDiscoveryUnavailable
+}
+
+func (unavailableResourceDiscovery) GetJSON(context.Context, string) ([]byte, error) {
+	return nil, ports.ErrOAuthDiscoveryUnavailable
+}
+
+func (unavailableResourceDiscovery) PostJSON(context.Context, string, []byte) ([]byte, error) {
+	return nil, ports.ErrOAuthDiscoveryUnavailable
+}
+
+func TestDiscoveryFailureAndRecoveryPersistAcrossNewPostgresAdapter(t *testing.T) {
+	ctx, repo, providerService, sharedPostgres, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+
+	encryption := newTestEncryption(t)
+	entity := testDCRPersistenceEntity("dcr-status-restart", "https://login.example.test", model.TokenEndpointAuthMethodClientSecretPost, model.NewAbsentSecret())
+	initialSuccess := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	entity.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &initialSuccess, LastSuccessAt: &initialSuccess}
+	entity.CreatedAt = initialSuccess
+	entity.UpdatedAt = initialSuccess
+	entity.ResourceExplicit = true
+	entity.AuthorizationParams["resource"] = "https://audience.example.test/files"
+	const clientSecret = "registered-client-secret"
+	clientCiphertext, err := encryption.Encrypt(ctx, []byte(clientSecret), map[string]string{"service_id": entity.ID.String()})
+	require.NoError(t, err)
+	entity.Secret = model.NewEncryptedSecret(clientCiphertext)
+	require.NoError(t, repo.Create(ctx, entity))
+	before, err := repo.Get(ctx, entity.ID)
+	require.NoError(t, err)
+	beforeCiphertext, err := before.Secret.GetCiphertext()
+	require.NoError(t, err)
+
+	adapter, err := postgres.NewAdapter(&ports.StorageConfig{
+		Backend:  "postgres",
+		Postgres: ports.PostgresConfig{ConnectionURL: sharedPostgres.ConnectionString(dbName)},
+	})
+	require.NoError(t, err)
+	require.NoError(t, adapter.Initialize(ctx))
+	principal := id.Principal("dcr-status-user@example.test")
+	accessCiphertext, err := encryption.Encrypt(ctx, []byte("existing-access-token"), map[string]string{"service_id": entity.ID.String()})
+	require.NoError(t, err)
+	refreshCiphertext, err := encryption.Encrypt(ctx, []byte("existing-refresh-token"), map[string]string{"service_id": entity.ID.String()})
+	require.NoError(t, err)
+	session := &storage.UserSession{
+		ID: id.NewSessionID(), Principal: principal, ServiceID: entity.ID,
+		ExpectedIssuerURI:    entity.IssuerURI,
+		EncryptedAccessToken: accessCiphertext, EncryptedRefreshToken: refreshCiphertext,
+		TokenType: "Bearer", Scope: []string{"read"},
+		EncryptionContext: storage.EncryptionContext{ServiceID: entity.ID},
+		InitiatedAt:       initialSuccess, CreatedAt: initialSuccess, UpdatedAt: initialSuccess,
+	}
+	require.NoError(t, postgres.NewUserSessionRepository(adapter).Create(ctx, session))
+	require.NoError(t, adapter.Close(ctx))
+
+	ready, err := providerService.GetDiscoveryStatus(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "ready", ready.Status)
+	require.NotNil(t, ready.LastAttemptAt)
+	require.NotNil(t, ready.LastSuccessAt)
+	assert.True(t, ready.LastAttemptAt.Equal(initialSuccess))
+	assert.True(t, ready.LastSuccessAt.Equal(initialSuccess))
+	assert.Nil(t, ready.FailureReason)
+
+	providerService.WithOAuthDiscoveryClient(unavailableResourceDiscovery{})
+	request := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: entity.ID, DisplayName: entity.DisplayName,
+		Secret:    model.NewAbsentSecret(),
+		Discovery: model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: entity.Discovery.ResourceURL},
+	}
+	err = providerService.Update(ctx, request, &before.Version)
+	require.ErrorContains(t, err, "resource_metadata_unavailable")
+
+	// A new adapter must see the failure and the original encrypted client and session.
+	restarted, err := postgres.NewAdapter(&ports.StorageConfig{
+		Backend:  "postgres",
+		Postgres: ports.PostgresConfig{ConnectionURL: sharedPostgres.ConnectionString(dbName)},
+	})
+	require.NoError(t, err)
+	require.NoError(t, restarted.Initialize(ctx))
+	defer func() { require.NoError(t, restarted.Close(ctx)) }()
+	freshRepo := postgres.NewPostgresThirdpartyOAuth2ProviderRepository(restarted)
+	freshService := thirdparty.NewThirdpartyOAuth2ProviderService(freshRepo, newTestEncryption(t), &noop.BranchKeyManager{}, nil, false, slog.Default())
+	failed, err := freshService.GetDiscoveryStatus(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", failed.Status)
+	require.NotNil(t, failed.ResourceURL)
+	assert.Equal(t, *entity.Discovery.ResourceURL, *failed.ResourceURL)
+	require.NotNil(t, failed.IssuerURI)
+	assert.Equal(t, entity.IssuerURI, *failed.IssuerURI)
+	require.NotNil(t, failed.ClientMethod)
+	assert.Equal(t, string(model.ClientBootstrapDCR), *failed.ClientMethod)
+	require.NotNil(t, failed.LastAttemptAt)
+	require.NotNil(t, failed.LastSuccessAt)
+	assert.True(t, failed.LastAttemptAt.After(*failed.LastSuccessAt))
+	assert.True(t, failed.LastSuccessAt.Equal(initialSuccess))
+	require.NotNil(t, failed.FailureReason)
+	assert.Equal(t, "resource_metadata_unavailable", *failed.FailureReason)
+
+	stored, err := freshRepo.Get(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before.Version, stored.Version)
+	assert.True(t, before.UpdatedAt.Equal(stored.UpdatedAt))
+	assert.Equal(t, before.IssuerURI, stored.IssuerURI)
+	assert.Equal(t, before.ClientID, stored.ClientID)
+	assert.Equal(t, before.Discovery, stored.Discovery)
+	assert.Equal(t, before.ResourceExplicit, stored.ResourceExplicit)
+	assert.Equal(t, before.AuthorizationParams, stored.AuthorizationParams)
+	assert.Equal(t, before.Endpoints, stored.Endpoints)
+	assert.Equal(t, before.TokenEndpointAuthMethod, stored.TokenEndpointAuthMethod)
+	storedCiphertext, err := stored.Secret.GetCiphertext()
+	require.NoError(t, err)
+	assert.Equal(t, beforeCiphertext, storedCiphertext)
+	decrypted, err := freshService.Get(ctx, entity.ID)
+	require.NoError(t, err)
+	plaintext, err := decrypted.Secret.GetPlaintext()
+	require.NoError(t, err)
+	assert.Equal(t, clientSecret, plaintext)
+
+	sessions := postgres.NewUserSessionRepository(restarted)
+	persistedSession, err := sessions.FindByPrincipalAndService(ctx, principal, entity.ID)
+	require.NoError(t, err)
+	require.NotNil(t, persistedSession)
+	assert.Equal(t, session.ID, persistedSession.ID)
+	assert.Equal(t, session.EncryptedRefreshToken, persistedSession.EncryptedRefreshToken)
+	refreshToken, err := encryption.Decrypt(ctx, persistedSession.EncryptedRefreshToken, map[string]string{"service_id": entity.ID.String()})
+	require.NoError(t, err)
+	assert.Equal(t, "existing-refresh-token", string(refreshToken))
+	accessToken, err := encryption.Decrypt(ctx, persistedSession.EncryptedAccessToken, map[string]string{"service_id": entity.ID.String()})
+	require.NoError(t, err)
+	assert.Equal(t, "existing-access-token", string(accessToken))
+
+	// A late failure cannot overtake the latest attempt, even with the correct version.
+	for _, attempt := range []struct {
+		version int64
+		at      time.Time
+	}{
+		{before.Version, *failed.LastAttemptAt},
+		{before.Version, failed.LastAttemptAt.Add(-time.Microsecond)},
+		{before.Version + 1, failed.LastAttemptAt.Add(time.Minute)},
+	} {
+		err := freshRepo.RecordDiscoveryFailure(ctx, entity.ID, attempt.version, attempt.at, "stale_failure")
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+	}
+	stillFailed, err := freshService.GetDiscoveryStatus(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, failed, stillFailed)
+	staleAt := failed.LastAttemptAt.Add(-time.Microsecond)
+	staleSuccess := stored.Copy()
+	staleSuccess.Endpoints.TokenEndpoint = "https://login.example.test/stale-token"
+	staleSuccess.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &staleAt, LastSuccessAt: &staleAt}
+	err = freshRepo.Update(ctx, staleSuccess, &before.Version)
+	var staleError *storage.StorageError
+	require.ErrorAs(t, err, &staleError)
+	assert.Equal(t, storage.ErrorKindConflict, staleError.Kind)
+	stillFailed, err = freshService.GetDiscoveryStatus(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, failed, stillFailed)
+
+	// A successful refresh commits a new active endpoint and ready status together.
+	refreshedAt := failed.LastAttemptAt.Add(time.Minute)
+	stored.Endpoints.TokenEndpoint = "https://login.example.test/new-token"
+	stored.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &refreshedAt, LastSuccessAt: &refreshedAt}
+	stored.UpdatedAt = refreshedAt
+	require.NoError(t, freshRepo.Update(ctx, stored, &before.Version))
+	recovered, err := freshService.GetDiscoveryStatus(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "ready", recovered.Status)
+	assert.Nil(t, recovered.FailureReason)
+	require.NotNil(t, recovered.LastAttemptAt)
+	require.NotNil(t, recovered.LastSuccessAt)
+	assert.True(t, recovered.LastAttemptAt.Equal(refreshedAt))
+	assert.True(t, recovered.LastSuccessAt.Equal(refreshedAt))
+	active, err := freshRepo.Get(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before.Version+1, active.Version)
+	assert.Equal(t, stored.Endpoints.TokenEndpoint, active.Endpoints.TokenEndpoint)
+	assert.Equal(t, before.ClientID, active.ClientID)
+	assert.Equal(t, before.TokenEndpointAuthMethod, active.TokenEndpointAuthMethod)
+	activeCiphertext, err := active.Secret.GetCiphertext()
+	require.NoError(t, err)
+	assert.Equal(t, beforeCiphertext, activeCiphertext)
+	unchangedSession, err := sessions.FindByPrincipalAndService(ctx, principal, entity.ID)
+	require.NoError(t, err)
+	require.NotNil(t, unchangedSession)
+	assert.Equal(t, persistedSession.EncryptedRefreshToken, unchangedSession.EncryptedRefreshToken)
+
+	for _, attempt := range []struct {
+		version int64
+		at      time.Time
+	}{
+		{before.Version, refreshedAt.Add(time.Minute)},
+		{active.Version, refreshedAt},
+		{active.Version, failed.LastAttemptAt.Add(time.Microsecond)},
+	} {
+		err := freshRepo.RecordDiscoveryFailure(ctx, entity.ID, attempt.version, attempt.at, "stale_failure")
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+	}
+	stillReady, err := freshService.GetDiscoveryStatus(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, recovered, stillReady)
+}
+
+func TestDiscoveryToManualReplacementRetainsOmittedParamsAndClearsStatus(t *testing.T) {
+	ctx, repo, providerService, _, _, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+
+	discovered := testDCRPersistenceEntity("dcr-to-manual", "https://login.example.test", model.TokenEndpointAuthMethodClientSecretBasic, model.NewAbsentSecret())
+	const retainedAudience = "https://audience.example.test/files"
+	discovered.AuthorizationParams["resource"] = retainedAudience
+	discovered.ResourceExplicit = true
+	encryption := newTestEncryption(t)
+	oldCiphertext, err := encryption.Encrypt(ctx, []byte("old-dcr-secret"), map[string]string{"service_id": discovered.ID.String()})
+	require.NoError(t, err)
+	discovered.Secret = model.NewEncryptedSecret(oldCiphertext)
+	require.NoError(t, repo.Create(ctx, discovered))
+
+	manual := createTestService(discovered.ID.String(), "Manual replacement", nil)
+	require.NoError(t, providerService.Update(ctx, manual, &discovered.Version))
+	stored, err := repo.Get(ctx, discovered.ID)
+	require.NoError(t, err)
+	assert.Nil(t, stored.Discovery.ResourceURL)
+	assert.Empty(t, stored.Discovery.ClientMethod)
+	assert.Nil(t, stored.DiscoveryStatus.LastAttemptAt)
+	assert.Nil(t, stored.DiscoveryStatus.LastSuccessAt)
+	assert.Nil(t, stored.DiscoveryStatus.FailureReason)
+	assert.Equal(t, retainedAudience, stored.AuthorizationParams["resource"], "omitted parameters must keep the existing map")
+	assert.False(t, stored.ResourceExplicit, "manual services cannot retain the discovery override marker")
+	assert.Equal(t, manual.ClientID, stored.ClientID)
+	read, err := providerService.Get(ctx, stored.ID)
+	require.NoError(t, err)
+	secret, err := read.Secret.GetPlaintext()
+	require.NoError(t, err)
+	assert.Equal(t, "test-secret", secret)
+}
+
+func TestDCRIssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
+	ctx, repo, _, sharedPostgres, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
+	defer cleanup()
+	discovered := testDCRPersistenceEntity("issuer-race", "https://old-issuer.example.test", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
+	require.NoError(t, repo.Create(ctx, discovered))
+
+	adapter, err := postgres.NewAdapter(&ports.StorageConfig{
+		Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: sharedPostgres.ConnectionString(dbName)},
+	})
+	require.NoError(t, err)
+	require.NoError(t, adapter.Initialize(ctx))
+	defer func() { require.NoError(t, adapter.Close(ctx)) }()
+	sessions := postgres.NewUserSessionRepository(adapter)
+	oldIssuer := discovered.IssuerURI
+	changed := discovered.Copy()
+	changed.IssuerURI = "https://new-issuer.example.test"
+	changed.Endpoints = model.OAuth2Endpoints{AuthorizeEndpoint: changed.IssuerURI + "/authorize", TokenEndpoint: changed.IssuerURI + "/token"}
+	committedAt := discovered.DiscoveryStatus.LastSuccessAt.Add(time.Minute)
+	changed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &committedAt, LastSuccessAt: &committedAt}
+	changed.UpdatedAt = committedAt
+	require.NoError(t, repo.Update(ctx, changed, &discovered.Version))
+
+	session := &storage.UserSession{
+		ID: id.NewSessionID(), Principal: id.Principal("issuer-race@example.test"), ServiceID: discovered.ID,
+		EncryptedAccessToken: []byte("encrypted-token"), TokenType: "Bearer", Scope: []string{"files.read"},
+		EncryptionContext: storage.EncryptionContext{ServiceID: discovered.ID},
+		InitiatedAt:       committedAt, CreatedAt: committedAt, UpdatedAt: committedAt,
+		ExpectedIssuerURI: oldIssuer,
+	}
+	err = sessions.Create(ctx, session)
+	var storageErr *storage.StorageError
+	require.ErrorAs(t, err, &storageErr, "a callback from the old issuer must not insert after the change")
+	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+	count, err := sessions.CountByService(ctx, discovered.ID)
+	require.NoError(t, err)
+	assert.Zero(t, count)
+
+	session.ExpectedIssuerURI = changed.IssuerURI
+	require.NoError(t, sessions.Create(ctx, session))
+	withSessions := changed.Copy()
+	withSessions.IssuerURI = "https://third-issuer.example.test"
+	withSessions.Endpoints = model.OAuth2Endpoints{AuthorizeEndpoint: withSessions.IssuerURI + "/authorize", TokenEndpoint: withSessions.IssuerURI + "/token"}
+	nextAt := committedAt.Add(time.Minute)
+	withSessions.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &nextAt, LastSuccessAt: &nextAt}
+	err = repo.Update(ctx, withSessions, &changed.Version)
+	require.ErrorAs(t, err, &storageErr, "the issuer update must recheck sessions at commit")
+	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+	stored, err := repo.Get(ctx, discovered.ID)
+	require.NoError(t, err)
+	assert.Equal(t, changed.IssuerURI, stored.IssuerURI)
 }

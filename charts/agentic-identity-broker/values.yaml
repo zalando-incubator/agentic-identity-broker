@@ -344,7 +344,7 @@ broker:
       port: 8000
       # -- Bind address
       bind: "::"
-      # -- Public URL for end-user API (required for OAuth2 metadata)
+      # -- Public URL for callbacks and metadata. Hosted CIMD and DCR require stable public HTTPS.
       publicUrl: ""
       # Authentication
       authentication:
@@ -399,6 +399,8 @@ broker:
 
   # OAuth2 configuration
   thirdPartyOauth2:
+    # -- Optional broker/platform name sent during DCR. A blank name blocks DCR registration only.
+    clientName: ""
     # -- Raw 32-byte JWE signing key for state tokens (required, load from secret)
     # The chart base64-encodes this value before storing it as the broker-facing Secret string.
     # Set via environment variable or Kubernetes Secret

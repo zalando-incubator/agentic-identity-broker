@@ -299,6 +299,10 @@ type ThirdPartyOAuth2Config struct {
 	// Store in environment variable: IDENTITY_BROKER_JWE_SIGNING_KEY
 	JWESigningKey string `mapstructure:"jwe_signing_key"`
 
+	// ClientName identifies this broker or platform in DCR requests. It is optional
+	// for startup, manual services, and hosted CIMD; DCR requires a non-blank value.
+	ClientName string `mapstructure:"client_name"`
+
 	// StateTokenTTL is the time-to-live for OAuth2 state tokens.
 	// Maximum allowed: 15 minutes per security requirements (SR-008).
 	// Shorter TTL reduces exposure window for state token leakage.

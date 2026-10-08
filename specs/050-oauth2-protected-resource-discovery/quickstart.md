@@ -10,7 +10,7 @@ See [data-model.md](./data-model.md) for stored state. See [admin-api.md](./cont
 
 - Use Go 1.27.1, `just`, Ginkgo v2, and the repository development tools.
 - Start Docker or Podman for PostgreSQL migration and restart validation.
-- Set `server.enduser.public_url` to a stable public HTTPS URL for hosted CIMD.
+- Set `server.enduser.public_url` to a stable public HTTPS URL for hosted CIMD and DCR callbacks.
 - Configure the admin reverse proxy to send an operator principal.
 - Set `third_party_oauth2.client_name` to a non-blank broker or platform name for DCR. CIMD and manual services do not need this setting.
 - For manual validation, use a public HTTPS protected resource and authorization server.

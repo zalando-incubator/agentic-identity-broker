@@ -869,21 +869,23 @@ OAuth2 /authorize request
 
 **Redirect URI Matching**: `urivalidation.MatchesRedirectURI` (`internal/domain/urivalidation/redirect.go`) compares a registered URI against the runtime request URI. For loopback hosts (`localhost`, `127.0.0.1`, `::1`) the port component is ignored per RFC 8252 §7.3 and OAuth 2.1 §2.3.1 — any ephemeral port is accepted as long as scheme, host, and path match exactly. For all other hosts all four URI components (scheme, host, port, path) must match exactly. This rule applies to both CIMD clients (redirect_uris from the fetched document) and opaque clients (redirect_uris registered on the Agent entity).
 
-**See Also**: ADR 015 — CIMD Fetcher Architecture (SSRF hardening, caching, strategy pattern)
+**See Also**: [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) defines the CIMD fetch policy. [Accepted ADR 038](adrs/038-protected-resource-discovery-and-dcr.md) supersedes only its package locations. The CIMD timeout, response limit, cache, and validation rules remain unchanged.
 
 #### 3.1.z. Outbound CIMD Client Authentication (Feature 046)
 
 **Purpose**: Authenticate the broker to a third-party OAuth2 token endpoint for a CIMD confidential service. This outbound client-authentication feature does not change **inbound CIMD client resolution**, where the broker fetches and validates an agent's client metadata document before authorization.
 
-**Service modes**: Third-party OAuth2 service authentication is explicit:
+**Service modes**: Manual and discovery-backed third-party OAuth2 services use these token-endpoint authentication methods:
 
-| `token_endpoint_auth_method` | Service identity | Token endpoint credential |
+| `token_endpoint_auth_method` | Eligible service | Token endpoint credential |
 |---|---|---|
-| Omitted or `null` | Operator-supplied client ID | Existing encrypted shared secret |
-| `none` | Operator-supplied client ID | No client credential |
-| `private_key_jwt` | Broker-hosted HTTPS client ID URL | Fresh ES256 client assertion |
+| Omitted or `null` | Manual static confidential | Operator-supplied client ID and encrypted shared secret with automatic authentication-style detection |
+| `none` | Manual public or public DCR | Client ID and no client credential with PKCE S256 on authorization-code flows |
+| `private_key_jwt` | Manual or discovered hosted CIMD | Broker-hosted HTTPS client ID URL and a fresh ES256 client assertion |
+| `client_secret_basic` | Discovery-backed confidential DCR only | Provider-issued client ID and encrypted secret, sent by HTTP Basic only |
+| `client_secret_post` | Discovery-backed confidential DCR only | Provider-issued client ID and encrypted secret, sent in the form body only |
 
-`private_key_jwt` is confidential authentication. The broker generates its stable client ID URL and stores no shared secret. A service request with a caller client ID or non-empty secret is rejected before provider traffic.
+`private_key_jwt` is confidential authentication. For hosted CIMD, the broker generates the stable client ID URL and stores no shared secret. A manual CIMD service request with a caller client ID or non-empty secret fails before provider traffic. Discovery-backed DCR pins its selected method for code exchange and refresh. It does not use authentication-style probing. This DCR-only extension supersedes ADR 036 decision 2. Manual confidential services retain their existing negotiated behavior.
 
 **Key-domain boundary (ADR 037)**: Each signing-key record has a required `key_domain`. `token_signing` signs broker-issued access tokens. `cimd_client_authentication` signs outbound CIMD client assertions. The domains share encrypted storage and lifecycle mechanics, but each has separate selection, publication, and lifecycle operations. `kid` values are globally unique, and each domain has at most one active current key.
 
@@ -916,6 +918,51 @@ The broker caches only the public CIMD JWK set for 45 seconds per process. Each 
 **Client-ID continuity**: The broker persists the complete HTTPS client ID derived from `server.enduser.public_url` and the immutable service ID. Startup validates every persisted outbound CIMD identity before key bootstrap or route serving. A changed public origin fails startup rather than rewriting an identity or returning metadata from a fallback location. Restore the prior origin for immediate recovery; any re-registration or identity migration is an explicit, separately approved operation.
 
 **See Also**: [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md)
+
+#### 3.1.z.1. Protected-Resource Discovery and Dynamic Client Registration (Feature 050)
+
+**Boundary and ownership**: `ThirdpartyOAuth2ProviderService` owns discovery for the existing service aggregate. It validates source and metadata identities, selects an issuer and client method, sets the effective resource, encrypts DCR secrets, and changes status. The Admin handler parses requests and returns safe results. The domain uses the narrow `OAuthDiscoveryClient` port for the resource probe, bounded metadata reads, and one registration request. `internal/adapters/outboundhttp/` performs remote I/O. Builder wires the port and HTTP clients. No End-user API or consent UI changes.
+
+**Source separation**: `discovery.resource_url` with `discovery.enable_discovery: true` names the protected resource to probe. It cannot coexist with `discovery.metadata_url`, manual endpoints, or caller-supplied credentials. `discovery.metadata_url` continues to name authorization-server metadata for the existing direct-discovery path.
+
+Manual and direct-metadata services keep their validation, client authentication, connection, and renewal behavior. They make no protected-resource discovery or DCR request. A manual service reports `not_applicable` discovery status. Account connections and token renewals do not re-discover or re-register a discovery-backed service.
+
+**Outbound flow**:
+
+1. The broker probes `discovery.resource_url` with one unauthenticated `GET`. It accepts exactly one `resource_metadata` value from a `401` Bearer or DPoP `WWW-Authenticate` challenge. Duplicate, malformed, unsupported, or non-`401` values fail without fallback. A failed fetch of a selected challenge URL also fails without fallback.
+2. Without a challenge URL, the broker tries path-specific RFC 9728 metadata before root metadata. It tries root metadata only after a path-specific `404`. For `https://mcp.example.com/mcp`, these URLs are `https://mcp.example.com/.well-known/oauth-protected-resource/mcp` and `https://mcp.example.com/.well-known/oauth-protected-resource`. A root resource uses the root location. Another error or an invalid document stops discovery.
+3. The metadata `resource` must equal the configured URL exactly. The issuer list must contain distinct public HTTPS URIs without user information, queries, or fragments. The broker selects a sole issuer automatically. If multiple issuers exist, an administrator must select an advertised `issuer_uri`. The selection error returns validated choices without contacting an issuer. The broker revalidates the choice against fresh metadata on retry.
+4. For issuer `https://auth.example.com/tenant`, the broker tries `https://auth.example.com/.well-known/oauth-authorization-server/tenant`, then `https://auth.example.com/.well-known/openid-configuration/tenant`, then `https://auth.example.com/tenant/.well-known/openid-configuration`. For root issuer `https://auth.example.com`, it tries `https://auth.example.com/.well-known/oauth-authorization-server`, then `https://auth.example.com/.well-known/openid-configuration`. Only `404` advances to the next location. The first returned document must match the selected issuer and provide usable authorization and token endpoints. Invalid metadata or another error stops discovery.
+5. If the issuer advertises CIMD, `private_key_jwt`, and ES256 and the broker has a usable key, the broker selects hosted CIMD. Hosted CIMD requires HTTPS `server.enduser.public_url`. If no usable key exists, an administrator can generate one through `POST /api/cimd-client-keys` before CIMD setup. If a selected CIMD identity becomes unavailable, setup fails without DCR fallback.
+6. Otherwise, the broker prefers DCR `client_secret_basic`, then `client_secret_post`, then public `none` with PKCE S256. If metadata omits authentication methods, the RFC 8414 default is Basic only. A selected confidential registration failure never retries as public. If no method is compatible, creation fails without static credentials.
+7. DCR sends the broker's actual callback and deployment-wide `third_party_oauth2.client_name` without an initial access token. This name identifies the broker or platform, never the service `display_name`. An absent or blank name stops DCR before registration, but startup, manual services, and hosted CIMD remain available. An empty client ID, incompatible callback or method, missing confidential secret, or non-zero `client_secret_expires_at` fails registration. The broker discards registration-management credentials. A public DCR client stores no secret.
+8. The broker persists the source, selected issuer and endpoints, one client identity, and successful status together. An unchanged issuer and method retain the client identity on update. Every discovery-backed update retains `discovery.client_method` and the exact `token_endpoint_auth_method`. An issuer change requires explicit selection and zero user sessions. If the new issuer cannot support the saved method, the update fails without downgrade or static fallback.
+
+PostgreSQL locks the service row and checks for sessions again before an issuer change commits. Memory uses a shared gate for the same decision. Session creation checks the issuer sealed in OAuth2 state under the matching lock or gate. An old-issuer callback stops before code exchange or session storage.
+
+**Effective resource**: Discovery establishes the resource's identity and source URL, not token-exchange ownership. `authorization_params.resource` is the one effective RFC 8707 token audience. It defaults to the verified discovery URL. An administrator can supply a different absolute URI without a fragment. The broker records whether the value is derived or explicit. A changed discovery URL changes a derived audience but preserves an explicit override. An explicit replacement of `authorization_params` without `resource` restores the verified URL.
+
+Every discovery-backed authorization, code-exchange, and refresh request sends exactly one effective `resource`. A token endpoint URL cannot contain a `resource` query parameter. A provider rejection fails without a broader retry or replacement token.
+
+**Protected-resource ownership**: The separate `protected_resources` set remains administrator-owned. Its normalized URIs route RFC 8693 exchanges to a service. Discovery does not add, remove, or claim those URIs.
+
+**Client identity**: A DCR client is unique by `(issuer_uri, client_id)`, so separate issuers can issue the same ID. Manual client-ID uniqueness rules stay unchanged. The service encrypts a confidential DCR secret with the service-scoped encryption port and one `service_id` context subject. Successful discovery and its active configuration commit together. A failed create leaves no usable local service or credential.
+
+**Failed-refresh isolation**: A failed discovery refresh writes only a safe failure code and completion time. The write requires the same service version and a completion time later than the recorded attempt and last success. A successful refresh cannot replace a later completed failure, even when the service version is unchanged. The active issuer, endpoints, credential, resource, user sessions, last success, and ETag remain unchanged after failure. A focused storage port provides this failure-only write in memory and PostgreSQL.
+
+The authenticated Admin `GET /api/services/{service-id}/discovery-status` reads persisted state without decryption or provider traffic. It reports `ready` after a successful latest attempt and `failed` after a failed latest attempt. Manual services return `not_applicable` with null discovery fields. An unknown or deleted service returns `404`; a missing authenticated principal returns `401`. Connection and token-renewal errors do not change discovery status.
+
+**Outbound security NFRs**: The existing shared upstream HTTP client continues to serve manual services, proxy grants, and JWKS. A separate guarded client serves protected-resource discovery, DCR, and discovery-backed code exchange and refresh. These clients do not share mutable transport policy. The guarded transport accepts public HTTPS destinations, disables redirects and proxies, and rejects blocked resolved IPs after DNS resolution but before TCP connect. It uses the shared policy in `internal/domain/netpolicy/`, also used by the CIMD fetcher in `internal/adapters/outboundhttp/`. No production configuration disables this dial-time SSRF boundary.
+
+When tracing is enabled, the broker omits outbound spans for URLs with query parameters. This prevents OTel from exporting query values in `url.full`.
+
+Discovery and registration send no service credentials, user tokens, cookies, or browser headers to metadata endpoints.
+
+**Latency NFRs**: One fixed 15-second deadline covers an entire discovery and registration attempt. Each remote discovery or registration response has a fixed 256-KiB body limit. Discovery-backed token calls keep the configured upstream timeout and existing token-response limits. The CIMD fetcher keeps its own timeout, response limit, and cache. SC-006 requires at least 19 of 20 independent registrations to finish in less than five seconds. Each challenge, resource metadata, issuer metadata, and DCR response in that trial takes at most one second.
+
+**Audit NFRs**: Discovery, registration, rejection, and refresh audit records contain the service ID, operation, outcome, and validated issuer or selected method when known. They also contain a safe failure code on failure. They contain no secrets, assertions, tokens, authorization codes, query strings, or raw remote response bodies.
+
+**See Also**: [ADR 038: Protected Resource Discovery and Dynamic Client Registration](adrs/038-protected-resource-discovery-and-dcr.md), [feature specification](specs/050-oauth2-protected-resource-discovery/spec.md), and the canonical [Admin OpenAPI](api/admin/openapi.yaml).
 
 #### 3.1.y. User Impersonation Domain (Feature 037)
 
@@ -1255,6 +1302,7 @@ The [security assurance case](docs/resources/assurance-case.md) records the asse
 - **Authentication:** The trusted proxy authenticates end users and injects `X-Remote-User`. It restricts port 14000 to administrators. The broker validates signed machine client assertions and subject tokens for token exchange.
 - **Authorization:** Domain services check principal ownership and active delegation. Machine and browser approval endpoints have distinct authentication rules under ADR 018.
 - **Encryption:** Production uses AWS KMS and DynamoDB branch keys to encrypt secrets, sessions, and signing-key material before PostgreSQL storage. Failed encryption or decryption has no plaintext fallback. TLS termination and private backend connectivity are deployment responsibilities.
+- **Outbound discovery:** Public HTTPS validation, no redirects or proxies, and dial-time address blocking apply to discovery, registration, and discovery-backed token calls. The existing shared client for manual services does not change. The 15-second attempt deadline and 256-KiB response limit apply to discovery and registration. Audit events contain no credentials or raw remote bodies.
 - **Verification:** The required `CI gate` runs E2E suites for consent, approval, OAuth2, and token exchange, plus dependency review on pull requests. CodeQL analyzes Go and JavaScript/TypeScript on pull requests. A separate scheduled security workflow runs gosec, govulncheck, and OSV-Scanner. Parser fuzzing is scheduled separately.
 
 ## 8. Development & Testing Environment
@@ -1311,8 +1359,10 @@ This section lists all architectural decisions made for this project. ADRs docum
 
 ### Client ID Metadata Document (CIMD)
 
-- [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) - SSRF-hardened HTTP client, in-process caching, hexagonal port, strategy pattern for opaque vs URL-based client IDs
+- [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) - CIMD fetch, cache, validation, and strategy pattern. ADR 038 changes its package locations only.
 - [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) - Separate broker key domains and public JWK trust surfaces for outbound CIMD client authentication
+- [ADR 036: Public Client Token-Endpoint Authentication](adrs/036-public-client-token-endpoint-auth.md) - Manual public and negotiated confidential methods. ADR 038 permits Basic and POST only for discovery-backed DCR.
+- [ADR 038: Protected Resource Discovery and Dynamic Client Registration](adrs/038-protected-resource-discovery-and-dcr.md) - Accepted discovery, client selection, guarded HTTP, and status design. It supersedes ADR 015 locations and ADR 036 decision 2 only as specified.
 
 ### Tool Approval
 - [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
@@ -1415,15 +1465,31 @@ Define any project-specific terms or acronyms.)
 
 **Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization flow - if user lacks session or scopes, authorization proceeds anyway. Allows agents to degrade gracefully when optional integrations unavailable.
 
-**ThirdpartyOAuth2Provider**: External OAuth2 provider (e.g., GitHub, Google, Microsoft) registered in the system. Each provider defines a set of OAuth scopes that can be delegated to agents. Each provider has a client ID and an authentication mode. Static confidential providers have a client secret stored as a `Secret` value object. Public and CIMD confidential providers have no secret. Providers also have a display name. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
+**ThirdpartyOAuth2Provider**: An operator-managed third-party OAuth2 service with scopes, a display name, and one client identity. Manual services retain their existing credentials and methods. A discovery-backed service also owns its configured resource URL, issuer, effective resource, client bootstrap method, and discovery status. A confidential DCR secret uses the existing `Secret` value object. Public and hosted CIMD services have no shared secret. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
 
-**Provider Authorization Parameters**: Static provider-defined authorization request parameters owned by a `ThirdpartyOAuth2Provider`. They are administrator-managed service configuration, not end-user input, and are appended only when the broker constructs the upstream authorization URL.
+**Provider Authorization Parameters**: Administrator-managed OAuth2 request parameters on a `ThirdpartyOAuth2Provider`, not end-user input. Other parameters keep their existing authorization-URL behavior. For a discovery-backed service, `authorization_params.resource` is the single effective token audience on authorization, code exchange, and refresh. It does not grant ownership of a protected resource.
 
-**TokenEndpointAuthMethod**: Optional attribute of a `ThirdpartyOAuth2Service`. Its accepted values are `none` and `private_key_jwt`. An omitted or `null` value selects static confidential authentication.
+**TokenEndpointAuthMethod**: A service's token-endpoint authentication method. Manual services accept omitted or `null` (negotiated confidential), `none` (public), or `private_key_jwt` (hosted CIMD). Discovery-backed DCR adds `client_secret_basic` and `client_secret_post` for confidential clients only. The selected DCR method stays fixed for code exchange and refresh. It does not use the manual confidential client's authentication-style probe.
 
-**Public client**: A `ThirdpartyOAuth2Service` that declares `token_endpoint_auth_method: none`. It stores no client credential. At the upstream token endpoint, it sends its client identifier and PKCE code verifier but no client credential.
+**Public client**: A manual or DCR service with `token_endpoint_auth_method: none`. It stores no client credential. Authorization-code requests use PKCE S256. Its token requests send its client ID but no client credential.
 
-**Static confidential client**: A `ThirdpartyOAuth2Service` with an omitted or `null` authentication method. It stores an encrypted client credential. It uses the existing upstream client-authentication negotiation for code exchange and token refresh.
+**Static confidential client**: A manual service with an omitted or `null` authentication method. It stores an encrypted client secret. It retains the existing upstream authentication-style negotiation for code exchange and token refresh.
+
+**Configured discovery URL**: `discovery.resource_url`, the protected-resource identifier that an administrator supplies for an unauthenticated probe. It is not `discovery.metadata_url`, which names authorization-server metadata for direct discovery. Neither field changes the administrator-managed `protected_resources` set.
+
+**Protected Resource Metadata (PRM)**: An RFC 9728 document whose `resource` exactly matches the configured discovery URL. Its `authorization_servers` list identifies issuers that the resource accepts. The broker validates this claim before it contacts an issuer.
+
+**Authorization Server Metadata**: An RFC 8414 or OpenID document for one selected issuer. Its `issuer` must match the resource-advertised issuer exactly. It supplies the authorization and token endpoints and the capabilities used to select a client method.
+
+**Client bootstrap method**: The persisted `discovery.client_method`: `cimd` for a broker-hosted client identity or `dcr` for a dynamically registered identity. It is distinct from `token_endpoint_auth_method`, which identifies how the selected client authenticates to the token endpoint.
+
+**DCR client identity**: The pair `(issuer_uri, client_id)` that identifies a dynamically registered client. Two issuers can issue the same client ID. A duplicate pair cannot replace another service or its credential. Manual client-ID uniqueness stays unchanged.
+
+**Effective resource**: The one persisted `authorization_params.resource` value that a discovery-backed service sends as its RFC 8707 token audience. It derives from the verified discovery URL unless the administrator supplies an explicit override. It does not change the `protected_resources` set, which routes RFC 8693 exchanges to the service.
+
+**Discovery status**: The latest completed attempt and last successful configuration for one service. A failed refresh reports `failed` and retains the active client, resource, and last success. A manual service returns `not_applicable` with null discovery fields.
+
+**Broker client name**: The optional deployment-wide `third_party_oauth2.client_name` sent as DCR `client_name`. It identifies the broker or platform, not the service's `display_name`. An absent or blank value blocks DCR before registration but does not block startup, manual services, or hosted CIMD.
 
 **Secret**: Immutable value object in `internal/domain/` with exclusive plaintext, encrypted, or absent state. `NewPlaintextSecret(value)`, `NewEncryptedSecret(ciphertext)`, and `NewAbsentSecret()` construct these states. The absent state represents a secretless public or CIMD confidential service. `GetPlaintext()` fails on encrypted or absent state. `GetCiphertext()` fails on plaintext or absent state. `Redacted()` always returns `"REDACTED"`. The zero value remains plaintext-uninitialized, never absent. This prevents accidental plaintext persistence because `GetCiphertext()` errors until encryption occurs.
 

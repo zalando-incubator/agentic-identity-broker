@@ -77,6 +77,9 @@ data:
     # Third-party OAuth2 configuration
     third_party_oauth2:
       jwe_signing_key: ${IDENTITY_BROKER_JWE_SIGNING_KEY}
+      {{- if .Values.broker.thirdPartyOauth2.clientName }}
+      client_name: {{ .Values.broker.thirdPartyOauth2.clientName | quote }}
+      {{- end }}
 
     {{- if or .Values.broker.encryption.memory.rawKey .Values.broker.encryption.awsKms.keyArn }}
     # Encryption configuration

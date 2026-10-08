@@ -447,6 +447,9 @@ func init() {
 	rootCmd.PersistentFlags().String("server.admin.bind", "", "admin server bind address (default: ::)")
 	rootCmd.PersistentFlags().Duration("server.shutdown.timeout", 0, "graceful shutdown timeout (default: 30s)")
 
+	// Third-party OAuth2 client registration configuration
+	rootCmd.PersistentFlags().String("third_party_oauth2.client_name", "", "broker or platform name for dynamic client registration")
+
 	// Request security-context configuration flags
 	rootCmd.PersistentFlags().Bool("request_context.trusted_proxy.enabled", false, "trust configured forwarded header for client IP derivation")
 	rootCmd.PersistentFlags().String("request_context.trusted_proxy.forwarded_header", "", "forwarded header name for client IP derivation")

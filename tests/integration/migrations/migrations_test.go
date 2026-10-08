@@ -25,6 +25,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/lestrrat-go/jwx/v4/jwt"
@@ -772,4 +774,367 @@ func TestMigration035PrivateKeyJWTAuthentication(t *testing.T) {
 	`)
 	require.NoError(t, err)
 	assert.Equal(t, "true", strings.TrimSpace(legacyRowsPreserved), "migration replay must preserve legacy static and public services")
+}
+
+func TestMigration036ProtectedResourceDiscovery(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+
+	require.NoError(t, f.Up(t, 35))
+	require.NoError(t, f.ExecuteSQL(t, `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method,
+			 issuer_uri, enable_discovery, metadata_url, scopes, authorization_params)
+		VALUES
+			('36000000-0000-0000-0000-000000000001', 'legacy confidential', 'legacy-client',
+			 '\x01', NULL, 'https://issuer.example.com', false, NULL, '[]',
+			 '{"resource":"https://existing.example.com"}'),
+			('36000000-0000-0000-0000-000000000002', 'legacy public', 'public-client',
+			 NULL, 'none', 'https://issuer.example.com', false, NULL, '[]', '{}'),
+			('36000000-0000-0000-0000-000000000003', 'direct metadata CIMD',
+			 'https://broker.example.com/client/legacy', NULL, 'private_key_jwt',
+			 'https://issuer.example.com', true, 'https://issuer.example.com/metadata', '[]', '{}');
+	`))
+
+	manualSnapshot := func() string {
+		t.Helper()
+		rows, err := f.QuerySQL(t, `
+			SELECT jsonb_agg(to_jsonb(s) - ARRAY[
+				'resource_url', 'client_method', 'resource_explicit',
+				'discovery_last_attempt_at', 'discovery_last_success_at', 'discovery_failure_reason'
+			] ORDER BY id)::text
+			FROM thirdparty_oauth2_services AS s
+			WHERE id IN (
+				'36000000-0000-0000-0000-000000000001',
+				'36000000-0000-0000-0000-000000000002',
+				'36000000-0000-0000-0000-000000000003'
+			);
+		`)
+		require.NoError(t, err)
+		return rows
+	}
+	legacyRows := manualSnapshot()
+
+	require.NoError(t, f.UpAll(t))
+	version, dirty, err := f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(36), version, "protected-resource discovery migration must be applied")
+	require.False(t, dirty)
+	assert.Equal(t, legacyRows, manualSnapshot(), "migration must not modify existing service data")
+
+	for _, column := range []string{
+		"resource_url", "client_method", "resource_explicit", "discovery_last_attempt_at",
+		"discovery_last_success_at", "discovery_failure_reason",
+	} {
+		exists, err := f.ColumnExists(t, "thirdparty_oauth2_services", column)
+		require.NoError(t, err)
+		require.True(t, exists, "migration must add %s", column)
+	}
+	legacyStatus, err := f.QuerySQL(t, `
+		SELECT count(*) = 3 AND bool_and(
+			resource_url IS NULL AND client_method IS NULL AND resource_explicit = false
+			AND discovery_last_attempt_at IS NULL AND discovery_last_success_at IS NULL
+			AND discovery_failure_reason IS NULL
+		)
+		FROM thirdparty_oauth2_services
+		WHERE id IN (
+			'36000000-0000-0000-0000-000000000001',
+			'36000000-0000-0000-0000-000000000002',
+			'36000000-0000-0000-0000-000000000003'
+		);
+	`)
+	require.NoError(t, err)
+	require.Equal(t, "true", strings.TrimSpace(legacyStatus))
+
+	t.Run("manual service without authentication is rejected", func(t *testing.T) {
+		err := f.ExecuteSQL(t, `
+			INSERT INTO thirdparty_oauth2_services
+				(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method,
+				 issuer_uri, enable_discovery, scopes, authorization_params)
+			VALUES
+				('36000000-0000-0000-0000-000000000016', 'invalid manual client', 'invalid-client',
+				 NULL, NULL, 'https://issuer.example.com', false, '[]', '{}');
+		`)
+		var pgErr *pgconn.PgError
+		require.ErrorAs(t, err, &pgErr)
+		require.Equal(t, "23514", pgErr.Code)
+		require.Equal(t, "chk_thirdparty_oauth2_services_client_auth", pgErr.ConstraintName)
+	})
+
+	indexName := "ux_thirdparty_oauth2_services_dcr_issuer_client_id"
+	indexExists, err := f.IndexExists(t, indexName)
+	require.NoError(t, err)
+	require.True(t, indexExists)
+
+	require.NoError(t, f.ExecuteSQL(t, `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method,
+			 issuer_uri, enable_discovery, scopes, authorization_params, resource_url, client_method,
+			 resource_explicit, discovery_last_attempt_at, discovery_last_success_at)
+		VALUES
+			('36000000-0000-0000-0000-000000000010', 'discovered CIMD',
+			 'https://broker.example.com/client/discovered', NULL, 'private_key_jwt',
+			 'https://issuer.example.com', true, '[]', '{"resource":"https://resource.example.com"}',
+			 'https://resource.example.com', 'cimd', false,
+			 '2026-10-07T12:00:00Z', '2026-10-07T12:00:00Z'),
+			('36000000-0000-0000-0000-000000000011', 'DCR Basic', 'legacy-client',
+			 '\x02', 'client_secret_basic', 'https://issuer.example.com', true, '[]',
+			 '{"resource":"https://requested.example.com"}', 'https://basic.example.com',
+			 'dcr', true, '2026-10-07T12:00:00Z', '2026-10-07T12:00:00Z'),
+			('36000000-0000-0000-0000-000000000012', 'DCR POST', 'post-client',
+			 '\x03', 'client_secret_post', 'https://issuer.example.com', true, '[]',
+			 '{"resource":"https://post.example.com"}', 'https://post.example.com',
+			 'dcr', false, '2026-10-07T12:00:00Z', '2026-10-07T12:00:00Z'),
+			('36000000-0000-0000-0000-000000000013', 'DCR public', 'public-dcr-client',
+			 NULL, 'none', 'https://issuer.example.com', true, '[]',
+			 '{"resource":"https://public.example.com"}', 'https://public.example.com',
+			 'dcr', false, '2026-10-07T12:00:00Z', '2026-10-07T12:00:00Z'),
+			('36000000-0000-0000-0000-000000000014', 'DCR on different issuer', 'legacy-client',
+			 NULL, 'none', 'https://other-issuer.example.com', true, '[]',
+			 '{"resource":"https://other.example.com"}', 'https://other.example.com',
+			 'dcr', false, '2026-10-07T12:00:00Z', '2026-10-07T12:00:00Z');
+	`))
+
+	invalidUpdates := []struct {
+		name string
+		sql  string
+	}{
+		{"blank source", `UPDATE thirdparty_oauth2_services SET resource_url = ' ' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"disabled discovery", `UPDATE thirdparty_oauth2_services SET enable_discovery = false WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"conflicting metadata source", `UPDATE thirdparty_oauth2_services SET metadata_url = 'https://issuer.example.com/metadata' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"missing effective resource", `UPDATE thirdparty_oauth2_services SET authorization_params = '{}' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"non-string effective resource", `UPDATE thirdparty_oauth2_services SET authorization_params = '{"resource":42}' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"blank effective resource", `UPDATE thirdparty_oauth2_services SET authorization_params = '{"resource":"  "}' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"unmarked resource override", `UPDATE thirdparty_oauth2_services SET authorization_params = '{"resource":"https://other.example.com"}' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"unknown client method", `UPDATE thirdparty_oauth2_services SET client_method = 'junk' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"missing client method", `UPDATE thirdparty_oauth2_services SET client_method = NULL WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"method without source", `UPDATE thirdparty_oauth2_services SET client_method = 'dcr' WHERE id = '36000000-0000-0000-0000-000000000002'`},
+		{"manual discovery flag", `UPDATE thirdparty_oauth2_services SET resource_explicit = true WHERE id = '36000000-0000-0000-0000-000000000001'`},
+		{"manual discovery status", `UPDATE thirdparty_oauth2_services SET discovery_last_attempt_at = '2026-10-07T12:00:00Z' WHERE id = '36000000-0000-0000-0000-000000000001'`},
+		{"missing discovery success", `UPDATE thirdparty_oauth2_services SET discovery_last_success_at = NULL WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"unequal successful timestamps", `UPDATE thirdparty_oauth2_services SET discovery_last_attempt_at = '2026-10-07T12:01:00Z' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"failure before success", `UPDATE thirdparty_oauth2_services SET discovery_failure_reason = 'timeout' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"unsafe failure code", `UPDATE thirdparty_oauth2_services SET discovery_last_attempt_at = '2026-10-07T12:01:00Z', discovery_failure_reason = 'remote: error' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"CIMD with client secret", `UPDATE thirdparty_oauth2_services SET client_secret_encrypted = '\x04' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"CIMD with DCR authentication", `UPDATE thirdparty_oauth2_services SET token_endpoint_auth_method = 'client_secret_basic' WHERE id = '36000000-0000-0000-0000-000000000010'`},
+		{"DCR Basic without secret", `UPDATE thirdparty_oauth2_services SET client_secret_encrypted = NULL WHERE id = '36000000-0000-0000-0000-000000000011'`},
+		{"DCR without explicit authentication", `UPDATE thirdparty_oauth2_services SET token_endpoint_auth_method = NULL WHERE id = '36000000-0000-0000-0000-000000000011'`},
+		{"DCR public with secret", `UPDATE thirdparty_oauth2_services SET client_secret_encrypted = '\x04' WHERE id = '36000000-0000-0000-0000-000000000013'`},
+		{"manual DCR authentication", `UPDATE thirdparty_oauth2_services SET token_endpoint_auth_method = 'client_secret_post' WHERE id = '36000000-0000-0000-0000-000000000001'`},
+	}
+	for _, tc := range invalidUpdates {
+		t.Run(tc.name, func(t *testing.T) {
+			err := f.ExecuteSQL(t, tc.sql)
+			var pgErr *pgconn.PgError
+			require.ErrorAs(t, err, &pgErr)
+			require.Equal(t, "23514", pgErr.Code)
+		})
+	}
+
+	require.ErrorContains(t, f.ExecuteSQL(t, `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method,
+			 issuer_uri, enable_discovery, scopes, authorization_params, resource_url, client_method,
+			 discovery_last_attempt_at, discovery_last_success_at)
+		VALUES
+			('36000000-0000-0000-0000-000000000015', 'duplicate DCR', 'legacy-client',
+			 NULL, 'none', 'https://issuer.example.com', true, '[]',
+			 '{"resource":"https://duplicate.example.com"}', 'https://duplicate.example.com',
+			 'dcr', '2026-10-07T12:00:00Z', '2026-10-07T12:00:00Z');
+	`), indexName)
+
+	require.NoError(t, f.ExecuteSQL(t, `
+		UPDATE thirdparty_oauth2_services
+		SET discovery_last_attempt_at = '2026-10-07T12:01:00Z', discovery_failure_reason = 'timeout'
+		WHERE id = '36000000-0000-0000-0000-000000000010';
+	`))
+	status, err := f.QuerySQL(t, `
+		SELECT discovery_last_attempt_at > discovery_last_success_at
+			AND discovery_failure_reason = 'timeout'
+		FROM thirdparty_oauth2_services
+		WHERE id = '36000000-0000-0000-0000-000000000010';
+	`)
+	require.NoError(t, err)
+	require.Equal(t, "true", strings.TrimSpace(status))
+	require.NoError(t, f.ExecuteSQL(t, `
+		UPDATE thirdparty_oauth2_services
+		SET discovery_last_attempt_at = '2026-10-07T12:02:00Z',
+			discovery_last_success_at = '2026-10-07T12:02:00Z', discovery_failure_reason = NULL
+		WHERE id = '36000000-0000-0000-0000-000000000010';
+	`))
+	status, err = f.QuerySQL(t, `
+		SELECT discovery_last_attempt_at = discovery_last_success_at
+			AND discovery_failure_reason IS NULL
+		FROM thirdparty_oauth2_services
+		WHERE id = '36000000-0000-0000-0000-000000000010';
+	`)
+	require.NoError(t, err)
+	require.Equal(t, "true", strings.TrimSpace(status))
+
+	discoveredRows, err := f.QuerySQL(t, `
+		SELECT jsonb_agg(to_jsonb(s) ORDER BY id)::text
+		FROM thirdparty_oauth2_services AS s
+		WHERE id IN (
+			'36000000-0000-0000-0000-000000000010',
+			'36000000-0000-0000-0000-000000000011',
+			'36000000-0000-0000-0000-000000000012',
+			'36000000-0000-0000-0000-000000000013',
+			'36000000-0000-0000-0000-000000000014'
+		);
+	`)
+	require.NoError(t, err)
+
+	err = f.Down(t, 35)
+	require.ErrorContains(t, err, "cannot revert protected-resource discovery while discovery-backed services exist")
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(35), version)
+	require.True(t, dirty)
+	rowsAfterGuard, err := f.QuerySQL(t, `
+		SELECT jsonb_agg(to_jsonb(s) ORDER BY id)::text
+		FROM thirdparty_oauth2_services AS s
+		WHERE id IN (
+			'36000000-0000-0000-0000-000000000010',
+			'36000000-0000-0000-0000-000000000011',
+			'36000000-0000-0000-0000-000000000012',
+			'36000000-0000-0000-0000-000000000013',
+			'36000000-0000-0000-0000-000000000014'
+		);
+	`)
+	require.NoError(t, err)
+	require.Equal(t, discoveredRows, rowsAfterGuard, "failed rollback must preserve active discovery state")
+	indexExists, err = f.IndexExists(t, indexName)
+	require.NoError(t, err)
+	require.True(t, indexExists, "guard must run before schema removal")
+
+	require.NoError(t, f.Force(t, 36))
+	require.NoError(t, f.ExecuteSQL(t, `
+		DELETE FROM thirdparty_oauth2_services
+		WHERE id IN (
+			'36000000-0000-0000-0000-000000000010',
+			'36000000-0000-0000-0000-000000000011',
+			'36000000-0000-0000-0000-000000000012',
+			'36000000-0000-0000-0000-000000000013',
+			'36000000-0000-0000-0000-000000000014'
+		);
+	`))
+	require.NoError(t, f.Down(t, 35))
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(35), version)
+	require.False(t, dirty)
+	assert.Equal(t, legacyRows, manualSnapshot(), "clean rollback must preserve manual services")
+	for _, column := range []string{
+		"resource_url", "client_method", "resource_explicit", "discovery_last_attempt_at",
+		"discovery_last_success_at", "discovery_failure_reason",
+	} {
+		exists, err := f.ColumnExists(t, "thirdparty_oauth2_services", column)
+		require.NoError(t, err)
+		require.False(t, exists, "rollback must remove %s", column)
+	}
+	indexExists, err = f.IndexExists(t, indexName)
+	require.NoError(t, err)
+	require.False(t, indexExists)
+
+	for _, tc := range []struct {
+		name   string
+		method any
+		secret []byte
+	}{
+		{"DCR Basic", "client_secret_basic", []byte{4}},
+		{"DCR POST", "client_secret_post", []byte{4}},
+		{"private key with secret", "private_key_jwt", []byte{4}},
+	} {
+		t.Run("rollback rejects "+tc.name, func(t *testing.T) {
+			_, err := f.db.ExecContext(context.Background(), `
+				INSERT INTO thirdparty_oauth2_services
+					(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method,
+					 issuer_uri, enable_discovery, scopes)
+				VALUES ($1, $2, $3, $4, $5,
+					'https://issuer.example.com', false, '[]')`,
+				"36000000-0000-0000-0000-000000000015", tc.name, tc.name, tc.secret, tc.method)
+			var pgErr *pgconn.PgError
+			require.ErrorAs(t, err, &pgErr)
+			require.Equal(t, "23514", pgErr.Code)
+		})
+	}
+
+	require.NoError(t, f.Up(t, 36))
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(36), version)
+	require.False(t, dirty)
+	assert.Equal(t, legacyRows, manualSnapshot(), "replay must preserve manual services")
+	indexExists, err = f.IndexExists(t, indexName)
+	require.NoError(t, err)
+	require.True(t, indexExists)
+}
+
+func TestMigration036RollbackWaitsForDiscoveryWrite(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+	require.NoError(t, f.Up(t, 36))
+	m, err := migrate.New("file://"+f.migrationsDir, f.connStr)
+	require.NoError(t, err)
+	defer func() { _, _ = m.Close() }()
+
+	tx, err := f.db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	var rollbackDone chan struct{}
+	defer func() {
+		_ = tx.Rollback()
+		if rollbackDone != nil {
+			<-rollbackDone
+		}
+	}()
+	_, err = tx.ExecContext(context.Background(), `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method,
+			 issuer_uri, enable_discovery, scopes, authorization_params, resource_url, client_method,
+			 discovery_last_attempt_at, discovery_last_success_at)
+		VALUES
+			('36000000-0000-0000-0000-000000000020', 'pending discovery', 'pending-client',
+			 NULL, 'none', 'https://issuer.example.com', true, '[]',
+			 '{"resource":"https://resource.example.com"}', 'https://resource.example.com',
+			 'dcr', '2026-10-07T12:00:00Z', '2026-10-07T12:00:00Z');
+	`)
+	require.NoError(t, err)
+
+	rollbackResult := make(chan error, 1)
+	rollbackDone = make(chan struct{})
+	go func() {
+		rollbackResult <- m.Steps(-1)
+		close(rollbackDone)
+	}()
+
+	require.Eventually(t, func() bool {
+		var waiting bool
+		err := f.db.QueryRowContext(context.Background(), `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_locks
+				WHERE relation = 'thirdparty_oauth2_services'::regclass
+				  AND mode = 'AccessExclusiveLock' AND NOT granted
+			);
+		`).Scan(&waiting)
+		return err == nil && waiting
+	}, 10*time.Second, 10*time.Millisecond, "rollback must acquire the exclusive table lock before checking rows")
+
+	require.NoError(t, tx.Commit())
+	select {
+	case err := <-rollbackResult:
+		require.ErrorContains(t, err, "cannot revert protected-resource discovery while discovery-backed services exist")
+	case <-time.After(10 * time.Second):
+		t.Fatal("rollback did not finish after the discovery write committed")
+	}
+
+	version, dirty, err := f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(35), version)
+	require.True(t, dirty)
+	row, err := f.QuerySQL(t, `
+		SELECT resource_url FROM thirdparty_oauth2_services
+		WHERE id = '36000000-0000-0000-0000-000000000020';
+	`)
+	require.NoError(t, err)
+	require.Equal(t, "https://resource.example.com", strings.TrimSpace(row))
 }

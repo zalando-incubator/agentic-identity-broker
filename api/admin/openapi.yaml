@@ -63,7 +63,9 @@ info:
     - Metadata URLs **must** use HTTPS
     - URL validation prevents injection attacks
     - Protected-resource discovery and every discovered endpoint require public HTTPS.
-    - Production discovery, registration, and discovery-backed token calls reject redirects and blocked resolved IP addresses before connection.
+    - Discovery and registration share a 15-second deadline and a 256-KiB cap per response.
+    - Discovery and registration use a guarded client without redirects or proxies. It rejects blocked resolved IP addresses before connection.
+    - Discovery-backed token calls use a separate guarded client with the configured upstream token timeout, no redirects, and no proxies.
 
     ### Referential Integrity
 
@@ -823,9 +825,13 @@ paths:
         only if fresh resource metadata still advertises it. A different issuer requires
         explicit selection and zero user sessions. Keep the client method and the exact
         token authentication method. Preserve the client ID and secret for an unchanged
-        issuer. Omitted `authorization_params` retains its source and values; a replacement
-        without `resource` restores the derived resource. Failed refresh changes only
-        the stored attempt time and safe reason. It keeps the active service ETag.
+        issuer. For a discovery-backed refresh, omitted `authorization_params` keeps the
+        map and its explicit or derived source. A replacement without `resource` restores
+        the derived resource. On replacement with manual configuration, omission keeps the
+        parameter map but clears the discovery source and resource source marker. For a
+        manual replacement, an explicit empty map clears all parameters. Failed refresh
+        changes only the stored attempt time and safe reason.
+        It keeps the active service ETag.
 
         **Security**: Static confidential-service `client_secret` values are redacted in responses. Public and CIMD service responses omit the property.
         - `protected_resources` omitted or `null`: preserves the current protected-resource set
@@ -928,7 +934,24 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
         '409':
-          $ref: '#/components/responses/ConflictError'
+          description: Conflict with the selected issuer, DCR identity, or existing manual client identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                issuer_change_with_sessions:
+                  value:
+                    error: conflict
+                    message: issuer_change_requires_no_sessions
+                duplicate_dcr_identity:
+                  value:
+                    error: conflict
+                    message: duplicate_client_identity
+                manual_duplicate:
+                  value:
+                    error: conflict
+                    message: Service with client_id 'Iv1.1234567890abcdef' already exists
         '412':
           $ref: '#/components/responses/PreconditionFailed'
         '428':
@@ -996,6 +1019,7 @@ paths:
       summary: Read the last discovery attempt and active configuration
       description: |
         Read stored status without contacting a resource or authorization server.
+        A missing operator principal returns `401` before the service is read.
         A failed refresh keeps the last successful issuer, client method, and resource URL.
         Manual services return `not_applicable` and null discovery fields.
       operationId: getServiceDiscoveryStatus
@@ -1036,6 +1060,14 @@ paths:
                     last_attempt_at: null
                     last_success_at: null
                     failure_reason: null
+        '401':
+          description: Operator principal is missing or empty
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: missing or empty principal
         '400':
           description: Malformed service identifier
           content:
@@ -1044,6 +1076,7 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
                 error: invalid service ID
+                message: service ID is invalid
         '404':
           $ref: '#/components/responses/NotFoundError'
         '500':
@@ -2833,9 +2866,12 @@ components:
         Protected-resource refresh uses fresh resource and issuer metadata. An omitted
         `issuer_uri` keeps the active issuer if still advertised. A new issuer requires
         explicit selection and zero user sessions. Omit manual endpoints and credentials.
-        The broker keeps the exact client and token authentication methods. Omitted
-        `authorization_params` preserves the map and resource source. A replacement object
-        without `resource` restores the verified resource URL.
+        The broker keeps the exact client and token authentication methods. On a
+        discovery-backed refresh, omitted `authorization_params` keeps the map and its
+        resource source. A replacement without `resource` restores the verified resource
+        URL. On replacement with manual configuration, omission keeps the parameter map
+        but clears the discovery source and resource source marker. For a manual replacement,
+        an explicit empty map clears all parameters.
       required:
         - display_name
         - discovery
@@ -2972,7 +3008,13 @@ components:
             - https://github.com/api/v3
         authorization_params:
           type: object
-          description: Provider parameters. Omission preserves the current map. For discovery-backed services, a replacement with `resource` sets an explicit absolute URI without a fragment. A replacement without `resource` clears the override and restores the verified resource URL.
+          description: |
+            Provider parameters. Omission preserves the map, including on replacement with
+            manual configuration. For a manual replacement, an explicit empty object clears
+            the map. For discovery-backed services, a replacement with `resource` sets an
+            explicit absolute URI without a fragment. A replacement without `resource`
+            clears the override and restores the verified resource URL, including when the
+            replacement object is empty.
           additionalProperties:
             type: string
           example:
