@@ -145,18 +145,23 @@ func NewProvider(ctx context.Context, cfg ports.TelemetryConfig, logger *slog.Lo
 // buildResource constructs the OTel resource with service metadata and additional
 // resource attributes from config. WithAttributes is listed last so explicit
 // config values take precedence over detected/env attributes on duplicate keys.
+//
+// Process command-line attributes are stripped from the final merged resource,
+// not just cfg.ResourceAttributes, because resource.WithFromEnv() can also
+// introduce them via the OTEL_RESOURCE_ATTRIBUTES environment variable, and
+// command lines may carry secrets (e.g. tokens passed as flags).
 func buildResource(ctx context.Context, cfg ports.TelemetryConfig) (*resource.Resource, error) {
 	attrs := []attribute.KeyValue{
 		semconv.ServiceName(cfg.ServiceName),
 	}
 	for k, v := range cfg.ResourceAttributes {
-		if k == "process.command_args" || k == "process.command" || k == "process.command_line" {
+		if isProcessCommandAttr(k) {
 			continue
 		}
 		attrs = append(attrs, attribute.String(k, v))
 	}
 
-	return resource.New(ctx,
+	res, err := resource.New(ctx,
 		resource.WithTelemetrySDK(),
 		resource.WithHost(),
 		resource.WithProcessPID(),
@@ -165,6 +170,34 @@ func buildResource(ctx context.Context, cfg ports.TelemetryConfig) (*resource.Re
 		resource.WithFromEnv(),
 		resource.WithAttributes(attrs...),
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	return stripProcessCommandAttrs(res), nil
+}
+
+func isProcessCommandAttr(key string) bool {
+	switch key {
+	case "process.command_args", "process.command", "process.command_line":
+		return true
+	default:
+		return false
+	}
+}
+
+// stripProcessCommandAttrs removes process command-line attributes from an already
+// merged resource, covering sources (like resource.WithFromEnv()) that the
+// cfg.ResourceAttributes filter above cannot reach.
+func stripProcessCommandAttrs(res *resource.Resource) *resource.Resource {
+	kept := make([]attribute.KeyValue, 0, len(res.Attributes()))
+	for _, kv := range res.Attributes() {
+		if isProcessCommandAttr(string(kv.Key)) {
+			continue
+		}
+		kept = append(kept, kv)
+	}
+	return resource.NewWithAttributes(res.SchemaURL(), kept...)
 }
 
 // buildGRPCProviders creates TracerProvider, and optionally MeterProvider and LoggerProvider,

@@ -93,6 +93,53 @@ func TestNewProvider_InvalidProtocol(t *testing.T) {
 	assert.Contains(t, err.Error(), "jaeger")
 }
 
+// buildResource must strip process.command_line/process.command/process.command_args
+// introduced via OTEL_RESOURCE_ATTRIBUTES (resource.WithFromEnv()), not just the
+// cfg.ResourceAttributes map, since command lines may carry secrets as flags.
+func TestBuildResource_StripsProcessCommandAttrsFromEnv(t *testing.T) {
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "process.command_line=/app/broker --token=secret,process.command_args=[\"--token=secret\"],process.command=/app/broker,safe.attr=kept")
+
+	cfg := ports.DefaultTelemetryConfig()
+	cfg.ServiceName = "test-service"
+
+	res, err := buildResource(context.Background(), cfg)
+	require.NoError(t, err)
+
+	for _, kv := range res.Attributes() {
+		key := string(kv.Key)
+		assert.NotEqual(t, "process.command_line", key, "process.command_line must not leak from OTEL_RESOURCE_ATTRIBUTES")
+		assert.NotEqual(t, "process.command_args", key, "process.command_args must not leak from OTEL_RESOURCE_ATTRIBUTES")
+		assert.NotEqual(t, "process.command", key, "process.command must not leak from OTEL_RESOURCE_ATTRIBUTES")
+	}
+
+	found := false
+	for _, kv := range res.Attributes() {
+		if string(kv.Key) == "safe.attr" {
+			found = true
+			assert.Equal(t, "kept", kv.Value.AsString())
+		}
+	}
+	assert.True(t, found, "unrelated attributes from OTEL_RESOURCE_ATTRIBUTES must still pass through")
+}
+
+// buildResource must also strip these keys when supplied directly via
+// cfg.ResourceAttributes (pre-existing behavior, still covered after the refactor).
+func TestBuildResource_StripsProcessCommandAttrsFromConfig(t *testing.T) {
+	cfg := ports.DefaultTelemetryConfig()
+	cfg.ServiceName = "test-service"
+	cfg.ResourceAttributes = map[string]string{
+		"process.command_line": "/app/broker --token=secret",
+		"safe.attr":            "kept",
+	}
+
+	res, err := buildResource(context.Background(), cfg)
+	require.NoError(t, err)
+
+	for _, kv := range res.Attributes() {
+		assert.NotEqual(t, "process.command_line", string(kv.Key))
+	}
+}
+
 // HTTPS protocol initializes using HTTP exporter with auto-prefixed endpoint.
 func TestNewProvider_HTTPSInitializes(t *testing.T) {
 	saveAndRestoreGlobalProviders(t)
