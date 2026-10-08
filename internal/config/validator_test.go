@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -208,6 +209,48 @@ func TestValidate(t *testing.T) {
 				if _, ok := err.(*config.ConfigError); !ok {
 					t.Errorf("Validate() error type = %T, want *config.ConfigError", err)
 				}
+			}
+		})
+	}
+}
+
+func TestValidateAdminPublicURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		publicURL string
+		wantValid bool
+	}{
+		{name: "blank URL", publicURL: ""},
+		{name: "malformed URL", publicURL: "https://[::1"},
+		{name: "missing host", publicURL: "https:///admin"},
+		{name: "port without hostname", publicURL: "https://:14000"},
+		{name: "empty explicit DNS port", publicURL: "https://admin.example.com:"},
+		{name: "empty explicit IPv6 port with path", publicURL: "https://[2001:db8::1]:/admin"},
+		{name: "userinfo", publicURL: "https://admin:secret@admin.example.com"},
+		{name: "valid HTTPS DNS without port", publicURL: "https://admin.example.com", wantValid: true},
+		{name: "valid HTTPS IPv6 without port", publicURL: "https://[2001:db8::1]", wantValid: true},
+		{name: "valid HTTPS DNS", publicURL: "https://admin.example.com:14000", wantValid: true},
+		{name: "valid HTTPS IPv6", publicURL: "https://[2001:db8::1]:14000", wantValid: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			cfg.Server.Admin.PublicURL = tt.publicURL
+			err := Validate(cfg)
+			if tt.wantValid {
+				if err != nil {
+					t.Fatalf("Validate() returned error for admin URL %q: %v", tt.publicURL, err)
+				}
+				return
+			}
+
+			var configErr *config.ConfigError
+			if !errors.As(err, &configErr) {
+				t.Fatalf("Validate() error = %v, want *config.ConfigError", err)
+			}
+			if configErr.Field != "server.admin.public_url" {
+				t.Errorf("Validate() error field = %q, want server.admin.public_url", configErr.Field)
 			}
 		})
 	}

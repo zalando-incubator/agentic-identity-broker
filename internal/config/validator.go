@@ -165,26 +165,32 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 		)
 	}
 
-	// Validate public URL (required for enduser server for OAuth2 callbacks)
-	if prefix == "server.enduser" && sic.PublicURL == "" {
-		return formatValidationError(
-			prefix+".public_url",
-			"",
-			"non-empty public URL (required for OAuth2 callbacks)",
-			nil,
-		)
+	// Both servers need a public URL; the admin URL also defines its trusted Host.
+	if sic.PublicURL == "" {
+		expected := "non-empty public URL (required for OAuth2 callbacks)"
+		if prefix == "server.admin" {
+			expected = "non-empty public URL (required for admin Host protection)"
+		}
+		return formatValidationError(prefix+".public_url", "", expected, nil)
 	}
 
-	// Validate public URL format if provided
-	if sic.PublicURL != "" {
-		if !isValidURL(sic.PublicURL) {
+	if prefix == "server.admin" {
+		u, err := url.Parse(sic.PublicURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.HasSuffix(u.Host, ":") {
 			return formatValidationError(
 				prefix+".public_url",
 				sic.PublicURL,
-				"valid HTTP/HTTPS URL",
+				"valid HTTP/HTTPS URL with hostname, no userinfo, and no empty explicit port",
 				nil,
 			)
 		}
+	} else if !isValidURL(sic.PublicURL) {
+		return formatValidationError(
+			prefix+".public_url",
+			sic.PublicURL,
+			"valid HTTP/HTTPS URL",
+			nil,
+		)
 	}
 
 	// Validate authentication
