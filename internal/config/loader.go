@@ -151,6 +151,7 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv("request_context.trusted_proxy.enabled", "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_ENABLED")
 	_ = l.v.BindEnv("request_context.trusted_proxy.forwarded_header", "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_FORWARDED_HEADER")
 	_ = l.v.BindEnv("request_context.trace.response_enabled", "IDENTITY_BROKER_REQUEST_CONTEXT_TRACE_RESPONSE_ENABLED")
+	_ = l.v.BindEnv("third_party_oauth2.client_name", "IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CLIENT_NAME")
 	_ = l.v.BindEnv("third_party_oauth2.jwe_signing_key", "IDENTITY_BROKER_JWE_SIGNING_KEY")
 	_ = l.v.BindEnv("third_party_oauth2.state_token_ttl", "IDENTITY_BROKER_STATE_TOKEN_TTL")
 	_ = l.v.BindEnv("third_party_oauth2.pkce_verifier_length", "IDENTITY_BROKER_PKCE_VERIFIER_LENGTH")
@@ -708,6 +709,13 @@ func (l *Loader) bindFlags() error {
 		enabled, _ := l.cmd.Flags().GetBool("request_context.trace.response_enabled")
 		l.v.Set("request_context.trace.response_enabled", enabled)
 		cliKeys = append(cliKeys, "request_context.trace.response_enabled")
+	}
+
+	// Bind third_party_oauth2.client_name flag
+	if l.cmd.Flags().Changed("third_party_oauth2.client_name") {
+		clientName, _ := l.cmd.Flags().GetString("third_party_oauth2.client_name")
+		l.v.Set("third_party_oauth2.client_name", clientName)
+		cliKeys = append(cliKeys, "third_party_oauth2.client_name")
 	}
 
 	// Record CLI source if any flags were set

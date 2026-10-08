@@ -57,12 +57,13 @@ Successful and error responses follow a small set of consistent shapes.
 |---|---|---|
 | `{"data": <resource-or-array>}` | Most resource responses | `{"data": {"principal": "…"}}` |
 | Bare JSON array | Admin list endpoints `GET /api/agents`, `GET /api/services` | `[{"id": "…"}]` |
+| Bare JSON object | Admin service create, get, update, and discovery-status GET | See the discovery-status response example. |
 | `{"items": [ … ]}` | `GET /api/oauth2-server/signing-keys` | `{"items": [{"kid": "…"}]}` |
-| `{"error": "<code>", "message": "<text>"}` | Standard errors (end-user and admin) | `{"error": "agent not found", "message": "…"}` |
+| `{"error": "<code>"}` with optional `message` | Standard errors (end-user and admin) | `{"error": "internal server error"}` |
 | `{"error": "<code>", "error_description": "…"}` | OAuth2 endpoints (RFC 6749 / 8693) | `{"error": "access_denied", "error_description": "…"}` |
 
-The error envelope depends on the API surface. End-user and admin APIs use `{error, message}`.
-Both fields are required. OAuth2 endpoints use the RFC `{error, error_description}` envelope.
+The error envelope depends on the API surface. The End-user and Admin `ErrorResponse` require `error`.
+Their `message` is optional. OAuth2 endpoints use the RFC `{error, error_description}` envelope.
 
 ## Error codes
 
@@ -151,12 +152,191 @@ Each admin endpoint requires `X-Remote-User`. The proxy enforces administrator p
 | GET | `/api/services/{service-id}` | Get a service (secret redacted). |
 | PUT | `/api/services/{service-id}` | Update a service. |
 | DELETE | `/api/services/{service-id}` | Delete a service (`409 conflict` if grants reference it). |
+| GET | `/api/services/{service-id}/discovery-status` | Read stored discovery status without contacting the provider. |
+| GET | `/api/services/{service-id}/protected-resources` | List the service's protected-resource URIs. |
+| POST | `/api/services/{service-id}/protected-resources` | Add one protected-resource URI. |
+| PUT | `/api/services/{service-id}/protected-resources/{resource}` | Add one URI by its encoded path segment. |
+| PATCH | `/api/services/{service-id}/protected-resources/{resource}` | Rename a protected-resource URI. |
+| DELETE | `/api/services/{service-id}/protected-resources/{resource}` | Remove a protected-resource URI. |
+
+### Protected-resource discovery
+
+The authenticated Admin `POST /api/services` creates a service from protected-resource metadata.
+Set `discovery.enable_discovery` to `true` and supply a public HTTPS `discovery.resource_url`.
+Omit manual endpoints, client credentials, `discovery.metadata_url`, and `token_endpoint_auth_method`.
+The broker validates the resource and issuer before it selects hosted CIMD or DCR.
+It does not create a service when discovery or registration fails.
+
+This create body does not contain credentials:
+
+```json
+{
+  "display_name": "Example MCP",
+  "discovery": {
+    "enable_discovery": true,
+    "resource_url": "https://mcp.example.com/mcp"
+  }
+}
+```
+
+If the resource advertises more than one issuer, the broker returns `400` with `issuer_selection_required`.
+Only this error includes `authorization_servers`, a list of validated issuers from matching resource metadata:
+
+```json
+{
+  "error": "discovery failed",
+  "message": "issuer_selection_required",
+  "authorization_servers": [
+    "https://login-a.example.com",
+    "https://login-b.example.com"
+  ]
+}
+```
+
+Retry the create request with an `issuer_uri` that matches one listed URI exactly:
+
+```json
+{
+  "display_name": "Example MCP",
+  "issuer_uri": "https://login-a.example.com",
+  "discovery": {
+    "enable_discovery": true,
+    "resource_url": "https://mcp.example.com/mcp"
+  }
+}
+```
+
+With one advertised issuer, `issuer_uri` is optional. A successful create returns `201` and a service object.
+The broker derives one effective `authorization_params.resource` from verified metadata unless an administrator supplies an explicit value.
+The explicit value must be a non-empty absolute URI without a fragment.
+This effective resource is distinct from `discovery.resource_url` and the `protected_resources` ownership set.
+The authenticated Admin `GET /api/services/{service-id}` returns the active service and its effective resource without a DCR secret.
+The response `discovery.metadata_url` and `discovery.resource_url` can be null.
+The response `discovery.client_method` can be null for manual and direct-metadata services.
+
+For example, a DCR create response can contain this service without a client secret:
+
+```json
+{
+  "id": "880e8400-e29b-41d4-a716-446655440003",
+  "display_name": "Example MCP",
+  "client_id": "dcr-client-123",
+  "token_endpoint_auth_method": "client_secret_basic",
+  "oauth2_flavor": "standard",
+  "issuer_uri": "https://login-a.example.com",
+  "discovery": {
+    "enable_discovery": true,
+    "resource_url": "https://mcp.example.com/mcp",
+    "client_method": "dcr"
+  },
+  "endpoints": {
+    "token_endpoint": "https://login-a.example.com/token",
+    "authorize_endpoint": "https://login-a.example.com/authorize"
+  },
+  "authorization_params": {
+    "resource": "https://mcp.example.com/mcp"
+  },
+  "created_at": "2026-10-06T10:00:00Z",
+  "updated_at": "2026-10-06T10:00:00Z"
+}
+```
+
+A confidential DCR response can show `client_secret_basic` or `client_secret_post` as `token_endpoint_auth_method`.
+These DCR methods are response-only. Create and update requests cannot supply them.
+DCR responses omit `client_secret` even when the broker stores an encrypted secret.
+
+For DCR, configure the deployment-wide `third_party_oauth2.client_name` before registration.
+The broker uses that name for the registered client, not the service `display_name`.
+If the name is blank, DCR returns `400` with `client_name_unconfigured`.
+Manual and CIMD services do not require this name.
+Hosted CIMD requires an HTTPS end-user public URL and a generated ES256 CIMD client key.
+DCR also requires a public HTTPS end-user URL for its registered callback.
+
+The authenticated Admin `PUT /api/services/{service-id}` refreshes protected-resource discovery.
+The request requires `display_name` and `discovery` and omits manual endpoints and credentials.
+For example, this request replaces the derived resource with an explicit resource:
+
+```json
+{
+  "display_name": "Example MCP",
+  "discovery": {
+    "enable_discovery": true,
+    "resource_url": "https://mcp.example.com/mcp"
+  },
+  "authorization_params": {
+    "resource": "https://mcp.example.com/api"
+  }
+}
+```
+
+If `authorization_params` is absent, the broker retains its values and the resource source.
+If a replacement object omits `resource`, the broker restores the derived resource.
+An omitted `issuer_uri` retains the active issuer only when fresh metadata still advertises it.
+A different issuer requires an explicit selection and no user sessions.
+For an unchanged issuer, the broker keeps the client ID, client method, credential, and exact token authentication method.
+The repository checks for user sessions again when an issuer change commits. A callback from the prior issuer cannot create a session after that change.
+On a full manual replacement, omit `authorization_params` to retain the map. Supply `{}` to clear it. The discovery override marker is always removed.
+A failed refresh keeps the active configuration and service ETag. It updates the stored attempt time and safe reason.
+
+The authenticated Admin `GET /api/services/{service-id}/discovery-status` reads stored state without provider traffic.
+Its `status` is `ready`, `failed`, or `not_applicable`.
+The response always includes `resource_url`, `issuer_uri`, `client_method`, `last_attempt_at`, `last_success_at`, and `failure_reason`.
+Each of those fields can be `null`. A manual service returns `not_applicable` and null discovery fields.
+After a failed refresh, `resource_url`, `issuer_uri`, and `client_method` describe the last successful active configuration.
+For example, a failed refresh can return:
+
+```json
+{
+  "status": "failed",
+  "resource_url": "https://mcp.example.com/mcp",
+  "issuer_uri": "https://login-a.example.com",
+  "client_method": "dcr",
+  "last_attempt_at": "2026-10-06T11:00:00Z",
+  "last_success_at": "2026-10-06T10:00:00Z",
+  "failure_reason": "authorization_server_metadata_invalid"
+}
+```
+
+For a manual service, the stored status has null discovery fields:
+
+```json
+{
+  "status": "not_applicable",
+  "resource_url": null,
+  "issuer_uri": null,
+  "client_method": null,
+  "last_attempt_at": null,
+  "last_success_at": null,
+  "failure_reason": null
+}
+```
+
+Discovery and registration errors use safe `message` codes. They never include provider bodies, URL queries, credentials, assertions, or tokens.
+
+| HTTP status | Admin operation | Meaning |
+|---|---|---|
+| `400` | Create or update | Invalid request, discovery failure, or client registration failure. |
+| `400` | Discovery-status GET | Malformed service ID. |
+| `401` | Discovery-status GET | An operator principal is required. |
+| `404` | Update or discovery-status GET | The service does not exist. Missing provider metadata instead returns `400`. |
+| `409` | Create or update | Duplicate client identity or issuer change with active sessions. Manual client-ID conflicts also return `409`. |
+| `504` | Create or update | Discovery or registration exceeded the 15-second attempt deadline. The `message` is `timeout`. |
+
+Discovery failures use `error: "discovery failed"` and a safe `message` code.
+Resource codes are `resource_metadata_not_found`, `resource_metadata_unavailable`, `resource_metadata_invalid`, and `resource_mismatch`.
+Issuer codes are `authorization_server_missing`, `issuer_selection_required`, `issuer_not_advertised`, and `issuer_mismatch`.
+Authorization-server codes are `authorization_server_metadata_not_found`, `authorization_server_metadata_unavailable`, and `authorization_server_metadata_invalid`.
+Other discovery codes are `unsafe_destination` and `response_too_large`.
+Registration failures use `error: "client registration failed"`.
+Their codes are `no_compatible_client_method`, `cimd_unavailable`, `client_name_unconfigured`, `client_registration_rejected`, `client_registration_invalid`, and `client_method_changed`.
+Conflict reasons include `duplicate_client_identity` and `issuer_change_requires_no_sessions`.
+Local storage or encryption errors return `500` without a discovery failure code.
 
 ### Outbound CIMD confidential services
 
 The broker uses **outbound CIMD client authentication** for a `private_key_jwt` third-party service. This is separate from inbound CIMD client resolution, where an agent presents a metadata URL to the broker authorization server.
 
-A service can use one of three token-endpoint authentication methods:
+A manual service can use one of three token-endpoint authentication methods:
 
 | Method | Client ID | `client_secret` in read responses |
 |---|---|---|

@@ -2,6 +2,8 @@ package oauth2session_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +46,563 @@ func (m *noopBranchKeyManager) Create(_ context.Context, _ domainencryption.Bran
 // =============================================================================
 // Tests for InitiateOAuth2Flow
 // =============================================================================
+
+func TestDiscoveredCIMDConnectionUsesDerivedResourceAndS256PKCE(t *testing.T) {
+	const resourceURL = "https://mcp.example.test/mcp"
+	ctx := context.Background()
+	service, repo, _, _, _, providerService := setupServiceWithConfig(t, func(config *oauth2session.Config) {
+		config.MaxRetries = 1
+	}, rejectingTokenHTTPClient())
+	service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
+	principal := id.Principal("user@example.com")
+	serviceID := id.NewServiceID()
+
+	requests := make(chan url.Values, 1)
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		requests <- r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"bound-token","token_type":"Bearer","refresh_token":"refresh-token","expires_in":3600}`)
+	}))
+	defer tokenServer.Close()
+
+	service = service.WithDiscoveryTokenHTTPClient(mappedDiscoveryTokenTLSClient(t, tokenServer))
+	storeDiscoveredCIMDProvider(t, repo, serviceID, resourceURL)
+	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
+	require.NoError(t, err)
+	parsed, err := url.Parse(flow.AuthorizationURL)
+	require.NoError(t, err)
+	authorization := parsed.Query()
+	assert.Equal(t, []string{resourceURL}, authorization["resource"])
+	assert.Equal(t, "S256", authorization.Get("code_challenge_method"))
+	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	require.NoError(t, err)
+	require.NotEmpty(t, claims.PKCEVerifier)
+	challenge := sha256.Sum256([]byte(claims.PKCEVerifier))
+	assert.Equal(t, base64.RawURLEncoding.EncodeToString(challenge[:]), authorization.Get("code_challenge"))
+
+	result, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID, Code: "authorization-code", State: flow.StateToken,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result.Session)
+	require.Len(t, requests, 1)
+	exchange := <-requests
+	assert.Equal(t, []string{resourceURL}, exchange["resource"])
+	assert.Equal(t, "authorization_code", exchange.Get("grant_type"))
+	assert.Equal(t, claims.PKCEVerifier, exchange.Get("code_verifier"))
+	assert.Equal(t, cimdClientIDForService(serviceID), exchange.Get("client_id"))
+	assert.NotEmpty(t, exchange.Get("client_assertion"))
+	assert.NotContains(t, exchange, "client_secret")
+
+	stored, err := providerService.Get(ctx, serviceID)
+	require.NoError(t, err)
+	assert.Equal(t, resourceURL, stored.AuthorizationParams["resource"])
+	assert.False(t, stored.ResourceExplicit)
+}
+
+func TestDiscoveredCIMDRefreshUsesInjectedTLSClientAndOneStoredResource(t *testing.T) {
+	const resourceURL = "https://mcp.example.test/mcp"
+	service, repo, _, _, _, providerService := setupServiceWithConfig(t, nil, rejectingTokenHTTPClient())
+	service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
+	serviceID := id.NewServiceID()
+	requests := make(chan url.Values, 1)
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		requests <- r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"renewed-token","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer tokenServer.Close()
+
+	service = service.WithDiscoveryTokenHTTPClient(mappedDiscoveryTokenTLSClient(t, tokenServer))
+	storeDiscoveredCIMDProvider(t, repo, serviceID, resourceURL)
+	provider, err := providerService.Get(context.Background(), serviceID)
+	require.NoError(t, err)
+	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	require.NoError(t, err)
+	assert.Equal(t, "renewed-token", token.AccessToken)
+	require.Len(t, requests, 1)
+	refresh := <-requests
+	assert.Equal(t, []string{resourceURL}, refresh["resource"])
+	assert.Equal(t, "refresh_token", refresh.Get("grant_type"))
+	assert.Equal(t, "refresh-token", refresh.Get("refresh_token"))
+	assert.Equal(t, cimdClientIDForService(serviceID), refresh.Get("client_id"))
+	assert.NotEmpty(t, refresh.Get("client_assertion"))
+	assert.NotContains(t, refresh, "client_secret")
+}
+
+func TestManualAndDirectMetadataConnectionsKeepSharedTokenClient(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		metadataURL bool
+	}{
+		{name: "manual"},
+		{name: "direct authorization-server metadata", metadataURL: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			service, repo, providerService := setupService(t)
+			var guardedCalls atomic.Int64
+			service = service.WithDiscoveryTokenHTTPClient(&http.Client{
+				Transport: tokenRoundTripFunc(func(_ *http.Request) (*http.Response, error) {
+					guardedCalls.Add(1)
+					return nil, errors.New("discovery token client must not be used")
+				}),
+			})
+			requests := make(chan url.Values, 2)
+			tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := r.ParseForm(); err != nil {
+					http.Error(w, "invalid form", http.StatusBadRequest)
+					return
+				}
+				requests <- r.PostForm
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"access_token":"shared-client-token","token_type":"Bearer","refresh_token":"refresh-token","expires_in":3600}`)
+			}))
+			defer tokenServer.Close()
+			serviceID := id.NewServiceID()
+			provider := createTestService(serviceID)
+			provider.Endpoints.TokenEndpoint = tokenServer.URL
+			require.NoError(t, providerService.Create(ctx, provider))
+			if tc.metadataURL {
+				stored, err := repo.Get(ctx, serviceID)
+				require.NoError(t, err)
+				metadataURL := "https://auth.example.test/.well-known/oauth-authorization-server"
+				stored.Discovery = model.DiscoveryConfig{EnableDiscovery: true, MetadataURL: &metadataURL}
+				require.NoError(t, repo.Update(ctx, stored, nil))
+			}
+			principal := id.Principal("user@example.com")
+			flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
+			require.NoError(t, err)
+			result, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
+				ServiceID: serviceID, Code: "authorization-code", State: flow.StateToken,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, result.Session)
+			stored, err := providerService.Get(ctx, serviceID)
+			require.NoError(t, err)
+			renewed, err := service.RefreshAccessToken(ctx, stored, "refresh-token")
+			require.NoError(t, err)
+			assert.Equal(t, "shared-client-token", renewed.AccessToken)
+			require.Len(t, requests, 2)
+			assert.Equal(t, "authorization_code", (<-requests).Get("grant_type"))
+			assert.Equal(t, "refresh_token", (<-requests).Get("grant_type"))
+			assert.Zero(t, guardedCalls.Load(), "only resource discovery selects the guarded client")
+		})
+	}
+}
+
+func TestDiscoveredCIMDInvalidTargetDoesNotRetryWithoutResource(t *testing.T) {
+	const resourceURL = "https://mcp.example.test/mcp"
+	ctx := context.Background()
+	service, repo, _, _, _, _ := setupServiceWithConfig(t, func(config *oauth2session.Config) {
+		config.MaxRetries = 3
+		config.RetryBaseDelay = time.Millisecond
+	}, rejectingTokenHTTPClient())
+	service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
+	serviceID := id.NewServiceID()
+	requests := make(chan url.Values, 3)
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		requests <- r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		if len(r.PostForm["resource"]) == 0 {
+			_, _ = io.WriteString(w, `{"access_token":"unbound-token","token_type":"Bearer","expires_in":3600}`)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"invalid_target"}`)
+	}))
+	defer tokenServer.Close()
+	service = service.WithDiscoveryTokenHTTPClient(mappedDiscoveryTokenTLSClient(t, tokenServer))
+	storeDiscoveredCIMDProvider(t, repo, serviceID, resourceURL)
+	principal := id.Principal("user@example.com")
+	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
+	require.NoError(t, err)
+	result, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID, Code: "authorization-code", State: flow.StateToken,
+	})
+	require.Error(t, err)
+	assert.Nil(t, result)
+	require.Len(t, requests, 1, "invalid_target must not cause a second, unbound exchange")
+	assert.Equal(t, []string{resourceURL}, (<-requests)["resource"])
+}
+
+func TestDCRStoredClientUsesPinnedTokenAuthenticationOnConnectionAndRenewal(t *testing.T) {
+	const resourceURL = "https://mcp.example.test/mcp"
+	const overrideURL = "https://api.example.test/tenant"
+	for _, tc := range []struct {
+		name     string
+		method   model.TokenEndpointAuthMethod
+		resource string
+		secret   string
+	}{
+		{name: "public none", method: model.TokenEndpointAuthMethodNone, resource: resourceURL},
+		{name: "confidential Basic", method: model.TokenEndpointAuthMethodClientSecretBasic, resource: resourceURL, secret: "basic-secret"},
+		{name: "confidential POST with explicit resource", method: model.TokenEndpointAuthMethodClientSecretPost, resource: overrideURL, secret: "post-secret"},
+		{name: "hosted CIMD", method: model.TokenEndpointAuthMethodPrivateKeyJWT, resource: resourceURL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := make(chan capturedTokenExchangeRequest, 8)
+			tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, readErr := io.ReadAll(r.Body)
+				form, parseErr := url.ParseQuery(string(body))
+				requests <- capturedTokenExchangeRequest{
+					method: r.Method, body: form, header: r.Header.Clone(), query: r.URL.Query(),
+					err: errorsJoin(readErr, parseErr),
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if form.Get("grant_type") == "authorization_code" {
+					_, _ = io.WriteString(w, `{"access_token":"first-token","token_type":"Bearer","refresh_token":"stored-refresh-token","expires_in":3600}`)
+				} else {
+					_, _ = io.WriteString(w, `{"access_token":"renewed-token","token_type":"Bearer","expires_in":3600}`)
+				}
+			}))
+			defer tokenServer.Close()
+
+			serviceID := id.NewServiceID()
+			provider := storedDCRSessionProvider(serviceID, tokenServer.URL+"/token", tc.method, tc.secret, resourceURL, tc.resource)
+			if tc.method == model.TokenEndpointAuthMethodPrivateKeyJWT {
+				provider.Discovery.ClientMethod = model.ClientBootstrapCIMD
+				provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
+			}
+			service, repo, providers := newStoredDCRSessionService(t, tokenServer.Client(), provider)
+			signer := &cimdAssertionSignerSpy{}
+			service = service.WithCIMDAssertionSigner(signer)
+			principal := id.Principal("user@example.com")
+			flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://broker.example.com/sessions")
+			require.NoError(t, err)
+			claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+			require.NoError(t, err)
+			require.NotEmpty(t, claims.PKCEVerifier)
+			challenge := sha256.Sum256([]byte(claims.PKCEVerifier))
+			authorizationURL, err := url.Parse(flow.AuthorizationURL)
+			require.NoError(t, err)
+			assert.Equal(t, []string{tc.resource}, authorizationURL.Query()["resource"])
+			assert.Equal(t, "S256", authorizationURL.Query().Get("code_challenge_method"))
+			assert.Equal(t, base64.RawURLEncoding.EncodeToString(challenge[:]), authorizationURL.Query().Get("code_challenge"))
+
+			connected, err := service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+				ServiceID: serviceID, Code: "registered-client-code", State: flow.StateToken,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, connected.Session)
+			decryptedProvider, err := providers.Get(context.Background(), serviceID)
+			require.NoError(t, err)
+			renewed, err := service.RefreshAccessToken(context.Background(), decryptedProvider, "stored-refresh-token")
+			require.NoError(t, err)
+			assert.Equal(t, "renewed-token", renewed.AccessToken)
+			require.Len(t, requests, 2, "one exchange and one renewal; no authentication probing")
+			codeRequest, refreshRequest := <-requests, <-requests
+
+			clientID := provider.ClientID.String()
+			codeForm := url.Values{
+				"grant_type": {"authorization_code"}, "code": {"registered-client-code"},
+				"redirect_uri":  {"https://broker.example.com/api/third-party/" + serviceID.String() + "/oauth2/callback"},
+				"code_verifier": {claims.PKCEVerifier}, "resource": {tc.resource},
+			}
+			refreshForm := url.Values{
+				"grant_type": {"refresh_token"}, "refresh_token": {"stored-refresh-token"}, "resource": {tc.resource},
+			}
+			switch tc.method {
+			case model.TokenEndpointAuthMethodNone:
+				codeForm.Set("client_id", clientID)
+				refreshForm.Set("client_id", clientID)
+			case model.TokenEndpointAuthMethodClientSecretPost:
+				codeForm.Set("client_id", clientID)
+				codeForm.Set("client_secret", tc.secret)
+				refreshForm.Set("client_id", clientID)
+				refreshForm.Set("client_secret", tc.secret)
+			case model.TokenEndpointAuthMethodPrivateKeyJWT:
+				codeForm.Set("client_id", clientID)
+				refreshForm.Set("client_id", clientID)
+				codeForm.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+				refreshForm.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+				codeForm.Set("client_assertion", "signed-cimd-assertion-1")
+				refreshForm.Set("client_assertion", "signed-cimd-assertion-2")
+			}
+			for _, captured := range []struct {
+				name    string
+				request capturedTokenExchangeRequest
+				want    url.Values
+			}{
+				{name: "exchange", request: codeRequest, want: codeForm},
+				{name: "renewal", request: refreshRequest, want: refreshForm},
+			} {
+				t.Run(captured.name, func(t *testing.T) {
+					require.NoError(t, captured.request.err)
+					assert.Equal(t, http.MethodPost, captured.request.method)
+					assert.Equal(t, "application/x-www-form-urlencoded", captured.request.header.Get("Content-Type"))
+					assert.Empty(t, captured.request.query)
+					assert.Equal(t, captured.want, captured.request.body, "exact form, including exactly one stored resource")
+					if tc.method == model.TokenEndpointAuthMethodClientSecretBasic {
+						username, password, ok := (&http.Request{Header: captured.request.header}).BasicAuth()
+						assert.True(t, ok)
+						assert.Equal(t, clientID, username)
+						assert.Equal(t, tc.secret, password)
+					} else {
+						assert.Empty(t, captured.request.header.Values("Authorization"))
+					}
+				})
+			}
+			if tc.method == model.TokenEndpointAuthMethodPrivateKeyJWT {
+				assert.Len(t, signer.Requests(), 2)
+			} else {
+				assert.Empty(t, signer.Requests())
+			}
+			assert.Zero(t, repo.createCalls.Load(), "connecting and renewing never re-registers the client")
+			assert.Zero(t, repo.registrationCalls.Load(), "connecting and renewing never calls the DCR endpoint")
+		})
+	}
+}
+
+func TestDCRConnectionAndRenewalRejectCredentialsWithoutProbingOrBroadeningResource(t *testing.T) {
+	const resourceURL = "https://mcp.example.test/mcp"
+	for _, method := range []model.TokenEndpointAuthMethod{
+		model.TokenEndpointAuthMethodNone,
+		model.TokenEndpointAuthMethodClientSecretBasic,
+		model.TokenEndpointAuthMethodClientSecretPost,
+	} {
+		for _, operation := range []string{"connection", "renewal"} {
+			t.Run(string(method)+"/"+operation, func(t *testing.T) {
+				requests := make(chan capturedTokenExchangeRequest, 8)
+				tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					body, readErr := io.ReadAll(r.Body)
+					form, parseErr := url.ParseQuery(string(body))
+					requests <- capturedTokenExchangeRequest{
+						method: r.Method, body: form, header: r.Header.Clone(), query: r.URL.Query(),
+						err: errorsJoin(readErr, parseErr),
+					}
+					w.Header().Set("Content-Type", "application/json")
+					if operation == "renewal" && form.Get("grant_type") == "authorization_code" {
+						_, _ = io.WriteString(w, `{"access_token":"initial-token","token_type":"Bearer","refresh_token":"issued-refresh","expires_in":3600}`)
+						return
+					}
+					w.WriteHeader(http.StatusUnauthorized)
+					_, _ = io.WriteString(w, `{"error":"invalid_client"}`)
+				}))
+				defer tokenServer.Close()
+
+				serviceID := id.NewServiceID()
+				secret := "registered-secret"
+				if method == model.TokenEndpointAuthMethodNone {
+					secret = ""
+				}
+				provider := storedDCRSessionProvider(serviceID, tokenServer.URL+"/token", method, secret, resourceURL, resourceURL)
+				service, repo, providers := newStoredDCRSessionService(t, tokenServer.Client(), provider)
+				principal := id.Principal("user@example.com")
+				flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://broker.example.com/sessions")
+				require.NoError(t, err)
+				connected, err := service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+					ServiceID: serviceID, Code: "single-use-code", State: flow.StateToken,
+				})
+				if operation == "connection" {
+					require.Error(t, err)
+					assert.Nil(t, connected)
+				} else {
+					require.NoError(t, err)
+					require.NotNil(t, connected.Session)
+					initial := <-requests
+					require.NoError(t, initial.err)
+					assert.Equal(t, []string{resourceURL}, initial.body["resource"])
+					stored, getErr := providers.Get(context.Background(), serviceID)
+					require.NoError(t, getErr)
+					renewed, refreshErr := service.RefreshAccessToken(context.Background(), stored, "issued-refresh")
+					require.Error(t, refreshErr)
+					assert.Nil(t, renewed)
+				}
+				require.Len(t, requests, 1, "credential rejection must not probe another auth style or omit the resource")
+				request := <-requests
+				require.NoError(t, request.err)
+				assert.Equal(t, http.MethodPost, request.method)
+				assert.Empty(t, request.query)
+				assert.Equal(t, []string{resourceURL}, request.body["resource"])
+				if method == model.TokenEndpointAuthMethodClientSecretBasic {
+					username, password, ok := (&http.Request{Header: request.header}).BasicAuth()
+					assert.True(t, ok)
+					assert.Equal(t, provider.ClientID.String(), username)
+					assert.Equal(t, secret, password)
+					assert.NotContains(t, request.body, "client_secret")
+				} else {
+					assert.Empty(t, request.header.Values("Authorization"))
+					if method == model.TokenEndpointAuthMethodClientSecretPost {
+						assert.Equal(t, []string{secret}, request.body["client_secret"])
+					} else {
+						assert.NotContains(t, request.body, "client_secret")
+					}
+				}
+				assert.Zero(t, repo.createCalls.Load(), "invalid_client must not trigger another registration")
+				assert.Zero(t, repo.registrationCalls.Load(), "invalid_client must not trigger DCR registration")
+			})
+		}
+	}
+}
+
+func TestDCRSessionWithoutRefreshTokenCannotRenewOrRegisterAgain(t *testing.T) {
+	const resourceURL = "https://mcp.example.test/mcp"
+	requests := make(chan url.Values, 4)
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		requests <- r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"access-only","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer tokenServer.Close()
+	serviceID := id.NewServiceID()
+	provider := storedDCRSessionProvider(serviceID, tokenServer.URL+"/token", model.TokenEndpointAuthMethodNone, "", resourceURL, resourceURL)
+	service, repo, _ := newStoredDCRSessionService(t, tokenServer.Client(), provider)
+	principal := id.Principal("user@example.com")
+	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://broker.example.com/sessions")
+	require.NoError(t, err)
+	connected, err := service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID, Code: "access-only-code", State: flow.StateToken,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, connected.Session)
+	assert.Empty(t, connected.Session.EncryptedRefreshToken)
+	_, err = service.ForceRefreshSession(context.Background(), principal, serviceID)
+	require.ErrorIs(t, err, oauth2session.ErrRefreshNotAvailable)
+	require.Len(t, requests, 1, "absence of a refresh token must not cause a token or registration request")
+	assert.Equal(t, []string{resourceURL}, (<-requests)["resource"])
+	assert.Zero(t, repo.createCalls.Load())
+	assert.Zero(t, repo.registrationCalls.Load())
+}
+
+func TestDCRSameClientIDAcrossIssuersKeepsServiceBoundCredentials(t *testing.T) {
+	requests := make(chan capturedTokenExchangeRequest, 8)
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		form, parseErr := url.ParseQuery(string(body))
+		requests <- capturedTokenExchangeRequest{
+			method: r.Method, body: form, header: r.Header.Clone(), query: r.URL.Query(),
+			err: errorsJoin(readErr, parseErr),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"issued-token","token_type":"Bearer","refresh_token":"issued-refresh","expires_in":3600}`)
+	}))
+	defer tokenServer.Close()
+	firstID, secondID := id.NewServiceID(), id.NewServiceID()
+	first := storedDCRSessionProvider(firstID, tokenServer.URL+"/token", model.TokenEndpointAuthMethodClientSecretBasic, "first-secret", "https://mcp.example.test/first", "https://mcp.example.test/first")
+	second := storedDCRSessionProvider(secondID, tokenServer.URL+"/token", model.TokenEndpointAuthMethodClientSecretBasic, "second-secret", "https://mcp.example.test/second", "https://mcp.example.test/second")
+	first.IssuerURI = "https://first-issuer.example.test"
+	second.IssuerURI = "https://second-issuer.example.test"
+	service, repo, providers := newStoredDCRSessionService(t, tokenServer.Client(), first, second)
+	principal := id.Principal("user@example.com")
+	for _, tc := range []struct {
+		provider *model.ThirdpartyOAuth2ProviderEntity
+		secret   string
+	}{
+		{provider: first, secret: "first-secret"},
+		{provider: second, secret: "second-secret"},
+	} {
+		flow, err := service.InitiateOAuth2Flow(context.Background(), principal, tc.provider.ID, "https://broker.example.com/sessions")
+		require.NoError(t, err)
+		_, err = service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+			ServiceID: tc.provider.ID, Code: "issuer-code", State: flow.StateToken,
+		})
+		require.NoError(t, err)
+		stored, err := providers.Get(context.Background(), tc.provider.ID)
+		require.NoError(t, err)
+		_, err = service.RefreshAccessToken(context.Background(), stored, "issued-refresh")
+		require.NoError(t, err)
+		require.Len(t, requests, 2)
+		for range 2 {
+			request := <-requests
+			require.NoError(t, request.err)
+			assert.Equal(t, []string{tc.provider.AuthorizationParams["resource"]}, request.body["resource"])
+			assert.NotContains(t, request.body, "client_secret")
+			username, password, ok := (&http.Request{Header: request.header}).BasicAuth()
+			assert.True(t, ok)
+			assert.Equal(t, "registered-client", username)
+			assert.Equal(t, tc.secret, password, "credentials are bound to the service and its issuer")
+		}
+	}
+	assert.Equal(t, first.ClientID, second.ClientID)
+	assert.NotEqual(t, first.IssuerURI, second.IssuerURI)
+	repo.entities[firstID].Secret = repo.entities[secondID].Secret
+	wrongServiceCredential, err := providers.Get(context.Background(), firstID)
+	require.NoError(t, err)
+	assert.True(t, wrongServiceCredential.Secret.IsEncrypted(), "another service's credential must not decrypt under this service_id")
+	token, err := service.RefreshAccessToken(context.Background(), wrongServiceCredential, "issued-refresh")
+	require.Error(t, err)
+	assert.Nil(t, token)
+	assert.Empty(t, requests, "cross-service ciphertext must fail before an outbound request")
+	assert.Zero(t, repo.createCalls.Load())
+	assert.Zero(t, repo.registrationCalls.Load())
+}
+
+func TestManualConfidentialConnectionKeepsSharedClientAndLegacyAuthProbe(t *testing.T) {
+	service, _, providers := setupService(t)
+	service = service.WithDiscoveryTokenHTTPClient(rejectingTokenHTTPClient())
+	requests := make(chan capturedTokenExchangeRequest, 4)
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		form, parseErr := url.ParseQuery(string(body))
+		requests <- capturedTokenExchangeRequest{
+			method: r.Method, body: form, header: r.Header.Clone(), query: r.URL.Query(),
+			err: errorsJoin(readErr, parseErr),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if len(requests) == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":"invalid_client"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"access_token":"manual-token","token_type":"Bearer","refresh_token":"manual-refresh","expires_in":3600}`)
+	}))
+	defer tokenServer.Close()
+	serviceID := id.NewServiceID()
+	provider := createTestService(serviceID)
+	provider.Endpoints.TokenEndpoint = tokenServer.URL
+	require.NoError(t, providers.Create(context.Background(), provider))
+	principal := id.Principal("user@example.com")
+	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://broker.example.com/sessions")
+	require.NoError(t, err)
+	_, err = service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID, Code: "manual-code", State: flow.StateToken,
+	})
+	require.NoError(t, err)
+	stored, err := providers.Get(context.Background(), serviceID)
+	require.NoError(t, err)
+	_, err = service.RefreshAccessToken(context.Background(), stored, "manual-refresh")
+	require.NoError(t, err)
+	require.Len(t, requests, 3)
+	probe, fallback, renewal := <-requests, <-requests, <-requests
+	for _, request := range []capturedTokenExchangeRequest{probe, fallback, renewal} {
+		require.NoError(t, request.err)
+		assert.Equal(t, http.MethodPost, request.method)
+		assert.Empty(t, request.query)
+		assert.NotContains(t, request.body, "resource")
+	}
+	username, password, ok := (&http.Request{Header: probe.header}).BasicAuth()
+	assert.True(t, ok)
+	assert.Equal(t, "test-client-id", username)
+	assert.Equal(t, "test-client-secret", password)
+	assert.NotContains(t, probe.body, "client_secret")
+	assert.Equal(t, "manual-code", probe.body.Get("code"))
+	assert.Empty(t, fallback.header.Values("Authorization"))
+	assert.Equal(t, "test-client-id", fallback.body.Get("client_id"))
+	assert.Equal(t, "test-client-secret", fallback.body.Get("client_secret"))
+	assert.Equal(t, "manual-code", fallback.body.Get("code"))
+	assert.Empty(t, renewal.header.Values("Authorization"))
+	assert.Equal(t, url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {"manual-refresh"},
+		"client_id": {"test-client-id"}, "client_secret": {"test-client-secret"},
+	}, renewal.body)
+}
 
 func TestCIMDInitiateOAuth2Flow_UsesAdvertisedCallbackWithTrailingPublicURLSlash(t *testing.T) {
 	service, _, _, _, _, providerService := setupServiceWithConfig(t, func(config *oauth2session.Config) {
@@ -793,31 +1352,21 @@ func TestHandleCallback_InvalidStateToken(t *testing.T) {
 }
 
 func TestHandleCallback_ExpiredStateToken(t *testing.T) {
-	ctx := context.Background()
-	service, _, providerService := setupService(t)
-
-	// Create service
-	serviceID := id.NewServiceID()
-	thirdPartyService := createTestService(serviceID)
-	err := providerService.Create(ctx, thirdPartyService)
-	require.NoError(t, err)
-
-	// Create an expired state token (manually constructed)
-	// This would require CreateStateToken to be exposed or tested via time manipulation
-	req := &oauth2session.HandleCallbackRequest{
-		ServiceID: serviceID,
-		Code:      "auth-code",
-		State:     "expired-token", // Would be actual expired JWE in implementation
-	}
-
+	service, _, _ := setupService(t)
 	principal := id.Principal("user@example.com")
-	result, err := service.HandleCallback(ctx, principal, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	// Verify it's specifically an invalid state token error (malformed token treated as invalid)
-	assert.True(t, errors.Is(err, oauth2session.ErrInvalidStateToken),
-		"expected ErrInvalidStateToken, got: %v", err)
+	serviceID := id.NewServiceID()
+	now := time.Now()
+	state, err := service.CreateStateToken(&oauth2session.OAuth2StateTokenClaims{
+		Principal: principal, ServiceID: serviceID, PKCEVerifier: "valid-verifier",
+		RedirectURI: "https://broker.example.com/sessions", IssuedAt: now.Add(-20 * time.Minute),
+		ExpiresAt: now.Add(-10 * time.Minute),
+	})
+	require.NoError(t, err)
+	result, err := service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID, Code: "auth-code", State: state,
+	})
+	require.Nil(t, result)
+	require.ErrorIs(t, err, oauth2session.ErrStateTokenExpired)
 }
 
 func TestHandleCallback_PrincipalMismatch(t *testing.T) {
@@ -834,10 +1383,8 @@ func TestHandleCallback_PrincipalMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	flowResult, err := service.InitiateOAuth2Flow(ctx, principal1, serviceID, redirectURI)
-	if err != nil {
-		assert.Contains(t, err.Error(), "not implemented")
-		return
-	}
+	require.NoError(t, err)
+	require.NotNil(t, flowResult)
 
 	// Try to complete callback as user2 (CSRF attack)
 	principal2 := id.Principal("user2@example.com")
@@ -877,10 +1424,8 @@ func TestHandleCallback_ServiceIDMismatch(t *testing.T) {
 	principal := id.Principal("user@example.com")
 	redirectURI := "https://example.com/sessions"
 	flowResult, err := service.InitiateOAuth2Flow(ctx, principal, serviceID1, redirectURI)
-	if err != nil {
-		assert.Contains(t, err.Error(), "not implemented")
-		return
-	}
+	require.NoError(t, err)
+	require.NotNil(t, flowResult)
 
 	// Try to use state token for service2
 	req := &oauth2session.HandleCallbackRequest{
@@ -899,48 +1444,28 @@ func TestHandleCallback_ServiceIDMismatch(t *testing.T) {
 }
 
 func TestHandleCallback_OAuth2ErrorResponse(t *testing.T) {
-	tests := []struct {
-		name      string
-		error     string
-		errorDesc string
+	for _, tc := range []struct {
+		name, code string
 	}{
-		{
-			name:      "access denied",
-			error:     "access_denied",
-			errorDesc: "User denied access",
-		},
-		{
-			name:      "invalid scope",
-			error:     "invalid_scope",
-			errorDesc: "Requested scope is invalid",
-		},
-		{
-			name:      "server error",
-			error:     "server_error",
-			errorDesc: "Authorization server error",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
+		{name: "access denied", code: "access_denied"},
+		{name: "invalid scope", code: "invalid_scope"},
+		{name: "server error", code: "server_error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			service, _, _ := setupService(t)
-
-			principal := id.Principal("user@example.com")
-			req := &oauth2session.HandleCallbackRequest{
-				ServiceID: id.NewServiceID(),
-				Code:      "", // No code when error present
-				State:     "state-token",
-				Error:     tt.error,
-				ErrorDesc: tt.errorDesc,
-			}
-
-			result, err := service.HandleCallback(ctx, principal, req)
-
-			assert.Error(t, err)
+			principal, serviceID := id.Principal("user@example.com"), id.NewServiceID()
+			state, err := service.CreateStateToken(&oauth2session.OAuth2StateTokenClaims{
+				Principal: principal, ServiceID: serviceID, PKCEVerifier: strings.Repeat("a", 43),
+				RedirectURI: "https://broker.example.com/sessions", IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute),
+			})
+			require.NoError(t, err)
+			result, err := service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
+				ServiceID: serviceID, State: state, Error: tc.code, ErrorDesc: "remote description must not be disclosed",
+			})
+			require.Error(t, err)
 			assert.Nil(t, result)
-			// Verify error contains the OAuth2 error code
-			assert.Contains(t, err.Error(), tt.error, "error should contain OAuth2 error code")
+			assert.Contains(t, err.Error(), tc.code)
+			assert.NotContains(t, err.Error(), "remote description")
 		})
 	}
 }
@@ -1508,6 +2033,7 @@ func (readyCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error { 
 func setupServiceWithConfig(
 	t *testing.T,
 	configure func(*oauth2session.Config),
+	sharedClient ...*http.Client,
 ) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
 
@@ -1522,6 +2048,7 @@ func setupServiceWithConfig(
 	// Create repositories
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
+	serviceRepo.WithUserSessionRepository(sessionRepo)
 	grantRepo := memory.NewUserGrantRepository()
 	agentRepo := memory.NewAgentRepository()
 
@@ -1545,6 +2072,11 @@ func setupServiceWithConfig(
 		slog.Default(),
 	).WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
 
+	upstreamClient := &http.Client{}
+	if len(sharedClient) > 0 {
+		upstreamClient = sharedClient[0]
+	}
+
 	svc := oauth2session.NewOAuth2SessionService(
 		providerService,
 		sessionRepo,
@@ -1552,7 +2084,7 @@ func setupServiceWithConfig(
 		grantRepo,
 		agentRepo,
 		encryption,
-		&http.Client{},
+		upstreamClient,
 		domjwe.New(key),
 		config,
 		slog.Default(),
@@ -1582,6 +2114,142 @@ func createTestService(serviceID id.ServiceID) *model.ThirdpartyOAuth2ProviderEn
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
+}
+
+type tokenRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f tokenRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func rejectingTokenHTTPClient() *http.Client {
+	return &http.Client{Transport: tokenRoundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return nil, errors.New("shared token client must not serve discovery-backed requests")
+	})}
+}
+
+func mappedDiscoveryTokenTLSClient(t *testing.T, server *httptest.Server) *http.Client {
+	t.Helper()
+	localURL, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	transport := server.Client().Transport
+	return &http.Client{Transport: tokenRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Scheme != "https" || request.URL.Host != "auth.example.test" || request.URL.Path != "/token" {
+			return nil, fmt.Errorf("unexpected token destination: %s", request.URL.Redacted())
+		}
+		mapped := request.Clone(request.Context())
+		destination := *request.URL
+		destination.Host = localURL.Host
+		mapped.URL = &destination
+		mapped.Host = localURL.Host
+		return transport.RoundTrip(mapped)
+	})}
+}
+
+func storeDiscoveredCIMDProvider(t *testing.T, repo *memory.InMemoryThirdpartyOAuth2ProviderRepository, serviceID id.ServiceID, resourceURL string) {
+	t.Helper()
+	provider := createCIMDTestProvider(serviceID, "https://auth.example.test/token")
+	provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
+	provider.IssuerURI = "https://auth.example.test"
+	provider.Endpoints.AuthorizeEndpoint = "https://auth.example.test/authorize"
+	provider.Discovery = model.DiscoveryConfig{
+		EnableDiscovery: true,
+		ResourceURL:     &resourceURL,
+		ClientMethod:    model.ClientBootstrapCIMD,
+	}
+	provider.AuthorizationParams = map[string]string{"resource": resourceURL}
+	provider.ResourceExplicit = false
+	storedAt := time.Now()
+	provider.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &storedAt, LastSuccessAt: &storedAt}
+	require.NoError(t, repo.Create(context.Background(), provider))
+}
+
+type storedDCRProviderRepository struct {
+	ports.ThirdpartyOAuth2ProviderRepository
+	entities          map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity
+	createCalls       atomic.Int64
+	registrationCalls atomic.Int64
+}
+
+func (r *storedDCRProviderRepository) Get(_ context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	entity, ok := r.entities[serviceID]
+	if !ok {
+		return nil, fmt.Errorf("stored provider %s not found", serviceID)
+	}
+	return entity.Copy(), nil
+}
+
+func (r *storedDCRProviderRepository) Create(context.Context, *model.ThirdpartyOAuth2ProviderEntity) error {
+	r.createCalls.Add(1)
+	return errors.New("connection must not dynamically register another client")
+}
+
+type rejectingDCRRegistrationClient struct {
+	ports.OAuthDiscoveryClient
+	calls *atomic.Int64
+}
+
+func (c *rejectingDCRRegistrationClient) PostJSON(context.Context, string, []byte) ([]byte, error) {
+	c.calls.Add(1)
+	return nil, errors.New("existing client must not be re-registered")
+}
+
+func storedDCRSessionProvider(serviceID id.ServiceID, tokenEndpoint string, method model.TokenEndpointAuthMethod, secret, resourceURL, audience string) *model.ThirdpartyOAuth2ProviderEntity {
+	provider := createTestService(serviceID)
+	provider.ClientID = id.ClientID("registered-client")
+	provider.IssuerURI = "https://issuer.example.test"
+	provider.Endpoints.TokenEndpoint = tokenEndpoint
+	provider.Endpoints.AuthorizeEndpoint = "https://issuer.example.test/authorize"
+	provider.TokenEndpointAuthMethod = method
+	provider.Discovery = model.DiscoveryConfig{
+		EnableDiscovery: true, ResourceURL: &resourceURL, ClientMethod: model.ClientBootstrapDCR,
+	}
+	provider.AuthorizationParams = map[string]string{"resource": audience}
+	provider.ResourceExplicit = resourceURL != audience
+	if secret == "" {
+		provider.Secret = model.NewAbsentSecret()
+	} else {
+		provider.Secret = model.NewPlaintextSecret(secret)
+	}
+	return provider
+}
+
+func newStoredDCRSessionService(t *testing.T, tokenClient *http.Client, providers ...*model.ThirdpartyOAuth2ProviderEntity) (*oauth2session.OAuth2SessionService, *storedDCRProviderRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
+	t.Helper()
+	key, err := jwk.Import[jwk.Key]([]byte("test-secret-key-must-be-32-bytes"))
+	require.NoError(t, err)
+	require.NoError(t, key.Set(jwk.KeyIDKey, "test-key"))
+	require.NoError(t, key.Set(jwk.AlgorithmKey, "A256GCM"))
+
+	encryption := newTestEncryption(t)
+	repo := &storedDCRProviderRepository{entities: make(map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity, len(providers))}
+	sessions := memory.NewInMemoryUserSessionRepository()
+	storedProviders := memory.NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
+	repo.ThirdpartyOAuth2ProviderRepository = storedProviders
+	for _, provider := range providers {
+		stored := provider.Copy()
+		if !stored.Secret.IsAbsent() {
+			plaintext, err := stored.Secret.GetPlaintext()
+			require.NoError(t, err)
+			ciphertext, err := encryption.Encrypt(context.Background(), []byte(plaintext), domainencryption.NewServiceBranchKeySubject(stored.ID).EncryptionContext())
+			require.NoError(t, err)
+			stored.Secret = model.NewEncryptedSecret(ciphertext)
+		}
+		readyAt := time.Now().UTC()
+		stored.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &readyAt, LastSuccessAt: &readyAt}
+		require.NoError(t, storedProviders.Create(context.Background(), stored))
+		repo.entities[stored.ID] = stored
+	}
+	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(repo, encryption, newNoopBranchKeyManager(), nil, false, slog.Default()).WithOAuthDiscoveryClient(&rejectingDCRRegistrationClient{calls: &repo.registrationCalls})
+	config := oauth2session.DefaultConfig()
+	config.CallbackBaseURL = "https://broker.example.com"
+	config.MaxRetries = 3
+	config.RetryBaseDelay = time.Millisecond
+	service := oauth2session.NewOAuth2SessionService(
+		providerService, sessions, sessions, memory.NewUserGrantRepository(), memory.NewAgentRepository(),
+		encryption, rejectingTokenHTTPClient(), domjwe.New(key), config, slog.Default(),
+	).WithDiscoveryTokenHTTPClient(tokenClient)
+	return service, repo, providerService
 }
 
 // =============================================================================

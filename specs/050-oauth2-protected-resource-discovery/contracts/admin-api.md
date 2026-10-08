@@ -13,7 +13,7 @@ The 2026-10-01 clarification confirms these items:
 - `GET /api/services/{service-id}/discovery-status`.
 - Status fields `status`, `resource_url`, `issuer_uri`, `client_method`, `last_attempt_at`, `last_success_at`, and `failure_reason`.
 
-The new `token_endpoint_auth_method` response values, the `discovery.client_method` response field, and failure codes follow from API-002, API-003, and API-005. Record stakeholder review of these details in the PR before implementation.
+The new `token_endpoint_auth_method` response values, `discovery.client_method`, and failure codes follow API-002, API-003, and API-005. The [2026-10-07 review](../spec.md#session-2026-10-07) approves these details.
 The 2026-10-06 stakeholder feedback confirms returning validated `authorization_servers` when issuer selection is required.
 
 ## Summary of the delta
@@ -63,6 +63,9 @@ An omitted `token_endpoint_auth_method` does not mean static confidential mode w
 
 The broker takes the DCR `client_name` from deployment-wide `third_party_oauth2.client_name`, never `display_name`. An absent or blank setting stops DCR before registration. It does not block startup, manual services, or hosted CIMD. The name is not an Admin API request field.
 
+Discovery and registration share a 15-second deadline and a 256-KiB cap per response. They do not follow redirects or use proxies.
+Discovery-backed token calls use a separate guarded client with the configured upstream token timeout. The client rejects redirects, proxies, and blocked resolved addresses before connection.
+
 ### 1.2 Create example
 
 ```json
@@ -89,9 +92,11 @@ The broker takes the DCR `client_name` from deployment-wide `third_party_oauth2.
 | `issuer_uri` omitted for an existing discovery-backed service | Use the active issuer only if the resource still advertises it. Do not select another advertised issuer. |
 | Explicit different advertised `issuer_uri` | Fail with `409` when the service has user sessions. Otherwise, keep the exact `discovery.client_method` and `token_endpoint_auth_method`. Register a new DCR client only with that saved authentication method. If the new issuer or registration cannot support it, reject the update without public or alternate-method fallback. |
 | Different client bootstrap or token authentication method required by metadata | Reject the update, including after explicit issuer selection. This API has no method selector. Keep the active client unchanged. |
-| `authorization_params` omitted | Keep the current parameter map and explicit/derived source. |
+| `authorization_params` omitted on discovery refresh | Keep the current parameter map and explicit/derived source. |
 | `authorization_params` present with `resource` | Store that value as an explicit override. |
-| `authorization_params` present without `resource` | Clear the explicit override and use the verified resource URL. |
+| `authorization_params` present without `resource`, including `{}`, on discovery refresh | Clear the explicit override and use the verified resource URL. |
+| `authorization_params` omitted on replacement with manual configuration | Keep the current parameter map. Clear the discovery source and set the stored `resource_explicit` marker to `false`. |
+| `authorization_params` present as `{}` on replacement with manual configuration | Clear all parameters and the discovery source. Set the stored `resource_explicit` marker to `false`. |
 | Manual configuration without `resource_url` | Apply the existing manual replacement contract. Remove discovery source, DCR credential, and discovery timestamps after success. |
 
 A request-shape error happens before discovery and does not change status. A failure after remote discovery starts updates only `last_attempt_at` and `failure_reason`. It does not change active configuration, `last_success_at`, the service ETag, or user sessions.
@@ -168,7 +173,7 @@ Add this route under the root `PreAuthProxy` security requirement:
 |---|---|---|---|
 | `GET` | `/api/services/{service-id}/discovery-status` | `getServiceDiscoveryStatus` | `200` and `ServiceDiscoveryStatus` |
 
-The route accepts the existing UUID or canonical service ID forms. It reads persisted state only and never contacts a provider.
+The route requires an operator principal. It reads persisted state only and never contacts a provider. It accepts the existing UUID or canonical service ID forms.
 
 ```yaml
 ServiceDiscoveryStatus:
@@ -239,12 +244,17 @@ The response examples are:
 
 On failure, `resource_url`, `issuer_uri`, and `client_method` describe the active configuration. The status does not return a failed replacement URL. The effective token audience appears only in the service's `authorization_params.resource`.
 
+For manual services, `status` is `not_applicable` and all six discovery fields are `null`, even when a retained parameter map contains `resource`.
+
 | Condition | Status |
 |---|---|
+| Missing or empty operator principal | `401` |
 | Existing manual or discovery-backed service | `200` |
 | Malformed service identifier | `400` |
 | Unknown or deleted service | `404` |
 | Internal failure | `500` |
+
+An unauthenticated request returns `{"error":"missing or empty principal"}` from the principal middleware. A malformed identifier returns `{"error":"invalid service ID","message":"service ID is invalid"}`. An unknown service returns `404` with `error: service not found`.
 
 ## 4. Errors
 
@@ -313,6 +323,8 @@ No response includes a provider response body, URL query, secret, assertion, cod
 
 ## 5. Documentation and confirmation record
 
-Update `api/admin/openapi.yaml` before implementation. Then update `docs/reference/api.md` and `docs/guides/manage-agents-and-services.md` from that root contract. Correct the stale reference that says `ErrorResponse.message` is always required.
+The root OpenAPI file defines the implemented contract. The API reference and service guide describe its create, update, and status operations. `ErrorResponse.message` is optional.
 
-The stakeholder confirmation in [spec.md](../spec.md) covers the request field, effective resource, status route and fields, and the `authorization_servers` error field confirmed on 2026-10-06. On 2026-10-07, the stakeholder also approved the drafted `api/admin/openapi.yaml` response methods (`client_secret_basic` and `client_secret_post` for DCR only), read-only `discovery.client_method`, and failure-code/status mappings. The approval includes `client_name_unconfigured` as a safe `400` response. Link this review record from the implementation PR.
+The [specification](../spec.md#clarifications) records the request and status decisions. It records the 2026-10-06 `authorization_servers` feedback.
+The 2026-10-07 session approves the response methods, read-only `discovery.client_method`, and failure-code mappings.
+[PR #191](https://github.com/zalando-incubator/agentic-identity-broker/pull/191) links this review, including `client_name_unconfigured` as a safe `400` response.

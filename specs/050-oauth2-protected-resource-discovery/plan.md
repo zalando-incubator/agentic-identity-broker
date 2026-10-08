@@ -61,6 +61,7 @@ The design keeps the existing `ThirdpartyOAuth2ProviderEntity` aggregate. It add
 **2026-10-07 security-scan exception:** The stakeholder chose to finish this feature before remediating advisories tracked in Dependabot PRs. The Phase 0 `just verify` run passed formatting, vet, and lint, then failed on 11 npm advisories in unchanged lockfiles. Three advisories had no fixed version listed. Focused Go tests for the moved packages, Builder, and E2E bootstrap passed. The existing CIMD E2E filter passed 101 scenarios. This exception does not make `just verify` green or disable a runtime security control. Re-run and report the full gate at the final checkpoint.
 
 Phase 0 was published for review in [PR #190](https://github.com/zalando-incubator/agentic-identity-broker/pull/190). It contains only the accepted ADR, relocated code, bootstrap/Builder callers, and architecture paths. The feature implementation remains a separate stacked change.
+The approved Admin API review record is linked in the draft [feature PR #191](https://github.com/zalando-incubator/agentic-identity-broker/pull/191), stacked on Phase 0 PR #190 before feature behavior.
 
 ### Implementation considerations
 
@@ -279,6 +280,7 @@ Add `GetDiscoveryStatus` to `ServicesHandler`. Mount `GET /api/services/{service
 - Keep the 15-second and 256-KiB discovery limits fixed. Hosted CIMD needs an HTTPS `server.enduser.public_url`.
 - Add `examples/config/protected-resource-discovery.yaml` with the broker client name and reference it from `examples/config/README.md`.
 - Add the broker client name to the Helm values, schema, ConfigMap, and README. Keep the existing public-URL mapping.
+- The chart already forwards `broker.server.enduser.publicUrl` to `server.enduser.public_url`. The new `broker.thirdPartyOauth2.clientName` key forwards nonempty names to `third_party_oauth2.client_name`.
 
 #### Phase 2c: API Design
 

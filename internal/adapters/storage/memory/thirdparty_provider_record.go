@@ -23,19 +23,21 @@ func providerEntityCopy(entity *model.ThirdpartyOAuth2ProviderEntity) (*model.Th
 		return nil, errors.New("entity cannot be nil")
 	}
 
-	if err := entity.TokenEndpointAuthMethod.Validate(); err != nil {
+	if err := entity.ValidateStoredClientAuthentication(); err != nil {
 		return nil, err
 	}
-	if (entity.IsPublicClient() || entity.IsCIMDConfidentialClient()) != entity.Secret.IsAbsent() {
-		return nil, errors.New("token_endpoint_auth_method and client_secret state must agree")
-	}
-	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
-		if _, err := entity.Secret.GetCiphertext(); err != nil {
+
+	copy := entity.Copy()
+	if entity.Secret.IsAbsent() {
+		copy.Secret = model.NewAbsentSecret()
+	} else {
+		ciphertext, err := entity.Secret.GetCiphertext()
+		if err != nil {
 			return nil, fmt.Errorf("entity secret must be encrypted with non-empty ciphertext: %w", err)
 		}
+		copy.Secret = model.NewEncryptedSecret(ciphertext)
 	}
-
-	return entity.Copy(), nil
+	return copy, nil
 }
 
 func providerEntityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*thirdpartyOAuth2ProviderRecord, error) {

@@ -33,6 +33,12 @@ type ThirdpartyOAuth2ProviderRecord struct {
 	IssuerURI               string                      `db:"issuer_uri"`
 	EnableDiscovery         bool                        `db:"enable_discovery"`
 	MetadataURL             *string                     `db:"metadata_url"`
+	ResourceURL             *string                     `db:"resource_url"`
+	ClientMethod            *string                     `db:"client_method"`
+	ResourceExplicit        bool                        `db:"resource_explicit"`
+	DiscoveryLastAttemptAt  *time.Time                  `db:"discovery_last_attempt_at"`
+	DiscoveryLastSuccessAt  *time.Time                  `db:"discovery_last_success_at"`
+	DiscoveryFailureReason  *string                     `db:"discovery_failure_reason"`
 	TokenEndpoint           string                      `db:"token_endpoint"`
 	AuthorizeEndpoint       string                      `db:"authorize_endpoint"`
 	Scopes                  providerScopeArray          `db:"scopes"`
@@ -125,6 +131,9 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 	if entity == nil {
 		return nil, errors.New("entity cannot be nil")
 	}
+	if err := entity.ValidateStoredClientAuthentication(); err != nil {
+		return nil, fmt.Errorf("invalid stored client authentication: %w", err)
+	}
 
 	var ciphertext []byte
 	if !entity.Secret.IsAbsent() {
@@ -151,6 +160,7 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 		Flavor:                  string(entity.Flavor),
 		IssuerURI:               entity.IssuerURI,
 		EnableDiscovery:         entity.Discovery.EnableDiscovery,
+		ResourceExplicit:        entity.ResourceExplicit,
 		TokenEndpoint:           entity.Endpoints.TokenEndpoint,
 		AuthorizeEndpoint:       entity.Endpoints.AuthorizeEndpoint,
 		Scopes:                  providerScopeArray(entity.Scopes),
@@ -162,6 +172,26 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 	if entity.Discovery.MetadataURL != nil {
 		s := *entity.Discovery.MetadataURL
 		record.MetadataURL = &s
+	}
+	if entity.Discovery.ResourceURL != nil {
+		s := *entity.Discovery.ResourceURL
+		record.ResourceURL = &s
+	}
+	if entity.Discovery.ClientMethod != "" {
+		method := string(entity.Discovery.ClientMethod)
+		record.ClientMethod = &method
+	}
+	if entity.DiscoveryStatus.LastAttemptAt != nil {
+		attempt := *entity.DiscoveryStatus.LastAttemptAt
+		record.DiscoveryLastAttemptAt = &attempt
+	}
+	if entity.DiscoveryStatus.LastSuccessAt != nil {
+		success := *entity.DiscoveryStatus.LastSuccessAt
+		record.DiscoveryLastSuccessAt = &success
+	}
+	if entity.DiscoveryStatus.FailureReason != nil {
+		reason := *entity.DiscoveryStatus.FailureReason
+		record.DiscoveryFailureReason = &reason
 	}
 
 	if entity.ProtectedResources != nil {
@@ -208,6 +238,7 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 		Discovery: model.DiscoveryConfig{
 			EnableDiscovery: record.EnableDiscovery,
 		},
+		ResourceExplicit: record.ResourceExplicit,
 		Endpoints: model.OAuth2Endpoints{
 			TokenEndpoint:     record.TokenEndpoint,
 			AuthorizeEndpoint: record.AuthorizeEndpoint,
@@ -221,6 +252,25 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 	if record.MetadataURL != nil {
 		s := *record.MetadataURL
 		entity.Discovery.MetadataURL = &s
+	}
+	if record.ResourceURL != nil {
+		s := *record.ResourceURL
+		entity.Discovery.ResourceURL = &s
+	}
+	if record.ClientMethod != nil {
+		entity.Discovery.ClientMethod = model.ClientBootstrapMethod(*record.ClientMethod)
+	}
+	if record.DiscoveryLastAttemptAt != nil {
+		attempt := *record.DiscoveryLastAttemptAt
+		entity.DiscoveryStatus.LastAttemptAt = &attempt
+	}
+	if record.DiscoveryLastSuccessAt != nil {
+		success := *record.DiscoveryLastSuccessAt
+		entity.DiscoveryStatus.LastSuccessAt = &success
+	}
+	if record.DiscoveryFailureReason != nil {
+		reason := *record.DiscoveryFailureReason
+		entity.DiscoveryStatus.FailureReason = &reason
 	}
 
 	if record.Scopes != nil {
@@ -243,6 +293,15 @@ func invalidProviderRecord(message string) error {
 func clientAuthenticationFromRecord(record *ThirdpartyOAuth2ProviderRecord) (model.TokenEndpointAuthMethod, model.Secret, error) {
 	if record.TokenEndpointAuthMethod != nil {
 		method := model.TokenEndpointAuthMethod(*record.TokenEndpointAuthMethod)
+		if method == "client_secret_basic" || method == "client_secret_post" {
+			if record.ClientMethod == nil || *record.ClientMethod != string(model.ClientBootstrapDCR) {
+				return "", model.Secret{}, invalidProviderRecord("stored token_endpoint_auth_method is invalid")
+			}
+			if len(record.SecretCiphertext) == 0 {
+				return "", model.Secret{}, invalidProviderRecord("stored confidential client secret ciphertext cannot be empty")
+			}
+			return method, model.NewEncryptedSecret(record.SecretCiphertext), nil
+		}
 		if err := method.Validate(); err != nil || method.IsAbsent() {
 			return "", model.Secret{}, invalidProviderRecord("stored token_endpoint_auth_method is invalid")
 		}

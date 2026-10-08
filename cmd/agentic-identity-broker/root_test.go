@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -12,6 +13,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/config"
+	"github.com/stretchr/testify/require"
 )
 
 const brokerTestKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
@@ -263,5 +267,48 @@ func TestRunAtomicBindFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestBrokerClientNameFlagOverridesEnvironment(t *testing.T) {
+	setBrokerConfigPath(t, writeBrokerConfig(t, freeBrokerPort(t), freeBrokerPort(t)))
+	t.Setenv("IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CLIENT_NAME", "Environment Platform")
+
+	flag := rootCmd.PersistentFlags().Lookup("third_party_oauth2.client_name")
+	require.NotNil(t, flag, "broker CLI must expose the optional DCR client name")
+	previousValue, previousChanged := flag.Value.String(), flag.Changed
+	t.Cleanup(func() {
+		if err := flag.Value.Set(previousValue); err != nil {
+			t.Error(err)
+		}
+		flag.Changed = previousChanged
+	})
+	require.NoError(t, rootCmd.ParseFlags([]string{"--third_party_oauth2.client_name=CLI Platform"}))
+
+	loader := config.NewLoader()
+	loader.SetCommand(rootCmd)
+	cfg, err := loader.GetConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "CLI Platform", cfg.ThirdPartyOAuth2.ClientName)
+}
+
+func TestRunWithWhitespaceOnlyDCRClientNameReachesServerBind(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := occupied.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	adminPort := occupied.Addr().(*net.TCPAddr).Port
+	enduserPort := freeBrokerPort(t)
+	setBrokerConfigPath(t, writeBrokerConfig(t, enduserPort, adminPort))
+	t.Setenv("IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CLIENT_NAME", "  \t  ")
+
+	err = run(rootCmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "admin server bind failed") {
+		t.Fatalf("whitespace-only DCR name should not prevent startup before port binding, got %v", err)
 	}
 }

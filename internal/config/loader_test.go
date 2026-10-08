@@ -452,3 +452,51 @@ func TestRequestContextConfigurationCLIOverridesEnvironment(t *testing.T) {
 
 	t.Fatal("CLI source not found")
 }
+
+func TestThirdPartyOAuth2ClientNameConfiguration(t *testing.T) {
+	const envName = "IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CLIENT_NAME"
+
+	t.Run("YAML supplies the broker name", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv(envName, "")
+		path := filepath.Join(t.TempDir(), "broker.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("third_party_oauth2:\n  client_name: YAML Platform\n"), 0o600))
+		t.Setenv("IDENTITY_BROKER_CONFIG_PATH", path)
+
+		cfg, err := NewLoader().GetConfig(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "YAML Platform", cfg.ThirdPartyOAuth2.ClientName)
+	})
+
+	t.Run("environment overrides YAML", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		path := filepath.Join(t.TempDir(), "broker.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("third_party_oauth2:\n  client_name: YAML Platform\n"), 0o600))
+		t.Setenv("IDENTITY_BROKER_CONFIG_PATH", path)
+		t.Setenv(envName, "Environment Platform")
+
+		cfg, err := NewLoader().GetConfig(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "Environment Platform", cfg.ThirdPartyOAuth2.ClientName)
+	})
+
+	t.Run("missing name does not block configuration", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("IDENTITY_BROKER_CONFIG_PATH", filepath.Join(t.TempDir(), "absent.yaml"))
+		t.Setenv(envName, "")
+
+		cfg, err := NewLoader().GetConfig(context.Background())
+		require.NoError(t, err)
+		assert.Empty(t, cfg.ThirdPartyOAuth2.ClientName)
+	})
+
+	t.Run("whitespace-only name does not block configuration", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("IDENTITY_BROKER_CONFIG_PATH", filepath.Join(t.TempDir(), "absent.yaml"))
+		t.Setenv(envName, "  \t  ")
+
+		cfg, err := NewLoader().GetConfig(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, "  \t  ", cfg.ThirdPartyOAuth2.ClientName)
+	})
+}

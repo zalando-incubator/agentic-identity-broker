@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -2353,4 +2354,813 @@ func TestThirdpartyOAuth2ProviderService_GetCIMDClientServiceRejectsNonCIMDServi
 
 	require.ErrorIs(t, err, ports.ErrNotFound)
 	assert.Nil(t, projection)
+}
+
+type countingCIMDKeyReadiness struct {
+	calls int
+	err   error
+}
+
+func (r *countingCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error {
+	r.calls++
+	return r.err
+}
+
+func TestThirdpartyOAuth2ProviderService_Create_DiscoveryCommitsSelectedCIMDAndDerivedResourceTogether(t *testing.T) {
+	entity := discoveredProvider(discoveryResource, "")
+	entity.ID = id.ServiceID{}
+	client := &recordingOAuthDiscoveryClient{
+		probes: map[string]discoveryProbeReply{discoveryResource: {status: 401, challenges: []string{`DPoP resource_metadata="` + discoveryResourcePath + `"`}}},
+		gets: map[string]discoveryJSONReply{
+			discoveryResourcePath: {body: protectedResourceDocument(discoveryResource, discoveryIssuer)},
+			discoveryIssuerOAuth:  {body: issuerCIMDDocument(discoveryIssuer, discoveryIssuer+"/authorize")},
+		},
+	}
+	readiness := new(countingCIMDKeyReadiness)
+	var saved *model.ThirdpartyOAuth2ProviderEntity
+	var createCalls int
+	repo := &functionFieldProviderRepository{
+		createFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity) error {
+			createCalls++
+			saved = provider.Copy()
+			return nil
+		},
+		getFn: func(_ context.Context, requestedID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+			if saved == nil || requestedID != saved.ID {
+				return nil, errors.New("service was not saved")
+			}
+			return saved.Copy(), nil
+		},
+	}
+	service := NewThirdpartyOAuth2ProviderService(repo, &functionFieldEncryption{}, newNoopBranchKeyManager(), nil, false, slog.Default()).
+		WithOAuthDiscoveryClient(client).
+		WithCIMDPublicURL("https://broker.example.test").
+		WithCIMDKeyReadiness(readiness)
+
+	err := service.Create(context.Background(), entity)
+	assert.Equal(t, []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + discoveryIssuerOAuth}, client.calls, "compatible CIMD must not register through DCR")
+	require.NoError(t, err)
+	require.NotNil(t, saved)
+	assert.Equal(t, 1, createCalls)
+	assert.Equal(t, 1, readiness.calls)
+	assert.False(t, saved.ID.IsZero())
+	assert.Equal(t, id.ClientID("https://broker.example.test/.well-known/oauth-client/"+saved.ID.String()), saved.ClientID)
+	assert.Equal(t, model.ClientBootstrapCIMD, saved.Discovery.ClientMethod)
+	assert.Equal(t, model.TokenEndpointAuthMethodPrivateKeyJWT, saved.TokenEndpointAuthMethod)
+	assert.Equal(t, discoveryIssuer, saved.IssuerURI)
+	assert.Equal(t, discoveryIssuer+"/authorize", saved.Endpoints.AuthorizeEndpoint)
+	assert.Equal(t, discoveryIssuer+"/token", saved.Endpoints.TokenEndpoint)
+	assert.Equal(t, discoveryResource, saved.AuthorizationParams["resource"])
+	assert.False(t, saved.ResourceExplicit)
+	assert.True(t, saved.Secret.IsAbsent())
+	require.NotNil(t, saved.DiscoveryStatus.LastAttemptAt)
+	require.NotNil(t, saved.DiscoveryStatus.LastSuccessAt)
+	assert.False(t, saved.DiscoveryStatus.LastSuccessAt.Before(*saved.DiscoveryStatus.LastAttemptAt))
+	assert.Nil(t, saved.DiscoveryStatus.FailureReason)
+
+	read, err := service.Get(context.Background(), saved.ID)
+	require.NoError(t, err)
+	assert.Equal(t, discoveryResource, read.AuthorizationParams["resource"])
+	assert.Equal(t, model.ClientBootstrapCIMD, read.Discovery.ClientMethod)
+}
+
+func TestThirdpartyOAuth2ProviderService_Create_SelectedCIMDKeyFailureNeverAttemptsDCRorStores(t *testing.T) {
+	client := &recordingOAuthDiscoveryClient{
+		probes: map[string]discoveryProbeReply{discoveryResource: {status: 200}},
+		gets: map[string]discoveryJSONReply{
+			discoveryResourcePath: {body: protectedResourceDocument(discoveryResource, discoveryIssuer)},
+			discoveryIssuerOAuth:  {body: issuerCIMDDocument(discoveryIssuer, discoveryIssuer+"/authorize")},
+		},
+	}
+	readiness := &countingCIMDKeyReadiness{err: ports.ErrCIMDPublicKeyUnavailable}
+	createCalls := 0
+	repo := &functionFieldProviderRepository{createFn: func(context.Context, *model.ThirdpartyOAuth2ProviderEntity) error {
+		createCalls++
+		return nil
+	}}
+	service := NewThirdpartyOAuth2ProviderService(repo, &functionFieldEncryption{}, newNoopBranchKeyManager(), nil, false, slog.Default()).
+		WithOAuthDiscoveryClient(client).
+		WithCIMDPublicURL("https://broker.example.test").
+		WithCIMDKeyReadiness(readiness)
+
+	err := service.Create(context.Background(), discoveredProvider(discoveryResource, ""))
+	assert.Equal(t, []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + discoveryIssuerOAuth}, client.calls)
+	assert.Equal(t, 1, readiness.calls, "selected ES256 CIMD method must check its published key")
+	assert.Zero(t, createCalls, "a failed discovery cannot persist a partially configured service")
+	require.ErrorContains(t, err, "cimd_unavailable")
+}
+
+func TestThirdpartyOAuth2ProviderService_Create_RejectsCIMDWithoutES256BeforeKeyCheck(t *testing.T) {
+	client := &recordingOAuthDiscoveryClient{
+		probes: map[string]discoveryProbeReply{discoveryResource: {status: 200}},
+		gets: map[string]discoveryJSONReply{
+			discoveryResourcePath: {body: protectedResourceDocument(discoveryResource, discoveryIssuer)},
+			discoveryIssuerOAuth:  {body: []byte(`{"issuer":"https://auth.example.test/tenant","authorization_endpoint":"https://auth.example.test/tenant/authorize","token_endpoint":"https://auth.example.test/tenant/token","client_id_metadata_document_supported":true,"token_endpoint_auth_methods_supported":["private_key_jwt"],"token_endpoint_auth_signing_alg_values_supported":["RS256"]}`)},
+		},
+	}
+	readiness := new(countingCIMDKeyReadiness)
+	repo := &functionFieldProviderRepository{createFn: func(context.Context, *model.ThirdpartyOAuth2ProviderEntity) error {
+		return errors.New("unsupported method cannot persist")
+	}}
+	service := NewThirdpartyOAuth2ProviderService(repo, &functionFieldEncryption{}, newNoopBranchKeyManager(), nil, false, slog.Default()).
+		WithOAuthDiscoveryClient(client).
+		WithCIMDPublicURL("https://broker.example.test").
+		WithCIMDKeyReadiness(readiness)
+
+	err := service.Create(context.Background(), discoveredProvider(discoveryResource, ""))
+	assert.Equal(t, []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + discoveryIssuerOAuth}, client.calls)
+	assert.Zero(t, readiness.calls, "RS256 alone cannot select an ES256 hosted CIMD identity")
+	require.ErrorContains(t, err, "no_compatible_client_method")
+}
+
+func TestThirdpartyOAuth2ProviderService_Create_ManualStillIgnoresInjectedDiscoveryClient(t *testing.T) {
+	client := new(recordingOAuthDiscoveryClient)
+	entity := minimalValidEntity(id.NewServiceID(), model.NewPlaintextSecret("manual-secret"))
+	entity.Discovery = model.DiscoveryConfig{EnableDiscovery: false}
+	entity.Endpoints = model.OAuth2Endpoints{
+		AuthorizeEndpoint: "https://issuer.example.com/authorize",
+		TokenEndpoint:     "https://issuer.example.com/token",
+	}
+	var saved *model.ThirdpartyOAuth2ProviderEntity
+	repo := &functionFieldProviderRepository{createFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity) error {
+		saved = provider.Copy()
+		return nil
+	}}
+	encryption := &functionFieldEncryption{encryptFn: func(_ context.Context, plaintext []byte, encryptionContext map[string]string) ([]byte, error) {
+		assert.Equal(t, []byte("manual-secret"), plaintext)
+		assert.Equal(t, serviceSubject(entity.ID).EncryptionContext(), encryptionContext)
+		return []byte("encrypted-secret"), nil
+	}}
+	service := NewThirdpartyOAuth2ProviderService(repo, encryption, newNoopBranchKeyManager(), nil, false, slog.Default()).WithOAuthDiscoveryClient(client)
+
+	err := service.Create(context.Background(), entity)
+	require.NoError(t, err)
+	require.NotNil(t, saved)
+	assert.Empty(t, client.calls)
+	assert.Equal(t, id.ClientID("test-client-id"), saved.ClientID)
+	assert.True(t, saved.Secret.IsEncrypted())
+	assert.Empty(t, saved.Discovery.ClientMethod)
+	assert.Nil(t, saved.DiscoveryStatus.LastSuccessAt)
+}
+
+func TestThirdpartyOAuth2ProviderService_DCRPersistsIssuerScopedEncryptedCredentialWithoutReregistering(t *testing.T) {
+	ctx := context.Background()
+	entity := discoveredProvider(discoveryResource, "")
+	entity.DisplayName = "Files MCP"
+	entity.AuthorizationParams = map[string]string{"resource": "https://audience.example.test/files"}
+	const clientSecret = "provider-issued-secret"
+	const managementToken = "registration-management-token"
+	const managementURL = discoveryIssuer + "/register/manage/client-42"
+	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_basic"}, nil))
+	client.postFn = func(_ context.Context, rawURL string, _ []byte) ([]byte, error) {
+		require.Equal(t, discoveryIssuer+"/register", rawURL)
+		response := dcrResponse(dcrCallback(entity.ID), model.TokenEndpointAuthMethodClientSecretBasic, clientSecret)
+		response["registration_access_token"] = managementToken
+		response["registration_client_uri"] = managementURL
+		return dcrJSON(response), nil
+	}
+
+	var saved *model.ThirdpartyOAuth2ProviderEntity
+	var createCalls, encryptCalls, decryptCalls int
+	repo := &functionFieldProviderRepository{
+		createFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity) error {
+			createCalls++
+			saved = provider.Copy()
+			return nil
+		},
+		getFn: func(_ context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+			require.NotNil(t, saved)
+			require.Equal(t, saved.ID, serviceID)
+			return saved.Copy(), nil
+		},
+	}
+	encryption := &functionFieldEncryption{
+		encryptFn: func(_ context.Context, plaintext []byte, encryptionContext map[string]string) ([]byte, error) {
+			encryptCalls++
+			assert.Equal(t, []byte(clientSecret), plaintext)
+			assert.Equal(t, map[string]string{"service_id": entity.ID.String()}, encryptionContext)
+			return []byte("opaque-ciphertext"), nil
+		},
+		decryptFn: func(_ context.Context, ciphertext []byte, encryptionContext map[string]string) ([]byte, error) {
+			decryptCalls++
+			assert.Equal(t, []byte("opaque-ciphertext"), ciphertext)
+			assert.Equal(t, map[string]string{"service_id": entity.ID.String()}, encryptionContext)
+			return []byte(clientSecret), nil
+		},
+	}
+	logs := new(bytes.Buffer)
+	service := NewThirdpartyOAuth2ProviderService(repo, encryption, newNoopBranchKeyManager(), nil, false, slog.New(slog.NewJSONHandler(logs, nil))).
+		WithOAuthDiscoveryClient(client).
+		WithCIMDPublicURL(dcrBrokerOrigin).
+		WithDCRClientName("Example Platform")
+
+	require.NoError(t, service.Create(ctx, entity))
+	require.NotNil(t, saved)
+	assert.Equal(t, 1, createCalls)
+	assert.Equal(t, 1, encryptCalls)
+	assert.Equal(t, discoveryIssuer, saved.IssuerURI)
+	assert.Equal(t, id.ClientID("registered-client-42"), saved.ClientID)
+	assert.Equal(t, model.ClientBootstrapDCR, saved.Discovery.ClientMethod)
+	assert.Equal(t, model.TokenEndpointAuthMethodClientSecretBasic, saved.TokenEndpointAuthMethod)
+	assert.Equal(t, "Files MCP", saved.DisplayName)
+	assert.Equal(t, "https://audience.example.test/files", saved.AuthorizationParams["resource"])
+	assert.True(t, saved.ResourceExplicit)
+	assert.True(t, saved.Secret.IsEncrypted())
+	ciphertext, err := saved.Secret.GetCiphertext()
+	require.NoError(t, err)
+	assert.Equal(t, []byte("opaque-ciphertext"), ciphertext)
+	assert.NotContains(t, string(ciphertext), clientSecret)
+	persisted, err := json.Marshal(saved)
+	require.NoError(t, err)
+	assert.NotContains(t, string(persisted), managementToken)
+	assert.NotContains(t, string(persisted), managementURL)
+
+	for range 2 {
+		loaded, err := service.Get(ctx, saved.ID)
+		require.NoError(t, err)
+		require.NotNil(t, loaded)
+		assert.Equal(t, discoveryIssuer, loaded.IssuerURI)
+		assert.Equal(t, saved.ClientID, loaded.ClientID)
+		plaintext, err := loaded.Secret.GetPlaintext()
+		require.NoError(t, err)
+		assert.Equal(t, clientSecret, plaintext)
+	}
+	assert.Equal(t, 2, decryptCalls)
+	assert.Equal(t, 1, createCalls)
+	assert.Equal(t, 1, encryptCalls)
+	assert.Equal(t, []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + discoveryIssuerOAuth, "post " + discoveryIssuer + "/register"}, client.calls, "loading the established identity must not register a new client")
+	assert.NotContains(t, logs.String(), managementToken)
+	assert.NotContains(t, logs.String(), managementURL)
+	assert.NotContains(t, logs.String(), clientSecret)
+}
+
+func TestThirdpartyOAuth2ProviderService_Create_DuplicateDCRIdentityPreservesExistingCredential(t *testing.T) {
+	const secondResource = "https://mcp.example.test/other"
+	const secondMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource/other"
+	first := discoveredProvider(discoveryResource, "")
+	second := discoveredProvider(secondResource, "")
+	client := dcrDiscoveryClient(issuerDCRDocument([]string{"none", "client_secret_basic"}, []string{"S256"}))
+	client.probes[secondResource] = discoveryProbeReply{status: 200}
+	client.gets[secondMetadata] = discoveryJSONReply{body: protectedResourceDocument(secondResource, discoveryIssuer)}
+	registrations := 0
+	client.postFn = func(_ context.Context, rawURL string, _ []byte) ([]byte, error) {
+		require.Equal(t, discoveryIssuer+"/register", rawURL)
+		registrations++
+		switch registrations {
+		case 1:
+			return dcrJSON(dcrResponse(dcrCallback(first.ID), model.TokenEndpointAuthMethodClientSecretBasic, "original-secret")), nil
+		case 2:
+			return dcrJSON(dcrResponse(dcrCallback(second.ID), model.TokenEndpointAuthMethodClientSecretBasic, "replacement-secret")), nil
+		default:
+			return nil, errors.New("unexpected registration retry")
+		}
+	}
+
+	var stored []*model.ThirdpartyOAuth2ProviderEntity
+	repo := &functionFieldProviderRepository{createFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity) error {
+		for _, existing := range stored {
+			if existing.Discovery.ClientMethod == model.ClientBootstrapDCR && existing.IssuerURI == provider.IssuerURI && existing.ClientID == provider.ClientID {
+				return storage.NewStorageError("CreateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrDuplicateDCRClientIdentity, "provider DCR issuer and client_id already exist")
+			}
+		}
+		stored = append(stored, provider.Copy())
+		return nil
+	}}
+	encryption := &functionFieldEncryption{encryptFn: func(_ context.Context, plaintext []byte, _ map[string]string) ([]byte, error) {
+		switch string(plaintext) {
+		case "original-secret":
+			return []byte("opaque-original"), nil
+		case "replacement-secret":
+			return []byte("opaque-replacement"), nil
+		default:
+			return nil, errors.New("unexpected DCR credential")
+		}
+	}}
+	logs := new(bytes.Buffer)
+	service := NewThirdpartyOAuth2ProviderService(repo, encryption, newNoopBranchKeyManager(), nil, false, slog.New(slog.NewJSONHandler(logs, nil))).
+		WithOAuthDiscoveryClient(client).
+		WithCIMDPublicURL(dcrBrokerOrigin).
+		WithDCRClientName("Example Platform")
+
+	require.NoError(t, service.Create(context.Background(), first))
+	err := service.Create(context.Background(), second)
+	assert.Equal(t, []string{
+		"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + discoveryIssuerOAuth, "post " + discoveryIssuer + "/register",
+		"probe " + secondResource, "get " + secondMetadata, "get " + discoveryIssuerOAuth, "post " + discoveryIssuer + "/register",
+	}, client.calls, "duplicate registration must not retry as a public client")
+	assert.Equal(t, 2, registrations)
+	var storageErr *storage.StorageError
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+	require.Len(t, stored, 1, "a duplicate identity must not create another service")
+	var rejectedAudit map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var entry map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &entry))
+		if entry["service_id"] == second.ID.String() && entry["outcome"] == "rejected" {
+			rejectedAudit = entry
+			break
+		}
+	}
+	require.NotNil(t, rejectedAudit)
+	assert.Equal(t, "create", rejectedAudit["operation"])
+	assert.Equal(t, discoveryIssuer, rejectedAudit["issuer"])
+	assert.Equal(t, "dcr", rejectedAudit["client_method"])
+	assert.Equal(t, "duplicate_client_identity", rejectedAudit["failure_code"])
+	assert.NotContains(t, logs.String(), "original-secret")
+	assert.NotContains(t, logs.String(), "replacement-secret")
+	assert.Equal(t, first.ID, stored[0].ID)
+	assert.Equal(t, discoveryIssuer, stored[0].IssuerURI)
+	assert.Equal(t, id.ClientID("registered-client-42"), stored[0].ClientID)
+	secret, secretErr := stored[0].Secret.GetCiphertext()
+	require.NoError(t, secretErr)
+	assert.Equal(t, []byte("opaque-original"), secret, "rejected registration must not replace the active credential")
+}
+
+// refreshTestRepository keeps the service row and its failure-only status write
+// separate, as the production storage port does. It rejects stale attempts.
+type refreshTestRepository struct {
+	*functionFieldProviderRepository
+	stored       *model.ThirdpartyOAuth2ProviderEntity
+	updates      int
+	statusWrites int
+	lastVersion  int64
+	lastCode     string
+}
+
+func newRefreshTestRepository(stored *model.ThirdpartyOAuth2ProviderEntity) *refreshTestRepository {
+	repo := &refreshTestRepository{stored: stored.Copy()}
+	repo.functionFieldProviderRepository = &functionFieldProviderRepository{
+		getFn: func(_ context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+			if repo.stored.ID != serviceID {
+				return nil, ports.ErrNotFound
+			}
+			return repo.stored.Copy(), nil
+		},
+		updateFn: func(_ context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+			if expectedVersion == nil || *expectedVersion != repo.stored.Version {
+				return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "stale service version")
+			}
+			previousVersion := repo.stored.Version
+			repo.updates++
+			repo.stored = entity.Copy()
+			repo.stored.Version = previousVersion + 1
+			return nil
+		},
+	}
+	return repo
+}
+
+func (r *refreshTestRepository) RecordDiscoveryFailure(_ context.Context, serviceID id.ServiceID, expectedVersion int64, completedAt time.Time, failureCode string) error {
+	r.statusWrites++
+	r.lastVersion = expectedVersion
+	r.lastCode = failureCode
+	if r.stored.ID != serviceID || r.stored.Version != expectedVersion ||
+		r.stored.Discovery.ResourceURL == nil || r.stored.DiscoveryStatus.LastAttemptAt == nil ||
+		!completedAt.After(*r.stored.DiscoveryStatus.LastAttemptAt) ||
+		(r.stored.DiscoveryStatus.LastSuccessAt != nil && !completedAt.After(*r.stored.DiscoveryStatus.LastSuccessAt)) {
+		return storage.NewStorageError("RecordDiscoveryFailure", storage.ErrorKindConflict, nil, "stale discovery attempt")
+	}
+	r.stored.DiscoveryStatus.LastAttemptAt = &completedAt
+	r.stored.DiscoveryStatus.FailureReason = &failureCode
+	return nil
+}
+
+var _ ports.ThirdpartyOAuth2ProviderDiscoveryStatusWriter = (*refreshTestRepository)(nil)
+
+type refreshSessionRepository struct {
+	ports.UserSessionRepository
+	count int
+	calls int
+}
+
+func (r *refreshSessionRepository) CountByService(context.Context, id.ServiceID) (int, error) {
+	r.calls++
+	return r.count, nil
+}
+
+func readyRefreshProvider(method model.TokenEndpointAuthMethod) *model.ThirdpartyOAuth2ProviderEntity {
+	provider := discoveredProvider(discoveryResource, discoveryIssuer)
+	provider.ClientID = id.ClientID("original-registered-client")
+	provider.Discovery.ClientMethod = model.ClientBootstrapDCR
+	provider.TokenEndpointAuthMethod = method
+	provider.Secret = model.NewEncryptedSecret([]byte("original-sealed-secret"))
+	provider.Endpoints = model.OAuth2Endpoints{AuthorizeEndpoint: discoveryIssuer + "/authorize", TokenEndpoint: discoveryIssuer + "/token"}
+	provider.AuthorizationParams = map[string]string{"resource": discoveryResource}
+	provider.Version = 7
+	succeededAt := time.Now().UTC().Add(-time.Hour)
+	provider.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &succeededAt, LastSuccessAt: &succeededAt}
+	return provider
+}
+
+func refreshRequest(stored *model.ThirdpartyOAuth2ProviderEntity) *model.ThirdpartyOAuth2ProviderEntity {
+	return discoveredProvider(*stored.Discovery.ResourceURL, "")
+}
+
+func refreshTestService(repo *refreshTestRepository, client ports.OAuthDiscoveryClient, encryption ports.EncryptionPort, logs *bytes.Buffer) *ThirdpartyOAuth2ProviderService {
+	return NewThirdpartyOAuth2ProviderService(repo, encryption, newNoopBranchKeyManager(), nil, false, slog.New(slog.NewJSONHandler(logs, nil))).
+		WithOAuthDiscoveryClient(client).
+		WithCIMDPublicURL(dcrBrokerOrigin).
+		WithCIMDKeyReadiness(readyCIMDKeyReadiness{}).
+		WithDCRClientName("Example Platform").
+		WithUserSessions(&refreshSessionRepository{}).
+		WithDiscoveryStatusWriter(repo)
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_RefreshKeepsExactDCRCredentialAndOmittedOverride(t *testing.T) {
+	ctx := context.Background()
+	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
+	stored.AuthorizationParams["resource"] = "https://audience.example.test/explicit"
+	stored.ResourceExplicit = true
+	repo := newRefreshTestRepository(stored)
+	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_post", "client_secret_basic", "none"}, []string{"S256"}))
+	client.gets[discoveryIssuerOAuth] = discoveryJSONReply{body: []byte(`{"issuer":"https://auth.example.test/tenant","authorization_endpoint":"https://auth.example.test/new-authorize","token_endpoint":"https://auth.example.test/new-token","registration_endpoint":"https://auth.example.test/register","token_endpoint_auth_methods_supported":["client_secret_post","client_secret_basic","none"]}`)}
+	logs := new(bytes.Buffer)
+	service := refreshTestService(repo, client, &functionFieldEncryption{}, logs)
+	replacement := refreshRequest(stored)
+	replacement.ID = stored.ID
+
+	require.NoError(t, service.Update(ctx, replacement, &stored.Version))
+	assert.Equal(t, []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + discoveryIssuerOAuth}, client.calls, "refresh must not re-register or select the newly preferred POST method")
+	assert.Equal(t, 1, repo.updates)
+	assert.Zero(t, repo.statusWrites)
+	assert.Equal(t, stored.ClientID, repo.stored.ClientID)
+	assert.Equal(t, stored.Discovery.ClientMethod, repo.stored.Discovery.ClientMethod)
+	assert.Equal(t, model.TokenEndpointAuthMethodClientSecretBasic, repo.stored.TokenEndpointAuthMethod)
+	assert.Equal(t, stored.Secret, repo.stored.Secret)
+	assert.Equal(t, "https://auth.example.test/new-token", repo.stored.Endpoints.TokenEndpoint)
+	assert.Equal(t, "https://audience.example.test/explicit", repo.stored.AuthorizationParams["resource"])
+	assert.True(t, repo.stored.ResourceExplicit)
+	assert.Equal(t, stored.Version+1, repo.stored.Version)
+	require.NotNil(t, repo.stored.DiscoveryStatus.LastAttemptAt)
+	require.NotNil(t, repo.stored.DiscoveryStatus.LastSuccessAt)
+	assert.Equal(t, *repo.stored.DiscoveryStatus.LastAttemptAt, *repo.stored.DiscoveryStatus.LastSuccessAt)
+	assert.True(t, repo.stored.DiscoveryStatus.LastSuccessAt.After(*stored.DiscoveryStatus.LastSuccessAt))
+	assert.Nil(t, repo.stored.DiscoveryStatus.FailureReason)
+	view, err := service.GetDiscoveryStatus(ctx, stored.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "ready", view.Status)
+	require.NotNil(t, view.IssuerURI)
+	assert.Equal(t, discoveryIssuer, *view.IssuerURI)
+	assert.NotContains(t, logs.String(), "original-sealed-secret")
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_ExplicitIssuerChangeRegistersOneClientWithStoredPOSTMethod(t *testing.T) {
+	const nextIssuer = "https://other-auth.example.test/tenant"
+	const nextMetadata = "https://other-auth.example.test/.well-known/oauth-authorization-server/tenant"
+	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretPost)
+	repo := newRefreshTestRepository(stored)
+	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_post"}, nil))
+	client.gets[discoveryResourcePath] = discoveryJSONReply{body: protectedResourceDocument(discoveryResource, discoveryIssuer, nextIssuer)}
+	client.gets[nextMetadata] = discoveryJSONReply{body: []byte(`{"issuer":"https://other-auth.example.test/tenant","authorization_endpoint":"https://other-auth.example.test/tenant/authorize","token_endpoint":"https://other-auth.example.test/tenant/token","registration_endpoint":"https://other-auth.example.test/tenant/register","token_endpoint_auth_methods_supported":["client_secret_basic","client_secret_post","none"]}`)}
+	registrationCount := 0
+	client.postFn = func(_ context.Context, rawURL string, body []byte) ([]byte, error) {
+		registrationCount++
+		assert.Equal(t, nextIssuer+"/register", rawURL)
+		var registration map[string]any
+		require.NoError(t, json.Unmarshal(body, &registration))
+		assert.Equal(t, string(model.TokenEndpointAuthMethodClientSecretPost), registration["token_endpoint_auth_method"], "the old POST method wins over the new issuer's Basic preference")
+		assert.Equal(t, "Example Platform", registration["client_name"])
+		response := dcrResponse(dcrCallback(stored.ID), model.TokenEndpointAuthMethodClientSecretPost, "new-issued-secret")
+		response["client_id"] = "new-issuer-client"
+		return dcrJSON(response), nil
+	}
+	encryptions := 0
+	encryption := &functionFieldEncryption{encryptFn: func(_ context.Context, plaintext []byte, aad map[string]string) ([]byte, error) {
+		encryptions++
+		assert.Equal(t, []byte("new-issued-secret"), plaintext)
+		assert.Equal(t, map[string]string{"service_id": stored.ID.String()}, aad)
+		return []byte("new-sealed-secret"), nil
+	}}
+	service := refreshTestService(repo, client, encryption, new(bytes.Buffer))
+	replacement := refreshRequest(stored)
+	replacement.IssuerURI = nextIssuer
+	replacement.ID = stored.ID
+
+	require.NoError(t, service.Update(context.Background(), replacement, &stored.Version))
+	assert.Equal(t, []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + nextMetadata, "post " + nextIssuer + "/register"}, client.calls)
+	assert.Equal(t, 1, registrationCount)
+	assert.Equal(t, 1, encryptions)
+	assert.Equal(t, nextIssuer, repo.stored.IssuerURI)
+	assert.Equal(t, id.ClientID("new-issuer-client"), repo.stored.ClientID)
+	assert.Equal(t, model.ClientBootstrapDCR, repo.stored.Discovery.ClientMethod)
+	assert.Equal(t, model.TokenEndpointAuthMethodClientSecretPost, repo.stored.TokenEndpointAuthMethod)
+	secret, err := repo.stored.Secret.GetCiphertext()
+	require.NoError(t, err)
+	assert.Equal(t, []byte("new-sealed-secret"), secret)
+	assert.Equal(t, stored.Version+1, repo.stored.Version)
+	assert.Zero(t, repo.statusWrites)
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_DuplicateNewIssuerClientRecordsFailedStatus(t *testing.T) {
+	const nextIssuer = "https://other-auth.example.test/tenant"
+	const nextMetadata = "https://other-auth.example.test/.well-known/oauth-authorization-server/tenant"
+	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretPost)
+	repo := newRefreshTestRepository(stored)
+	repo.updateFn = func(_ context.Context, _ *model.ThirdpartyOAuth2ProviderEntity, version *int64) error {
+		require.Equal(t, stored.Version, *version)
+		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
+			storage.ErrDuplicateDCRClientIdentity, "provider DCR issuer and client_id already exist")
+	}
+	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_post"}, nil))
+	client.gets[discoveryResourcePath] = discoveryJSONReply{body: protectedResourceDocument(discoveryResource, discoveryIssuer, nextIssuer)}
+	client.gets[nextMetadata] = discoveryJSONReply{body: []byte(strings.ReplaceAll(string(issuerDCRDocument([]string{"client_secret_post"}, nil)), discoveryIssuer, nextIssuer))}
+	registrations := 0
+	client.postFn = func(_ context.Context, rawURL string, _ []byte) ([]byte, error) {
+		registrations++
+		assert.Equal(t, nextIssuer+"/register", rawURL)
+		return dcrJSON(dcrResponse(dcrCallback(stored.ID), model.TokenEndpointAuthMethodClientSecretPost, "new-issued-secret")), nil
+	}
+	encryption := &functionFieldEncryption{encryptFn: func(_ context.Context, plaintext []byte, aad map[string]string) ([]byte, error) {
+		assert.Equal(t, []byte("new-issued-secret"), plaintext)
+		assert.Equal(t, map[string]string{"service_id": stored.ID.String()}, aad)
+		return []byte("new-sealed-secret"), nil
+	}}
+	logs := new(bytes.Buffer)
+	service := refreshTestService(repo, client, encryption, logs)
+	replacement := refreshRequest(stored)
+	replacement.ID = stored.ID
+	replacement.IssuerURI = nextIssuer
+
+	err := service.Update(context.Background(), replacement, &stored.Version)
+	require.ErrorIs(t, err, storage.ErrDuplicateDCRClientIdentity)
+	assert.Equal(t, 1, registrations)
+	assert.Equal(t, 1, repo.statusWrites)
+	assert.Equal(t, stored.Version, repo.lastVersion)
+	assert.Equal(t, "duplicate_client_identity", repo.lastCode)
+	assert.Zero(t, repo.updates)
+	assert.Equal(t, stored.IssuerURI, repo.stored.IssuerURI)
+	assert.Equal(t, stored.ClientID, repo.stored.ClientID)
+	assert.Equal(t, stored.Secret, repo.stored.Secret)
+	assert.Equal(t, stored.Version, repo.stored.Version)
+	assert.Equal(t, stored.DiscoveryStatus.LastSuccessAt, repo.stored.DiscoveryStatus.LastSuccessAt)
+	require.NotNil(t, repo.stored.DiscoveryStatus.FailureReason)
+	assert.Equal(t, "duplicate_client_identity", *repo.stored.DiscoveryStatus.FailureReason)
+	var audit map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &audit))
+	assert.Equal(t, nextIssuer, audit["issuer"])
+	assert.Equal(t, "duplicate_client_identity", audit["failure_code"])
+	assert.NotContains(t, logs.String(), "new-issued-secret")
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_CIMDIssuerChangeKeepsHostedIdentityWithoutDCR(t *testing.T) {
+	const nextIssuer = "https://other-auth.example.test/tenant"
+	const nextMetadata = "https://other-auth.example.test/.well-known/oauth-authorization-server/tenant"
+	stored := readyRefreshProvider(model.TokenEndpointAuthMethodPrivateKeyJWT)
+	stored.Discovery.ClientMethod = model.ClientBootstrapCIMD
+	stored.ClientID = id.ClientID(dcrBrokerOrigin + "/.well-known/oauth-client/" + stored.ID.String())
+	stored.Secret = model.NewAbsentSecret()
+	repo := newRefreshTestRepository(stored)
+	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_basic"}, nil))
+	client.gets[discoveryResourcePath] = discoveryJSONReply{body: protectedResourceDocument(discoveryResource, discoveryIssuer, nextIssuer)}
+	client.gets[nextMetadata] = discoveryJSONReply{body: issuerCIMDDocument(nextIssuer, nextIssuer+"/authorize")}
+	service := refreshTestService(repo, client, &functionFieldEncryption{}, new(bytes.Buffer))
+	replacement := refreshRequest(stored)
+	replacement.ID = stored.ID
+	replacement.IssuerURI = nextIssuer
+
+	require.NoError(t, service.Update(context.Background(), replacement, &stored.Version))
+	assert.Equal(t, []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + nextMetadata}, client.calls, "an existing hosted client must not be registered through DCR")
+	assert.Equal(t, nextIssuer, repo.stored.IssuerURI)
+	assert.Equal(t, stored.ClientID, repo.stored.ClientID)
+	assert.Equal(t, model.ClientBootstrapCIMD, repo.stored.Discovery.ClientMethod)
+	assert.Equal(t, model.TokenEndpointAuthMethodPrivateKeyJWT, repo.stored.TokenEndpointAuthMethod)
+	assert.True(t, repo.stored.Secret.IsAbsent())
+	assert.Equal(t, nextIssuer+"/token", repo.stored.Endpoints.TokenEndpoint)
+	assert.Equal(t, stored.Version+1, repo.stored.Version)
+	assert.Zero(t, repo.statusWrites)
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_IssuerChangeRequiresZeroSessionsBeforeDiscovery(t *testing.T) {
+	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
+	repo := newRefreshTestRepository(stored)
+	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_basic"}, nil))
+	sessions := &refreshSessionRepository{count: 1}
+	logs := new(bytes.Buffer)
+	service := refreshTestService(repo, client, &functionFieldEncryption{}, logs).WithUserSessions(sessions)
+	replacement := refreshRequest(stored)
+	replacement.ID = stored.ID
+	replacement.IssuerURI = "https://other-auth.example.test/tenant"
+
+	err := service.Update(context.Background(), replacement, &stored.Version)
+	require.ErrorContains(t, err, "issuer_change_requires_no_sessions")
+	assert.Equal(t, 1, sessions.calls)
+	assert.Empty(t, client.calls, "an active session must block discovery and registration at the new issuer")
+	assert.Zero(t, repo.updates)
+	assert.Equal(t, 1, repo.statusWrites)
+	assert.Equal(t, "issuer_change_requires_no_sessions", repo.lastCode)
+	assert.Equal(t, stored.ClientID, repo.stored.ClientID)
+	assert.Equal(t, stored.Secret, repo.stored.Secret)
+	assert.Equal(t, stored.Version, repo.stored.Version)
+	assert.Equal(t, "failed", repo.stored.DiscoveryStatus.Status(repo.stored.Discovery.ResourceURL))
+	var audit map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &audit))
+	assert.Equal(t, stored.IssuerURI, audit["issuer"])
+	assert.Equal(t, string(stored.Discovery.ClientMethod), audit["client_method"])
+	assert.Equal(t, "issuer_change_requires_no_sessions", audit["failure_code"])
+	assert.NotContains(t, logs.String(), replacement.IssuerURI, "the requested issuer has not been verified")
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_RejectsAuthenticationDowngradesWithoutReplacingActiveService(t *testing.T) {
+	const nextIssuer = "https://other-auth.example.test/tenant"
+	const nextMetadata = "https://other-auth.example.test/.well-known/oauth-authorization-server/tenant"
+	cases := []struct {
+		name         string
+		method       model.TokenEndpointAuthMethod
+		metadata     []byte
+		cimd         bool
+		issuerChange bool
+	}{
+		{name: "Basic-to-POST", method: model.TokenEndpointAuthMethodClientSecretBasic, metadata: issuerDCRDocument([]string{"client_secret_post", "none"}, []string{"S256"})},
+		{name: "confidential-to-public-on-new-issuer", method: model.TokenEndpointAuthMethodClientSecretBasic, metadata: issuerDCRDocument([]string{"none"}, []string{"S256"}), issuerChange: true},
+		{name: "CIMD-to-DCR-on-new-issuer", method: model.TokenEndpointAuthMethodPrivateKeyJWT, metadata: issuerDCRDocument([]string{"client_secret_basic", "none"}, []string{"S256"}), cimd: true, issuerChange: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stored := readyRefreshProvider(tc.method)
+			if tc.cimd {
+				stored.Discovery.ClientMethod = model.ClientBootstrapCIMD
+				stored.ClientID = id.ClientID(dcrBrokerOrigin + "/.well-known/oauth-client/" + stored.ID.String())
+				stored.Secret = model.NewAbsentSecret()
+			}
+			repo := newRefreshTestRepository(stored)
+			client := dcrDiscoveryClient(tc.metadata)
+			wantCalls := []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + discoveryIssuerOAuth}
+			if tc.issuerChange {
+				client.gets[discoveryResourcePath] = discoveryJSONReply{body: protectedResourceDocument(discoveryResource, discoveryIssuer, nextIssuer)}
+				client.gets[nextMetadata] = discoveryJSONReply{body: []byte(strings.ReplaceAll(string(tc.metadata), discoveryIssuer, nextIssuer))}
+				wantCalls[2] = "get " + nextMetadata
+			}
+			logs := new(bytes.Buffer)
+			service := refreshTestService(repo, client, &functionFieldEncryption{}, logs)
+			replacement := refreshRequest(stored)
+			replacement.ID = stored.ID
+			if tc.issuerChange {
+				replacement.IssuerURI = nextIssuer
+			}
+
+			err := service.Update(context.Background(), replacement, &stored.Version)
+			require.ErrorContains(t, err, "client_method_changed")
+			assert.Equal(t, wantCalls, client.calls, "do not fall back to another client bootstrap or token authentication method")
+			assert.Zero(t, repo.updates)
+			assert.Equal(t, 1, repo.statusWrites, "a remote refresh failure must persist a safe failure status")
+			assert.Equal(t, stored.Version, repo.lastVersion)
+			assert.Equal(t, "client_method_changed", repo.lastCode)
+			assert.Equal(t, stored.Version, repo.stored.Version, "failure must not change ETag")
+			assert.Equal(t, stored.IssuerURI, repo.stored.IssuerURI)
+			assert.Equal(t, stored.ClientID, repo.stored.ClientID)
+			assert.Equal(t, stored.Discovery.ClientMethod, repo.stored.Discovery.ClientMethod)
+			assert.Equal(t, stored.TokenEndpointAuthMethod, repo.stored.TokenEndpointAuthMethod)
+			assert.Equal(t, stored.Secret, repo.stored.Secret)
+			assert.Equal(t, stored.Endpoints, repo.stored.Endpoints)
+			assert.Equal(t, stored.AuthorizationParams, repo.stored.AuthorizationParams)
+			assert.Equal(t, stored.DiscoveryStatus.LastSuccessAt, repo.stored.DiscoveryStatus.LastSuccessAt)
+			require.NotNil(t, repo.stored.DiscoveryStatus.FailureReason)
+			assert.Equal(t, "client_method_changed", *repo.stored.DiscoveryStatus.FailureReason)
+			require.NotNil(t, repo.stored.DiscoveryStatus.LastAttemptAt)
+			assert.True(t, repo.stored.DiscoveryStatus.LastAttemptAt.After(*stored.DiscoveryStatus.LastAttemptAt))
+			view, viewErr := service.GetDiscoveryStatus(context.Background(), stored.ID)
+			require.NoError(t, viewErr)
+			require.NotNil(t, view.IssuerURI)
+			assert.Equal(t, "failed", view.Status)
+			assert.Equal(t, discoveryIssuer, *view.IssuerURI)
+			assert.NotContains(t, logs.String(), "original-sealed-secret")
+		})
+	}
+}
+
+// The issuer metadata read is the concurrency point: a later refresh can commit
+// while this earlier read is in flight. Its subsequent failure must not win.
+type interleavedRefreshClient struct {
+	*recordingOAuthDiscoveryClient
+	beforeIssuerRead func()
+}
+
+func (c *interleavedRefreshClient) GetJSON(ctx context.Context, rawURL string) ([]byte, error) {
+	if rawURL == discoveryIssuerOAuth {
+		c.beforeIssuerRead()
+	}
+	return c.recordingOAuthDiscoveryClient.GetJSON(ctx, rawURL)
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_StaleFailureDoesNotReplaceNewerSuccessOrLeakProviderBody(t *testing.T) {
+	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
+	repo := newRefreshTestRepository(stored)
+	const hostileBody = `{"issuer":"https://auth.example.test/tenant","authorization_endpoint":"https://auth.example.test/authorize?access_token=private-token","client_secret":"provider-secret"}`
+	client := &interleavedRefreshClient{recordingOAuthDiscoveryClient: dcrDiscoveryClient([]byte(hostileBody))}
+	client.beforeIssuerRead = func() {
+		repo.stored.Endpoints.TokenEndpoint = discoveryIssuer + "/new-token"
+		repo.stored.Version++
+		committedAt := time.Now().UTC()
+		repo.stored.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &committedAt, LastSuccessAt: &committedAt}
+	}
+	logs := new(bytes.Buffer)
+	service := refreshTestService(repo, client, &functionFieldEncryption{}, logs)
+	replacement := refreshRequest(stored)
+	replacement.ID = stored.ID
+
+	err := service.Update(context.Background(), replacement, &stored.Version)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "authorization_server_metadata_invalid")
+	assert.Equal(t, 1, repo.statusWrites, "the failure writer receives the observed, not the newly committed, version")
+	assert.Equal(t, stored.Version, repo.lastVersion)
+	assert.Equal(t, "authorization_server_metadata_invalid", repo.lastCode)
+	assert.Zero(t, repo.updates)
+	assert.Equal(t, stored.Version+1, repo.stored.Version)
+	assert.Equal(t, discoveryIssuer+"/new-token", repo.stored.Endpoints.TokenEndpoint)
+	assert.Equal(t, stored.ClientID, repo.stored.ClientID)
+	assert.Equal(t, stored.Secret, repo.stored.Secret)
+	assert.Nil(t, repo.stored.DiscoveryStatus.FailureReason)
+	assert.Equal(t, repo.stored.DiscoveryStatus.LastSuccessAt, repo.stored.DiscoveryStatus.LastAttemptAt)
+	assert.Equal(t, "ready", repo.stored.DiscoveryStatus.Status(repo.stored.Discovery.ResourceURL))
+	var rejectedAudit map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var event map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &event))
+		if event["operation"] == "update" && event["outcome"] == "rejected" {
+			rejectedAudit = event
+			break
+		}
+	}
+	require.NotNil(t, rejectedAudit)
+	assert.Equal(t, stored.ID.String(), rejectedAudit["service_id"])
+	assert.Equal(t, "authorization_server_metadata_invalid", rejectedAudit["failure_code"])
+	assert.NotEqual(t, "https://auth.example.test/tenant?access_token=private-token", rejectedAudit["issuer"], "audit issuer must never come from an unverified provider claim")
+	assert.NotContains(t, logs.String(), "private-token")
+	assert.NotContains(t, logs.String(), "provider-secret")
+	assert.NotContains(t, logs.String(), "original-sealed-secret")
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_ResourceSourceTracksVerifiedURLAndExplicitReplacement(t *testing.T) {
+	const otherResource = "https://mcp.example.test/other"
+	const otherMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource/other"
+	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
+	repo := newRefreshTestRepository(stored)
+	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_basic"}, nil))
+	client.probes[otherResource] = discoveryProbeReply{status: 200}
+	client.gets[otherMetadata] = discoveryJSONReply{body: protectedResourceDocument(otherResource, discoveryIssuer)}
+	service := refreshTestService(repo, client, &functionFieldEncryption{}, new(bytes.Buffer))
+
+	update := func(resource string, params map[string]string) {
+		t.Helper()
+		replacement := discoveredProvider(resource, "")
+		replacement.ID = stored.ID
+		replacement.AuthorizationParams = params
+		version := repo.stored.Version
+		require.NoError(t, service.Update(context.Background(), replacement, &version))
+		assert.Equal(t, stored.ClientID, repo.stored.ClientID)
+		assert.Equal(t, stored.Secret, repo.stored.Secret)
+		assert.Equal(t, model.TokenEndpointAuthMethodClientSecretBasic, repo.stored.TokenEndpointAuthMethod)
+	}
+
+	update(otherResource, nil)
+	assert.Equal(t, otherResource, repo.stored.AuthorizationParams["resource"], "derived resource follows a new verified URL")
+	assert.False(t, repo.stored.ResourceExplicit)
+	update(otherResource, map[string]string{"resource": "https://audience.example.test/explicit"})
+	assert.True(t, repo.stored.ResourceExplicit)
+	update(discoveryResource, nil)
+	assert.Equal(t, "https://audience.example.test/explicit", repo.stored.AuthorizationParams["resource"], "omitted authorization_params retains the explicit override")
+	assert.True(t, repo.stored.ResourceExplicit)
+	update(discoveryResource, map[string]string{"prompt": "consent"})
+	assert.Equal(t, discoveryResource, repo.stored.AuthorizationParams["resource"], "replacement without resource restores the verified URL")
+	assert.Equal(t, "consent", repo.stored.AuthorizationParams["prompt"])
+	assert.False(t, repo.stored.ResourceExplicit)
+	assert.Zero(t, repo.statusWrites)
+	for _, call := range client.calls {
+		assert.NotContains(t, call, "post ", "same-issuer resource changes must not register another client")
+	}
+}
+
+func TestThirdpartyOAuth2ProviderService_Update_InvalidRequestDoesNotRecordDiscoveryAttempt(t *testing.T) {
+	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
+	repo := newRefreshTestRepository(stored)
+	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_basic"}, nil))
+	service := refreshTestService(repo, client, &functionFieldEncryption{}, new(bytes.Buffer))
+	replacement := refreshRequest(stored)
+	replacement.ID = stored.ID
+	badResource := "https://mcp.example.test/mcp#fragment"
+	replacement.Discovery.ResourceURL = &badResource
+
+	require.Error(t, service.Update(context.Background(), replacement, &stored.Version))
+	assert.Empty(t, client.calls, "request-shape failures must happen before untrusted network access")
+	assert.Zero(t, repo.statusWrites)
+	assert.Zero(t, repo.updates)
+	assert.Equal(t, stored.Version, repo.stored.Version)
+	assert.Equal(t, stored.DiscoveryStatus, repo.stored.DiscoveryStatus)
+	assert.Equal(t, stored.Secret, repo.stored.Secret)
+}
+
+func TestThirdpartyOAuth2ProviderService_AuditFinalIssuerConflictUsesSafeCode(t *testing.T) {
+	logs := new(bytes.Buffer)
+	service := &ThirdpartyOAuth2ProviderService{logger: slog.New(slog.NewJSONHandler(logs, nil))}
+	provider := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
+	err := storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
+		storage.ErrIssuerChangeHasSessions, "provider has user sessions")
+	service.auditDiscovery(provider, "update", err, provider)
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &entry))
+	assert.Equal(t, "rejected", entry["outcome"])
+	assert.Equal(t, "issuer_change_requires_no_sessions", entry["failure_code"])
+	assert.Equal(t, provider.IssuerURI, entry["issuer"])
+	assert.NotContains(t, logs.String(), "original-sealed-secret")
 }

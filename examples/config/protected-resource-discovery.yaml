@@ -1,0 +1,52 @@
+# Broker configuration for protected-resource discovery.
+# Replace the public URL with the broker's stable, externally reachable HTTPS URL.
+# Hosted CIMD and DCR use this URL for their identity or OAuth2 callback.
+# Put the broker behind an authenticating reverse proxy on the same host.
+# The proxy must set X-Remote-User. Direct access is limited to loopback.
+# Supply the PostgreSQL URL, KMS key ARN, and random 32-byte base64 JWE key
+# through the named environment variables. Do not store secrets in this file.
+
+log:
+  level: info
+  format: json
+
+server:
+  enduser:
+    bind: "127.0.0.1"
+    public_url: "https://broker.example.com"
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
+  admin:
+    bind: "127.0.0.1"
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
+
+storage:
+  backend: postgres
+  postgres:
+    connection_url: "${IDENTITY_BROKER_STORAGE_POSTGRES_URL}"
+
+encryption:
+  aws_kms:
+    key_arn: "${IDENTITY_BROKER_ENCRYPTION_AWS_KMS_KEY_ARN}"
+
+third_party_oauth2:
+  # This key protects OAuth2 state. It is not the hosted CIMD signing key.
+  jwe_signing_key: "${IDENTITY_BROKER_JWE_SIGNING_KEY}"
+  # Optional broker/platform name. DCR requires a non-blank value; hosted CIMD does not.
+  # Do not use a service display_name here.
+  client_name: "Example Platform"
+
+# The broker still needs an inbound OAuth2 server mode. This is not a CIMD key setting.
+oauth2_authorization_server:
+  mode: "local"
+
+# If hosted CIMD is selected, generate an ES256 client-authentication key through
+# POST /api/cimd-client-keys on the authenticated Admin API when no usable key exists.
+# The broker generates and stores its private key; do not put key material here.
+# Send discovery.enable_discovery: true and a public HTTPS discovery.resource_url
+# in each service's Admin API create/update request, not in this broker configuration file.
+# Discovery and registration have a fixed shared 15-second attempt deadline.
+# Each remote discovery or registration response has a fixed 256-KiB limit.
