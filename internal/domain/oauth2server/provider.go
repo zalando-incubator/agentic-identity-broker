@@ -51,6 +51,7 @@ func NewProvider(
 	tokenTTL time.Duration,
 	refreshTokenTTL time.Duration,
 	tokenClaimsExpression string,
+	verifier grantVerifier,
 	logger *slog.Logger,
 	transactions ...ports.StorageTransactionManager,
 ) (*Provider, error) {
@@ -72,7 +73,7 @@ func NewProvider(
 	refreshStrategy := &RandomRefreshTokenStrategy{}
 
 	// Storage adapters
-	storage := NewFositeStorage(codeRepo, refreshRepo, pkceRepo, credRepo, clientResolver, logger, transactions...)
+	storage := NewFositeStorage(codeRepo, refreshRepo, pkceRepo, credRepo, clientResolver, verifier, logger, transactions...)
 
 	config := &fosite.Config{
 		AuthorizeCodeLifespan:          60 * time.Second,
@@ -442,6 +443,11 @@ func (p *Provider) HandleRefreshToken(
 
 	fositeResp := fosite.NewAccessResponse()
 	if err := p.refreshHandler.PopulateTokenEndpointResponse(ctx, req, fositeResp); err != nil {
+		// Fosite has rolled back, but reports an inactive rotation as invalid_request.
+		if errors.Is(err, fosite.ErrInvalidRequest) && !errors.Is(err, fosite.ErrServerError) &&
+			(errors.Is(err, fosite.ErrNotFound) || errors.Is(err, fosite.ErrInactiveToken)) {
+			return nil, fosite.ErrInvalidGrant
+		}
 		return nil, err
 	}
 

@@ -44,6 +44,7 @@ func newTestProvider(t *testing.T) (*Provider, *memory.AgentRepository, *Signing
 		time.Hour, // 1h TTL
 		time.Hour,
 		"", // no CEL expression
+		newTestGrantVerifier(agentRepo),
 		logger,
 	)
 	require.NoError(t, err)
@@ -76,6 +77,7 @@ func setupTestCredentials(t *testing.T, provider *Provider, agentRepo ports.Agen
 
 	err = provider.fositeStorage.credRepo.Create(ctx, cred)
 	require.NoError(t, err)
+	seedTestGrant(t, provider.fositeStorage.verifier, agent.ID, id.Principal("user@example.com"))
 
 	return agent, cred, plaintext
 }
@@ -491,6 +493,7 @@ func TestProvider_RefreshTokens(t *testing.T) {
 			time.Hour,
 			time.Hour,
 			"",
+			nil,
 			logger,
 		)
 		require.NoError(t, err)
@@ -958,7 +961,7 @@ func TestProvider_CEL_RequestGrantType(t *testing.T) {
 		logger := testSlogger()
 
 		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
-		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, logger)
+		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), logger)
 		require.NoError(t, err)
 
 		_, err = svc.generateAndStore(context.Background(), "ES256", true, time.Now())
@@ -1022,7 +1025,7 @@ func TestProvider_CEL_AudienceListClaimFailsAuthorizationCodeExchange(t *testing
 		logger := testSlogger()
 
 		svc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
-		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, logger)
+		p, err := NewProvider(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, svc, "https://broker.example.com", time.Hour, time.Hour, expr, newTestGrantVerifier(agentRepo), logger)
 		require.NoError(t, err)
 
 		_, err = svc.generateAndStore(context.Background(), "ES256", true, time.Now())

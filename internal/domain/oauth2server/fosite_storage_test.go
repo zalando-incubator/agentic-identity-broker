@@ -83,7 +83,7 @@ func newTestFositeStorage() (*FositeStorage, *memory.AuthorizationCodeStore, *me
 	agentRepo := memory.NewAgentRepository()
 	credRepo := memory.NewClientCredentialStore()
 	resolver := &testClientResolver{agentRepo: agentRepo}
-	return NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), pkceRepo, credRepo, resolver, testSlogger()), codeRepo, agentRepo, credRepo
+	return NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), pkceRepo, credRepo, resolver, newTestGrantVerifier(agentRepo), testSlogger()), codeRepo, agentRepo, credRepo
 }
 
 func TestFositeStorage_AuthorizeCodeSessions(t *testing.T) {
@@ -343,6 +343,7 @@ func TestFositeStorage_RefreshTokenSessions(t *testing.T) {
 			SecretHash: "hash",
 		}
 		require.NoError(t, credRepo.Create(context.Background(), cred))
+		seedTestGrant(t, store.verifier, agent.ID, id.Principal("user@example.com"))
 
 		return &fosite.Request{
 			ID:             requestID,
@@ -410,6 +411,7 @@ func TestFositeStorage_RefreshToken_ProfileRoundTrip(t *testing.T) {
 	require.NoError(t, agentRepo.Create(context.Background(), agent))
 	cred := &dstorage.ClientCredential{ID: id.NewCredentialID(), AgentID: agent.ID, SecretHash: "hash"}
 	require.NoError(t, credRepo.Create(context.Background(), cred))
+	seedTestGrant(t, store.verifier, agent.ID, id.Principal("u@example.com"))
 
 	session := &fosite.DefaultSession{Subject: "u@example.com", ExpiresAt: map[fosite.TokenType]time.Time{fosite.RefreshToken: time.Now().Add(time.Hour)}}
 	setSessionProfile(session, ptr.To("u@example.com"), "Jane Doe")
@@ -536,7 +538,7 @@ func TestExtractAgentID(t *testing.T) {
 }
 
 func TestCreateAuthorizeCodeSession_WrongClientType(t *testing.T) {
-	store := NewFositeStorage(&mockCodeRepo{}, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), &mockCredentialRepo{}, &testClientResolver{agentRepo: memory.NewAgentRepository()}, testSlogger())
+	store := NewFositeStorage(&mockCodeRepo{}, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), &mockCredentialRepo{}, &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
 
 	req := &fosite.Request{
 		Client:  &fosite.DefaultClient{ID: "not-a-broker-client"},
@@ -572,7 +574,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 				return nil, connectionErr
 			},
 		}
-		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, testSlogger())
+		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
 
 		_, err := store.GetAuthorizeCodeSession(context.Background(), "anycode", nil)
 		assert.Error(t, err)
@@ -586,14 +588,14 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 				return nil, notFoundErr
 			},
 		}
-		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, testSlogger())
+		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
 
 		_, err := store.GetAuthorizeCodeSession(context.Background(), "anycode", nil)
 		assert.ErrorIs(t, err, fosite.ErrNotFound)
 	})
 
 	t.Run("GetClient non-UUID input returns ErrNotFound", func(t *testing.T) {
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
 
 		_, err := store.GetClient(context.Background(), "broker_any")
 		assert.ErrorIs(t, err, fosite.ErrNotFound)
@@ -606,7 +608,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 				return nil, dstorage.NewStorageError("Get", dstorage.ErrorKindTimeout, nil, "query timeout")
 			},
 		}
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), resolver, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), resolver, nil, testSlogger())
 
 		_, err := store.GetClient(context.Background(), agentID.String())
 		assert.Error(t, err)
@@ -614,7 +616,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 	})
 
 	t.Run("GetClient valid-but-unknown agent UUID returns ErrNotFound", func(t *testing.T) {
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
 
 		_, err := store.GetClient(context.Background(), id.NewAgentID().String())
 		assert.ErrorIs(t, err, fosite.ErrNotFound)
@@ -626,7 +628,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 		agent := &dstorage.Agent{ID: agentID, ClientID: ptr.To(id.ClientID("upstream-client")), DisplayName: "Test Agent", Description: "Test agent for infrastructure error tests", PermissionSets: testAgentPermissionSets()}
 		require.NoError(t, agentRepo.Create(context.Background(), agent))
 		// No credential created — credential repo is empty
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: agentRepo}, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: agentRepo}, nil, testSlogger())
 
 		_, err := store.GetClient(context.Background(), agentID.String())
 		assert.ErrorIs(t, err, fosite.ErrNotFound)
@@ -646,7 +648,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 				return timeoutErr
 			},
 		}
-		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, testSlogger())
+		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
 
 		err := store.InvalidateAuthorizeCodeSession(context.Background(), "anycode")
 		assert.Error(t, err)
@@ -668,7 +670,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 				return notFoundErr
 			},
 		}
-		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, testSlogger())
+		store := NewFositeStorage(codeRepo, memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
 
 		err := store.InvalidateAuthorizeCodeSession(context.Background(), "anycode")
 		assert.ErrorIs(t, err, fosite.ErrInvalidatedAuthorizeCode)
@@ -679,7 +681,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 		pkceRepo := &mockPKCERepo{
 			deleteFunc: func(_ context.Context, _ string) error { return connErr },
 		}
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), pkceRepo, memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), pkceRepo, memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
 
 		err := store.DeletePKCERequestSession(context.Background(), "anysig")
 		assert.Error(t, err)
@@ -691,7 +693,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 		pkceRepo := &mockPKCERepo{
 			deleteFunc: func(_ context.Context, _ string) error { return notFoundErr },
 		}
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), pkceRepo, memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), pkceRepo, memory.NewClientCredentialStore(), &testClientResolver{agentRepo: memory.NewAgentRepository()}, nil, testSlogger())
 
 		err := store.DeletePKCERequestSession(context.Background(), "anysig")
 		assert.ErrorIs(t, err, fosite.ErrNotFound)
@@ -708,7 +710,7 @@ func TestFositeStorage_InfrastructureErrors(t *testing.T) {
 			SecretHash: "hash",
 		}
 		require.NoError(t, credRepo.Create(context.Background(), cred))
-		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, testSlogger())
+		store := NewFositeStorage(memory.NewAuthorizationCodeStore(), memory.NewRefreshTokenSessionStore(), memory.NewPKCESessionStore(), credRepo, &testClientResolver{agentRepo: agentRepo}, nil, testSlogger())
 
 		client, err := store.GetClient(context.Background(), agentID.String())
 		require.NoError(t, err)

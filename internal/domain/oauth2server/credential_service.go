@@ -2,6 +2,7 @@ package oauth2server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -13,12 +14,13 @@ import (
 type CredentialService struct {
 	agents      ports.AgentRepository
 	credentials ports.ClientCredentialRepository
+	refreshRepo ports.RefreshTokenSessionRepository
 	generator   ports.CredentialGenerator
 	logger      *slog.Logger
 }
 
-func NewCredentialService(agents ports.AgentRepository, credentials ports.ClientCredentialRepository, generator ports.CredentialGenerator, logger *slog.Logger) *CredentialService {
-	return &CredentialService{agents: agents, credentials: credentials, generator: generator, logger: logger}
+func NewCredentialService(agents ports.AgentRepository, credentials ports.ClientCredentialRepository, refreshRepo ports.RefreshTokenSessionRepository, generator ports.CredentialGenerator, logger *slog.Logger) *CredentialService {
+	return &CredentialService{agents: agents, credentials: credentials, refreshRepo: refreshRepo, generator: generator, logger: logger}
 }
 
 func (s *CredentialService) Generate(ctx context.Context, agentID id.AgentID) (ports.CredentialGenerationResult, error) {
@@ -57,5 +59,13 @@ func (s *CredentialService) Get(ctx context.Context, agentID id.AgentID) (*stora
 }
 
 func (s *CredentialService) Revoke(ctx context.Context, agentID id.AgentID) error {
-	return s.credentials.Delete(ctx, agentID)
+	if err := s.credentials.Delete(ctx, agentID); err != nil {
+		return err
+	}
+	count, err := s.refreshRepo.RevokeByAgent(ctx, agentID)
+	if err != nil {
+		return fmt.Errorf("failed to revoke refresh sessions: %w", err)
+	}
+	s.logger.Info("refresh sessions revoked", "trigger", "credential_revoked", "agent_id", agentID, "row_count", count)
+	return nil
 }

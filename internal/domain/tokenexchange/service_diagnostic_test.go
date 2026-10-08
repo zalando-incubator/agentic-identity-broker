@@ -124,7 +124,7 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			svc := &TokenExchangeService{
 				jwtValidator: jwtValidator, celEvaluator: celEvaluator, providerService: thirdpartyService,
 				oauth2SessionService: sessionService, agentRepository: agentRepo,
-				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, slog.Default()),
+				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, nil, slog.Default()),
 				permissionSetService: permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default()),
 			}
 			claims := map[string]interface{}{
