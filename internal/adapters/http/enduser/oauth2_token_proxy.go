@@ -62,10 +62,6 @@ func (r *oauth2TokenProxyResponse) ReadBody() ([]byte, error) {
 	return body, nil
 }
 
-func (r *oauth2TokenProxyResponse) StreamBody(dst io.Writer) (int64, error) {
-	return io.Copy(dst, r.Body)
-}
-
 func (r *oauth2TokenProxyResponse) CloseBody() error {
 	return r.Body.Close()
 }

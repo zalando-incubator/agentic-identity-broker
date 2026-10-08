@@ -4,18 +4,20 @@ import (
 	"context"
 	"testing"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGenerateMetadata_ProxyMode(t *testing.T) {
-	svc := NewAuthorizationService(nil, NewMockSessionRepository(), nil, &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), nil, &OAuth2Config{
 		ModeStrategy:           NewProxyModeStrategy(),
 		PublicURL:              "https://broker.example.com",
 		SupportedResponseTypes: []string{"code"},
 		SupportedGrantTypes:    []string{"authorization_code", "refresh_token"},
 		SupportedScopes:        nil,
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	metadata, err := svc.GenerateMetadata(context.Background())
 	require.NoError(t, err)
@@ -31,13 +33,13 @@ func TestGenerateMetadata_ProxyMode(t *testing.T) {
 }
 
 func TestGenerateMetadata_LocalMode(t *testing.T) {
-	svc := NewAuthorizationService(nil, NewMockSessionRepository(), nil, &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), nil, &OAuth2Config{
 		ModeStrategy:           NewLocalModeStrategy(),
 		PublicURL:              "https://broker.example.com",
 		SupportedResponseTypes: []string{"code"},
 		SupportedGrantTypes:    []string{"authorization_code", "client_credentials", "refresh_token"},
 		SupportedScopes:        []string{"offline_access"},
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	metadata, err := svc.GenerateMetadata(context.Background())
 	require.NoError(t, err)
@@ -53,13 +55,13 @@ func TestGenerateMetadata_LocalMode(t *testing.T) {
 
 // T045b: hybrid mode metadata reflects union of proxy + local capabilities.
 func TestGenerateMetadata_HybridMode(t *testing.T) {
-	svc := NewAuthorizationService(nil, NewMockSessionRepository(), nil, &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), nil, &OAuth2Config{
 		ModeStrategy:           NewHybridModeStrategy(),
 		PublicURL:              "https://broker.example.com",
 		SupportedResponseTypes: []string{"code"},
 		SupportedGrantTypes:    []string{"authorization_code", "client_credentials", "refresh_token"},
 		SupportedScopes:        []string{"offline_access"},
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	metadata, err := svc.GenerateMetadata(context.Background())
 	require.NoError(t, err)
@@ -72,14 +74,14 @@ func TestGenerateMetadata_HybridMode(t *testing.T) {
 }
 
 func TestGenerateMetadata_LocalModeWithCIMD(t *testing.T) {
-	svc := NewAuthorizationService(nil, NewMockSessionRepository(), nil, &OAuth2Config{
+	svc := NewAuthorizationService(consent.NewService(nil, nil, nil, nil, nil, nil, ledgerfixture.NewRecorder()), NewMockSessionRepository(), nil, &OAuth2Config{
 		ModeStrategy:           NewLocalModeStrategy(),
 		PublicURL:              "https://broker.example.com",
 		SupportedResponseTypes: []string{"code"},
 		SupportedGrantTypes:    []string{"authorization_code", "client_credentials", "refresh_token"},
 		SupportedScopes:        []string{"offline_access"},
 		CIMDEnabled:            true,
-	}, nil, newTestSessionTokenService())
+	}, nil, newTestSessionTokenService(), ledgerfixture.NewRecorder())
 
 	metadata, err := svc.GenerateMetadata(context.Background())
 	require.NoError(t, err)

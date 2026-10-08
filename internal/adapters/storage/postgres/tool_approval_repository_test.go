@@ -142,12 +142,21 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 
 		_, err := createPatternedApproval(ctx, repo, first)
 		require.NoError(t, err)
+		unrecognized, err := createPatternedApproval(ctx, repo, second)
+		require.NoError(t, err)
+		require.Equal(t, first.ID, unrecognized.ID, "retirement must wait for expiry recognition")
+		old, err := repo.Get(ctx, first.ID)
+		require.NoError(t, err)
+		require.False(t, old.Consumed)
+		won, err := repo.RecordExpiration(ctx, first.ID, first.ExpiresAt)
+		require.NoError(t, err)
+		require.True(t, won)
 		created, err := createPatternedApproval(ctx, repo, second)
 		require.NoError(t, err)
 		assert.Equal(t, second.ID, created.ID)
 		assert.Equal(t, second.ApprovalURL, created.ApprovalURL)
 
-		old, err := repo.Get(ctx, first.ID)
+		old, err = repo.Get(ctx, first.ID)
 		require.NoError(t, err)
 		assert.True(t, old.Consumed)
 	})
@@ -367,6 +376,71 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 	})
 }
 
+func TestToolApprovalRepository_TransitionsRejectExpiryAfterOwnerBegan(t *testing.T) {
+	adapter, cleanup := setupApprovalTestDB(t)
+	defer cleanup()
+	repo := NewToolApprovalRepository(adapter)
+	syncRepo := NewApprovalSyncStateRepository(adapter)
+	ctx := context.Background()
+	agentID := id.NewAgentID()
+	seedAgent(t, adapter, agentID)
+	for _, action := range []string{"approve", "deny"} {
+		t.Run(action, func(t *testing.T) {
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			approval := &storage.ToolApproval{
+				ID: id.NewApprovalID(), Principal: "in-progress-expiry", AgentID: agentID,
+				GatewayClientID: "test-gateway", ToolName: "read_file", ArgumentsHash: action,
+				Status: storage.ApprovalStatusPending, ApprovalURL: "https://broker.example/approval",
+				CreatedAt: now, ExpiresAt: now.Add(time.Minute),
+			}
+			_, err := createPatternedApproval(ctx, repo, approval)
+			require.NoError(t, err)
+			owner, err := adapter.BeginTX(ports.WithStorageTransactionHints(ctx, ports.StorageTransactionHints{
+				Subjects: []ports.StorageSubjectGate{{Principal: approval.Principal}},
+			}))
+			require.NoError(t, err)
+			defer func() { _ = adapter.Rollback(owner) }()
+			_, err = adapter.storageExecutor(owner).ExecContext(owner, `
+				UPDATE tool_approvals SET expires_at = clock_timestamp() + interval '100 milliseconds' WHERE id = $1`, approval.ID)
+			require.NoError(t, err)
+			var eligibleAtStart bool
+			require.NoError(t, adapter.storageExecutor(owner).GetContext(owner, &eligibleAtStart,
+				`SELECT expires_at > transaction_timestamp() FROM tool_approvals WHERE id = $1`, approval.ID))
+			require.True(t, eligibleAtStart)
+			_, err = adapter.storageExecutor(owner).ExecContext(owner, `SELECT pg_sleep(0.15)`)
+			require.NoError(t, err)
+			var expired bool
+			require.NoError(t, adapter.storageExecutor(owner).GetContext(owner, &expired,
+				`SELECT expires_at < clock_timestamp() FROM tool_approvals WHERE id = $1`, approval.ID))
+			require.True(t, expired)
+			versionBefore, err := syncRepo.GetVersion(owner)
+			require.NoError(t, err)
+
+			var result *storage.ToolApproval
+			switch action {
+			case "approve":
+				result, err = repo.Approve(owner, approval.ID, storage.ApprovalDecision{
+					Persistence: storage.ApprovalPersistenceOnce, ToolPattern: approval.ToolName,
+					ParamsPattern: storageExactParams(t, approval),
+				}, time.Now().UTC())
+			case "deny":
+				result, err = repo.Deny(owner, approval.ID, nil, time.Now().UTC())
+			}
+			require.ErrorIs(t, err, ports.ErrNotFound)
+			require.Nil(t, result)
+			require.NoError(t, adapter.Commit(owner))
+			stored, err := repo.Get(ctx, approval.ID)
+			require.NoError(t, err)
+			require.Equal(t, storage.ApprovalStatusPending, stored.Status)
+			require.Nil(t, stored.ApprovedAt)
+			require.Nil(t, stored.DeniedAt)
+			versionAfter, err := syncRepo.GetVersion(ctx)
+			require.NoError(t, err)
+			require.Equal(t, versionBefore, versionAfter, "an expired transition must not publish a sync change")
+		})
+	}
+}
+
 func TestToolApprovalRepository_MutationsAdvanceSyncVersion(t *testing.T) {
 	adapter, cleanup := setupApprovalTestDB(t)
 	defer cleanup()
@@ -500,6 +574,9 @@ func TestToolApprovalRepository_ActiveQueriesExcludeExpiredAndConsumed(t *testin
 	live := createPending(principal, agentID, "live", now.Add(2*time.Hour))
 	expired := createPending(principal, agentID, "expired", now.Add(-time.Hour))
 	retired := createPending(principal, agentID, "retired", now.Add(-time.Hour))
+	recognized, recognitionErr := repo.RecordExpiration(ctx, retired.ID, retired.ExpiresAt)
+	require.NoError(t, recognitionErr)
+	require.True(t, recognized)
 	replacement := createPending(principal, agentID, "retired", now.Add(2*time.Hour))
 	once := createPending(principal, agentID, "once", now.Add(2*time.Hour))
 	_, err := repo.Approve(ctx, once.ID, storage.ApprovalDecision{
@@ -582,6 +659,26 @@ func TestToolApprovalRepository_FailedCreateDoesNotPersistOrAdvanceSync(t *testi
 	}
 	_, err := createPatternedApproval(ctx, repo, existing)
 	require.NoError(t, err)
+	t.Run("unrecognized expired duplicate returns unchanged", func(t *testing.T) {
+		before, err := repo.Get(ctx, existing.ID)
+		require.NoError(t, err)
+		baseline, err := syncRepo.GetVersion(ctx)
+		require.NoError(t, err)
+		duplicate := *existing
+		duplicate.ID, duplicate.CreatedAt, duplicate.ExpiresAt = id.NewApprovalID(), now, now.Add(time.Hour)
+		unchanged, err := createPatternedApproval(ctx, repo, &duplicate)
+		require.NoError(t, err)
+		require.Equal(t, before, unchanged)
+		after, err := repo.Get(ctx, existing.ID)
+		require.NoError(t, err)
+		require.Equal(t, before, after)
+		version, err := syncRepo.GetVersion(ctx)
+		require.NoError(t, err)
+		require.Equal(t, baseline, version)
+	})
+	recognized, err := repo.RecordExpiration(ctx, existing.ID, existing.ExpiresAt)
+	require.NoError(t, err)
+	require.True(t, recognized)
 	before, err := repo.Get(ctx, existing.ID)
 	require.NoError(t, err)
 	require.False(t, before.Consumed)
@@ -662,4 +759,36 @@ func createPatternedApproval(ctx context.Context, repo *ToolApprovalRepository, 
 		return nil, err
 	}
 	return repo.Create(ctx, approval)
+}
+
+func TestPostgresApprovalExpirationRecognitionJoinsOwner(t *testing.T) {
+	adapter, cleanup := setupApprovalTestDB(t)
+	defer cleanup()
+	agentID := id.NewAgentID()
+	seedAgent(t, adapter, agentID)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	expiry := now.Add(-time.Hour)
+	approval := &storage.ToolApproval{ID: id.NewApprovalID(), Principal: "expiration-user", AgentID: agentID, ToolName: "read_file", ArgumentsHash: "expiration", Status: storage.ApprovalStatusPending, ApprovalURL: "https://broker.example/approval", CreatedAt: now.Add(-2 * time.Hour), ExpiresAt: expiry}
+	repo := NewToolApprovalRepository(adapter)
+	_, err := createPatternedApproval(context.Background(), repo, approval)
+	require.NoError(t, err)
+	other := *approval
+	other.ID, other.Principal, other.ArgumentsHash = id.NewApprovalID(), "unrelated-expiration-user", "another-expiration"
+	_, err = createPatternedApproval(context.Background(), repo, &other)
+	require.NoError(t, err)
+	owner, err := adapter.BeginTX(context.Background())
+	require.NoError(t, err)
+	defer func() { _ = adapter.Rollback(owner) }()
+	won, err := repo.RecordExpiration(owner, approval.ID, expiry)
+	require.NoError(t, err)
+	require.NoError(t, adapter.Rollback(owner))
+	require.True(t, won)
+	candidates, err := repo.ListUnrecordedExpiredForPrincipal(context.Background(), approval.Principal, time.Now().UTC(), 100)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, approval.ID, candidates[0].ID)
+	candidates, err = repo.ListUnrecordedExpiredForPrincipal(context.Background(), other.Principal, time.Now().UTC(), 1)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, other.ID, candidates[0].ID)
 }

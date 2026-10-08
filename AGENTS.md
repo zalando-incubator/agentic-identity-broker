@@ -13,7 +13,7 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 ### Architecture & Decisions
 
 `ARCHITECTURE.md` | Source of truth for system design
-`adrs/NNN-*.md` | Binding ADRs — read before implementation (see the ADR index that follows)
+`adrs/NNN-*.md` | Decision records. Accepted ADRs are binding. Proposed ADRs require review (see the ADR index).
 `.specify/memory/constitution.md` | Binding constitution — 13 principles governing all work
 
 ### Section-Specific Agent Context
@@ -146,6 +146,7 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
+| 039 | `adrs/039-business-event-ledger.md` | Accepted ledger design: atomic facts, recoverable telemetry, and deletion barriers |
 
 ## Domain Glossary
 
@@ -175,6 +176,7 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 | `just build` | Build Go binary → `./bin/agentic-identity-broker` |
 | `just test` | Fast Go/package tests (no E2E or integration suites) |
 | `just verify` | Full verification gate with E2E as the final guard layer |
+| `just security broker` | First-party broker runtime code and reachable dependency vulnerabilities |
 | `just build-all` | Backend + frontend build |
 | `just test-e2e` | All backend, ExtProc, and frontend E2E suites |
 | `just test-integration` | Default self-contained integration suites |

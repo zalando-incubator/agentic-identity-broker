@@ -48,7 +48,7 @@ func NewProxyTokenGrantStrategy(
 	return &proxyTokenGrantStrategy{upstreamTokenURL: upstreamTokenURL, outcomes: outcomes, logger: logger}
 }
 
-// HandleTokenGrant retains streaming when no agent-claim verification is required.
+// HandleTokenGrant forwards only the response staged by domain completion.
 func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *http.Request, _ string, formData url.Values, resolution *ports.TokenGrantResolution) {
 	ctx, span := otel.Tracer("upstream").Start(r.Context(), "oauth2.token_proxy")
 	defer span.End()
@@ -57,6 +57,8 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 	response, failure, err := s.outcomes.Proxy(ctx, formData, r.Header.Get("Content-Type"), resolution)
 	if err != nil {
 		switch failure {
+		case ports.TokenProxyRecordingFailed:
+			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "failed to record token outcome")
 		case ports.TokenProxyClientMissing:
 			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "agent has no upstream client_id configured")
 		case ports.TokenProxyRequestCreationFailed:
@@ -78,15 +80,14 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 
 	statusCode := response.ResponseStatus()
 	span.SetAttributes(attribute.Int("http.status_code", statusCode))
-	for _, headerName := range proxyTokenResponseHeaders {
-		for _, value := range response.HeaderValues(headerName) {
-			w.Header().Add(headerName, value)
-		}
-	}
 
 	agentID := resolution.AgentID
 	completion, failure, err := s.outcomes.CompleteProxy(r.Context(), response, agentID)
 	if err != nil {
+		if failure == ports.TokenProxyRecordingFailed {
+			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "failed to record token outcome")
+			return
+		}
 		if failure == ports.TokenProxyResponseReadFailed {
 			if s.logger != nil {
 				s.logger.ErrorContext(r.Context(), "AgentIDClaimMissing",
@@ -127,16 +128,15 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 				"agent_id", agentID.String(),
 			)
 		}
-		w.WriteHeader(statusCode)
-		_, _ = w.Write(completion.Body)
-		return
 	}
-
-	w.WriteHeader(statusCode)
-	if _, err := response.StreamBody(w); err != nil {
-		if s.logger != nil {
-			s.logger.ErrorContext(r.Context(), "failed to stream upstream token response", "error", err)
+	for _, headerName := range proxyTokenResponseHeaders {
+		for _, value := range response.HeaderValues(headerName) {
+			w.Header().Add(headerName, value)
 		}
+	}
+	w.WriteHeader(statusCode)
+	if _, err := w.Write(completion.Body); err != nil && s.logger != nil {
+		s.logger.ErrorContext(r.Context(), "failed to stream upstream token response", "error", err)
 	}
 }
 

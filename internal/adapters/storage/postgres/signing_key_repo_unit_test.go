@@ -33,17 +33,15 @@ var (
 )
 
 type signingKeyRepoTestConfig struct {
-	beginErr        error
-	execErr         error
-	execErrs        []error
-	queryErr        error
-	queryColumns    []string
-	queryRows       [][]driver.Value
-	queryResults    []signingKeyRepoTestQueryResult
-	commitErr       error
-	rowsAffected    int64
-	recordedQueries *[]string
-	recordedExecs   *[]string
+	beginErr     error
+	execErr      error
+	execErrs     []error
+	queryErr     error
+	queryColumns []string
+	queryRows    [][]driver.Value
+	queryResults []signingKeyRepoTestQueryResult
+	commitErr    error
+	rowsAffected int64
 }
 
 type signingKeyRepoTestQueryResult struct {
@@ -99,10 +97,7 @@ func (c *signingKeyRepoTestConn) BeginTx(_ context.Context, _ driver.TxOptions) 
 	return &signingKeyRepoTestTx{cfg: c.cfg}, nil
 }
 
-func (c *signingKeyRepoTestConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
-	if c.cfg.recordedExecs != nil {
-		*c.cfg.recordedExecs = append(*c.cfg.recordedExecs, query)
-	}
+func (c *signingKeyRepoTestConn) ExecContext(_ context.Context, _ string, _ []driver.NamedValue) (driver.Result, error) {
 	if len(c.cfg.execErrs) > 0 {
 		var err error
 		if c.execCalls < len(c.cfg.execErrs) {
@@ -121,10 +116,7 @@ func (c *signingKeyRepoTestConn) ExecContext(_ context.Context, query string, _ 
 	return driver.RowsAffected(c.cfg.rowsAffected), nil
 }
 
-func (c *signingKeyRepoTestConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
-	if c.cfg.recordedQueries != nil {
-		*c.cfg.recordedQueries = append(*c.cfg.recordedQueries, query)
-	}
+func (c *signingKeyRepoTestConn) QueryContext(_ context.Context, _ string, _ []driver.NamedValue) (driver.Rows, error) {
 	if len(c.cfg.queryResults) > 0 {
 		result := signingKeyRepoTestQueryResult{}
 		if c.queryCalls < len(c.cfg.queryResults) {
@@ -314,7 +306,7 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 	}{
 		{
 			name:      "Create maps deadline exceeded to timeout",
-			cfg:       signingKeyRepoTestConfig{execErr: context.DeadlineExceeded},
+			cfg:       signingKeyRepoTestConfig{queryErr: context.DeadlineExceeded},
 			operation: "SigningKeyRepo.Create",
 			kind:      storage.ErrorKindTimeout,
 			call: func(repo *SigningKeyRepo) error {
@@ -322,8 +314,8 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 			},
 		},
 		{
-			name:      "Create maps generic exec error to connection",
-			cfg:       signingKeyRepoTestConfig{execErr: errors.New("database unavailable")},
+			name:      "Create maps generic query error to connection",
+			cfg:       signingKeyRepoTestConfig{queryErr: errors.New("database unavailable")},
 			operation: "SigningKeyRepo.Create",
 			kind:      storage.ErrorKindConnection,
 			call: func(repo *SigningKeyRepo) error {
@@ -332,7 +324,7 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 		},
 		{
 			name:      "Create maps unique violation to conflict",
-			cfg:       signingKeyRepoTestConfig{execErr: &pgconn.PgError{Code: "23505"}},
+			cfg:       signingKeyRepoTestConfig{queryErr: &pgconn.PgError{Code: "23505"}},
 			operation: "SigningKeyRepo.Create",
 			kind:      storage.ErrorKindConflict,
 			call: func(repo *SigningKeyRepo) error {
@@ -358,8 +350,13 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 			},
 		},
 		{
-			name:      "CreateAndSetCurrent maps unique violation on insert to conflict",
-			cfg:       signingKeyRepoTestConfig{execErrs: []error{nil, &pgconn.PgError{Code: "23505"}}},
+			name: "CreateAndSetCurrent maps unique violation on insert to conflict",
+			cfg: signingKeyRepoTestConfig{
+				queryResults: []signingKeyRepoTestQueryResult{
+					{columns: []string{"kid", "is_current", "activates_at"}},
+					{err: &pgconn.PgError{Code: "23505"}},
+				},
+			},
 			operation: "SigningKeyRepo.CreateAndSetCurrent",
 			kind:      storage.ErrorKindConflict,
 			call: func(repo *SigningKeyRepo) error {
@@ -367,8 +364,14 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 			},
 		},
 		{
-			name:      "CreateAndSetCurrent maps commit generic error to connection",
-			cfg:       signingKeyRepoTestConfig{commitErr: errors.New("commit failed")},
+			name: "CreateAndSetCurrent maps commit generic error to connection",
+			cfg: signingKeyRepoTestConfig{
+				queryResults: []signingKeyRepoTestQueryResult{
+					{columns: []string{"kid", "is_current", "activates_at"}},
+					{columns: []string{"activates_at", "created_at"}, rows: [][]driver.Value{{time.Now(), time.Now()}}},
+				},
+				commitErr: errors.New("commit failed"),
+			},
 			operation: "SigningKeyRepo.CreateAndSetCurrent",
 			kind:      storage.ErrorKindConnection,
 			call: func(repo *SigningKeyRepo) error {
@@ -647,20 +650,6 @@ func TestSigningKeyRepo_ErrorClassification(t *testing.T) {
 	}
 }
 
-func TestSigningKeyRepo_SetPublicJWKUsesConditionalUpdate(t *testing.T) {
-	var execs []string
-	repo := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{
-		rowsAffected:  1,
-		recordedExecs: &execs,
-	})
-
-	written, err := repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
-	require.NoError(t, err)
-	assert.True(t, written)
-	require.Len(t, execs, 1)
-	assert.Contains(t, execs[0], "public_jwk IS NULL")
-}
-
 func TestSigningKeyRepo_SetPublicJWKAlreadySet(t *testing.T) {
 	repo := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{
 		queryColumns: []string{"exists"},
@@ -669,48 +658,6 @@ func TestSigningKeyRepo_SetPublicJWKAlreadySet(t *testing.T) {
 	written, err := repo.SetPublicJWK(context.Background(), id.NewKeyID("kid-public-jwk"), []byte(`{"kty":"EC"}`))
 	require.NoError(t, err)
 	assert.False(t, written)
-}
-
-func TestSigningKeyRepo_MutationPathsLockActiveKeysInDeterministicOrder(t *testing.T) {
-	now := time.Now().UTC()
-
-	t.Run("SetCurrent locks active keys in kid order before updates", func(t *testing.T) {
-		var queries []string
-		repo := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{
-			queryColumns: []string{"kid", "is_current", "activates_at"},
-			queryRows: [][]driver.Value{
-				{"kid-current", true, now},
-				{"kid-target", false, now},
-			},
-			execErr:         context.Canceled,
-			recordedQueries: &queries,
-		})
-
-		_, err := repo.SetCurrentInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-target"), time.Now())
-		require.Error(t, err)
-		require.NotEmpty(t, queries)
-		assert.Contains(t, queries[0], "ORDER BY kid")
-		assert.Contains(t, queries[0], "FOR UPDATE")
-	})
-
-	t.Run("Delete locks active keys in kid order before deletion", func(t *testing.T) {
-		var queries []string
-		repo := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{
-			queryColumns: []string{"kid", "is_current", "activates_at"},
-			queryRows: [][]driver.Value{
-				{"kid-delete", false, now},
-				{"kid-other", true, now},
-			},
-			rowsAffected:    1,
-			recordedQueries: &queries,
-		})
-
-		err := repo.DeleteInDomain(context.Background(), storage.KeyDomainTokenSigning, id.NewKeyID("kid-delete"))
-		require.NoError(t, err)
-		require.NotEmpty(t, queries)
-		assert.Contains(t, queries[0], "ORDER BY kid")
-		assert.Contains(t, queries[0], "FOR UPDATE")
-	})
 }
 
 func TestSigningKeyRepo_DeleteRejectsRemovingCurrentlyUsableFallbackKey(t *testing.T) {

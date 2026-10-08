@@ -15,6 +15,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -113,7 +114,8 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			thirdpartyService := newTestProviderService(repo)
 			sessionConfig := oauth2session.DefaultConfig()
 			sessionConfig.CallbackBaseURL = "https://broker.example.com/"
-			sessionService := oauth2session.NewOAuth2SessionService(thirdpartyService, sessionRepo, sessionRepo, nil, nil, &MockEncryption{}, &http.Client{Timeout: time.Second}, nil, sessionConfig, slog.Default())
+			recorder := ledgerfixture.NewRecorder()
+			sessionService := oauth2session.NewOAuth2SessionService(thirdpartyService, sessionRepo, &refreshExchangeSessionRepository{sessionRepo}, nil, nil, &MockEncryption{}, &http.Client{Timeout: time.Second}, nil, sessionConfig, slog.Default(), recorder, nil)
 			jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
 			require.NoError(t, err)
 			celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
@@ -124,8 +126,9 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			svc := &TokenExchangeService{
 				jwtValidator: jwtValidator, celEvaluator: celEvaluator, providerService: thirdpartyService,
 				oauth2SessionService: sessionService, agentRepository: agentRepo,
-				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, slog.Default()),
+				consentService:       consent.NewService(agentRepo, thirdpartyService, grantRepo, nil, nil, slog.Default(), recorder),
 				permissionSetService: permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default()),
+				ledger:               recorder,
 			}
 			claims := map[string]interface{}{
 				"iss": "https://auth.example.com", "aud": "agentic-identity-broker", "sub": "user@example.com",

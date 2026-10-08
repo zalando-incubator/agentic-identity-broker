@@ -176,6 +176,45 @@ See [values.yaml](values.yaml) for the complete list of configuration options.
 | `broker.requestContext.trustedProxy.forwardedHeader` | Forwarded header to inspect when trusted proxy mode is enabled | `X-Forwarded-For` |
 | `broker.requestContext.trace.responseEnabled` | Emit the additive W3C `traceresponse` response header | `true` |
 
+### Business Event Ledger Configuration
+
+The chart exposes the accepted [ledger configuration contract](../../specs/048-business-event-ledger/contracts/configuration.md).
+The broker ConfigMap includes both `business_events` keys and preserves an explicit `false`.
+
+The ledger implements recording, retention, erasure, and recoverable telemetry.
+The chart implements partition provisioning, scheduling, and role grants.
+The 20 functional acceptance scenarios remain required.
+The user retired the performance gate and deployment-profile requirement.
+The unverified 5 ms p99 goal is diagnostic only.
+The [validation evidence](../../specs/048-business-event-ledger/quickstart.md) records the results.
+
+| Parameter | Type | Default | Contract |
+|-----------|------|---------|----------|
+| `broker.businessEvents.retention` | string | `2160h` | Recorded-time retention as a positive Go duration (90 days). |
+| `broker.businessEvents.telemetryCopyEnabled` | bool | `true` | Additional ledger telemetry copies. Also requires `broker.telemetry.enabled` and `broker.telemetry.logs.enabled`. |
+| `migration.grants.businessEvents.readerRole` | string | `""` | An existing operational role for `SELECT` on ledger parent tables. An empty value grants nothing. |
+| `migration.grants.businessEvents.erasureRole` | string | `""` | An existing operational role for `EXECUTE` on `public.business_event_erase_subject(text)`. An empty value grants nothing. |
+
+The retention contract accepts positive Go durations, such as `2160h` or `720h`, but not `90d`.
+It rejects malformed, zero, negative, and overflowing durations.
+Positive fractions round upward to microseconds.
+No ledger-persistence disable switch exists.
+Disabled telemetry copies do not disable recording or retention.
+Existing telemetry destinations and ordinary logs remain unchanged.
+
+The broker environment variables are `IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION` and `IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED`.
+Their CLI flags are `--business_events.retention` and `--business_events.telemetry_copy_enabled`.
+The order of precedence is an explicit CLI flag, an environment variable, the configuration file, then the default.
+
+Example chart values for shorter retention without additional telemetry copies:
+
+```yaml
+broker:
+  businessEvents:
+    retention: 720h
+    telemetryCopyEnabled: false
+```
+
 ### Custom Values File
 
 Create a `values-production.yaml` file:
@@ -311,13 +350,83 @@ Both images share the same version tag to ensure consistency between migrations 
 - Set `postgresql.external.migrationSecretName` to your migration user secret
 - Set `postgresql.external.brokerSecretName` to your broker user secret
 - Migration user needs: `CREATE`, `ALTER`, `DROP` permissions for schema changes
-- Broker user needs: `SELECT`, `INSERT`, `UPDATE`, `DELETE` permissions for data access
+- The broker user requires business-table DML and the restricted ledger permissions in the [operations guide](../../docs/operations/business-event-ledger.md).
 
 **Zalando PostgreSQL Operator**:
 - Secrets are created automatically by the operator
 - Secret names follow the pattern: `{username}.{teamId}-{instanceName}.credentials.postgresql.acid.zalan.do`
-- Migration user gets: `superuser` and `createdb` role attributes
-- Broker user gets: `login` attribute + database ownership (grants full table access)
+- The migration user owns the database. The default configuration requires no special role attributes.
+- The broker user has no special role attributes or database ownership. Post-migration grants provide runtime data access.
+
+### Business Event Ledger Deployment Contract
+
+When a deployment uses PostgreSQL with `migration.enabled: true`, the chart installs migration-owned maintenance every five minutes.
+Maintenance is independent of telemetry.
+It uses a CronJob with schedule `*/5 * * * *` and `concurrencyPolicy: Forbid`.
+The Job runs `SELECT public.business_event_maintain_partitions();` through `psql -v ON_ERROR_STOP=1`.
+
+It reuses `migration.grants.image`, the migration ServiceAccount, migration credentials, and the trusted database endpoint and SSL configuration.
+It uses non-root execution, a read-only filesystem, bounded resources, a 120-second deadline, and at most two retries.
+The SQL connection sets a five-second lock timeout and a 30-second statement timeout through `PGOPTIONS` before the first command.
+Maintenance rejects a missing statement deadline or one greater than 30 seconds.
+
+The maintenance function reads the stored `business_event_policy`.
+Broker startup writes the validated retention policy.
+The Job has no separate retention parser or telemetry switch.
+The initial migration seeds a 90-day policy.
+The broker remains DML-only and never receives the migration Secret.
+Memory uses an in-process retention worker with startup and five-minute sweeps, not a CronJob.
+
+Migrations and pre-install/pre-upgrade hooks only call `public.business_event_provision_partitions()` to provision current and future partitions.
+Provisioning never drops partitions.
+Only scheduled maintenance drops expired partition pairs.
+Even when `migration.grants.enabled` is `false`, the migration Job remains required.
+Missing maintenance must trigger an alert before the 24-hour removal limit.
+A missing current partition fails readiness until maintenance provisions it.
+If you disable `migration.enabled`, the chart removes provisioning and maintenance Jobs.
+For that configuration, install equivalent external migration and scheduler procedures.
+The [operations guide](../../docs/operations/business-event-ledger.md) provides bare-process installation, SQL grants, erasure, health alerts, and rollback precautions.
+
+#### Coordinated Retention Changes
+
+The broker reads retention at startup. All replicas that share a ledger must use the same value.
+The last successful validated startup policy write is authoritative.
+Policy writes serialize with maintenance.
+An old, shorter policy can delete history that an increased retention value must preserve.
+
+For each retention change:
+
+1. Suspend the maintenance CronJob.
+2. Upgrade the release so every broker replica starts with the same new retention value.
+3. Verify that `business_event_policy.retention_microseconds` contains the new normalized duration with migration credentials.
+4. Resume the maintenance CronJob.
+
+The maintenance template omits `spec.suspend`, so `helm upgrade` preserves the suspension that the operator applies.
+The pre-upgrade provisioning hook never runs a destructive retention sweep.
+
+#### Operational Roles and Custom Grants
+
+The role contract uses existing database roles only.
+The chart does not create roles.
+Empty role values grant nothing, so investigation remains outside the broker and erasure remains with the migration owner.
+Neither operational capability belongs to the broker user.
+
+A custom `migration.grants.sql` replaces the complete default grants script.
+For a ledger deployment, the custom script must apply ledger restrictions and operational role grants itself.
+It must revoke event `UPDATE` and `DELETE` after broad DML grants.
+It must deny broker execution of maintenance, provisioning, and erasure functions.
+It must preserve migration ownership and immutable-update protection for parent tables and future partitions.
+Reader and erasure role values do not supplement a custom script.
+The [storage contract](../../specs/048-business-event-ledger/contracts/storage.md) defines the required privilege boundaries.
+The default script removes PUBLIC/runtime execution on future migration-owned functions.
+If a non-ledger function requires execution access, give it an explicit execution grant.
+Runtime must not own ledger objects or inherit forbidden privileges from another role.
+
+CAUTION: Before migration rollback, back up ledger and business data.
+Obtain explicit acknowledgement of history loss.
+Deploy the matching old binary.
+
+Migration 036 rollback removes ledger history, pending references, policy, and expiry markers. It does not restore erased or expired history.
 
 ## Static Manifest Generation
 

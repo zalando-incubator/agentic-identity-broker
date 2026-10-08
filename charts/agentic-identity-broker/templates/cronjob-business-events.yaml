@@ -1,0 +1,81 @@
+{{- if and (eq .Values.storage.type "postgres") .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ printf "%s-business-events" (include "agentic-identity-broker.fullname" .) | trunc 52 | trimSuffix "-" }}
+  namespace: {{ include "agentic-identity-broker.namespace" . }}
+  labels:
+    {{- include "agentic-identity-broker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: business-event-maintenance
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: {{ min 2 (.Values.migration.backoffLimit | int) }}
+      activeDeadlineSeconds: 120
+      ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished }}
+      template:
+        metadata:
+          labels:
+            {{- include "agentic-identity-broker.podLabels" . | nindent 12 }}
+            app.kubernetes.io/component: business-event-maintenance
+        spec:
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          serviceAccountName: {{ include "agentic-identity-broker.fullname" . }}-migrate
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+          - name: maintain-partitions
+            image: {{ .Values.migration.grants.image | quote }}
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              runAsNonRoot: true
+              runAsUser: 999
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                  - ALL
+            command: ["psql"]
+            args:
+              - "-v"
+              - "ON_ERROR_STOP=1"
+              - "-c"
+              - "SELECT public.business_event_maintain_partitions();"
+            resources:
+              {{- toYaml .Values.migration.resources | nindent 14 }}
+            env:
+            - name: PGHOST
+              value: {{ include "agentic-identity-broker.postgresHost" . | quote }}
+            - name: PGPORT
+              value: {{ if .Values.postgresql.external.enabled }}{{ .Values.postgresql.external.port | quote }}{{ else }}"5432"{{ end }}
+            - name: PGDATABASE
+              value: {{ if .Values.postgresql.external.enabled }}{{ .Values.postgresql.external.database | quote }}{{ else }}{{ .Values.postgresql.operator.database | quote }}{{ end }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentic-identity-broker.migrationSecretName" . }}
+                  key: {{ .Values.postgresql.external.migrationSecretKeys.username | default "username" }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "agentic-identity-broker.migrationSecretName" . }}
+                  key: {{ .Values.postgresql.external.migrationSecretKeys.password | default "password" }}
+            - name: PGSSLMODE
+              value: {{ if .Values.postgresql.external.enabled }}{{ .Values.postgresql.external.sslMode | quote }}{{ else }}"require"{{ end }}
+            - name: PGOPTIONS
+              value: "-c lock_timeout=5s -c statement_timeout=30s"
+            - name: PSQL_HISTORY
+              value: /tmp/.psql_history
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          volumes:
+          - name: tmp
+            emptyDir: {}
+{{- end }}

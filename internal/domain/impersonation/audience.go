@@ -28,7 +28,15 @@ func ValidateAudiencePrefix(prefix string) error {
 }
 
 // ResolveTarget determines whether an audience activates impersonation and resolves its target.
-func (s *Service) ResolveTarget(ctx context.Context, audiences []string) (*Target, bool, error) {
+func (s *Service) ResolveTarget(ctx context.Context, audiences []string) (target *Target, activated bool, err error) {
+	targetLookupStarted := false
+	defer func() {
+		if err != nil && targetLookupStarted {
+			if recordErr := s.completeImpersonation(ctx, id.AgentID{}, nil, err); recordErr != nil {
+				err = originError(ctx, serverError("failed to record impersonation target outcome"), recordErr, tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified)
+			}
+		}
+	}()
 	if len(audiences) != 1 {
 		return nil, false, nil
 	}
@@ -47,11 +55,13 @@ func (s *Service) ResolveTarget(ctx context.Context, audiences []string) (*Targe
 		if targetID.String() != suffix {
 			return nil, true, invalidTargetSuffix()
 		}
+		targetLookupStarted = true
 		agent, lookupErr = s.agents.Get(ctx, targetID)
 	} else {
 		if canonical.Validate(&suffix) != nil {
 			return nil, true, invalidTargetSuffix()
 		}
+		targetLookupStarted = true
 		agent, lookupErr = s.canonicalAgents.GetByCanonicalID(ctx, suffix)
 	}
 	if lookupErr != nil {

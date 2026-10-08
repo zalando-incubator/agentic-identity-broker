@@ -37,7 +37,7 @@ func (r *PermissionSetRepository) Create(ctx context.Context, ps *storage.Permis
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTx(ctxTimeout, nil)
+	tx, err := r.adapter.beginSQLTransaction(ctxTimeout, nil)
 	if err != nil {
 		return r.handlePostgresError("CreatePermissionSet", err)
 	}
@@ -70,7 +70,7 @@ func (r *PermissionSetRepository) Get(ctx context.Context, psID id.PermissionSet
 
 	query := `SELECT id, canonical_id, name, description, created_at, updated_at FROM permission_sets WHERE id = $1`
 	var ps storage.PermissionSet
-	err := r.adapter.db.QueryRowContext(ctxTimeout, query, psID).Scan(
+	err := r.adapter.storageExecutor(ctxTimeout).QueryRowContext(ctxTimeout, query, psID).Scan(
 		&ps.ID, &ps.CanonicalID, &ps.Name, &ps.Description, &ps.CreatedAt, &ps.UpdatedAt,
 	)
 	if err != nil {
@@ -93,7 +93,7 @@ func (r *PermissionSetRepository) GetByCanonicalID(ctx context.Context, canonica
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 	var permissionSetID id.PermissionSetID
-	if err := r.adapter.db.QueryRowContext(ctxTimeout, `SELECT id FROM permission_sets WHERE canonical_id = $1`, canonicalID).Scan(&permissionSetID); err != nil {
+	if err := r.adapter.storageExecutor(ctxTimeout).QueryRowContext(ctxTimeout, `SELECT id FROM permission_sets WHERE canonical_id = $1`, canonicalID).Scan(&permissionSetID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, storage.NewStorageError("GetPermissionSetByCanonicalID", storage.ErrorKindNotFound, ports.ErrNotFound, "permission set not found")
 		}
@@ -112,7 +112,7 @@ func (r *PermissionSetRepository) GetCanonicalIDs(ctx context.Context, ids []id.
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, `SELECT id, canonical_id FROM permission_sets WHERE id = ANY($1::uuid[]) AND canonical_id IS NOT NULL`, pq.Array(ids))
+	rows, err := r.adapter.storageExecutor(ctxTimeout).QueryContext(ctxTimeout, `SELECT id, canonical_id FROM permission_sets WHERE id = ANY($1::uuid[]) AND canonical_id IS NOT NULL`, pq.Array(ids))
 	if err != nil {
 		return nil, r.handlePostgresError("GetCanonicalIDsPermissionSet", err)
 	}
@@ -153,7 +153,7 @@ func (r *PermissionSetRepository) GetByIDs(ctx context.Context, ids []id.Permiss
 	}
 
 	query := `SELECT id, canonical_id, name, description, created_at, updated_at FROM permission_sets WHERE id = ANY($1::uuid[])`
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, pq.Array(idStrings))
+	rows, err := r.adapter.storageExecutor(ctxTimeout).QueryContext(ctxTimeout, query, pq.Array(idStrings))
 	if err != nil {
 		return nil, r.handlePostgresError("GetByIDsPermissionSet", err)
 	}
@@ -206,7 +206,7 @@ func (r *PermissionSetRepository) Update(ctx context.Context, ps *storage.Permis
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTx(ctxTimeout, nil)
+	tx, err := r.adapter.beginSQLTransaction(ctxTimeout, nil)
 	if err != nil {
 		return r.handlePostgresError("UpdatePermissionSet", err)
 	}
@@ -261,6 +261,10 @@ func (r *PermissionSetRepository) Delete(ctx context.Context, psID id.Permission
 		return storage.NewStorageError("DeletePermissionSet", storage.ErrorKindUnknown, err, "failed to build JSONB filter")
 	}
 
+	if _, joined := storageTransaction(ctx); joined {
+		return r.deleteInSerializableTx(ctxTimeout, psID, jsonFilter)
+	}
+
 	const maxRetries = 3
 	var lastErr error
 	for range maxRetries {
@@ -277,7 +281,7 @@ func (r *PermissionSetRepository) Delete(ctx context.Context, psID id.Permission
 }
 
 func (r *PermissionSetRepository) deleteInSerializableTx(ctx context.Context, psID id.PermissionSetID, jsonFilter []byte) error {
-	tx, err := r.adapter.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	tx, err := r.adapter.beginSQLTransaction(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return storage.NewStorageError("DeletePermissionSet", storage.ErrorKindConnection, err, "failed to begin transaction")
 	}
@@ -333,7 +337,7 @@ func (r *PermissionSetRepository) List(ctx context.Context, serviceID id.Service
 
 	if serviceID.IsZero() {
 		query := `SELECT id, canonical_id, name, description, created_at, updated_at FROM permission_sets ORDER BY name`
-		rows, err = r.adapter.db.QueryContext(ctxTimeout, query)
+		rows, err = r.adapter.storageExecutor(ctxTimeout).QueryContext(ctxTimeout, query)
 	} else {
 		query := `
 			SELECT DISTINCT ps.id, ps.canonical_id, ps.name, ps.description, ps.created_at, ps.updated_at
@@ -342,7 +346,7 @@ func (r *PermissionSetRepository) List(ctx context.Context, serviceID id.Service
 			WHERE psss.service_id = $1
 			ORDER BY ps.name
 		`
-		rows, err = r.adapter.db.QueryContext(ctxTimeout, query, serviceID)
+		rows, err = r.adapter.storageExecutor(ctxTimeout).QueryContext(ctxTimeout, query, serviceID)
 	}
 	if err != nil {
 		return nil, r.handlePostgresError("ListPermissionSets", err)
@@ -402,10 +406,8 @@ func (r *PermissionSetRepository) CountAgentsReferencingPermissionSet(ctx contex
 	}
 
 	var count int
-	err = r.adapter.db.QueryRowContext(ctxTimeout,
-		`SELECT COUNT(*) FROM agents WHERE permission_sets @> $1::jsonb`,
-		jsonFilter,
-	).Scan(&count)
+	err = r.adapter.storageExecutor(ctxTimeout).QueryRowContext(ctxTimeout, `SELECT COUNT(*) FROM agents WHERE permission_sets @> $1::jsonb`,
+		jsonFilter).Scan(&count)
 	if err != nil {
 		return 0, r.handlePostgresError("CountAgentsReferencingPermissionSet", err)
 	}
@@ -429,7 +431,7 @@ func (r *PermissionSetRepository) CountPermissionSetsForService(ctx context.Cont
 	`
 
 	var count int
-	err := r.adapter.db.QueryRowContext(ctxTimeout, query, serviceID).Scan(&count)
+	err := r.adapter.storageExecutor(ctxTimeout).QueryRowContext(ctxTimeout, query, serviceID).Scan(&count)
 	if err != nil {
 		return 0, r.handlePostgresError("CountPermissionSetsForService", err)
 	}
@@ -438,7 +440,7 @@ func (r *PermissionSetRepository) CountPermissionSetsForService(ctx context.Cont
 }
 
 // insertServiceScopes inserts service scope rows within a transaction.
-func (r *PermissionSetRepository) insertServiceScopes(ctx context.Context, tx *sql.Tx, psID id.PermissionSetID, scopes []storage.ServiceScope) error {
+func (r *PermissionSetRepository) insertServiceScopes(ctx context.Context, tx sqlTransactionExecutor, psID id.PermissionSetID, scopes []storage.ServiceScope) error {
 	if len(scopes) == 0 {
 		return nil
 	}
@@ -476,7 +478,7 @@ func (r *PermissionSetRepository) loadServiceScopesBatch(ctx context.Context, ps
 		WHERE permission_set_id = ANY($1::uuid[])
 	`
 
-	rows, err := r.adapter.db.QueryContext(ctx, query, pq.Array(idStrings))
+	rows, err := r.adapter.storageExecutor(ctx).QueryContext(ctx, query, pq.Array(idStrings))
 	if err != nil {
 		return nil, r.handlePostgresError("LoadServiceScopesBatch", err)
 	}
@@ -511,7 +513,7 @@ func (r *PermissionSetRepository) loadServiceScopes(ctx context.Context, psID id
 		WHERE permission_set_id = $1
 	`
 
-	rows, err := r.adapter.db.QueryContext(ctx, query, psID)
+	rows, err := r.adapter.storageExecutor(ctx).QueryContext(ctx, query, psID)
 	if err != nil {
 		return nil, r.handlePostgresError("LoadServiceScopes", err)
 	}

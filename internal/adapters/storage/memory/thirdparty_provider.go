@@ -17,6 +17,7 @@ import (
 // authoritative child set and indexed globally by their normalized URI.
 type InMemoryThirdpartyOAuth2ProviderRepository struct {
 	mu             sync.RWMutex
+	transactions   *TransactionManager
 	providers      map[id.ServiceID]*thirdpartyOAuth2ProviderRecord
 	canonicalIndex map[string]id.ServiceID
 	resources      map[id.ServiceID]map[string]struct{}
@@ -26,8 +27,9 @@ type InMemoryThirdpartyOAuth2ProviderRepository struct {
 var _ ports.ThirdpartyOAuth2ProviderRepository = (*InMemoryThirdpartyOAuth2ProviderRepository)(nil)
 
 // NewInMemoryThirdpartyOAuth2ProviderRepository creates a new in-memory provider repository.
-func NewInMemoryThirdpartyOAuth2ProviderRepository() *InMemoryThirdpartyOAuth2ProviderRepository {
+func NewInMemoryThirdpartyOAuth2ProviderRepository(transactions *TransactionManager) *InMemoryThirdpartyOAuth2ProviderRepository {
 	return &InMemoryThirdpartyOAuth2ProviderRepository{
+		transactions:   transactions,
 		providers:      make(map[id.ServiceID]*thirdpartyOAuth2ProviderRecord),
 		canonicalIndex: make(map[string]id.ServiceID),
 		resources:      make(map[id.ServiceID]map[string]struct{}),
@@ -36,7 +38,12 @@ func NewInMemoryThirdpartyOAuth2ProviderRepository() *InMemoryThirdpartyOAuth2Pr
 }
 
 // Create stores a new provider and its complete protected-resource set.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) Create(_ context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) error {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) Create(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	if entity == nil {
 		return providerStorageError("CreateThirdpartyOAuth2Provider", storage.ErrorKindValidation, nil, "entity cannot be nil")
 	}
@@ -72,19 +79,28 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Create(_ context.Context, e
 	if err != nil {
 		return providerStorageError("CreateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to store provider")
 	}
+	journalEntry(ctx, r.providers, entity.ID)
 	r.providers[entity.ID] = record
+	journalEntry(ctx, r.resources, entity.ID)
 	r.resources[entity.ID] = resources
 	if entity.CanonicalID != nil {
+		journalEntry(ctx, r.canonicalIndex, *entity.CanonicalID)
 		r.canonicalIndex[*entity.CanonicalID] = entity.ID
 	}
 	for resource := range resources {
+		journalEntry(ctx, r.resourceOwners, resource)
 		r.resourceOwners[resource] = entity.ID
 	}
 	return nil
 }
 
 // Get retrieves a provider with protected resources materialized from its child set.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) Get(_ context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) Get(ctx context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	record, exists := r.providers[serviceID]
@@ -94,7 +110,12 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Get(_ context.Context, serv
 	return providerRecordToEntity(record, r.resources[serviceID]), nil
 }
 
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetByCanonicalID(_ context.Context, canonicalID string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetByCanonicalID(ctx context.Context, canonicalID string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	serviceID, exists := r.canonicalIndex[canonicalID]
@@ -104,7 +125,12 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetByCanonicalID(_ context.
 	return providerRecordToEntity(r.providers[serviceID], r.resources[serviceID]), nil
 }
 
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetCanonicalIDs(_ context.Context, ids []id.ServiceID) (map[id.ServiceID]string, error) {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetCanonicalIDs(ctx context.Context, ids []id.ServiceID) (map[id.ServiceID]string, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -119,7 +145,12 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetCanonicalIDs(_ context.C
 
 // Update changes provider fields and increments its version. A nil expectedVersion
 // preserves the current child resource set; a non-nil value replaces it atomically.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(_ context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	if entity == nil {
 		return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, nil, "entity cannot be nil")
 	}
@@ -172,40 +203,60 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(_ context.Context, e
 
 	if expectedVersion != nil {
 		for resource := range r.resources[entity.ID] {
+			journalEntry(ctx, r.resourceOwners, resource)
 			delete(r.resourceOwners, resource)
 		}
+		journalEntry(ctx, r.resources, entity.ID)
 		r.resources[entity.ID] = resourceSet
 		for resource := range resourceSet {
+			journalEntry(ctx, r.resourceOwners, resource)
 			r.resourceOwners[resource] = entity.ID
 		}
 	}
+	journalEntry(ctx, r.providers, entity.ID)
 	r.providers[entity.ID] = record
 	if existing.entity.CanonicalID != nil {
+		journalEntry(ctx, r.canonicalIndex, *existing.entity.CanonicalID)
 		delete(r.canonicalIndex, *existing.entity.CanonicalID)
 	}
 	if entity.CanonicalID != nil {
+		journalEntry(ctx, r.canonicalIndex, *entity.CanonicalID)
 		r.canonicalIndex[*entity.CanonicalID] = entity.ID
 	}
 	return nil
 }
 
 // Delete removes the provider and releases every resource it owns.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) Delete(_ context.Context, serviceID id.ServiceID) error {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) Delete(ctx context.Context, serviceID id.ServiceID) error {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for resource := range r.resources[serviceID] {
+		journalEntry(ctx, r.resourceOwners, resource)
 		delete(r.resourceOwners, resource)
 	}
 	if record, exists := r.providers[serviceID]; exists && record.entity.CanonicalID != nil {
+		journalEntry(ctx, r.canonicalIndex, *record.entity.CanonicalID)
 		delete(r.canonicalIndex, *record.entity.CanonicalID)
 	}
+	journalEntry(ctx, r.resources, serviceID)
 	delete(r.resources, serviceID)
+	journalEntry(ctx, r.providers, serviceID)
 	delete(r.providers, serviceID)
 	return nil
 }
 
 // List retrieves all providers with resources materialized from child sets.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) List(_ context.Context) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) List(ctx context.Context) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	result := make([]*model.ThirdpartyOAuth2ProviderEntity, 0, len(r.providers))
@@ -217,6 +268,11 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) List(_ context.Context) ([]
 
 // FindByProtectedResource resolves a normalized resource through the authoritative owner index.
 func (r *InMemoryThirdpartyOAuth2ProviderRepository) FindByProtectedResource(ctx context.Context, resourceURI string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	select {
 	case <-ctx.Done():
 		return nil, providerStorageError("FindByProtectedResource", storage.ErrorKindTimeout, ctx.Err(), "context cancelled or timeout")
@@ -240,14 +296,19 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) FindByProtectedResource(ctx
 }
 
 // AddProtectedResource atomically claims a normalized URI for a provider.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) AddProtectedResource(_ context.Context, serviceID id.ServiceID, resourceURI string) (ports.ProtectedResourceMutationResult, error) {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) AddProtectedResource(ctx context.Context, serviceID id.ServiceID, resourceURI string) (ports.ProtectedResourceMutationResult, error) {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return ports.ProtectedResourceMutationResult{}, gateErr
+	}
+	defer guard.release()
 	resource, err := model.NormalizeAndValidateProtectedResource(resourceURI)
 	if err != nil {
 		return ports.ProtectedResourceMutationResult{}, providerStorageError("AddProtectedResource", storage.ErrorKindValidation, err, "invalid protected resource")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	record, exists := r.providers[serviceID]
+	_, exists := r.providers[serviceID]
 	if !exists {
 		return ports.ProtectedResourceMutationResult{}, providerStorageError("AddProtectedResource", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
 	}
@@ -255,37 +316,49 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) AddProtectedResource(_ cont
 		if owner != serviceID {
 			return ports.ProtectedResourceMutationResult{}, providerStorageError("AddProtectedResource", storage.ErrorKindConflict, nil, "protected resource is already owned")
 		}
-		return r.mutationResultLocked(serviceID, resource, false), nil
+		return r.mutationResultLocked(ctx, serviceID, resource, false), nil
 	}
+	journalEntry(ctx, r.resources[serviceID], resource)
 	r.resources[serviceID][resource] = struct{}{}
+	journalEntry(ctx, r.resourceOwners, resource)
 	r.resourceOwners[resource] = serviceID
-	record.entity.Version++
-	return r.mutationResultLocked(serviceID, resource, true), nil
+	return r.mutationResultLocked(ctx, serviceID, resource, true), nil
 }
 
 // RemoveProtectedResource atomically releases a normalized URI from its owner.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) RemoveProtectedResource(_ context.Context, serviceID id.ServiceID, resourceURI string) (ports.ProtectedResourceMutationResult, error) {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) RemoveProtectedResource(ctx context.Context, serviceID id.ServiceID, resourceURI string) (ports.ProtectedResourceMutationResult, error) {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return ports.ProtectedResourceMutationResult{}, gateErr
+	}
+	defer guard.release()
 	resource, err := model.NormalizeAndValidateProtectedResource(resourceURI)
 	if err != nil {
 		return ports.ProtectedResourceMutationResult{}, providerStorageError("RemoveProtectedResource", storage.ErrorKindValidation, err, "invalid protected resource")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	record, exists := r.providers[serviceID]
+	_, exists := r.providers[serviceID]
 	if !exists {
 		return ports.ProtectedResourceMutationResult{}, providerStorageError("RemoveProtectedResource", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
 	}
 	if owner, found := r.resourceOwners[resource]; !found || owner != serviceID {
 		return ports.ProtectedResourceMutationResult{}, providerStorageError("RemoveProtectedResource", storage.ErrorKindNotFound, ports.ErrNotFound, "protected resource not found")
 	}
+	journalEntry(ctx, r.resources[serviceID], resource)
 	delete(r.resources[serviceID], resource)
+	journalEntry(ctx, r.resourceOwners, resource)
 	delete(r.resourceOwners, resource)
-	record.entity.Version++
-	return r.mutationResultLocked(serviceID, resource, true), nil
+	return r.mutationResultLocked(ctx, serviceID, resource, true), nil
 }
 
 // RenameProtectedResource atomically replaces one normalized URI with another.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) RenameProtectedResource(_ context.Context, serviceID id.ServiceID, fromURI, toURI string) (ports.ProtectedResourceMutationResult, error) {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) RenameProtectedResource(ctx context.Context, serviceID id.ServiceID, fromURI, toURI string) (ports.ProtectedResourceMutationResult, error) {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return ports.ProtectedResourceMutationResult{}, gateErr
+	}
+	defer guard.release()
 	from, err := model.NormalizeAndValidateProtectedResource(fromURI)
 	if err != nil {
 		return ports.ProtectedResourceMutationResult{}, providerStorageError("RenameProtectedResource", storage.ErrorKindValidation, err, "invalid source protected resource")
@@ -296,7 +369,7 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) RenameProtectedResource(_ c
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	record, exists := r.providers[serviceID]
+	_, exists := r.providers[serviceID]
 	if !exists {
 		return ports.ProtectedResourceMutationResult{}, providerStorageError("RenameProtectedResource", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
 	}
@@ -304,21 +377,29 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) RenameProtectedResource(_ c
 		return ports.ProtectedResourceMutationResult{}, providerStorageError("RenameProtectedResource", storage.ErrorKindNotFound, ports.ErrNotFound, "protected resource not found")
 	}
 	if from == to {
-		return r.mutationResultLocked(serviceID, to, false), nil
+		return r.mutationResultLocked(ctx, serviceID, to, false), nil
 	}
 	if _, claimed := r.resourceOwners[to]; claimed {
 		return ports.ProtectedResourceMutationResult{}, providerStorageError("RenameProtectedResource", storage.ErrorKindConflict, nil, "protected resource is already owned")
 	}
+	journalEntry(ctx, r.resources[serviceID], from)
 	delete(r.resources[serviceID], from)
+	journalEntry(ctx, r.resourceOwners, from)
 	delete(r.resourceOwners, from)
+	journalEntry(ctx, r.resources[serviceID], to)
 	r.resources[serviceID][to] = struct{}{}
+	journalEntry(ctx, r.resourceOwners, to)
 	r.resourceOwners[to] = serviceID
-	record.entity.Version++
-	return r.mutationResultLocked(serviceID, to, true), nil
+	return r.mutationResultLocked(ctx, serviceID, to, true), nil
 }
 
 // ListProtectedResources returns a copy of the normalized child set and its version.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) ListProtectedResources(_ context.Context, serviceID id.ServiceID) ([]string, int64, error) {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) ListProtectedResources(ctx context.Context, serviceID id.ServiceID) ([]string, int64, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, 0, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	record, exists := r.providers[serviceID]
@@ -328,7 +409,13 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) ListProtectedResources(_ co
 	return resourceSetSlice(r.resources[serviceID]), record.entity.Version, nil
 }
 
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) mutationResultLocked(serviceID id.ServiceID, resource string, changed bool) ports.ProtectedResourceMutationResult {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) mutationResultLocked(ctx context.Context, serviceID id.ServiceID, resource string, changed bool) ports.ProtectedResourceMutationResult {
+	if changed {
+		entity := *r.providers[serviceID].entity
+		entity.Version++
+		journalEntry(ctx, r.providers, serviceID)
+		r.providers[serviceID] = &thirdpartyOAuth2ProviderRecord{entity: &entity}
+	}
 	return ports.ProtectedResourceMutationResult{
 		Resource:           resource,
 		ProtectedResources: resourceSetSlice(r.resources[serviceID]),

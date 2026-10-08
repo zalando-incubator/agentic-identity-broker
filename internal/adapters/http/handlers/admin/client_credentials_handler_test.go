@@ -15,6 +15,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/cascadefixture"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -68,8 +70,8 @@ func (g credentialGeneratorFake) GenerateCredentials(agentID id.AgentID) (*stora
 
 func newClientCredentialsHandlerForTest(agentRepo *MockAgentRepository, serviceRepo *MockProviderRepository, credentialRepo ports.ClientCredentialRepository, generator ports.CredentialGenerator) *ClientCredentialsHandler {
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(serviceRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default())
-	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true)
-	credentialService := oauth2server.NewCredentialService(agentRepo, credentialRepo, generator, slog.Default())
+	agentService := agents.NewService(agentRepo, providerService, slog.Default(), true, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
+	credentialService := oauth2server.NewCredentialService(agentRepo, credentialRepo, generator, slog.Default(), ledgerfixture.NewRecorder())
 	return NewClientCredentialsHandler(credentialService, agentService, slog.Default())
 }
 
@@ -119,6 +121,7 @@ func TestClientCredentialsHandler_CanonicalAgentPaths(t *testing.T) {
 		credentialRepo := &clientCredentialRepositoryFake{credential: credential}
 		handler := newClientCredentialsHandlerForTest(agentRepo, serviceRepo, credentialRepo, credentialGeneratorFake{credential: credential})
 		agentRepo.On("GetByCanonicalID", mock.Anything, canonicalID).Return(agent, nil)
+		agentRepo.On("Get", mock.Anything, agentID).Return(agent, nil)
 		w := httptest.NewRecorder()
 		handler.Revoke(w, canonicalCredentialRequest(http.MethodDelete, canonicalID))
 		require.Equal(t, http.StatusNoContent, w.Code)

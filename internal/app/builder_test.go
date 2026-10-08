@@ -30,6 +30,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/cascadefixture"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -116,6 +118,7 @@ func TestBuilderMinimalConfiguration(t *testing.T) {
 
 	// Create minimal configuration
 	cfg := &ports.Config{
+		BusinessEvents: ports.DefaultBusinessEventsConfig(),
 		Log: ports.LogConfig{
 			Level:  ports.LogLevelInfo,
 			Format: ports.LogFormatText,
@@ -265,6 +268,7 @@ func TestBuilderUpstreamClientReusesConcurrentConnections(t *testing.T) {
 	defer server.Close()
 
 	cfg := &ports.Config{
+		BusinessEvents: ports.DefaultBusinessEventsConfig(),
 		Server: ports.ServerConfig{
 			EndUser: ports.ServerInstanceConfig{
 				Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
@@ -397,6 +401,7 @@ func TestBuilderMissingRequiredDependency(t *testing.T) {
 
 		_, err = NewBuilder().
 			WithConfig(&ports.Config{
+				BusinessEvents: ports.DefaultBusinessEventsConfig(),
 				OAuth2AuthServer: ports.OAuth2AuthServerConfig{
 					Mode: "proxy",
 					Proxy: ports.ProxyModeConfig{
@@ -470,7 +475,8 @@ func TestBuilderTokenExchangeExpectedAudience(t *testing.T) {
 		}
 
 		cfg := &ports.Config{
-			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			BusinessEvents: ports.DefaultBusinessEventsConfig(),
+			Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 			Server: ports.ServerConfig{
 				EndUser: ports.ServerInstanceConfig{
 					Port:      8000,
@@ -622,7 +628,8 @@ func TestBuilderTokenExchangeExpectedAudience(t *testing.T) {
 func TestBuilder_ModeStrategyWiring(t *testing.T) {
 	baseConfig := func(jweKey string) *ports.Config {
 		return &ports.Config{
-			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			BusinessEvents: ports.DefaultBusinessEventsConfig(),
+			Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 			Server: ports.ServerConfig{
 				EndUser: ports.ServerInstanceConfig{
 					Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
@@ -773,7 +780,7 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 
 func TestNewTokenExchangeAgentIDResolver(t *testing.T) {
 	newService := func(repo ports.AgentRepository) *agentsservice.Service {
-		return agentsservice.NewService(repo, builderTestRequirementValidator{}, slog.Default(), false)
+		return agentsservice.NewService(repo, builderTestRequirementValidator{}, slog.Default(), false, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 	}
 
 	t.Run("resolves upstream client ID before any UUID fallback", func(t *testing.T) {
@@ -861,7 +868,7 @@ func TestTokenExchangeAgentIDResolverFailureDiagnostics(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			svc := agentsservice.NewService(tc.repo, builderTestRequirementValidator{}, slog.Default(), false)
+			svc := agentsservice.NewService(tc.repo, builderTestRequirementValidator{}, slog.Default(), false, ledgerfixture.NewRecorder(), cascadefixture.NewAgentDependents(), cascadefixture.NewCredentialRepository())
 			resolve := newTokenExchangeAgentIDResolver(svc, time.Second)
 			assertFailure := func(err error) {
 				t.Helper()
@@ -961,7 +968,8 @@ func TestBuilder_ProxyJWKSFailsWhenStartupMetadataDiscoveryFails(t *testing.T) {
 
 	newConfig := func(jweKey string, upstreamURL string) *ports.Config {
 		return &ports.Config{
-			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			BusinessEvents: ports.DefaultBusinessEventsConfig(),
+			Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 			Server: ports.ServerConfig{
 				EndUser: ports.ServerInstanceConfig{
 					Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
@@ -1038,7 +1046,8 @@ func TestBuilder_HybridJWKSWarnsWhenStartupProbeFails(t *testing.T) {
 
 	newConfig := func(jweKey string, upstreamURL string) *ports.Config {
 		return &ports.Config{
-			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			BusinessEvents: ports.DefaultBusinessEventsConfig(),
+			Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 			Server: ports.ServerConfig{
 				EndUser: ports.ServerInstanceConfig{
 					Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
@@ -1136,7 +1145,8 @@ func TestBuilder_ShutdownStopsUpstreamJWKSAdapterWorkers(t *testing.T) {
 
 	newConfig := func(jweKey string, mode string, upstreamURL string) *ports.Config {
 		cfg := &ports.Config{
-			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			BusinessEvents: ports.DefaultBusinessEventsConfig(),
+			Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 			Server: ports.ServerConfig{
 				EndUser: ports.ServerInstanceConfig{
 					Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
@@ -1253,7 +1263,8 @@ func TestBuilder_ShutdownStopsUpstreamJWKSAdapterWorkers(t *testing.T) {
 func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {
 	newConfig := func(jweKey string) *ports.Config {
 		return &ports.Config{
-			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			BusinessEvents: ports.DefaultBusinessEventsConfig(),
+			Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 			Server: ports.ServerConfig{
 				EndUser: ports.ServerInstanceConfig{
 					Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
@@ -1419,7 +1430,8 @@ func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {
 func TestBuilder_HybridModeSigningKeyReadiness(t *testing.T) {
 	newConfig := func(jweKey string, upstreamURL string) *ports.Config {
 		return &ports.Config{
-			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			BusinessEvents: ports.DefaultBusinessEventsConfig(),
+			Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 			Server: ports.ServerConfig{
 				EndUser: ports.ServerInstanceConfig{
 					Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
@@ -1539,7 +1551,8 @@ func TestBuilder_MissingOAuth2AuthServerConfig(t *testing.T) {
 
 	jweKey := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 	cfg := &ports.Config{
-		Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+		BusinessEvents: ports.DefaultBusinessEventsConfig(),
+		Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 		Server: ports.ServerConfig{
 			EndUser: ports.ServerInstanceConfig{
 				Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
@@ -1622,7 +1635,8 @@ func TestBuilder_SharedUpstreamJWKSAdapter(t *testing.T) {
 	}
 
 	cfg := &ports.Config{
-		Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+		BusinessEvents: ports.DefaultBusinessEventsConfig(),
+		Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 		Server: ports.ServerConfig{
 			EndUser: ports.ServerInstanceConfig{
 				Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
@@ -1760,7 +1774,8 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 
 	newConfig := func(mode string) *ports.Config {
 		cfg := &ports.Config{
-			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			BusinessEvents: ports.DefaultBusinessEventsConfig(),
+			Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 			Server: ports.ServerConfig{
 				EndUser: ports.ServerInstanceConfig{
 					Port: 8000, Bind: "::1", PublicURL: "https://broker.example.com",

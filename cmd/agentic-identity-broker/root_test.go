@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -12,6 +14,10 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/stretchr/testify/require"
 )
 
 const brokerTestKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
@@ -264,4 +270,106 @@ func TestRunAtomicBindFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRootCommandLoadsBusinessEventFlagsOverEnvironmentAndFile(t *testing.T) {
+	for _, name := range []string{"business_events.retention", "business_events.telemetry_copy_enabled"} {
+		flag := rootCmd.PersistentFlags().Lookup(name)
+		require.NotNil(t, flag, "missing operator CLI flag %q", name)
+		oldValue, oldChanged := flag.Value.String(), flag.Changed
+		t.Cleanup(func() {
+			_ = flag.Value.Set(oldValue)
+			flag.Changed = oldChanged
+		})
+	}
+
+	rootBusinessEventsConfigFixture(t)
+	t.Setenv("IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION", "36h")
+	t.Setenv("IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED", "true")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte("business_events:\n  retention: 48h\n  telemetry_copy_enabled: true\n"), 0o600))
+	t.Setenv("IDENTITY_BROKER_CONFIG_PATH", configPath)
+
+	require.NoError(t, rootCmd.ParseFlags([]string{
+		"--business_events.retention=12h",
+		"--business_events.telemetry_copy_enabled=false",
+	}))
+	loader := config.NewLoader()
+	loader.SetCommand(rootCmd)
+	cfg, err := loader.GetConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 12*time.Hour, cfg.BusinessEvents.Retention)
+	require.False(t, cfg.BusinessEvents.TelemetryCopyEnabled)
+
+	for _, source := range loader.GetSources() {
+		if source.Type == ports.SourceTypeCLI {
+			require.ElementsMatch(t, []string{
+				"business_events.retention",
+				"business_events.telemetry_copy_enabled",
+			}, source.Keys)
+			return
+		}
+	}
+	t.Fatal("explicit business-event CLI flags missing from startup source metadata")
+}
+
+func TestRootCommandSelectsBusinessEventConfigurationFile(t *testing.T) {
+	for _, tt := range []struct {
+		name, environmentPath, cliPath, wantFile string
+		wantRetention                            time.Duration
+		wantCopy                                 bool
+	}{
+		{name: "CLI file overrides default", cliPath: "selected.yaml", wantFile: "selected.yaml", wantRetention: 12 * time.Hour},
+		{name: "CLI file overrides environment path", environmentPath: "environment.yaml", cliPath: "selected.yaml", wantFile: "selected.yaml", wantRetention: 12 * time.Hour},
+		{name: "unset CLI preserves environment path", environmentPath: "environment.yaml", wantFile: "environment.yaml", wantRetention: 24 * time.Hour, wantCopy: true},
+		{name: "unset CLI and environment use default", wantFile: "config.yaml", wantRetention: 48 * time.Hour, wantCopy: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			flag := rootCmd.PersistentFlags().Lookup("config")
+			oldValue, oldChanged := flag.Value.String(), flag.Changed
+			t.Cleanup(func() {
+				_ = flag.Value.Set(oldValue)
+				flag.Changed = oldChanged
+			})
+			require.NoError(t, flag.Value.Set(""))
+			flag.Changed = false
+			rootBusinessEventsConfigFixture(t)
+			t.Setenv("IDENTITY_BROKER_CONFIG_PATH", tt.environmentPath)
+			dir := t.TempDir()
+			t.Chdir(dir)
+			require.NoError(t, os.WriteFile("config.yaml", []byte("business_events:\n  retention: 48h\n  telemetry_copy_enabled: true\n"), 0o600))
+			require.NoError(t, os.WriteFile("environment.yaml", []byte("business_events:\n  retention: 24h\n  telemetry_copy_enabled: true\n"), 0o600))
+			require.NoError(t, os.WriteFile("selected.yaml", []byte("business_events:\n  retention: 12h\n  telemetry_copy_enabled: false\n"), 0o600))
+			var args []string
+			if tt.cliPath != "" {
+				args = []string{"--config=" + tt.cliPath}
+			}
+			require.NoError(t, rootCmd.ParseFlags(args))
+			loader := config.NewLoader()
+			loader.SetCommand(rootCmd)
+			cfg, err := loader.GetConfig(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, tt.wantRetention, cfg.BusinessEvents.Retention)
+			require.Equal(t, tt.wantCopy, cfg.BusinessEvents.TelemetryCopyEnabled)
+			var paths []string
+			for _, source := range loader.GetSources() {
+				if source.Type == ports.SourceTypeYAML {
+					paths = append(paths, source.Path)
+				}
+			}
+			require.Equal(t, []string{filepath.Join(dir, tt.wantFile)}, paths)
+		})
+	}
+}
+
+func rootBusinessEventsConfigFixture(t *testing.T) {
+	t.Helper()
+	key := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	t.Setenv("IDENTITY_BROKER_JWE_SIGNING_KEY", key)
+	t.Setenv("IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY", key)
+	t.Setenv("IDENTITY_BROKER_SERVER_ENDUSER_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME", "X-Remote-User")
+	t.Setenv("IDENTITY_BROKER_SERVER_ADMIN_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME", "X-Remote-User")
+	t.Setenv("IDENTITY_BROKER_OAUTH2_AUTH_SERVER_MODE", "local")
+	t.Setenv("IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION", "")
+	t.Setenv("IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED", "")
 }

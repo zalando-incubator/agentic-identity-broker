@@ -25,6 +25,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 type capturedTokenExchangeRequest struct {
@@ -787,8 +788,9 @@ func TestRefreshLogsCarryOperationContext(t *testing.T) {
 
 func TestGetValidAccessTokenRefreshLogsCarryOperationContext(t *testing.T) {
 	recorder := contextRecordingHandler{mu: &sync.Mutex{}, messages: map[string]any{}}
-	sessions := memory.NewInMemoryUserSessionRepository()
-	service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(recorder), 1, sessions)
+	transactions := memory.NewTransactionManager()
+	sessions := memory.NewInMemoryUserSessionRepository(transactions)
+	service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(recorder), 1, transactions, sessions)
 	principal := id.Principal("user@example.com")
 	serviceID := id.NewServiceID()
 
@@ -833,13 +835,15 @@ func newSecurityTestOAuth2SessionService(
 	maxRetries int,
 ) (*oauth2session.OAuth2SessionService, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
-	return newSecurityTestOAuth2SessionServiceWithSessions(t, logger, maxRetries, memory.NewInMemoryUserSessionRepository())
+	transactions := memory.NewTransactionManager()
+	return newSecurityTestOAuth2SessionServiceWithSessions(t, logger, maxRetries, transactions, memory.NewInMemoryUserSessionRepository(transactions))
 }
 
 func newSecurityTestOAuth2SessionServiceWithSessions(
 	t *testing.T,
 	logger *slog.Logger,
 	maxRetries int,
+	transactions *memory.TransactionManager,
 	sessionRepo *memory.InMemoryUserSessionRepository,
 ) (*oauth2session.OAuth2SessionService, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
@@ -851,7 +855,7 @@ func newSecurityTestOAuth2SessionServiceWithSessions(
 
 	encryption := newTestEncryption(t)
 	providerService := thirdparty.NewThirdpartyOAuth2ProviderService(
-		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
+		memory.NewInMemoryThirdpartyOAuth2ProviderRepository(transactions),
 		encryption,
 		newNoopBranchKeyManager(),
 		nil,
@@ -868,13 +872,15 @@ func newSecurityTestOAuth2SessionServiceWithSessions(
 		providerService,
 		sessionRepo,
 		sessionRepo,
-		memory.NewUserGrantRepository(),
-		memory.NewAgentRepository(),
+		memory.NewUserGrantRepository(transactions),
+		memory.NewAgentRepository(transactions),
 		encryption,
 		&http.Client{},
 		domjwe.New(key),
 		config,
 		logger,
+		ledgerfixture.NewRecorder(),
+		transactions,
 	), providerService
 }
 

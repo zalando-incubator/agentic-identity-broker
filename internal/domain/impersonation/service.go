@@ -11,6 +11,8 @@ import (
 	"github.com/lestrrat-go/jwx/v4/jwt"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
@@ -28,6 +30,7 @@ type Service struct {
 	delegationVerifier ports.UserDelegationVerifier
 	consentBaseURL     string
 	logger             *slog.Logger
+	ledger             *ledger.Service
 }
 
 // NewService compiles the impersonation rules at startup and validates direct construction.
@@ -40,6 +43,7 @@ func NewService(
 	logger *slog.Logger,
 	delegationVerifier ports.UserDelegationVerifier,
 	consentBaseURL string,
+	recorder *ledger.Service,
 ) (*Service, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("impersonation config is nil")
@@ -59,6 +63,9 @@ func NewService(
 	}
 	if consentBaseURL == "" {
 		return nil, fmt.Errorf("impersonation consent base URL is required")
+	}
+	if recorder == nil {
+		return nil, fmt.Errorf("impersonation recorder is required")
 	}
 	if err := ValidateAudiencePrefix(cfg.AudiencePrefix); err != nil {
 		return nil, err
@@ -82,7 +89,7 @@ func NewService(
 		}
 		rules = append(rules, rule)
 	}
-	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, delegationVerifier: delegationVerifier, consentBaseURL: consentBaseURL, logger: logger}, nil
+	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, delegationVerifier: delegationVerifier, consentBaseURL: consentBaseURL, logger: logger, ledger: recorder}, nil
 }
 
 // AuditRecord is the credential-free decision record emitted for every impersonation attempt
@@ -105,17 +112,27 @@ type Outcome struct {
 	Audit    AuditRecord
 }
 
-func (s *Service) Impersonate(ctx context.Context, req *Request, target *Target) (*Outcome, error) {
+func (s *Service) Impersonate(ctx context.Context, req *Request, target *Target) (outcome *Outcome, err error) {
+	var targetID id.AgentID
+	var selectedResult *ruleResult
+	defer func() {
+		if recordErr := s.completeImpersonation(ctx, targetID, selectedResult, err); recordErr != nil {
+			failure := originError(ctx, serverError("failed to record impersonation outcome"), recordErr, tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified)
+			err = failure
+			outcome = &Outcome{Audit: failureAudit(targetID.String(), selectedResult, failure)}
+		}
+	}()
 	if target == nil || target.Agent == nil || target.Agent.ID.IsZero() {
 		err := serverError("impersonation target agent is required").
 			WithDiagnostic(impersonationDiagnostic(tokenexchange.StageIdentityResolution, tokenexchange.DetailAgentInvalid))
 		return &Outcome{Audit: failureAudit("", nil, err)}, err
 	}
-	request := requestContext{Scope: req.Scope, GrantType: GrantType, AgentID: target.Agent.ID.String()}
+	targetID = target.Agent.ID
+	request := requestContext{Scope: req.Scope, GrantType: GrantType, AgentID: targetID.String()}
 	for _, scope := range req.Scopes {
 		if !oauth2.IsScopeAllowed(target.Agent.AllowedScopes, scope) {
 			err := invalidScope("requested scope is not permitted")
-			return &Outcome{Audit: failureAudit(target.Agent.ID.String(), nil, err)}, err
+			return &Outcome{Audit: failureAudit(targetID.String(), nil, err)}, err
 		}
 	}
 
@@ -124,10 +141,12 @@ func (s *Service) Impersonate(ctx context.Context, req *Request, target *Target)
 	for _, rule := range s.rules {
 		res := s.evaluateRule(ctx, rule, req, request, target.Agent, &validationCache)
 		if res.matched {
-			return &Outcome{Response: res.response, Audit: successAudit(target.Agent.ID.String(), res)}, nil
+			selectedResult = res
+			return s.mintAuthorized(ctx, targetID, res)
 		}
 		if res.abort != nil {
-			return &Outcome{Audit: failureAudit(target.Agent.ID.String(), res, res.abort)}, res.abort
+			selectedResult = res
+			return &Outcome{Audit: failureAudit(targetID.String(), res, res.abort)}, res.abort
 		}
 		results = append(results, res)
 	}
@@ -137,22 +156,41 @@ func (s *Service) Impersonate(ctx context.Context, req *Request, target *Target)
 		failures = append(failures, res.failure)
 	}
 	selected := selectNoMatchError(failures)
-	auditRes := resultForCode(results, selected.Code())
-	return &Outcome{Audit: failureAudit(target.Agent.ID.String(), auditRes, selected)}, selected
+	selectedResult = resultForCode(results, selected.Code())
+	return &Outcome{Audit: failureAudit(targetID.String(), selectedResult, selected)}, selected
+}
+
+func (s *Service) mintAuthorized(ctx context.Context, targetID id.AgentID, res *ruleResult) (*Outcome, error) {
+	decisionData := map[string]any{"delegating_actor_id": res.actor}
+	if err := s.recordFact(ctx, "impersonation-granted", impersonationFacts(targetID, res), decisionData); err != nil {
+		failure := originError(ctx, serverError("failed to record impersonation permission"), err, tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified)
+		return &Outcome{Audit: failureAudit(targetID.String(), res, failure)}, failure
+	}
+	token, err := s.issuer.IssueImpersonationToken(ctx, res.mintInput)
+	if err != nil {
+		failure := originError(ctx, serverError("failed to mint impersonation token"), err, tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified)
+		return &Outcome{Audit: failureAudit(targetID.String(), res, failure)}, failure
+	}
+	response := tokenexchange.NewTokenExchangeResponse(token, BearerTokenType, AccessTokenType)
+	response.Scope = strings.Join(res.mintInput.Scopes, " ")
+	return &Outcome{Response: response, Audit: successAudit(targetID.String(), res)}, nil
 }
 
 // ruleResult captures the outcome of evaluating one rule, including audit-safe context.
 type ruleResult struct {
-	ruleName string
-	matched  bool
-	response *tokenexchange.TokenExchangeResponse
-	failure  *tokenexchange.TokenExchangeError // set when the rule did not match (fall-through)
-	abort    *tokenexchange.TokenExchangeError // set on terminal fail-closed error
+	ruleName  string
+	matched   bool
+	mintInput ports.ImpersonationMintInput
+	failure   *tokenexchange.TokenExchangeError // set when the rule did not match (fall-through)
+	abort     *tokenexchange.TokenExchangeError // set on terminal fail-closed error
 
-	client      string
-	actor       string
-	subject     string
-	issuerRoles []string
+	client             string
+	actor              string
+	subject            string
+	issuerRoles        []string
+	subjectEstablished bool
+	delegated          bool
+	delegationMissing  bool
 }
 
 func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Request, request requestContext, targetAgent *storage.Agent, validationCache *verifiedCredentialCache) *ruleResult {
@@ -220,6 +258,7 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		return res
 	}
 	res.subject = subjectID
+	res.subjectEstablished = !subjectUnverified
 
 	var email *string
 	if extractor := subjectRole.email; extractor != nil {
@@ -255,11 +294,15 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 	}
 	switch delegationStatus {
 	case ports.UserDelegationActive:
+		res.subjectEstablished = true
+		res.delegated = true
 	case ports.UserDelegationMissing:
+		res.delegationMissing = true
 		res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/") + "/agents/" + targetAgent.ID.String()).
 			WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing))
 		return res
 	case ports.UserDelegationExpired:
+		res.delegationMissing = true
 		res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/") + "/agents/" + targetAgent.ID.String()).
 			WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantExpired))
 		return res
@@ -268,23 +311,15 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		return res
 	}
 
-	token, err := s.issuer.IssueImpersonationToken(ctx, ports.ImpersonationMintInput{
+	res.mintInput = ports.ImpersonationMintInput{
 		Subject:     subjectID,
 		Email:       email,
 		Actor:       actorID,
 		ActorIssuer: actorIssuer.issuerURI,
 		TargetAgent: targetAgent,
 		Scopes:      req.Scopes,
-	})
-	if err != nil {
-		res.abort = originError(ctx, serverError("failed to mint impersonation token"), err, tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified)
-		return res
 	}
-
 	res.matched = true
-	response := tokenexchange.NewTokenExchangeResponse(token, BearerTokenType, AccessTokenType)
-	response.Scope = strings.Join(req.Scopes, " ")
-	res.response = response
 	return res
 }
 
@@ -379,4 +414,74 @@ func failureAudit(targetAgentID string, res *ruleResult, err *tokenexchange.Toke
 		record.SubjectIdentity = res.subject
 	}
 	return record
+}
+
+func impersonationFacts(targetID id.AgentID, res *ruleResult) model.BusinessEvent {
+	facts := model.BusinessEvent{AgentID: targetID, Actor: model.BusinessEventActor{Kind: "gateway"}}
+	if res == nil {
+		return facts
+	}
+	if res.client != "" {
+		facts.Actor.ID = &res.client
+		facts.GatewayClientID = id.ClientID(res.client)
+	}
+	if res.subjectEstablished {
+		subject := id.Principal(res.subject)
+		facts.Subject = &subject
+	}
+	if res.delegated {
+		facts.Actor.OnBehalfOf = facts.Subject
+	}
+	return facts
+}
+
+func (s *Service) recordFact(ctx context.Context, eventType string, facts model.BusinessEvent, data map[string]any) error {
+	facts.OccurredAt, facts.Data = time.Now().UTC(), data
+	event, err := s.ledger.NewEvent(ctx, model.BusinessEventTypePrefix+eventType, facts)
+	if err != nil {
+		return err
+	}
+	return s.ledger.Record(ctx, event)
+}
+
+func (s *Service) completeImpersonation(ctx context.Context, targetID id.AgentID, res *ruleResult, requestErr error) error {
+	facts := impersonationFacts(targetID, res)
+	if requestErr == nil {
+		return s.recordFact(ctx, "token-exchanged", facts, map[string]any{})
+	}
+	var failure *tokenexchange.TokenExchangeError
+	if !errors.As(requestErr, &failure) {
+		return s.recordFact(ctx, "token-request-failed", facts, map[string]any{"reason_code": "internal_failure"})
+	}
+	if res == nil && failure.Code() == tokenexchange.InvalidScopeError {
+		return nil
+	}
+	reason := "authentication_failed"
+	switch failure.Diagnostic().Outcome() {
+	case tokenexchange.OutcomeAuthenticationFailed:
+	case tokenexchange.OutcomeAuthorizationDenied:
+		reason = "authorization_failed"
+	case tokenexchange.OutcomeInvalidRequest:
+		return s.recordFact(ctx, "token-request-failed", facts, map[string]any{"reason_code": "invalid_request"})
+	default:
+		return s.recordFact(ctx, "token-request-failed", facts, map[string]any{"reason_code": "internal_failure"})
+	}
+	decisionReason := reason
+	if res != nil && res.delegationMissing {
+		decisionReason = "delegation_missing"
+	}
+	decisionData := map[string]any{"reason_code": decisionReason}
+	if res != nil && res.actor != "" {
+		decisionData["delegating_actor_id"] = res.actor
+	}
+	hints := ports.StorageTransactionHintsFromContext(ctx)
+	if facts.Subject != nil {
+		hints.Subjects = append(hints.Subjects, ports.StorageSubjectGate{Principal: *facts.Subject})
+	}
+	return s.ledger.WithTransaction(ctx, hints, func(txCtx context.Context) error {
+		if err := s.recordFact(txCtx, "impersonation-denied", facts, decisionData); err != nil {
+			return err
+		}
+		return s.recordFact(txCtx, "token-exchange-denied", facts, map[string]any{"reason_code": reason})
+	})
 }

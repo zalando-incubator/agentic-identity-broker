@@ -2,7 +2,7 @@
 
 ## Overview
 
-The in-memory storage adapter provides ephemeral, development-focused storage using thread-safe Go maps with `sync.RWMutex` synchronization.
+The in-memory adapter provides ephemeral storage with shared transaction coordination and store-local `sync.RWMutex` locks.
 
 **Use Cases:**
 - Development and testing environments
@@ -13,18 +13,18 @@ The in-memory storage adapter provides ephemeral, development-focused storage us
 **Characteristics:**
 - **Instant Initialization**: Zero I/O, returns in nanoseconds
 - **No Persistence**: All data lost on application restart
-- **Thread-Safe**: Concurrent read/write operations with RWMutex
-- **No External Dependencies**: Pure Go implementation
-- **Low Latency**: Sub-microsecond operations
+- **Thread-Safe**: Shared visibility gates and store-local locks
+- **No Infrastructure**: No database or external service required
+- **Transactions**: Owner/join scopes, rollback journals, and commit-only effects
 
 ## Performance
 
-Typical operation latencies (measured on M3 Max):
+Historical measurements before shared transaction coordination (M3 Max):
 - **Create**: ~172 ns/op
 - **Get**: ~42.5 ns/op
 - **List** (1000 items): ~29 µs/op
 
-All operations complete well under configured timeouts (5s read, 10s write).
+These measurements do not describe the current transaction implementation. Feature 048 records current performance separately.
 
 ## Limitations
 
@@ -32,7 +32,6 @@ All operations complete well under configured timeouts (5s read, 10s write).
 2. **No Data Durability Guarantees**: No write-ahead logging or crash recovery
 3. **In-Process Only**: Cannot be shared across multiple processes or instances
 4. **Memory Growth**: No built-in eviction or memory limits
-5. **No Transaction Support**: Operations are atomic but not transactional
 
 ## Configuration
 
@@ -48,17 +47,18 @@ No additional parameters required for the memory backend.
 
 ## Concurrency Model
 
-The adapter uses `sync.RWMutex` for synchronization:
+The factory injects one `TransactionManager` into every repository.
+Manually composed repositories must receive the same coordinator to participate in one transaction.
 
-- **Write Operations** (Create, Update, Delete): Exclusive lock
-  - Only one writer at a time
-  - Blocks all readers during modification
+Standalone operations acquire the lifecycle gate, then the visibility gate, then store-local locks.
+Readers share visibility access. Writers acquire exclusive visibility access.
+Composite reads propagate an operation context to prevent gate reentry.
 
-- **Read Operations** (Get, List): Shared lock
-  - Multiple concurrent readers allowed
-  - Blocked during write operations
-
-This model provides excellent performance for read-heavy workloads typical in development/testing.
+`BeginTX` holds exclusive visibility until the owning scope commits or rolls back.
+Joined commits do not publish state. Joined rollback makes the owner rollback-only.
+Rollback restores touched records and indexes in reverse order without a whole-store snapshot.
+Returned mutable values are independent copies.
+Commit-only effects run after the owner releases the gates.
 
 ## Thread Safety
 
@@ -82,8 +82,8 @@ wg.Wait() // All reads complete safely
 Each adapter instance maintains separate data:
 
 ```go
-adapter1 := memory.NewAdapter()
-adapter2 := memory.NewAdapter()
+adapter1 := memory.NewAdapter(memory.NewTransactionManager())
+adapter2 := memory.NewAdapter(memory.NewTransactionManager())
 
 // Data created in adapter1 is not visible to adapter2
 adapter1.CreateUser(ctx, user)
@@ -128,7 +128,7 @@ import (
 
 func main() {
     // Create adapter
-    adapter := memory.NewAdapter()
+    adapter := memory.NewAdapter(memory.NewTransactionManager())
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer cancel()
 

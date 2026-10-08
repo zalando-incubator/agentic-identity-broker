@@ -10,6 +10,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 )
 
 func TestGrantConsent_RejectsUndeclaredPermissionSets(t *testing.T) {
@@ -151,14 +152,7 @@ func TestGrantConsent_RejectsUndeclaredPermissionSets(t *testing.T) {
 			for grantID, stored := range grantRepo.grants {
 				originalGrants[grantID] = stored.Copy()
 			}
-			svc := NewService(
-				&mockAgentRepo{agents: map[id.AgentID]*storage.Agent{agentID: agent}},
-				nil,
-				grantRepo,
-				sessionRepo,
-				psService,
-				slog.Default(),
-			)
+			svc := NewService(&mockAgentRepo{agents: map[id.AgentID]*storage.Agent{agentID: agent}}, nil, grantRepo, sessionRepo, psService, slog.Default(), ledgerfixture.NewRecorder())
 
 			grant, err := svc.GrantConsent(context.Background(), &GrantRequest{
 				Principal:             principal,

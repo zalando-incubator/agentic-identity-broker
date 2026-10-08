@@ -222,6 +222,11 @@ data:
     security:
       skip_thirdparty_https_validation: {{ .Values.broker.security.skipThirdpartyHttpsValidation }}
 
+    # Business event ledger configuration
+    business_events:
+      retention: {{ .Values.broker.businessEvents.retention | quote }}
+      telemetry_copy_enabled: {{ .Values.broker.businessEvents.telemetryCopyEnabled }}
+
     {{- if .Values.broker.telemetry.enabled }}
     # OpenTelemetry observability configuration
     telemetry:

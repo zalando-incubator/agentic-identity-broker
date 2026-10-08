@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	eventschemas "github.com/agentic-identity-broker/agentic-identity-broker/api/events"
 	adaptercmd "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/cimd"
 	awsencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/aws"
 	encryptionnoop "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
@@ -35,7 +38,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/oauth2_sessions"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/jwks"
 	jwtauthadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/jwtauth"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	postgresstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/postgres"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	agentsservice "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
@@ -46,6 +48,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	domjwtauth "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/ledger"
 	oauth2service "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	domaincimd "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/cimd"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
@@ -66,7 +69,7 @@ type App struct {
 	Config *ports.Config
 
 	// Repositories
-	Storage          *storage.Adapter
+	Storage          ports.StorageProvider
 	BranchKeyManager ports.BranchKeyManager
 
 	// Domain services
@@ -79,6 +82,7 @@ type App struct {
 	ApprovalService        *domainapproval.Service
 	ApprovalSyncSubscriber *postgresstorage.ApprovalSyncSubscriber // nil when storage is not postgres
 	SessionTokenService    *sessiontoken.Service
+	LedgerService          *ledger.Service
 
 	// CIMD compile-time contracts are wired once the outbound key domain is implemented.
 	CIMDKeyService       ports.CIMDClientKeyService
@@ -124,12 +128,13 @@ func (a *App) EnduserHealthComponents() map[string]string {
 //		Build()
 type Builder struct {
 	config                 *ports.Config
-	storage                *storage.Adapter
+	storage                ports.StorageProvider
 	logger                 *slog.Logger
 	staticWebResourcesPath string
 	tracerProvider         *sdktrace.TracerProvider // Optional: custom TracerProvider for testing
 	cimdFetcher            ports.CIMDFetcher        // Optional: overrides auto-created CIMD fetcher for testing
 	jwksPublisher          ports.JWKSPublisherPort  // Optional: overrides JWKS publisher for testing
+	businessEventSchemas   []fs.FS
 }
 
 // NewBuilder creates a new application builder.
@@ -146,7 +151,13 @@ func (b *Builder) WithConfig(cfg *ports.Config) *Builder {
 }
 
 // WithStorage sets the storage adapter for the builder.
-func (b *Builder) WithStorage(storage *storage.Adapter) *Builder {
+func (b *Builder) WithStorage(storage ports.StorageProvider) *Builder {
+	if storage != nil {
+		value := reflect.ValueOf(storage)
+		if value.Kind() == reflect.Pointer && value.IsNil() {
+			storage = nil
+		}
+	}
 	b.storage = storage
 	return b
 }
@@ -185,6 +196,11 @@ func (b *Builder) WithCIMDFetcher(f ports.CIMDFetcher) *Builder {
 // upstream metadata discovery for JWKS publishing.
 func (b *Builder) WithJWKSPublisher(p ports.JWKSPublisherPort) *Builder {
 	b.jwksPublisher = p
+	return b
+}
+
+func (b *Builder) WithBusinessEventSchemas(source fs.FS) *Builder {
+	b.businessEventSchemas = append(b.businessEventSchemas, source)
 	return b
 }
 
@@ -298,6 +314,14 @@ func (b *Builder) Build() (*App, error) {
 	if b.logger == nil {
 		return nil, fmt.Errorf("logger is required")
 	}
+	schemaSources := make([]fs.FS, 1, len(b.businessEventSchemas)+1)
+	schemaSources[0] = eventschemas.Schemas
+	schemaSources = append(schemaSources, b.businessEventSchemas...)
+	registry, err := ledger.NewRegistry(schemaSources...)
+	if err != nil {
+		return nil, fmt.Errorf("business event registry initialization failed: %w", err)
+	}
+	b.storage.ConfigureBusinessEventValidation(registry)
 
 	oauthCfg, err := b.config.OAuth2AuthServer.Resolve()
 	if err != nil {
@@ -310,6 +334,13 @@ func (b *Builder) Build() (*App, error) {
 		Storage: b.storage,
 		Logger:  b.logger,
 	}
+	copyEnabled := b.config.Telemetry.Enabled && b.config.Telemetry.Logs.Enabled && b.config.BusinessEvents.TelemetryCopyEnabled
+	app.LedgerService = ledger.NewService(registry, b.storage.BusinessEvents(), b.storage.BusinessEventLifecycle(), b.storage, copyEnabled)
+	retention, err := ledger.NormalizeRetention(b.config.BusinessEvents.Retention)
+	if err != nil {
+		return nil, fmt.Errorf("business_events.retention configuration invalid: %w", err)
+	}
+	b.config.BusinessEvents.Retention = retention
 
 	// T029: Initialize telemetry provider
 	// Per ADR-011: OTel provider wired at app layer, no port interface needed.
@@ -480,6 +511,7 @@ func (b *Builder) Build() (*App, error) {
 			b.storage.UserSessions(),
 			app.PermissionSetService,
 			b.logger,
+			app.LedgerService,
 		)
 	}
 
@@ -565,12 +597,13 @@ func (b *Builder) Build() (*App, error) {
 		}
 
 		authService := oauth2service.NewAuthorizationService(
-			b.storage.UserGrants(),
+			app.ConsentService,
 			b.storage.UserSessions(),
 			clientResolver,
 			oauth2Config,
 			b.logger,
 			sessionTokenSvc,
+			app.LedgerService,
 		)
 		app.OAuth2Service = authService
 	}
@@ -620,14 +653,23 @@ func (b *Builder) Build() (*App, error) {
 		jweTokenService,
 		cfg,
 		b.logger,
+		app.LedgerService,
+		b.storage,
 	).WithCIMDAssertionSigner(app.CIMDAssertionSigner)
 
 	// Create agent domain service (used by admin handlers and CEL resolver)
+	agentDependents, ok := b.storage.Agents().(ports.AgentDependentRepository)
+	if !ok {
+		return nil, fmt.Errorf("agent cascade repositories are required")
+	}
 	agentService := agentsservice.NewService(
 		b.storage.Agents(),
 		app.ProviderService,
 		b.logger,
 		ov.multiAgentClient.Enabled,
+		app.LedgerService,
+		agentDependents,
+		b.storage.BrokerCredentials(),
 	)
 
 	// Shared upstream JWKS adapter is required when token exchange, approval authentication,
@@ -804,6 +846,7 @@ func (b *Builder) Build() (*App, error) {
 		b.config.Approvals.PendingTTL,
 		b.config.Server.EndUser.PublicURL,
 		b.logger,
+		app.LedgerService,
 	)
 
 	// Wire approval sync subscriber for PostgreSQL backend (cross-instance long-poll wake-up)
@@ -875,6 +918,7 @@ func (b *Builder) Build() (*App, error) {
 			ov.localRefreshTokenTTL,
 			claimsExpr,
 			b.logger,
+			app.LedgerService,
 			b.storage,
 		)
 		if err != nil {
@@ -908,20 +952,22 @@ func (b *Builder) Build() (*App, error) {
 	// wireLocalAdminHandlers constructs the local-mode admin services and handlers.
 	// Used in both "local" and "hybrid" modes.
 	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
-		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
+		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger, app.LedgerService)
 		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
-		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), clientAuthService, b.logger)
+		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), clientAuthService, b.logger, app.LedgerService)
 		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
 		return signingKeyService
 	}
 
+	var tokenOutcomes *oauth2service.TokenOutcomeService
+
 	// buildProxyStrategies constructs the proxy path strategies.
 	// Used in both "proxy" and "hybrid" modes.
 	buildProxyStrategies := func(upstreamTokenEndpoint string) (enduser.TokenGrantStrategy, enduser.AuthorizationProceedStrategy) {
 		transport := enduser.NewOAuth2TokenProxy(upstreamTokenEndpoint, upstreamClient)
-		outcomes := oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier)
-		grant := enduser.NewProxyTokenGrantStrategy(upstreamTokenEndpoint, outcomes, b.logger)
+		tokenOutcomes = oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier, app.LedgerService)
+		grant := enduser.NewProxyTokenGrantStrategy(upstreamTokenEndpoint, tokenOutcomes, b.logger)
 		proceed := enduser.NewProxyProceedStrategy()
 		return grant, proceed
 	}
@@ -938,6 +984,7 @@ func (b *Builder) Build() (*App, error) {
 			return nil, err
 		}
 		impersonationIssuer = provider
+		tokenOutcomes = oauth2service.NewTokenOutcomeService(nil, nil, app.LedgerService)
 		grantHandler = enduser.NewLocalGrantStrategy(newLocalMintingStrategy(provider), b.logger)
 		proceedHandler = enduser.NewLocalProceedStrategy(newLocalCodeIssuer(provider), b.logger)
 		b.logger.Info("OAuth2 server mode: local — local token minting enabled",
@@ -1037,7 +1084,7 @@ func (b *Builder) Build() (*App, error) {
 			}
 		}
 
-		svc, err := impersonation.NewService(impCfg, b.newImpersonationJWKSFactory(upstreamClient), b.storage.Agents(), impersonationIssuer, 0, b.logger, newUserDelegationVerifier(app.ConsentService), consentBaseURL)
+		svc, err := impersonation.NewService(impCfg, b.newImpersonationJWKSFactory(upstreamClient), b.storage.Agents(), impersonationIssuer, 0, b.logger, newUserDelegationVerifier(app.ConsentService), consentBaseURL, app.LedgerService)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build impersonation service: %w", err)
 		}
@@ -1125,6 +1172,7 @@ func (b *Builder) Build() (*App, error) {
 			app.PermissionSetService,
 			b.storage.Agents(),
 			&b.config.TokenExchange,
+			app.LedgerService,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create token exchange service: %w", err)
@@ -1154,6 +1202,7 @@ func (b *Builder) Build() (*App, error) {
 			OAuth2Service: app.OAuth2Service,
 			Logger:        b.logger,
 			GrantHandler:  grantHandler,
+			Outcomes:      tokenOutcomes,
 			Impersonation: impersonationService,
 		},
 		OAuth2Metadata:       oauth2MetadataHandler,
@@ -1170,6 +1219,16 @@ func (b *Builder) Build() (*App, error) {
 		CIMDMetadata:         enduserHandlers.NewCIMDMetadataHandler(app.CIMDMetadataProvider, b.logger),
 		JWKS:                 jwksHandler,
 		SPA:                  handlers.NewSPAHandler(b.staticWebResourcesPath, b.logger),
+	}
+
+	policyCtx, cancelPolicy := context.WithTimeout(context.Background(), b.config.Storage.Timeouts.Write)
+	err = app.LedgerService.SetRetentionPolicy(policyCtx, retention)
+	cancelPolicy()
+	if err != nil {
+		if app.Shutdown != nil {
+			_ = app.Shutdown(context.Background())
+		}
+		return nil, fmt.Errorf("business event retention policy initialization failed: %w", err)
 	}
 
 	// Start maintenance only after all fallible construction has completed.
@@ -1195,6 +1254,34 @@ func (b *Builder) Build() (*App, error) {
 				return prevShutdown(ctx)
 			}
 			return nil
+		}
+	}
+	if b.config.Storage.Backend == "memory" {
+		stopRetention, err := startMemoryBusinessEventRetention(app.LedgerService, b.config.Storage.Timeouts.Write, b.logger)
+		if err != nil {
+			if app.Shutdown != nil {
+				_ = app.Shutdown(context.Background())
+			}
+			return nil, fmt.Errorf("business event retention startup failed: %w", err)
+		}
+		previousShutdown := app.Shutdown
+		app.Shutdown = func(ctx context.Context) error {
+			retentionErr := stopRetention(ctx)
+			if previousShutdown != nil {
+				return errors.Join(retentionErr, previousShutdown(ctx))
+			}
+			return retentionErr
+		}
+	}
+	if copyEnabled {
+		stopDelivery := startBusinessEventDelivery(b.storage.BusinessEventDelivery(), b.config, b.logger)
+		previousShutdown := app.Shutdown
+		app.Shutdown = func(ctx context.Context) error {
+			deliveryErr := stopDelivery(ctx)
+			if previousShutdown != nil {
+				return errors.Join(deliveryErr, previousShutdown(ctx))
+			}
+			return deliveryErr
 		}
 	}
 

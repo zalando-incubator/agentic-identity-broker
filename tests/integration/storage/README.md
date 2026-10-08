@@ -66,6 +66,7 @@ Tests:
 - `TestPostgresAdapter_CreateUser_ValidationErrors` - Input validation
 - `TestPostgresAdapter_ContextCancellation` - Context cancellation handling
 - `TestPostgresAdapter_FullLifecycle_Integration` - Full lifecycle with real PostgreSQL container
+- `TestConsentLedgerConcurrentIdenticalFirstGrantRecordsOnlyWinner` - Two first-time consent requests wait on the PostgreSQL pair lock and return the same grant ID. They retain one creation fact and no update fact.
 
 ## Container Runtime
 

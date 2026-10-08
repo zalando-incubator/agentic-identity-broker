@@ -542,3 +542,66 @@ func TestUserGrantRepository(t *testing.T) {
 		assert.Equal(t, 2, count)
 	})
 }
+
+func TestPostgresGrantExpirationRecognitionJoinsOwner(t *testing.T) {
+	adapter, agents, grants, cleanup := setupUserGrantTestDB(t)
+	defer cleanup()
+	agent := createUserGrantTestAgent(t, agents, "expiration")
+	grant := newUserGrant(id.Principal("expiration-user"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+	require.NoError(t, grants.Create(context.Background(), grant))
+	expiry := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	_, err := adapter.db.Exec(`UPDATE public.user_grants SET valid_until=$2 WHERE id=$1`, grant.ID, expiry)
+	require.NoError(t, err)
+	owner, err := adapter.BeginTX(context.Background())
+	require.NoError(t, err)
+	defer func() { _ = adapter.Rollback(owner) }()
+	won, err := grants.RecordExpiration(owner, grant.ID, expiry)
+	require.NoError(t, err)
+	require.NoError(t, adapter.Rollback(owner))
+	require.True(t, won)
+	candidates, err := grants.ListUnrecordedExpiredForPrincipal(context.Background(), grant.Principal, time.Now().UTC(), 100)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, grant.ID, candidates[0].ID)
+}
+
+func TestPostgresGrantExpirationRecognitionInNonUTCSession(t *testing.T) {
+	adapter, agents, grants, cleanup := setupUserGrantTestDB(t)
+	defer cleanup()
+	adapter.db.SetMaxOpenConns(1)
+	ctx := context.Background()
+	for _, zone := range []string{"America/New_York", "Asia/Tokyo"} {
+		t.Run(zone, func(t *testing.T) {
+			_, err := adapter.db.Exec(`SELECT set_config('TimeZone', $1, false)`, zone)
+			require.NoError(t, err)
+			agent := createUserGrantTestAgent(t, agents, zone)
+			grant := newUserGrant(id.NewPrincipal(t.Name()), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+			future := time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
+			grant.ValidUntil = &future
+			require.NoError(t, grants.Create(ctx, grant))
+			cutoff := time.Now().In(time.FixedZone("caller", -7*3600))
+			candidates, err := grants.ListUnrecordedExpiredForPrincipal(ctx, grant.Principal, cutoff, 10)
+			require.NoError(t, err)
+			require.Empty(t, candidates, "a future expiry must not be selected")
+			expiry := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+			_, err = adapter.db.Exec(`UPDATE public.user_grants SET valid_until=$2::timestamptz AT TIME ZONE 'UTC' WHERE id=$1`, grant.ID, expiry)
+			require.NoError(t, err)
+			candidates, err = grants.ListUnrecordedExpiredForPrincipal(ctx, grant.Principal, cutoff, 10)
+			require.NoError(t, err)
+			require.Len(t, candidates, 1)
+			require.Equal(t, grant.ID, candidates[0].ID)
+			won, err := grants.RecordExpiration(ctx, grant.ID, expiry.In(time.FixedZone("caller", 2*3600)))
+			require.NoError(t, err)
+			require.True(t, won, "a selected recently expired grant must make progress")
+			var recorded time.Time
+			require.NoError(t, adapter.db.Get(&recorded, `SELECT expiration_recorded_for FROM public.user_grants WHERE id=$1`, grant.ID))
+			require.True(t, recorded.Equal(expiry), "the marker must retain the UTC expiry instant")
+			won, err = grants.RecordExpiration(ctx, grant.ID, expiry)
+			require.NoError(t, err)
+			require.False(t, won, "the same expiry must be recognized only once")
+			candidates, err = grants.ListUnrecordedExpiredForPrincipal(ctx, grant.Principal, cutoff, 10)
+			require.NoError(t, err)
+			require.Empty(t, candidates, "recognized grants must leave the candidate list")
+		})
+	}
+}

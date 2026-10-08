@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentic-identity-broker:events:v1:approval-denied",
+  "title": "approval-denied",
+  "description": "A pending approval is denied.",
+  "allOf": [
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:envelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "agentic-identity-broker.approval-denied"
+        },
+        "outcome": {
+          "const": "denied"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reason_code": {
+              "enum": [
+                "user_denied"
+              ]
+            }
+          },
+          "required": [
+            "reason_code"
+          ]
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "approval_id",
+        "agent_id"
+      ]
+    }
+  ]
+}

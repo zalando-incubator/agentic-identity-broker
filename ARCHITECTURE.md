@@ -718,7 +718,14 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 
 - **OAuth2SessionService**: Transparently encrypts tokens on CreateSession, decrypts on retrieval
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
-- **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Provider metadata is loaded before the session lock, then automatic and explicit refresh re-read the latest session under that lock. PostgreSQL holds a row lock through the provider exchange and commits rotated encrypted tokens before releasing it; database acquisition, reads, and writes have separate configured timeouts. The in-memory adapter serializes refresh, upsert, and deletion per session while holding its map mutex only for lookup and commit. Replicas therefore use the latest refresh token without racing on a stale one.
+- **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Provider metadata loads before per-session coordination. Refresh and encryption run without ledger lifecycle, subject, or memory visibility gates.
+
+  A short subject-gated transaction conditionally updates the exact pre-exchange snapshot and appends `session-refreshed`. If logout or reauthorization changes that snapshot, refresh returns a conflict instead of resurrecting tokens or losing an update. PostgreSQL uses connection-scoped advisory coordination and reuses that connection for the short transaction.
+
+  PostgreSQL never acquires refresh coordination from a lifecycle-locked business read. Memory retains per-session coordination while unrelated sessions and admin reads remain available.
+- **Refresh pooler contract**: PostgreSQL refresh requires direct connections or session-mode pooling. Transaction-mode and statement-mode poolers cannot preserve the backend for its session advisory lock. Acquisition uses the operation context without an adapter-set `lock_timeout`.
+
+  If lock acquisition is uncertain or unlock fails, the adapter discards the connection. The [storage contract](specs/048-business-event-ledger/contracts/storage.md#shared-lock-protocol) and [operations guide](docs/operations/business-event-ledger.md#postgresql-connection-pooling-for-refresh) describe these requirements.
 - **Refresh cancellation and audit**: Automatic refresh has an operation deadline covering the configured upstream HTTP timeout and storage work. Caller cancellation stops that caller's wait without aborting a shared refresh that may already have rotated the provider token. Success audit events are emitted only after session persistence succeeds.
 - **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.
 - **Upstream response limits and retries**: The OAuth2 library already limits code-exchange responses to 1 MiB. The broker also rejects JWKS, refresh, and buffered proxy responses over 1 MiB. Unverified proxied responses stream unchanged. Authorization-code exchange retries network failures and HTTP 5xx, but not permanent OAuth errors.
@@ -929,6 +936,114 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 **Reused Machinery**: the JWKS adapter (`internal/adapters/jwks`), the ADR-009 CEL evaluator pattern (`internal/domain/tokenexchange/cel_evaluator.go`), the signed-JWT validation pattern, and the local issuer's signing key + `token_claims_expression` principal context (`internal/domain/oauth2server`).
 
 **See Also**: ADR 032 (accepted) — mandatory user delegation for impersonation; spec `037-oauth2-user-impersonation` (FR-013–019, CR-001–010).
+
+#### 3.1.z. Business Event Ledger (Feature 048)
+
+**Status**: [ADR 039](adrs/039-business-event-ledger.md) is accepted and binding. The broker implements atomic recording, lifecycle barriers, retention, erasure, and recoverable telemetry.
+The user removed the performance release gate and deployment-profile requirement on 2026-10-04. The [specification](specs/048-business-event-ledger/spec.md) and [plan](specs/048-business-event-ledger/plan.md) record that criteria change. The design in accepted ADR 039 remains unchanged.
+The [validation evidence](specs/048-business-event-ledger/quickstart.md) records functional results. The [performance report](specs/048-business-event-ledger/performance-results.md) retains historical measurements without claiming a deployment-load pass.
+
+**Ownership**: `internal/domain/ledger/` owns validation, recording, investigation, and lifecycle invariants as an independent bounded context.
+Existing business services determine whether each catalogued fact occurred.
+Shared immutable values belong in `internal/domain/model/`, and repository contracts belong in `internal/ports/storage.go`.
+The builder owns dependency composition and worker shutdown.
+
+Handlers parse requests and format responses. They do not append events directly.
+Pre-authentication token input errors preserve their existing HTTP responses without durable events. Authenticated security decisions remain fail closed.
+
+**Atomicity**:
+
+- A business mutation and its event share one owning transaction.
+- Joined scopes cannot commit the owner. Joined rollback marks the owner rollback-only.
+- Validation or append failure prevents success and the release of token or secret bytes.
+- Non-mutating failures use a separate transaction after the unsuccessful mutation scope ends.
+- Intentional replay-detection revocations retain their independent commit boundary.
+- Memory uses one visibility gate and a touched-record/index undo journal, not whole-store snapshots.
+- Memory completion rejects new operations and waits for admitted guards before undo, visibility release, or commit effects.
+- Commit releases notifications and cache invalidations. The broker does not automatically retry external operations.
+- Agent deletion restarts only its local owner when locked discovery reveals another subject. Failed rollback, cancellation, or joined ownership stops the restart.
+
+**Identity and privacy**: Every event has a generated UUIDv7 ID, immutable envelope, registered type, and closed type-specific data.
+The fixed type prefix is `agentic-identity-broker.`. The fixed source is `urn:agentic-identity-broker:broker`.
+Offline embedded schemas define all 28 initial types. A new type does not require a database migration.
+
+Unknown types, extra fields, invalid semantic values, and unsafe attribution fail closed.
+Reasons use fixed templates, and user-agent values use recognized family names rather than raw strings.
+No credential, raw error payload, arbitrary request body, or token response enters the event.
+
+The event subject identifies the affected principal.
+Actor Context identifies the initiating caller. If the workflow establishes a represented principal, Actor Context also identifies that principal.
+On delegated exchange, `SecurityContext.Actor` currently identifies the affected principal, not the initiating caller.
+The ledger derives its actor separately from verified caller results.
+Client-assertion exchange and impersonation use the same `gateway` actor kind and verified caller ID.
+
+Approval consumption authenticates only the represented subject. Its gateway caller ID is null. The broker never copies that ID from the user or approval creator.
+Unavailable identities are null, not the anonymous sentinel or an invented agent-as-user identity.
+Trace and span values must belong to the authoritative request context.
+
+**Storage and deletion**: PostgreSQL partitions events and payload-free delivery references by six-hour UTC windows of `recorded_at`.
+Storage assigns recording time. Investigation uses the separate business occurrence time.
+Events retain references without cascading foreign keys to mutable business objects.
+Queries require an exact subject or an explicit no-subject selector and use strict `(occurred_at,id)` continuation.
+
+Append and dispatch acquire the shared lifecycle barrier before sorted shared subject barriers and business locks.
+Exact-subject erasure takes an exclusive subject barrier and removes matching events and delivery references in one transaction.
+PostgreSQL erasure requires `READ COMMITTED` isolation. Both repository and operational SQL entry points reject incompatible ambient transactions.
+Erasure leaves business expiry-recognition markers intact and creates neither identity tombstones nor replacement subject events.
+Retention and policy changes take the exclusive lifecycle barrier.
+Memory applies equivalent lifecycle guarantees with a coarser barrier.
+
+Gateway sync polling does not scan globally for unrecorded approval expiry.
+Lazy discovery is bounded and principal-scoped. Mutation paths recognize the objects they affect.
+Approval decisions compare expiry with the wall clock, not the transaction start time.
+Session upserts return the retained row's ID and lifecycle timestamps before the domain constructs `session-established`.
+
+**Retention and operations**: Retention defaults to 90 days and accepts only positive durations, normalized upward to microseconds.
+The migration owner provisions the current window and seven future days.
+The broker performs no partition DDL and has no erasure or maintenance execution privilege.
+
+A separate five-minute scheduler drops only partition pairs whose upper bound is no later than the retention cutoff.
+Retention never removes an event early.
+Six-hour partitions and five-minute scheduling keep normal grace below 6h05m plus bounded execution, within the required 24-hour maximum.
+Missing maintenance requires an alert before that limit and fails readiness when the current partition is absent.
+Erasure and maintenance require a positive statement timeout of at most 30 seconds before invocation.
+Adapters use a separate preceding command. Scheduled jobs configure the connection through `PGOPTIONS`.
+
+Deployment hooks provision partitions without dropping history.
+Retention changes require one coordinated policy across replicas and suspension of maintenance until the new policy takes effect.
+Memory applies logical six-hour retention at startup and every five minutes.
+Operational queries and erasure use restricted database roles. The feature adds no public read, erase, export, or ingestion API.
+
+**Recoverable telemetry**: Eligible events commit a payload-free delivery reference with their authoritative record.
+A builder-owned worker reloads each retained event under lifecycle and subject barriers.
+It exports through a separate, non-global, synchronous OpenTelemetry pipeline with the existing destination and Resource.
+The worker acknowledges only successful export and acknowledgement commit.
+Retries preserve the event ID and can produce duplicates.
+
+After an export fails or is canceled, dispatch commits a 30-second backoff before it releases deletion barriers.
+PostgreSQL reserves one second beyond the export budget for this cleanup.
+This prevents retries on every worker scan after an exporter deadline.
+No event payload survives the deletion barrier in an SDK queue.
+Erasure cannot recall telemetry already delivered to external systems.
+Ledger recording does not change the existing slog signals or batch pipeline.
+Token exchange and session telemetry retain main's credential-safe classification contract, not the older raw-error fields in historical ledger captures.
+
+Copying requires all three switches: `telemetry.enabled`, `telemetry.logs.enabled`, and `business_events.telemetry_copy_enabled`.
+Disabled-period events have no delivery references and receive no historical backfill.
+Recording and retention have no disable switch.
+Shutdown drains HTTP, stops the ledger workers, closes their provider, completes existing telemetry shutdown, and closes storage.
+
+**Acceptance scope**: The 20 active functional scenarios remain required in the existing backend E2E and integration lanes.
+The user removed the performance release gate and deployment-profile requirement, then removed the feature-specific diagnostic tools.
+No replacement performance suite, paired run, or numeric result is required.
+The 5 ms p99 recording-overhead goal remains unverified and non-blocking.
+Accepted ADR 039's storage/security design and production defaults of 25 open/5 idle connections remain unchanged.
+
+Recording instrumentation separates preflight validation and append from checkout and physical commit.
+Historical Docker-VM measurements include pool contention, commit-inclusive spans, and delivery load.
+These measurements do not establish a 5 ms pass or failure.
+
+**Canonical contracts**: [Data model](specs/048-business-event-ledger/data-model.md), [events](specs/048-business-event-ledger/contracts/events.md), [storage](specs/048-business-event-ledger/contracts/storage.md), and [configuration](specs/048-business-event-ledger/contracts/configuration.md).
 
 ### 3.2. Envoy External Processor (ExtProc) Token Exchange Service
 
@@ -1553,7 +1668,7 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **CredentialService**: Domain service in `internal/domain/oauth2server/credential_service.go` that owns broker credential creation, rotation, and revocation. It checks agent existence and selects creation or replacement through repository ports. The builder injects it into the admin handler through `ClientCredentialManager`. The handler retains HTTP response formatting and existing success logs.
 
-**StorageTransactionManager**: Shared context-based transaction contract in `internal/ports/storage.go`. Participating PostgreSQL repositories select the ambient transaction through `storageExecutor`. The in-memory factory currently returns a no-op transaction manager. The shared name does not imply memory rollback or nested transaction ownership.
+**StorageTransactionManager**: Shared context-based transaction contract in `internal/ports/storage.go`. PostgreSQL repositories use the ambient transaction through `storageExecutor`. Memory uses a shared visibility gate and an undo journal. Joined scopes cannot commit independently, and joined rollback poisons the owner. Memory completion closes admission and waits for admitted repository operations before releasing storage or effects.
 
 **SigningKey**: An asymmetric key pair scoped to a `key_domain`. `token_signing` keys support ES256 or RS256 and sign locally-issued JWT access tokens; `cimd_client_authentication` keys support ES256 only and sign outbound client assertions. Each domain has separate current-key and activation-grace state, while `kid` remains globally unique. Private material is PEM-encoded and encrypted via `EncryptionPort`; the corresponding public JWK is stored alongside it for publication without decryption. Migration 033 leaves existing public JWKs nullable; the first JWKS rebuild for an older token-signing key derives and backfills its public JWK once. Newly added current keys may wait behind an `activates_at` grace period so JWKS caches can learn them before they begin signing; if local or hybrid mode starts with no active token-signing key, `Builder` calls `SigningKeyService.EnsureInitialKey` to auto-generate one immediately. Keys remain in their public key set until explicitly soft-deleted via `removed_at`. Located in `internal/domain/storage/signing_key.go`.
 
@@ -1569,7 +1684,11 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **Token signing cache**: `SigningKeyService` caches the current signer's parsed private JWK, identified by `kid` and its published public key, for up to 45 seconds per process; a deadline timer clears idle entries. Repeated local-token issuance reuses it without decrypting or parsing the PEM again; simultaneous misses, including failed decryptions, share one in-flight load with a 30-second deadline, and each request can cancel its wait independently. Keys without persisted public material are never cached because their JWKS availability still depends on decrypting the private key on each request. Successful key generation, promotion, and deletion invalidate the local cache; loads still in progress when invalidation occurs are discarded and reselect the current key. Every mint still reads `GetCurrent` from the repository before using cached material, so a different replica's promotion or deletion changes key selection immediately rather than allowing an old signer to issue tokens against a newer JWKS. Failed lookups or decryptions do not fall back to cached material.
 
-**SigningKeyBootstrapCoordinator**: Port in `internal/ports/oauth2server.go` that serializes `EnsureInitialKey` across broker replicas sharing a backend. Memory uses an in-process lock; PostgreSQL uses an advisory transaction lock. Callers must perform all bootstrap work with the callback context supplied by the coordinator.
+Token issuance loads signing material before ledger gates. The short transaction revalidates selection and signs locally with Fosite's final claims.
+PostgreSQL holds a shared lock on the signing revision row until completion. Key mutations update that row.
+Changed selection fails closed without another decryption inside the transaction.
+
+**SigningKeyBootstrapCoordinator**: Port in `internal/ports/oauth2server.go` that serializes initial selection across broker replicas. Memory uses an in-process lock. PostgreSQL uses an advisory transaction lock. Key generation, branch-key provisioning, and encryption occur before coordination. The callback rechecks selection and persists prepared material, its promotion event, and commit effects. A losing candidate stores no key or promotion fact. Existing timeout recovery remains in place.
 
 **AuthorizationCode**: Ephemeral, single-use code issued by the authorization endpoint and exchanged for an access token. Stored as SHA-256 hash. Expires after 60 seconds. Invalidated atomically on first use via `UPDATE ... SET used_at WHERE used_at IS NULL`. PKCE (S256) always required. Located in `internal/domain/storage/authorization_code.go`.
 
@@ -1700,3 +1819,25 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 **ApprovalConsumed**: Domain event emitted when a once-persistence approval is consumed by ExtProc after use. Carries approval_id and timestamp. Triggers sync version increment.
 
 **ApprovalExpired**: Domain event emitted lazily when an expired approval is first accessed. Carries approval_id and expiry timestamp. Emitted as OTel span linked to originating trace if present.
+
+### Business Event Ledger
+
+These definitions describe the implementation governed by accepted ADR 039.
+The 20 functional acceptance scenarios remain required.
+The user retired the performance gate, deployment-profile requirement, and feature-specific diagnostic tools.
+The 5 ms p99 goal remains unverified and non-blocking.
+
+**Business Event**: An immutable, credential-free historical broker fact. It belongs to a registered Event Type and survives deletion of referenced business objects.
+
+**Event Type**: A fixed `agentic-identity-broker.<event-name>` meaning with a closed schema, outcome, required references, and safe reason templates.
+
+**Event Envelope**: The immutable identity, times, subject, Actor Context, business references, reasons, correlation, and type-specific data for one Business Event.
+
+**Actor Context**: The initiating caller's kind and nullable trusted identity, plus an optional represented principal. It is distinct from the event subject.
+
+**Delivery Reference**: A payload-free pointer to a retained Business Event. The pointer commits atomically with the event when telemetry copying is enabled. It contains delivery scheduling state.
+
+**Ledger Telemetry Copy**: An additional recoverable OpenTelemetry log for one retained Business Event. It preserves the envelope and event ID without replacing existing slog.
+
+**Retention Policy**: The positive recorded-time lifetime and bounded deletion grace for Business Events and Delivery References. The default lifetime is 90 days.
+

@@ -33,12 +33,10 @@ func (r *PKCESessionRepo) Create(ctx context.Context, session *storage.PKCESessi
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.db.ExecContext(execCtx,
-		`INSERT INTO pkce_sessions (signature, code_challenge, code_challenge_method, expires_at, created_at)
+	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, `INSERT INTO pkce_sessions (signature, code_challenge, code_challenge_method, expires_at, created_at)
 		 VALUES ($1, $2, $3, $4, $5)`,
 		session.Signature, session.CodeChallenge, session.CodeChallengeMethod,
-		session.ExpiresAt, session.CreatedAt,
-	)
+		session.ExpiresAt, session.CreatedAt)
 	if err != nil {
 		return storage.NewStorageError("PKCESessionRepo.Create", storage.ErrorKindUnknown, err, "failed to create PKCE session")
 	}
@@ -54,7 +52,7 @@ func (r *PKCESessionRepo) FindBySignature(ctx context.Context, signature string)
 	defer cancel()
 
 	var session storage.PKCESession
-	err := r.adapter.db.GetContext(queryCtx, &session,
+	err := r.adapter.storageExecutor(queryCtx).GetContext(queryCtx, &session,
 		`SELECT signature, code_challenge, code_challenge_method, expires_at, created_at
 		 FROM pkce_sessions WHERE signature = $1`, signature)
 	if err != nil {
@@ -77,8 +75,7 @@ func (r *PKCESessionRepo) Delete(ctx context.Context, signature string) error {
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	result, err := r.adapter.db.ExecContext(execCtx,
-		`DELETE FROM pkce_sessions WHERE signature = $1`, signature)
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, `DELETE FROM pkce_sessions WHERE signature = $1`, signature)
 	if err != nil {
 		return storage.NewStorageError("PKCESessionRepo.Delete", storage.ErrorKindUnknown, err, "failed to delete PKCE session")
 	}
@@ -94,8 +91,7 @@ func (r *PKCESessionRepo) DeleteExpired(ctx context.Context) (int, error) {
 	defer cancel()
 
 	now := time.Now()
-	result, err := r.adapter.db.ExecContext(execCtx,
-		`DELETE FROM pkce_sessions WHERE expires_at < $1`, now)
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, `DELETE FROM pkce_sessions WHERE expires_at < $1`, now)
 	if err != nil {
 		return 0, storage.NewStorageError("PKCESessionRepo.DeleteExpired", storage.ErrorKindUnknown, err, "failed to delete expired PKCE sessions")
 	}

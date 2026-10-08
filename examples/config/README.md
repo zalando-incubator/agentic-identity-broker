@@ -45,6 +45,60 @@ The most minimal valid configuration. Demonstrates:
 ./agentic-identity-broker --config ./examples/config/config.minimal.yaml
 ```
 
+### `business-event-ledger.yaml`
+
+**Status:** The broker implements recording, retention, erasure, and recoverable telemetry.
+The 20 active functional scenarios remain the release criteria.
+The 5 ms p99 figure is an unverified, non-blocking diagnostic goal.
+Release requires no deployment profile.
+The [validation evidence](../../specs/048-business-event-ledger/quickstart.md) records the results.
+
+This single-document YAML file provides a local configuration with the ledger defaults:
+
+- Retention of `2160h` (90 days)
+- The copy value `telemetry_copy_enabled: true`.
+
+The example uses in-memory storage and loopback listeners. It is not a durable production deployment.
+Its pre-authentication headers are for local use only.
+Production requires a trusted authentication proxy and PostgreSQL storage.
+
+**Default configuration:**
+
+```bash
+just build
+export IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(openssl rand -base64 32)"
+./bin/agentic-identity-broker --config ./examples/config/business-event-ledger.yaml
+```
+
+**Shorter retention with disabled additional copies:**
+
+```bash
+./bin/agentic-identity-broker --config ./examples/config/business-event-ledger.yaml \
+  --business_events.retention=720h \
+  --business_events.telemetry_copy_enabled=false
+```
+
+The alternative uses the same encryption key from the first command.
+Its explicit CLI flags override environment variables and the YAML defaults.
+The equivalent environment overrides are:
+
+```bash
+IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION=720h \
+IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED=false \
+  ./bin/agentic-identity-broker --config ./examples/config/business-event-ledger.yaml
+```
+
+Retention must be a positive Go duration, such as `2160h`, not `90d`.
+Both storage backends round positive fractions upward to whole microseconds.
+There is no persistence-disable switch.
+Copies require `telemetry.enabled`, `telemetry.logs.enabled`, and `business_events.telemetry_copy_enabled` to be `true`.
+Global telemetry remains disabled by default, even though the ledger copy switch defaults to `true`.
+Disabled copies do not disable recording or retention.
+
+Replicas that share a ledger must use the same retention value.
+For retention changes, use the [coordinated rollout procedure](../../docs/configuration.md#coordinated-retention-rollout).
+The [ledger configuration reference](../../docs/configuration.md#business-event-ledger) defines defaults, exact mappings, validation, and telemetry precedence.
+
 ### `config.development.yaml`
 
 Development environment configuration. Demonstrates:
@@ -482,12 +536,7 @@ The application loads configuration from multiple sources with this precedence (
    ./agentic-identity-broker --log-level debug --log-format json
    ```
 
-2. **YAML File** (from --config flag or IDENTITY_BROKER_CONFIG_PATH)
-   ```bash
-   ./agentic-identity-broker --config ./examples/config/config.production.yaml
-   ```
-
-3. **.env Files** (environment-specific loading)
+2. **Environment variables**, including values from `.env` files:
    - `.env` (always loaded)
    - `.env.local` (local overrides, not in version control)
    - `.env.{GO_ENV}` (environment-specific, e.g., `.env.production`)
@@ -496,6 +545,11 @@ The application loads configuration from multiple sources with this precedence (
    Example with GO_ENV=production:
    ```bash
    GO_ENV=production ./agentic-identity-broker
+   ```
+
+3. **YAML File** (from --config flag or IDENTITY_BROKER_CONFIG_PATH)
+   ```bash
+   ./agentic-identity-broker --config ./examples/config/config.production.yaml
    ```
 
 4. **Defaults** (lowest precedence)

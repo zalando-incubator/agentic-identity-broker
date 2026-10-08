@@ -27,6 +27,55 @@ func NewToolApprovalRepository(adapter *Adapter) *ToolApprovalRepository {
 	return &ToolApprovalRepository{adapter: adapter}
 }
 
+func (r *ToolApprovalRepository) ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.ToolApproval, error) {
+	const operation = "ListExpiredToolApprovals"
+	if r.adapter == nil || r.adapter.db == nil {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")
+	}
+	if principal.IsZero() || at.IsZero() || limit <= 0 || limit > 1000 {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "invalid expiration query")
+	}
+	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	rows, err := r.adapter.storageExecutor(execCtx).QueryContext(execCtx, `SELECT id, principal, agent_id, gateway_client_id, tool_name,
+		arguments, arguments_hash, description, risk_level, mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
+		status, persistence, consumed, approval_url, created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
+		FROM public.tool_approvals WHERE principal = $1 AND status = 'pending' AND expires_at < $2
+		AND expiration_recorded_for IS DISTINCT FROM expires_at ORDER BY expires_at, id LIMIT $3`, principal, at, limit)
+	if err != nil {
+		return nil, businessEventStorageError(operation, err)
+	}
+	defer func() { _ = rows.Close() }()
+	result, err := scanApprovalRows(rows, operation)
+	if err != nil {
+		return nil, businessEventStorageError(operation, err)
+	}
+	return result, nil
+}
+
+func (r *ToolApprovalRepository) RecordExpiration(ctx context.Context, approvalID id.ApprovalID, effectiveExpiry time.Time) (bool, error) {
+	const operation = "RecordToolApprovalExpiration"
+	if r.adapter == nil || r.adapter.db == nil {
+		return false, storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")
+	}
+	if approvalID.IsZero() || effectiveExpiry.IsZero() {
+		return false, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "invalid expiration recognition")
+	}
+	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, `UPDATE public.tool_approvals SET expiration_recorded_for = expires_at
+		WHERE id = $1 AND status = 'pending' AND expires_at = $2 AND expires_at < clock_timestamp()
+		AND expiration_recorded_for IS DISTINCT FROM expires_at`, approvalID, effectiveExpiry)
+	if err != nil {
+		return false, businessEventStorageError(operation, err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, businessEventStorageError(operation, err)
+	}
+	return count == 1, nil
+}
+
 var (
 	_ ports.ToolApprovalRepository        = (*ToolApprovalRepository)(nil)
 	_ ports.ToolApprovalQueryRepository   = (*ToolApprovalRepository)(nil)
@@ -89,7 +138,7 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 		return nil, storage.NewStorageError("CreateToolApproval", storage.ErrorKindValidation, err, "failed to marshal params pattern to JSON")
 	}
 
-	tx, err := r.adapter.db.BeginTx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return nil, storage.NewStorageError(
 			"CreateToolApproval",
@@ -104,7 +153,8 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 		UPDATE tool_approvals
 		SET consumed = TRUE
 		WHERE principal = $1 AND agent_id = $2 AND tool_name = $3 AND arguments_hash = $4
-		  AND status = 'pending' AND consumed = FALSE AND expires_at <= NOW()
+		  AND status = 'pending' AND consumed = FALSE AND expires_at < clock_timestamp()
+		  AND expiration_recorded_for = expires_at
 	`, approval.Principal, approval.AgentID, approval.ToolName, approval.ArgumentsHash)
 	if err != nil {
 		return nil, storage.NewStorageError(
@@ -308,7 +358,7 @@ func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.Approval
 	`
 
 	approval := &storage.ToolApproval{}
-	err := r.adapter.db.QueryRowContext(queryCtx, query, approvalID).Scan(
+	err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, query, approvalID).Scan(
 		&approval.ID,
 		&approval.Principal,
 		&approval.AgentID,
@@ -420,7 +470,7 @@ func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.Appr
 	query := `
 		UPDATE tool_approvals
 		SET status = 'approved', persistence = $2, tool_pattern = $3, params_pattern = $4, approved_at = $5
-		WHERE id = $1 AND status = 'pending' AND expires_at > NOW()
+		WHERE id = $1 AND status = 'pending' AND expires_at > clock_timestamp()
 		RETURNING id, principal, agent_id, gateway_client_id, tool_name,
 		          arguments, arguments_hash, description, risk_level,
 		          mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
@@ -430,7 +480,7 @@ func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.Appr
 
 	approval := &storage.ToolApproval{}
 	var storedParamsPatternJSON []byte
-	err = r.adapter.db.QueryRowContext(execCtx, query, approvalID, decision.Persistence, decision.ToolPattern, paramsPatternJSON, approvedAt).Scan(
+	err = r.adapter.storageExecutor(execCtx).QueryRowContext(execCtx, query, approvalID, decision.Persistence, decision.ToolPattern, paramsPatternJSON, approvedAt).Scan(
 		&approval.ID,
 		&approval.Principal,
 		&approval.AgentID,
@@ -536,7 +586,7 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 	query := `
 		UPDATE tool_approvals
 		SET status = 'denied', persistence = $2, denied_at = $3
-		WHERE id = $1 AND status = 'pending' AND expires_at > NOW()
+		WHERE id = $1 AND status = 'pending' AND expires_at > clock_timestamp()
 		RETURNING id, principal, agent_id, gateway_client_id, tool_name,
 		          arguments, arguments_hash, description, risk_level,
 		          mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
@@ -545,7 +595,7 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 	`
 
 	approval := &storage.ToolApproval{}
-	err := r.adapter.db.QueryRowContext(execCtx, query, approvalID, persistence, deniedAt).Scan(
+	err := r.adapter.storageExecutor(execCtx).QueryRowContext(execCtx, query, approvalID, persistence, deniedAt).Scan(
 		&approval.ID,
 		&approval.Principal,
 		&approval.AgentID,
@@ -660,7 +710,7 @@ func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.Appr
 	`
 
 	approval := &storage.ToolApproval{}
-	err := r.adapter.db.QueryRowContext(execCtx, query, approvalID, consumedAt).Scan(
+	err := r.adapter.storageExecutor(execCtx).QueryRowContext(execCtx, query, approvalID, consumedAt).Scan(
 		&approval.ID,
 		&approval.Principal,
 		&approval.AgentID,
@@ -758,7 +808,7 @@ func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID
 	`
 
 	approval := &storage.ToolApproval{}
-	err := r.adapter.db.QueryRowContext(execCtx, query, approvalID, revokedAt).Scan(
+	err := r.adapter.storageExecutor(execCtx).QueryRowContext(execCtx, query, approvalID, revokedAt).Scan(
 		&approval.ID,
 		&approval.Principal,
 		&approval.AgentID,
@@ -843,7 +893,7 @@ func (r *ToolApprovalRepository) ListAllActive(ctx context.Context, principalFil
 	if principalFilter != nil {
 		principal = string(*principalFilter)
 	}
-	rows, err := r.adapter.db.QueryContext(queryCtx, query, pq.Array(activeAgentSessionIDs), principal)
+	rows, err := r.adapter.storageExecutor(queryCtx).QueryContext(queryCtx, query, pq.Array(activeAgentSessionIDs), principal)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return nil, storage.NewStorageError(
@@ -898,7 +948,7 @@ func (r *ToolApprovalRepository) ListActiveByPrincipalAndAgent(ctx context.Conte
 		ORDER BY created_at DESC
 	`
 
-	rows, err := r.adapter.db.QueryContext(queryCtx, query, principal, agentID)
+	rows, err := r.adapter.storageExecutor(queryCtx).QueryContext(queryCtx, query, principal, agentID)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return nil, storage.NewStorageError(
@@ -952,7 +1002,7 @@ func (r *ToolApprovalRepository) ListPermanentByPrincipal(ctx context.Context, p
 		ORDER BY created_at DESC
 	`
 
-	rows, err := r.adapter.db.QueryContext(queryCtx, query, principal)
+	rows, err := r.adapter.storageExecutor(queryCtx).QueryContext(queryCtx, query, principal)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return nil, storage.NewStorageError(
@@ -1003,7 +1053,7 @@ func (r *ToolApprovalRepository) CountPendingByPrincipalAndAgent(ctx context.Con
 	`
 
 	var count int
-	err := r.adapter.db.QueryRowContext(queryCtx, query, principal, agentID).Scan(&count)
+	err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, query, principal, agentID).Scan(&count)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return 0, storage.NewStorageError(
