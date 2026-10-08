@@ -1,0 +1,248 @@
+# Contract fragment for api/admin/openapi.yaml (Principle IV, X).
+#
+# Merge target: api/admin/openapi.yaml
+#   - tags:        append the `Sessions` tag
+#   - paths:       insert `/api/sessions/sweep` after `/api/cimd-client-keys`
+#   - components.schemas: add `SessionSweepRequest`, `SessionSweepResult`
+# Reuses existing components: `#/components/responses/BadRequestError`,
+# `#/components/responses/InternalServerError`, `#/components/schemas/ErrorResponse`,
+# and the document-level `security: [PreAuthProxy: []]`.
+#
+# STAKEHOLDER CONFIRMATION REQUIRED before implementation (Principle X). Confirm all four
+# contract choices, including those now stated in spec API-002:
+#   1. `page_size` maximum of 1000 (API-002, FR-008).
+#   2. `lookahead_duration` grammar restricted to days/hours/minutes/seconds (API-002).
+#   3. Unknown request properties rejected with 400.
+#   4. Missing operator principal returns 500 `server_misconfiguration` (CIMD-key precedent).
+openapi: 3.0.3
+info:
+  title: Admin API fragment — Session Sweep
+  version: 1.0.0
+tags:
+  - name: Sessions
+    description: Administrative maintenance of third-party user sessions across all principals
+paths:
+  /api/sessions/sweep:
+    post:
+      summary: Refresh third-party sessions whose access tokens expire soon
+      description: |
+        Refreshes every stored third-party user session whose access token expires within the
+        lookahead window, across all principals and services. Intended to be called on a schedule
+        by an operator-managed job (for example a Kubernetes CronJob); the broker runs no internal
+        scheduler.
+
+        **Selection**: A session is a candidate when its access token has a recorded expiry at or
+        before `now + lookahead_duration`. Sessions with no access-token expiry are never
+        candidates. Healthy sessions outside the window are not evaluated and do not appear in any
+        count.
+
+        **Processing**: Candidates are read in pages of `page_size` and refreshed one at a time
+        using each session's stored refresh token. Newly issued tokens are encrypted before they
+        are stored. A candidate that another refresh already renewed, or that was deleted during
+        the sweep, is counted as `skipped`. A candidate that cannot be refreshed (no usable refresh
+        token, upstream error) is counted as `failed`. The sweep then continues and the stored
+        session is left unchanged.
+
+        **Dry run**: With `dry_run: true`, candidates are classified without calling any upstream
+        provider and without writing. Candidates that would be refreshed are counted in
+        `refreshed`.
+
+        **Concurrency**: Safe to invoke concurrently on several broker replicas. Each session is
+        refreshed under a row lock, so concurrent sweeps never refresh the same session twice and
+        never leave a partial update. Concurrent sweeps do not divide the work between them.
+
+        **Duration**: The request runs until every candidate has been evaluated. The server
+        removes its write timeout for this operation. The caller controls the overall timeout. If
+        the client disconnects, the sweep stops after the session in progress, and sessions already
+        refreshed stay refreshed.
+
+        **Response semantics**: `200 OK` is returned whenever the sweep itself completes, even if
+        every candidate failed. `500` is returned only when the sweep cannot continue because the
+        session store is unavailable. The response contains only counts and never token material.
+
+        Every invocation is audit-logged with the operator principal.
+      operationId: sweepSessions
+      tags:
+        - Sessions
+      requestBody:
+        required: false
+        description: |
+          All fields are optional. An empty body and `{}` are equivalent. The
+          `Content-Type: application/json` header is still required (see Browser Request Protection).
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionSweepRequest'
+            examples:
+              defaults:
+                summary: Use configured lookahead and page size
+                value: {}
+              scheduled:
+                summary: Ten-minute window for a CronJob that runs every five minutes
+                value:
+                  lookahead_duration: PT10M
+              dry_run_wide:
+                summary: Preview a one-day window without refreshing
+                value:
+                  lookahead_duration: P1D
+                  dry_run: true
+                  page_size: 500
+      responses:
+        '200':
+          description: The sweep completed; counts describe per-session outcomes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionSweepResult'
+              examples:
+                mixed:
+                  summary: Some sessions refreshed, one could not be refreshed
+                  value:
+                    refreshed: 42
+                    skipped: 3
+                    failed: 1
+                    total_evaluated: 46
+                    dry_run: false
+                all_failed:
+                  summary: Every candidate failed (still 200)
+                  value:
+                    refreshed: 0
+                    skipped: 0
+                    failed: 7
+                    total_evaluated: 7
+                    dry_run: false
+                dry_run:
+                  summary: Dry run
+                  value:
+                    refreshed: 120
+                    skipped: 0
+                    failed: 4
+                    total_evaluated: 124
+                    dry_run: true
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_duration:
+                  summary: Unsupported or malformed duration
+                  value:
+                    error: invalid request body
+                    message: lookahead_duration must be an ISO 8601 duration of days, hours, minutes, or seconds (e.g. PT5M)
+                non_positive_duration:
+                  summary: Zero duration
+                  value:
+                    error: invalid request body
+                    message: lookahead_duration must be greater than zero
+                page_size_out_of_range:
+                  summary: Page size outside 1..1000
+                  value:
+                    error: invalid request body
+                    message: page_size must be between 1 and 1000
+                unknown_field:
+                  summary: Unknown property
+                  value:
+                    error: invalid request body
+                    message: 'unknown field "lookahead"'
+        '500':
+          description: |
+            The sweep could not continue because the session store is unavailable, or the request
+            reached the broker without an operator principal (`server_misconfiguration`). Sessions
+            refreshed before the failure stay refreshed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                storage_unavailable:
+                  value:
+                    error: internal server error
+                missing_operator:
+                  value:
+                    error: server_misconfiguration
+                    message: operator principal required for session sweep
+components:
+  schemas:
+    SessionSweepRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        lookahead_duration:
+          type: string
+          format: duration
+          description: |
+            ISO 8601 duration. Sessions whose access token expires within this duration from the
+            start of the sweep are refreshed. Only day, hour, minute, and second components are
+            accepted (`P[nD][T[nH][nM][n[.f]S]]`); year, month, and week components are rejected.
+            Must be greater than zero. Defaults to the server-configured
+            `token_refresh.lookahead_duration` (default 5 minutes).
+          pattern: '^P(?!$)(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?)?$'
+          example: PT5M
+        dry_run:
+          type: boolean
+          default: false
+          description: When true, report what would be refreshed without contacting upstream providers or writing.
+        page_size:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 1000
+          description: |
+            Number of candidate sessions read per page. Defaults to the server-configured
+            `token_refresh.sweep.default_page_size` (default 100).
+          example: 100
+    SessionSweepResult:
+      type: object
+      additionalProperties: false
+      required:
+        - refreshed
+        - skipped
+        - failed
+        - total_evaluated
+        - dry_run
+      description: |
+        Summary of one sweep. `refreshed + skipped + failed = total_evaluated`. Sessions outside
+        the lookahead window are not evaluated and appear in no count.
+      properties:
+        refreshed:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Candidates whose tokens were refreshed, or would be refreshed when `dry_run` is true.
+        skipped:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Candidates that no longer needed a refresh when evaluated (already refreshed by another request or replica, or deleted during the sweep).
+        failed:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Candidates that needed a refresh but could not be refreshed (refresh token missing or expired, upstream error, provider misconfiguration). Their stored sessions are unchanged.
+        total_evaluated:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Candidates evaluated in this sweep.
+        dry_run:
+          type: boolean
+          description: Whether this sweep was a dry run.
+    ErrorResponse:
+      description: Existing schema in api/admin/openapi.yaml — shown here only so this fragment validates standalone.
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+  securitySchemes:
+    PreAuthProxy:
+      type: apiKey
+      in: header
+      name: X-Remote-User
+security:
+  - PreAuthProxy: []
