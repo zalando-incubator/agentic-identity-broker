@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
@@ -119,12 +120,11 @@ func (h *PermissionSetsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create in service
+	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	if err := h.svc.Create(ctx, ps); err != nil {
 		h.handleStorageError(w, r, "Create", err)
 		return
 	}
-
-	h.logger.Info("permission set created", "permission_set_id", ps.ID, "name", ps.Name)
 
 	resp := h.toResponse(ps)
 	w.Header().Set("Location", fmt.Sprintf("/api/permission-sets/%s", ps.ID))
@@ -301,12 +301,11 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update in service
+	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	if err := h.svc.Update(ctx, ps); err != nil {
 		h.handleStorageError(w, r, "Update", err)
 		return
 	}
-
-	h.logger.Info("permission set updated", "permission_set_id", ps.ID, "name", ps.Name)
 
 	// Return updated permission set
 	resp := h.toResponse(ps)
@@ -331,6 +330,7 @@ func (h *PermissionSetsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	// Delete from service. Both storage implementations are idempotent (missing ID
 	// is a no-op), so NotFound never occurs in practice — treat it as success.
+	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	if err := h.svc.Delete(ctx, psID); err != nil {
 		var storageErr *storage.StorageError
 		if errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindNotFound {

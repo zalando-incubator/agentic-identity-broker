@@ -2153,9 +2153,12 @@ func TestService_RevokeConsentUsesDeletedGrantWithoutLookup(t *testing.T) {
 			deletedGrantID := id.NewGrantID()
 			unrelatedID := id.NewGrantID()
 			staleGrantID := id.NewGrantID()
+			updatedAt := time.Date(2026, time.January, 2, 3, 4, 5, 123456789, time.FixedZone("offset", 2*60*60))
+			validUntil := time.Now().Add(time.Hour)
+			entries := []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID(), id.NewServiceID()}}}
 			repo := &mockGrantRepo{
 				grants: map[id.GrantID]*storage.UserGrant{
-					deletedGrantID: {ID: deletedGrantID, Principal: principal, AgentID: agentID},
+					deletedGrantID: {ID: deletedGrantID, Principal: principal, AgentID: agentID, ValidUntil: &validUntil, UpdatedAt: updatedAt, GrantedPermissionSets: entries},
 					unrelatedID:    {ID: unrelatedID, Principal: id.Principal("other@example.com"), AgentID: agentID},
 				},
 				findByPrincipalAndAgentFunc: func(context.Context, id.Principal, id.AgentID) (*storage.UserGrant, error) {
@@ -2168,6 +2171,7 @@ func TestService_RevokeConsentUsesDeletedGrantWithoutLookup(t *testing.T) {
 			if idempotent {
 				revoke = svc.RevokeConsent
 			}
+			revocationStarted := time.Now()
 			require.NoError(t, revoke(context.Background(), principal, agentID))
 			err := revoke(context.Background(), principal, agentID)
 			if idempotent {
@@ -2186,8 +2190,16 @@ func TestService_RevokeConsentUsesDeletedGrantWithoutLookup(t *testing.T) {
 			assert.Equal(t, string(principal), record["principal"])
 			assert.Equal(t, agentID.String(), record["agent_id"])
 			assert.Equal(t, deletedGrantID.String(), record["grant_id"])
-			assert.NotContains(t, record, "valid_until")
-			assert.NotContains(t, record, "granted_permission_sets")
+			assert.Equal(t, validUntil.UTC().Format(time.RFC3339Nano), record["valid_until"])
+			assert.Equal(t, updatedAt.UTC().Format(time.RFC3339Nano), record["updated_at"])
+			assert.Equal(t, grantAuditEntriesJSON(t, entries), record["granted_permission_sets"])
+			require.IsType(t, "", record["revoked_at"])
+			revokedAt, parseErr := time.Parse(time.RFC3339Nano, record["revoked_at"].(string))
+			require.NoError(t, parseErr)
+			assert.True(t, !revokedAt.Before(revocationStarted) && !revokedAt.After(time.Now()))
+			assert.Equal(t, revokedAt.UTC().Format(time.RFC3339Nano), record["revoked_at"])
+			assert.NotContains(t, record, "actor")
+			assert.NotContains(t, record, "trace_id")
 		})
 	}
 }
@@ -2280,4 +2292,309 @@ func TestService_GrantConsentReturnsWinningUpsertMetadata(t *testing.T) {
 	grant.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
 	assert.Equal(t, validUntil, *repo.grants[winningID].ValidUntil)
 	assert.Equal(t, serviceID, repo.grants[winningID].GrantedPermissionSets[0].IncludedServiceIDs[0])
+}
+
+type grantAuditLogHandler struct {
+	slog.Handler
+	records  []slog.Record
+	contexts []context.Context
+}
+
+func (h *grantAuditLogHandler) Handle(ctx context.Context, record slog.Record) error {
+	h.records = append(h.records, record.Clone())
+	h.contexts = append(h.contexts, ctx)
+	return nil
+}
+
+func (h *grantAuditLogHandler) JSONRecords(t *testing.T) []map[string]any {
+	t.Helper()
+	var logs bytes.Buffer
+	handler := slog.NewJSONHandler(&logs, nil)
+	for _, record := range h.records {
+		require.NoError(t, handler.Handle(context.Background(), record))
+	}
+	decoder := json.NewDecoder(&logs)
+	records := make([]map[string]any, len(h.records))
+	for i := range records {
+		require.NoError(t, decoder.Decode(&records[i]))
+	}
+	return records
+}
+
+type grantAuditRepository struct {
+	*mockGrantRepo
+	createErr error
+	updateErr error
+	createdAt time.Time
+	updatedAt time.Time
+	deleted   *storage.UserGrant
+}
+
+func (r *grantAuditRepository) Create(ctx context.Context, grant *storage.UserGrant) error {
+	if r.createErr != nil {
+		return r.createErr
+	}
+	grant.CreatedAt = r.createdAt
+	grant.UpdatedAt = r.updatedAt
+	if grant.ValidUntil != nil {
+		validUntil := grant.ValidUntil.Truncate(time.Microsecond)
+		grant.ValidUntil = &validUntil
+	}
+	return r.mockGrantRepo.Create(ctx, grant)
+}
+
+func (r *grantAuditRepository) Update(ctx context.Context, grant *storage.UserGrant) error {
+	if r.updateErr != nil {
+		return r.updateErr
+	}
+	grant.UpdatedAt = r.updatedAt
+	if grant.ValidUntil != nil {
+		validUntil := grant.ValidUntil.Truncate(time.Microsecond)
+		grant.ValidUntil = &validUntil
+	}
+	return r.mockGrantRepo.Update(ctx, grant)
+}
+
+func (r *grantAuditRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	grant, err := r.mockGrantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID)
+	r.deleted = grant
+	return grant, err
+}
+
+func newGrantAuditFixture(t *testing.T, repo ports.UserGrantRepository, logger *slog.Logger) (*Service, *GrantRequest) {
+	t.Helper()
+	principal := id.Principal("grant-owner")
+	agentID := id.NewAgentID()
+	firstPS, secondPS := id.NewPermissionSetID(), id.NewPermissionSetID()
+	firstService, secondService := id.NewServiceID(), id.NewServiceID()
+	future := time.Now().Add(time.Hour)
+	agentRepo := &mockAgentRepo{agents: map[id.AgentID]*storage.Agent{agentID: {
+		ID: agentID, DisplayName: "PRIVATE_PROFILE_SENTINEL", Description: "PRIVATE_DESCRIPTION_SENTINEL",
+		PermissionSets: []storage.AgentPermissionSetEntry{
+			{PermissionSetID: firstPS, RequirementType: storage.RequirementTypeOptional},
+			{PermissionSetID: secondPS, RequirementType: storage.RequirementTypeOptional},
+		},
+	}}}
+	psService := &mockPermissionSetService{permissionSets: map[id.PermissionSetID]*storage.PermissionSet{
+		firstPS: {ID: firstPS, ServiceScopes: []storage.ServiceScope{
+			{ServiceID: firstService, Scopes: []string{"read"}, RequirementType: storage.RequirementTypeOptional},
+			{ServiceID: secondService, Scopes: []string{"write"}, RequirementType: storage.RequirementTypeOptional},
+		}},
+		secondPS: {ID: secondPS, ServiceScopes: []storage.ServiceScope{{ServiceID: firstService, RequirementType: storage.RequirementTypeOptional}}},
+	}}
+	sessions := &mockUserSessionRepo{sessions: map[id.SessionID]*storage.UserSession{
+		id.NewSessionID(): {Principal: principal, ServiceID: firstService, RefreshTokenExpiresAt: &future, EncryptedAccessToken: []byte("PRIVATE_TOKEN_SENTINEL")},
+		id.NewSessionID(): {Principal: principal, ServiceID: secondService, RefreshTokenExpiresAt: &future},
+	}}
+	request := &GrantRequest{
+		Principal: principal, AgentID: agentID, ValidUntil: &future,
+		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{
+			{PermissionSetID: secondPS, IncludedServiceIDs: []id.ServiceID{firstService}},
+			{PermissionSetID: firstPS, IncludedServiceIDs: []id.ServiceID{secondService, firstService}},
+		},
+	}
+	return NewService(agentRepo, nil, repo, sessions, psService, logger), request
+}
+
+func grantAuditEntriesJSON(t *testing.T, entries []storage.GrantedPermissionSetEntry) any {
+	t.Helper()
+	raw, err := json.Marshal(entries)
+	require.NoError(t, err)
+	var value any
+	require.NoError(t, json.Unmarshal(raw, &value))
+	return value
+}
+
+func assertGrantMutationAudit(t *testing.T, record map[string]any, action string, grant *storage.UserGrant) {
+	t.Helper()
+	assert.Equal(t, action, record["action"])
+	assert.Equal(t, string(grant.Principal), record["principal"])
+	assert.Equal(t, grant.AgentID.String(), record["agent_id"])
+	assert.Equal(t, grant.ID.String(), record["grant_id"])
+	assert.Equal(t, grant.CreatedAt.UTC().Format(time.RFC3339Nano), record["created_at"])
+	assert.Equal(t, grant.UpdatedAt.UTC().Format(time.RFC3339Nano), record["updated_at"])
+	if grant.ValidUntil == nil {
+		assert.Contains(t, record, "valid_until")
+		assert.Nil(t, record["valid_until"])
+	} else {
+		assert.Equal(t, grant.ValidUntil.UTC().Format(time.RFC3339Nano), record["valid_until"])
+	}
+	assert.Equal(t, grantAuditEntriesJSON(t, grant.GrantedPermissionSets), record["granted_permission_sets"])
+	allowed := map[string]bool{
+		"time": true, "level": true, "msg": true, "action": true, "principal": true,
+		"agent_id": true, "grant_id": true, "valid_until": true, "created_at": true,
+		"updated_at": true, "granted_permission_sets": true,
+		"previous_observed_valid_until": true, "previous_observed_updated_at": true,
+		"previous_observed_granted_permission_sets": true,
+	}
+	for key := range record {
+		assert.True(t, allowed[key], "unexpected grant audit field %s", key)
+	}
+}
+
+func TestService_GrantConsentLifecycleAudit(t *testing.T) {
+	t.Parallel()
+	for _, indefinite := range []bool{false, true} {
+		name := "finite"
+		if indefinite {
+			name = "indefinite"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var unused bytes.Buffer
+			capture := &grantAuditLogHandler{Handler: slog.NewJSONHandler(&unused, nil)}
+			repo := &grantAuditRepository{
+				mockGrantRepo: &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}},
+				createdAt:     time.Date(2026, time.January, 1, 4, 5, 6, 123456000, time.FixedZone("offset", -3*60*60)),
+				updatedAt:     time.Date(2026, time.January, 2, 4, 5, 6, 654321000, time.FixedZone("offset", -3*60*60)),
+			}
+			svc, request := newGrantAuditFixture(t, repo, slog.New(capture))
+			if indefinite {
+				request.ValidUntil = nil
+			}
+			type requestMarker struct{}
+			ctx := context.WithValue(context.Background(), requestMarker{}, "request-context")
+			created, err := svc.GrantConsent(ctx, request)
+			require.NoError(t, err)
+			stored, err := repo.Get(ctx, created.ID)
+			require.NoError(t, err)
+			assert.Equal(t, stored, created)
+			creationSnapshot := stored.Copy()
+			require.Len(t, capture.records, 1)
+			assert.Equal(t, "grant created", capture.records[0].Message)
+			assert.Same(t, ctx, capture.contexts[0])
+
+			if request.ValidUntil != nil {
+				request.ValidUntil = ptr.To(*created.ValidUntil)
+			}
+			unchanged, err := svc.GrantConsent(ctx, request)
+			require.NoError(t, err)
+			assert.Equal(t, created, unchanged)
+			assert.Equal(t, 1, repo.createCalls)
+			assert.Zero(t, repo.updateCalls)
+			require.Len(t, capture.records, 1, "sequential unchanged consent is not a mutation")
+
+			observed := stored.Copy()
+			before := observed.Copy()
+			repo.findByPrincipalAndAgentFunc = func(context.Context, id.Principal, id.AgentID) (*storage.UserGrant, error) {
+				return observed, nil
+			}
+			newValidity := time.Now().Add(2*time.Hour + 123*time.Nanosecond)
+			request.ValidUntil = &newValidity
+			request.GrantedPermissionSets = []storage.GrantedPermissionSetEntry{request.GrantedPermissionSets[1]}
+			request.GrantedPermissionSets[0].IncludedServiceIDs = []id.ServiceID{request.GrantedPermissionSets[0].IncludedServiceIDs[1]}
+			repo.updatedAt = repo.updatedAt.Add(time.Hour)
+			updated, err := svc.GrantConsent(ctx, request)
+			require.NoError(t, err)
+			persisted, err := repo.Get(ctx, updated.ID)
+			require.NoError(t, err)
+			assert.Equal(t, persisted, updated)
+			updateSnapshot := persisted.Copy()
+			assert.Equal(t, 1, repo.updateCalls)
+			require.Len(t, capture.records, 2)
+			assert.Equal(t, "grant updated", capture.records[1].Message)
+			assert.Same(t, ctx, capture.contexts[1])
+
+			// Render retained records only after every possible source has been mutated.
+			for _, grant := range []*storage.UserGrant{created, unchanged, stored, observed, updated, persisted, repo.grants[updated.ID]} {
+				grant.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
+				if grant.ValidUntil != nil {
+					*grant.ValidUntil = grant.ValidUntil.Add(time.Hour)
+				}
+			}
+			request.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
+			records := capture.JSONRecords(t)
+			assertGrantMutationAudit(t, records[0], "grant_created", creationSnapshot)
+			assert.NotContains(t, records[0], "previous_observed_valid_until")
+			assert.NotContains(t, records[0], "previous_observed_updated_at")
+			assert.NotContains(t, records[0], "previous_observed_granted_permission_sets")
+			assertGrantMutationAudit(t, records[1], "grant_updated", updateSnapshot)
+			if before.ValidUntil == nil {
+				assert.Contains(t, records[1], "previous_observed_valid_until")
+				assert.Nil(t, records[1]["previous_observed_valid_until"])
+			} else {
+				assert.Equal(t, before.ValidUntil.UTC().Format(time.RFC3339Nano), records[1]["previous_observed_valid_until"])
+			}
+			assert.Equal(t, before.UpdatedAt.UTC().Format(time.RFC3339Nano), records[1]["previous_observed_updated_at"])
+			assert.Equal(t, grantAuditEntriesJSON(t, before.GrantedPermissionSets), records[1]["previous_observed_granted_permission_sets"])
+		})
+	}
+}
+
+func TestService_GrantConsentFailureEmitsNoLifecycleAudit(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []string{"validation", "lookup", "create", "update"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
+			var logs bytes.Buffer
+			repo := &grantAuditRepository{mockGrantRepo: &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}}
+			svc, request := newGrantAuditFixture(t, repo, slog.New(slog.NewJSONHandler(&logs, nil)))
+			cause := errors.New("PRIVATE_COMMIT_FAILURE_SENTINEL")
+			switch failure {
+			case "validation":
+				request.GrantedPermissionSets = nil
+			case "lookup":
+				repo.err = cause
+			case "create":
+				repo.createErr = cause
+			case "update":
+				existing := &storage.UserGrant{ID: id.NewGrantID(), Principal: request.Principal, AgentID: request.AgentID}
+				repo.grants[existing.ID] = existing
+				repo.updateErr = cause
+			}
+			grant, err := svc.GrantConsent(context.Background(), request)
+			require.Error(t, err)
+			if failure != "validation" {
+				assert.ErrorIs(t, err, cause)
+			}
+			assert.Nil(t, grant)
+			assert.Empty(t, logs.String())
+		})
+	}
+}
+
+func TestService_RevokeConsentAuditRetainsOnlyDefensiveOperationalSnapshot(t *testing.T) {
+	t.Parallel()
+	var unused bytes.Buffer
+	capture := &grantAuditLogHandler{Handler: slog.NewJSONHandler(&unused, nil)}
+	repo := &grantAuditRepository{mockGrantRepo: &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}}
+	svc, request := newGrantAuditFixture(t, repo, slog.New(capture))
+	deleted := &storage.UserGrant{
+		ID: id.NewGrantID(), Principal: request.Principal, AgentID: request.AgentID,
+		GrantedPermissionSets: request.GrantedPermissionSets,
+		UpdatedAt:             time.Date(2026, time.February, 3, 4, 5, 6, 123456789, time.FixedZone("offset", 60*60)),
+	}
+	before := deleted.Copy()
+	repo.grants[deleted.ID] = deleted
+	type requestMarker struct{}
+	ctx := context.WithValue(context.Background(), requestMarker{}, "revoke-context")
+	revocationStarted := time.Now()
+	require.NoError(t, svc.RevokeConsentForPrincipal(ctx, request.Principal, request.AgentID))
+	revocationFinished := time.Now()
+	require.Len(t, capture.records, 1)
+	assert.Same(t, ctx, capture.contexts[0])
+	require.NotNil(t, repo.deleted)
+	repo.deleted.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
+	repo.deleted.UpdatedAt = time.Now()
+	repo.deleted.Principal = "PRIVATE_REPLACEMENT_OWNER_SENTINEL"
+	repo.deleted.ValidUntil = ptr.To(time.Now().Add(time.Hour))
+	record := capture.JSONRecords(t)[0]
+	assert.Equal(t, "grant revoked", record["msg"])
+	assert.Equal(t, "grant_revoked", record["action"])
+	assert.Equal(t, before.Principal.String(), record["principal"])
+	assert.Equal(t, before.AgentID.String(), record["agent_id"])
+	assert.Equal(t, before.ID.String(), record["grant_id"])
+	assert.Equal(t, before.UpdatedAt.UTC().Format(time.RFC3339Nano), record["updated_at"])
+	assert.Equal(t, grantAuditEntriesJSON(t, before.GrantedPermissionSets), record["granted_permission_sets"])
+	assert.Contains(t, record, "valid_until")
+	assert.Nil(t, record["valid_until"])
+	require.IsType(t, "", record["revoked_at"])
+	revokedAt, err := time.Parse(time.RFC3339Nano, record["revoked_at"].(string))
+	require.NoError(t, err)
+	assert.True(t, !revokedAt.Before(revocationStarted) && !revokedAt.After(revocationFinished))
+	assert.Equal(t, revokedAt.UTC().Format(time.RFC3339Nano), record["revoked_at"])
+	assert.Len(t, record, 11, "revocation contains only its allowed operational fields and slog metadata")
+	assert.NotContains(t, record, "actor")
+	assert.NotContains(t, record, "trace_id")
+	assert.Zero(t, repo.findCalls)
 }
