@@ -38,6 +38,7 @@ type OAuth2TokenHandler struct {
 	OAuth2Service ports.OAuth2Service
 	Logger        *slog.Logger
 	GrantHandler  TokenGrantStrategy // always non-nil: proxy, local, or hybrid
+	Outcomes      ports.TokenFailureRecorder
 
 	// Impersonation is non-nil only in local mode when configured. Its routing prefix resolves a
 	// canonical registered target agent before third-party token-exchange parameter validation.
@@ -107,7 +108,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.Logger != nil {
 			h.Logger.ErrorContext(r.Context(), "OAuth2 token handler invoked with nil OAuth2Service or GrantHandler — check builder wiring")
 		}
-		writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "OAuth2 authorization server not configured")
+		writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestInternalFailure, id.AgentID{}, http.StatusInternalServerError, "server_error", "OAuth2 authorization server not configured")
 		return
 	}
 
@@ -116,12 +117,19 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var clientErr *ports.ClientIDError
 		if errors.As(resolveErr, &clientErr) {
 			status := tokenEndpointStatus(clientErr.Code)
-			writeOAuth2ErrorJSON(w, status, clientErr.Code, clientErr.Desc)
+			failure := ports.TokenRequestUnauthenticated
+			switch clientErr.Code {
+			case "unauthorized_client":
+				failure = ports.TokenRequestUnauthorized
+			case "server_error":
+				failure = ports.TokenRequestInternalFailure
+			}
+			writeRecordedTokenError(w, r, h.Outcomes, failure, id.AgentID{}, status, clientErr.Code, clientErr.Desc)
 		} else {
 			if h.Logger != nil {
 				h.Logger.ErrorContext(r.Context(), "unexpected error during client resolution", "error_code", "server_error")
 			}
-			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "client resolution failed")
+			writeRecordedTokenError(w, r, h.Outcomes, ports.TokenRequestInternalFailure, id.AgentID{}, http.StatusInternalServerError, "server_error", "client resolution failed")
 		}
 		return
 	}
@@ -422,4 +430,12 @@ func tokenEndpointStatus(code string) int {
 	default:
 		return http.StatusBadRequest
 	}
+}
+
+func writeRecordedTokenError(w http.ResponseWriter, r *http.Request, outcomes ports.TokenFailureRecorder, failure ports.TokenRequestFailure, agentID id.AgentID, status int, code, description string) {
+	if outcomes == nil || outcomes.RecordFailure(r.Context(), failure, agentID) != nil {
+		writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "failed to record token outcome")
+		return
+	}
+	writeOAuth2ErrorJSON(w, status, code, description)
 }

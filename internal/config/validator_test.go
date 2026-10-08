@@ -14,6 +14,7 @@ import (
 // validTestConfig returns a valid Config for testing with all required fields set.
 func validTestConfig() *ports.Config {
 	return &ports.Config{
+		BusinessEvents: ports.DefaultBusinessEventsConfig(),
 		Log: ports.LogConfig{
 			Level:  ports.LogLevelInfo,
 			Format: ports.LogFormatText,

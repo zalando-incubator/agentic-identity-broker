@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentic-identity-broker:events:v1:signing-key-promoted",
+  "title": "signing-key-promoted",
+  "description": "A signing key becomes the active signing key.",
+  "allOf": [
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:envelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "agentic-identity-broker.signing-key-promoted"
+        },
+        "outcome": {
+          "const": "success"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "signing_key_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "activates_at": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+            }
+          },
+          "required": [
+            "signing_key_id",
+            "activates_at"
+          ]
+        }
+      }
+    }
+  ]
+}

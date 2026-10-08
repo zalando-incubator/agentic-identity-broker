@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
@@ -38,9 +39,112 @@ type HealthChecker interface {
 
 // StorageTransactionManager supplies a context shared by participating repository operations.
 type StorageTransactionManager interface {
+	// BeginTX owns a new scope or joins its ambient owner; it never starts a second physical transaction.
 	BeginTX(ctx context.Context) (context.Context, error)
+	// Joined commit only completes that scope. The owner alone commits physically and releases effects.
 	Commit(ctx context.Context) error
+	// Joined rollback poisons the owner; a rollback-only owner cannot report a successful commit.
 	Rollback(ctx context.Context) error
+}
+
+type StorageTransactionIsolation uint8
+
+const (
+	StorageReadCommitted StorageTransactionIsolation = iota
+	StorageRepeatableRead
+	StorageSerializable
+)
+
+type StorageLifecycleGate uint8
+
+const (
+	StorageLifecycleShared StorageLifecycleGate = iota
+	StorageLifecycleExclusive
+)
+
+type StorageSubjectGate struct {
+	Principal id.Principal
+	Exclusive bool
+}
+
+type StorageTransactionHints struct {
+	Isolation StorageTransactionIsolation
+	Lifecycle StorageLifecycleGate
+	Subjects  []StorageSubjectGate
+}
+
+type StorageTransactionEffects interface {
+	AfterCommit(func()) error
+}
+
+// StorageProvider composes repository facets for application assembly and decorators.
+// Business services continue to depend on their individual repository interfaces.
+type StorageProvider interface {
+	StorageTransactionManager
+	HealthChecker
+	BusinessEventSchemaConfiguration
+	Close(ctx context.Context) error
+	Users() UserRepository
+	Agents() AgentRepository
+	Services() ThirdpartyOAuth2ProviderRepository
+	UserGrants() UserGrantRepository
+	UserSessions() UserSessionRepository
+	SessionRefresh() UserSessionRefreshRepository
+	ToolApprovals() ToolApprovalRepository
+	ToolApprovalQueries() ToolApprovalQueryRepository
+	ToolApprovalMetrics() ToolApprovalMetricsRepository
+	ApprovalSyncState() ApprovalSyncStateRepository
+	PermissionSets() PermissionSetRepository
+	BrokerCredentials() ClientCredentialRepository
+	SigningKeys() SigningKeyRepository
+	SigningKeyBootstrapCoordinator() SigningKeyBootstrapCoordinator
+	AuthorizationCodes() AuthorizationCodeRepository
+	RefreshTokenSessions() RefreshTokenSessionRepository
+	PKCESessions() PKCESessionRepository
+	BusinessEvents() BusinessEventRepository
+	BusinessEventLifecycle() BusinessEventLifecycleRepository
+	BusinessEventDelivery() BusinessEventDeliveryRepository
+}
+
+type BusinessEventValidator interface {
+	Validate(event *model.BusinessEvent) (map[string]any, error)
+	ValidateQuery(query model.BusinessEventQuery) error
+}
+
+type BusinessEventSchemaConfiguration interface {
+	ConfigureBusinessEventValidation(validator BusinessEventValidator)
+}
+
+type BusinessEventRepository interface {
+	// Append joins the ambient owner, assigns recorded time once, and acquires lifecycle before subject gates.
+	Append(ctx context.Context, event *model.BusinessEvent, queueDelivery bool) error
+	// Query requires one exact principal or explicit no-subject selection and uses strict tuple continuation.
+	Query(ctx context.Context, query model.BusinessEventQuery) ([]*model.BusinessEvent, error)
+	Get(ctx context.Context, key model.BusinessEventKey) (*model.BusinessEvent, error)
+}
+
+type BusinessEventLifecycleRepository interface {
+	// Erasure is exact-subject and commits event/reference deletion together; it never records a replacement fact.
+	EraseSubject(ctx context.Context, subject id.Principal) (int64, error)
+	ApplyRetention(ctx context.Context) error
+	SetRetentionPolicy(ctx context.Context, retention time.Duration) error
+}
+
+type BusinessEventDeliveryRepository interface {
+	// ListDue returns only payload-free reference keys; dispatch alone may load the retained envelope.
+	ListDue(ctx context.Context, limit int) ([]model.BusinessEventKey, error)
+	// DispatchOne holds deletion barriers through synchronous export and acknowledgement commit.
+	DispatchOne(ctx context.Context, key model.BusinessEventKey, emit func(context.Context, *model.BusinessEvent) error) (bool, error)
+}
+
+type UserGrantExpirationRepository interface {
+	ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.UserGrant, error)
+	RecordExpiration(ctx context.Context, grantID id.GrantID, effectiveExpiry time.Time) (bool, error)
+}
+
+type ToolApprovalExpirationRepository interface {
+	ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.ToolApproval, error)
+	RecordExpiration(ctx context.Context, approvalID id.ApprovalID, effectiveExpiry time.Time) (bool, error)
 }
 
 // User represents a user entity in the storage layer.
@@ -115,6 +219,12 @@ type AgentRepository interface {
 // AgentCanonicalIDRepository resolves type-scoped canonical agent IDs.
 type AgentCanonicalIDRepository interface {
 	GetByCanonicalID(ctx context.Context, canonicalID string) (*storage.Agent, error)
+}
+
+// AgentDependentRepository exposes retained business objects before agent deletion cascades.
+type AgentDependentRepository interface {
+	ListGrantsByAgent(ctx context.Context, agentID id.AgentID) ([]*storage.UserGrant, error)
+	ListApprovalsByAgent(ctx context.Context, agentID id.AgentID) ([]*storage.ToolApproval, error)
 }
 
 // UserGrantRepository defines storage operations for user grant entities.
@@ -213,6 +323,7 @@ type UserGrantRepository interface {
 type UserSessionRepository interface {
 	// Create creates a new user session.
 	// Uses upsert semantics: if session exists for (principal, service_id), replaces tokens.
+	// Updates session with the persisted ID, InitiatedAt, CreatedAt, and UpdatedAt, including upsert conflicts.
 	// Returns error if:
 	// - Service ID doesn't exist (StorageError with Kind=NotFound via FK constraint)
 	// - Storage connection fails (StorageError with Kind=Connection)
@@ -252,12 +363,17 @@ type UserSessionRepository interface {
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 
-// UserSessionRefreshRepository serializes a read-modify-write refresh for one session.
-// The callback sees the latest session under a lock; it returns true only when it
-// has replaced the encrypted tokens and the adapter must persist them atomically.
-// A nil session means the principal has no session for that service.
+// UserSessionRefreshRepository coordinates a single refresh per principal/service.
+// WithLockedSession reads the latest session before invoking the callback without
+// holding a ledger transaction across upstream work. The callback owns persistence
+// through UpdateRefreshedSession and its transaction. A nil session means no session
+// exists for the pair.
 type UserSessionRefreshRepository interface {
-	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
+	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) error) (*storage.UserSession, error)
+	// UpdateRefreshedSession conditionally replaces tokens inside the caller's
+	// transaction. A deleted/re-authorized/changed session returns a conflict;
+	// the caller must roll back its event in the same transaction.
+	UpdateRefreshedSession(ctx context.Context, previous, current *storage.UserSession) error
 }
 
 // PermissionSetRepository defines storage operations for permission set entities.
@@ -287,6 +403,8 @@ type ToolApprovalRepository interface {
 	// Uses partial unique index for deduplication (principal, agent_id, tool_name, arguments_hash)
 	// where status=pending AND consumed=false.
 	// Returns the existing record if a duplicate is found (idempotent).
+	// An expired duplicate remains pending until its owning expiration marker is recorded;
+	// the domain records the expiry and calls Create again in the same transaction.
 	Create(ctx context.Context, approval *storage.ToolApproval) (*storage.ToolApproval, error)
 
 	// Get retrieves a tool approval by ID.
@@ -374,6 +492,7 @@ type SigningKeyRepository interface {
 	GetByKIDInDomain(ctx context.Context, domain storage.KeyDomain, kid id.KeyID) (*storage.SigningKey, error)
 
 	// GetCurrentInDomain retrieves the current active signing key from one key domain.
+	// An ambient transaction stabilizes selection against committed key mutations until completion.
 	GetCurrentInDomain(ctx context.Context, domain storage.KeyDomain) (*storage.SigningKey, error)
 
 	// ListActiveInDomain returns active signing keys from one key domain.

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agentic-identity-broker:events:v1:session-refresh-failed",
+  "title": "session-refresh-failed",
+  "description": "A third-party session refresh attempt fails.",
+  "allOf": [
+    {
+      "$ref": "urn:agentic-identity-broker:events:v1:envelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "agentic-identity-broker.session-refresh-failed"
+        },
+        "outcome": {
+          "const": "failure"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reason_code": {
+              "enum": [
+                "upstream_rejected",
+                "upstream_unavailable",
+                "invalid_response",
+                "refresh_unavailable",
+                "internal_failure"
+              ]
+            }
+          },
+          "required": [
+            "reason_code"
+          ]
+        }
+      }
+    }
+  ]
+}

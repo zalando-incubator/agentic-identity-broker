@@ -13,7 +13,7 @@ import (
 )
 
 func TestUserSessionRepository_ListByPrincipal(t *testing.T) {
-	repo := memory.NewInMemoryUserSessionRepository()
+	repo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
 	ctx := context.Background()
 
 	principal := id.Principal("user@example.com")
@@ -44,7 +44,7 @@ func TestUserSessionRepository_ListByPrincipal(t *testing.T) {
 }
 
 func TestUserSessionRepository_ListByPrincipal_Empty(t *testing.T) {
-	repo := memory.NewInMemoryUserSessionRepository()
+	repo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
 	ctx := context.Background()
 
 	sessions, err := repo.ListByPrincipal(ctx, id.Principal("nonexistent@example.com"))
@@ -53,7 +53,7 @@ func TestUserSessionRepository_ListByPrincipal_Empty(t *testing.T) {
 }
 
 func TestUserSessionRepository_ListByPrincipal_MultiplePrincipals(t *testing.T) {
-	repo := memory.NewInMemoryUserSessionRepository()
+	repo := memory.NewInMemoryUserSessionRepository(memory.NewTransactionManager())
 	ctx := context.Background()
 
 	principal1 := id.Principal("user1@example.com")

@@ -14,6 +14,7 @@ import (
 	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/unit/ledgerfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,10 +43,11 @@ func newTestTokenHandler(upstreamURL string, agentID id.AgentID) *enduser.OAuth2
 		ClientID: ptr.To(id.ClientID("test-upstream-client-id")),
 	}
 	transport := enduser.NewOAuth2TokenProxy(upstreamURL, nil)
-	outcomes := oauth2.NewTokenOutcomeService(transport, nil)
+	outcomes := oauth2.NewTokenOutcomeService(transport, nil, ledgerfixture.NewRecorder())
 	return &enduser.OAuth2TokenHandler{
 		OAuth2Service: &stubOAuth2Service{agent: agent},
 		GrantHandler:  enduser.NewProxyTokenGrantStrategy(upstreamURL, outcomes, nil),
+		Outcomes:      outcomes,
 	}
 }
 

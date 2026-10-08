@@ -52,6 +52,10 @@ end-user `:8000` server and the admin `:14000` server.
 
 Both adapters implement the required storage contracts. The migrations are in `migrations/`. They use go-migrate names.
 
+Ledger storage uses `business_event*.go` in both backends.
+`telemetry/business_event*.go` owns the separate ledger provider.
+Read `docs/operations/business-event-ledger.md` for the storage, telemetry, and operations contracts.
+
 ## Rules
 
 - **Cross-adapter ban**: Do not import `storage/postgres/` from `encryption/aws/`, or import between other adapters.

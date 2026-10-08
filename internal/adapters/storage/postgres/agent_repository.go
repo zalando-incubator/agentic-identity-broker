@@ -44,11 +44,8 @@ func NewAgentRepository(adapter *Adapter) *AgentRepository {
 
 // fetchClientURIs retrieves all client URIs for an agent from the agent_client_uris table.
 func (r *AgentRepository) fetchClientURIs(ctx context.Context, agentID id.AgentID) ([]string, error) {
-	rows, err := r.adapter.db.QueryContext(
-		ctx,
-		`SELECT client_uri FROM agent_client_uris WHERE agent_id = $1 ORDER BY client_uri`,
-		agentID,
-	)
+	rows, err := r.adapter.storageExecutor(ctx).QueryContext(ctx, `SELECT client_uri FROM agent_client_uris WHERE agent_id = $1 ORDER BY client_uri`,
+		agentID)
 	if err != nil {
 		return nil, storage.NewStorageError("fetchClientURIs", storage.ErrorKindConnection, err, "failed to query client URIs")
 	}
@@ -73,7 +70,7 @@ func (r *AgentRepository) fetchClientURIs(ctx context.Context, agentID id.AgentI
 
 // insertClientURIs inserts client URIs into agent_client_uris within an existing transaction.
 // Returns StorageError with Kind=Conflict if a client_uri uniqueness violation occurs.
-func insertClientURIs(ctx context.Context, tx *sql.Tx, agentID id.AgentID, uris []string) error {
+func insertClientURIs(ctx context.Context, tx sqlTransactionExecutor, agentID id.AgentID, uris []string) error {
 	for _, uri := range uris {
 		_, err := tx.ExecContext(
 			ctx,
@@ -163,7 +160,7 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 		}
 	}
 
-	tx, err := r.adapter.db.BeginTx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return storage.NewStorageError("CreateAgent", storage.ErrorKindConnection, err, "failed to begin transaction")
 	}
@@ -262,16 +259,16 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 
 	var serviceReqsJSON, permissionSetsJSON []byte
 
-	agent := &storage.Agent{}
-	err := r.adapter.db.QueryRowContext(
-		queryCtx,
-		`SELECT id, canonical_id, client_id, external_id, display_name, description,
+	query := `SELECT id, canonical_id, client_id, external_id, display_name, description,
 		        governance_url, user_documentation_url, agent_interface_url,
 		        service_requirements, permission_sets, redirect_uris, allowed_scopes, created_at, updated_at
 	 FROM agents
-	 WHERE id = $1`,
-		agentID,
-	).Scan(
+	 WHERE id = $1`
+	if _, joined := storageTransaction(ctx); joined {
+		query += " FOR UPDATE"
+	}
+	agent := &storage.Agent{}
+	err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, query, agentID).Scan(
 		&agent.ID, &agent.CanonicalID, &agent.ClientID, &agent.ExternalID,
 		&agent.DisplayName, &agent.Description,
 		&agent.GovernanceURL, &agent.UserDocumentationURL, &agent.AgentInterfaceURL,
@@ -323,7 +320,7 @@ func (r *AgentRepository) GetByCanonicalID(ctx context.Context, canonicalID stri
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 	var agentID id.AgentID
-	if err := r.adapter.db.QueryRowContext(queryCtx, `SELECT id FROM agents WHERE canonical_id = $1`, canonicalID).Scan(&agentID); err != nil {
+	if err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, `SELECT id FROM agents WHERE canonical_id = $1`, canonicalID).Scan(&agentID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, storage.NewStorageError("GetAgentByCanonicalID", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
 		}
@@ -393,7 +390,7 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 		}
 	}
 
-	tx, err := r.adapter.db.BeginTx(execCtx, nil)
+	tx, err := r.adapter.beginSQLTransaction(execCtx, nil)
 	if err != nil {
 		return storage.NewStorageError("UpdateAgent", storage.ErrorKindConnection, err, "failed to begin transaction")
 	}
@@ -492,7 +489,7 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.db.ExecContext(execCtx, `DELETE FROM agents WHERE id = $1`, agentID)
+	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, `DELETE FROM agents WHERE id = $1`, agentID)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return storage.NewStorageError("DeleteAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
@@ -518,13 +515,10 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 
-	rows, err := r.adapter.db.QueryContext(
-		queryCtx,
-		`SELECT id, canonical_id, client_id, external_id, display_name, description,
+	rows, err := r.adapter.storageExecutor(queryCtx).QueryContext(queryCtx, `SELECT id, canonical_id, client_id, external_id, display_name, description,
 		        governance_url, user_documentation_url, agent_interface_url,
 		        service_requirements, permission_sets, redirect_uris, allowed_scopes, created_at, updated_at
-	 FROM agents ORDER BY created_at DESC`,
-	)
+	 FROM agents ORDER BY created_at DESC`)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return nil, storage.NewStorageError("ListAgents", storage.ErrorKindTimeout, err, "operation exceeded timeout")
@@ -594,11 +588,8 @@ func (r *AgentRepository) batchFetchClientURIs(ctx context.Context, agentIDs []i
 		uuids[i] = agentID.String()
 	}
 
-	rows, err := r.adapter.db.QueryContext(
-		ctx,
-		`SELECT agent_id, client_uri FROM agent_client_uris WHERE agent_id = ANY($1::uuid[]) ORDER BY client_uri`,
-		pq.Array(uuids),
-	)
+	rows, err := r.adapter.storageExecutor(ctx).QueryContext(ctx, `SELECT agent_id, client_uri FROM agent_client_uris WHERE agent_id = ANY($1::uuid[]) ORDER BY client_uri`,
+		pq.Array(uuids))
 	if err != nil {
 		return nil, storage.NewStorageError("batchFetchClientURIs", storage.ErrorKindConnection, err, "failed to batch query client URIs")
 	}
@@ -645,15 +636,12 @@ func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientI
 
 	var serviceReqsJSON, permissionSetsJSON []byte
 	agent := &storage.Agent{}
-	err := r.adapter.db.QueryRowContext(
-		queryCtx,
-		`SELECT id, client_id, external_id, display_name, description,
+	err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, `SELECT id, client_id, external_id, display_name, description,
 		        governance_url, user_documentation_url, agent_interface_url,
 		        service_requirements, permission_sets, redirect_uris, allowed_scopes, created_at, updated_at
 		 FROM agents
 		 WHERE client_id = $1`,
-		clientID,
-	).Scan(
+		clientID).Scan(
 		&agent.ID, &agent.ClientID, &agent.ExternalID,
 		&agent.DisplayName, &agent.Description,
 		&agent.GovernanceURL, &agent.UserDocumentationURL, &agent.AgentInterfaceURL,
@@ -715,15 +703,11 @@ func (r *AgentRepository) ExistsOtherWithClientID(ctx context.Context, clientID 
 	var exists bool
 	var err error
 	if excludeAgentID == nil {
-		err = r.adapter.db.QueryRowContext(queryCtx,
-			`SELECT EXISTS(SELECT 1 FROM agents WHERE client_id = $1)`,
-			clientID,
-		).Scan(&exists)
+		err = r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, `SELECT EXISTS(SELECT 1 FROM agents WHERE client_id = $1)`,
+			clientID).Scan(&exists)
 	} else {
-		err = r.adapter.db.QueryRowContext(queryCtx,
-			`SELECT EXISTS(SELECT 1 FROM agents WHERE client_id = $1 AND id <> $2)`,
-			clientID, *excludeAgentID,
-		).Scan(&exists)
+		err = r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, `SELECT EXISTS(SELECT 1 FROM agents WHERE client_id = $1 AND id <> $2)`,
+			clientID, *excludeAgentID).Scan(&exists)
 	}
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -735,7 +719,7 @@ func (r *AgentRepository) ExistsOtherWithClientID(ctx context.Context, clientID 
 }
 
 func (r *AgentRepository) findAgentByCIMDClientURIPattern(ctx context.Context, candidate string) (id.AgentID, error) {
-	rows, err := r.adapter.db.QueryContext(ctx, `SELECT agent_id, client_uri FROM agent_client_uris WHERE client_uri LIKE '%*%'`)
+	rows, err := r.adapter.storageExecutor(ctx).QueryContext(ctx, `SELECT agent_id, client_uri FROM agent_client_uris WHERE client_uri LIKE '%*%'`)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return id.AgentID{}, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindTimeout, err, "operation exceeded timeout")
@@ -792,17 +776,14 @@ func (r *AgentRepository) GetByClientURI(ctx context.Context, uri string) (*stor
 
 	var serviceReqsJSON, permissionSetsJSON []byte
 	agent := &storage.Agent{}
-	err := r.adapter.db.QueryRowContext(
-		queryCtx,
-		`SELECT a.id, a.client_id, a.external_id, a.display_name, a.description,
+	err := r.adapter.storageExecutor(queryCtx).QueryRowContext(queryCtx, `SELECT a.id, a.client_id, a.external_id, a.display_name, a.description,
 		        a.governance_url, a.user_documentation_url, a.agent_interface_url,
 		        a.service_requirements, a.permission_sets, a.redirect_uris, a.allowed_scopes,
 		        a.created_at, a.updated_at
 		 FROM agents a
 		 JOIN agent_client_uris acu ON acu.agent_id = a.id
 		 WHERE acu.client_uri = $1`,
-		uri,
-	).Scan(
+		uri).Scan(
 		&agent.ID, &agent.ClientID, &agent.ExternalID,
 		&agent.DisplayName, &agent.Description,
 		&agent.GovernanceURL, &agent.UserDocumentationURL, &agent.AgentInterfaceURL,

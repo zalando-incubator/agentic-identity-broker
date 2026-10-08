@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -28,6 +29,65 @@ func NewUserGrantRepository(adapter *Adapter) *UserGrantRepository {
 	return &UserGrantRepository{
 		adapter: adapter,
 	}
+}
+
+func (r *UserGrantRepository) ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.UserGrant, error) {
+	const operation = "ListExpiredUserGrants"
+	if r.adapter == nil || r.adapter.db == nil {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")
+	}
+	if principal.IsZero() || at.IsZero() || limit <= 0 || limit > 1000 {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "invalid expiration query")
+	}
+	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	rows, err := r.adapter.storageExecutor(execCtx).QueryContext(execCtx, `SELECT id, principal, agent_id, valid_until, granted_permission_sets, created_at, updated_at
+		FROM public.user_grants WHERE valid_until <= ($1::timestamptz AT TIME ZONE 'UTC')
+		AND expiration_recorded_for IS DISTINCT FROM (valid_until AT TIME ZONE 'UTC')
+		AND principal = $3 ORDER BY valid_until, id LIMIT $2`, at, limit, principal)
+	if err != nil {
+		return nil, businessEventStorageError(operation, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var result []*storage.UserGrant
+	for rows.Next() {
+		var grant storage.UserGrant
+		var permissions []byte
+		if err := rows.Scan(&grant.ID, &grant.Principal, &grant.AgentID, &grant.ValidUntil, &permissions, &grant.CreatedAt, &grant.UpdatedAt); err != nil {
+			return nil, businessEventStorageError(operation, err)
+		}
+		if err := json.Unmarshal(permissions, &grant.GrantedPermissionSets); err != nil {
+			return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "stored permission sets cannot be decoded")
+		}
+		result = append(result, &grant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, businessEventStorageError(operation, err)
+	}
+	return result, nil
+}
+
+func (r *UserGrantRepository) RecordExpiration(ctx context.Context, grantID id.GrantID, effectiveExpiry time.Time) (bool, error) {
+	const operation = "RecordUserGrantExpiration"
+	if r.adapter == nil || r.adapter.db == nil {
+		return false, storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")
+	}
+	if grantID.IsZero() || effectiveExpiry.IsZero() {
+		return false, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "invalid expiration recognition")
+	}
+	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	defer cancel()
+	result, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx, `UPDATE public.user_grants SET expiration_recorded_for = valid_until AT TIME ZONE 'UTC'
+		WHERE id = $1 AND valid_until = ($2::timestamptz AT TIME ZONE 'UTC') AND valid_until <= (clock_timestamp() AT TIME ZONE 'UTC')
+		AND expiration_recorded_for IS DISTINCT FROM (valid_until AT TIME ZONE 'UTC')`, grantID, effectiveExpiry)
+	if err != nil {
+		return false, businessEventStorageError(operation, err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, businessEventStorageError(operation, err)
+	}
+	return count == 1, nil
 }
 
 // Create creates a new user grant or updates existing grant for same principal+agent (upsert).
@@ -89,7 +149,7 @@ func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGra
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTx(ctxTimeout, nil)
+	tx, err := r.adapter.beginSQLTransaction(ctxTimeout, nil)
 	if err != nil {
 		return r.handlePostgresError("CreateUserGrant", err)
 	}
@@ -116,7 +176,7 @@ func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGra
 		INSERT INTO user_grants (
 			id, principal, agent_id, valid_until, granted_permission_sets, created_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4::timestamptz AT TIME ZONE 'UTC', $5, $6, $7)
 		ON CONFLICT (principal, agent_id)
 		DO UPDATE SET
 			valid_until = EXCLUDED.valid_until,
@@ -177,7 +237,7 @@ func (r *UserGrantRepository) Get(ctx context.Context, grantID id.GrantID) (*sto
 	var grant storage.UserGrant
 	var permissionSetsJSON []byte
 
-	err := r.adapter.db.QueryRowContext(ctxTimeout, query, grantID).Scan(
+	err := r.adapter.storageExecutor(ctxTimeout).QueryRowContext(ctxTimeout, query, grantID).Scan(
 		&grant.ID,
 		&grant.Principal,
 		&grant.AgentID,
@@ -248,7 +308,7 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	tx, err := r.adapter.db.BeginTx(ctxTimeout, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	tx, err := r.adapter.beginSQLTransaction(ctxTimeout, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return storage.NewStorageError("UpdateUserGrant", storage.ErrorKindConnection, err, "failed to begin transaction")
 	}
@@ -259,7 +319,7 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 	// so we can still lock PS rows to close the concurrent-delete window.
 	query := `
 		UPDATE user_grants
-		SET valid_until = $2,
+		SET valid_until = $2::timestamptz AT TIME ZONE 'UTC',
 		    granted_permission_sets = $3,
 		    updated_at = $4
 		WHERE id = $1
@@ -332,7 +392,7 @@ func (r *UserGrantRepository) Delete(ctx context.Context, grantID id.GrantID) er
 
 	query := `DELETE FROM user_grants WHERE id = $1`
 
-	_, err := r.adapter.db.ExecContext(ctxTimeout, query, grantID)
+	_, err := r.adapter.storageExecutor(ctxTimeout).ExecContext(ctxTimeout, query, grantID)
 	if err != nil {
 		return r.handlePostgresError("DeleteUserGrant", err)
 	}
@@ -365,7 +425,7 @@ func (r *UserGrantRepository) ListByPrincipalAndAgent(ctx context.Context, princ
 		ORDER BY created_at DESC
 	`
 
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, principal, agentID)
+	rows, err := r.adapter.storageExecutor(ctxTimeout).QueryContext(ctxTimeout, query, principal, agentID)
 	if err != nil {
 		return nil, r.handlePostgresError("ListUserGrants", err)
 	}
@@ -441,11 +501,19 @@ func (r *UserGrantRepository) FindByPrincipalAndAgent(ctx context.Context, princ
 		WHERE principal = $1 AND agent_id = $2
 		LIMIT 1
 	`
+	if _, ambient := storageTransaction(ctxTimeout); ambient {
+		// A missing row also needs a pair lock so concurrent creators compare committed state.
+		if _, err := r.adapter.storageExecutor(ctxTimeout).ExecContext(ctxTimeout,
+			`SELECT pg_advisory_xact_lock($1, hashtext($2 || '/' || $3))`, int32(1095320135), principal.String(), agentID.String()); err != nil {
+			return nil, businessEventStorageError("FindUserGrant", err)
+		}
+		query += " FOR UPDATE"
+	}
 
 	var grant storage.UserGrant
 	var permissionSetsJSON []byte
 
-	err := r.adapter.db.QueryRowContext(ctxTimeout, query, principal, agentID).Scan(
+	err := r.adapter.storageExecutor(ctxTimeout).QueryRowContext(ctxTimeout, query, principal, agentID).Scan(
 		&grant.ID,
 		&grant.Principal,
 		&grant.AgentID,
@@ -498,7 +566,7 @@ func (r *UserGrantRepository) DeleteByAgent(ctx context.Context, agentID id.Agen
 
 	query := `DELETE FROM user_grants WHERE agent_id = $1`
 
-	_, err := r.adapter.db.ExecContext(ctxTimeout, query, agentID)
+	_, err := r.adapter.storageExecutor(ctxTimeout).ExecContext(ctxTimeout, query, agentID)
 	if err != nil {
 		return r.handlePostgresError("DeleteGrantsByAgent", err)
 	}
@@ -539,7 +607,7 @@ func (r *UserGrantRepository) ListByPrincipal(ctx context.Context, principal id.
 		ORDER BY updated_at DESC
 	`
 
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, principal)
+	rows, err := r.adapter.storageExecutor(ctxTimeout).QueryContext(ctxTimeout, query, principal)
 	if err != nil {
 		return nil, r.handlePostgresError("ListByPrincipal", err)
 	}
@@ -617,7 +685,7 @@ func (r *UserGrantRepository) CountAgentsByPrincipalAndServiceID(ctx context.Con
 	defer cancel()
 
 	var count int
-	err := r.adapter.db.QueryRowContext(ctxTimeout, query, principal, serviceID.String()).Scan(&count)
+	err := r.adapter.storageExecutor(ctxTimeout).QueryRowContext(ctxTimeout, query, principal, serviceID.String()).Scan(&count)
 	if err != nil {
 		return 0, r.handlePostgresError("CountAgentsByPrincipalAndServiceID", err)
 	}
@@ -650,7 +718,7 @@ func (r *UserGrantRepository) ListByPrincipalAndServiceID(ctx context.Context, p
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 
-	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, principal, serviceID.String())
+	rows, err := r.adapter.storageExecutor(ctxTimeout).QueryContext(ctxTimeout, query, principal, serviceID.String())
 	if err != nil {
 		return nil, r.handlePostgresError("ListByPrincipalAndServiceID", err)
 	}
@@ -700,10 +768,8 @@ func (r *UserGrantRepository) CountGrantsReferencingPermissionSet(ctx context.Co
 	}
 
 	var count int
-	err = r.adapter.db.QueryRowContext(ctxTimeout,
-		`SELECT COUNT(*) FROM user_grants WHERE granted_permission_sets @> $1::jsonb AND (valid_until IS NULL OR valid_until > NOW())`,
-		jsonFilter,
-	).Scan(&count)
+	err = r.adapter.storageExecutor(ctxTimeout).QueryRowContext(ctxTimeout, `SELECT COUNT(*) FROM user_grants WHERE granted_permission_sets @> $1::jsonb AND (valid_until IS NULL OR valid_until > NOW())`,
+		jsonFilter).Scan(&count)
 	if err != nil {
 		return 0, r.handlePostgresError("CountGrantsReferencingPermissionSet", err)
 	}
@@ -729,7 +795,7 @@ func (r *UserGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, p
 
 	query := `DELETE FROM user_grants WHERE principal = $1 AND agent_id = $2`
 
-	result, err := r.adapter.db.ExecContext(ctxTimeout, query, principal, agentID)
+	result, err := r.adapter.storageExecutor(ctxTimeout).ExecContext(ctxTimeout, query, principal, agentID)
 	if err != nil {
 		return r.handlePostgresError("DeleteByPrincipalAndAgentID", err)
 	}

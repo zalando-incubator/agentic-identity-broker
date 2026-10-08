@@ -20,7 +20,7 @@ var (
 )
 
 func TestUserGrantRepository_Create(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	validUntil := time.Now().Add(24 * time.Hour)
@@ -45,7 +45,7 @@ func TestUserGrantRepository_Create(t *testing.T) {
 }
 
 func TestUserGrantRepository_UpsertSemantics(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	validUntil1 := time.Now().Add(24 * time.Hour)
@@ -95,7 +95,7 @@ func TestUserGrantRepository_UpsertSemantics(t *testing.T) {
 }
 
 func TestUserGrantRepository_Get(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Get non-existent grant
@@ -124,7 +124,7 @@ func TestUserGrantRepository_Get(t *testing.T) {
 }
 
 func TestUserGrantRepository_Update(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	psID1 := id.NewPermissionSetID()
@@ -159,7 +159,7 @@ func TestUserGrantRepository_Update(t *testing.T) {
 }
 
 func TestUserGrantRepository_Update_NotFound(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	grant := &storage.UserGrant{
@@ -179,7 +179,7 @@ func TestUserGrantRepository_Update_NotFound(t *testing.T) {
 }
 
 func TestUserGrantRepository_Delete(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Create grant
@@ -207,7 +207,7 @@ func TestUserGrantRepository_Delete(t *testing.T) {
 }
 
 func TestUserGrantRepository_Delete_Idempotent(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Delete non-existent grant (should not error)
@@ -216,7 +216,7 @@ func TestUserGrantRepository_Delete_Idempotent(t *testing.T) {
 }
 
 func TestUserGrantRepository_ListByPrincipalAndAgent(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// List when no grants exist
@@ -244,7 +244,7 @@ func TestUserGrantRepository_ListByPrincipalAndAgent(t *testing.T) {
 }
 
 func TestUserGrantRepository_ListByPrincipalAndAgent_IncludesExpired(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Create grant with very short validity (1 millisecond in future)
@@ -271,7 +271,7 @@ func TestUserGrantRepository_ListByPrincipalAndAgent_IncludesExpired(t *testing.
 }
 
 func TestUserGrantRepository_FindByPrincipalAndAgent(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Find when no grant exists
@@ -302,7 +302,7 @@ func TestUserGrantRepository_FindByPrincipalAndAgent(t *testing.T) {
 }
 
 func TestUserGrantRepository_DeleteByAgent(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Create multiple grants for same agent with different principals
@@ -354,7 +354,7 @@ func TestUserGrantRepository_DeleteByAgent(t *testing.T) {
 }
 
 func TestUserGrantRepository_DeleteByAgent_Idempotent(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Delete grants for non-existent agent (should not error)
@@ -363,7 +363,7 @@ func TestUserGrantRepository_DeleteByAgent_Idempotent(t *testing.T) {
 }
 
 func TestUserGrantRepository_ConcurrentAccess(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Test concurrent creates
@@ -394,7 +394,7 @@ func TestUserGrantRepository_ConcurrentAccess(t *testing.T) {
 }
 
 func TestUserGrantRepository_DeleteByPrincipalAndAgentID(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Create a grant for testPrincipal1 + testAgentID1
@@ -429,7 +429,7 @@ func TestUserGrantRepository_DeleteByPrincipalAndAgentID(t *testing.T) {
 }
 
 func TestUserGrantRepository_DeleteByPrincipalAndAgentID_NotFound(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Delete when no grant exists — must return NotFound (NOT idempotent, unlike DeleteByAgent)
@@ -441,7 +441,7 @@ func TestUserGrantRepository_DeleteByPrincipalAndAgentID_NotFound(t *testing.T) 
 }
 
 func TestUserGrantRepository_DeleteByPrincipalAndAgentID_CrossPrincipalIsolation(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Create grants for two different principals, same agent
@@ -483,7 +483,7 @@ func TestUserGrantRepository_DeleteByPrincipalAndAgentID_CrossPrincipalIsolation
 }
 
 func TestUserGrantRepository_DeleteByPrincipalAndAgentID_AgentIndexCleanup(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Create grant for agent1 and agent2 under same principal
@@ -522,7 +522,7 @@ func TestUserGrantRepository_DeleteByPrincipalAndAgentID_AgentIndexCleanup(t *te
 }
 
 func TestUserGrantRepository_DeepCopy(t *testing.T) {
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	ctx := context.Background()
 
 	// Create grant
@@ -556,7 +556,7 @@ func TestUserGrantRepository_CountGrantsReferencingPermissionSet(t *testing.T) {
 	svcID := id.NewServiceID()
 
 	t.Run("counts active grants referencing the permission set", func(t *testing.T) {
-		repo := NewUserGrantRepository()
+		repo := NewUserGrantRepository(NewTransactionManager())
 		grant := &storage.UserGrant{
 			Principal: testPrincipal1,
 			AgentID:   testAgentID1,
@@ -574,7 +574,7 @@ func TestUserGrantRepository_CountGrantsReferencingPermissionSet(t *testing.T) {
 	})
 
 	t.Run("excludes expired grants", func(t *testing.T) {
-		repo := NewUserGrantRepository()
+		repo := NewUserGrantRepository(NewTransactionManager())
 		past := time.Now().Add(-time.Hour)
 		grant := &storage.UserGrant{
 			Principal:  testPrincipal1,
@@ -594,7 +594,7 @@ func TestUserGrantRepository_CountGrantsReferencingPermissionSet(t *testing.T) {
 	})
 
 	t.Run("counts indefinite grants (no valid_until)", func(t *testing.T) {
-		repo := NewUserGrantRepository()
+		repo := NewUserGrantRepository(NewTransactionManager())
 		grant := &storage.UserGrant{
 			Principal: testPrincipal1,
 			AgentID:   testAgentID1,
@@ -612,7 +612,7 @@ func TestUserGrantRepository_CountGrantsReferencingPermissionSet(t *testing.T) {
 	})
 
 	t.Run("counts grants with future valid_until as active", func(t *testing.T) {
-		repo := NewUserGrantRepository()
+		repo := NewUserGrantRepository(NewTransactionManager())
 		future := time.Now().Add(time.Hour)
 		grant := &storage.UserGrant{
 			Principal:  testPrincipal1,
@@ -632,7 +632,7 @@ func TestUserGrantRepository_CountGrantsReferencingPermissionSet(t *testing.T) {
 	})
 
 	t.Run("returns zero when no grants reference the permission set", func(t *testing.T) {
-		repo := NewUserGrantRepository()
+		repo := NewUserGrantRepository(NewTransactionManager())
 		count, err := repo.CountGrantsReferencingPermissionSet(ctx, psID)
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
@@ -641,7 +641,7 @@ func TestUserGrantRepository_CountGrantsReferencingPermissionSet(t *testing.T) {
 
 func TestUserGrantRepository_ListByPrincipalAndServiceID(t *testing.T) {
 	ctx := context.Background()
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	principalA := id.Principal("principal-a@example.com")
 	principalB := id.Principal("principal-b@example.com")
 	targetServiceID := id.NewServiceID()
@@ -676,7 +676,7 @@ func TestUserGrantRepository_ListByPrincipalAndServiceID(t *testing.T) {
 
 func TestUserGrantRepository_CountAgentsByPrincipalAndServiceID(t *testing.T) {
 	ctx := context.Background()
-	repo := NewUserGrantRepository()
+	repo := NewUserGrantRepository(NewTransactionManager())
 	principalA := id.Principal("principal-a@example.com")
 	principalB := id.Principal("principal-b@example.com")
 	targetServiceID := id.NewServiceID()

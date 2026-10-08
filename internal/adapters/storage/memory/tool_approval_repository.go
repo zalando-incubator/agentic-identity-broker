@@ -12,15 +12,63 @@ import (
 
 // ToolApprovalRepository implements the three tool approval repository interfaces in-memory.
 type ToolApprovalRepository struct {
-	mu        sync.RWMutex
-	approvals map[id.ApprovalID]*storage.ToolApproval
+	mu                    sync.RWMutex
+	transactions          *TransactionManager
+	approvals             map[id.ApprovalID]*storage.ToolApproval
+	expirationRecordedFor map[id.ApprovalID]time.Time
 }
 
 // NewToolApprovalRepository creates a new in-memory ToolApprovalRepository.
-func NewToolApprovalRepository() *ToolApprovalRepository {
+func NewToolApprovalRepository(transactions *TransactionManager) *ToolApprovalRepository {
 	return &ToolApprovalRepository{
-		approvals: make(map[id.ApprovalID]*storage.ToolApproval),
+		transactions:          transactions,
+		approvals:             make(map[id.ApprovalID]*storage.ToolApproval),
+		expirationRecordedFor: make(map[id.ApprovalID]time.Time),
 	}
+}
+
+func (r *ToolApprovalRepository) ListUnrecordedExpiredForPrincipal(ctx context.Context, principal id.Principal, at time.Time, limit int) ([]*storage.ToolApproval, error) {
+	if principal.IsZero() || at.IsZero() || limit <= 0 || limit > 1000 {
+		return nil, storage.NewStorageError("ListExpiredToolApprovals", storage.ErrorKindValidation, nil, "invalid expiration query")
+	}
+	guard, err := r.transactions.lock(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	defer guard.release()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []*storage.ToolApproval
+	for _, approval := range r.approvals {
+		if approval.Principal == principal && approval.Status == storage.ApprovalStatusPending &&
+			approval.IsExpired(at) && !r.expirationRecordedFor[approval.ID].Equal(approval.ExpiresAt) {
+			result = append(result, copyApproval(approval))
+			if len(result) == limit {
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func (r *ToolApprovalRepository) RecordExpiration(ctx context.Context, approvalID id.ApprovalID, effectiveExpiry time.Time) (bool, error) {
+	if approvalID.IsZero() || effectiveExpiry.IsZero() {
+		return false, storage.NewStorageError("RecordToolApprovalExpiration", storage.ErrorKindValidation, nil, "invalid expiration recognition")
+	}
+	guard, err := r.transactions.lock(ctx, true)
+	if err != nil {
+		return false, err
+	}
+	defer guard.release()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	approval := r.approvals[approvalID]
+	if approval == nil || approval.Status != storage.ApprovalStatusPending || !approval.IsExpired(time.Now()) || !approval.ExpiresAt.Equal(effectiveExpiry) || r.expirationRecordedFor[approvalID].Equal(effectiveExpiry) {
+		return false, nil
+	}
+	journalEntry(ctx, r.expirationRecordedFor, approvalID)
+	r.expirationRecordedFor[approvalID] = effectiveExpiry
+	return true, nil
 }
 
 // Compile-time interface checks.
@@ -36,7 +84,12 @@ func (*ToolApprovalRepository) ApprovalMutationsSyncAtomically() bool {
 	return false
 }
 
-func (r *ToolApprovalRepository) Create(_ context.Context, approval *storage.ToolApproval) (*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.ToolApproval) (*storage.ToolApproval, error) {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	if approval.ToolPattern == "" {
 		return nil, storage.NewStorageError("Create", storage.ErrorKindValidation, storage.ErrApprovalPatternMissing, "approval tool pattern is required")
 	}
@@ -55,18 +108,30 @@ func (r *ToolApprovalRepository) Create(_ context.Context, approval *storage.Too
 			existing.Status == storage.ApprovalStatusPending &&
 			!existing.Consumed {
 			if existing.IsExpired(time.Now()) {
-				existing.Consumed = true
+				if !r.expirationRecordedFor[existing.ID].Equal(existing.ExpiresAt) {
+					return copyApproval(existing), nil
+				}
+				updated := *existing
+				updated.Consumed = true
+				journalEntry(ctx, r.approvals, updated.ID)
+				r.approvals[updated.ID] = &updated
 				continue
 			}
 			return copyApproval(existing), nil
 		}
 	}
 
+	journalEntry(ctx, r.approvals, approval.ID)
 	r.approvals[approval.ID] = copyApproval(approval)
 	return copyApproval(approval), nil
 }
 
-func (r *ToolApprovalRepository) Get(_ context.Context, approvalID id.ApprovalID) (*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.ApprovalID) (*storage.ToolApproval, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -77,7 +142,12 @@ func (r *ToolApprovalRepository) Get(_ context.Context, approvalID id.ApprovalID
 	return copyApproval(a), nil
 }
 
-func (r *ToolApprovalRepository) Approve(_ context.Context, approvalID id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error) {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	if decision.ToolPattern == "" {
 		return nil, storage.NewStorageError("Approve", storage.ErrorKindValidation, storage.ErrApprovalPatternMissing, "approval tool pattern is required")
 	}
@@ -89,6 +159,10 @@ func (r *ToolApprovalRepository) Approve(_ context.Context, approvalID id.Approv
 		return nil, storage.NewStorageError("Approve", storage.ErrorKindNotFound, ports.ErrNotFound, "approval not found or not pending")
 	}
 
+	updated := *a
+	a = &updated
+	journalEntry(ctx, r.approvals, approvalID)
+	r.approvals[approvalID] = a
 	a.Status = storage.ApprovalStatusApproved
 	a.Persistence = &decision.Persistence
 	a.ToolPattern = decision.ToolPattern
@@ -97,7 +171,12 @@ func (r *ToolApprovalRepository) Approve(_ context.Context, approvalID id.Approv
 	return copyApproval(a), nil
 }
 
-func (r *ToolApprovalRepository) Deny(_ context.Context, approvalID id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (*storage.ToolApproval, error) {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -106,13 +185,22 @@ func (r *ToolApprovalRepository) Deny(_ context.Context, approvalID id.ApprovalI
 		return nil, storage.NewStorageError("Deny", storage.ErrorKindNotFound, ports.ErrNotFound, "approval not found or not pending")
 	}
 
+	updated := *a
+	a = &updated
+	journalEntry(ctx, r.approvals, approvalID)
+	r.approvals[approvalID] = a
 	a.Status = storage.ApprovalStatusDenied
-	a.Persistence = persistence
+	a.Persistence = copyPointer(persistence)
 	a.DeniedAt = &deniedAt
 	return copyApproval(a), nil
 }
 
-func (r *ToolApprovalRepository) RevokePermanent(_ context.Context, approvalID id.ApprovalID, revokedAt time.Time) (*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID id.ApprovalID, revokedAt time.Time) (*storage.ToolApproval, error) {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -122,13 +210,22 @@ func (r *ToolApprovalRepository) RevokePermanent(_ context.Context, approvalID i
 		return nil, storage.NewStorageError("RevokePermanent", storage.ErrorKindNotFound, ports.ErrNotFound, "approval not found or not permanently approved or denied")
 	}
 
+	updated := *a
+	a = &updated
+	journalEntry(ctx, r.approvals, approvalID)
+	r.approvals[approvalID] = a
 	a.Status = storage.ApprovalStatusDenied
 	a.Persistence = nil
 	a.DeniedAt = &revokedAt
 	return copyApproval(a), nil
 }
 
-func (r *ToolApprovalRepository) Consume(_ context.Context, approvalID id.ApprovalID, consumedAt time.Time) (*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.ApprovalID, consumedAt time.Time) (*storage.ToolApproval, error) {
+	guard, gateErr := r.transactions.lock(ctx, true)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -146,12 +243,21 @@ func (r *ToolApprovalRepository) Consume(_ context.Context, approvalID id.Approv
 		return copyApproval(a), nil // Idempotent
 	}
 
+	updated := *a
+	a = &updated
+	journalEntry(ctx, r.approvals, approvalID)
+	r.approvals[approvalID] = a
 	a.Consumed = true
 	a.ConsumedAt = &consumedAt
 	return copyApproval(a), nil
 }
 
-func (r *ToolApprovalRepository) ListAllActive(_ context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) ([]*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) ListAllActive(ctx context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) ([]*storage.ToolApproval, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -186,7 +292,12 @@ func (r *ToolApprovalRepository) ListAllActive(_ context.Context, principalFilte
 	return result, nil
 }
 
-func (r *ToolApprovalRepository) ListActiveByPrincipalAndAgent(_ context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) ListActiveByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -207,7 +318,12 @@ func (r *ToolApprovalRepository) ListActiveByPrincipalAndAgent(_ context.Context
 	return result, nil
 }
 
-func (r *ToolApprovalRepository) ListPermanentByPrincipal(_ context.Context, principal id.Principal) ([]*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) ListPermanentByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.ToolApproval, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -223,7 +339,12 @@ func (r *ToolApprovalRepository) ListPermanentByPrincipal(_ context.Context, pri
 	return result, nil
 }
 
-func (r *ToolApprovalRepository) CountPendingByPrincipalAndAgent(_ context.Context, principal id.Principal, agentID id.AgentID) (int, error) {
+func (r *ToolApprovalRepository) CountPendingByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (int, error) {
+	guard, gateErr := r.transactions.lock(ctx, false)
+	if gateErr != nil {
+		return 0, gateErr
+	}
+	defer guard.release()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -240,10 +361,14 @@ func (r *ToolApprovalRepository) CountPendingByPrincipalAndAgent(_ context.Conte
 
 func copyApproval(a *storage.ToolApproval) *storage.ToolApproval {
 	cp := *a
+	cp.MCPSessionID = copyPointer(a.MCPSessionID)
+	cp.AgentSessionID = copyPointer(a.AgentSessionID)
+	cp.ToolInvocationID = copyPointer(a.ToolInvocationID)
+	cp.OpenTelemetryTraceparent = copyPointer(a.OpenTelemetryTraceparent)
 	if a.Arguments != nil {
 		cp.Arguments = make(map[string]any, len(a.Arguments))
 		for k, v := range a.Arguments {
-			cp.Arguments[k] = v
+			cp.Arguments[k] = copyJSONValue(v)
 		}
 	}
 	if a.ParamsPattern != nil {

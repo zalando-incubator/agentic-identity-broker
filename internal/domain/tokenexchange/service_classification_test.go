@@ -111,7 +111,7 @@ func TestExchangeCallerCancellationDuringGrantLookupPreservesStage(t *testing.T)
 	fixture := newExchangeFixture(t, exchangeFixtureConfig{coverage: grantCoversRequested, sessionRepo: &MockSessionRepository{}, encryption: &MockEncryption{}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	fixture.svc.consentService = consent.NewService(fixture.svc.agentRepository, fixture.svc.providerService, cancelingClassificationGrantRepo{cancel: cancel}, nil, nil, slog.Default())
+	fixture.svc.consentService = consent.NewService(fixture.svc.agentRepository, fixture.svc.providerService, cancelingClassificationGrantRepo{cancel: cancel}, nil, nil, slog.Default(), fixture.svc.ledger)
 	_, err := fixture.svc.Exchange(ctx, fixture.req)
 	var failure *TokenExchangeError
 	require.ErrorAs(t, err, &failure)

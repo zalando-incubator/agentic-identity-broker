@@ -229,7 +229,7 @@ func setupMigratedPostgresDatabase(t *testing.T) (string, func()) {
 	t.Helper()
 
 	postgres := testbootstrap.RequireSharedPostgres(t)
-	_, connStr, cleanupDatabase := postgres.SetupDatabaseFromTemplate(t, "oauth2_signing_key_bootstrap_full_migrations", func(t *testing.T, dbName string) {
+	_, connStr, cleanupDatabase := postgres.SetupDatabaseFromTemplate(t, "oauth2_signing_key_bootstrap_full_migrations", func(dbName string) {
 		projectRoot, err := testbootstrap.FindProjectRoot()
 		require.NoError(t, err)
 		migrationsDir, err := filepath.Abs(filepath.Join(projectRoot, "migrations"))
@@ -272,7 +272,8 @@ func newPostgresStorageAdapter(t *testing.T, connStr string) (*storageadapter.Ad
 func newLocalModePostgresConfig(connStr string) *ports.Config {
 	jweKey := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
 	return &ports.Config{
-		Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+		Log:            ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+		BusinessEvents: ports.BusinessEventsConfig{Retention: 2160 * time.Hour},
 		Server: ports.ServerConfig{
 			EndUser: ports.ServerInstanceConfig{
 				Port:      8000,

@@ -323,6 +323,13 @@ migration:
     #   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO <broker_user>
     # Use the psql variable :broker_user to reference the broker username.
     sql: ""
+    businessEvents:
+      # -- Existing operational role for SELECT on ledger parent tables. Empty grants nothing.
+      # The default grants script applies these roles. Custom grants.sql replaces that script.
+      readerRole: ""
+      # -- Existing operational role for EXECUTE on public.business_event_erase_subject(text). Empty grants nothing.
+      # The chart does not create roles or grant this capability to the broker user.
+      erasureRole: ""
 
 # Broker application configuration
 broker:
@@ -638,6 +645,18 @@ broker:
   security:
     # -- Skip HTTPS validation for third-party services (dev/test only!)
     skipThirdpartyHttpsValidation: false
+
+  # Business event ledger configuration
+  businessEvents:
+    # -- Recorded-time retention as a positive Go duration (2160h = 90 days).
+    # Positive fractions round upward to microseconds. Use 2160h, not 90d.
+    # Environment: IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION.
+    # Retention changes require a coordinated rollout across all replicas.
+    retention: 2160h
+    # -- Enable additional ledger telemetry copies, not ledger persistence.
+    # Also requires telemetry.enabled and telemetry.logs.enabled.
+    # Environment: IDENTITY_BROKER_BUSINESS_EVENTS_TELEMETRY_COPY_ENABLED.
+    telemetryCopyEnabled: true
 
   # OpenTelemetry observability configuration
   telemetry:

@@ -15,7 +15,7 @@ func TestRefreshTokenSessionStore(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("create and find by signature", func(t *testing.T) {
-		store := NewRefreshTokenSessionStore()
+		store := NewRefreshTokenSessionStore(NewTransactionManager())
 		session := &storage.RefreshTokenSession{
 			Signature: "sig-1",
 			RequestID: "req-1",
@@ -36,7 +36,7 @@ func TestRefreshTokenSessionStore(t *testing.T) {
 	})
 
 	t.Run("mark used is single-use", func(t *testing.T) {
-		store := NewRefreshTokenSessionStore()
+		store := NewRefreshTokenSessionStore(NewTransactionManager())
 		session := &storage.RefreshTokenSession{
 			Signature: "sig-2",
 			RequestID: "req-2",
@@ -61,7 +61,7 @@ func TestRefreshTokenSessionStore(t *testing.T) {
 	})
 
 	t.Run("revoke by request id marks matching sessions used", func(t *testing.T) {
-		store := NewRefreshTokenSessionStore()
+		store := NewRefreshTokenSessionStore(NewTransactionManager())
 		require.NoError(t, store.Create(ctx, &storage.RefreshTokenSession{
 			Signature: "sig-3",
 			RequestID: "req-chain",
@@ -91,7 +91,7 @@ func TestRefreshTokenSessionStore(t *testing.T) {
 	})
 
 	t.Run("delete expired removes expired sessions only", func(t *testing.T) {
-		store := NewRefreshTokenSessionStore()
+		store := NewRefreshTokenSessionStore(NewTransactionManager())
 		require.NoError(t, store.Create(ctx, &storage.RefreshTokenSession{
 			Signature: "expired",
 			RequestID: "req-expired",
