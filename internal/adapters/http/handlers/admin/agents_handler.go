@@ -367,7 +367,6 @@ func (h *AgentsHandler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.Info("agent deleted", "agent_id", agentID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

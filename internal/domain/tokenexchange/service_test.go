@@ -109,12 +109,10 @@ func (m *MockPermissionSetRepository) Update(ctx context.Context, ps *storagedom
 	return nil
 }
 
-func (m *MockPermissionSetRepository) Delete(ctx context.Context, psID id.PermissionSetID) error {
-	if m.psMap == nil {
-		return nil
-	}
+func (m *MockPermissionSetRepository) Delete(ctx context.Context, psID id.PermissionSetID) (bool, error) {
+	_, existed := m.psMap[psID]
 	delete(m.psMap, psID)
-	return nil
+	return existed, nil
 }
 
 func (m *MockPermissionSetRepository) List(ctx context.Context, serviceID id.ServiceID) ([]*storagedomain.PermissionSet, error) {
@@ -173,8 +171,8 @@ func (m *MockAgentRepository) Update(ctx context.Context, agent *storagedomain.A
 	return nil
 }
 
-func (m *MockAgentRepository) Delete(ctx context.Context, agentID id.AgentID) error {
-	return nil
+func (m *MockAgentRepository) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
+	return false, nil
 }
 
 func (m *MockAgentRepository) List(ctx context.Context) ([]*storagedomain.Agent, error) {
@@ -315,6 +313,23 @@ func (m *MockGrantRepository) FindByPrincipalAndAgent(ctx context.Context, princ
 }
 
 func (m *MockGrantRepository) Create(ctx context.Context, grant *storagedomain.UserGrant) error {
+	if m.err != nil {
+		return m.err
+	}
+	persisted := grant.Copy()
+	if m.grant != nil && m.grant.Principal == grant.Principal && m.grant.AgentID == grant.AgentID {
+		persisted.ID = m.grant.ID
+		persisted.CreatedAt = m.grant.CreatedAt
+	}
+	m.grant = persisted
+	grant.ID = persisted.ID
+	grant.CreatedAt = persisted.CreatedAt
+	grant.UpdatedAt = persisted.UpdatedAt
+	grant.ValidUntil = nil
+	if persisted.ValidUntil != nil {
+		validUntil := *persisted.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 	return nil
 }
 
@@ -323,6 +338,23 @@ func (m *MockGrantRepository) Get(ctx context.Context, grantID id.GrantID) (*sto
 }
 
 func (m *MockGrantRepository) Update(ctx context.Context, grant *storagedomain.UserGrant) error {
+	if m.err != nil {
+		return m.err
+	}
+	if m.grant == nil || m.grant.ID != grant.ID {
+		return ports.ErrNotFound
+	}
+	persisted := grant.Copy()
+	persisted.CreatedAt = m.grant.CreatedAt
+	m.grant = persisted
+	grant.ID = persisted.ID
+	grant.CreatedAt = persisted.CreatedAt
+	grant.UpdatedAt = persisted.UpdatedAt
+	grant.ValidUntil = nil
+	if persisted.ValidUntil != nil {
+		validUntil := *persisted.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 	return nil
 }
 
@@ -350,8 +382,16 @@ func (m *MockGrantRepository) ListByPrincipalAndAgent(ctx context.Context, princ
 	return nil, nil
 }
 
-func (m *MockGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	return m.err
+func (m *MockGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storagedomain.UserGrant, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.grant == nil || m.grant.Principal != principal || m.grant.AgentID != agentID {
+		return nil, storagedomain.NewStorageError("DeleteByPrincipalAndAgentID", storagedomain.ErrorKindNotFound, ports.ErrNotFound, "grant not found")
+	}
+	snapshot := m.grant.Copy()
+	m.grant = nil
+	return snapshot, nil
 }
 
 func (m *MockGrantRepository) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {
@@ -1340,7 +1380,9 @@ func (r *trackingAgentRepository) Create(_ context.Context, _ *storagedomain.Age
 
 func (r *trackingAgentRepository) Update(_ context.Context, _ *storagedomain.Agent) error { return nil }
 
-func (r *trackingAgentRepository) Delete(_ context.Context, _ id.AgentID) error { return nil }
+func (r *trackingAgentRepository) Delete(_ context.Context, _ id.AgentID) (bool, error) {
+	return false, nil
+}
 
 func (r *trackingAgentRepository) List(_ context.Context) ([]*storagedomain.Agent, error) {
 	return nil, nil
@@ -1561,7 +1603,7 @@ func (r *singleAgentRepo) Get(_ context.Context, agentID id.AgentID) (*storagedo
 	if r.err != nil {
 		return nil, r.err
 	}
-	if agentID == r.agentID {
+	if agentID == r.agentID && r.agent != nil {
 		return r.agent, nil
 	}
 	return nil, ports.ErrNotFound
@@ -1576,7 +1618,16 @@ func (r *singleAgentRepo) GetByClientURI(_ context.Context, _ string) (*storaged
 }
 func (r *singleAgentRepo) Create(_ context.Context, _ *storagedomain.Agent) error { return nil }
 func (r *singleAgentRepo) Update(_ context.Context, _ *storagedomain.Agent) error { return nil }
-func (r *singleAgentRepo) Delete(_ context.Context, _ id.AgentID) error           { return nil }
+func (r *singleAgentRepo) Delete(_ context.Context, agentID id.AgentID) (bool, error) {
+	if r.err != nil {
+		return false, r.err
+	}
+	if r.agent == nil || agentID != r.agentID {
+		return false, nil
+	}
+	r.agent = nil
+	return true, nil
+}
 func (r *singleAgentRepo) List(_ context.Context) ([]*storagedomain.Agent, error) { return nil, nil }
 func (r *singleAgentRepo) ExistsOtherWithClientID(_ context.Context, _ id.ClientID, _ *id.AgentID) (bool, error) {
 	return false, nil

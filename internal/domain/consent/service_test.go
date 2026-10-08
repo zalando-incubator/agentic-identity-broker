@@ -1,7 +1,9 @@
 package consent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"testing"
@@ -100,12 +102,13 @@ func (m *mockAgentRepo) Update(ctx context.Context, agent *storage.Agent) error 
 	return nil
 }
 
-func (m *mockAgentRepo) Delete(ctx context.Context, agentID id.AgentID) error {
+func (m *mockAgentRepo) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
 	if m.err != nil {
-		return m.err
+		return false, m.err
 	}
+	_, exists := m.agents[agentID]
 	delete(m.agents, agentID)
-	return nil
+	return exists, nil
 }
 
 func (m *mockAgentRepo) List(ctx context.Context) ([]*storage.Agent, error) {
@@ -279,6 +282,19 @@ func (m *mockPermissionSetService) Delete(ctx context.Context, psID id.Permissio
 	return nil
 }
 
+type mockPermissionSetRepository struct {
+	*mockPermissionSetService
+}
+
+func (m *mockPermissionSetRepository) Delete(_ context.Context, psID id.PermissionSetID) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	_, exists := m.permissionSets[psID]
+	delete(m.permissionSets, psID)
+	return exists, nil
+}
+
 func (m *mockPermissionSetService) List(ctx context.Context, serviceID id.ServiceID) ([]*storage.PermissionSet, error) {
 	if m.err != nil {
 		return nil, m.err
@@ -415,6 +431,7 @@ type mockGrantRepo struct {
 	createCalls                 int
 	updateCalls                 int
 	findCalls                   int
+	deleteCalls                 int
 	findByPrincipalAndAgentFunc func(context.Context, id.Principal, id.AgentID) (*storage.UserGrant, error)
 }
 
@@ -423,11 +440,26 @@ func (m *mockGrantRepo) Create(ctx context.Context, grant *storage.UserGrant) er
 		return m.err
 	}
 	m.createCalls++
-	// Generate ID if not set
 	if grant.ID.IsZero() {
 		grant.ID = id.NewGrantID()
 	}
-	m.grants[grant.ID] = grant.Copy()
+	stored := grant.Copy()
+	for _, existing := range m.grants {
+		if existing.Principal == grant.Principal && existing.AgentID == grant.AgentID {
+			stored.ID = existing.ID
+			stored.CreatedAt = existing.CreatedAt
+			break
+		}
+	}
+	m.grants[stored.ID] = stored
+	grant.ID = stored.ID
+	grant.CreatedAt = stored.CreatedAt
+	grant.UpdatedAt = stored.UpdatedAt
+	grant.ValidUntil = nil
+	if stored.ValidUntil != nil {
+		validUntil := *stored.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 	return nil
 }
 
@@ -447,10 +479,21 @@ func (m *mockGrantRepo) Update(ctx context.Context, grant *storage.UserGrant) er
 		return m.err
 	}
 	m.updateCalls++
-	if _, exists := m.grants[grant.ID]; !exists {
+	existing, exists := m.grants[grant.ID]
+	if !exists {
 		return ports.ErrNotFound
 	}
-	m.grants[grant.ID] = grant.Copy()
+	stored := grant.Copy()
+	stored.CreatedAt = existing.CreatedAt
+	m.grants[stored.ID] = stored
+	grant.ID = stored.ID
+	grant.CreatedAt = stored.CreatedAt
+	grant.UpdatedAt = stored.UpdatedAt
+	grant.ValidUntil = nil
+	if stored.ValidUntil != nil {
+		validUntil := *stored.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 	return nil
 }
 
@@ -560,17 +603,19 @@ func (m *mockGrantRepo) ListByPrincipalAndServiceID(ctx context.Context, princip
 	return agentIDs, nil
 }
 
-func (m *mockGrantRepo) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
+func (m *mockGrantRepo) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	m.deleteCalls++
 	if m.err != nil {
-		return m.err
+		return nil, m.err
 	}
 	for grantID, grant := range m.grants {
 		if grant.Principal == principal && grant.AgentID == agentID {
+			deleted := grant.Copy()
 			delete(m.grants, grantID)
-			return nil
+			return deleted, nil
 		}
 	}
-	return ports.ErrNotFound
+	return nil, storage.NewStorageError("DeleteUserGrant", storage.ErrorKindNotFound, ports.ErrNotFound, "grant not found")
 }
 
 func (m *mockGrantRepo) CountGrantsReferencingPermissionSet(_ context.Context, psID id.PermissionSetID) (int, error) {
@@ -989,7 +1034,7 @@ func TestService_GrantConsent(t *testing.T) {
 		psRepo := &mockPermissionSetService{
 			permissionSets: map[id.PermissionSetID]*storage.PermissionSet{psID: ps},
 		}
-		psService := permissionset.NewPermissionSetService(psRepo, &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}, slog.Default())
+		psService := permissionset.NewPermissionSetService(&mockPermissionSetRepository{psRepo}, &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}, slog.Default())
 		defer psService.Close()
 
 		svc := NewService(
@@ -1341,7 +1386,7 @@ func TestService_RevokeConsent(t *testing.T) {
 		assert.Empty(t, grantRepo.grants)
 	})
 
-	t.Run("grant not found - returns nil (idempotent: POST empty-tokens path)", func(t *testing.T) {
+	t.Run("grant not found - returns nil (idempotent wrapper)", func(t *testing.T) {
 		t.Parallel()
 		svc := NewService(
 			&mockAgentRepo{agents: map[id.AgentID]*storage.Agent{}},
@@ -1839,7 +1884,7 @@ func TestService_GetAgentConsentDetail_WithPermissionSets(t *testing.T) {
 		psRepo := &mockPermissionSetService{
 			permissionSets: map[id.PermissionSetID]*storage.PermissionSet{psID: ps},
 		}
-		psService := permissionset.NewPermissionSetService(psRepo, &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}, slog.Default())
+		psService := permissionset.NewPermissionSetService(&mockPermissionSetRepository{psRepo}, &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}, slog.Default())
 
 		agentWithPS := &storage.Agent{
 			ID:          agentID,
@@ -1876,7 +1921,7 @@ func TestService_GetAgentConsentDetail_WithPermissionSets(t *testing.T) {
 		serviceID2 := id.NewServiceID()
 		psID1 := id.NewPermissionSetID()
 		psID2 := id.NewPermissionSetID()
-		psService := permissionset.NewPermissionSetService(&mockPermissionSetService{
+		psService := permissionset.NewPermissionSetService(&mockPermissionSetRepository{&mockPermissionSetService{
 			permissionSets: map[id.PermissionSetID]*storage.PermissionSet{
 				psID1: {
 					ID: psID1,
@@ -1892,7 +1937,7 @@ func TestService_GetAgentConsentDetail_WithPermissionSets(t *testing.T) {
 					},
 				},
 			},
-		}, &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}, slog.Default())
+		}}, &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{}}, slog.Default())
 		defer psService.Close()
 
 		agentWithAllScopes := &storage.Agent{
@@ -2092,4 +2137,147 @@ func TestService_VerifyAgentAccessUnavailableGrantReturnsNil(t *testing.T) {
 			assert.Equal(t, 1, repo.findCalls)
 		})
 	}
+}
+
+func TestService_RevokeConsentUsesDeletedGrantWithoutLookup(t *testing.T) {
+	t.Parallel()
+	for _, idempotent := range []bool{false, true} {
+		name := "explicit"
+		if idempotent {
+			name = "idempotent"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			principal := id.Principal("owner@example.com")
+			agentID := id.NewAgentID()
+			deletedGrantID := id.NewGrantID()
+			unrelatedID := id.NewGrantID()
+			staleGrantID := id.NewGrantID()
+			repo := &mockGrantRepo{
+				grants: map[id.GrantID]*storage.UserGrant{
+					deletedGrantID: {ID: deletedGrantID, Principal: principal, AgentID: agentID},
+					unrelatedID:    {ID: unrelatedID, Principal: id.Principal("other@example.com"), AgentID: agentID},
+				},
+				findByPrincipalAndAgentFunc: func(context.Context, id.Principal, id.AgentID) (*storage.UserGrant, error) {
+					return &storage.UserGrant{ID: staleGrantID}, nil
+				},
+			}
+			var logs bytes.Buffer
+			svc := NewService(nil, nil, repo, nil, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+			revoke := svc.RevokeConsentForPrincipal
+			if idempotent {
+				revoke = svc.RevokeConsent
+			}
+			require.NoError(t, revoke(context.Background(), principal, agentID))
+			err := revoke(context.Background(), principal, agentID)
+			if idempotent {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, ErrGrantNotFound)
+			}
+			assert.Zero(t, repo.findCalls, "revocation must use the atomic deletion result, not a pre-read")
+			assert.Equal(t, 2, repo.deleteCalls)
+			assert.NotContains(t, repo.grants, deletedGrantID)
+			assert.Contains(t, repo.grants, unrelatedID)
+			assert.Equal(t, 1, bytes.Count(logs.Bytes(), []byte(`"msg":"grant revoked"`)))
+			var record map[string]any
+			require.NoError(t, json.NewDecoder(&logs).Decode(&record))
+			assert.Equal(t, "grant_revoked", record["action"])
+			assert.Equal(t, string(principal), record["principal"])
+			assert.Equal(t, agentID.String(), record["agent_id"])
+			assert.Equal(t, deletedGrantID.String(), record["grant_id"])
+			assert.NotContains(t, record, "valid_until")
+			assert.NotContains(t, record, "granted_permission_sets")
+		})
+	}
+}
+
+func TestService_RevokeConsentFailureEmitsNoSuccess(t *testing.T) {
+	t.Parallel()
+	repositoryCause := errors.New("grant deletion failed")
+	for _, tc := range []struct {
+		name       string
+		idempotent bool
+		err        error
+		wantErr    error
+	}{
+		{name: "explicit absent", err: storage.NewStorageError("DeleteGrant", storage.ErrorKindNotFound, ports.ErrNotFound, "grant not found"), wantErr: ErrGrantNotFound},
+		{name: "idempotent absent", idempotent: true, err: ports.ErrNotFound},
+		{name: "explicit failed", err: repositoryCause, wantErr: repositoryCause},
+		{name: "idempotent failed", idempotent: true, err: repositoryCause, wantErr: repositoryCause},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := &mockGrantRepo{err: tc.err}
+			var logs bytes.Buffer
+			svc := NewService(nil, nil, repo, nil, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+			revoke := svc.RevokeConsentForPrincipal
+			if tc.idempotent {
+				revoke = svc.RevokeConsent
+			}
+			err := revoke(context.Background(), id.Principal("owner@example.com"), id.NewAgentID())
+			if tc.wantErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, tc.wantErr)
+			}
+			assert.Zero(t, repo.findCalls)
+			assert.Equal(t, 1, repo.deleteCalls)
+			assert.Empty(t, logs.String())
+		})
+	}
+}
+
+func TestService_GrantConsentReturnsWinningUpsertMetadata(t *testing.T) {
+	t.Parallel()
+	principal := id.Principal("owner@example.com")
+	agentID := id.NewAgentID()
+	psID := id.NewPermissionSetID()
+	serviceID := id.NewServiceID()
+	winningID := id.NewGrantID()
+	createdAt := time.Now().Add(-time.Hour)
+	validUntil := time.Now().Add(time.Hour)
+	repo := &mockGrantRepo{
+		grants: map[id.GrantID]*storage.UserGrant{
+			winningID: {ID: winningID, Principal: principal, AgentID: agentID, CreatedAt: createdAt},
+		},
+		findByPrincipalAndAgentFunc: func(context.Context, id.Principal, id.AgentID) (*storage.UserGrant, error) {
+			return nil, ports.ErrNotFound
+		},
+	}
+	psService := &mockPermissionSetService{permissionSets: map[id.PermissionSetID]*storage.PermissionSet{
+		psID: {ID: psID, ServiceScopes: []storage.ServiceScope{{ServiceID: serviceID, RequirementType: storage.RequirementTypeOptional}}},
+	}}
+	sessionID := id.NewSessionID()
+	sessionRepo := &mockUserSessionRepo{sessions: map[id.SessionID]*storage.UserSession{
+		sessionID: {ID: sessionID, Principal: principal, ServiceID: serviceID, RefreshTokenExpiresAt: &validUntil},
+	}}
+	agentRepo := &mockAgentRepo{agents: map[id.AgentID]*storage.Agent{
+		agentID: {ID: agentID, PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: psID, RequirementType: storage.RequirementTypeOptional}}},
+	}}
+	svc := NewService(agentRepo, nil, repo, sessionRepo, psService, slog.Default())
+	grant, err := svc.GrantConsent(context.Background(), &GrantRequest{
+		Principal:  principal,
+		AgentID:    agentID,
+		ValidUntil: &validUntil,
+		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{
+			PermissionSetID:    psID,
+			IncludedServiceIDs: []id.ServiceID{serviceID},
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, grant)
+	assert.Equal(t, winningID, grant.ID)
+	assert.Equal(t, createdAt, grant.CreatedAt)
+	assert.Equal(t, 1, repo.createCalls)
+	assert.Zero(t, repo.updateCalls)
+	require.Len(t, repo.grants, 1)
+	stored, err := repo.Get(context.Background(), winningID)
+	require.NoError(t, err)
+	assert.Equal(t, stored, grant)
+	assert.NotSame(t, repo.grants[winningID].ValidUntil, grant.ValidUntil)
+	*grant.ValidUntil = grant.ValidUntil.Add(time.Hour)
+	grant.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
+	assert.Equal(t, validUntil, *repo.grants[winningID].ValidUntil)
+	assert.Equal(t, serviceID, repo.grants[winningID].GrantedPermissionSets[0].IncludedServiceIDs[0])
 }

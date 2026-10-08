@@ -103,7 +103,8 @@ type AgentRepository interface {
 	Create(ctx context.Context, agent *storage.Agent) error
 	Get(ctx context.Context, id id.AgentID) (*storage.Agent, error)
 	Update(ctx context.Context, agent *storage.Agent) error
-	Delete(ctx context.Context, id id.AgentID) error
+	// Delete reports whether the primary agent row was actually deleted; absence is false, nil.
+	Delete(ctx context.Context, id id.AgentID) (bool, error)
 	List(ctx context.Context) ([]*storage.Agent, error)
 	GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
 	ExistsOtherWithClientID(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
@@ -123,6 +124,8 @@ type AgentCanonicalIDRepository interface {
 type UserGrantRepository interface {
 	// Create creates a new user grant or updates existing grant for same principal+agent (upsert).
 	// The grant ID should be generated before calling this method.
+	// On success, copies persisted ID, CreatedAt, UpdatedAt and ValidUntil back to grant.
+	// ValidUntil is a defensive value; failed writes do not publish committed metadata.
 	// Returns error if:
 	// - Agent ID doesn't exist (StorageError with Kind=NotFound)
 	// - Storage connection fails (StorageError with Kind=Connection)
@@ -135,6 +138,8 @@ type UserGrantRepository interface {
 	Get(ctx context.Context, id id.GrantID) (*storage.UserGrant, error)
 
 	// Update updates an existing user grant.
+	// On success, copies persisted ID, CreatedAt, UpdatedAt and defensive ValidUntil back to grant.
+	// Failed writes do not publish committed metadata.
 	// Returns error if:
 	// - Grant ID not found (StorageError with Kind=NotFound)
 	// - Storage connection fails (StorageError with Kind=Connection)
@@ -164,12 +169,11 @@ type UserGrantRepository interface {
 	// It is safe to call with non-existent agent (idempotent).
 	DeleteByAgent(ctx context.Context, agentID id.AgentID) error
 
-	// DeleteByPrincipalAndAgentID deletes the grant owned by principal for the given agent.
-	// Returns StorageError wrapping ports.ErrNotFound when no active grant exists for
-	// the (principal, agent_id) pair — never returns raw sql.ErrNoRows.
-	// This is the revocation operation for FR-014 (user-initiated grant deletion).
-	// Unlike DeleteByAgent, this is NOT idempotent: absence of the grant is an error.
-	DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error
+	// DeleteByPrincipalAndAgentID atomically deletes the owned grant and returns a defensive
+	// snapshot of the row actually deleted, only after successful persistence.
+	// Absence returns StorageError wrapping ports.ErrNotFound, never raw sql.ErrNoRows.
+	// This revocation operation is not idempotent and returns no snapshot on error.
+	DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error)
 
 	// ListByPrincipal retrieves all active grants for a principal across all agents.
 	// Filters expired grants (valid_until < NOW()).
@@ -268,7 +272,8 @@ type PermissionSetRepository interface {
 	Get(ctx context.Context, id id.PermissionSetID) (*storage.PermissionSet, error)
 	GetByIDs(ctx context.Context, ids []id.PermissionSetID) ([]*storage.PermissionSet, error)
 	Update(ctx context.Context, ps *storage.PermissionSet) error
-	Delete(ctx context.Context, id id.PermissionSetID) error
+	// Delete reports whether the primary permission-set row was actually deleted; absence is false, nil.
+	Delete(ctx context.Context, id id.PermissionSetID) (bool, error)
 	List(ctx context.Context, serviceID id.ServiceID) ([]*storage.PermissionSet, error)
 	CountAgentsReferencingPermissionSet(ctx context.Context, id id.PermissionSetID) (int, error)
 	CountPermissionSetsForService(ctx context.Context, serviceID id.ServiceID) (int, error)

@@ -582,9 +582,10 @@ func (m *mockAgentRepository) Update(ctx context.Context, agent *storage.Agent) 
 	return nil
 }
 
-func (m *mockAgentRepository) Delete(ctx context.Context, agentID id.AgentID) error {
+func (m *mockAgentRepository) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
+	_, existed := m.agents[agentID]
 	delete(m.agents, agentID)
-	return nil
+	return existed, nil
 }
 
 func (m *mockAgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
@@ -628,7 +629,23 @@ func newMockGrantRepo() *mockGrantRepository {
 }
 
 func (m *mockGrantRepository) Create(ctx context.Context, grant *storage.UserGrant) error {
-	m.grants[grant.ID] = grant
+	persisted := grant.Copy()
+	for _, existing := range m.grants {
+		if existing.Principal == grant.Principal && existing.AgentID == grant.AgentID {
+			persisted.ID = existing.ID
+			persisted.CreatedAt = existing.CreatedAt
+			break
+		}
+	}
+	m.grants[persisted.ID] = persisted
+	grant.ID = persisted.ID
+	grant.CreatedAt = persisted.CreatedAt
+	grant.UpdatedAt = persisted.UpdatedAt
+	grant.ValidUntil = nil
+	if persisted.ValidUntil != nil {
+		validUntil := *persisted.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 	return nil
 }
 
@@ -641,10 +658,21 @@ func (m *mockGrantRepository) Get(ctx context.Context, grantID id.GrantID) (*sto
 }
 
 func (m *mockGrantRepository) Update(ctx context.Context, grant *storage.UserGrant) error {
-	if _, ok := m.grants[grant.ID]; !ok {
+	existing, ok := m.grants[grant.ID]
+	if !ok {
 		return ports.ErrNotFound
 	}
-	m.grants[grant.ID] = grant
+	persisted := grant.Copy()
+	persisted.CreatedAt = existing.CreatedAt
+	m.grants[persisted.ID] = persisted
+	grant.ID = persisted.ID
+	grant.CreatedAt = persisted.CreatedAt
+	grant.UpdatedAt = persisted.UpdatedAt
+	grant.ValidUntil = nil
+	if persisted.ValidUntil != nil {
+		validUntil := *persisted.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 	return nil
 }
 
@@ -752,14 +780,15 @@ func (m *mockGrantRepository) ListByPrincipalAndServiceID(ctx context.Context, p
 	return agentIDs, nil
 }
 
-func (m *mockGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
+func (m *mockGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
 	for grantID, grant := range m.grants {
 		if grant.Principal == principal && grant.AgentID == agentID {
+			snapshot := grant.Copy()
 			delete(m.grants, grantID)
-			return nil
+			return snapshot, nil
 		}
 	}
-	return ports.ErrNotFound
+	return nil, storage.NewStorageError("DeleteByPrincipalAndAgentID", storage.ErrorKindNotFound, ports.ErrNotFound, "grant not found")
 }
 
 func (m *mockGrantRepository) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {

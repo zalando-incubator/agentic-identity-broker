@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -189,6 +190,32 @@ func (f *grantDiagnosticsFixture) ExchangeRecords() []map[string]any {
 		}
 	}
 	return observations
+}
+
+func (f *grantDiagnosticsFixture) DeletionRecords() []map[string]any {
+	records, err := f.Logs.Records()
+	Expect(err).NotTo(HaveOccurred())
+	var deletions []map[string]any
+	for _, record := range records {
+		switch record["msg"] {
+		case "grant revoked", "agent deleted", "PermissionSetDeleted", "permission set deleted":
+			f.AssertPrivateObservation(record)
+			deletions = append(deletions, record)
+		}
+	}
+	return deletions
+}
+
+func (f *grantDiagnosticsFixture) Delete(server *bootstrap.TestServer, path string, status int) {
+	response, err := server.DirectRequest(http.MethodDelete, path, f.Principal.String(), nil, nil)
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { _ = response.Body.Close() }()
+	Expect(response.StatusCode).To(Equal(status))
+	if status == http.StatusNoContent {
+		body, err := io.ReadAll(response.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(body).To(BeEmpty(), "successful DELETE must retain its empty 204 response")
+	}
 }
 
 func (f *grantDiagnosticsFixture) ExchangeSpans() []sdktrace.ReadOnlySpan {
@@ -439,9 +466,66 @@ var _ = Describe("Grant Observation Context", func() {
 			Expect(len(sessions)).To(BeZero())
 		}, http.StatusBadRequest, "session_missing", true, true),
 		Entry("unregistered subject-token candidate is not exported despite a stored grant", func(f *grantDiagnosticsFixture) {
-			Expect(f.Storage.Agents().Delete(context.Background(), f.Agent.ID)).To(Succeed())
-			_, err := f.Storage.UserGrants().Get(context.Background(), f.Grant.ID)
+			deleted, err := f.Storage.Agents().Delete(context.Background(), f.Agent.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(deleted).To(BeTrue())
+			_, err = f.Storage.UserGrants().Get(context.Background(), f.Grant.ID)
 			Expect(err).NotTo(HaveOccurred(), "the candidate must not expose even a still-stored grant")
 		}, http.StatusInternalServerError, "agent_missing", false, false),
 	)
+})
+
+var _ = Describe("Grant Deletion Outcomes", func() {
+	var fixture *grantDiagnosticsFixture
+
+	BeforeEach(func() {
+		fixture = newGrantDiagnosticsFixture()
+	})
+
+	// GD-D1 from specs/013-token-exchange/spec.md.
+	It("[GD-D1] returns 204 then 404 for grant revocation and records one minimal successful revoke", func() {
+		path := "/api/consent/agents/" + fixture.Agent.ID.String() + "/grants"
+		fixture.Delete(fixture.Enduser, path, http.StatusNoContent)
+		fixture.Delete(fixture.Enduser, path, http.StatusNotFound)
+
+		records := fixture.DeletionRecords()
+		Expect(records).To(HaveLen(1), "only the actual revocation must produce a successful deletion record")
+		Expect(records[0]["msg"]).To(Equal("grant revoked"))
+		Expect(records[0]["action"]).To(Equal("grant_revoked"))
+		Expect(records[0]["principal"]).To(Equal(fixture.Principal.String()))
+		Expect(records[0]["agent_id"]).To(Equal(fixture.Agent.ID.String()))
+		Expect(records[0]["grant_id"]).To(Equal(fixture.Grant.ID.String()))
+	})
+
+	// GD-D1 from specs/013-token-exchange/spec.md.
+	It("[GD-D1] keeps existing and absent agent deletes at 204 with one domain deletion record", func() {
+		fixture.Delete(fixture.Enduser, "/api/consent/agents/"+fixture.Agent.ID.String()+"/grants", http.StatusNoContent)
+		fixture.Logs.Reset()
+
+		path := "/api/agents/" + fixture.Agent.ID.String()
+		fixture.Delete(fixture.Admin, path, http.StatusNoContent)
+		fixture.Delete(fixture.Admin, path, http.StatusNoContent)
+
+		records := fixture.DeletionRecords()
+		Expect(records).To(HaveLen(1), "an absent delete and the handler must not add successful deletion records")
+		Expect(records[0]["msg"]).To(Equal("agent deleted"))
+		Expect(records[0]["agent_id"]).To(Equal(fixture.Agent.ID.String()))
+	})
+
+	// GD-D1 from specs/013-token-exchange/spec.md.
+	It("[GD-D1] keeps existing and absent unused permission-set deletes at 204 with one domain deletion record", func() {
+		fixture.Delete(fixture.Enduser, "/api/consent/agents/"+fixture.Agent.ID.String()+"/grants", http.StatusNoContent)
+		fixture.Delete(fixture.Admin, "/api/agents/"+fixture.Agent.ID.String(), http.StatusNoContent)
+		fixture.Logs.Reset()
+
+		path := "/api/permission-sets/" + fixture.PermissionSet.ID.String()
+		fixture.Delete(fixture.Admin, path, http.StatusNoContent)
+		fixture.Delete(fixture.Admin, path, http.StatusNoContent)
+
+		records := fixture.DeletionRecords()
+		Expect(records).To(HaveLen(1), "an absent delete and the handler must not add successful deletion records")
+		Expect(records[0]["msg"]).To(Equal("PermissionSetDeleted"))
+		Expect(records[0]["action"]).To(Equal("permission_set_deleted"))
+		Expect(records[0]["permission_set_id"]).To(Equal(fixture.PermissionSet.ID.String()))
+	})
 })

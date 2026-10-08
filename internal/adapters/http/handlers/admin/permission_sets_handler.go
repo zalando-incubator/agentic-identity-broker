@@ -341,8 +341,6 @@ func (h *PermissionSetsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.Info("permission set deleted", "permission_set_id", psIDStr)
-
 	// Return 204 No Content
 	w.WriteHeader(http.StatusNoContent)
 }

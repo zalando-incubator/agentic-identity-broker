@@ -1,7 +1,9 @@
 package agents
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -22,7 +24,7 @@ type mockAgentRepo struct {
 	createFn         func(ctx context.Context, agent *storage.Agent) error
 	getFn            func(ctx context.Context, id id.AgentID) (*storage.Agent, error)
 	updateFn         func(ctx context.Context, agent *storage.Agent) error
-	deleteFn         func(ctx context.Context, id id.AgentID) error
+	deleteFn         func(ctx context.Context, id id.AgentID) (bool, error)
 	listFn           func(ctx context.Context) ([]*storage.Agent, error)
 	getByClientIDFn  func(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
 	existsOtherFn    func(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
@@ -60,12 +62,13 @@ func (m *mockAgentRepo) Update(ctx context.Context, agent *storage.Agent) error 
 	return nil
 }
 
-func (m *mockAgentRepo) Delete(ctx context.Context, agentID id.AgentID) error {
+func (m *mockAgentRepo) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
 	if m.deleteFn != nil {
 		return m.deleteFn(ctx, agentID)
 	}
+	_, exists := m.agents[agentID]
 	delete(m.agents, agentID)
-	return nil
+	return exists, nil
 }
 
 func (m *mockAgentRepo) List(ctx context.Context) ([]*storage.Agent, error) {
@@ -396,4 +399,46 @@ func TestResolveIDAcceptsUUIDCanonicalAndRejectsUnknown(t *testing.T) {
 	}
 	_, err := service.ResolveID(context.Background(), "unknown-agent")
 	require.Error(t, err)
+}
+
+func TestDeleteLogsOnlyActualDeletion(t *testing.T) {
+	t.Parallel()
+	deleteCause := errors.New("agent delete failed")
+	for _, tc := range []struct {
+		name    string
+		present bool
+		err     error
+	}{
+		{name: "existing then absent", present: true},
+		{name: "absent"},
+		{name: "repository failure", present: true, err: deleteCause},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			agentID := id.NewAgentID()
+			repo := newMockAgentRepo()
+			if tc.present {
+				repo.agents[agentID] = &storage.Agent{ID: agentID}
+			}
+			if tc.err != nil {
+				repo.deleteFn = func(context.Context, id.AgentID) (bool, error) { return false, tc.err }
+			}
+			var logs bytes.Buffer
+			svc := NewService(repo, nil, slog.New(slog.NewJSONHandler(&logs, nil)), false)
+			err := svc.Delete(context.Background(), agentID)
+			if tc.err != nil {
+				require.ErrorIs(t, err, tc.err)
+				assert.Contains(t, repo.agents, agentID)
+			} else {
+				require.NoError(t, err)
+				require.NoError(t, svc.Delete(context.Background(), agentID))
+				assert.NotContains(t, repo.agents, agentID)
+			}
+			wantRecords := 0
+			if tc.present && tc.err == nil {
+				wantRecords = 1
+			}
+			assert.Equal(t, wantRecords, bytes.Count(logs.Bytes(), []byte(`"msg":"agent deleted"`)))
+		})
+	}
 }

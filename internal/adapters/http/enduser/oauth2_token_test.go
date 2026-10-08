@@ -120,7 +120,16 @@ func (r *stubAgentRepo) Get(_ context.Context, _ id.AgentID) (*storage.Agent, er
 
 func (r *stubAgentRepo) Create(_ context.Context, _ *storage.Agent) error { return nil }
 func (r *stubAgentRepo) Update(_ context.Context, _ *storage.Agent) error { return nil }
-func (r *stubAgentRepo) Delete(_ context.Context, _ id.AgentID) error     { return nil }
+func (r *stubAgentRepo) Delete(_ context.Context, agentID id.AgentID) (bool, error) {
+	if r.err != nil {
+		return false, r.err
+	}
+	if r.agent == nil || r.agent.ID != agentID {
+		return false, nil
+	}
+	r.agent = nil
+	return true, nil
+}
 func (r *stubAgentRepo) List(_ context.Context) ([]*storage.Agent, error) { return nil, nil }
 func (r *stubAgentRepo) GetByClientID(_ context.Context, _ id.ClientID) (*storage.Agent, error) {
 	return nil, nil

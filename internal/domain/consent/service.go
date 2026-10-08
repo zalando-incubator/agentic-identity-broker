@@ -27,7 +27,7 @@ var (
 	ErrAgentAccessDenied = errors.New("agent access denied")
 	// ErrGrantExpired is returned when a user grant has expired.
 	ErrGrantExpired = errors.New("grant expired")
-	// ErrGrantNotFound is returned by RevokeConsentForPrincipal when no active grant exists
+	// ErrGrantNotFound is returned by RevokeConsentForPrincipal when no grant exists
 	// for the (principal, agent) pair. The handler maps this to HTTP 404.
 	ErrGrantNotFound = errors.New("grant not found")
 	// ErrUnconnectedServices is returned when the submission includes services without active sessions.
@@ -574,37 +574,24 @@ func permissionSetsMatch(left, right []storage.GrantedPermissionSetEntry) bool {
 
 // RevokeConsent deletes a user grant (FR-014).
 // Idempotent: returns nil if the grant doesn't exist (absence is not an error).
-// Used by the POST /grants path with empty tokens.
 func (s *Service) RevokeConsent(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	if err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID); err != nil {
-		if errors.Is(err, ports.ErrNotFound) {
-			return nil // idempotent: absence is not an error
-		}
-		return fmt.Errorf("failed to revoke consent: %w", err)
+	err := s.RevokeConsentForPrincipal(ctx, principal, agentID)
+	if errors.Is(err, ErrGrantNotFound) {
+		return nil
 	}
-	return nil
+	return err
 }
 
 // RevokeConsentForPrincipal revokes the authenticated user's grant for the given agent (FR-014).
-// This is the user-facing revocation entry point for DELETE /api/consent/agent/{agent-id}/grants.
+// This is the user-facing revocation entry point for DELETE /api/consent/agents/{agent-id}/grants.
 //
-// Unlike RevokeConsent, this method:
+// Revocation behavior:
 // - Is NOT idempotent: absence of grant returns ErrGrantNotFound (handler maps to 404)
 // - Emits a structured audit log on success with action, principal, agent_id, and grant_id
 func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	// Phase 1: look up the grant to capture the ID for the audit log.
-	grant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agentID)
+	grant, err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
-			return fmt.Errorf("%w", ErrGrantNotFound)
-		}
-		return fmt.Errorf("failed to find grant: %w", err)
-	}
-
-	// Phase 2: delete the grant.
-	if err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID); err != nil {
-		if errors.Is(err, ports.ErrNotFound) {
-			// Concurrent revocation raced us — treat as not found.
 			return fmt.Errorf("%w", ErrGrantNotFound)
 		}
 		return fmt.Errorf("failed to revoke consent: %w", err)
@@ -612,8 +599,8 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 
 	s.logger.Info("grant revoked",
 		"action", "grant_revoked",
-		"principal", principal,
-		"agent_id", agentID,
+		"principal", grant.Principal,
+		"agent_id", grant.AgentID,
 		"grant_id", grant.ID)
 
 	return nil
