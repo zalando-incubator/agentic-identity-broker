@@ -127,6 +127,8 @@ type ThirdpartyOAuth2ProviderEntity struct {
 	Endpoints               OAuth2Endpoints
 	Scopes                  []OAuthScope
 	AuthorizationParams     map[string]string
+	ResourceExplicit        bool
+	DiscoveryStatus         DiscoveryStatus
 	ProtectedResources      []string
 	Version                 int64
 	ServiceRequirements     []ServiceRequirement
@@ -199,6 +201,19 @@ func (e *ThirdpartyOAuth2ProviderEntity) Validate() error {
 			}
 		}
 	}
+	if err := e.Discovery.validateResourceSource(); err != nil {
+		return err
+	}
+	if err := e.validateEffectiveDiscoveryResource(); err != nil {
+		return err
+	}
+	if e.Discovery.ClientMethod == ClientBootstrapDCR {
+		if err := e.validateDCRClientAuthentication(); err != nil {
+			return err
+		}
+	} else if e.TokenEndpointAuthMethod == TokenEndpointAuthMethodClientSecretBasic || e.TokenEndpointAuthMethod == TokenEndpointAuthMethodClientSecretPost {
+		return errors.New("token_endpoint_auth_method requires protected-resource DCR")
+	}
 
 	if e.IssuerURI == "" {
 		return errors.New("issuer_uri is required")
@@ -207,9 +222,75 @@ func (e *ThirdpartyOAuth2ProviderEntity) Validate() error {
 	return nil
 }
 
+// ValidateStoredClientAuthentication checks the client method and secret state
+// before a repository stores an encrypted or secretless service.
+func (e *ThirdpartyOAuth2ProviderEntity) ValidateStoredClientAuthentication() error {
+	if err := e.TokenEndpointAuthMethod.Validate(); err != nil {
+		return err
+	}
+	if err := e.Discovery.validateResourceSource(); err != nil {
+		return err
+	}
+	if err := e.validateStoredDiscoveryState(); err != nil {
+		return err
+	}
+	switch e.Discovery.ClientMethod {
+	case ClientBootstrapDCR:
+		if err := e.validateDCRClientAuthentication(); err != nil {
+			return err
+		}
+	case ClientBootstrapCIMD:
+		if e.TokenEndpointAuthMethod != TokenEndpointAuthMethodPrivateKeyJWT {
+			return errors.New("discovery.client_method cimd requires private_key_jwt")
+		}
+	case "":
+		if e.TokenEndpointAuthMethod == TokenEndpointAuthMethodClientSecretBasic || e.TokenEndpointAuthMethod == TokenEndpointAuthMethodClientSecretPost {
+			return errors.New("token_endpoint_auth_method requires protected-resource DCR")
+		}
+	default:
+		return errors.New("unsupported discovery.client_method")
+	}
+	if (e.IsPublicClient() || e.IsCIMDConfidentialClient()) != e.Secret.IsAbsent() {
+		return errors.New("token_endpoint_auth_method and client_secret state must agree")
+	}
+	if !e.Secret.IsAbsent() && !e.Secret.IsEncrypted() {
+		return errors.New("client_secret must be encrypted before storage")
+	}
+	return nil
+}
+
+func (e *ThirdpartyOAuth2ProviderEntity) validateStoredDiscoveryState() error {
+	if err := e.DiscoveryStatus.Validate(e.Discovery.ResourceURL); err != nil {
+		return err
+	}
+	return e.validateEffectiveDiscoveryResource()
+}
+
+func (e *ThirdpartyOAuth2ProviderEntity) validateEffectiveDiscoveryResource() error {
+	if e.Discovery.ResourceURL == nil {
+		return nil
+	}
+	resource, present := e.AuthorizationParams["resource"]
+	if !present {
+		return errors.New("authorization_params.resource is required for discovery")
+	}
+	if e.ResourceExplicit {
+		return validateExplicitDiscoveryResource(resource)
+	}
+	if resource != *e.Discovery.ResourceURL {
+		return errors.New("derived resource must equal discovery.resource_url")
+	}
+	return nil
+}
+
 func (e *ThirdpartyOAuth2ProviderEntity) validateClientAuthentication(flavor OAuth2Flavor) (bool, error) {
 	if err := e.TokenEndpointAuthMethod.Validate(); err != nil {
 		return false, err
+	}
+	if e.TokenEndpointAuthMethod == TokenEndpointAuthMethodClientSecretBasic || e.TokenEndpointAuthMethod == TokenEndpointAuthMethodClientSecretPost {
+		if e.Discovery.ClientMethod != ClientBootstrapDCR || e.Discovery.ResourceURL == nil {
+			return false, errors.New("token_endpoint_auth_method requires protected-resource DCR")
+		}
 	}
 
 	if e.IsCIMDConfidentialClient() {
@@ -245,10 +326,179 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateClientAuthentication(flavor OAu
 	return false, nil
 }
 
+// ValidateDiscoveryRequest checks the administrator's protected-resource request
+// before the service contacts untrusted metadata or registers a client.
+func (e *ThirdpartyOAuth2ProviderEntity) ValidateDiscoveryRequest() error {
+	if e.Discovery.ResourceURL == nil {
+		return errors.New("discovery.resource_url is required")
+	}
+	if err := e.Discovery.validateResourceSource(); err != nil {
+		return err
+	}
+	if e.Discovery.ClientMethod != "" {
+		return errors.New("discovery.client_method must be selected by the broker")
+	}
+	if !e.ClientID.IsZero() || !e.Secret.IsAbsent() || !e.TokenEndpointAuthMethod.IsAbsent() {
+		return errors.New("client_id, client_secret, and token_endpoint_auth_method must be absent for protected-resource discovery")
+	}
+	if e.Endpoints != (OAuth2Endpoints{}) {
+		return errors.New("endpoints must be absent for protected-resource discovery")
+	}
+	if err := canonical.Validate(e.CanonicalID); err != nil {
+		return err
+	}
+	if e.DisplayName == "" {
+		return errors.New("display_name is required")
+	}
+	if len(e.DisplayName) > 255 {
+		return fmt.Errorf("display_name exceeds 255 characters (got %d)", len(e.DisplayName))
+	}
+	flavor := e.Flavor
+	if flavor == "" {
+		flavor = DefaultOAuth2Flavor
+	}
+	if flavor != OAuth2FlavorStandard {
+		return errors.New("oauth2_flavor must be standard for protected-resource discovery")
+	}
+	for i, scope := range e.Scopes {
+		if err := scope.Validate(); err != nil {
+			return fmt.Errorf("scope %d: %w", i, err)
+		}
+	}
+	if err := e.validateProtectedResourcesForSource(); err != nil {
+		return err
+	}
+	if err := validateAuthorizationParams(e.AuthorizationParams); err != nil {
+		return err
+	}
+	if e.IssuerURI != "" {
+		if err := validateDiscoveryIssuer(e.IssuerURI); err != nil {
+			return err
+		}
+	}
+	if resource, present := e.AuthorizationParams["resource"]; present {
+		if err := validateExplicitDiscoveryResource(resource); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *ThirdpartyOAuth2ProviderEntity) validateDCRClientAuthentication() error {
+	if e.ClientID.IsZero() {
+		return errors.New("discovery.client_method dcr requires a registered client_id")
+	}
+	if e.Flavor != "" && e.Flavor != OAuth2FlavorStandard {
+		return errors.New("oauth2_flavor must be standard for protected-resource discovery")
+	}
+	switch e.TokenEndpointAuthMethod {
+	case TokenEndpointAuthMethodClientSecretBasic, TokenEndpointAuthMethodClientSecretPost:
+		if e.Secret.IsAbsent() {
+			return errors.New("client_secret is required for confidential DCR clients")
+		}
+	case TokenEndpointAuthMethodNone:
+		if !e.Secret.IsAbsent() {
+			return errors.New("client_secret must be absent for public DCR clients")
+		}
+	default:
+		return errors.New("discovery.client_method dcr requires a supported DCR authentication method")
+	}
+	return nil
+}
+
+// validateDiscoverySelection checks only the protected-resource mode. Manual
+// endpoints and direct authorization-server discovery retain their old rules.
+func (e *ThirdpartyOAuth2ProviderEntity) validateDiscoverySelection() error {
+	if err := e.Discovery.validateResourceSource(); err != nil {
+		return err
+	}
+	if e.Discovery.ResourceURL == nil {
+		return nil
+	}
+	switch e.Discovery.ClientMethod {
+	case ClientBootstrapCIMD:
+		if e.TokenEndpointAuthMethod != TokenEndpointAuthMethodPrivateKeyJWT || !e.Secret.IsAbsent() || !e.ClientID.IsZero() {
+			return errors.New("discovery.client_method cimd requires private_key_jwt and an unassigned client_id without a client_secret")
+		}
+	case ClientBootstrapDCR:
+		if err := e.validateDCRClientAuthentication(); err != nil {
+			return err
+		}
+	default:
+		return errors.New("discovery.client_method must be cimd or dcr")
+	}
+	if err := validateDiscoveryIssuer(e.IssuerURI); err != nil {
+		return err
+	}
+	if err := validateDiscoveredURL("authorize_endpoint", e.Endpoints.AuthorizeEndpoint); err != nil {
+		return err
+	}
+	if err := validateDiscoveredURL("token_endpoint", e.Endpoints.TokenEndpoint); err != nil {
+		return err
+	}
+	if e.Endpoints.JWKsURI != "" {
+		if err := validateDiscoveredURL("jwks_uri", e.Endpoints.JWKsURI); err != nil {
+			return err
+		}
+	}
+	tokenURL, _ := url.Parse(e.Endpoints.TokenEndpoint) // Validated above.
+	query, err := url.ParseQuery(tokenURL.RawQuery)
+	if err != nil {
+		return errors.New("token_endpoint has invalid query parameters")
+	}
+	if _, present := query["resource"]; present {
+		return errors.New("token_endpoint must not contain a resource query parameter")
+	}
+	resource, present := e.AuthorizationParams["resource"]
+	if !present {
+		return errors.New("authorization_params.resource is required for protected-resource discovery")
+	}
+	if e.ResourceExplicit {
+		return validateExplicitDiscoveryResource(resource)
+	}
+	if resource != *e.Discovery.ResourceURL {
+		return errors.New("derived authorization_params.resource must equal discovery.resource_url")
+	}
+	return nil
+}
+
+func validateDiscoveryIssuer(raw string) error {
+	if err := ValidatePublicHTTPSURL(raw); err != nil {
+		return errors.New("issuer_uri must be a public HTTPS URL")
+	}
+	u, _ := url.Parse(raw) // Validated above.
+	if u.RawQuery != "" || u.ForceQuery {
+		return errors.New("issuer_uri must not contain a query")
+	}
+	return nil
+}
+
+func validateDiscoveredURL(name, raw string) error {
+	if err := ValidatePublicHTTPSURL(raw); err != nil {
+		return fmt.Errorf("%s must be a public HTTPS URL", name)
+	}
+	return nil
+}
+
+func validateExplicitDiscoveryResource(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return errors.New("authorization_params.resource cannot be blank")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || strings.Contains(raw, "#") || u.Opaque == "" && u.Host == "" && u.Path == "" ||
+		(u.Scheme == "http" || u.Scheme == "https") && u.Host == "" {
+		return errors.New("authorization_params.resource must be a nonempty absolute URI without a fragment")
+	}
+	return nil
+}
+
 // ValidateForCreate validates the entity for a create operation.
 // skipHTTPSValidation allows HTTP URLs for development/testing.
 // Does not require ID (will be generated by the domain service).
 func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation bool) error {
+	if err := e.validateDiscoverySelection(); err != nil {
+		return err
+	}
 	if err := canonical.Validate(e.CanonicalID); err != nil {
 		return err
 	}
@@ -335,7 +585,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 		}
 	}
 
-	if err := e.ValidateProtectedResources(); err != nil {
+	if err := e.validateProtectedResourcesForSource(); err != nil {
 		return err
 	}
 	if err := validateAuthorizationParams(e.AuthorizationParams); err != nil {
@@ -350,8 +600,12 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForCreate(skipHTTPSValidation b
 
 // ValidateForUpdate validates the entity for an update operation.
 // skipHTTPSValidation allows HTTP URLs for development/testing.
-// Requires ID. Confidential clients must supply the new secret in plaintext.
+// Requires ID. Manual confidential clients supply plaintext; the domain service may
+// retain DCR ciphertext after confirming the registered client is unchanged.
 func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation bool) error {
+	if err := e.validateDiscoverySelection(); err != nil {
+		return err
+	}
 	if err := canonical.Validate(e.CanonicalID); err != nil {
 		return err
 	}
@@ -381,12 +635,18 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 
 	credential := ""
 	if !isPublicClient && !isCIMDClient {
-		if !e.Secret.IsPlaintext() {
+		switch {
+		case e.Secret.IsPlaintext():
+			credential, err = e.Secret.GetPlaintext()
+			if err != nil {
+				return errors.New("client_secret is required")
+			}
+		case e.Discovery.ClientMethod == ClientBootstrapDCR && e.Secret.IsEncrypted():
+			if _, err := e.Secret.GetCiphertext(); err != nil {
+				return errors.New("client_secret is required")
+			}
+		default:
 			return errors.New("client_secret is required for update")
-		}
-		credential, err = e.Secret.GetPlaintext()
-		if err != nil {
-			return errors.New("client_secret is required")
 		}
 	}
 
@@ -395,9 +655,6 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 		// Standard/GitHub flavor: client_id and issuer_uri are required; confidential clients require a credential.
 		if e.ClientID == "" && !isCIMDClient {
 			return errors.New("client_id is required")
-		}
-		if !isPublicClient && !isCIMDClient && credential == "" {
-			return errors.New("client_secret is required")
 		}
 		if e.IssuerURI == "" {
 			return errors.New("issuer_uri is required")
@@ -441,7 +698,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateForUpdate(skipHTTPSValidation b
 		}
 	}
 
-	if err := e.ValidateProtectedResources(); err != nil {
+	if err := e.validateProtectedResourcesForSource(); err != nil {
 		return err
 	}
 	if err := validateAuthorizationParams(e.AuthorizationParams); err != nil {
@@ -557,6 +814,26 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateProtectedResources() error {
 	return nil
 }
 
+// validateProtectedResourcesForSource preserves legacy manual errors while
+// keeping untrusted discovery URIs (including query strings) out of errors.
+func (e *ThirdpartyOAuth2ProviderEntity) validateProtectedResourcesForSource() error {
+	if e.Discovery.ResourceURL == nil {
+		return e.ValidateProtectedResources()
+	}
+	resources := make(map[string]struct{}, len(e.ProtectedResources))
+	for i, resourceURI := range e.ProtectedResources {
+		normalized, err := NormalizeAndValidateProtectedResource(resourceURI)
+		if err != nil {
+			return fmt.Errorf("protected_resources[%d]: invalid URI", i)
+		}
+		if _, exists := resources[normalized]; exists {
+			return fmt.Errorf("protected_resources[%d]: duplicate resource", i)
+		}
+		resources[normalized] = struct{}{}
+	}
+	return nil
+}
+
 // RedactedCopy returns a deep copy of the entity with Secret replaced by a plaintext
 // "REDACTED" value. Use for API responses and logs to comply with SR-003.
 func (e *ThirdpartyOAuth2ProviderEntity) RedactedCopy() *ThirdpartyOAuth2ProviderEntity {
@@ -583,12 +860,16 @@ func (e *ThirdpartyOAuth2ProviderEntity) Copy() *ThirdpartyOAuth2ProviderEntity 
 		TokenEndpointAuthMethod: e.TokenEndpointAuthMethod,
 		Flavor:                  e.Flavor,
 		IssuerURI:               e.IssuerURI,
+		ResourceExplicit:        e.ResourceExplicit,
+		DiscoveryStatus:         e.DiscoveryStatus,
 		Discovery: DiscoveryConfig{
 			EnableDiscovery: e.Discovery.EnableDiscovery,
+			ClientMethod:    e.Discovery.ClientMethod,
 		},
 		Endpoints: OAuth2Endpoints{
 			TokenEndpoint:     e.Endpoints.TokenEndpoint,
 			AuthorizeEndpoint: e.Endpoints.AuthorizeEndpoint,
+			JWKsURI:           e.Endpoints.JWKsURI,
 		},
 		CreatedAt: e.CreatedAt,
 		UpdatedAt: e.UpdatedAt,
@@ -603,6 +884,22 @@ func (e *ThirdpartyOAuth2ProviderEntity) Copy() *ThirdpartyOAuth2ProviderEntity 
 	if e.Discovery.MetadataURL != nil {
 		metadataURL := *e.Discovery.MetadataURL
 		result.Discovery.MetadataURL = &metadataURL
+	}
+	if e.Discovery.ResourceURL != nil {
+		resourceURL := *e.Discovery.ResourceURL
+		result.Discovery.ResourceURL = &resourceURL
+	}
+	if e.DiscoveryStatus.LastAttemptAt != nil {
+		attempt := *e.DiscoveryStatus.LastAttemptAt
+		result.DiscoveryStatus.LastAttemptAt = &attempt
+	}
+	if e.DiscoveryStatus.LastSuccessAt != nil {
+		success := *e.DiscoveryStatus.LastSuccessAt
+		result.DiscoveryStatus.LastSuccessAt = &success
+	}
+	if e.DiscoveryStatus.FailureReason != nil {
+		reason := *e.DiscoveryStatus.FailureReason
+		result.DiscoveryStatus.FailureReason = &reason
 	}
 
 	// Deep copy slices

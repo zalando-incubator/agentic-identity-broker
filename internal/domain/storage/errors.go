@@ -1,8 +1,15 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 )
+
+// ErrDuplicateDCRClientIdentity marks an issuer/client ID pair that is already stored.
+var ErrDuplicateDCRClientIdentity = errors.New("DCR client identity already exists")
+
+// ErrIssuerChangeHasSessions marks a service whose sessions block an issuer change.
+var ErrIssuerChangeHasSessions = errors.New("user sessions block issuer change")
 
 // ErrorKind classifies the type of storage error for consistent handling.
 type ErrorKind string

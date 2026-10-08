@@ -9,7 +9,7 @@ Add these terms to `ARCHITECTURE.md` before implementation:
 - **Client bootstrap method:** The source of a discovery-backed client's identity. `cimd` uses the broker-hosted document. `dcr` uses an RFC 7591 registration.
 - **DCR client identity:** The pair `(issuer_uri, client_id)`. One client ID can exist at two different issuers.
 - **Effective resource:** The single persisted RFC 8707 `authorization_params.resource` value. It is derived from a verified resource URL or supplied by an administrator.
-- **Broker client name:** The optional deployment-wide `third_party_oauth2.client_name` used in DCR requests. Its absence blocks DCR only. It never comes from a service display name.
+- **Broker client name:** The optional deployment-wide `third_party_oauth2.client_name` supplies DCR `client_name`. The configuration port supplies it at registration time. It has no service column or per-service override. Its absence blocks DCR only; the service display name is never a fallback.
 - **Discovery status:** The latest attempt and latest successful configuration for one service. A failed refresh does not replace the active configuration.
 
 The discovery resource, the effective token resource, and the service's `protected_resources` ownership set are distinct concepts. The last set supports RFC 8693 token exchange under [ADR 030](../../adrs/030-normalize-protected-resources.md).
@@ -29,13 +29,13 @@ The existing `model.ThirdpartyOAuth2ProviderEntity` remains the only service agg
 | `Endpoints.TokenEndpoint` | string | Required public HTTPS URL from the selected AS metadata. It cannot have a `resource` query parameter. |
 | `Endpoints.JWKsURI` | string | Optional, but a non-empty discovered URL must be public HTTPS. |
 | `ClientID` | `id.ClientID` | Hosted CIMD URL or returned DCR ID. Non-empty and scoped to `IssuerURI` for DCR. |
-| `ClientMethod` | nullable enum `cimd` / `dcr` | Null for manual or direct AS-metadata services. Stable on every discovery-backed update, including issuer change. |
+| `ClientMethod` | nullable enum `cimd` / `dcr` | Null for manual or direct AS-metadata services. Keep the selected method on every discovery-backed update, including an issuer change. |
 | `TokenEndpointAuthMethod` | enum | `private_key_jwt` for hosted CIMD; `client_secret_basic` or `client_secret_post` for confidential DCR; `none` for public DCR. Keep the exact value on every discovery-backed update. Existing null/manual confidential behavior remains unchanged. |
 | `Secret` | `model.Secret` | Absent for CIMD/public DCR. Confidential DCR has encrypted ciphertext at rest under the existing `service_id` encryption context. |
 | `AuthorizationParams` | `map[string]string` | Contains exactly one effective `resource` entry for discovery-backed services. Other permitted provider parameters remain unchanged. |
-| `ResourceExplicit` | boolean | True only when an administrator supplies `authorization_params.resource`. False when the value is derived from verified metadata. |
-| `DiscoveryStatus` | value object | Contains attempt and success timestamps and a safe failure reason. It is stored with the service. |
-| `Version` | integer | Existing optimistic-concurrency version. A failure-only status write does not change active configuration or this version. |
+| `ResourceExplicit` | boolean | True only when an administrator supplies `authorization_params.resource` for a discovery-backed service. False for manual services, even when an omitted parameter map retains a `resource` entry. |
+| `DiscoveryStatus` | value object | Attempt time, success time, and a safe failure code occupy the same service row as the active configuration. |
+| `Version` | integer | Existing optimistic-concurrency version. A failure-only status write guards this version but does not change it or the ETag. |
 
 The existing `Scopes`, `ProtectedResources`, `ServiceRequirements`, canonical ID, and timestamps retain their meanings. A discovery URL does not add an entry to `ProtectedResources` automatically.
 
@@ -50,23 +50,23 @@ The existing `Scopes`, `ProtectedResources`, `ServiceRequirements`, canonical ID
 | Discovery confidential DCR | `dcr` | `client_secret_basic` or `client_secret_post` | Encrypted | The selected method only, with PKCE. |
 | Discovery public DCR | `dcr` | `none` | Absent | Public token requests and PKCE. |
 
-Only DCR rows participate in issuer/client-ID uniqueness. Manual services retain their present uniqueness rules. A DCR client must never use auto-detected authentication.
+[ADR 038](../../adrs/038-protected-resource-discovery-and-dcr.md) supersedes [ADR 036](../../adrs/036-public-client-token-endpoint-auth.md) only for discovery-backed DCR authentication. Manual confidential clients keep automatic authentication. DCR pins its selected method for code exchange and refresh without probing alternatives. Only DCR rows participate in issuer/client-ID uniqueness. Manual services retain their present uniqueness rules.
 
 ## DiscoveryStatus value object
 
 | Field | Type | Rule |
 |---|---|---|
-| `LastAttemptAt` | nullable timestamp | Set when a create or refresh completes. Latest attempt wins. Null for manual services. |
-| `LastSuccessAt` | nullable timestamp | Set after active discovery configuration commits. Failed refresh retains the prior value. Null before success or for manual services. |
-| `FailureReason` | nullable safe category/string | Null after success. Failure has no raw provider body, credential, token, assertion, URL query, or secret. |
+| `LastAttemptAt` | nullable timestamp | Set with each committed create or refresh result. Null for manual services; a failed create has no service row. |
+| `LastSuccessAt` | nullable timestamp | Set with the active configuration on success. Retained on a failed refresh. Null only for manual services. |
+| `FailureReason` | nullable safe code | Null after success and for manual services. Never store a provider body, credential, token, assertion, or URL query. |
 
-The `status` response is a derived value, not a separate stored enum. The domain derives it in this order:
+The `status` response is derived from the service row, not a stored enum or a separate table:
 
-- `not_applicable`: The service has no protected-resource discovery source.
-- `ready`: The latest attempt succeeded and the active configuration is usable.
-- `failed`: The latest attempt failed. The last successful active configuration remains usable.
+- `not_applicable`: `resource_url` is null. All discovery timestamps, the client method, and the failure reason are null.
+- `ready`: A discovery-backed row has equal attempt and success timestamps and no failure reason.
+- `failed`: A discovery-backed row has an attempt after its last success and a safe failure code. Its active configuration remains usable.
 
-The status response reads the active `ResourceURL`, `IssuerURI`, and `ClientMethod`. It does not return the URL of a failed attempted replacement. Missing fields serialize as JSON `null`.
+The response reads the active `ResourceURL`, `IssuerURI`, and `ClientMethod`. It never returns a failed replacement URL. Missing fields serialize as JSON `null`.
 
 ## Ephemeral metadata and registration values
 
@@ -93,7 +93,7 @@ erDiagram
     ClientRegistration }o--|| AuthorizationServerMetadata : belongs_to
 ```
 
-`ClientRegistration` is an owned value, not a second local entity or table. A DCR registration can remain at the remote provider after a failed local transaction. No usable local service or stored credential remains after that failure.
+`DiscoveryStatus` and `ClientRegistration` are owned values, not separate local tables. The service row holds its status beside its active client and issuer. A remote DCR registration can remain after a failed local transaction, but no usable local service or stored credential remains.
 
 ## State transitions
 
@@ -101,35 +101,170 @@ erDiagram
 |---|---|---|---|
 | No service | Successful resource discovery and bootstrap | Ready discovery-backed service | Commit active fields, encrypted secret if needed, and both timestamps together. |
 | No service | Invalid metadata, unsafe URL, or failed bootstrap | No service | No local row or credential. An unused remote DCR registration can remain. |
-| Ready service | Refresh with unchanged issuer and client method | Ready service | Update endpoints and verified URL. Retain client identity, DCR secret, and user sessions. |
-| Ready service | Failed refresh | Same active service plus failed status | Change attempt time and safe reason only. Retain success time, version, endpoints, credential, and sessions. |
+| Ready service | Refresh with unchanged issuer and client method | Ready service | Update verified source, endpoints, and both timestamps on the service row. Clear the failure reason. Retain client ID, DCR secret, token authentication method, and user sessions. |
+| Ready service | Failed refresh | Same active service plus failed status | Change only the attempt time and safe failure code on that row. Retain success time, version, ETag, endpoints, issuer, credential, resource, and sessions. |
 | Ready service | New verified resource URL with derived resource | Ready service | Replace the derived `authorization_params.resource`. |
 | Ready service | New verified resource URL with explicit override | Ready service | Keep the explicit `authorization_params.resource`. |
 | Ready service | Replacement `authorization_params` without `resource` | Ready service | Clear the override and restore the current verified resource. |
-| Ready service without user sessions | Explicit selection of a different advertised issuer | Ready service only if the new issuer supports the exact active client and token authentication methods. Keep the hosted CIMD ID or register a new DCR client with the stored auth method. Reject unavailable methods or a different DCR result without changing active state. Commit the new issuer and client identity together. |
-| Ready service with user sessions | Explicit selection of a different issuer | Unchanged service | Return `409` before network access. Do not send an old-issuer refresh token to a new issuer. |
+| Ready service without user sessions | Explicit selection of a different advertised issuer | Ready service if the new issuer supports the stored client method and exact token authentication method | Validate the new issuer. Keep the hosted CIMD ID, or register a new DCR client and store its ID and required secret. Commit the issuer and client identity together. A failure changes only status. |
+| Ready service with user sessions | Explicit selection of a different issuer | Active configuration unchanged; status failed | Return `409` before network access. Save only the safe failure code and attempt time. Do not send a credential or refresh token to the new issuer. |
+| Discovery-backed service | Successful manual replacement without `resource_url` | Manual service | Clear the discovery source, client method, status timestamps, failure reason, and explicit marker. Replace the DCR identity and credential with the manual configuration. If `authorization_params` is omitted, keep the current map. If an empty map is supplied, clear it. |
 | Discovery-backed service | Delete under existing reference guards | Absent service | Delete its local status and credential with the service row. Later status GET returns 404. |
 | Manual service | Status GET | Unchanged manual service | Return `not_applicable` with null discovery fields. No network request occurs. |
 
-An update without `authorization_params` retains its current map and source marker. A replacement object with `resource` sets an explicit override. A replacement object without `resource` restores a derived value.
+For a discovery-backed update, omitting `authorization_params` retains its current map and source marker. A replacement object with `resource` sets an explicit override. A replacement object without `resource` restores a derived value. On a successful transition to manual configuration, an omitted map remains stored, but `resource_explicit` becomes false. An explicit empty map clears all parameters.
+
+An issuer change checks for user sessions before network access and again when it commits. PostgreSQL uses a service-row lock, while memory uses a shared gate. Session insertion uses the matching lock or gate and checks the issuer sealed in OAuth2 state. An old callback cannot create a session after the issuer changes.
 
 ## Persistence design
 
-Use `036_add_protected_resource_discovery.{up,down}.sql` after migration 035:
+Migration `036_add_protected_resource_discovery.{up,down}.sql` extends `thirdparty_oauth2_services`. These SQL predicates implement [accepted ADR 038](../../adrs/038-protected-resource-discovery-and-dcr.md). The existing `authorization_params` JSONB column stores the effective resource.
 
-1. Add nullable `resource_url` and `client_method` to `thirdparty_oauth2_services`. Add `resource_explicit BOOLEAN NOT NULL DEFAULT FALSE`.
-2. Add nullable `discovery_last_attempt_at`, `discovery_last_success_at`, and `discovery_failure_reason` to that same row.
-3. Extend `chk_thirdparty_oauth2_services_client_auth` for explicit DCR `client_secret_basic` and `client_secret_post` only when `client_method = 'dcr'` and ciphertext is present. Keep the current static, public, and hosted-CIMD states valid.
-4. Add a DCR-only unique index on `(issuer_uri, client_id)`. Scope it with `WHERE client_method = 'dcr'`. Do not change manual client-ID behavior.
-5. Add a service-row check for the discovery field combination and basic status consistency. Domain validation remains authoritative for exact resource URI and method policy.
+```sql
+ALTER TABLE thirdparty_oauth2_services
+    ADD COLUMN resource_url TEXT,
+    ADD COLUMN client_method VARCHAR(4),
+    ADD COLUMN resource_explicit BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN discovery_last_attempt_at TIMESTAMPTZ,
+    ADD COLUMN discovery_last_success_at TIMESTAMPTZ,
+    ADD COLUMN discovery_failure_reason VARCHAR(64);
 
-The PostgreSQL repository writes active fields and success status in one transaction. A narrow status-writer operation updates only attempt time and safe reason after failure. It guards against stale versions or a newer successful attempt. The memory adapter applies equivalent rules under its lock. The down migration refuses to remove discovery columns while discovery-backed rows exist. Then it drops the DCR index, restores the migration-035 authentication check, and removes the new columns. Test apply, guarded rollback, clean rollback, and replay with real PostgreSQL.
+ALTER TABLE thirdparty_oauth2_services
+    ADD CONSTRAINT chk_thirdparty_oauth2_services_discovery_fields CHECK (
+        (
+            resource_url IS NULL
+            AND client_method IS NULL
+            AND resource_explicit = FALSE
+        ) OR (
+            resource_url IS NOT NULL
+            AND btrim(resource_url) <> ''
+            AND enable_discovery IS TRUE
+            AND metadata_url IS NULL
+            AND client_method IS NOT NULL
+            AND client_method IN ('cimd', 'dcr')
+            AND authorization_params ? 'resource'
+            AND jsonb_typeof(authorization_params -> 'resource') = 'string'
+            AND NULLIF(btrim(authorization_params ->> 'resource'), '') IS NOT NULL
+            AND (resource_explicit OR authorization_params ->> 'resource' = resource_url)
+        )
+    ),
+    ADD CONSTRAINT chk_thirdparty_oauth2_services_discovery_status CHECK (
+        (
+            resource_url IS NULL
+            AND discovery_last_attempt_at IS NULL
+            AND discovery_last_success_at IS NULL
+            AND discovery_failure_reason IS NULL
+        ) OR (
+            resource_url IS NOT NULL
+            AND discovery_last_attempt_at IS NOT NULL
+            AND discovery_last_success_at IS NOT NULL
+            AND (
+                (discovery_failure_reason IS NULL
+                 AND discovery_last_attempt_at = discovery_last_success_at)
+                OR (discovery_failure_reason IS NOT NULL
+                    AND discovery_failure_reason ~ '^[a-z][a-z0-9_]*$'
+                    AND discovery_last_attempt_at > discovery_last_success_at)
+            )
+        )
+    );
 
-The existing `client_secret_encrypted` column contains a DCR secret when one is needed. The service domain encrypts before persistence and decrypts only for a token request. The repository never stores plaintext. The encryption context contains exactly one `service_id` key per [ADR 008](../../adrs/008-encryption-context-optimization.md).
+ALTER TABLE thirdparty_oauth2_services
+    DROP CONSTRAINT chk_thirdparty_oauth2_services_client_auth,
+    ADD CONSTRAINT chk_thirdparty_oauth2_services_client_auth CHECK (
+        CASE
+            WHEN client_method IS NULL THEN
+                (token_endpoint_auth_method IS NULL AND client_secret_encrypted IS NOT NULL)
+                OR (token_endpoint_auth_method IS NOT DISTINCT FROM 'none' AND client_secret_encrypted IS NULL)
+                OR (token_endpoint_auth_method IS NOT DISTINCT FROM 'private_key_jwt' AND client_secret_encrypted IS NULL)
+            WHEN client_method = 'cimd' THEN
+                token_endpoint_auth_method IS NOT DISTINCT FROM 'private_key_jwt'
+                AND client_secret_encrypted IS NULL
+            WHEN client_method = 'dcr' THEN
+                (token_endpoint_auth_method IS NOT DISTINCT FROM 'none'
+                 AND client_secret_encrypted IS NULL)
+                OR (token_endpoint_auth_method IS NOT NULL
+                    AND token_endpoint_auth_method IN ('client_secret_basic', 'client_secret_post')
+                    AND client_secret_encrypted IS NOT NULL)
+            ELSE FALSE
+        END
+    );
+
+CREATE UNIQUE INDEX ux_thirdparty_oauth2_services_dcr_issuer_client_id
+    ON thirdparty_oauth2_services (issuer_uri, client_id)
+    WHERE client_method = 'dcr';
+```
+
+The field check accepts valid legacy manual and direct-metadata rows with their existing `enable_discovery`, `metadata_url`, and `authorization_params` values. It rejects a null method with a null secret instead of accepting an unknown SQL `CHECK` result. It limits discovered rows to one verified source and one stored effective resource. Domain validation checks HTTPS, exact metadata identity, the explicit resource URI, and the selected methods. The partial index does not apply to manual or CIMD rows. Keep existing manual-client uniqueness behavior.
+
+On a successful create or refresh, the repository writes the active configuration and both equal status timestamps in one transaction. It clears `discovery_failure_reason`. An unsuccessful create stores no row. For a version-checked discovery-backed update, PostgreSQL applies these conditions to the successful write:
+
+```sql
+WHERE id = $1
+  AND ($10::text IS NULL OR resource_url IS NULL OR discovery_last_attempt_at <= $13)
+  AND version = $25;
+```
+
+Here `$10` is the incoming resource URL, `$13` is the completed attempt time, and `$25` is the supplied expected version. If no expected version is supplied, the repository omits the final condition. The repository places the attempt guard on the same `UPDATE` that writes active fields, status, and the next version. If a later failed attempt is already recorded, an earlier success changes no row, even when the version still matches. Equal attempt times remain valid. The memory adapter applies the same attempt guard under its lock.
+
+On a failed refresh, the focused status writer changes only the attempt time and safe code:
+```sql
+UPDATE thirdparty_oauth2_services
+SET discovery_last_attempt_at = $1,
+    discovery_failure_reason = $2
+WHERE id = $3
+  AND version = $4
+  AND resource_url IS NOT NULL
+  AND discovery_last_attempt_at < $1
+  AND discovery_last_success_at < $1;
+```
+
+Bind `$1` to the completed attempt time and `$2` to a safe failure code. Bind `$3` to the service ID and `$4` to the observed version. The attempt time must exceed the last stored attempt. A zero-row result is a stale or deleted service, not permission to overwrite it. Do not change `version`, `updated_at`, or active fields in this operation. The memory adapter applies the same failure guards under its lock. An issuer change requires explicit selection and zero user sessions before network access. Its new issuer and DCR identity commit together.
+
+For an issuer change, PostgreSQL locks the service row `FOR UPDATE` in the success transaction. It then checks again for user sessions before replacing the issuer or client identity. The service lock conflicts with the foreign-key key-share lock that new session inserts take. The memory implementations must coordinate their service and session locks for this check.
+
+The down migration first refuses to remove these columns while a discovery-backed row exists. This guard runs before any schema changes. The SQL then removes the partial index and discovery checks, restores the exact migration-035 authentication predicate, and removes the new columns:
+
+```sql
+LOCK TABLE thirdparty_oauth2_services IN ACCESS EXCLUSIVE MODE;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM thirdparty_oauth2_services
+        WHERE resource_url IS NOT NULL OR client_method IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'cannot revert protected-resource discovery while discovery-backed services exist';
+    END IF;
+END
+$$;
+
+DROP INDEX ux_thirdparty_oauth2_services_dcr_issuer_client_id;
+
+ALTER TABLE thirdparty_oauth2_services
+    DROP CONSTRAINT chk_thirdparty_oauth2_services_discovery_fields,
+    DROP CONSTRAINT chk_thirdparty_oauth2_services_discovery_status,
+    DROP CONSTRAINT chk_thirdparty_oauth2_services_client_auth,
+    ADD CONSTRAINT chk_thirdparty_oauth2_services_client_auth
+        CHECK (
+            (token_endpoint_auth_method IS NULL AND client_secret_encrypted IS NOT NULL)
+            OR (token_endpoint_auth_method IS NOT DISTINCT FROM 'none' AND client_secret_encrypted IS NULL)
+            OR (token_endpoint_auth_method = 'private_key_jwt' AND client_secret_encrypted IS NULL)
+        ),
+    DROP COLUMN resource_url,
+    DROP COLUMN client_method,
+    DROP COLUMN resource_explicit,
+    DROP COLUMN discovery_last_attempt_at,
+    DROP COLUMN discovery_last_success_at,
+    DROP COLUMN discovery_failure_reason;
+```
+
+Migration 035 remains the rollback target. The down migration locks the service table before it checks for discovery-backed rows. This lock prevents a concurrent insert from passing the guard. If a discovery-backed row exists, rollback stops before schema changes. Otherwise, rollback keeps legacy manual rows and their authentication methods. PostgreSQL tests cover apply, guarded rollback, clean rollback, and replay.
+
+The existing `client_secret_encrypted` column contains a DCR secret when required. The service domain encrypts before persistence and decrypts only for token requests. The repository never stores plaintext. The encryption context contains exactly one `service_id` key per [ADR 008](../../adrs/008-encryption-context-optimization.md).
 
 ## Invariants
 
-- One service has one active issuer, one active client method, one exact token authentication method, one client ID, and one effective RFC 8707 resource.
+- One discovery-backed service has one active issuer, one active client method, one exact token authentication method, one client ID, and one effective RFC 8707 resource.
 - A discovered issuer comes only from validated metadata for the configured resource URL.
 - A successful status and active configuration become visible together.
 - A failed refresh cannot replace an active credential, endpoint, effective resource, session, or success timestamp.

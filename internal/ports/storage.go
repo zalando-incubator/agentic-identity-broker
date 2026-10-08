@@ -43,6 +43,14 @@ type StorageTransactionManager interface {
 	Rollback(ctx context.Context) error
 }
 
+// ThirdpartyOAuth2ProviderDiscoveryStatusWriter records a failed discovery
+// attempt without changing the service's active configuration or version.
+type ThirdpartyOAuth2ProviderDiscoveryStatusWriter interface {
+	// RecordDiscoveryFailure rejects a stale version or an attempt no later than
+	// the stored attempt or success. failureCode contains no remote response data.
+	RecordDiscoveryFailure(ctx context.Context, serviceID id.ServiceID, expectedVersion int64, completedAt time.Time, failureCode string) error
+}
+
 // User represents a user entity in the storage layer.
 // Domain entity - does not expose storage implementation details.
 type User struct {

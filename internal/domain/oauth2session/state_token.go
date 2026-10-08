@@ -24,6 +24,10 @@ type OAuth2StateTokenClaims struct {
 	// Must match the serviceId path parameter at callback.
 	ServiceID id.ServiceID `json:"service_id"`
 
+	// IssuerURI binds a discovery-backed flow to the selected authorization server.
+	// Manual and direct-metadata flows leave it empty.
+	IssuerURI string `json:"issuer_uri,omitempty"`
+
 	// RedirectURI is where to redirect after flow completes.
 	// Must be same-origin with the authorize request.
 	RedirectURI string `json:"redirect_uri"`

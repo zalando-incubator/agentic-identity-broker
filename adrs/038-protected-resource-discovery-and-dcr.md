@@ -34,11 +34,15 @@ Persist one effective RFC 8707 `authorization_params.resource` and whether it is
 
 Store the latest attempt and last success on the existing service row. Commit a successful discovery and active configuration together. On a failed refresh, write only the safe failure code and attempt timestamp, guarded by the service version and attempt order. Do not change the previous issuer, credential, resource, sessions, success timestamp, or ETag. Keep this failure-only write in a separate, focused storage port with memory and PostgreSQL implementations. On update, keep the client method and the exact token authentication method. An issuer change requires explicit selection and zero user sessions.
 
+PostgreSQL uses conflicting service-row locks for the final issuer update and session insertion. Memory uses a shared gate. Both adapters check for sessions before the issuer switch. A callback seals its original issuer and rejects a changed issuer before token exchange.
+
 ## Consequences
 
 The broker gains one guarded outbound boundary without changing the manual-service HTTP client. A remote DCR registration can remain orphaned if local persistence fails; no local usable service or credential remains. A provider can also reject a requested `resource`, so metadata success alone does not prove that an opaque token has the right audience. The broker must report safe failures instead of retrying with a broader request.
 
-The new configuration key and Helm mapping are required by the latest feature specification. The earlier plan's no-new-key and no-chart-change statements must be corrected before implementation. Acceptance tests must cover the two additional client-name scenarios in the specification.
+Completed-at ordering prevents an older successful refresh from clearing a newer failure, even when the service version stays unchanged. The authenticated Admin status GET reads the service row without decrypting credentials or contacting the provider. It reports the latest completed outcome and retains the prior success and active fields after failure. Manual services return `not_applicable` with null discovery fields.
+
+Helm `broker.thirdPartyOauth2.clientName` maps to the optional `third_party_oauth2.client_name` key. DCR setup requires a non-blank value. Startup, manual services, and hosted CIMD do not require this key.
 
 ## Alternatives Considered
 
