@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -9,6 +10,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
+
+// ErrAmbiguousClientID means more than one agent matches a client ID.
+var ErrAmbiguousClientID = errors.New("client ID resolves to multiple agents")
 
 // Service encapsulates agent business logic: client ID generation, uniqueness enforcement,
 // and unambiguous client ID resolution. It sits between the HTTP handler and the repository,
@@ -148,7 +152,7 @@ func (s *Service) ResolveUniqueByClientID(ctx context.Context, clientID id.Clien
 		return nil, fmt.Errorf("resolveAgentByClientID: duplicate check failed: %w", err)
 	}
 	if dup {
-		return nil, fmt.Errorf("resolveAgentByClientID: ambiguous client_id %q matches multiple agents; deduplicate before disabling multi_agent_client", clientID)
+		return nil, fmt.Errorf("resolveAgentByClientID: %w", ErrAmbiguousClientID)
 	}
 
 	return agent, nil

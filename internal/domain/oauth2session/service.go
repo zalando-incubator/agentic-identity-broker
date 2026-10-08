@@ -178,13 +178,9 @@ func (s *OAuth2SessionService) GetCallbackBaseURL() string {
 	return s.config.CallbackBaseURL
 }
 
-// ServiceAuthorizeURL returns the URL a user must visit to initiate (or re-initiate)
-// OAuth2 authorization with the specified third-party service.
-// The URL follows the same base-URL convention already used for OAuth2 callback URLs.
-// It is included in RFC 6749 §5.2 error_uri fields when a user session is missing
-// or has expired, giving clients an actionable re-authentication link.
-func (s *OAuth2SessionService) ServiceAuthorizeURL(serviceID id.ServiceID) string {
-	return s.config.CallbackBaseURL + "/api/third-party/" + serviceID.String() + "/oauth2/authorize"
+// SessionRecoveryURL returns a browser entry point without OAuth2 redirect parameters.
+func (s *OAuth2SessionService) SessionRecoveryURL() string {
+	return strings.TrimRight(s.config.CallbackBaseURL, "/") + "/sessions"
 }
 
 // InitiateFlowResult contains the data needed to redirect user to authorization.
@@ -359,21 +355,23 @@ func IsSafeOAuthErrorCode(code string) bool {
 }
 
 func safeTokenExchangeError(err error) error {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
-	}
-
+	metadata := NewErrorMetadata(OperationCodeExchange, DetailProviderUnavailable)
 	var retrieveErr *oauth2.RetrieveError
-	if errors.As(err, &retrieveErr) && IsSafeOAuthErrorCode(retrieveErr.ErrorCode) {
-		return fmt.Errorf("%w: %s", ErrTokenExchange, retrieveErr.ErrorCode)
+	if errors.As(err, &retrieveErr) {
+		status := 0
+		if retrieveErr.Response != nil {
+			status = retrieveErr.Response.StatusCode
+		}
+		detail := DetailProviderRejected
+		switch {
+		case status == http.StatusTooManyRequests || status >= 500 && status <= 599:
+			detail = DetailProviderUnavailable
+		case status >= 400 && status <= 499 && (retrieveErr.ErrorCode == "invalid_client" || retrieveErr.ErrorCode == "unauthorized_client"):
+			detail = DetailProviderClientRejected
+		}
+		metadata = NewErrorMetadata(OperationCodeExchange, detail).WithProviderResponse(status, retrieveErr.ErrorCode)
 	}
-
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) && urlErr.Err != nil {
-		return fmt.Errorf("%w: %w", ErrTokenExchange, urlErr.Err)
-	}
-
-	return fmt.Errorf("%w: upstream token request failed", ErrTokenExchange)
+	return NewOperationError(metadata, errors.Join(ErrTokenExchange, err))
 }
 
 func tokenExchangeErrorIsPermanent(err error) bool {
@@ -402,8 +400,13 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 	code string,
 	verifier string,
 	authorizationParams map[string]string,
-) (*oauth2.Token, error) {
-	lastErr := ErrTokenExchange
+) (resultToken *oauth2.Token, resultErr error) {
+	defer func() {
+		if resultErr != nil && ctx.Err() != nil && ctx.Value(sharedRefreshContextKey{}) != true {
+			resultErr = callerCanceledError(ctx, OperationCodeExchange, resultErr)
+		}
+	}()
+	var lastErr error = NewOperationError(NewErrorMetadata(OperationCodeExchange, DetailConfiguration), ErrInvalidConfiguration)
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, s.httpClient)
 
 	for attempt := range s.config.MaxRetries {
@@ -417,11 +420,12 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 		}
 		if service.IsCIMDConfidentialClient() {
 			if s.cimdAssertionSigner == nil {
-				return nil, ports.ErrCIMDKeyUnavailable
+				return nil, NewOperationError(NewErrorMetadata(OperationCodeExchange, DetailConfiguration).WithDependency(DependencySigning), ports.ErrCIMDKeyUnavailable)
 			}
 			assertion, err := s.cimdAssertionSigner.SignClientAssertion(ctx, service.ClientID, service.Endpoints.TokenEndpoint)
 			if err != nil {
-				return nil, fmt.Errorf("sign CIMD client assertion: %w", ports.ErrCIMDKeyUnavailable)
+				failure := sessionOperationError(ctx, OperationCodeExchange, DetailProviderUnavailable, errors.Join(ports.ErrCIMDKeyUnavailable, err))
+				return nil, failure.WithMetadata(failure.Metadata().WithDependency(DependencySigning))
 			}
 			opts = append(opts,
 				oauth2.SetAuthURLParam("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
@@ -438,7 +442,7 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 		}
 
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, sessionOperationError(ctx, OperationCodeExchange, DetailCallerCanceled, errors.Join(lastErr, ctx.Err()))
 		}
 		if attempt == s.config.MaxRetries-1 || !shouldRetryTokenExchange(err) {
 			break
@@ -450,14 +454,15 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 			"attempt", attempt+1,
 			"delay", delay,
 			"reason", "token_exchange_failed",
-			"error", lastErr)
+			"service_id", service.ID,
+			"oauth2_session", sessionFailureMetadata(lastErr))
 
 		// Sleep with context cancellation support
 		select {
 		case <-time.After(delay):
 			// Continue to next retry
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, sessionOperationError(ctx, OperationCodeExchange, DetailCallerCanceled, errors.Join(lastErr, ctx.Err()))
 		}
 	}
 
@@ -504,10 +509,11 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	}
 
 	// Fetch the service (with decrypted client secret via service manager)
-	service, err := s.providerService.Get(ctx, serviceID)
+	service, err := s.providerService.GetForTokenAcquisition(ctx, serviceID)
 	if err != nil {
-		s.logger.Error("service not found", "service_id", serviceID, "err", err)
-		return nil, fmt.Errorf("failed to initiate OAuth2 flow: %w", ErrServiceNotFound)
+		failure := tokenAcquisitionError(ctx, OperationCodeExchange, err)
+		s.logger.ErrorContext(ctx, "failed to fetch service for authorization", "service_id", serviceID, "oauth2_session", failure.Metadata())
+		return nil, failure
 	}
 
 	// Generate PKCE
@@ -528,7 +534,7 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	// Encrypt state token
 	stateToken, err := s.CreateStateToken(claims)
 	if err != nil {
-		s.logger.Error("failed to create state token", "err", err)
+		s.logger.ErrorContext(ctx, "failed to create state token", "service_id", serviceID, "oauth2_session", NewErrorMetadata(OperationCodeExchange, DetailEncryptionFailed))
 		return nil, fmt.Errorf("failed to create state token: %w", err)
 	}
 	if len(stateToken) >= maxProviderStateBytes {
@@ -539,7 +545,7 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	callbackURL := s.config.CallbackBaseURL + "/api/third-party/" + serviceID.String() + "/oauth2/callback"
 	cfg, err := s.buildOAuth2Config(service, callbackURL)
 	if err != nil {
-		s.logger.Error("failed to build oauth2 config", "service_id", serviceID, "err", err)
+		s.logger.ErrorContext(ctx, "failed to build oauth2 config", "service_id", serviceID, "oauth2_session", NewErrorMetadata(OperationCodeExchange, DetailConfiguration))
 		return nil, fmt.Errorf("failed to build oauth2 config: %w", err)
 	}
 
@@ -583,8 +589,9 @@ func (s *OAuth2SessionService) createSession(
 	// Check if session already exists for this principal+service
 	existingSession, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, serviceID)
 	if err != nil {
-		s.logger.Error("failed to query existing session", "principal", principal, "service_id", serviceID, "err", err)
-		return nil, fmt.Errorf("failed to query existing session: %w", err)
+		failure := sessionOperationError(ctx, OperationCodeExchange, DetailRepositoryUnavailable, err)
+		s.logger.ErrorContext(ctx, "failed to query existing session", "service_id", serviceID, "oauth2_session", failure.Metadata())
+		return nil, failure
 	}
 
 	var encryptedAccess []byte
@@ -598,16 +605,18 @@ func (s *OAuth2SessionService) createSession(
 	// Encrypt access token
 	encryptedAccess, err = s.encryption.Encrypt(ctx, []byte(token.AccessToken), encryptionContext)
 	if err != nil {
-		s.logger.Error("failed to encrypt access token", "err", err)
-		return nil, fmt.Errorf("failed to encrypt access token: %w", err)
+		failure := sessionOperationError(ctx, OperationCodeExchange, DetailEncryptionFailed, errors.Join(ErrEncryptionFailed, err))
+		s.logger.ErrorContext(ctx, "failed to encrypt access token", "service_id", serviceID, "oauth2_session", failure.Metadata())
+		return nil, failure
 	}
 
 	// Encrypt refresh token if present
 	if token.RefreshToken != "" {
 		encryptedRefresh, err = s.encryption.Encrypt(ctx, []byte(token.RefreshToken), encryptionContext)
 		if err != nil {
-			s.logger.Error("failed to encrypt refresh token", "err", err)
-			return nil, fmt.Errorf("failed to encrypt refresh token: %w", err)
+			failure := sessionOperationError(ctx, OperationCodeExchange, DetailEncryptionFailed, errors.Join(ErrEncryptionFailed, err))
+			s.logger.ErrorContext(ctx, "failed to encrypt refresh token", "service_id", serviceID, "oauth2_session", failure.Metadata())
+			return nil, failure
 		}
 	}
 
@@ -657,8 +666,9 @@ func (s *OAuth2SessionService) createSession(
 
 	// Store session (will upsert if already exists)
 	if err := s.sessionRepo.Create(ctx, session); err != nil {
-		s.logger.Error("failed to create session", "principal", principal, "service_id", serviceID, "err", err)
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		failure := sessionOperationError(ctx, OperationCodeExchange, DetailPersistenceFailed, err)
+		s.logger.ErrorContext(ctx, "failed to create session", "service_id", serviceID, "oauth2_session", failure.Metadata())
+		return nil, failure
 	}
 
 	s.logger.Info("session created", "session_id", sessionID, "principal", principal, "service_id", serviceID)
@@ -675,42 +685,37 @@ func (s *OAuth2SessionService) HandleCallback(
 
 	// Check for OAuth2 error response
 	if req.Error != "" {
-		if req.ErrorDesc != "" {
-			s.logger.Warn("OAuth2 authorization failed", "error", req.Error, "description", req.ErrorDesc)
-			return nil, fmt.Errorf("OAuth2 authorization failed: %s: %s", req.Error, req.ErrorDesc)
-		}
-		s.logger.Warn("OAuth2 authorization failed", "error", req.Error)
-		return nil, fmt.Errorf("OAuth2 authorization failed: %s", req.Error)
+		metadata := NewErrorMetadata(OperationCodeExchange, DetailProviderRejected).WithProviderResponse(0, req.Error)
+		s.logger.WarnContext(ctx, "OAuth2 authorization failed", "service_id", req.ServiceID, "oauth2_session", metadata)
+		return nil, NewOperationError(metadata, fmt.Errorf("OAuth2 authorization failed: %s: %s", req.Error, req.ErrorDesc))
 	}
 
 	// Validate state token (checks expiration, principal mismatch, tampering)
 	claims, err := s.ValidateStateToken(req.State, principal, req.ServiceID)
 	if err != nil {
-		s.logger.Error("state token validation failed", "err", err)
+		s.logger.ErrorContext(ctx, "state token validation failed", "service_id", req.ServiceID, "oauth2_session", NewErrorMetadata(OperationCodeExchange, DetailConfiguration))
 		return nil, fmt.Errorf("state token validation failed: %w", err)
 	}
 
 	// Fetch the service (with decrypted client secret via service manager)
-	service, err := s.providerService.Get(ctx, req.ServiceID)
+	service, err := s.providerService.GetForTokenAcquisition(ctx, req.ServiceID)
 	if err != nil {
-		s.logger.Error("service not found during callback", "service_id", req.ServiceID, "err", err)
-		return nil, fmt.Errorf("service not found: %w", err)
+		failure := tokenAcquisitionError(ctx, OperationCodeExchange, err)
+		s.logger.ErrorContext(ctx, "service not found during callback", "service_id", req.ServiceID, "oauth2_session", failure.Metadata())
+		return nil, failure
 	}
 
 	// Build OAuth2 config
 	callbackURL := s.config.CallbackBaseURL + "/api/third-party/" + req.ServiceID.String() + "/oauth2/callback"
 	cfg, err := s.buildOAuth2Config(service, callbackURL)
 	if err != nil {
-		s.logger.Error("failed to build oauth2 config during callback", "service_id", req.ServiceID, "err", err)
-		return nil, fmt.Errorf("failed to build oauth2 config: %w", err)
+		failure := sessionOperationError(ctx, OperationCodeExchange, DetailConfiguration, errors.Join(ErrInvalidConfiguration, err))
+		s.logger.ErrorContext(ctx, "failed to build oauth2 config during callback", "service_id", req.ServiceID, "oauth2_session", failure.Metadata())
+		return nil, failure
 	}
 
 	// Exchange authorization code for tokens (with retry)
-	s.logger.Info("exchanging authorization code for token",
-		"service_id", req.ServiceID,
-		"callback_url", callbackURL,
-		"token_endpoint", cfg.Endpoint.TokenURL,
-		"client_id", cfg.ClientID)
+	s.logger.InfoContext(ctx, "exchanging authorization code for token", "service_id", req.ServiceID, "operation", OperationCodeExchange)
 	token, err := s.exchangeCodeWithRetry(ctx, cfg, service, req.Code, claims.PKCEVerifier, service.AuthorizationParams)
 	if err != nil {
 		if service.IsCIMDConfidentialClient() {
@@ -719,11 +724,10 @@ func (s *OAuth2SessionService) HandleCallback(
 		// Audit log: PKCE validation failure (token exchange failure typically indicates PKCE error)
 		s.logger.Error("oauth2_pkce_validation_failed",
 			"event", "session.oauth2.pkce_validation_failed",
-			"principal", principal,
 			"service_id", req.ServiceID,
 			"public_client", service.IsPublicClient(),
 			"reason", "token_exchange_failed",
-			"error", err,
+			"oauth2_session", sessionFailureMetadata(err),
 			"timestamp", time.Now().Unix())
 		return nil, fmt.Errorf("failed to exchange authorization code: %w", err)
 	}
@@ -754,7 +758,7 @@ func (s *OAuth2SessionService) HandleCallback(
 	// Create and store session
 	session, err := s.createSession(ctx, principal, req.ServiceID, token, scopes)
 	if err != nil {
-		s.logger.Error("failed to create session from token", "err", err)
+		s.logger.ErrorContext(ctx, "failed to create session from token", "service_id", req.ServiceID, "oauth2_session", sessionFailureMetadata(err))
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
@@ -795,9 +799,17 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	ctx context.Context,
 	entity *model.ThirdpartyOAuth2ProviderEntity,
 	refreshToken string,
-) (*oauth2.Token, error) {
+) (resultToken *oauth2.Token, resultErr error) {
+	defer func() {
+		if resultErr != nil && ctx.Err() != nil && ctx.Value(sharedRefreshContextKey{}) != true {
+			resultErr = callerCanceledError(ctx, OperationRefresh, resultErr)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, sessionOperationError(ctx, OperationRefresh, DetailProviderUnavailable, err)
+	}
 	if entity == nil {
-		return nil, fmt.Errorf("service entity cannot be nil")
+		return nil, sessionOperationError(ctx, OperationRefresh, DetailConfiguration, errors.New("service entity cannot be nil"))
 	}
 
 	isCIMDClient := entity.IsCIMDConfidentialClient()
@@ -805,13 +817,13 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		return nil, fmt.Errorf("invalid outbound client authentication: %w", err)
+		return nil, sessionOperationError(ctx, OperationRefresh, DetailConfiguration, fmt.Errorf("%w: %w", ErrInvalidConfiguration, err))
 	}
 	if refreshToken == "" {
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		return nil, fmt.Errorf("refresh token cannot be empty")
+		return nil, sessionOperationError(ctx, OperationRefresh, DetailRefreshUnavailable, ErrRefreshNotAvailable)
 	}
 
 	isPublicClient := entity.IsPublicClient()
@@ -820,7 +832,7 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		var err error
 		clientSecret, err = entity.Secret.GetPlaintext()
 		if err != nil {
-			return nil, fmt.Errorf("provider secret not in plaintext state for refresh: %w", err)
+			return nil, sessionOperationError(ctx, OperationRefresh, DetailDecryptionFailed, err)
 		}
 	}
 
@@ -835,12 +847,13 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	if isCIMDClient {
 		if s.cimdAssertionSigner == nil {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-			return nil, ports.ErrCIMDKeyUnavailable
+			return nil, NewOperationError(NewErrorMetadata(OperationRefresh, DetailConfiguration).WithDependency(DependencySigning), ports.ErrCIMDKeyUnavailable)
 		}
 		assertion, err := s.cimdAssertionSigner.SignClientAssertion(ctx, entity.ClientID, entity.Endpoints.TokenEndpoint)
 		if err != nil {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
-			return nil, fmt.Errorf("sign CIMD client assertion: %w", ports.ErrCIMDKeyUnavailable)
+			failure := sessionOperationError(ctx, OperationRefresh, DetailProviderUnavailable, errors.Join(ports.ErrCIMDKeyUnavailable, err))
+			return nil, failure.WithMetadata(failure.Metadata().WithDependency(DependencySigning))
 		}
 		data.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
 		data.Set("client_assertion", assertion)
@@ -852,7 +865,7 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		return nil, fmt.Errorf("failed to create refresh token request: %w", err)
+		return nil, sessionOperationError(ctx, OperationRefresh, DetailConfiguration, err)
 	}
 
 	// Set standard OAuth2 headers
@@ -865,7 +878,7 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		return nil, fmt.Errorf("failed to call upstream token endpoint for refresh: %w", err)
+		return nil, sessionOperationError(ctx, OperationRefresh, DetailProviderUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -888,19 +901,19 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		return nil, fmt.Errorf("failed to decode upstream token response: %w", err)
+		return nil, refreshResponseError(ctx, resp.StatusCode, err)
 	}
 	if _, err := io.Copy(io.Discard, limited); err != nil {
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		return nil, fmt.Errorf("failed to read upstream token response: %w", err)
+		return nil, refreshResponseError(ctx, resp.StatusCode, err)
 	}
 	if limited.N == 0 {
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		return nil, fmt.Errorf("upstream token response exceeds %d byte limit", maxTokenResponseBytes)
+		return nil, refreshResponseError(ctx, resp.StatusCode, fmt.Errorf("upstream token response exceeds %d byte limit", maxTokenResponseBytes))
 	}
 
 	// Validate required fields in response
@@ -908,7 +921,7 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		return nil, fmt.Errorf("upstream token response missing access_token")
+		return nil, refreshResponseError(ctx, resp.StatusCode, errors.New("upstream token response missing access_token"))
 	}
 
 	// Determine token expiry
@@ -928,9 +941,7 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		s.auditCIMDTokenAcquisition(entity.ID, "refresh", "success")
 	}
 
-	s.logger.InfoContext(ctx, "access token refreshed",
-		"service_id", entity.ID,
-		"token_endpoint", entity.Endpoints.TokenEndpoint)
+	s.logger.InfoContext(ctx, "access token refreshed", "service_id", entity.ID, "operation", OperationRefresh)
 
 	return token, nil
 }
@@ -946,16 +957,32 @@ func thirdpartyRefreshError(resp *http.Response) error {
 			Status:     fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)),
 		},
 	}
+	oauthCode := ""
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxThirdpartyErrorBodyBytes+1))
 	if err == nil && len(body) <= maxThirdpartyErrorBodyBytes {
 		var payload struct {
 			Error string `json:"error"`
 		}
-		if json.Unmarshal(body, &payload) == nil && IsSafeOAuthErrorCode(payload.Error) {
-			retrieveErr.ErrorCode = payload.Error
+		if json.Unmarshal(body, &payload) == nil {
+			oauthCode = payload.Error
+			if IsSafeOAuthErrorCode(payload.Error) {
+				retrieveErr.ErrorCode = payload.Error
+			}
 		}
 	}
-	return fmt.Errorf("%w: %w", &RefreshRejectedError{StatusCode: resp.StatusCode, OAuthError: retrieveErr.ErrorCode}, retrieveErr)
+	detail := DetailProviderRejected
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 && resp.StatusCode <= 599:
+		detail = DetailProviderUnavailable
+	case err != nil:
+		detail = DetailProviderUnavailable
+	case resp.StatusCode >= 400 && resp.StatusCode <= 499 && retrieveErr.ErrorCode == "invalid_grant":
+		detail = DetailRefreshRejected
+	case resp.StatusCode >= 400 && resp.StatusCode <= 499 && (retrieveErr.ErrorCode == "invalid_client" || retrieveErr.ErrorCode == "unauthorized_client"):
+		detail = DetailProviderClientRejected
+	}
+	metadata := NewErrorMetadata(OperationRefresh, detail).WithProviderResponse(resp.StatusCode, oauthCode)
+	return NewOperationError(metadata, errors.Join(&RefreshRejectedError{StatusCode: resp.StatusCode, OAuthError: retrieveErr.ErrorCode}, retrieveErr, err))
 }
 
 func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *storage.UserSession, newToken *oauth2.Token) error {
@@ -966,7 +993,7 @@ func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *st
 	// Encrypt new access token
 	encryptedAccess, err := s.encryption.Encrypt(ctx, []byte(newToken.AccessToken), encContext)
 	if err != nil {
-		return fmt.Errorf("failed to encrypt refreshed access token: %w", err)
+		return sessionOperationError(ctx, OperationRefresh, DetailEncryptionFailed, errors.Join(ErrEncryptionFailed, err))
 	}
 
 	// Update session with new access token
@@ -984,7 +1011,7 @@ func (s *OAuth2SessionService) setSessionTokens(ctx context.Context, session *st
 	if newToken.RefreshToken != "" {
 		encryptedRefresh, err := s.encryption.Encrypt(ctx, []byte(newToken.RefreshToken), encContext)
 		if err != nil {
-			return fmt.Errorf("failed to encrypt new refresh token: %w", err)
+			return sessionOperationError(ctx, OperationRefresh, DetailEncryptionFailed, errors.Join(ErrEncryptionFailed, err))
 		}
 		session.EncryptedRefreshToken = encryptedRefresh
 	}
@@ -1260,7 +1287,7 @@ func (s *OAuth2SessionService) GetSessionWithAgents(
 //   - ErrSessionNotFound: No session exists for principal+service (T075)
 //   - ErrSessionExpired: Both tokens expired, user must re-authenticate (T076)
 //   - ErrRefreshFailed: Upstream provider rejected refresh request
-//   - fmt.Errorf wraps: Other retrieval/decryption/storage errors
+//   - OperationError preserves retrieval, decryption, and persistence causes with bounded metadata
 //
 // Per SR-005 (Security Rule): Token values are never included in error messages.
 // Only metadata (service, expiration times) is included.
@@ -1268,21 +1295,29 @@ func (s *OAuth2SessionService) GetValidAccessToken(
 	ctx context.Context,
 	principal id.Principal,
 	serviceID id.ServiceID,
-) (*storage.UserSession, string, error) {
+) (resultSession *storage.UserSession, resultToken string, resultErr error) {
+	defer func() {
+		if resultErr != nil && ctx.Err() != nil {
+			resultErr = callerCanceledError(ctx, OperationSessionLookup, resultErr)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, "", sessionOperationError(ctx, OperationSessionLookup, DetailCallerCanceled, err)
+	}
 	session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, serviceID)
 	if err != nil {
 		if ports.IsNotFoundErr(err) {
-			return nil, "", fmt.Errorf("%w: principal=%s, service=%s", ErrSessionNotFound, principal, serviceID)
+			return nil, "", sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, errors.Join(ErrSessionNotFound, err))
 		}
-		return nil, "", fmt.Errorf("failed to retrieve session: %w", err)
+		return nil, "", sessionOperationError(ctx, OperationSessionLookup, DetailRepositoryUnavailable, err)
 	}
 	if session == nil {
-		return nil, "", fmt.Errorf("%w: principal=%s, service=%s", ErrSessionNotFound, principal, serviceID)
+		return nil, "", sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
 	}
 	if session.HasValidAccessToken() {
 		accessToken, err := s.DecryptAccessToken(ctx, session)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to decrypt access token: %w", err)
+			return nil, "", sessionOperationError(ctx, OperationSessionLookup, DetailDecryptionFailed, err)
 		}
 		return session, accessToken, nil
 	}
@@ -1293,7 +1328,7 @@ func (s *OAuth2SessionService) GetValidAccessToken(
 	}
 	key := principal.String() + "|" + serviceID.String()
 	if err := ctx.Err(); err != nil {
-		return nil, "", err
+		return nil, "", sessionOperationError(ctx, OperationRefresh, DetailCallerCanceled, err)
 	}
 	resultCh := s.refreshGroup.DoChan(key, func() (any, error) {
 		refreshCtx, cancel := s.refreshOperationContext(context.WithoutCancel(ctx))
@@ -1306,10 +1341,10 @@ func (s *OAuth2SessionService) GetValidAccessToken(
 	})
 	select {
 	case <-ctx.Done():
-		return nil, "", ctx.Err()
+		return nil, "", sessionOperationError(ctx, OperationRefresh, DetailCallerCanceled, ctx.Err())
 	case outcome := <-resultCh:
 		if err := ctx.Err(); err != nil {
-			return nil, "", err
+			return nil, "", sessionOperationError(ctx, OperationRefresh, DetailCallerCanceled, err)
 		}
 		if outcome.Err != nil {
 			return nil, "", outcome.Err
@@ -1320,40 +1355,51 @@ func (s *OAuth2SessionService) GetValidAccessToken(
 }
 
 func (s *OAuth2SessionService) refreshExpiredSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, string, error) {
-	provider, providerErr := s.getRefreshProvider(ctx, principal, serviceID)
+	provider, providerErr := s.getRefreshProvider(ctx, serviceID)
 	refreshed := false
 	current, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
+		if current == nil {
+			return false, sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
+		}
 		if current.HasValidAccessToken() {
 			return false, nil
 		}
 		if !current.CanRefresh() {
 			// A stored refresh token that CanRefresh rejects has passed its recorded expiry.
 			if len(current.EncryptedRefreshToken) > 0 {
-				return false, fmt.Errorf("%w: %w: principal=%s, service=%s", ErrSessionExpired, ErrRefreshTokenExpired, principal, serviceID)
+				return false, sessionOperationError(ctx, OperationRefresh, DetailRefreshTokenExpired, errors.Join(ErrSessionExpired, ErrRefreshTokenExpired))
 			}
-			return false, fmt.Errorf("%w: principal=%s, service=%s", ErrSessionExpired, principal, serviceID)
+			detail := DetailRefreshUnavailable
+			if current.AccessTokenExpiresAt != nil && !current.AccessTokenExpiresAt.After(time.Now()) {
+				detail = DetailAccessTokenExpired
+			}
+			return false, sessionOperationError(ctx, OperationRefresh, detail, errors.Join(ErrSessionExpired, ErrRefreshNotAvailable))
 		}
 		if providerErr != nil {
 			return false, providerErr
 		}
-		if err := s.refreshSessionTokens(ctx, principal, current, provider); err != nil {
+		if err := s.refreshSessionTokens(ctx, current, provider); err != nil {
 			return false, err
 		}
 		refreshed = true
 		return true, nil
 	})
 	if err != nil {
-		return nil, "", err
+		detail := DetailRepositoryUnavailable
+		if refreshed {
+			detail = DetailPersistenceFailed
+		}
+		return nil, "", sessionRepositoryError(ctx, detail, err)
 	}
 	if current == nil {
-		return nil, "", fmt.Errorf("%w: principal=%s, service=%s", ErrSessionNotFound, principal, serviceID)
+		return nil, "", sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
 	}
 	if refreshed {
-		s.logRefreshSuccess(ctx, principal, serviceID, provider)
+		s.logRefreshSuccess(ctx, serviceID, provider)
 	}
 	token, err := s.DecryptAccessToken(ctx, current)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to decrypt refreshed access token: %w", err)
+		return nil, "", sessionOperationError(ctx, OperationRefresh, DetailDecryptionFailed, err)
 	}
 	return current, token, nil
 }
@@ -1363,20 +1409,16 @@ func (s *OAuth2SessionService) refreshOperationContext(ctx context.Context) (con
 	if upstreamTimeout <= 0 {
 		upstreamTimeout = 30 * time.Second
 	}
+	ctx = context.WithValue(ctx, sharedRefreshContextKey{}, true)
 	return context.WithTimeout(ctx, upstreamTimeout+s.config.RefreshStorageTimeout+time.Minute)
 }
 
-func (s *OAuth2SessionService) getRefreshProvider(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
-	service, err := s.providerService.Get(ctx, serviceID)
+func (s *OAuth2SessionService) getRefreshProvider(ctx context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	service, err := s.providerService.GetForTokenAcquisition(ctx, serviceID)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "failed to fetch service for token refresh",
-			"principal", principal,
-			"service_id", serviceID,
-			"err", err)
-		return nil, fmt.Errorf("failed to fetch service for token refresh: %w", err)
-	}
-	if service == nil {
-		return nil, fmt.Errorf("service not found for refresh: service_id=%s", serviceID)
+		failure := tokenAcquisitionError(ctx, OperationRefresh, err)
+		s.logger.ErrorContext(ctx, "failed to fetch service for token refresh", "service_id", serviceID, "oauth2_session", failure.Metadata())
+		return nil, failure
 	}
 	return service, nil
 }
@@ -1384,59 +1426,47 @@ func (s *OAuth2SessionService) getRefreshProvider(ctx context.Context, principal
 // refreshSessionTokens exchanges the stored refresh token and encrypts the result.
 // The caller holds the session lock and persists the modified session atomically.
 // Precondition: session.CanRefresh() is true.
-func (s *OAuth2SessionService) refreshSessionTokens(
-	ctx context.Context,
-	principal id.Principal,
-	session *storage.UserSession,
-	service *model.ThirdpartyOAuth2ProviderEntity,
-) error {
+func (s *OAuth2SessionService) refreshSessionTokens(ctx context.Context, session *storage.UserSession, service *model.ThirdpartyOAuth2ProviderEntity) error {
 	serviceID := session.ServiceID
 
 	refreshToken, err := s.DecryptRefreshToken(ctx, session)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "failed to decrypt refresh token",
-			"principal", principal,
-			"service_id", serviceID,
-			"err", err)
-		return fmt.Errorf("failed to decrypt refresh token: %w", err)
+		failure := sessionOperationError(ctx, OperationRefresh, DetailDecryptionFailed, err)
+		s.logger.ErrorContext(ctx, "failed to decrypt refresh token", "service_id", serviceID, "oauth2_session", failure.Metadata())
+		return failure
 	}
 
 	if refreshToken == "" {
-		return fmt.Errorf("refresh token is empty: principal=%s, service=%s", principal, serviceID)
+		return sessionOperationError(ctx, OperationRefresh, DetailRefreshUnavailable, ErrRefreshNotAvailable)
 	}
 
 	newToken, err := s.RefreshAccessToken(ctx, service, refreshToken)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "oauth2_refresh_failed",
 			"event", "session.oauth2.refresh_failed",
-			"principal", principal,
 			"service_id", serviceID,
 			"public_client", service.IsPublicClient(),
 			"reason", "token_refresh_failed",
-			"error", err,
+			"oauth2_session", sessionFailureMetadata(err),
 			"timestamp", time.Now().Unix())
-		return fmt.Errorf("%w: %w", ErrRefreshFailed, err)
+		return NewOperationError(sessionFailureMetadata(err), errors.Join(ErrRefreshFailed, err))
 	}
 
 	if newToken == nil {
-		return fmt.Errorf("upstream provider returned nil token: principal=%s, service=%s", principal, serviceID)
+		return sessionOperationError(ctx, OperationRefresh, DetailProviderResponseInvalid, errors.New("upstream provider returned nil token"))
 	}
 
 	if err := s.setSessionTokens(ctx, session, newToken); err != nil {
-		s.logger.ErrorContext(ctx, "failed to update session with refreshed tokens",
-			"principal", principal,
-			"service_id", serviceID,
-			"err", err)
-		return fmt.Errorf("failed to update session with refreshed tokens: %w", err)
+		s.logger.ErrorContext(ctx, "failed to update session with refreshed tokens", "service_id", serviceID, "oauth2_session", sessionFailureMetadata(err))
+		return err
 	}
 
 	return nil
 }
 
-func (s *OAuth2SessionService) logRefreshSuccess(ctx context.Context, principal id.Principal, serviceID id.ServiceID, service *model.ThirdpartyOAuth2ProviderEntity) {
+func (s *OAuth2SessionService) logRefreshSuccess(ctx context.Context, serviceID id.ServiceID, service *model.ThirdpartyOAuth2ProviderEntity) {
 	s.logger.InfoContext(ctx, "oauth2_token_refreshed",
 		"event", "session.oauth2.token_refreshed",
-		"principal", principal,
 		"service_id", serviceID,
 		"public_client", service.IsPublicClient(),
 		"reason", "token_refresh_succeeded",
@@ -1491,44 +1521,127 @@ func (s *OAuth2SessionService) ForceRefreshSession(
 	ctx context.Context,
 	principal id.Principal,
 	serviceID id.ServiceID,
-) (*storage.UserSessionSummary, error) {
+) (summary *storage.UserSessionSummary, resultErr error) {
+	callerCtx := ctx
+	defer func() {
+		if resultErr != nil && callerCtx.Err() != nil {
+			resultErr = callerCanceledError(callerCtx, OperationRefresh, resultErr)
+		}
+	}()
 	ctx, cancel := s.refreshOperationContext(ctx)
 	defer cancel()
 	existing, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, serviceID)
 	if ports.IsNotFoundErr(err) || existing == nil && err == nil {
-		return nil, fmt.Errorf("%w: principal=%s, service=%s", ErrSessionNotFound, principal, serviceID)
+		return nil, sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, errors.Join(ErrSessionNotFound, err))
 	}
 	if err != nil {
-		return nil, err
+		return nil, sessionOperationError(ctx, OperationRefresh, DetailRepositoryUnavailable, err)
 	}
-	service, providerErr := s.getRefreshProvider(ctx, principal, serviceID)
+	service, providerErr := s.getRefreshProvider(ctx, serviceID)
+	refreshed := false
 	session, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
+		if current == nil {
+			return false, sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
+		}
 		if !current.CanRefresh() {
-			return false, fmt.Errorf("%w: principal=%s, service=%s", ErrRefreshNotAvailable, principal, serviceID)
+			detail := DetailRefreshUnavailable
+			cause := ErrRefreshNotAvailable
+			if len(current.EncryptedRefreshToken) > 0 {
+				detail = DetailRefreshTokenExpired
+				cause = errors.Join(ErrRefreshNotAvailable, ErrRefreshTokenExpired)
+			}
+			return false, sessionOperationError(ctx, OperationRefresh, detail, cause)
 		}
 		if providerErr != nil {
 			return false, providerErr
 		}
-		if err := s.refreshSessionTokens(ctx, principal, current, service); err != nil {
+		if err := s.refreshSessionTokens(ctx, current, service); err != nil {
 			return false, err
 		}
+		refreshed = true
 		return true, nil
 	})
 	if err != nil {
-		if ports.IsNotFoundErr(err) {
-			return nil, fmt.Errorf("%w: principal=%s, service=%s", ErrSessionNotFound, principal, serviceID)
+		detail := DetailRepositoryUnavailable
+		if refreshed {
+			detail = DetailPersistenceFailed
 		}
-		return nil, err
+		return nil, sessionRepositoryError(ctx, detail, err)
 	}
 	if session == nil {
-		return nil, fmt.Errorf("%w: principal=%s, service=%s", ErrSessionNotFound, principal, serviceID)
+		return nil, sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
 	}
-	s.logRefreshSuccess(ctx, principal, serviceID, service)
+	s.logRefreshSuccess(ctx, serviceID, service)
 
 	agentCount, err := s.grantRepo.CountAgentsByPrincipalAndServiceID(ctx, principal, serviceID)
 	if err != nil {
-		s.logger.Warn("failed to count agents after refresh", "service_id", serviceID, "err", err)
+		s.logger.WarnContext(ctx, "failed to count agents after refresh", "service_id", serviceID, "oauth2_session", NewErrorMetadata(OperationRefresh, DetailRepositoryUnavailable).WithDependency(DependencySessionRepository))
 		agentCount = 0
 	}
 	return storage.NewUserSessionSummary(session, service.DisplayName, agentCount), nil
+}
+
+type sharedRefreshContextKey struct{}
+
+func sessionOperationError(ctx context.Context, operation Operation, detail ErrorDetail, cause error) *OperationError {
+	if detail == DetailProviderResponseInvalid && (errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)) {
+		detail = DetailProviderUnavailable
+	}
+	if ctx.Err() != nil && ctx.Value(sharedRefreshContextKey{}) != true {
+		detail = DetailCallerCanceled
+		cause = errors.Join(cause, ctx.Err())
+	}
+	return NewOperationError(NewErrorMetadata(operation, detail), cause)
+}
+
+func refreshResponseError(ctx context.Context, status int, cause error) *OperationError {
+	failure := sessionOperationError(ctx, OperationRefresh, DetailProviderResponseInvalid, cause)
+	return failure.WithMetadata(failure.Metadata().WithProviderResponse(status, ""))
+}
+
+func sessionFailureMetadata(err error) ErrorMetadata {
+	var failure *OperationError
+	if errors.As(err, &failure) {
+		return failure.Metadata()
+	}
+	return NewErrorMetadata(OperationUnknown, DetailInternalUnclassified)
+}
+
+func callerCanceledError(ctx context.Context, fallback Operation, cause error) *OperationError {
+	metadata := sessionFailureMetadata(cause)
+	if metadata.Operation() == OperationUnknown {
+		metadata.operation = fallback
+	}
+	metadata.detail, metadata.kind = DetailCallerCanceled, KindCanceled
+	return NewOperationError(metadata, errors.Join(cause, ctx.Err()))
+}
+
+func sessionRepositoryError(ctx context.Context, detail ErrorDetail, err error) *OperationError {
+	var failure *OperationError
+	if errors.As(err, &failure) {
+		return NewOperationError(failure.Metadata(), err)
+	}
+	if ports.IsNotFoundErr(err) {
+		return sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, errors.Join(ErrSessionNotFound, err))
+	}
+	return sessionOperationError(ctx, OperationRefresh, detail, err)
+}
+
+func tokenAcquisitionError(ctx context.Context, operation Operation, cause error) *OperationError {
+	detail, dependency := DetailRepositoryUnavailable, DependencyProviderRepository
+	if ports.IsNotFoundErr(cause) {
+		detail = DetailConfiguration
+		cause = errors.Join(ErrServiceNotFound, cause)
+	}
+	if errors.Is(cause, thirdparty.ErrProviderConfiguration) {
+		detail = DetailConfiguration
+	}
+	if errors.Is(cause, thirdparty.ErrSecretDecryption) {
+		detail, dependency = DetailDecryptionFailed, DependencyEncryption
+	}
+	failure := sessionOperationError(ctx, operation, detail, cause)
+	if failure.Metadata().Detail() == DetailCallerCanceled {
+		return failure
+	}
+	return failure.WithMetadata(failure.Metadata().WithDependency(dependency))
 }

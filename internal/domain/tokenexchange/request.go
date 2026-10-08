@@ -120,28 +120,28 @@ func NewTokenExchangeRequest(grantType, subjectToken, subjectTokenType, clientAs
 func (req *TokenExchangeRequest) Validate() error {
 	// Validate grant_type
 	if req.GrantType == "" {
-		return NewInvalidRequestError("grant_type parameter is required")
+		return NewInvalidRequestError("grant_type parameter is required").WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 	}
 	if req.GrantType != TokenExchangeGrantType {
-		return NewInvalidRequestError(fmt.Sprintf("grant_type must be %q, got %q", TokenExchangeGrantType, req.GrantType))
+		return NewInvalidRequestError("grant_type must identify token exchange").WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 	}
 
 	// Validate subject_token (required, must not be empty)
 	if req.SubjectToken == "" {
-		return NewInvalidRequestError("subject_token parameter is required")
+		return NewInvalidRequestError("subject_token parameter is required").WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 	}
 
 	// Validate client_assertion (required, must not be empty)
 	if req.ClientAssertion == "" {
-		return NewInvalidRequestError("client_assertion parameter is required")
+		return NewInvalidRequestError("client_assertion parameter is required").WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 	}
 
 	// Validate resource (required per FR-008, FR-049a)
 	if req.Resource == "" {
-		return NewInvalidRequestError("resource parameter is required")
+		return NewInvalidRequestError("resource parameter is required").WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailResourceMissing))
 	}
 	if _, err := NewResourceURI(req.Resource); err != nil {
-		return NewInvalidRequestError(err.Error())
+		return NewInvalidRequestError("resource parameter is invalid").WithCause(err).WithDiagnostic(NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 	}
 
 	return nil

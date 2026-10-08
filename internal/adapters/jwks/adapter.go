@@ -126,8 +126,9 @@ func NewJWKSAdapter(
 			// errsink. Caller-driven ctrl.Refresh failures are recorded in startRefresh.
 			adapter.recordFailure(err)
 			adapter.logger.Warn("JWKS refresh failed",
-				"jwks_uri", adapter.jwksURI,
-				"error", err,
+				"dependency", "jwks",
+				"operation", "refresh",
+				"error_kind", "dependency_failed",
 			)
 		})),
 	)
@@ -185,12 +186,12 @@ func (a *Adapter) GetKeySet(ctx context.Context) (_ jwk.Set, err error) {
 	ctx, span := otel.Tracer("jwks").Start(ctx, "jwks.fetch")
 	defer func() {
 		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
+			span.SetAttributes(attribute.String("error.type", "jwks_unavailable"))
+			span.SetStatus(codes.Error, "JWKS retrieval failed")
 		}
 		span.End()
 	}()
-	span.SetAttributes(attribute.String("url.full", a.jwksURI))
+	span.SetAttributes(attribute.String("dependency", "jwks"), attribute.String("operation", "fetch"))
 
 	if !a.resourceReady() || a.staleError() != nil {
 		if refreshErr := awaitRefresh(ctx, a.startRefresh(ctx)); refreshErr != nil {
@@ -204,10 +205,11 @@ func (a *Adapter) GetKeySet(ctx context.Context) (_ jwk.Set, err error) {
 	if staleErr := a.staleError(); staleErr != nil {
 		return nil, fmt.Errorf("failed to fetch jwks from %s: %w", a.jwksURI, staleErr)
 	}
-	if staleWarn := a.markStaleServeLogged(); staleWarn != nil {
+	if a.markStaleServeLogged() {
 		a.logger.Warn("serving cached JWKS after refresh failure",
-			"jwks_uri", a.jwksURI,
-			"error", staleWarn,
+			"dependency", "jwks",
+			"operation", "fetch",
+			"error_kind", "dependency_failed",
 		)
 	}
 
@@ -238,7 +240,8 @@ func shutdownControllerWithWarning(ctrl controllerShutdowner, logger *slog.Logge
 	if err := ctrl.ShutdownContext(context.Background()); err != nil {
 		logger.Warn("failed to shut down JWKS controller during constructor cleanup",
 			"reason", reason,
-			"error", err,
+			"error_kind", "shutdown_failed",
+			"dependency", "jwks",
 		)
 	}
 }
@@ -263,22 +266,19 @@ func (a *Adapter) staleErrorLocked() error {
 	return nil
 }
 
-func (a *Adapter) markStaleServeLogged() error {
+func (a *Adapter) markStaleServeLogged() bool {
 	a.healthMu.Lock()
 	defer a.healthMu.Unlock()
 
 	if a.lastSuccessAt.IsZero() || a.lastErr == nil {
-		return nil
+		return false
 	}
 	if !a.nextRefreshAt.IsZero() && time.Now().After(a.nextRefreshAt) {
-		return nil
+		return false
 	}
 
 	a.staleServeLogCount++
-	if a.staleServeLogCount == 1 || a.staleServeLogCount%staleServeRelogEvery == 0 {
-		return a.lastErr
-	}
-	return nil
+	return a.staleServeLogCount == 1 || a.staleServeLogCount%staleServeRelogEvery == 0
 }
 
 func (a *Adapter) recordSuccess() {

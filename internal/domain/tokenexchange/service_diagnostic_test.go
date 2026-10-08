@@ -30,19 +30,20 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		code   string
-		reason FailureReason
+		detail FailureDetail
 		status int
 		body   string
 	}{
-		{name: "no grant", code: "access_denied", reason: FailureReasonNoGrant},
-		{name: "no session", code: "invalid_grant", reason: FailureReasonNoSession},
-		{name: "access token expired, no refresh token", code: "invalid_grant", reason: FailureReasonAccessTokenExpired},
-		{name: "stored refresh token expired", code: "invalid_grant", reason: FailureReasonRefreshTokenExpired},
-		{name: "service invalid_grant", code: "invalid_grant", reason: FailureReasonRefreshTokenExpired, status: 400, body: `{"error":"invalid_grant"}`},
-		{name: "service rejects otherwise", code: "server_error", reason: FailureReason("service_rejected"), status: 502, body: "unavailable"},
-		{name: "service unreachable", code: "server_error"},
-		{name: "insufficient scope", code: "invalid_grant", reason: FailureReasonInsufficientScope},
-		{name: "unresolved resource", code: "invalid_target"},
+		{name: "no grant", code: "access_denied", detail: DetailGrantMissing},
+		{name: "expired grant", code: "access_denied", detail: DetailGrantExpired},
+		{name: "no session", code: "invalid_grant", detail: DetailSessionMissing},
+		{name: "access token expired, no refresh token", code: "invalid_grant", detail: DetailAccessTokenExpired},
+		{name: "stored refresh token expired", code: "invalid_grant", detail: DetailRefreshTokenExpired},
+		{name: "service invalid_grant", code: "invalid_grant", detail: DetailRefreshRejected, status: 400, body: `{"error":"invalid_grant"}`},
+		{name: "service rejects otherwise", code: "server_error", detail: DetailProviderUnavailable, status: 502, body: "unavailable"},
+		{name: "service unreachable", code: "server_error", detail: DetailProviderUnavailable},
+		{name: "insufficient scope", code: "invalid_grant", detail: DetailSessionScopeInsufficient},
+		{name: "unresolved resource", code: "invalid_target", detail: DetailResourceUnregistered},
 		{name: "success"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,7 +70,7 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			}}}
 			if tc.name == "unresolved resource" {
 				repo.service = nil
-				repo.err = NewInvalidTargetError("no service configured for the requested resource")
+				repo.err = NewResourceUnregisteredError()
 			}
 			agent := &storagedomain.Agent{ID: agentID, DisplayName: "Test Agent", PermissionSets: []storagedomain.AgentPermissionSetEntry{
 				{PermissionSetID: psID, RequirementType: storagedomain.RequirementTypeOptional},
@@ -82,6 +83,9 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			}}
 			if tc.name == "no grant" {
 				grantRepo.grant = nil
+			}
+			if tc.name == "expired grant" {
+				grantRepo.grant.ValidUntil = &past
 			}
 			psRepo := &MockPermissionSetRepository{psMap: map[id.PermissionSetID]*storagedomain.PermissionSet{psID: {
 				ID: psID, Name: "Test Permission Set", ServiceScopes: []storagedomain.ServiceScope{
@@ -107,7 +111,9 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 				sessionRepo.session.Scope = []string{}
 			}
 			thirdpartyService := newTestProviderService(repo)
-			sessionService := oauth2session.NewOAuth2SessionService(thirdpartyService, sessionRepo, sessionRepo, nil, nil, &MockEncryption{}, &http.Client{Timeout: time.Second}, nil, oauth2session.DefaultConfig(), slog.Default())
+			sessionConfig := oauth2session.DefaultConfig()
+			sessionConfig.CallbackBaseURL = "https://broker.example.com/"
+			sessionService := oauth2session.NewOAuth2SessionService(thirdpartyService, sessionRepo, sessionRepo, nil, nil, &MockEncryption{}, &http.Client{Timeout: time.Second}, nil, sessionConfig, slog.Default())
 			jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
 			require.NoError(t, err)
 			celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
@@ -128,7 +134,7 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			req := NewTokenExchangeRequest(TokenExchangeGrantType, signServiceTestJWT(t, privateKey, claims), AccessTokenType,
 				signServiceTestJWT(t, privateKey, claims), JWTBearerType, "https://api.example.com/resource", "")
 			response, err := svc.Exchange(context.Background(), req)
-			serviceRef := ServiceRef{ID: svcID, Name: "Example Service"}
+			serviceRef := ServiceRef{ID: svcID}
 			if tc.code == "" {
 				require.NoError(t, err)
 				assert.Equal(t, serviceRef, response.Service)
@@ -138,7 +144,17 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			tokenErr, ok := err.(*TokenExchangeError)
 			require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
 			assert.Equal(t, tc.code, tokenErr.Code())
-			assert.Equal(t, tc.reason, tokenErr.FailureReason())
+			assert.Equal(t, tc.detail, tokenErr.Diagnostic().Detail())
+			if tc.detail == DetailGrantMissing || tc.detail == DetailGrantExpired {
+				assert.Nil(t, response)
+				assert.Equal(t, http.StatusForbidden, tokenErr.HTTPStatus())
+				assert.Equal(t, StageGrantAuthorization, tokenErr.Diagnostic().Stage())
+				assert.Equal(t, OutcomeAuthorizationDenied, tokenErr.Diagnostic().Outcome())
+				assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
+				assert.Equal(t, TargetConsent, tokenErr.Diagnostic().RecoveryTarget())
+				assert.Equal(t, "https://broker.example.com/agents/"+agentID.String(), tokenErr.ErrorURI())
+				assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "consent denial must precede session lookup")
+			}
 			if tc.name == "unresolved resource" {
 				serviceRef = ServiceRef{}
 			}

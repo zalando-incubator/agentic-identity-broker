@@ -4,19 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/oauth2"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
@@ -31,7 +28,6 @@ import (
 type ImpersonationService interface {
 	ResolveTarget(ctx context.Context, audiences []string) (*impersonation.Target, bool, error)
 	Impersonate(ctx context.Context, req *impersonation.Request, target *impersonation.Target) (*impersonation.Outcome, error)
-	AudiencePrefix() string
 }
 
 // OAuth2TokenHandler handles OAuth2 token endpoint requests.
@@ -123,8 +119,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeOAuth2ErrorJSON(w, status, clientErr.Code, clientErr.Desc)
 		} else {
 			if h.Logger != nil {
-				h.Logger.ErrorContext(r.Context(), "unexpected error during client resolution",
-					"error", resolveErr, "client_id", rawClientID)
+				h.Logger.ErrorContext(r.Context(), "unexpected error during client resolution", "error_code", "server_error")
 			}
 			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "client resolution failed")
 		}
@@ -136,31 +131,36 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // handleTokenExchange processes RFC 8693 token exchange requests.
 func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.Request, formData url.Values) {
-	// Resolve audience-target activation before the generic resource guard. Unselected audiences
-	// retain third-party exchange behavior; malformed and unknown targets fail closed.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	ctx, span := otel.Tracer("tokenexchange").Start(r.Context(), "tokenexchange.exchange")
+	defer span.End()
+
 	if h.Impersonation != nil {
-		target, activated, err := h.Impersonation.ResolveTarget(r.Context(), formData["audience"])
+		target, activated, err := h.Impersonation.ResolveTarget(ctx, formData["audience"])
 		if err != nil {
-			h.logImpersonationDecision(r.Context(), h.impersonationParseAudit(err))
-			h.handleTokenExchangeError(w, err)
+			span.SetName("tokenexchange.impersonation")
+			h.logImpersonationDecision(ctx, h.impersonationParseAudit(err))
+			h.writeTokenExchangeFailure(ctx, span, w, err, tokenexchange.NewDiagnostic(tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified).WithExchangeKind(tokenexchange.ExchangeImpersonation))
 			return
 		}
 		if activated {
-			h.handleImpersonation(w, r, formData, target)
+			span.SetName("tokenexchange.impersonation")
+			h.handleImpersonation(ctx, span, w, formData, target)
 			return
 		}
 	}
 
 	if h.TokenExchange == nil {
-		if h.Logger != nil {
-			h.Logger.WarnContext(r.Context(), "token exchange not wired, returning unsupported_grant_type")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
+		diagnostic := tokenexchange.NewDiagnostic(tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified)
+		h.observeTokenExchange(ctx, span, diagnostic, nil, tokenexchange.ServiceRef{})
+		writeErr := writeTokenExchangeErrorJSON(w, http.StatusBadRequest, map[string]string{
 			"error":             "unsupported_grant_type",
 			"error_description": "token exchange is not available in this deployment mode",
 		})
+		if writeErr != nil {
+			h.observeTokenExchangeResponseWriteFailure(ctx, span, writeErr, diagnostic.ExchangeKind())
+		}
 		return
 	}
 
@@ -173,152 +173,51 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 		formData.Get("resource"),
 		formData.Get("scope"),
 	)
-
-	// Per FR-008: resource parameter is mandatory and validation occurs at HTTP layer
 	if req.Resource == "" {
-		if h.Logger != nil {
-			h.Logger.WarnContext(r.Context(), "Resource parameter missing")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"error":             "invalid_request",
-			"error_description": "resource parameter is required",
-		})
+		diagnostic := tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailResourceMissing)
+		err := tokenexchange.NewInvalidRequestError("resource parameter is required").WithDiagnostic(diagnostic)
+		h.writeTokenExchangeFailure(ctx, span, w, err, diagnostic)
 		return
 	}
 
-	sanitizedResource := sanitizeResourceURI(req.Resource)
-	ctx, span := otel.Tracer("tokenexchange").Start(r.Context(), "tokenexchange.exchange")
-	defer span.End()
-	span.SetAttributes(
-		attribute.String("token_exchange.resource", sanitizedResource),
-		attribute.String("token_exchange.grant_type", req.GrantType),
-	)
 	response, err := h.TokenExchange.Exchange(ctx, req)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		var tokenErrForSpan *tokenexchange.TokenExchangeError
-		if errors.As(err, &tokenErrForSpan) {
-			if details := tokenErrForSpan.Details(); details != "" {
-				span.SetAttributes(attribute.String("token_exchange.validation_details", truncateSpanAttribute(details, 512)))
-			}
-			span.SetAttributes(
-				attribute.String("token_exchange.error_code", tokenErrForSpan.Code()),
-				attribute.String("token_exchange.error_description", tokenErrForSpan.Description()),
-			)
-			if reason := tokenErrForSpan.FailureReason(); reason != "" {
-				span.SetAttributes(attribute.String("token_exchange.failure_reason", string(reason)))
-			}
-			setServiceSpanAttributes(span, tokenErrForSpan.Service())
-		}
-		thirdpartyStatus, thirdpartyCode, hasThirdparty := thirdpartyRejection(err)
-		if hasThirdparty {
-			span.SetAttributes(
-				attribute.Int("token_exchange.thirdparty_status_code", thirdpartyStatus),
-				attribute.String("token_exchange.thirdparty_error_code", thirdpartyCode),
-			)
-		}
-		if h.Logger != nil {
-			logAttrs := []any{
-				"error", err.Error(),
-				"error_type", fmt.Sprintf("%T", err),
-				"resource", sanitizedResource,
-			}
-			if hasThirdparty {
-				logAttrs = append(logAttrs, "thirdparty_status_code", thirdpartyStatus, "thirdparty_error_code", thirdpartyCode)
-			}
-			var tokenErrForLog *tokenexchange.TokenExchangeError
-			if errors.As(err, &tokenErrForLog) {
-				if cause := errors.Unwrap(tokenErrForLog); cause != nil {
-					logAttrs = append(logAttrs, "cause", cause.Error())
-				}
-				if details := tokenErrForLog.Details(); details != "" {
-					logAttrs = append(logAttrs, "details", details)
-				}
-				if reason := tokenErrForLog.FailureReason(); reason != "" {
-					logAttrs = append(logAttrs, "failure_reason", string(reason))
-				}
-			}
-			h.Logger.ErrorContext(ctx, "Token exchange failed", logAttrs...)
-		}
-		h.handleTokenExchangeError(w, err)
+		h.writeTokenExchangeFailure(ctx, span, w, err, tokenexchange.NewDiagnostic(tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified))
 		return
 	}
-	setServiceSpanAttributes(span, response.Service)
-
-	body, err := json.Marshal(response) // #nosec G117 -- OAuth2 token response is serialized for its direct HTTP response, not logging.
-	if err != nil {
-		if h.Logger != nil {
-			h.Logger.ErrorContext(ctx, "failed to encode token exchange response", "error", err)
-		}
-		http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
-
-	if h.Logger != nil {
-		h.Logger.InfoContext(ctx, "token_exchange_succeeded",
-			"resource", sanitizedResource,
-			"issued_token_type", response.IssuedTokenType,
-		)
-	}
+	h.writeTokenExchangeSuccess(ctx, span, w, response, tokenexchange.ExchangeThirdParty)
 }
 
-// handleImpersonation processes a target-resolved impersonation request end to end. It always
-// emits a credential-free audit event, then writes the RFC 8693 success response or mapped error.
-func (h *OAuth2TokenHandler) handleImpersonation(w http.ResponseWriter, r *http.Request, formData url.Values, target *impersonation.Target) {
-	ctx, span := otel.Tracer("tokenexchange").Start(r.Context(), "tokenexchange.impersonation")
-	defer span.End()
+// handleImpersonation always emits its credential-free audit event before the response.
+func (h *OAuth2TokenHandler) handleImpersonation(ctx context.Context, span trace.Span, w http.ResponseWriter, formData url.Values, target *impersonation.Target) {
 	span.SetAttributes(attribute.String("impersonation.target_agent_id", target.Agent.ID.String()))
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Pragma", "no-cache")
-
 	req, err := impersonation.ParseRequest(formData)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
 		record := h.impersonationParseAudit(err)
 		record.TargetAgentID = target.Agent.ID.String()
 		h.logImpersonationDecision(ctx, record)
-		h.handleTokenExchangeError(w, err)
+		h.writeTokenExchangeFailure(ctx, span, w, err, tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed).WithExchangeKind(tokenexchange.ExchangeImpersonation))
 		return
 	}
 
 	outcome, err := h.Impersonation.Impersonate(ctx, req, target)
-	h.logImpersonationDecision(ctx, outcome.Audit)
+	if outcome != nil {
+		h.logImpersonationDecision(ctx, outcome.Audit)
+	}
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		h.handleTokenExchangeError(w, err)
+		h.writeTokenExchangeFailure(ctx, span, w, err, tokenexchange.NewDiagnostic(tokenexchange.StageSubjectValidation, tokenexchange.DetailInternalUnclassified).WithExchangeKind(tokenexchange.ExchangeImpersonation))
 		return
 	}
-	span.SetAttributes(attribute.String("impersonation.outcome", outcome.Audit.Outcome))
-
-	body, marshalErr := json.Marshal(outcome.Response) // #nosec G117 -- OAuth2 token response is serialized for its direct HTTP response, not logging.
-	if marshalErr != nil {
-		if h.Logger != nil {
-			h.Logger.Error("failed to encode impersonation response", "error", marshalErr)
-		}
-		http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
+	h.writeTokenExchangeSuccess(ctx, span, w, outcome.Response, tokenexchange.ExchangeImpersonation)
 }
 
 // impersonationParseAudit builds an audit record for a failure before rule evaluation.
 func (h *OAuth2TokenHandler) impersonationParseAudit(err error) impersonation.AuditRecord {
-	record := impersonation.AuditRecord{Audience: h.Impersonation.AudiencePrefix()}
+	record := impersonation.AuditRecord{}
 	var tokenErr *tokenexchange.TokenExchangeError
 	if errors.As(err, &tokenErr) {
 		record.Outcome = tokenErr.Code()
 		record.OAuthErrorCode = tokenErr.Code()
-		record.FailureCategory = tokenErr.Details()
 	} else {
 		record.Outcome = "server_error"
 		record.OAuthErrorCode = "server_error"
@@ -335,16 +234,12 @@ func (h *OAuth2TokenHandler) logImpersonationDecision(ctx context.Context, recor
 	attrs := []any{
 		"event", "impersonation_decision",
 		"outcome", record.Outcome,
-		"audience", record.Audience,
 	}
 	if record.TargetAgentID != "" {
 		attrs = append(attrs, "target_agent_id", record.TargetAgentID)
 	}
 	if record.SelectedRule != "" {
 		attrs = append(attrs, "rule", record.SelectedRule)
-	}
-	if len(record.IssuerIdentifiers) > 0 {
-		attrs = append(attrs, "issuer_identifiers", record.IssuerIdentifiers)
 	}
 	if len(record.IssuerRoles) > 0 {
 		attrs = append(attrs, "issuer_roles", record.IssuerRoles)
@@ -361,72 +256,159 @@ func (h *OAuth2TokenHandler) logImpersonationDecision(ctx context.Context, recor
 	if record.OAuthErrorCode != "" {
 		attrs = append(attrs, "oauth_error_code", record.OAuthErrorCode)
 	}
-	if record.FailureCategory != "" {
-		attrs = append(attrs, "failure_category", record.FailureCategory)
-	}
 	if requestID := httpctx.RequestIDFromContext(ctx); requestID != "" {
 		attrs = append(attrs, "request_id", requestID)
 	}
 	h.Logger.InfoContext(ctx, "impersonation_decision", attrs...)
 }
 
-// handleTokenExchangeError maps domain-layer token exchange errors to RFC 8693 error responses.
-func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err error) {
-	var (
-		status  int
-		errBody map[string]string
-	)
-
-	var tokenExchangeErr *tokenexchange.TokenExchangeError
-	if errors.As(err, &tokenExchangeErr) {
-		status = tokenExchangeErr.HTTPStatus()
-		errBody = map[string]string{
-			"error":             tokenExchangeErr.Code(),
-			"error_description": tokenExchangeErr.Description(),
-		}
-		if tokenExchangeErr.ErrorURI() != "" {
-			errBody["error_uri"] = tokenExchangeErr.ErrorURI()
-		}
-	} else {
-		if h.Logger != nil {
-			h.Logger.Error("unrecognized token exchange error", "error", err)
-		}
-		status = http.StatusInternalServerError
-		errBody = map[string]string{
-			"error":             "server_error",
-			"error_description": "internal server error during token exchange",
-		}
+func (h *OAuth2TokenHandler) writeTokenExchangeFailure(ctx context.Context, span trace.Span, w http.ResponseWriter, err error, fallback tokenexchange.Diagnostic) {
+	diagnostic := fallback
+	service := tokenexchange.ServiceRef{}
+	var exchangeErr *tokenexchange.TokenExchangeError
+	if errors.As(err, &exchangeErr) {
+		diagnostic = exchangeErr.Diagnostic().WithExchangeKind(fallback.ExchangeKind())
+		service = exchangeErr.Service()
 	}
-
-	body, marshalErr := json.Marshal(errBody)
-	if marshalErr != nil {
-		if h.Logger != nil {
-			h.Logger.Error("failed to marshal token exchange error response", "error", marshalErr)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"server_error"}`))
-		return
+	h.observeTokenExchange(ctx, span, diagnostic, err, service)
+	if writeErr := h.handleTokenExchangeError(w, err); writeErr != nil {
+		h.observeTokenExchangeResponseWriteFailure(ctx, span, writeErr, diagnostic.ExchangeKind())
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
 }
 
-// thirdpartyRejection extracts the provider HTTP status and an allowlisted OAuth error code from a
-// wrapped RetrieveError. Any non-allowlisted code becomes "unknown" so diagnostics never carry
-// provider-controlled text.
-func thirdpartyRejection(err error) (status int, code string, ok bool) {
-	var retrieveErr *oauth2.RetrieveError
-	if !errors.As(err, &retrieveErr) || retrieveErr.Response == nil {
-		return 0, "", false
+func (h *OAuth2TokenHandler) writeTokenExchangeSuccess(ctx context.Context, span trace.Span, w http.ResponseWriter, response *tokenexchange.TokenExchangeResponse, kind tokenexchange.ExchangeKind) {
+	body, err := json.Marshal(response) // #nosec G117 -- OAuth2 token response is serialized for its direct HTTP response, not logging.
+	if err != nil {
+		diagnostic := tokenexchange.NewDiagnostic(tokenexchange.StageResponseWrite, tokenexchange.DetailResponseWriteFailed).WithExchangeKind(kind)
+		h.writeTokenExchangeFailure(ctx, span, w, tokenexchange.NewServerError("token exchange response could not be encoded").WithCause(err).WithDiagnostic(diagnostic), diagnostic)
+		return
 	}
-	code = "unknown"
-	if oauth2session.IsSafeOAuthErrorCode(retrieveErr.ErrorCode) {
-		code = retrieveErr.ErrorCode
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	if n, writeErr := w.Write(body); writeErr != nil || n != len(body) {
+		h.observeTokenExchangeResponseWriteFailure(ctx, span, writeErr, kind)
+		return
 	}
-	return retrieveErr.Response.StatusCode, code, true
+	h.observeTokenExchange(ctx, span, tokenexchange.SuccessDiagnostic(kind), nil, response.Service)
+}
+
+func (h *OAuth2TokenHandler) observeTokenExchangeResponseWriteFailure(ctx context.Context, span trace.Span, cause error, kind tokenexchange.ExchangeKind) {
+	diagnostic := tokenexchange.NewDiagnostic(tokenexchange.StageResponseWrite, tokenexchange.DetailResponseWriteFailed).WithExchangeKind(kind)
+	if ctx.Err() != nil && errors.Is(cause, ctx.Err()) {
+		diagnostic = tokenexchange.NewDiagnostic(tokenexchange.StageResponseWrite, tokenexchange.DetailCallerCanceled).WithExchangeKind(kind)
+	}
+	h.observeTokenExchange(ctx, span, diagnostic, nil, tokenexchange.ServiceRef{})
+}
+
+func (h *OAuth2TokenHandler) observeTokenExchange(ctx context.Context, span trace.Span, diagnostic tokenexchange.Diagnostic, err error, service tokenexchange.ServiceRef) {
+	attrs := []attribute.KeyValue{
+		attribute.String("token_exchange.outcome", string(diagnostic.Outcome())),
+		attribute.String("token_exchange.recovery_action", string(diagnostic.RecoveryAction())),
+		attribute.String("token_exchange.recovery_target", string(diagnostic.RecoveryTarget())),
+		attribute.String("token_exchange.exchange_kind", string(diagnostic.ExchangeKind())),
+	}
+	level, message := slog.LevelInfo, "token_exchange_succeeded"
+	if diagnostic.Outcome() != tokenexchange.OutcomeSuccess {
+		attrs = append(attrs,
+			attribute.String("token_exchange.failure_stage", string(diagnostic.Stage())),
+			attribute.String("token_exchange.failure_detail", string(diagnostic.Detail())),
+		)
+		level, message = slog.LevelError, "Token exchange failed"
+		span.SetStatus(codes.Error, "token exchange failed")
+	}
+	if !service.ID.IsZero() {
+		attrs = append(attrs, attribute.String("token_exchange.service.id", service.ID.String()))
+	}
+	var operationErr *oauth2session.OperationError
+	if errors.As(err, &operationErr) {
+		metadata := operationErr.Metadata()
+		attrs = append(attrs,
+			attribute.String("token_exchange.session.operation", string(metadata.Operation())),
+			attribute.String("token_exchange.session.detail", string(metadata.Detail())),
+			attribute.String("token_exchange.session.kind", string(metadata.Kind())),
+			attribute.String("token_exchange.session.dependency", string(metadata.Dependency())),
+		)
+		if metadata.StatusCode() != 0 {
+			attrs = append(attrs, attribute.Int("token_exchange.session.status_code", metadata.StatusCode()))
+		}
+		if metadata.OAuthCode() != "" {
+			attrs = append(attrs, attribute.String("token_exchange.session.oauth_code", metadata.OAuthCode()))
+		}
+	}
+	span.SetAttributes(attrs...)
+	if h.Logger != nil {
+		logAttrs := make([]slog.Attr, 0, len(attrs))
+		for _, attr := range attrs {
+			logAttrs = append(logAttrs, slog.Any(string(attr.Key), attr.Value.AsInterface()))
+		}
+		h.Logger.LogAttrs(ctx, level, message, logAttrs...)
+	}
+}
+
+// handleTokenExchangeError keeps recovery links in the direct OAuth response only.
+func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err error) error {
+	status := http.StatusInternalServerError
+	errBody := map[string]string{
+		"error":             "server_error",
+		"error_description": "internal server error during token exchange",
+	}
+	var exchangeErr *tokenexchange.TokenExchangeError
+	if errors.As(err, &exchangeErr) {
+		status = exchangeErr.HTTPStatus()
+		errBody["error"] = exchangeErr.Code()
+		errBody["error_description"] = tokenExchangeErrorDescription(exchangeErr)
+		if exchangeErr.ErrorURI() != "" {
+			errBody["error_uri"] = exchangeErr.ErrorURI()
+		}
+	}
+	return writeTokenExchangeErrorJSON(w, status, errBody)
+}
+
+func writeTokenExchangeErrorJSON(w http.ResponseWriter, status int, body map[string]string) error {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.WriteHeader(status)
+	n, err := w.Write(encoded)
+	if err == nil && n != len(encoded) {
+		return io.ErrShortWrite
+	}
+	return err
+}
+
+func tokenExchangeErrorDescription(err *tokenexchange.TokenExchangeError) string {
+	diagnostic := err.Diagnostic()
+	if diagnostic.Detail() == tokenexchange.DetailResourceMissing {
+		return "resource parameter is required"
+	}
+	if diagnostic.RecoveryTarget() == tokenexchange.TargetProviderSession && diagnostic.RecoveryAction() == tokenexchange.RecoveryReauthenticate {
+		return "User session is unavailable. Please re-authenticate."
+	}
+	if diagnostic.RecoveryAction() == tokenexchange.RecoveryReconsent {
+		return "User authorization is insufficient. Please re-consent."
+	}
+	switch err.Code() {
+	case tokenexchange.InvalidRequestError:
+		return "token exchange request is invalid"
+	case tokenexchange.InvalidClientError:
+		return "client authentication failed"
+	case tokenexchange.InvalidGrantError:
+		return "token exchange grant is invalid or unavailable"
+	case tokenexchange.InvalidTargetError:
+		return "token exchange target is invalid or unavailable"
+	case tokenexchange.InvalidScopeError:
+		return "requested scope is not permitted"
+	case tokenexchange.AccessDeniedError:
+		return "token exchange is not authorized"
+	default:
+		return "internal server error during token exchange"
+	}
 }
 
 // tokenEndpointStatus maps an OAuth2 error code to the appropriate HTTP status for the token endpoint.
@@ -440,47 +422,4 @@ func tokenEndpointStatus(code string) int {
 	default:
 		return http.StatusBadRequest
 	}
-}
-
-func setServiceSpanAttributes(span trace.Span, service tokenexchange.ServiceRef) {
-	if service.ID.IsZero() {
-		return
-	}
-	span.SetAttributes(
-		attribute.String("token_exchange.service.id", service.ID.String()),
-		attribute.String("token_exchange.service.name", service.Name),
-	)
-}
-
-// truncateSpanAttribute trims s to at most maxRunes runes and replaces newlines
-// with spaces, producing a single-line string safe to emit as an OTel span attribute.
-func truncateSpanAttribute(s string, maxRunes int) string {
-	runes := []rune(s)
-	if len(runes) > maxRunes {
-		runes = runes[:maxRunes]
-	}
-	result := make([]rune, len(runes))
-	for i, r := range runes {
-		if r == '\n' || r == '\r' {
-			result[i] = ' '
-		} else {
-			result[i] = r
-		}
-	}
-	return string(result)
-}
-
-// sanitizeResourceURI strips caller-controlled credentials, query strings, and fragments
-// before recording an RFC 8693 resource in telemetry or logs.
-func sanitizeResourceURI(resource string) string {
-	if i := strings.IndexByte(resource, '#'); i >= 0 {
-		resource = resource[:i]
-	}
-	u, err := url.ParseRequestURI(resource)
-	if err != nil {
-		return "[invalid resource URI]"
-	}
-	u.User = nil
-	u.RawQuery = ""
-	return u.String()
 }

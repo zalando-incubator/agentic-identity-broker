@@ -1342,7 +1342,7 @@ var _ = Describe("Permission Sets (019)", func() {
 		// so an SR-only agent would bypass the check even when its grant contained PS entries.
 		// The agent is seeded directly into storage (bypassing the admin API / FR-019 check)
 		// so it has service_requirements but no permission_sets at the agent level.
-		It("returns invalid_grant when requested service is not covered by any PS in grant (SR-only agent)", func() {
+		It("returns access_denied when requested service is not covered by any PS in grant (SR-only agent)", func() {
 			// Create a PS that covers only github.
 			psResp, err := adminServer.DirectRequest(
 				"POST", "/api/permission-sets", adminPrincipal,
@@ -1460,10 +1460,10 @@ var _ = Describe("Permission Sets (019)", func() {
 			defer func() { _ = resp.Body.Close() }()
 
 			// FR-018 fail-closed: google is not authorized by any PS in the grant.
-			Expect(resp.StatusCode).To(Equal(http.StatusBadRequest))
+			Expect(resp.StatusCode).To(Equal(http.StatusForbidden))
 			var errBody map[string]interface{}
 			Expect(json.NewDecoder(resp.Body).Decode(&errBody)).To(Succeed())
-			Expect(errBody["error"]).To(Equal("invalid_grant"))
+			Expect(errBody["error"]).To(Equal("access_denied"))
 		})
 
 		// Edge case: empty permission set submission rejected for agents with mandatory PSes

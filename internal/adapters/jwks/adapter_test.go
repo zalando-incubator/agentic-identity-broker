@@ -343,8 +343,14 @@ func TestGetKeySet_RecordsSpanErrorOnFailure(t *testing.T) {
 	span := findSpanByName(spanRecorder.Ended(), "jwks.fetch")
 	require.NotNil(t, span)
 	assert.Equal(t, codes.Error, span.Status().Code)
-	assert.Contains(t, span.Status().Description, "failed to fetch jwks")
-	assert.Contains(t, spanEvents(span), "exception")
+	assert.Empty(t, span.Events(), "raw JWKS errors must not become exception events")
+	var kind string
+	for _, attr := range span.Attributes() {
+		if attr.Key == "error.type" {
+			kind = attr.Value.AsString()
+		}
+	}
+	assert.Equal(t, "jwks_unavailable", kind)
 }
 
 // TestGetKeySet_ContextCancelled tests cancellation handling
@@ -600,15 +606,6 @@ func findSpanByName(spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnl
 	return nil
 }
 
-func spanEvents(span sdktrace.ReadOnlySpan) []string {
-	events := span.Events()
-	names := make([]string, 0, len(events))
-	for _, event := range events {
-		names = append(names, event.Name)
-	}
-	return names
-}
-
 func TestShutdown_CanBeCalledMultipleTimes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -728,7 +725,7 @@ func TestMarkStaleServeLogged_RelogsEveryTenthServe(t *testing.T) {
 
 	logged := 0
 	for range 10 {
-		if err := adapter.markStaleServeLogged(); err != nil {
+		if adapter.markStaleServeLogged() {
 			logged++
 		}
 	}

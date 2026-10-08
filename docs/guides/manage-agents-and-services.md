@@ -285,9 +285,9 @@ Google requires two `authorization_params` to support token refresh:
   include a refresh token in later responses. `prompt: consent` requests a new refresh
   token.
 
-If either parameter is absent, the broker stores no refresh token. After the access token
-expires, the broker returns `invalid_grant` and *"User session has expired. All tokens are
-no longer valid"*. The user must authenticate again.
+If either parameter is absent, the broker stores no refresh token. After the access token expires, token exchange returns `invalid_grant`.
+The response’s `error_uri` points to the broker sessions page at the public URL’s `/sessions` path.
+There, the user can authenticate again with the provider.
 
 :::tip
 After you add or change `authorization_params`, existing sessions do not change. A user

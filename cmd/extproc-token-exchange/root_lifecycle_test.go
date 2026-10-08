@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/assert"
@@ -82,7 +83,7 @@ func TestRun_TokenGrantFailureStopsStartup(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = io.WriteString(w, `{"error":"temporarily_unavailable"}`)
+		_, _ = io.WriteString(w, `{"error":"temporarily_unavailable","error_description":"provider-description-secret-sentinel","error_uri":"https://recovery-url-secret-sentinel.invalid/private/path"}`)
 	}))
 	defer issuer.Close()
 
@@ -90,7 +91,13 @@ func TestRun_TokenGrantFailureStopsStartup(t *testing.T) {
 	configureExtProcRun(t, issuer.URL, port, "secret")
 	err := run(rootCmd, nil)
 	require.ErrorContains(t, err, "failed to initialize token exchanger")
-	require.ErrorContains(t, err, "startup client assertion failed")
+	var operationErr *extprocserver.OperationError
+	require.ErrorAs(t, err, &operationErr)
+	assert.Equal(t, extprocserver.OperationAssertionRefresh, operationErr.Metadata().Operation())
+	assert.Equal(t, extprocserver.KindUnavailable, operationErr.Metadata().Kind())
+	assert.Equal(t, extprocserver.DependencyOAuthProvider, operationErr.Metadata().Dependency())
+	assert.Equal(t, http.StatusServiceUnavailable, operationErr.Metadata().StatusCode())
+	assert.NotContains(t, err.Error(), "secret-sentinel", "startup error must not serialize provider text or URLs")
 	assert.Equal(t, int32(1), requests.Load(), "startup must attempt the client credentials grant")
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	require.NoError(t, err, "failed token grant must not start the gRPC listener")
@@ -247,19 +254,23 @@ func TestRun_ServesExtProcAndGracefullyStopsOnSIGTERM(t *testing.T) {
 	closeLogs()
 
 	assert.NotContains(t, stdout.String(), secret, "the real command must never log the client secret")
-	redactionLogged := false
+	assert.NotContains(t, stdout.String(), issuer.URL, "startup must not emit endpoint URLs")
+	assert.NotContains(t, stdout.String(), "lifecycle-client")
+	startupLogged := false
 	for _, line := range bytes.Split(stdout.Bytes(), []byte("\n")) {
 		if len(line) == 0 {
 			continue
 		}
 		var entry map[string]any
 		require.NoError(t, json.Unmarshal(line, &entry), "invalid structured command log: %s", line)
-		if value, ok := entry["client_secret"]; ok {
-			redactionLogged = true
-			assert.Equal(t, "[REDACTED]", value)
+		if entry["msg"] == "ExtProc Token Exchange Service starting" {
+			startupLogged = true
+		}
+		for _, field := range []string{"client_secret", "client_id", "token_endpoint", "issuer", "endpoint"} {
+			assert.NotContains(t, entry, field, "credential-bearing configuration must be omitted")
 		}
 	}
-	require.True(t, redactionLogged, "the actual command did not emit its redacted startup log: %s", stdout.String())
+	require.True(t, startupLogged, "the actual startup log must be exercised: %s", stdout.String())
 
 	listener, err := net.Listen("tcp", address)
 	require.NoError(t, err, "SIGTERM must release the gRPC listener")

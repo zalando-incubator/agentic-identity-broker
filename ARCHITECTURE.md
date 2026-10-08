@@ -338,34 +338,9 @@ HTTP servers drain → tp.Shutdown(ctx) → mp.Shutdown(ctx) → lp.Shutdown(ctx
 
 The composite shutdown function is stored as `App.ShutdownTelemetry func(context.Context) error` and called after HTTP servers have drained all in-flight requests.
 
-**Token exchange span attributes and logs**:
+**Token exchange diagnostic boundary**:
 
-The `tokenexchange.exchange` span records `token_exchange.service.id` (service UUID) and `token_exchange.service.name` (`DisplayName`) after resource resolution.
-These attributes accompany successful exchanges and every subsequent failure, including failures without a classified reason.
-Failures before provider resolution omit both attributes.
-
-Classified `Token exchange failed` logs include `failure_reason`, with the same values as the span attribute.
-The existing `resource` field identifies the target. Logs do not add service ID or name fields.
-Successes and unclassified failures omit `failure_reason`.
-Log messages, levels, and existing fields remain unchanged.
-
-The optional `token_exchange.failure_reason` attribute uses these stable values:
-
-| Value | Meaning |
-|---|---|
-| `no_grant` | The grant does not authorize this agent for the third-party service, including missing agents and stale permission sets. |
-| `no_session` | The user has no session for the third-party service. |
-| `access_token_expired` | The access token expired and no refresh token exists. |
-| `refresh_token_expired` | The stored refresh-token expiry passed, or the third-party service returned OAuth `invalid_grant` during refresh. |
-| `insufficient_scope` | The session lacks scopes required by the grant. |
-| `service_rejected` | The refresh endpoint returned a non-2xx status without OAuth `invalid_grant`. |
-
-Transport, decode, decrypt, storage, CIMD, and cancellation errors have no failure reason.
-Refresh rejection classification checks the HTTP status before decoding the body.
-The broker does not populate stored refresh-token expiry, so the third-party service's `invalid_grant` identifies refresh expiry in production.
-A parsed HTTP 400 `invalid_grant` refresh rejection returns client-visible `invalid_grant` with a broker-generated re-authentication `error_uri`; other refresh failures return `server_error`.
-Service metadata stays outside response JSON and contains no client secrets.
-Refresh rejection logs and spans include the third-party HTTP status and an allowlisted OAuth error code; provider-controlled descriptions, URIs, headers, and bodies are omitted.
+Domain errors expose immutable, typed, credential-free diagnostics. Telemetry excludes wrapped causes and sensitive request data. Recovery URLs remain in direct protocol responses, not telemetry. ExtProc derives its own diagnostics without importing broker domain packages. The [token-exchange reference](docs/reference/token-exchange.md#diagnostic-attributes) defines attribute values and classification rules.
 
 #### 3.1.4. End-to-End Testing Architecture
 
@@ -683,6 +658,7 @@ A last-resort net in `LoggingMiddleware` finalizes any still-open holder after t
 - **SR-004 / FR-006**: security-relevant logs carry `trace_id`, `actor`, and optional `calling_peer`.
 - **SR-005 / FR-012**: credentials, cookies, authorization codes, and query strings are not copied into the security context or its logs.
 - **SR-006 / FR-010**: forwarding headers are ignored unless trusted proxy mode is explicitly enabled; when enabled, the broker treats the right-most configured forwarded-header entry as authoritative.
+- **Log-forging protection**: access and recovery middleware escape line-break characters and literal backslashes in logged methods, paths, client addresses, and panic messages. Escapes preserve distinct values for CR, LF, vertical tab, form feed, NEL, and Unicode line and paragraph separators. Ordinary values use an unchanged, allocation-free fast path. Requests and diagnostic stack traces remain unchanged.
 - **SC-008**: the design budget is under 1 ms median per-request overhead with no additional heap allocations beyond one context value and one response header on the hot path.
 
 #### 3.1.5. Encryption Vault for OAuth Tokens (Feature 012)
@@ -1120,7 +1096,7 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 - Initialize logger
 - Initialize telemetry provider (if enabled; bounded by exporter timeout, interruptible by signal)
 - Wire slog-to-OTel bridge (if telemetry + logs enabled)
-- Create TokenExchanger (acquires client assertion; otelhttp wraps outbound HTTP)
+- Create TokenExchanger (acquires client assertion; credential-free transport traces outbound HTTP)
 - Create gRPC server
 - Register ExternalProcessorServer
 - Listen on configured bind/port
@@ -1511,9 +1487,11 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
 
-**ServiceRef**: Third-party service identity for token exchange, with the service ID and display name only. It contains no credentials and is excluded from response JSON.
+**ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
 
-**FailureReason**: Stable classification of a token exchange failure after third-party service resolution. It adds telemetry context without changing the RFC 8693 error response.
+**Diagnostic**: Immutable token-exchange classification: outcome, failure stage/detail, recovery recommendation/target, and exchange kind. It contains no credentials or free-form errors.
+
+**Session Operation Metadata**: Immutable classification at a session-operation origin, with bounded operation, detail, kind, dependency, HTTP status, and allowlisted OAuth code. Exchange diagnostics derive from this metadata, not error descriptions.
 
 **ClientAssertion**: JWT authenticating the privileged client (API gateway or reverse proxy) making the token exchange request. Contains privileged client identifier in the `sub` claim. Validated against the external client-assertion trust anchor's JWKS, not against broker-minted credentials. Represents the privileged client's identity and authorization to perform token exchange.
 

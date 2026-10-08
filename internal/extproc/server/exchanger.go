@@ -23,7 +23,8 @@ import (
 
 	"github.com/sony/gobreaker/v2"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
@@ -67,7 +68,7 @@ type cachedToken struct {
 	grantedPermissionSets map[string][]string
 	principal             string
 	agentID               string
-	reAuthErr             *BrokerExchangeError
+	reAuthErr             error
 	expiresAt             time.Time
 	staleUntil            time.Time
 }
@@ -116,10 +117,21 @@ type BrokerExchangeError struct {
 }
 
 func (e *BrokerExchangeError) Error() string {
-	if e.Description != "" {
-		return fmt.Sprintf("broker error %d: %s (%s)", e.StatusCode, e.Code, e.Description)
+	m := e.Metadata()
+	return fmt.Sprintf("broker exchange failed: %s (status=%d, code=%s)", m.Kind(), m.StatusCode(), m.OAuthCode())
+}
+
+// Metadata returns a bounded copy; raw protocol fields are not telemetry.
+func (e *BrokerExchangeError) Metadata() ErrorMetadata {
+	kind := responseErrorKind(e.StatusCode)
+	if e.StatusCode == http.StatusTooManyRequests && e.ErrorURI != "" {
+		kind = KindRejected
 	}
-	return fmt.Sprintf("broker error %d: %s", e.StatusCode, e.Code)
+	return NewErrorMetadata(OperationExchange, kind, DependencyBroker, e.StatusCode, e.Code)
+}
+
+func (e *BrokerExchangeError) Diagnostic() Diagnostic {
+	return diagnosticForMetadata(e.Metadata(), e)
 }
 
 // assertionState is the atomically-swapped snapshot of the client assertion.
@@ -163,12 +175,12 @@ type TokenExchanger struct {
 // Returns an error if the startup assertion grant fails (fail-fast per FR-006).
 func NewTokenExchanger(cfg *extprocconfig.Config, logger *slog.Logger) (*TokenExchanger, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("config must not be nil")
+		return nil, NewOperationError(NewErrorMetadata(OperationConfiguration, KindConfiguration, DependencyLocal, 0, ""), errors.New("config must not be nil"))
 	}
 
 	httpClient, err := httpclient.New(cfg, cfg.OAuth2.ExchangeTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("building HTTP client: %w", err)
+		return nil, NewOperationError(NewErrorMetadata(OperationConfiguration, KindConfiguration, DependencyLocal, 0, ""), err)
 	}
 
 	te := &TokenExchanger{
@@ -188,7 +200,7 @@ func NewTokenExchanger(cfg *extprocconfig.Config, logger *slog.Logger) (*TokenEx
 
 	// Fail-fast: acquire initial client assertion at startup.
 	if err := te.refreshClientAssertion(); err != nil {
-		return nil, fmt.Errorf("startup client assertion failed: %w", err)
+		return nil, err
 	}
 
 	// Start background eviction goroutine.
@@ -259,7 +271,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 				if errors.As(err, &brokerErr) && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
 					te.cacheMu.Lock()
 					te.cache[key] = &cachedToken{
-						reAuthErr: brokerErr,
+						reAuthErr: err,
 						expiresAt: time.Now().Add(reAuthCooldownTTL),
 					}
 					te.cacheMu.Unlock()
@@ -324,7 +336,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 		result, execErr := te.cb.Execute(doExchangeAndCache)
 		if execErr != nil {
 			if errors.Is(execErr, gobreaker.ErrOpenState) || errors.Is(execErr, gobreaker.ErrTooManyRequests) {
-				execErr = ErrCircuitOpen
+				execErr = NewOperationError(NewErrorMetadata(OperationExchange, KindCircuitOpen, DependencyBroker, 0, ""), errors.Join(ErrCircuitOpen, execErr))
 			}
 			return serveStaleOrErr(execErr)
 		}
@@ -336,11 +348,14 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 	// if their own deadline is exceeded, even if other callers are still waiting.
 	res, err := awaitResult(ctx, resChan)
 	if err != nil {
-		return ExchangeResult{}, err
+		return ExchangeResult{}, NewOperationError(NewErrorMetadata(OperationExchange, KindCallerCanceled, DependencyLocal, 0, ""), err)
 	}
 	if res.Shared {
-		logger.DebugContext(ctx, "singleflight: exchange result shared across concurrent callers",
-			"resource", sanitizeURIForTelemetry(resourceURI))
+		diagnostic := SuccessDiagnostic(ExchangeUnknown)
+		if res.Err != nil {
+			diagnostic = diagnosticFromError(ctx, res.Err)
+		}
+		logDiagnostic(ctx, logger, slog.LevelDebug, "singleflight: exchange result shared across concurrent callers", diagnostic)
 	}
 	if res.Err != nil {
 		return ExchangeResult{}, res.Err
@@ -396,7 +411,7 @@ func (te *TokenExchanger) Shutdown() {
 func (te *TokenExchanger) ClientAssertion() (string, error) {
 	assertion := te.assertion.Load()
 	if assertion == nil || assertion.value == "" || (!assertion.expiresAt.IsZero() && time.Now().After(assertion.expiresAt)) {
-		return "", ErrAssertionExpired
+		return "", NewOperationError(NewErrorMetadata(OperationAssertionRefresh, KindAssertionExpired, DependencyLocal, 0, ""), ErrAssertionExpired)
 	}
 	return assertion.value, nil
 }
@@ -419,34 +434,35 @@ func (te *TokenExchanger) doExchange(ctx context.Context, subjectToken, resource
 	}
 	req, err := http.NewRequestWithContext(exchangeCtx, http.MethodPost, te.cfg.OAuth2.TokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return ExchangeResult{}, 0, fmt.Errorf("building token exchange request: %w", err)
+		return ExchangeResult{}, 0, NewOperationError(NewErrorMetadata(OperationExchange, KindConfiguration, DependencyLocal, 0, ""), err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	otel.GetTextMapPropagator().Inject(exchangeCtx, propagation.HeaderCarrier(req.Header))
 	resp, err := te.client.Do(req)
 	if err != nil {
-		return ExchangeResult{}, 0, fmt.Errorf("token exchange request failed: %w", err)
+		return ExchangeResult{}, 0, NewOperationError(NewErrorMetadata(OperationExchange, KindUnavailable, DependencyBroker, 0, ""), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return ExchangeResult{}, 0, fmt.Errorf("reading token exchange response: %w", err)
+		kind := KindInvalidResponse
+		if resp.StatusCode != http.StatusOK {
+			kind = responseErrorKind(resp.StatusCode)
+		}
+		return ExchangeResult{}, 0, NewOperationError(NewErrorMetadata(OperationExchange, kind, DependencyBroker, resp.StatusCode, ""), err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		var errBody brokerErrorBody
 		_ = json.Unmarshal(body, &errBody)
-		if errBody.Code != "" {
-			logger.WarnContext(ctx, "token exchange returned broker error", "status", resp.StatusCode, "code", errBody.Code, "resource", sanitizeURIForTelemetry(resourceURI), "has_error_uri", errBody.ErrorURI != "")
-			return ExchangeResult{}, 0, &BrokerExchangeError{StatusCode: resp.StatusCode, Code: errBody.Code, Description: errBody.Description, ErrorURI: errBody.ErrorURI}
-		}
-		return ExchangeResult{}, 0, &BrokerExchangeError{StatusCode: resp.StatusCode, Code: fmt.Sprintf("http_%d", resp.StatusCode)}
+		brokerErr := &BrokerExchangeError{StatusCode: resp.StatusCode, Code: errBody.Code, Description: errBody.Description, ErrorURI: errBody.ErrorURI}
+		logOperationError(ctx, logger, slog.LevelWarn, "token exchange returned broker error", brokerErr.Metadata(), brokerErr.Diagnostic())
+		return ExchangeResult{}, 0, NewOperationError(brokerErr.Metadata(), brokerErr)
 	}
 	var response tokenExchangeResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return ExchangeResult{}, 0, fmt.Errorf("parsing token exchange response: %w", err)
+		return ExchangeResult{}, 0, NewOperationError(NewErrorMetadata(OperationExchange, KindInvalidResponse, DependencyBroker, resp.StatusCode, ""), err)
 	}
 	if response.AccessToken == "" {
-		return ExchangeResult{}, 0, fmt.Errorf("token exchange response missing access_token")
+		return ExchangeResult{}, 0, NewOperationError(NewErrorMetadata(OperationExchange, KindInvalidResponse, DependencyBroker, resp.StatusCode, ""), errors.New("token exchange response missing access_token"))
 	}
 	return ExchangeResult{Token: response.AccessToken, GrantedPermissionSets: cloneGrantedPermissionSets(response.GrantedPermissionSets), Principal: response.Principal, AgentID: response.AgentID}, te.computeTTL(response.ExpiresIn), nil
 }
@@ -469,13 +485,38 @@ func (te *TokenExchanger) computeTTL(expiresIn *int) time.Duration {
 // refreshClientAssertion obtains a new client assertion (id_token or access_token based on config)
 // via the client_credentials grant using golang.org/x/oauth2/clientcredentials.
 // Thread-safe: may be called from the background refresh goroutine.
-func (te *TokenExchanger) refreshClientAssertion() error {
+func (te *TokenExchanger) refreshClientAssertion() (resultErr error) {
+	ctx, span := otel.Tracer("extproc").Start(context.Background(), "extproc.client_assertion.refresh")
+	defer func() {
+		metadata := NewErrorMetadata(OperationAssertionRefresh, KindNone, DependencyOAuthProvider, 0, "")
+		diagnostic := SuccessDiagnostic(ExchangeUnknown)
+		if resultErr != nil {
+			// This operation owns its deadline; it has no canceling exchange caller.
+			metadata = metadataFromError(context.Background(), resultErr)
+			diagnostic = diagnosticFromError(context.Background(), resultErr)
+			span.SetStatus(codes.Error, "client assertion refresh failed")
+			logOperationError(ctx, te.logger, slog.LevelError, "client assertion refresh failed", metadata, diagnostic)
+		}
+		span.SetAttributes(
+			attribute.String("operation", string(metadata.Operation())),
+			attribute.String("error_kind", string(metadata.Kind())),
+			attribute.String("dependency", string(metadata.Dependency())),
+			attribute.Int("http.response.status_code", metadata.StatusCode()),
+			attribute.String("oauth.error_code", metadata.OAuthCode()))
+		attrs := diagnostic.metricAttributes()
+		n := len(attrs)
+		if diagnostic.Outcome() == OutcomeSuccess {
+			n = 4
+		}
+		span.SetAttributes(attrs[:n]...)
+		span.End()
+	}()
 	endpoint := te.cfg.OAuth2.ClientCredentialsEndpoint
 	if endpoint == "" {
 		endpoint = te.cfg.OAuth2.Issuer + "/oauth/token"
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), te.cfg.OAuth2.ExchangeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, te.cfg.OAuth2.ExchangeTimeout)
 	defer cancel()
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, te.client)
 
@@ -489,8 +530,7 @@ func (te *TokenExchanger) refreshClientAssertion() error {
 
 	token, err := conf.Token(ctx)
 	if err != nil {
-		te.logger.Error("client credentials grant failed", "error", err)
-		return fmt.Errorf("client credentials grant failed: %w", err)
+		return NewOperationError(assertionErrorMetadata(err), err)
 	}
 
 	var assertion string
@@ -498,23 +538,21 @@ func (te *TokenExchanger) refreshClientAssertion() error {
 	case "id_token":
 		idToken, ok := token.Extra("id_token").(string)
 		if !ok || idToken == "" {
-			return fmt.Errorf("client credentials response missing id_token (required for client assertion with client_assertion_type=id_token)")
+			return NewOperationError(NewErrorMetadata(OperationAssertionRefresh, KindInvalidResponse, DependencyOAuthProvider, http.StatusOK, ""), errors.New("client credentials response missing id_token"))
 		}
 		assertion = idToken
 	case "access_token":
 		if token.AccessToken == "" {
-			return fmt.Errorf("client credentials response missing access_token (required for client assertion with client_assertion_type=access_token)")
+			return NewOperationError(NewErrorMetadata(OperationAssertionRefresh, KindInvalidResponse, DependencyOAuthProvider, http.StatusOK, ""), errors.New("client credentials response missing access_token"))
 		}
 		assertion = token.AccessToken
 	default:
-		return fmt.Errorf("invalid client_assertion_type: %q", te.cfg.OAuth2.ClientAssertionType)
+		return NewOperationError(NewErrorMetadata(OperationAssertionRefresh, KindConfiguration, DependencyLocal, 0, ""), errors.New("invalid client assertion type"))
 	}
 
 	te.assertion.Store(&assertionState{value: assertion, issuedAt: time.Now(), expiresAt: token.Expiry})
 
-	te.logger.Debug("client assertion refreshed",
-		"assertion_type", te.cfg.OAuth2.ClientAssertionType,
-		"expires_at", token.Expiry.Format(time.RFC3339))
+	logDiagnostic(ctx, te.logger, slog.LevelDebug, "client assertion refreshed", SuccessDiagnostic(ExchangeUnknown))
 	return nil
 }
 
@@ -575,10 +613,7 @@ func (te *TokenExchanger) maybeRefreshAssertion() {
 	threshold := max(lifetime/5, 30*time.Second) // 20% of lifetime, floor 30s
 
 	if remaining := time.Until(s.expiresAt); remaining < threshold {
-		if err := te.refreshClientAssertion(); err != nil {
-			te.logger.Error("background client assertion refresh failed",
-				"error", err)
-		}
+		_ = te.refreshClientAssertion() // The refresh operation records bounded failure metadata.
 	}
 }
 

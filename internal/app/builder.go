@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/telemetryhttp"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/contrib/propagators/b3"
 	"go.opentelemetry.io/contrib/propagators/ot"
 	"go.opentelemetry.io/otel"
@@ -546,9 +546,7 @@ func (b *Builder) Build() (*App, error) {
 					return nil, fmt.Errorf("failed to create CIMD fetcher: %w", fetchErr)
 				}
 				if b.config.Telemetry.Enabled && b.config.Telemetry.Traces.Enabled {
-					concreteFetcher.WrapTransport(func(base http.RoundTripper) http.RoundTripper {
-						return otelhttp.NewTransport(base)
-					})
+					concreteFetcher.WrapTransport(telemetryhttp.NewTransport)
 				}
 				activeFetcher = concreteFetcher
 			}
@@ -606,12 +604,9 @@ func (b *Builder) Build() (*App, error) {
 	transport.MaxIdleConnsPerHost = 100
 	upstreamClient := &http.Client{Transport: transport, Timeout: ov.upstreamTimeout}
 
-	// Wrap the HTTP transport with OTel instrumentation when tracing is enabled.
-	// This is the "last resort" layer: even operations without an explicit custom span will
-	// still emit a client span and propagate W3C traceparent/tracestate headers to every
-	// outgoing HTTP call (JWKS fetches, upstream token proxy, OAuth2 session token exchange).
+	// Propagate traces without recording provider URLs, headers, bodies or error strings.
 	if b.config.Telemetry.Enabled && b.config.Telemetry.Traces.Enabled {
-		upstreamClient.Transport = otelhttp.NewTransport(transport)
+		upstreamClient.Transport = telemetryhttp.NewTransport(transport)
 	}
 
 	app.OAuth2SessionService = oauth2session.NewOAuth2SessionService(
@@ -1238,17 +1233,28 @@ func newTokenExchangeAgentIDResolver(agentService *agentsservice.Service, timeou
 			return agent.ID.String(), nil
 		}
 		if !ports.IsNotFoundErr(err) {
-			return "", fmt.Errorf("resolveAgentIdByClientId: %w", err)
+			detail := tokenexchange.DetailAgentRepositoryUnavailable
+			if errors.Is(err, agentsservice.ErrAmbiguousClientID) {
+				detail = tokenexchange.DetailAgentInvalid
+			}
+			return "", tokenexchange.NewServerErrorWithCause("agent identifier resolution failed", err).
+				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageIdentityResolution, detail))
 		}
 
 		parsedAgentID, parseErr := id.ParseAgentID(rawIdentifier)
 		if parseErr != nil {
-			return "", fmt.Errorf("resolveAgentIdByClientId: %w", parseErr)
+			return "", tokenexchange.NewServerErrorWithCause("no agent configured for the subject identity", errors.Join(err, parseErr)).
+				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageIdentityResolution, tokenexchange.DetailAgentMissing))
 		}
 
 		agent, err = agentService.Get(ctx, parsedAgentID)
 		if err != nil {
-			return "", fmt.Errorf("resolveAgentIdByClientId: %w", err)
+			detail := tokenexchange.DetailAgentRepositoryUnavailable
+			if ports.IsNotFoundErr(err) {
+				detail = tokenexchange.DetailAgentMissing
+			}
+			return "", tokenexchange.NewServerErrorWithCause("agent identifier lookup failed", err).
+				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageIdentityResolution, detail))
 		}
 
 		return agent.ID.String(), nil

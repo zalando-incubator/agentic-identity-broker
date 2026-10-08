@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/oauth2"
-
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtclaims"
@@ -171,12 +169,28 @@ func NewTokenExchangeService(
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
 func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (_ *TokenExchangeResponse, err error) {
 	var serviceRef ServiceRef
+	stage := StageRequestValidation
 	defer func() {
-		var tokenErr *TokenExchangeError
-		if !serviceRef.ID.IsZero() && errors.As(err, &tokenErr) {
-			err = tokenErr.WithService(serviceRef)
+		if err == nil {
+			return
 		}
+		var tokenErr *TokenExchangeError
+		if !errors.As(err, &tokenErr) {
+			tokenErr = NewServerErrorWithCause("token exchange failed", err)
+		}
+		diagnostic := tokenErr.Diagnostic()
+		if diagnostic.Detail() == DetailInternalUnclassified {
+			diagnostic = NewDiagnostic(stage, DetailInternalUnclassified)
+		}
+		var sessionErr *oauth2session.OperationError
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) && !errors.As(err, &sessionErr) {
+			diagnostic = NewDiagnostic(diagnostic.Stage(), DetailCallerCanceled)
+		}
+		err = tokenErr.WithDiagnostic(diagnostic).WithService(serviceRef)
 	}()
+	if ctx.Err() != nil {
+		return nil, NewServerErrorWithCause("token exchange canceled", ctx.Err()).WithDiagnostic(NewDiagnostic(stage, DetailCallerCanceled))
+	}
 
 	// Step 1: Validate request structure
 	if err := req.Validate(); err != nil {
@@ -184,18 +198,21 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	}
 
 	// Step 2: Validate subject_token JWT
+	stage = StageSubjectValidation
 	subjectTokenJWT, err := s.jwtValidator.ValidateSubjectToken(ctx, req.SubjectToken)
 	if err != nil {
 		return nil, err
 	}
 
 	// Step 3: Validate client_assertion JWT
+	stage = StageClientValidation
 	clientAssertionJWT, err := s.jwtValidator.ValidateClientAssertion(ctx, req.ClientAssertion)
 	if err != nil {
 		return nil, err
 	}
 
 	// Step 4: Extract principal from subject_token via CEL
+	stage = StageIdentityResolution
 	subjectTokenClaims := jwtclaims.FromToken(subjectTokenJWT)
 	principal, err := s.celEvaluator.ExtractPrincipal(subjectTokenClaims)
 	if err != nil {
@@ -217,6 +234,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	}
 
 	// Step 6: Authorize privileged client via CEL expression evaluation
+	stage = StageClientAuthorization
 	clientAssertionClaims := jwtclaims.FromToken(clientAssertionJWT)
 	requestContext := &CELRequestContext{
 		Resource:  req.Resource,
@@ -230,22 +248,23 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, err
 	}
 	if !authorized {
-		return nil, NewAccessDeniedError("privileged client authorization failed")
+		return nil, NewAccessDeniedError("privileged client authorization failed").WithDiagnostic(NewDiagnostic(stage, DetailClientPolicyDenied))
 	}
 
 	// Step 7: Normalize resource URI
 	normalizedResource := Normalize(req.Resource)
 
 	// Step 8: Lookup service by resource URI
+	stage = StageResourceResolution
 	service, err := s.providerService.FindByProtectedResource(ctx, normalizedResource)
 	if err != nil {
 		if IsTokenExchangeError(err) {
 			// InvalidTarget error from repository
 			return nil, err
 		}
-		return nil, NewServerErrorWithCause("failed to lookup service by resource URI", err)
+		return nil, NewServerErrorWithCause("failed to lookup service by resource URI", err).WithDiagnostic(NewDiagnostic(stage, DetailResourceRepositoryUnavailable))
 	}
-	serviceRef = ServiceRef{ID: service.ID, Name: service.DisplayName}
+	serviceRef = ServiceRef{ID: service.ID}
 
 	// Step 9: Verify user has granted agent access to service (T059-T065)
 	// CRITICAL (T078): Grant verification MUST occur BEFORE session check
@@ -255,21 +274,17 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// T059: Agent ID extracted from subject_token (already done in Step 5)
 	// T060 (Feature 021): agentID is the broker-internal agent UUID (resolved by CEL).
 	// Parse it as UUID and look up by primary key — no GetByClientID needed.
+	stage = StageIdentityResolution
 	parsedAgentID, parseErr := id.ParseAgentID(agentID)
 	if parseErr != nil {
-		return nil, NewInvalidRequestError(
-			fmt.Sprintf("agent_id %q extracted from subject_token is not a valid agent UUID", agentID),
-		)
+		return nil, NewServerErrorWithCause("agent identity configuration is invalid", parseErr).WithDiagnostic(NewDiagnostic(stage, DetailAgentInvalid))
 	}
 	agent, err := s.agentRepository.Get(ctx, parsedAgentID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
-			return nil, NewAccessDeniedErrorWithDetails(
-				"user has not granted permission for this agent to access the requested service",
-				fmt.Sprintf("agent with id %q not found", agentID),
-			).WithFailureReason(FailureReasonNoGrant)
+			return nil, NewServerErrorWithCause("agent is not configured", err).WithDiagnostic(NewDiagnostic(stage, DetailAgentMissing))
 		}
-		return nil, NewServerErrorWithCause("failed to lookup agent by agent_id", err)
+		return nil, NewServerErrorWithCause("failed to lookup agent", err).WithDiagnostic(NewDiagnostic(stage, DetailAgentRepositoryUnavailable))
 	}
 	// T061-T065: Delegate grant verification to ConsentService using internal agent UUID
 	// ConsentService.VerifyAgentAccess checks:
@@ -278,25 +293,22 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// - T063: Return error for missing grant
 	// - T064: Return error for revoked grant
 	// - T065: Return error for expired grant
+	stage = StageGrantAuthorization
 	grant, err := s.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
 	if err != nil {
 		// Map ConsentService errors to TokenExchange errors
 		if errors.Is(err, consent.ErrAgentAccessDenied) {
 			// T063: User has not granted agent access
-			return nil, NewAccessDeniedErrorWithDetails(
-				"user has not granted permission for this agent to access the requested service",
-				err.Error(),
-			).WithFailureReason(FailureReasonNoGrant)
+			return nil, NewAccessDeniedError("user has not granted permission for this agent to access the requested service").
+				WithCause(err).WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, DetailGrantMissing))
 		}
 		if errors.Is(err, consent.ErrGrantExpired) {
 			// T065: User grant has expired
-			return nil, NewAccessDeniedErrorWithDetails(
-				"user grant has expired",
-				err.Error(),
-			).WithFailureReason(FailureReasonNoGrant)
+			return nil, NewAccessDeniedError("user grant has expired").WithCause(err).
+				WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, DetailGrantExpired))
 		}
 		// System/repository error
-		return nil, NewServerErrorWithCause("failed to verify user grant", err)
+		return nil, NewServerErrorWithCause("failed to verify user grant", err).WithDiagnostic(NewDiagnostic(stage, DetailGrantRepositoryUnavailable))
 	}
 
 	// Step 9a: Authorize the requested service against the grant (FR-010, SR-007).
@@ -304,8 +316,8 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// session lookup or credential decryption. Agents that declare neither PermissionSets
 	// nor ServiceRequirements are not exempt.
 	if len(grant.GrantedPermissionSets) == 0 {
-		return nil, NewInvalidGrantError("grant has no permission set entries; re-consent required").
-			WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
+		return nil, NewAccessDeniedError("grant has no permission set entries; re-consent required").
+			WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, DetailGrantInsufficient))
 	}
 	effectiveScopes, err := s.resolveEffectiveScopes(ctx, grant, agent)
 	if err != nil {
@@ -313,10 +325,8 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	}
 	serviceScopes, covered := effectiveScopes[service.ID]
 	if !covered {
-		return nil, NewInvalidGrantError(fmt.Sprintf(
-			"service %s is not authorized by any permission set in the grant; re-consent required",
-			service.ID,
-		)).WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
+		return nil, NewAccessDeniedError("service is not authorized by the grant; re-consent required").
+			WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, DetailGrantInsufficient))
 	}
 
 	// Step 10: Get valid access token with session metadata (with transparent refresh if needed)
@@ -328,60 +338,20 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	//
 	// Per T075: invalid_grant if session doesn't exist
 	// Per T076: invalid_grant if both tokens are expired
+	stage = StageSessionLookup
 	sessionObj, accessToken, err := s.oauth2SessionService.GetValidAccessToken(ctx, id.Principal(principal), service.ID)
 	if err != nil {
-		// Map oauth2session errors to RFC 8693 token exchange errors
-		if errors.Is(err, oauth2session.ErrSessionNotFound) {
-			// T075: No session exists for this principal+service combination
-			// T077: Include service info and re-auth hint in error_description
-			description := fmt.Sprintf(
-				"User has no active session with the requested service. Service: %s. Please re-authenticate to %s.",
-				service.ID,
-				service.DisplayName,
-			)
-			reAuthURL := s.oauth2SessionService.ServiceAuthorizeURL(service.ID)
-			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL).WithFailureReason(FailureReasonNoSession)
+		diagnostic := sessionDiagnostic(err)
+		if diagnostic.Outcome() == OutcomeReauthRequired {
+			return nil, NewInvalidGrantError("provider session is missing or unusable; re-authentication required").
+				WithCause(err).WithErrorURI(s.oauth2SessionService.SessionRecoveryURL()).WithDiagnostic(diagnostic)
 		}
-		if errors.Is(err, oauth2session.ErrSessionExpired) {
-			// T076: Both access and refresh tokens are expired
-			// T077: Include service info and re-auth hint in error_description
-			description := fmt.Sprintf(
-				"User session has expired. All tokens are no longer valid. Service: %s. Please re-authenticate to %s.",
-				service.ID,
-				service.DisplayName,
-			)
-			reAuthURL := s.oauth2SessionService.ServiceAuthorizeURL(service.ID)
-			reason := FailureReasonAccessTokenExpired
-			if errors.Is(err, oauth2session.ErrRefreshTokenExpired) {
-				reason = FailureReasonRefreshTokenExpired
-			}
-			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL).WithFailureReason(reason)
-		}
-		if refreshRejectedWithInvalidGrant(err) {
-			description := fmt.Sprintf(
-				"User session refresh was rejected by the requested service. Service: %s. Please re-authenticate to %s.",
-				service.ID,
-				service.DisplayName,
-			)
-			return nil, NewInvalidGrantError(description).
-				WithErrorURI(s.oauth2SessionService.ServiceAuthorizeURL(service.ID)).
-				WithCause(err).WithFailureReason(FailureReasonRefreshTokenExpired)
-		}
-		// Other errors (other refresh failures, decryption failed, etc)
-		serverErr := NewServerErrorWithCause("failed to get valid access token", err)
-		var rejected *oauth2session.RefreshRejectedError
-		if errors.As(err, &rejected) {
-			reason := FailureReasonServiceRejected
-			if errors.Is(err, oauth2session.ErrRefreshTokenExpired) {
-				reason = FailureReasonRefreshTokenExpired
-			}
-			return nil, serverErr.WithFailureReason(reason)
-		}
-		return nil, serverErr
+		return nil, NewServerErrorWithCause("failed to get valid access token", err).WithDiagnostic(diagnostic)
 	}
 
 	// Step 11: Validate the session's scopes cover the effective scopes for the requested
 	// service (FR-012, FR-013). Requires the session, so it runs after retrieval.
+	stage = StageScopeValidation
 	if len(serviceScopes) > 0 {
 		sessionScopeSet := make(map[string]bool, len(sessionObj.Scope))
 		for _, scope := range sessionObj.Scope {
@@ -394,13 +364,8 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 			}
 		}
 		if len(missingScopes) > 0 {
-			description := fmt.Sprintf(
-				"User session does not cover all required scopes for service %s. Missing: %s. Please re-authenticate with the required scopes.",
-				service.DisplayName,
-				strings.Join(missingScopes, ", "),
-			)
-			reAuthURL := s.oauth2SessionService.ServiceAuthorizeURL(service.ID)
-			return nil, NewInvalidGrantError(description).WithErrorURI(reAuthURL).WithFailureReason(FailureReasonInsufficientScope)
+			return nil, NewInvalidGrantError("provider session does not cover required scopes; re-authentication required").
+				WithErrorURI(s.oauth2SessionService.SessionRecoveryURL()).WithDiagnostic(NewDiagnostic(stage, DetailSessionScopeInsufficient))
 		}
 	}
 
@@ -440,17 +405,6 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	return response, nil
 }
 
-// refreshRejectedWithInvalidGrant reports whether the provider explicitly rejected the stored
-// refresh token (RFC 6749 §5.2 HTTP 400 invalid_grant), which only user re-authentication fixes.
-func refreshRejectedWithInvalidGrant(err error) bool {
-	var retrieveErr *oauth2.RetrieveError
-	return errors.Is(err, oauth2session.ErrRefreshFailed) &&
-		errors.As(err, &retrieveErr) &&
-		retrieveErr.Response != nil &&
-		retrieveErr.Response.StatusCode == 400 &&
-		retrieveErr.ErrorCode == "invalid_grant"
-}
-
 func (s *TokenExchangeService) agentConsentURL(agentID id.AgentID) string {
 	return strings.TrimRight(s.oauth2SessionService.GetCallbackBaseURL(), "/") + "/agents/" + agentID.String()
 }
@@ -475,10 +429,8 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 	psIDs := make([]id.PermissionSetID, len(grant.GrantedPermissionSets))
 	for i, entry := range grant.GrantedPermissionSets {
 		if !declaredPS[entry.PermissionSetID] {
-			return nil, NewInvalidGrantError(fmt.Sprintf(
-				"permission set %s referenced in grant is not declared by the agent; re-consent required",
-				entry.PermissionSetID,
-			)).WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
+			return nil, NewAccessDeniedError("grant references a permission set not declared by the agent; re-consent required").
+				WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantInsufficient))
 		}
 		psIDs[i] = entry.PermissionSetID
 	}
@@ -486,7 +438,7 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 	// Resolve permission sets (TTL cache transparent)
 	resolvedSets, err := s.permissionSetService.GetByIDs(ctx, psIDs)
 	if err != nil {
-		return nil, NewServerErrorWithCause("failed to resolve permission sets", err)
+		return nil, NewServerErrorWithCause("failed to resolve permission sets", err).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantRepositoryUnavailable))
 	}
 
 	// Index resolved PSets by ID for lookup
@@ -513,10 +465,8 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 		if !ok {
 			// Fail closed: any PS referenced by a stored grant must still exist.
 			// Whether mandatory or optional, a missing PS means the grant is stale.
-			return nil, NewInvalidGrantError(fmt.Sprintf(
-				"permission set %s referenced in grant no longer exists; re-consent required",
-				entry.PermissionSetID,
-			)).WithErrorURI(s.agentConsentURL(agent.ID)).WithFailureReason(FailureReasonNoGrant)
+			return nil, NewAccessDeniedError("grant references a missing permission set; re-consent required").
+				WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantInsufficient))
 		}
 		included := grantIndex[entry.PermissionSetID]
 		for _, ss := range ps.ServiceScopes {
