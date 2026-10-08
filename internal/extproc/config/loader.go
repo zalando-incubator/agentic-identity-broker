@@ -138,6 +138,12 @@ func loadFromViperWithCommand(v *viper.Viper, cmd *cobra.Command) (*Config, erro
 		return nil, fmt.Errorf("failed to unmarshal configuration: %w", err)
 	}
 
+	// These are read directly rather than decoded: a map key containing a
+	// literal dot (e.g. "service.namespace") is indistinguishable from nesting
+	// once Viper flattens config paths, so Unmarshal can't represent it.
+	cfg.Telemetry.ResourceAttributes = v.GetStringMapString("telemetry.resource_attributes")
+	cfg.Telemetry.Exporter.Headers = v.GetStringMapString("telemetry.exporter.headers")
+
 	// Expand ${VAR} notation in all string fields
 	expandEnvVars(cfg)
 
@@ -384,7 +390,6 @@ func applyDefaults(v *viper.Viper) {
 func applyTelemetryDefaults(v *viper.Viper) {
 	v.SetDefault("telemetry.enabled", false)
 	v.SetDefault("telemetry.service_name", "extproc-token-exchange")
-	v.SetDefault("telemetry.resource_attributes", map[string]string{})
 	v.SetDefault("telemetry.traces.enabled", true)
 	v.SetDefault("telemetry.traces.sampling_rate", 1.0)
 	v.SetDefault("telemetry.traces.propagators", []string{"tracecontext", "ottrace", "b3multi", "baggage"})
@@ -393,7 +398,6 @@ func applyTelemetryDefaults(v *viper.Viper) {
 	v.SetDefault("telemetry.logs.enabled", true)
 	v.SetDefault("telemetry.exporter.protocol", "grpc")
 	v.SetDefault("telemetry.exporter.endpoint", "")
-	v.SetDefault("telemetry.exporter.headers", map[string]string{})
 	v.SetDefault("telemetry.exporter.timeout", "10s")
 	v.SetDefault("telemetry.exporter.insecure", false)
 	v.SetDefault("telemetry.exporter.compression", "none")

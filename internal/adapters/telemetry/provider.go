@@ -143,8 +143,8 @@ func NewProvider(ctx context.Context, cfg ports.TelemetryConfig, logger *slog.Lo
 }
 
 // buildResource constructs the OTel resource with service metadata and additional
-// resource attributes from config. WithAttributes is listed last so custom values
-// take precedence over detected attributes on duplicate keys.
+// resource attributes from config. WithAttributes is listed last so explicit
+// config values take precedence over detected/env attributes on duplicate keys.
 func buildResource(ctx context.Context, cfg ports.TelemetryConfig) (*resource.Resource, error) {
 	attrs := []attribute.KeyValue{
 		semconv.ServiceName(cfg.ServiceName),
@@ -162,6 +162,7 @@ func buildResource(ctx context.Context, cfg ports.TelemetryConfig) (*resource.Re
 		resource.WithProcessPID(),
 		resource.WithProcessRuntimeName(),
 		resource.WithProcessRuntimeVersion(),
+		resource.WithFromEnv(),
 		resource.WithAttributes(attrs...),
 	)
 }

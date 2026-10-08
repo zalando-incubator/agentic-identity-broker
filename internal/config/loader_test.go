@@ -249,6 +249,53 @@ func TestImpersonationEnvironmentVariableNoLongerOverridesYAML(t *testing.T) {
 	assert.Equal(t, "https://yaml.example.com/impersonation", cfg.OAuth2AuthServer.Impersonation.AudiencePrefix)
 }
 
+// Regression test: a dotted resource attribute key (e.g. "service.namespace")
+// used to crash config loading nondeterministically. Looped to catch flakes.
+func TestConfigurationResourceAttributesDottedKey(t *testing.T) {
+	setMinimalConfigEnv(t)
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`telemetry:
+  resource_attributes:
+    service.namespace: zap-agentgateway
+    k8s.pod.name: central-extproc-abc123
+`), 0o600))
+	t.Setenv("IDENTITY_BROKER_CONFIG_PATH", configPath)
+
+	for i := 0; i < 200; i++ {
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+		require.NoError(t, err, "iteration %d", i)
+		assert.Equal(t, map[string]string{
+			"service.namespace": "zap-agentgateway",
+			"k8s.pod.name":      "central-extproc-abc123",
+		}, cfg.Telemetry.ResourceAttributes, "iteration %d: dotted keys must be preserved flat, not nested", i)
+	}
+}
+
+func TestConfigurationExporterHeadersDottedKey(t *testing.T) {
+	setMinimalConfigEnv(t)
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`telemetry:
+  exporter:
+    headers:
+      x.custom.header: value
+      authorization: Bearer token
+`), 0o600))
+	t.Setenv("IDENTITY_BROKER_CONFIG_PATH", configPath)
+
+	for i := 0; i < 200; i++ {
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+		require.NoError(t, err, "iteration %d", i)
+		assert.Equal(t, map[string]string{
+			"x.custom.header": "value",
+			"authorization":   "Bearer token",
+		}, cfg.Telemetry.Exporter.Headers, "iteration %d: dotted keys must be preserved flat, not nested", i)
+	}
+}
+
 func TestConfigLoader_MissingOAuth2Mode(t *testing.T) {
 	t.Run("GetConfig fails when oauth2_authorization_server.mode is not set", func(t *testing.T) {
 		t.Setenv("IDENTITY_BROKER_JWE_SIGNING_KEY", generateBase64EncodedString(t, 32))
