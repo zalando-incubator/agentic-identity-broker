@@ -4,6 +4,8 @@ package http
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -82,6 +84,86 @@ func TestLoggingMiddlewareLogsAllPathsWhenNoPrefixesGiven(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "HTTP request") {
 		t.Errorf("expected log output when no prefixes given, got: %s", buf.String())
+	}
+}
+
+func TestMiddlewareSanitizesLogValues(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		middleware func(*slog.Logger) func(http.Handler) http.Handler
+		panicValue func(string) any
+		status     int
+	}{
+		{"access", func(logger *slog.Logger) func(http.Handler) http.Handler { return LoggingMiddleware(logger) }, nil, http.StatusNoContent},
+		{"panic string", func(logger *slog.Logger) func(http.Handler) http.Handler { return RecoveryMiddleware(logger, false) }, func(s string) any { return s }, http.StatusInternalServerError},
+		{"panic error", func(logger *slog.Logger) func(http.Handler) http.Handler { return RecoveryMiddleware(logger, false) }, func(s string) any { return errors.New(s) }, http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, value := range []struct{ raw, escaped string }{
+				{"", ""},
+				{"\r", `\r`},
+				{"\n", `\n`},
+				{"\r\n", `\r\n`},
+				{"\v", `\v`},
+				{"\f", `\f`},
+				{"\u0085", `\u0085`},
+				{"\u2028", `\u2028`},
+				{"\u2029", `\u2029`},
+				{`\`, `\\`},
+				{`\r`, `\\r`},
+				{`\n`, `\\n`},
+				{`\r\n`, `\\r\\n`},
+				{`\v`, `\\v`},
+				{`\f`, `\\f`},
+				{`\u0085`, `\\u0085`},
+				{`\u2028`, `\\u2028`},
+				{`\u2029`, `\\u2029`},
+				{"\n\\n", `\n\\n`},
+				{"é", "é"},
+			} {
+				t.Run(fmt.Sprintf("input %q", value.raw), func(t *testing.T) {
+					for _, source := range []string{"remote address", "context client IP"} {
+						t.Run(source, func(t *testing.T) {
+							base := newPanicLogCaptureHandler()
+							logger := slog.New(base)
+							method := "GE" + value.raw + "T"
+							path := "/api/" + value.raw + "resource"
+							clientIP := "192.0.2." + value.raw + "1"
+							panicMessage := "invalid " + value.raw + "input"
+							handler := tc.middleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+								assert.Equal(t, method, r.Method)
+								assert.Equal(t, path, r.URL.Path)
+								if tc.panicValue != nil {
+									panic(tc.panicValue(panicMessage))
+								}
+								w.WriteHeader(tc.status)
+							}))
+							req := httptest.NewRequest(http.MethodGet, "/api/resource", nil)
+							req.Method = method
+							req.URL.Path = path
+							req.RemoteAddr = clientIP
+							if source == "context client IP" {
+								req.RemoteAddr = "198.51.100.2:1234"
+								req = req.WithContext(security.WithSecurityContext(req.Context(), security.SecurityContext{ClientIP: clientIP}))
+							}
+							rr := httptest.NewRecorder()
+							handler.ServeHTTP(rr, req)
+
+							assert.Equal(t, tc.status, rr.Code)
+							require.Len(t, *base.records, 1)
+							attrs := (*base.records)[0].attrs
+							assert.Equal(t, "GE"+value.escaped+"T", attrs["method"])
+							assert.Equal(t, "/api/"+value.escaped+"resource", attrs["path"])
+							assert.Equal(t, "192.0.2."+value.escaped+"1", attrs["remote_addr"])
+							assert.Equal(t, "192.0.2."+value.escaped+"1", attrs["client_ip"])
+							if tc.panicValue != nil {
+								assert.Equal(t, "invalid "+value.escaped+"input", attrs["error"])
+							}
+						})
+					}
+				})
+			}
+		})
 	}
 }
 

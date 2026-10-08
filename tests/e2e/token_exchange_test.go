@@ -302,7 +302,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US1-S6 from specs/013-token-exchange/spec.md
-		It("[US1-S6] should return 400 invalid_request with invalid subject_token", func() {
+		It("[US1-S6] should return 400 invalid_grant with invalid subject_token", func() {
 			// Given: Request with malformed subject_token (not a valid JWT structure)
 			data := url.Values{
 				"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
@@ -318,13 +318,13 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
-			// Then: Returns 400 with invalid_request error
+			// A rejected subject credential is not a malformed OAuth request.
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
 
 			var errorResponse map[string]interface{}
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(errorResponse["error"]).To(Equal("invalid_request"))
+			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
 		})
 	})
 
@@ -556,6 +556,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("access_denied"))
+			Expect(errorResponse["error_uri"]).To(Equal(strings.TrimRight(config.Server.EndUser.PublicURL, "/") + "/agents/" + agent.ID.String()))
 		})
 
 		// Spec Reference: US3-S3 from specs/013-token-exchange/spec.md
@@ -629,12 +630,11 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
-			// Then: 400 invalid_grant with the agent consent-management URI; no token is issued
-			// and the provider token endpoint is never contacted.
-			Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
+			// Consent denial precedes token-vault access and supplies the consent-management URI.
+			Expect(resp).To(matchers.HaveStatusCode(http.StatusForbidden))
 			var errorResponse map[string]interface{}
 			Expect(json.NewDecoder(resp.Body).Decode(&errorResponse)).To(Succeed())
-			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
+			Expect(errorResponse["error"]).To(Equal("access_denied"))
 			Expect(errorResponse["error_uri"]).To(Equal(strings.TrimRight(config.Server.EndUser.PublicURL, "/") + "/agents/" + agent.ID.String()))
 			Expect(errorResponse).NotTo(HaveKey("access_token"))
 			Expect(mockUpstream.GetTokenRequests()).To(BeEmpty())
@@ -679,6 +679,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("access_denied"))
+			Expect(errorResponse["error_uri"]).To(Equal(strings.TrimRight(config.Server.EndUser.PublicURL, "/") + "/agents/" + agent.ID.String()))
 		})
 	})
 
@@ -900,6 +901,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
+			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
 		})
 
 		// Spec Reference: US5-S2 from specs/013-token-exchange/spec.md
@@ -931,10 +933,11 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
+			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
 		})
 
 		// Spec Reference: US5-S3 from specs/013-token-exchange/spec.md
-		It("[US5-S3] should include sufficient info in error_description for re-auth flow", func() {
+		It("[US5-S3] should direct session recovery to the sessions page", func() {
 			// Given: Request that will fail with invalid_grant (no session exists)
 			ctx := context.Background()
 			anotherPrincipal := fixtures.AdminPrincipal().String()
@@ -971,15 +974,13 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(err).NotTo(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
 
-			// Then: Error includes actionable description for re-auth
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusBadRequest))
 
 			var errorResponse map[string]interface{}
 			err = json.NewDecoder(resp.Body).Decode(&errorResponse)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
-			Expect(errorResponse).To(HaveKey("error_description"))
-			Expect(errorResponse["error_description"]).NotTo(BeEmpty())
+			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
 		})
 
 		// Spec Reference: US5-S4 from specs/013-token-exchange/spec.md
@@ -1016,12 +1017,14 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			var errorResponse map[string]interface{}
 			Expect(json.Unmarshal(rawBody, &errorResponse)).To(Succeed())
 			Expect(errorResponse["error"]).To(Equal("invalid_grant"))
-			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/api/third-party/" + githubServiceID.String() + "/oauth2/authorize"))
+			Expect(errorResponse["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
 			Expect(errorResponse).NotTo(HaveKey("access_token"))
 			Expect(string(rawBody)).NotTo(ContainSubstring("sentinel-provider-secret"))
 			Expect(logBuf.String()).NotTo(ContainSubstring("sentinel-provider-secret"))
-			Expect(logBuf.String()).To(ContainSubstring("thirdparty_status_code=400"))
-			Expect(logBuf.String()).To(ContainSubstring("thirdparty_error_code=invalid_grant"))
+			Expect(logBuf.String()).To(ContainSubstring("token_exchange.session.status_code=400"))
+			Expect(logBuf.String()).To(ContainSubstring("token_exchange.session.oauth_code=invalid_grant"))
+			Expect(logBuf.String()).To(ContainSubstring("token_exchange.failure_detail=refresh_rejected"))
+			Expect(logBuf.String()).To(ContainSubstring("token_exchange.recovery_target=provider_session"))
 
 			// And: The stored session is unchanged.
 			after, err := testStorage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), githubServiceID)
@@ -1075,8 +1078,10 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(errorResponse["error"]).To(Equal("server_error"))
 			Expect(errorResponse).NotTo(HaveKey("error_uri"))
 			Expect(string(rawBody)).NotTo(ContainSubstring("sentinel-provider-secret"))
-			Expect(logBuf.String()).To(ContainSubstring("thirdparty_status_code=400"))
-			Expect(logBuf.String()).To(ContainSubstring("thirdparty_error_code=invalid_client"))
+			Expect(logBuf.String()).To(ContainSubstring("token_exchange.session.status_code=400"))
+			Expect(logBuf.String()).To(ContainSubstring("token_exchange.session.oauth_code=invalid_client"))
+			Expect(logBuf.String()).To(ContainSubstring("token_exchange.failure_detail=provider_client_rejected"))
+			Expect(logBuf.String()).To(ContainSubstring("token_exchange.recovery_action=fix_configuration"))
 			Expect(logBuf.String()).NotTo(ContainSubstring("sentinel-provider-secret"))
 		})
 	})

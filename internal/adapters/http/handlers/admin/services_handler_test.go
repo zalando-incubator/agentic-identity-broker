@@ -341,9 +341,9 @@ func TestServicesHandler_CreateService(t *testing.T) {
 		bodyBytes, _ := json.Marshal(reqBody)
 
 		mockRepo.On("FindByProtectedResource", mock.Anything, "https://api.example.com").
-			Return(nil, tokenexchange.NewInvalidTargetErrorWithDetails("no service configured for the requested resource", "resource_not_found")).Once()
+			Return(nil, tokenexchange.NewResourceUnregisteredError()).Once()
 		mockRepo.On("FindByProtectedResource", mock.Anything, "https://api.example.com/v2").
-			Return(nil, tokenexchange.NewInvalidTargetErrorWithDetails("no service configured for the requested resource", "resource_not_found")).Once()
+			Return(nil, tokenexchange.NewResourceUnregisteredError()).Once()
 
 		mockRepo.On("Create", mock.Anything, mock.MatchedBy(func(e *model.ThirdpartyOAuth2ProviderEntity) bool {
 			return len(e.ProtectedResources) == 2 &&
@@ -431,7 +431,7 @@ func TestServicesHandler_CreateService(t *testing.T) {
 		bodyBytes, _ := json.Marshal(reqBody)
 
 		mockRepo.On("FindByProtectedResource", mock.Anything, "https://api.example.com").
-			Return(nil, tokenexchange.NewInvalidTargetErrorWithDetails("multiple services configured for the same resource", "resource_ambiguous")).Once()
+			Return(nil, tokenexchange.NewResourceAmbiguousError()).Once()
 
 		req := httptest.NewRequest(http.MethodPost, "/api/third-party/oauth2/clients", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
@@ -1426,9 +1426,9 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 		bodyBytes, _ := json.Marshal(reqBody)
 
 		mockRepo.On("FindByProtectedResource", mock.Anything, "https://api.example.com").
-			Return(nil, tokenexchange.NewInvalidTargetErrorWithDetails("no service configured for the requested resource", "resource_not_found")).Once()
+			Return(nil, tokenexchange.NewResourceUnregisteredError()).Once()
 		mockRepo.On("FindByProtectedResource", mock.Anything, "https://api.example.com/v2").
-			Return(nil, tokenexchange.NewInvalidTargetErrorWithDetails("no service configured for the requested resource", "resource_not_found")).Once()
+			Return(nil, tokenexchange.NewResourceUnregisteredError()).Once()
 
 		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(e *model.ThirdpartyOAuth2ProviderEntity) bool {
 			return e.ID == serviceID &&
@@ -2029,7 +2029,7 @@ func TestServicesHandler_UpdateServiceProtectedResourcesETag(t *testing.T) {
 	t.Run("uses strong ETag and emits replacement version", func(t *testing.T) {
 		mockRepo := new(MockProviderRepository)
 		handler := setupHandler(t, mockRepo)
-		mockRepo.On("FindByProtectedResource", mock.Anything, "https://api.example.com/resource").Return(nil, tokenexchange.NewInvalidTargetErrorWithDetails("not found", "resource_not_found"))
+		mockRepo.On("FindByProtectedResource", mock.Anything, "https://api.example.com/resource").Return(nil, tokenexchange.NewResourceUnregisteredError())
 		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
 			return entity.ProtectedResources[0] == "https://api.example.com/resource" && entity.Secret.IsEncrypted()
 		}), mock.MatchedBy(func(version *int64) bool { return version != nil && *version == 7 })).Run(func(args mock.Arguments) { args.Get(1).(*model.ThirdpartyOAuth2ProviderEntity).Version = 8 }).Return(nil)
@@ -2047,7 +2047,7 @@ func TestServicesHandler_UpdateServiceProtectedResourcesETag(t *testing.T) {
 	t.Run("maps a stale resource replacement to 412", func(t *testing.T) {
 		mockRepo := new(MockProviderRepository)
 		handler := setupHandler(t, mockRepo)
-		mockRepo.On("FindByProtectedResource", mock.Anything, "https://api.example.com/resource").Return(nil, tokenexchange.NewInvalidTargetErrorWithDetails("not found", "resource_not_found"))
+		mockRepo.On("FindByProtectedResource", mock.Anything, "https://api.example.com/resource").Return(nil, tokenexchange.NewResourceUnregisteredError())
 		mockRepo.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(storage.NewStorageError("Update", storage.ErrorKindConflict, nil, "provider version is stale"))
 		req, recorder := newRequest(body, `"7"`)
 		handler.UpdateService(recorder, req)

@@ -373,7 +373,7 @@ broker:
       port: 14000
       # -- Bind address
       bind: "::"
-      # -- Public URL for admin API
+      # -- Public URL for admin API Host validation; set to the external admin URL (proxy must preserve Host). Empty uses the broker default http://localhost:14000.
       publicUrl: ""
       # Authentication
       authentication:

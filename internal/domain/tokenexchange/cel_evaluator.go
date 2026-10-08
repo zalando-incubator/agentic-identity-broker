@@ -3,6 +3,7 @@ package tokenexchange
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -116,10 +117,8 @@ func (e *CELEvaluator) compilePrincipalExpression() error {
 
 	program, err := e.compileExpression(expr)
 	if err != nil {
-		return NewServerErrorWithDetails(
-			"invalid principal extraction CEL expression at startup",
-			"principal_expression_invalid",
-		)
+		return NewServerErrorWithCause("invalid principal extraction CEL expression at startup", err).
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
 	}
 
 	e.principalProgram = program
@@ -136,10 +135,8 @@ func (e *CELEvaluator) compileAgentIDExpression() error {
 
 	program, err := e.compileExpression(expr)
 	if err != nil {
-		return NewServerErrorWithDetails(
-			"invalid agent ID extraction CEL expression at startup",
-			"agent_id_expression_invalid",
-		)
+		return NewServerErrorWithCause("invalid agent ID extraction CEL expression at startup", err).
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
 	}
 
 	e.agentIDProgram = program
@@ -156,10 +153,8 @@ func (e *CELEvaluator) compileAuthorizationExpression() error {
 
 	program, err := e.compileExpression(expr)
 	if err != nil {
-		return NewServerErrorWithDetails(
-			"invalid authorization CEL expression at startup",
-			"authorization_expression_invalid",
-		)
+		return NewServerErrorWithCause("invalid authorization CEL expression at startup", err).
+			WithDiagnostic(NewDiagnostic(StageClientAuthorization, DetailCELConfiguration))
 	}
 
 	e.authorizationProgram = program
@@ -190,11 +185,12 @@ func (e *CELEvaluator) compileExpression(expr string) (cel.Program, error) {
 				cel.UnaryBinding(func(arg ref.Val) ref.Val {
 					clientID, ok := arg.Value().(string)
 					if !ok {
-						return types.NewErr("resolveAgentIdByClientId: argument must be a string")
+						return types.WrapErr(NewServerError("agent resolver argument must be a string").
+							WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration)))
 					}
 					agentID, err := resolver(clientID)
 					if err != nil {
-						return types.NewErr("resolveAgentIdByClientId: %v", err)
+						return types.WrapErr(err)
 					}
 					return types.String(agentID)
 				}),
@@ -247,10 +243,7 @@ func (e *CELEvaluator) ExtractPrincipal(subjectTokenClaims map[string]interface{
 	// Evaluate the expression
 	result, err := e.evaluateWithTimeout(ctx, e.principalProgram, variables)
 	if err != nil {
-		return "", NewServerErrorWithDetails(
-			"failed to extract principal from subject_token",
-			"principal_extraction_failed",
-		)
+		return "", celEvaluationError("failed to extract principal from subject_token", StageIdentityResolution, err)
 	}
 
 	// Convert result to string
@@ -260,18 +253,14 @@ func (e *CELEvaluator) ExtractPrincipal(subjectTokenClaims map[string]interface{
 		if val, ok := result.(types.String); ok {
 			principal = string(val)
 		} else {
-			return "", NewServerErrorWithDetails(
-				"principal extraction did not return a string",
-				"principal_extraction_type_error",
-			)
+			return "", NewServerError("principal extraction did not return a string").
+				WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
 		}
 	}
 
 	if principal == "" {
-		return "", NewServerErrorWithDetails(
-			"principal extraction returned empty value",
-			"principal_extraction_empty",
-		)
+		return "", NewServerError("principal extraction returned empty value").
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
 	}
 
 	return principal, nil
@@ -295,10 +284,7 @@ func (e *CELEvaluator) ExtractAgentID(subjectTokenClaims map[string]interface{})
 	// Evaluate the expression
 	result, err := e.evaluateWithTimeout(ctx, e.agentIDProgram, variables)
 	if err != nil {
-		return "", NewServerErrorWithDetails(
-			"failed to extract agent ID from subject_token",
-			"agent_id_extraction_failed",
-		)
+		return "", celEvaluationError("failed to extract agent ID from subject_token", StageIdentityResolution, err)
 	}
 
 	// Convert result to string
@@ -308,18 +294,14 @@ func (e *CELEvaluator) ExtractAgentID(subjectTokenClaims map[string]interface{})
 		if val, ok := result.(types.String); ok {
 			agentID = string(val)
 		} else {
-			return "", NewServerErrorWithDetails(
-				"agent ID extraction did not return a string",
-				"agent_id_extraction_type_error",
-			)
+			return "", NewServerError("agent ID extraction did not return a string").
+				WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
 		}
 	}
 
 	if agentID == "" {
-		return "", NewServerErrorWithDetails(
-			"agent ID extraction returned empty value",
-			"agent_id_extraction_empty",
-		)
+		return "", NewServerError("agent ID extraction returned empty value").
+			WithDiagnostic(NewDiagnostic(StageIdentityResolution, DetailCELConfiguration))
 	}
 
 	return agentID, nil
@@ -357,10 +339,7 @@ func (e *CELEvaluator) AuthorizePrivilegedClient(
 	// Evaluate the expression
 	result, err := e.evaluateWithTimeout(ctx, e.authorizationProgram, variables)
 	if err != nil {
-		return false, NewServerErrorWithDetails(
-			"CEL authorization expression evaluation timed out",
-			"authorization_timeout",
-		)
+		return false, celEvaluationError("CEL authorization expression evaluation failed", StageClientAuthorization, err)
 	}
 
 	// Convert result to boolean
@@ -370,19 +349,29 @@ func (e *CELEvaluator) AuthorizePrivilegedClient(
 		if val, ok := result.(types.Bool); ok {
 			authorized = bool(val)
 		} else {
-			return false, NewServerErrorWithDetails(
-				"authorization expression did not return a boolean",
-				"authorization_type_error",
-			)
+			return false, NewServerError("authorization expression did not return a boolean").
+				WithDiagnostic(NewDiagnostic(StageClientAuthorization, DetailCELConfiguration))
 		}
 	}
 
 	// If authorization fails, return access_denied
 	if !authorized {
-		return false, NewAccessDeniedError("privileged client authorization denied by CEL policy")
+		return false, NewAccessDeniedError("privileged client authorization denied by CEL policy").
+			WithDiagnostic(NewDiagnostic(StageClientAuthorization, DetailClientPolicyDenied))
 	}
 
 	return true, nil
+}
+
+// celEvaluationError retains resolver-origin diagnostics and all wrapped causes.
+// An evaluator-owned deadline is an infrastructure failure, not caller cancellation.
+func celEvaluationError(description string, stage FailureStage, cause error) *TokenExchangeError {
+	diagnostic := NewDiagnostic(stage, DetailCELEvaluationFailed)
+	var origin *TokenExchangeError
+	if errors.As(cause, &origin) && origin.Diagnostic().Detail() != DetailInternalUnclassified {
+		diagnostic = origin.Diagnostic()
+	}
+	return NewServerErrorWithCause(description, cause).WithDiagnostic(diagnostic)
 }
 
 // evaluateWithTimeout evaluates a CEL program with timeout enforcement.
@@ -413,11 +402,7 @@ func (e *CELEvaluator) evaluateWithTimeout(
 		}
 		return result.value, nil
 	case <-ctx.Done():
-		// Context deadline exceeded (timeout or cancellation)
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("CEL evaluation timeout")
-		}
-		return nil, fmt.Errorf("CEL evaluation cancelled")
+		return nil, ctx.Err()
 	}
 }
 

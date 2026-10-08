@@ -146,7 +146,7 @@ func newSDKAuthorizer(cfg *config.AuthorizationConfig, logger *slog.Logger) (*OP
 // Evaluate evaluates the OPA policy against input, applying the evaluation timeout
 // from cfg. On undefined result or evaluation error, deny is returned (fail-closed).
 //
-// Audit log fields (SR-004): action, reasons, tool_name, protocol, duration_ms.
+// Audit telemetry contains bounded action, result, protocol, method and duration only.
 func (a *OPAAuthorizer) Evaluate(ctx context.Context, input OPAInput) (*OPADecision, error) {
 	ctx, span := otel.Tracer("extproc").Start(ctx, "extproc.opa.evaluate")
 	defer span.End()
@@ -164,9 +164,9 @@ func (a *OPAAuthorizer) Evaluate(ctx context.Context, input OPAInput) (*OPADecis
 	}
 	if err != nil {
 		durationMS := time.Since(start).Milliseconds()
-		a.logger.ErrorContext(ctx, "opa input conversion error — denying", "error", err)
+		a.logger.ErrorContext(ctx, "opa input conversion error — denying", "error_kind", "input_conversion_failed")
 		traceDecision(ctx, input, ActionDeny, "error", durationMS)
-		a.logAudit(ctx, ActionDeny, nil, durationMS, input, "error")
+		a.logAudit(ctx, ActionDeny, durationMS, input, "error")
 		return &OPADecision{Action: ActionDeny, Reasons: []string{"policy evaluation error"}}, nil
 	}
 	if a.sdkOPA != nil {
@@ -178,7 +178,7 @@ func (a *OPAAuthorizer) Evaluate(ctx context.Context, input OPAInput) (*OPADecis
 func (a *OPAAuthorizer) timeoutDecision(ctx context.Context, input OPAInput, start time.Time) *OPADecision {
 	durationMS := time.Since(start).Milliseconds()
 	traceDecision(ctx, input, ActionDeny, "timeout", durationMS)
-	a.logAudit(ctx, ActionDeny, nil, durationMS, input, "timeout")
+	a.logAudit(ctx, ActionDeny, durationMS, input, "timeout")
 	return &OPADecision{Action: ActionDeny, Reasons: []string{"evaluation timeout"}}
 }
 
@@ -189,15 +189,15 @@ func (a *OPAAuthorizer) evaluateQuery(ctx, evalCtx context.Context, input OPAInp
 
 	if err != nil {
 		traceDecision(ctx, input, "deny", "error", durationMS)
-		a.logAudit(ctx, "deny", nil, durationMS, input, "error")
-		a.logger.ErrorContext(ctx, "opa evaluation error — denying", "error", err, "duration_ms", durationMS)
+		a.logAudit(ctx, "deny", durationMS, input, "error")
+		a.logger.ErrorContext(ctx, "opa evaluation error — denying", "error_kind", "evaluation_failed", "duration_ms", durationMS)
 		return &OPADecision{Action: "deny", Reasons: []string{"policy evaluation error"}}, nil
 	}
 
 	// Empty ResultSet means the rule is undefined — deny unconditionally to fail closed.
 	if len(rs) == 0 || len(rs[0].Expressions) == 0 || rs[0].Expressions[0].Value == nil {
 		traceDecision(ctx, input, ActionDeny, "undefined", durationMS)
-		a.logAudit(ctx, ActionDeny, nil, durationMS, input, "undefined")
+		a.logAudit(ctx, ActionDeny, durationMS, input, "undefined")
 		a.logger.WarnContext(ctx, "OPA policy result is undefined — treating as deny", "duration_ms", durationMS)
 		return &OPADecision{Action: ActionDeny, Reasons: []string{"policy result is undefined"}}, nil
 	}
@@ -221,13 +221,13 @@ func (a *OPAAuthorizer) evaluateSDK(ctx, evalCtx context.Context, input OPAInput
 	if err != nil {
 		if opasdk.IsUndefinedErr(err) {
 			traceDecision(ctx, input, ActionDeny, "undefined", durationMS)
-			a.logAudit(ctx, ActionDeny, nil, durationMS, input, "undefined")
+			a.logAudit(ctx, ActionDeny, durationMS, input, "undefined")
 			a.logger.WarnContext(ctx, "OPA policy result is undefined — treating as deny", "duration_ms", durationMS)
 			return &OPADecision{Action: ActionDeny, Reasons: []string{"policy result is undefined"}}, nil
 		}
 		traceDecision(ctx, input, ActionDeny, "error", durationMS)
-		a.logAudit(ctx, ActionDeny, nil, durationMS, input, "error")
-		a.logger.ErrorContext(ctx, "opa sdk evaluation error — denying", "error", err, "duration_ms", durationMS)
+		a.logAudit(ctx, ActionDeny, durationMS, input, "error")
+		a.logger.ErrorContext(ctx, "opa sdk evaluation error — denying", "error_kind", "evaluation_failed", "duration_ms", durationMS)
 		return &OPADecision{Action: ActionDeny, Reasons: []string{"policy evaluation error"}}, nil
 	}
 
@@ -235,8 +235,7 @@ func (a *OPAAuthorizer) evaluateSDK(ctx, evalCtx context.Context, input OPAInput
 	return a.finalizeDecision(ctx, resultMap, durationMS, input)
 }
 
-// finalizeDecision parses the raw policy result, preserves future-action observability,
-// emits the audit log, and returns the effective enforcement decision.
+// finalizeDecision preserves enforcement and emits only bounded policy telemetry.
 func (a *OPAAuthorizer) finalizeDecision(ctx context.Context, resultMap map[string]any, durationMS int64, input OPAInput) (*OPADecision, error) {
 	decision := ParseDecision(resultMap)
 	auditAction := decision.Action
@@ -250,10 +249,10 @@ func (a *OPAAuthorizer) finalizeDecision(ctx context.Context, resultMap map[stri
 		a.logger.WarnContext(ctx, "unsupported OPA action — treating as deny", "action", rawAction, "duration_ms", durationMS)
 	default:
 		resultCode = "undefined_action"
-		a.logger.WarnContext(ctx, "undefined OPA action — treating as deny", "action", rawAction, "duration_ms", durationMS)
+		a.logger.WarnContext(ctx, "undefined OPA action — treating as deny", "action", "unknown", "duration_ms", durationMS)
 	}
 	traceDecision(ctx, input, auditAction, resultCode, durationMS)
-	a.logAudit(ctx, auditAction, decision.Reasons, durationMS, input, resultCode)
+	a.logAudit(ctx, auditAction, durationMS, input, resultCode)
 	return decision, nil
 }
 
@@ -262,28 +261,22 @@ func traceDecision(ctx context.Context, input OPAInput, action, resultCode strin
 	attrs := []attribute.KeyValue{
 		attribute.String("authorization.action", action),
 		attribute.String("authorization.result_code", resultCode),
-		attribute.String("authorization.protocol", fields.protocol),
+		attribute.String("authorization.protocol", string(fields.protocol)),
 		attribute.Int64("authorization.duration_ms", durationMS),
 	}
-	if fields.toolName != "" {
-		attrs = append(attrs, attribute.String("authorization.tool_name", fields.toolName))
-	}
 	if fields.method != "" {
-		attrs = append(attrs, attribute.String("authorization.method", fields.method))
-	}
-	if fields.targetServerName != "" {
-		attrs = append(attrs, attribute.String("authorization.target_server_name", fields.targetServerName))
+		attrs = append(attrs, attribute.String("authorization.method", string(fields.method)))
 	}
 	trace.SpanFromContext(ctx).SetAttributes(attrs...)
 }
 
-// auditFields holds the request dimensions extracted from an OPAInput for audit
-// logs and trace spans (SR-004).
+// Only allowlisted protocol and method dimensions can leave the policy boundary.
+type auditProtocol string
+type auditMethod string
+
 type auditFields struct {
-	protocol         string
-	toolName         string
-	method           string
-	targetServerName string
+	protocol auditProtocol
+	method   auditMethod
 }
 
 func auditDimensions(input OPAInput) auditFields {
@@ -300,23 +293,25 @@ func auditDimensions(input OPAInput) auditFields {
 		}
 	}
 	if mcp, ok := input["mcp"].(map[string]any); ok {
-		fields.toolName, _ = mcp["tool_name"].(string)
-		fields.method, _ = mcp["method"].(string)
-		fields.targetServerName, _ = mcp["target_server_name"].(string)
+		method, _ := mcp["method"].(string)
+		switch method {
+		case "initialize", "ping", "tools/list", "tools/call", "resources/list", "resources/read", "resources/subscribe", "resources/unsubscribe", "resources/templates/list", "prompts/list", "prompts/get", "notifications/initialized", "notifications/cancelled", "notifications/progress", "notifications/tools/list_changed", "notifications/resources/list_changed", "notifications/prompts/list_changed":
+			fields.method = auditMethod(method)
+		case "":
+		default:
+			fields.method = "unknown"
+		}
 	}
 	return fields
 }
 
 // logAudit emits a structured audit log entry per SR-004.
-func (a *OPAAuthorizer) logAudit(ctx context.Context, action string, reasons []string, durationMS int64, input OPAInput, resultCode string) {
+func (a *OPAAuthorizer) logAudit(ctx context.Context, action string, durationMS int64, input OPAInput, resultCode string) {
 	fields := auditDimensions(input)
 	a.logger.InfoContext(ctx, "opa authorization decision",
 		"action", action,
-		"reasons", reasons,
-		"tool_name", fields.toolName,
-		"method", fields.method,
-		"protocol", fields.protocol,
-		"target_server_name", fields.targetServerName,
+		"method", string(fields.method),
+		"protocol", string(fields.protocol),
 		"duration_ms", durationMS,
 		"result_code", resultCode,
 	)

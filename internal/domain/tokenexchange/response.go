@@ -10,8 +10,7 @@ import (
 
 // ServiceRef identifies the third-party OAuth2 service a token exchange resolved to.
 type ServiceRef struct {
-	ID   id.ServiceID
-	Name string
+	ID id.ServiceID
 }
 
 // TokenExchangeResponse represents an RFC 8693 token exchange response.

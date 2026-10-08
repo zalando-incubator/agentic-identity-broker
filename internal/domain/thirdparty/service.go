@@ -14,6 +14,11 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
+var (
+	ErrSecretDecryption      = errors.New("provider secret decryption failed")
+	ErrProviderConfiguration = errors.New("provider identity configuration is invalid")
+)
+
 // ThirdpartyOAuth2ProviderService manages external OAuth2 providers, coordinating
 // conditional encryption and decryption with branch-key provisioning across provider
 // lifecycle operations.
@@ -255,10 +260,30 @@ func (s *ThirdpartyOAuth2ProviderService) Get(
 		s.logger.Warn("secret_decryption_failed_returning_encrypted",
 			"operation", "get",
 			"service_id", entity.ID,
-			"reason", decErr)
+			"error_kind", "decryption_failed",
+			"dependency", "encryption")
 		return entity, nil
 	}
 	return dec, nil
+}
+
+// Token acquisition must retain decryption failures; administrative reads may retain ciphertext.
+func (s *ThirdpartyOAuth2ProviderService) GetForTokenAcquisition(ctx context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	entity, err := s.repo.Get(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	if entity == nil || entity.ID != serviceID {
+		return nil, ErrProviderConfiguration
+	}
+	if entity.IsPublicClient() || entity.IsCIMDConfidentialClient() || entity.Secret.IsPlaintext() {
+		return entity, nil
+	}
+	decrypted, err := s.decryptSecret(ctx, entity)
+	if err != nil {
+		return nil, errors.Join(ErrSecretDecryption, err)
+	}
+	return decrypted, nil
 }
 
 // GetCIMDClientService returns only the public state needed to compose CIMD metadata.

@@ -182,3 +182,21 @@ func trustedBrokerConfig(t *testing.T, broker *httptest.Server) *extprocconfig.C
 		TLS: extprocconfig.TLSConfig{CaBundlePath: caFile},
 	}}
 }
+
+func TestNewCABundleErrorsPreserveCausesWithoutPaths(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ca-path-secret-sentinel.pem")
+	cfg := &extprocconfig.Config{OAuth2: extprocconfig.OAuth2Config{TLS: extprocconfig.TLSConfig{CaBundlePath: path}}}
+	_, err := New(cfg, time.Second)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	var pathErr *os.PathError
+	require.ErrorAs(t, err, &pathErr)
+	assert.Equal(t, path, pathErr.Path)
+	assert.NotContains(t, err.Error(), path)
+	assert.NotContains(t, err.Error(), "secret-sentinel")
+
+	require.NoError(t, os.WriteFile(path, []byte("invalid-ca-secret-sentinel"), 0o600))
+	_, err = New(cfg, time.Second)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "secret-sentinel")
+	assert.NotContains(t, err.Error(), path)
+}

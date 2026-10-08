@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -26,6 +27,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
 	domstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -827,8 +829,70 @@ func TestNewTokenExchangeAgentIDResolver(t *testing.T) {
 		resolve := newTokenExchangeAgentIDResolver(newService(repo), time.Second)
 		_, err := resolve(rawIdentifier)
 		require.Error(t, err)
-		assert.ErrorContains(t, err, "ambiguous")
+		assert.ErrorIs(t, err, agentsservice.ErrAmbiguousClientID)
+		var tokenErr *tokenexchange.TokenExchangeError
+		require.ErrorAs(t, err, &tokenErr)
+		assert.Equal(t, tokenexchange.OutcomeConfigurationError, tokenErr.Diagnostic().Outcome())
+		assert.Equal(t, tokenexchange.DetailAgentInvalid, tokenErr.Diagnostic().Detail())
+		assert.NotContains(t, tokenErr.Error(), rawIdentifier)
 	})
+}
+
+func TestTokenExchangeAgentIDResolverFailureDiagnostics(t *testing.T) {
+	t.Parallel()
+	secretCause := errors.New("https://secret-store.example/private?credential=secret-store-token")
+	missingCause := domstorage.NewStorageError("GetByClientID", domstorage.ErrorKindNotFound, ports.ErrNotFound, "secret-missing-value")
+	unavailableCause := domstorage.NewStorageError("Get", domstorage.ErrorKindConnection, secretCause, "secret-dependency-value")
+	agentID := id.NewAgentID()
+	for _, tc := range []struct {
+		name          string
+		rawIdentifier string
+		repo          *builderTestAgentRepo
+		cause         error
+		outcome       tokenexchange.Outcome
+		detail        tokenexchange.FailureDetail
+	}{
+		{"unregistered upstream ID", "secret-client-id", &builderTestAgentRepo{getByClientIDErr: missingCause}, missingCause, tokenexchange.OutcomeConfigurationError, tokenexchange.DetailAgentMissing},
+		{"unregistered UUID", agentID.String(), &builderTestAgentRepo{}, ports.ErrNotFound, tokenexchange.OutcomeConfigurationError, tokenexchange.DetailAgentMissing},
+		{"client lookup unavailable", "secret-client-id", &builderTestAgentRepo{getByClientIDErr: unavailableCause}, unavailableCause, tokenexchange.OutcomeInfrastructureError, tokenexchange.DetailAgentRepositoryUnavailable},
+		{"UUID lookup unavailable", agentID.String(), &builderTestAgentRepo{getErr: unavailableCause}, unavailableCause, tokenexchange.OutcomeInfrastructureError, tokenexchange.DetailAgentRepositoryUnavailable},
+		{"shared deadline", "secret-client-id", &builderTestAgentRepo{getByClientIDErr: context.DeadlineExceeded}, context.DeadlineExceeded, tokenexchange.OutcomeInfrastructureError, tokenexchange.DetailAgentRepositoryUnavailable},
+		{"duplicate check unavailable", "secret-client-id", &builderTestAgentRepo{byClientID: map[id.ClientID]*domstorage.Agent{"secret-client-id": {ID: agentID}}, existsOtherErr: unavailableCause}, unavailableCause, tokenexchange.OutcomeInfrastructureError, tokenexchange.DetailAgentRepositoryUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc := agentsservice.NewService(tc.repo, builderTestRequirementValidator{}, slog.Default(), false)
+			resolve := newTokenExchangeAgentIDResolver(svc, time.Second)
+			assertFailure := func(err error) {
+				t.Helper()
+				var tokenErr *tokenexchange.TokenExchangeError
+				require.ErrorAs(t, err, &tokenErr)
+				assert.Equal(t, "server_error", tokenErr.Code())
+				assert.Equal(t, tc.outcome, tokenErr.Diagnostic().Outcome())
+				assert.Equal(t, tokenexchange.StageIdentityResolution, tokenErr.Diagnostic().Stage())
+				assert.Equal(t, tc.detail, tokenErr.Diagnostic().Detail())
+				assert.ErrorIs(t, err, tc.cause)
+				if storageCause, ok := tc.cause.(*domstorage.StorageError); ok {
+					var preserved *domstorage.StorageError
+					require.ErrorAs(t, err, &preserved)
+					assert.Same(t, storageCause, preserved)
+				}
+				for _, secret := range []string{tc.rawIdentifier, "secret-store", "secret-missing-value", "secret-dependency-value"} {
+					assert.NotContains(t, fmt.Sprint(tokenErr, tokenErr.Description(), tokenErr.Diagnostic()), secret)
+				}
+			}
+			_, err := resolve(tc.rawIdentifier)
+			assertFailure(err)
+			evaluator, err := tokenexchange.NewCELEvaluator(tokenexchange.CELEvaluatorConfig{
+				AgentIDExpression:        "resolveAgentIdByClientId(subject_token.azp)",
+				ResolveAgentIDByClientID: resolve,
+				EvaluationTimeout:        time.Second,
+			})
+			require.NoError(t, err)
+			_, err = evaluator.ExtractAgentID(map[string]any{"azp": tc.rawIdentifier})
+			assertFailure(err)
+		})
+	}
 }
 
 type builderTestRequirementValidator struct{}

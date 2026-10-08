@@ -150,13 +150,18 @@ func buildResource(ctx context.Context, cfg ports.TelemetryConfig) (*resource.Re
 		semconv.ServiceName(cfg.ServiceName),
 	}
 	for k, v := range cfg.ResourceAttributes {
+		if k == "process.command_args" || k == "process.command" || k == "process.command_line" {
+			continue
+		}
 		attrs = append(attrs, attribute.String(k, v))
 	}
 
 	return resource.New(ctx,
 		resource.WithTelemetrySDK(),
 		resource.WithHost(),
-		resource.WithProcess(),
+		resource.WithProcessPID(),
+		resource.WithProcessRuntimeName(),
+		resource.WithProcessRuntimeVersion(),
 		resource.WithAttributes(attrs...),
 	)
 }

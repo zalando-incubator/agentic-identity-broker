@@ -371,7 +371,8 @@ func TestResolveUniqueByClientID_Ambiguous(t *testing.T) {
 
 	_, err := svc.ResolveUniqueByClientID(context.Background(), "shared")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ambiguous")
+	assert.ErrorIs(t, err, ErrAmbiguousClientID)
+	assert.NotContains(t, err.Error(), "shared")
 }
 
 func TestResolveUniqueByClientID_NotFound(t *testing.T) {

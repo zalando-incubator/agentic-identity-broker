@@ -23,39 +23,29 @@ type TokenExchangeError struct {
 	// httpStatus is the HTTP status code for this error response (per RFC 8693 Section 5.2)
 	httpStatus int
 
-	// cause is the underlying error for debugging/logging context (may be nil)
+	// Causes remain inspectable with errors.Is/As, but must not be serialized into telemetry.
 	cause error
-
-	// details contains optional structured context for logging without exposing sensitive data.
-	// Examples: "principal_missing", "grant_expired", "resource_ambiguous"
-	// MUST NOT contain token values.
-	details string
 
 	// errorURI is the RFC 6749 §5.2 error_uri — a URI pointing to a human-readable page
 	// with more information about the error. For session-not-found / session-expired errors
-	// this is the re-authentication URL the user must visit (e.g. third-party authorize endpoint).
+	// this is the sessions landing page where the user can inspect the session.
 	// May be empty when no re-authentication URL is available.
 	errorURI string
 
-	failureReason FailureReason
-	service       ServiceRef
+	diagnostic Diagnostic
+	service    ServiceRef
 }
 
-// FailureReason classifies why an exchange failed after its resource resolved to a third-party service.
-// Values are stable telemetry identifiers.
-type FailureReason string
-
-const (
-	FailureReasonNoGrant             FailureReason = "no_grant"
-	FailureReasonNoSession           FailureReason = "no_session"
-	FailureReasonAccessTokenExpired  FailureReason = "access_token_expired"
-	FailureReasonRefreshTokenExpired FailureReason = "refresh_token_expired"
-	FailureReasonInsufficientScope   FailureReason = "insufficient_scope"
-	FailureReasonServiceRejected     FailureReason = "service_rejected"
+var (
+	ErrResourceUnregistered = errors.New("requested resource is not registered")
+	ErrResourceAmbiguous    = errors.New("registered resource configuration is ambiguous")
 )
 
-func (e *TokenExchangeError) FailureReason() FailureReason {
-	return e.failureReason
+func (e *TokenExchangeError) Diagnostic() Diagnostic {
+	if e.diagnostic.outcome == "" {
+		return NewDiagnostic(StageExchangeRouting, DetailInternalUnclassified)
+	}
+	return e.diagnostic
 }
 
 func (e *TokenExchangeError) Service() ServiceRef {
@@ -100,13 +90,6 @@ func (e *TokenExchangeError) HTTPStatus() int {
 	return e.httpStatus
 }
 
-// Details returns optional structured context for logging (no token values).
-// Examples: "principal_missing", "grant_expired", "resource_ambiguous"
-// Useful for structured logging and debugging without exposing sensitive data.
-func (e *TokenExchangeError) Details() string {
-	return e.details
-}
-
 // NewInvalidRequestError creates an error for malformed token exchange requests.
 // RFC 8693 Section 5.2: invalid_request (400)
 // Used when required parameters are missing, malformed, or invalid.
@@ -122,33 +105,12 @@ func NewInvalidRequestError(description string) *TokenExchangeError {
 	}
 }
 
-// NewInvalidRequestErrorWithDetails creates an error for malformed token exchange requests
-// with additional structured context for logging.
-func NewInvalidRequestErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "invalid_request",
-		description: description,
-		httpStatus:  400,
-		details:     details,
-	}
-}
-
 // NewInvalidScopeError creates an error for a requested scope that is not permitted.
 func NewInvalidScopeError(description string) *TokenExchangeError {
 	return &TokenExchangeError{
 		code:        InvalidScopeError,
 		description: description,
 		httpStatus:  400,
-	}
-}
-
-// NewInvalidScopeErrorWithDetails creates an invalid_scope error with structured logging details.
-func NewInvalidScopeErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        InvalidScopeError,
-		description: description,
-		httpStatus:  400,
-		details:     details,
 	}
 }
 
@@ -161,17 +123,6 @@ func NewInvalidClientError(description string) *TokenExchangeError {
 		code:        "invalid_client",
 		description: description,
 		httpStatus:  401,
-	}
-}
-
-// NewInvalidClientErrorWithDetails creates an error for invalid client authentication
-// with additional structured context for logging.
-func NewInvalidClientErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "invalid_client",
-		description: description,
-		httpStatus:  401,
-		details:     details,
 	}
 }
 
@@ -190,17 +141,6 @@ func NewInvalidGrantError(description string) *TokenExchangeError {
 	}
 }
 
-// NewInvalidGrantErrorWithDetails creates an error when no valid tokens exist
-// with additional structured context for logging.
-func NewInvalidGrantErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "invalid_grant",
-		description: description,
-		httpStatus:  400,
-		details:     details,
-	}
-}
-
 // NewInvalidTargetError creates an error when resource cannot be resolved to a service.
 // RFC 8693 Section 5.2: invalid_target (400)
 // Used when:
@@ -216,46 +156,22 @@ func NewInvalidTargetError(description string) *TokenExchangeError {
 	}
 }
 
-// NewInvalidTargetErrorWithDetails creates an error when resource cannot be resolved
-// with additional structured context for logging.
-func NewInvalidTargetErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "invalid_target",
-		description: description,
-		httpStatus:  400,
-		details:     details,
-	}
+func NewResourceUnregisteredError() *TokenExchangeError {
+	return NewInvalidTargetError("no service configured for the requested resource").
+		WithCause(ErrResourceUnregistered).WithDiagnostic(NewDiagnostic(StageResourceResolution, DetailResourceUnregistered))
 }
 
-const (
-	invalidTargetResourceNotFoundDescription  = "no service configured for the requested resource"
-	invalidTargetResourceAmbiguousDescription = "multiple services configured for the same resource"
-	invalidTargetResourceNotFoundDetails      = "resource_not_found"
-	invalidTargetResourceAmbiguousDetails     = "resource_ambiguous"
-)
+func NewResourceAmbiguousError() *TokenExchangeError {
+	return NewServerError("registered resource configuration is ambiguous").
+		WithCause(ErrResourceAmbiguous).WithDiagnostic(NewDiagnostic(StageResourceResolution, DetailResourceAmbiguous))
+}
 
-// IsResourceNotConfigured reports whether err means no service matched the requested resource.
 func IsResourceNotConfigured(err error) bool {
-	return hasInvalidTargetDetails(err, invalidTargetResourceNotFoundDetails, invalidTargetResourceNotFoundDescription)
+	return errors.Is(err, ErrResourceUnregistered)
 }
 
-// IsResourceAmbiguous reports whether err means multiple services matched the requested resource.
 func IsResourceAmbiguous(err error) bool {
-	return hasInvalidTargetDetails(err, invalidTargetResourceAmbiguousDetails, invalidTargetResourceAmbiguousDescription)
-}
-
-func hasInvalidTargetDetails(err error, details, description string) bool {
-	var tokenErr *TokenExchangeError
-	if !errors.As(err, &tokenErr) {
-		return false
-	}
-	if tokenErr.Code() != "invalid_target" {
-		return false
-	}
-	if tokenErr.Details() == details {
-		return true
-	}
-	return tokenErr.Details() == "" && tokenErr.Description() == description
+	return errors.Is(err, ErrResourceAmbiguous)
 }
 
 // NewAccessDeniedError creates an error for authorization failures.
@@ -276,17 +192,6 @@ func NewAccessDeniedError(description string) *TokenExchangeError {
 	}
 }
 
-// NewAccessDeniedErrorWithDetails creates an error for authorization failures
-// with additional structured context for logging.
-func NewAccessDeniedErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "access_denied",
-		description: description,
-		httpStatus:  403,
-		details:     details,
-	}
-}
-
 // NewServerError creates an error for internal server errors.
 // RFC 8693 Section 5.2: server_error (500)
 // Used when unexpected errors occur:
@@ -299,17 +204,6 @@ func NewServerError(description string) *TokenExchangeError {
 		code:        "server_error",
 		description: description,
 		httpStatus:  500,
-	}
-}
-
-// NewServerErrorWithDetails creates an error for internal server errors
-// with additional structured context for logging.
-func NewServerErrorWithDetails(description, details string) *TokenExchangeError {
-	return &TokenExchangeError{
-		code:        "server_error",
-		description: description,
-		httpStatus:  500,
-		details:     details,
 	}
 }
 
@@ -332,18 +226,11 @@ func IsTokenExchangeError(err error) bool {
 }
 
 // WithCause returns a copy of the error with the given underlying cause attached.
-// The cause is available via errors.Unwrap() for logging and error chain inspection.
+// The cause is available for error chain inspection, not telemetry serialization.
 // The cause is NOT included in the RFC 8693 error response to the client.
 func (e *TokenExchangeError) WithCause(cause error) *TokenExchangeError {
 	clone := *e
 	clone.cause = cause
-	return &clone
-}
-
-// WithDetails returns a copy of the error with the given structured details for logging.
-func (e *TokenExchangeError) WithDetails(details string) *TokenExchangeError {
-	clone := *e
-	clone.details = details
 	return &clone
 }
 
@@ -359,9 +246,9 @@ func (e *TokenExchangeError) WithErrorURI(uri string) *TokenExchangeError {
 	return &clone
 }
 
-func (e *TokenExchangeError) WithFailureReason(reason FailureReason) *TokenExchangeError {
+func (e *TokenExchangeError) WithDiagnostic(diagnostic Diagnostic) *TokenExchangeError {
 	clone := *e
-	clone.failureReason = reason
+	clone.diagnostic = diagnostic
 	return &clone
 }
 

@@ -433,7 +433,7 @@ func TestRefreshAccessToken_RejectsOversizedResponse(t *testing.T) {
 
 	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
 	require.Nil(t, token)
-	require.ErrorContains(t, err, "exceeds")
+	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailProviderResponseInvalid)
 }
 
 func TestInitiateOAuth2Flow_ServiceNotFound(t *testing.T) {
@@ -940,8 +940,12 @@ func TestHandleCallback_OAuth2ErrorResponse(t *testing.T) {
 
 			assert.Error(t, err)
 			assert.Nil(t, result)
-			// Verify error contains the OAuth2 error code
-			assert.Contains(t, err.Error(), tt.error, "error should contain OAuth2 error code")
+			metadata := assertOperationMetadata(t, err, oauth2session.OperationCodeExchange, oauth2session.DetailProviderRejected)
+			if oauth2session.IsSafeOAuthErrorCode(tt.error) {
+				assert.Equal(t, tt.error, metadata.OAuthCode())
+			} else {
+				assert.Equal(t, "unknown", metadata.OAuthCode())
+			}
 		})
 	}
 }
@@ -1053,9 +1057,8 @@ func TestHandleCallback_RetryExhausted(t *testing.T) {
 	// Verify error handling
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	// Verify it exhausted retries and contains expected error messages
-	assert.Contains(t, err.Error(), "failed to exchange authorization code", "error should indicate authorization code exchange failed")
-	assert.Contains(t, err.Error(), "token exchange failed", "error should indicate retry exhaustion")
+	assert.ErrorIs(t, err, oauth2session.ErrTokenExchange)
+	assertOperationMetadata(t, err, oauth2session.OperationCodeExchange, oauth2session.DetailProviderUnavailable)
 }
 
 func TestHandleCallback_ContextCancellationDuringRetry(t *testing.T) {
@@ -1283,10 +1286,9 @@ func TestHandleCallback_PKCEValidationFailure(t *testing.T) {
 	// Verify error handling
 	assert.Error(t, err)
 	assert.Nil(t, result)
-	// PKCE validation failures result in token exchange errors with specific messages
-	assert.Contains(t, err.Error(), "failed to exchange authorization code", "error should indicate authorization code exchange failed")
-	// The mock returns invalid_grant which becomes a token exchange error
-	assert.Contains(t, err.Error(), "invalid_grant", "error should indicate PKCE validation failure")
+	assert.ErrorIs(t, err, oauth2session.ErrTokenExchange)
+	metadata := assertOperationMetadata(t, err, oauth2session.OperationCodeExchange, oauth2session.DetailProviderRejected)
+	assert.Equal(t, "invalid_grant", metadata.OAuthCode())
 }
 
 func TestHandleCallback_MissingCode(t *testing.T) {
@@ -2197,6 +2199,13 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 
 	// Create third-party service
 	thirdPartyService := createTestService(serviceID)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"invalid_grant","error_description":"SENTINEL_CALLBACK_PROVIDER_SECRET"}`)
+	}))
+	defer upstream.Close()
+	thirdPartyService.Endpoints.TokenEndpoint = upstream.URL
 	err = providerService.Create(ctx, thirdPartyService)
 	require.NoError(t, err)
 
@@ -2225,8 +2234,10 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 	// Verify error occurred
 	require.Error(t, err)
 	require.Nil(t, result)
-	assert.Contains(t, err.Error(), "failed to exchange authorization code",
-		"Error should indicate token exchange failure")
+	assert.ErrorIs(t, err, oauth2session.ErrTokenExchange)
+	var operationErr *oauth2session.OperationError
+	require.ErrorAs(t, err, &operationErr)
+	assert.Equal(t, oauth2session.OperationCodeExchange, operationErr.Metadata().Operation())
 
 	// Parse log output to verify audit log was emitted
 	logLines := strings.Split(logOutput.String(), "\n")
@@ -2249,7 +2260,10 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 
 			// Verify required fields
 			assert.Equal(t, "session.oauth2.pkce_validation_failed", eventVal)
-			assert.Equal(t, principal.String(), logEntry["principal"])
+			metadata, ok := logEntry["oauth2_session"].(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, string(oauth2session.OperationCodeExchange), metadata["operation"])
+			assert.Equal(t, string(oauth2session.DetailProviderRejected), metadata["failure_detail"])
 			assert.Equal(t, serviceID.String(), logEntry["service_id"])
 			assert.NotEmpty(t, logEntry["timestamp"])
 			assert.Equal(t, "token_exchange_failed", logEntry["reason"])
@@ -2258,6 +2272,7 @@ func TestHandleCallback_PKCEValidationFailure_EmitsAuditLog(t *testing.T) {
 			break
 		}
 	}
+	assert.NotContains(t, logOutput.String(), "SENTINEL_CALLBACK_PROVIDER_SECRET")
 
 	assert.True(t, foundAuditLog, "Audit log for PKCE validation failure not found in logs. Log output:\n%s", logOutput.String())
 	if foundAuditLog {
