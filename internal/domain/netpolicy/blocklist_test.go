@@ -1,4 +1,4 @@
-package cimd
+package netpolicy
 
 import (
 	"net"
