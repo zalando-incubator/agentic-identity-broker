@@ -410,6 +410,27 @@ Pre-authentication mode allows the Identity Broker to trust authenticated princi
 - Empty/missing headers result in 401 Unauthorized on protected routes
 - Optional authentication routes allow missing principals
 
+**JWT pre-authentication (both servers):** Configure `server.enduser.authentication.jwt` and
+`server.admin.authentication.jwt` independently. For Helm, set the corresponding
+`broker.server.enduser.authentication.jwt` and `broker.server.admin.authentication.jwt`
+values with the same snake_case keys. When `jwt` is configured, the plain principal header
+is not a fallback. The broker accepts the configured JWT header only from a trusted proxy
+or mesh; it must remove client-supplied copies and restrict direct access to both ports.
+
+| Option under `server.<enduser or admin>.authentication.jwt` | Default | Description |
+|---|---|---|
+| `header_name` | `Authorization` | JWT header; only `Authorization` strips a `Bearer ` prefix. A gateway-supplied `X-Userinfo` contains the raw JWT. |
+| `verification` | `jwks` | `jwks` verifies a signature; `none` trusts a gateway-supplied JWT without signature verification. |
+| `jwks_uri` | none | Required with `jwks`, forbidden with `none`. Must use HTTPS except when the development-only HTTPS skip is enabled. |
+| `expected_audience`, `expected_issuer` | unset | Reject JWTs with other audience/issuer when set. |
+| `claim_extraction.principal_expression` | `claims.sub` | CEL expression returning a non-empty principal; for gateway userinfo containing `principal`, use `claims.principal`. |
+| `claim_extraction.display_name_expression`, `email_expression`, `picture_url_expression` | unset | Optional CEL expressions for profile attributes. |
+
+The admin gateway must authorize callers and set the configured JWT header after discarding
+client copies. A bearer token used to authenticate at the gateway is not the broker's
+operator principal. With an absent or invalid JWT, admin CIMD key mutations do not create
+a key and report `server_misconfiguration` because the operator principal is missing.
+
 **Example YAML configurations:**
 
 Development (custom header):

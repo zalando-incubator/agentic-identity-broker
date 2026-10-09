@@ -91,10 +91,12 @@ the token from a header. It can validate the signature. It then extracts the pri
 a profile with CEL. The profile can contain a display name, email address, and picture. The
 consent interface can show this profile instead of a bare ID.
 
-Configure this mode in `server.enduser.authentication.jwt`. Configure
-`server.admin.authentication.jwt` when the admin proxy also sends JWTs. Keep the `preauth`
-block. The server still requires `principal_header_name`. With `jwt` enabled, a missing
-`header_name` returns `401 Unauthorized`. The broker does not use the plain header instead.
+Configure `server.enduser.authentication.jwt` and `server.admin.authentication.jwt` separately.
+Each server uses its own header, verification mode, and claim-extraction expressions. A
+`preauth` block is needed only if JWT is not configured. When JWT is configured, a missing
+or invalid JWT cannot fall back to the plain principal header. Required-principal routes
+return `401 Unauthorized`; admin CIMD key mutations without an operator principal return
+`server_misconfiguration` without generating a key.
 
 ### Use a JWKS
 
@@ -143,10 +145,25 @@ server:
           principal_expression: "claims.sub"
           display_name_expression: "claims.preferred_username"
           email_expression: "claims.email"
+  admin:
+    port: 14000
+    authentication:
+      jwt:
+        header_name: "X-Userinfo"
+        verification: "none"
+        claim_extraction:
+          principal_expression: "claims.principal"
 ```
 
 Do not set `jwks_uri` with `verification: none`. These settings are mutually exclusive. The
 broker does not start when both settings are present.
+
+The gateway must authenticate and authorize each admin caller (for example, using a bearer
+token), discard every client-supplied `X-Userinfo` value, and set `X-Userinfo` itself with
+the authenticated operator's JWT claims. Restrict network access to both broker ports to
+that gateway or mesh. The broker cannot distinguish a proxy-supplied unsigned JWT from a
+forged caller-supplied one if clients can reach it directly. `Authorization: Bearer ...`
+alone does not supply the broker's operator principal.
 
 ### Extract the principal and profile with CEL
 
@@ -172,6 +189,10 @@ Adjust each expression to match the claim names your identity provider emits.
 - **The wrong user is authenticated, or outside clients authenticate.** The broker accepts
   the header from an untrusted source. Make sure that only the proxy can reach broker ports.
   Make sure that the proxy removes each client-supplied copy before it adds its own value.
+- **Admin CIMD key creation reports `server_misconfiguration`.** Check the admin server's
+  effective `authentication.jwt` configuration, the broker's JWT-authenticator wiring, and
+  whether the trusted gateway supplies the configured JWT header with a non-empty
+  `principal` claim. Do not work around this by sending an unsigned header from a client.
 - **The broker does not start with a JWT error.** `verification: none` and `jwks_uri` are
   both set. Remove `jwks_uri` for an unsigned mesh. Or set `verification: jwks` to validate
   the JWT.

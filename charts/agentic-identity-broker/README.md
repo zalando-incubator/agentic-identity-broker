@@ -37,6 +37,15 @@ the broker's default `http://localhost:14000`. Admin `/api` requests must match
 this URL's Host authority; ingress and other reverse proxies must preserve it.
 Forwarded Host headers are not trusted. `/health` probes remain unrestricted.
 
+`broker.server.enduser.authentication.jwt` and `broker.server.admin.authentication.jwt`
+are optional, independent JWT pre-authentication blocks (default: unset). Each supports
+`header_name`, `verification` (`jwks` or `none`), `jwks_uri`, audience/issuer constraints,
+and CEL `claim_extraction` keys in broker snake_case. The chart passes both blocks to
+their respective servers. If admin uses `verification: none` with `X-Userinfo`, the
+gateway must authenticate and authorize the caller, strip client-supplied `X-Userinfo`,
+set its own header with an operator `principal` claim, and prevent direct access to
+port 14000. An `Authorization` bearer token alone does not supply the operator principal.
+
 ### Install with External PostgreSQL
 
 For production deployments with an existing PostgreSQL database:
@@ -128,6 +137,8 @@ See [values.yaml](values.yaml) for the complete list of configuration options.
 | `serviceAccount.irsa.role` | IAM role ARN for IRSA | `""` |
 | `ingress.enduser.enabled` | Enable Ingress for end-user API | `false` |
 | `ingress.admin.enabled` | Enable Ingress for admin API | `false` |
+| `broker.server.enduser.authentication.jwt` | End-user JWT pre-auth configuration, independent of admin | unset |
+| `broker.server.admin.authentication.jwt` | Admin JWT pre-auth configuration, independent of end-user | unset |
 | `resources.requests.cpu` | CPU request | `100m` |
 | `resources.requests.memory` | Memory request | `128Mi` |
 | `commonLabels` | Labels applied to all chart resources | `{}` |

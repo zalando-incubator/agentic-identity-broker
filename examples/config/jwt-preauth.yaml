@@ -5,9 +5,9 @@
 # optional profile attributes from a signed or unsigned JWT provided by an
 # upstream reverse proxy, API gateway, or service mesh.
 #
-# When `authentication.jwt` is configured, requests missing the JWT header
-# fail closed with 401. The plain pre-auth header is not used as a runtime
-# fallback.
+# When `authentication.jwt` is configured, missing or invalid JWT headers never
+# fall back to the plain principal header. Protected routes return 401; admin
+# CIMD key mutations require an operator principal before generating a key.
 #
 # For full documentation see: docs/configuration.md
 
@@ -91,3 +91,20 @@
 #     authentication:
 #       preauth:
 #         principal_header_name: X-Remote-User
+
+# =============================================================================
+# Example 5: Admin JWT from a Trusted Gateway
+# =============================================================================
+# Configure each server's JWT authentication independently. This admin example
+# requires a gateway to authorize the operator, remove all inbound X-Userinfo
+# headers, then inject its own JWT. Keep port 14000 inaccessible to clients.
+# The gateway's Authorization bearer token is not an operator principal here.
+#
+# server:
+#   admin:
+#     authentication:
+#       jwt:
+#         header_name: X-Userinfo
+#         verification: none
+#         claim_extraction:
+#           principal_expression: "claims.principal"

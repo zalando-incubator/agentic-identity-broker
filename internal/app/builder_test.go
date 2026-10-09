@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -1248,6 +1249,69 @@ func TestBuilder_ShutdownStopsUpstreamJWKSAdapterWorkers(t *testing.T) {
 				"expected upstream JWKS adapter workers to stop after shutdown")
 		})
 	}
+}
+
+func TestBuilderJWTPreauthClosesBothJWKSWorkers(t *testing.T) {
+	newJWKS := func() (*httptest.Server, *atomic.Int32) {
+		fetches := &atomic.Int32{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fetches.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"keys":[]}`)
+		}))
+		t.Cleanup(server.Close)
+		return server, fetches
+	}
+	enduserJWKS, enduserFetches := newJWKS()
+	adminJWKS, adminFetches := newJWKS()
+	config := &ports.Config{
+		Server: ports.ServerConfig{
+			EndUser: ports.ServerInstanceConfig{
+				PublicURL: "http://localhost:8000",
+				Authentication: ports.AuthenticationConfig{JWT: &ports.JWTConfig{
+					HeaderName: "Authorization", Verification: "jwks", JWKSURI: enduserJWKS.URL,
+					ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
+				}},
+			},
+			Admin: ports.ServerInstanceConfig{
+				PublicURL: "http://localhost:14000",
+				Authentication: ports.AuthenticationConfig{JWT: &ports.JWTConfig{
+					HeaderName: "X-Userinfo", Verification: "jwks", JWKSURI: adminJWKS.URL,
+					ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.principal"},
+				}},
+			},
+		},
+		Storage:          ports.StorageConfig{Backend: "memory"},
+		ThirdPartyOAuth2: ports.ThirdPartyOAuth2Config{JWESigningKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))},
+		Encryption:       ports.EncryptionConfig{Memory: &ports.MemoryConfig{RawKey: testutil.TestKEKBase64}},
+		OAuth2AuthServer: ports.OAuth2AuthServerConfig{
+			Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour},
+		},
+	}
+	adapter, err := storage.NewAdapter(&config.Storage)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, adapter.Close(context.Background())) })
+
+	baseline := countHTTPRCGoroutines(t)
+	built, err := NewBuilder().WithConfig(config).WithStorage(adapter).
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).Build()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if built != nil {
+			require.NoError(t, built.Shutdown(context.Background()))
+		}
+	})
+	require.Positive(t, enduserFetches.Load())
+	require.Positive(t, adminFetches.Load())
+	waitForHTTPRCGoroutineCount(t,
+		func(count int) bool { return count >= baseline+2 },
+		"expected a JWKS refresh worker for each server")
+
+	require.NoError(t, built.Shutdown(context.Background()))
+	built = nil
+	waitForHTTPRCGoroutineCount(t,
+		func(count int) bool { return count <= baseline },
+		"expected both JWT JWKS refresh workers to stop after shutdown")
 }
 
 func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {
