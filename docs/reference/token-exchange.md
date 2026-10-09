@@ -273,6 +273,20 @@ Missing agents and ambiguous registered resources are configuration errors. Unav
 
 Missing or unusable consent grants remain authorization denial with `reconsent` targeting `consent`.
 They return `access_denied` and the agent consent-management `error_uri` before token-vault access.
+Grant coverage denials use the first applicable detail below. Scope unions, agent ceilings, HTTP status, and recovery behavior are unchanged.
+
+| Detail | Meaning |
+|---|---|
+| `grant_empty` | The grant has no permission-set entries. |
+| `grant_permission_set_undeclared` | A referenced permission set is no longer declared by the agent. |
+| `grant_permission_set_missing` | A referenced permission-set definition is missing, including unrelated stale references. |
+| `grant_service_omitted` | The grant's effective inclusion entries omit the requested service. |
+| `grant_service_definition_missing` | The included service is absent from applicable granted definitions. |
+| `grant_service_requirement_excluded` | Nonempty agent service requirements exclude the included, defined service. |
+| `grant_scope_intersection_empty` | The explicit agent ceiling removes every scope from a nonempty permission-set union. |
+
+`grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
+
 Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
 Their OAuth response is `invalid_grant` with the sessions landing page as `error_uri`.
 Provider refresh rejection and recorded local expiry are distinct causes.

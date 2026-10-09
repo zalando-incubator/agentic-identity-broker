@@ -86,6 +86,22 @@ The system must verify that the user (identified by subject_token 'sub' claim) h
 4. **Given** user's grant exists but has expired, **When** privileged client requests token exchange, **Then** system returns 403 Forbidden with error=access_denied and error_description="User grant has expired"
 5. **Given** user has an active UserGrant for the agent whose permission-set entries do not include the requested service, **When** privileged client requests token exchange, **Then** system denies the request before any token-vault lookup and returns 403 Forbidden with error=access_denied and error_uri set to the agent consent-management page (`<public URL>/agents/{agent-id}`); no token or credential is forwarded
 
+### Grant Denial Classification
+
+**GD-C1**: A registered agent has an active grant and a defined target service, but the user has no stored sessions.
+Signed token-exchange requests exercise these three authorization limits independently:
+
+- The grant omits the target service: `grant_service_omitted`.
+- The grant includes the defined target service, but the agent requirements exclude it: `grant_service_requirement_excluded`.
+- The grant includes the defined target service, but the explicit agent ceiling removes every scope: `grant_scope_intersection_empty`.
+
+Each request returns HTTP 403 with `error=access_denied` and `error_description="User authorization is insufficient. Please re-consent."`.
+The response retains `error_uri=<public URL>/agents/{agent-id}` and contains no token fields.
+JSON observation logs and request spans contain the corresponding detail, `authorization_denied` outcome, and `grant_authorization` stage.
+Recovery remains `reconsent` targeting `consent`.
+No upstream token or refresh request occurs.
+Observations exclude credentials, raw JWTs, unprojected claims, raw errors, sensitive URIs, and provider response material.
+
 ---
 
 ### User Story 4 - Privileged Client Authorization via CEL (Priority: P2)
