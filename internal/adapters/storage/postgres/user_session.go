@@ -119,8 +119,8 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		session.ID = id.NewSessionID()
 	}
 
-	// The share lock serializes this issuer check and the insert with provider
-	// updates, which take the service row's exclusive lock before counting sessions.
+	// The share lock serializes issuer and audience checks with provider updates,
+	// which take the service row's exclusive lock before counting sessions.
 	const insertQuery = `
 		INSERT INTO user_sessions (
 			id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
@@ -130,8 +130,9 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		FROM thirdparty_oauth2_services AS service
 		WHERE service.id = $3
-			AND ((service.resource_url IS NULL AND $15::text = '')
-				OR (service.resource_url IS NOT NULL AND $15::text <> '' AND service.issuer_uri = $15::text))
+			AND ((service.resource_url IS NULL AND $15::text = '' AND $16::text = '')
+				OR (service.resource_url IS NOT NULL AND $15::text <> '' AND $16::text <> ''
+					AND service.issuer_uri = $15::text AND service.authorization_params ->> 'resource' = $16::text))
 		FOR SHARE OF service
 		ON CONFLICT (principal, service_id)
 	`
@@ -158,7 +159,7 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
 		pq.Array(session.Scope), session.EncryptionContext,
 		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
-		session.CallbackID, session.ExpectedIssuerURI,
+		session.CallbackID, session.ExpectedIssuerURI, session.ExpectedResource,
 	)
 	if err != nil {
 		return nil, r.wrapError(err, "Create")
@@ -169,23 +170,24 @@ func (r *PostgresUserSessionRepository) create(ctx context.Context, session *sto
 	}
 	if rows == 0 {
 		if replace {
-			return nil, storage.NewStorageError("Create", storage.ErrorKindConflict, nil, "service issuer or source changed")
+			return nil, storage.NewStorageError("Create", storage.ErrorKindConflict, nil, "service issuer, audience, or source changed")
 		}
-		// DO NOTHING and an issuer mismatch both affect zero rows. Verify the
-		// issuer before returning a concurrent callback's existing session.
-		var issuerMatches bool
+		// DO NOTHING and a provider mismatch both affect zero rows. Verify the
+		// issuer and effective audience before returning an existing session.
+		var providerMatches bool
 		readCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
-		err = r.adapter.db.GetContext(readCtx, &issuerMatches, `SELECT EXISTS (
+		err = r.adapter.db.GetContext(readCtx, &providerMatches, `SELECT EXISTS (
 			SELECT 1 FROM thirdparty_oauth2_services
-			WHERE id = $1 AND ((resource_url IS NULL AND $2::text = '')
-				OR (resource_url IS NOT NULL AND $2::text <> '' AND issuer_uri = $2::text))
-		)`, session.ServiceID, session.ExpectedIssuerURI)
+			WHERE id = $1 AND ((resource_url IS NULL AND $2::text = '' AND $3::text = '')
+				OR (resource_url IS NOT NULL AND $2::text <> '' AND $3::text <> ''
+					AND issuer_uri = $2::text AND authorization_params ->> 'resource' = $3::text))
+		)`, session.ServiceID, session.ExpectedIssuerURI, session.ExpectedResource)
 		cancel()
 		if err != nil {
 			return nil, r.wrapError(err, "CreateIfAbsent")
 		}
-		if !issuerMatches {
-			return nil, storage.NewStorageError("CreateIfAbsent", storage.ErrorKindConflict, nil, "service issuer or source changed")
+		if !providerMatches {
+			return nil, storage.NewStorageError("CreateIfAbsent", storage.ErrorKindConflict, nil, "service issuer, audience, or source changed")
 		}
 		winner, err := r.FindByPrincipalAndService(ctx, session.Principal, session.ServiceID)
 		if err != nil {

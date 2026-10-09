@@ -49,7 +49,7 @@ type Adapter struct {
 	userGrants            ports.UserGrantRepository
 	userSessions          ports.UserSessionRepository
 	sessionRefresh        ports.UserSessionRefreshRepository
-	sessionExpiry        ports.UserSessionExpiryRepository
+	sessionExpiry         ports.UserSessionExpiryRepository
 	toolApprovals         ports.ToolApprovalRepository
 	toolApprovalQueries   ports.ToolApprovalQueryRepository
 	toolApprovalMetrics   ports.ToolApprovalMetricsRepository
@@ -105,16 +105,16 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		providers:             providerRepo,
 		discoveryStatusWriter: providerRepo,
 		userGrants:            userGrants,
-		userSessions:         sessions,
-		sessionRefresh:       sessions,
-		sessionExpiry:        sessions,
-		toolApprovals:        toolApprovalRepo,
-		toolApprovalQueries:  toolApprovalRepo,
-		toolApprovalMetrics:  toolApprovalRepo,
+		userSessions:          sessions,
+		sessionRefresh:        sessions,
+		sessionExpiry:         sessions,
+		toolApprovals:         toolApprovalRepo,
+		toolApprovalQueries:   toolApprovalRepo,
+		toolApprovalMetrics:   toolApprovalRepo,
 		approvalSyncState:     memory.NewApprovalSyncStateRepository(),
 		permissionSets:        permissionSets,
 		brokerCredentials:     memory.NewClientCredentialStore(),
-		signingKeys:          signingKeys,
+		signingKeys:           signingKeys,
 		authorizationCodes:    memory.NewAuthorizationCodeStore(),
 		refreshTokenSessions:  memory.NewRefreshTokenSessionStore(),
 		transactions:          noOpStorageTransactionManager{},
@@ -144,16 +144,16 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		providers:             providerRepo,
 		discoveryStatusWriter: providerRepo,
 		userGrants:            postgres.NewUserGrantRepository(pgAdapter),
-		userSessions:         sessions,
-		sessionRefresh:       sessions,
-		sessionExpiry:        sessions,
-		toolApprovals:        toolApprovalRepo,
-		toolApprovalQueries:  toolApprovalRepo,
-		toolApprovalMetrics:  toolApprovalRepo,
+		userSessions:          sessions,
+		sessionRefresh:        sessions,
+		sessionExpiry:         sessions,
+		toolApprovals:         toolApprovalRepo,
+		toolApprovalQueries:   toolApprovalRepo,
+		toolApprovalMetrics:   toolApprovalRepo,
 		approvalSyncState:     postgres.NewApprovalSyncStateRepository(pgAdapter),
 		permissionSets:        postgres.NewPermissionSetRepository(pgAdapter),
 		brokerCredentials:     postgres.NewClientCredentialRepo(pgAdapter),
-		signingKeys:          signingKeys,
+		signingKeys:           signingKeys,
 		authorizationCodes:    postgres.NewAuthorizationCodeRepo(pgAdapter),
 		refreshTokenSessions:  postgres.NewRefreshTokenSessionRepo(pgAdapter),
 		transactions:          pgAdapter,

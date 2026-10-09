@@ -2,6 +2,7 @@ package model
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -113,6 +114,12 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateDiscoveryRequest_RejectsConflict
 		{"malformed explicit audience", func(e *ThirdpartyOAuth2ProviderEntity) {
 			e.AuthorizationParams = map[string]string{"resource": "https://api.example.test/%zz"}
 		}, "authorization_params.resource"},
+		{"case-variant resource parameter", func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.AuthorizationParams = map[string]string{"Resource": "https://api.example.test/data"}
+		}, "authorization_params"},
+		{"duplicate case-variant resource parameter", func(e *ThirdpartyOAuth2ProviderEntity) {
+			e.AuthorizationParams = map[string]string{"resource": "https://api.example.test/data", "rEsOuRcE": "https://api.example.test/data"}
+		}, "authorization_params"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -131,6 +138,24 @@ func TestThirdpartyOAuth2ProviderEntity_ValidateDiscoveryRequest_ExplicitAudienc
 			e := discoveryRequestEntity()
 			e.AuthorizationParams = map[string]string{"resource": audience}
 			require.NoError(t, e.ValidateDiscoveryRequest())
+		})
+	}
+}
+
+func TestThirdpartyOAuth2ProviderEntity_StoredDiscoveryRejectsCaseVariantResourceParameter(t *testing.T) {
+	t.Parallel()
+	for _, resourceKey := range []string{"Resource", "rEsOuRcE"} {
+		t.Run(resourceKey, func(t *testing.T) {
+			t.Parallel()
+			entity := discoveryEntity()
+			clientID, err := CIMDClientID("https://broker.example.test", entity.ID)
+			require.NoError(t, err)
+			entity.ClientID = clientID
+			committedAt := time.Now().UTC()
+			entity.DiscoveryStatus = DiscoveryStatus{LastAttemptAt: &committedAt, LastSuccessAt: &committedAt}
+			entity.AuthorizationParams[resourceKey] = "https://other.example.test/audience"
+			require.ErrorContains(t, entity.Validate(), "authorization_params")
+			require.ErrorContains(t, entity.validateStoredDiscoveryState(), "authorization_params")
 		})
 	}
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -103,10 +102,11 @@ type ServiceResponse struct {
 
 // DiscoveryConfigResponse represents the discovery configuration in responses.
 type DiscoveryConfigResponse struct {
-	EnableDiscovery bool    `json:"enable_discovery"`
-	MetadataURL     *string `json:"metadata_url,omitempty"`
-	ResourceURL     *string `json:"resource_url,omitempty"`
-	ClientMethod    *string `json:"client_method"`
+	EnableDiscovery                    bool    `json:"enable_discovery"`
+	MetadataURL                        *string `json:"metadata_url,omitempty"`
+	ResourceURL                        *string `json:"resource_url,omitempty"`
+	ClientMethod                       *string `json:"client_method"`
+	AuthorizationParamResourceStrategy *string `json:"authorization_param_resource_strategy"`
 }
 
 // OAuth2EndpointsResponse represents OAuth2 endpoints in responses.
@@ -270,8 +270,6 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Normalize protected resources for duplicate ownership checks. The domain
-	// validates discovery requests before network access; retain legacy manual validation here.
 	entity.NormalizeProtectedResources()
 	if req.Discovery.ResourceURL == nil {
 		if err := entity.ValidateProtectedResources(); err != nil {
@@ -281,10 +279,6 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
 			return
 		}
-	}
-
-	if !h.checkProtectedResourceConflicts(ctx, w, r, entity, id.ServiceID{}, "CreateService") {
-		return
 	}
 
 	// Create service (branch key provisioning and encryption handled by domain service)
@@ -511,9 +505,6 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 		}
-		if !h.checkProtectedResourceConflicts(ctx, w, r, entity, entity.ID, "UpdateService") {
-			return
-		}
 	}
 
 	if err := h.providerService.Update(ctx, entity, expectedVersion); err != nil {
@@ -554,58 +545,6 @@ func strongETag(version int64) string {
 
 func isJSONNull(value json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(value), []byte("null"))
-}
-
-func (h *ServicesHandler) checkProtectedResourceConflicts(
-	ctx context.Context,
-	w http.ResponseWriter,
-	r *http.Request,
-	entity *model.ThirdpartyOAuth2ProviderEntity,
-	excludeServiceID id.ServiceID,
-	operation string,
-) bool {
-	for _, resource := range entity.ProtectedResources {
-		existing, err := h.providerService.FindByProtectedResource(ctx, resource)
-		switch {
-		case err == nil && existing == nil:
-			continue
-		case err == nil && existing.ID == excludeServiceID:
-			continue
-		case err == nil:
-			if entity.Discovery.ResourceURL == nil {
-				h.logger.Warn("duplicate protected resource",
-					"resource", resource,
-					"service_id", existing.ID)
-			}
-			h.writeError(w, http.StatusConflict, "conflict", "protected resource URI already configured for another service")
-			return false
-		case tokenexchange.IsResourceNotConfigured(err):
-			continue
-		case tokenexchange.IsResourceAmbiguous(err):
-			if entity.Discovery.ResourceURL == nil {
-				h.logger.Warn("protected resource lookup is ambiguous",
-					"resource", resource,
-					"error", err)
-			}
-			h.writeError(w, http.StatusConflict, "conflict", "protected resource URI already configured for another service")
-			return false
-		default:
-			var storageErr *storage.StorageError
-			if errors.As(err, &storageErr) {
-				h.handleServiceMutationError(w, r, operation+"DuplicateCheck", err, entity.Discovery.ResourceURL != nil)
-				return false
-			}
-			if entity.Discovery.ResourceURL == nil {
-				h.logger.Error("protected resource duplicate check failed",
-					"resource", resource,
-					"error", err)
-			}
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
-			return false
-		}
-	}
-
-	return true
 }
 
 // DeleteService handles DELETE /api/services/:service-id
@@ -709,6 +648,13 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		clientMethod := string(entity.Discovery.ClientMethod)
 		response.Discovery.ClientMethod = &clientMethod
 	}
+	if entity.Discovery.ResourceURL != nil {
+		strategy := "derived"
+		if entity.ResourceExplicit {
+			strategy = "pinned"
+		}
+		response.Discovery.AuthorizationParamResourceStrategy = &strategy
+	}
 
 	if !entity.TokenEndpointAuthMethod.IsAbsent() {
 		tokenEndpointAuthMethod := string(entity.TokenEndpointAuthMethod)
@@ -736,6 +682,9 @@ func (h *ServicesHandler) handleServiceMutationError(w http.ResponseWriter, r *h
 		h.handleStorageError(w, r, operation, err)
 		return
 	}
+	if errors.Is(r.Context().Err(), context.Canceled) {
+		return
+	}
 	var discoveryErr *thirdparty.DiscoveryError
 	if errors.As(err, &discoveryErr) {
 		h.writeDiscoveryError(w, discoveryErr)
@@ -751,9 +700,22 @@ func (h *ServicesHandler) handleServiceMutationError(w http.ResponseWriter, r *h
 			h.writeError(w, http.StatusConflict, "conflict", "issuer_change_requires_no_sessions")
 			return
 		}
+		if errors.Is(storageErr, storage.ErrResourceChangeHasSessions) {
+			h.writeError(w, http.StatusConflict, "conflict", "resource_change_requires_no_sessions")
+			return
+		}
+		if errors.Is(storageErr, storage.ErrProtectedResourceOwned) {
+			h.writeError(w, http.StatusConflict, "conflict", "protected resource URI already configured for another service")
+			return
+		}
 		h.writeError(w, http.StatusConflict, "conflict", "service conflict")
 		return
 	}
+	failureClass := "internal_failure"
+	if storageErr != nil {
+		failureClass = "storage_" + string(storageErr.Kind)
+	}
+	h.logger.Error("discovery service mutation failed", "operation", operation, "failure_class", failureClass)
 	h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 }
 
@@ -768,6 +730,14 @@ func (h *ServicesHandler) handleStorageError(w http.ResponseWriter, r *http.Requ
 	if !errors.As(err, &storageErr) {
 		h.logger.Error("unexpected error type", "operation", operation, "error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		return
+	}
+	if errors.Is(storageErr, storage.ErrResourceChangeHasSessions) {
+		h.writeError(w, http.StatusConflict, "conflict", "resource_change_requires_no_sessions")
+		return
+	}
+	if errors.Is(storageErr, storage.ErrProtectedResourceOwned) {
+		h.writeError(w, http.StatusConflict, "conflict", "protected resource URI already configured for another service")
 		return
 	}
 
@@ -805,7 +775,7 @@ func (h *ServicesHandler) writeDiscoveryError(w http.ResponseWriter, discoveryEr
 		category = "client registration failed"
 	case "timeout":
 		status = http.StatusGatewayTimeout
-	case "duplicate_client_identity", "issuer_change_requires_no_sessions":
+	case "duplicate_client_identity", "issuer_change_requires_no_sessions", "resource_change_requires_no_sessions":
 		status, category = http.StatusConflict, "conflict"
 	default:
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")

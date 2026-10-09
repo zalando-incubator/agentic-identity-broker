@@ -89,6 +89,7 @@ func dcrExpireSession(storage *storageadapter.Adapter, principal, serviceID stri
 	provider, err := storage.Services().Get(ctx, parsedID)
 	Expect(err).NotTo(HaveOccurred())
 	session.ExpectedIssuerURI = provider.IssuerURI
+	session.ExpectedResource = provider.AuthorizationParams["resource"]
 	expired := time.Now().Add(-time.Minute)
 	session.AccessTokenExpiresAt = &expired
 	Expect(storage.UserSessions().Create(ctx, session)).To(Succeed())

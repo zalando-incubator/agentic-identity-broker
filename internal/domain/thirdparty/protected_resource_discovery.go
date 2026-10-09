@@ -53,9 +53,15 @@ func discoveryFailure(code string) error { return &DiscoveryError{Code: code} }
 
 // discoveryReadFailure translates untrusted transport errors into the fixed API
 // vocabulary. Neither network errors nor response bodies reach callers or logs.
-func discoveryReadFailure(err error, document string) error {
+func discoveryReadFailure(ctx context.Context, err error, document string) error {
+	switch ctx.Err() {
+	case context.Canceled:
+		return context.Canceled
+	case context.DeadlineExceeded:
+		return discoveryFailure("timeout")
+	}
 	switch {
-	case errors.Is(err, ports.ErrOAuthDiscoveryTimeout), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+	case errors.Is(err, ports.ErrOAuthDiscoveryTimeout), errors.Is(err, context.DeadlineExceeded):
 		return discoveryFailure("timeout")
 	case errors.Is(err, ports.ErrOAuthDiscoveryUnsafeDestination):
 		return discoveryFailure("unsafe_destination")
@@ -273,12 +279,12 @@ func decodeUniqueJSONMembers(body []byte) (map[string]json.RawMessage, error) {
 
 func discoveryDocument(ctx context.Context, client ports.OAuthDiscoveryClient, locations []string, kind string) ([]byte, error) {
 	for index, location := range locations {
-		if ctx.Err() != nil {
-			return nil, discoveryFailure("timeout")
+		if err := ctx.Err(); err != nil {
+			return nil, discoveryReadFailure(ctx, err, kind)
 		}
 		body, err := client.GetJSON(ctx, location)
-		if ctx.Err() != nil {
-			return nil, discoveryFailure("timeout")
+		if err := ctx.Err(); err != nil {
+			return nil, discoveryReadFailure(ctx, err, kind)
 		}
 		if err == nil {
 			return body, nil
@@ -286,21 +292,21 @@ func discoveryDocument(ctx context.Context, client ports.OAuthDiscoveryClient, l
 		if errors.Is(err, ports.ErrOAuthDiscoveryNotFound) && index+1 < len(locations) {
 			continue
 		}
-		return nil, discoveryReadFailure(err, kind)
+		return nil, discoveryReadFailure(ctx, err, kind)
 	}
 	return nil, discoveryFailure(kind + "_not_found")
 }
 
 func (s *ThirdpartyOAuth2ProviderService) resourceIssuer(ctx context.Context, resourceURL, requestedIssuer string) (string, error) {
 	status, challenges, err := s.oauthDiscoveryClient.Probe(ctx, resourceURL)
-	if ctx.Err() != nil {
-		return "", discoveryFailure("timeout")
+	if err := ctx.Err(); err != nil {
+		return "", discoveryReadFailure(ctx, err, "resource_metadata")
 	}
 	if err != nil {
 		if errors.Is(err, ports.ErrOAuthDiscoveryNotFound) {
 			return "", discoveryFailure("resource_metadata_unavailable")
 		}
-		return "", discoveryReadFailure(err, "resource_metadata")
+		return "", discoveryReadFailure(ctx, err, "resource_metadata")
 	}
 	challengeURL, err := challengeResourceMetadata(status, challenges)
 	if err != nil {
@@ -409,8 +415,13 @@ func (s *ThirdpartyOAuth2ProviderService) issuerMetadata(ctx context.Context, is
 	}
 	tokenURL, _ := url.Parse(metadata.TokenEndpoint)
 	query, err := url.ParseQuery(tokenURL.RawQuery)
-	if err != nil || query.Has("resource") {
+	if err != nil {
 		return authorizationServerMetadata{}, model.OAuth2Endpoints{}, discoveryFailure("authorization_server_metadata_invalid")
+	}
+	for name := range query {
+		if model.IsDiscoveryResourceParamName(name) {
+			return authorizationServerMetadata{}, model.OAuth2Endpoints{}, discoveryFailure("authorization_server_metadata_invalid")
+		}
 	}
 	endpoints := model.OAuth2Endpoints{AuthorizeEndpoint: metadata.AuthorizationEndpoint, TokenEndpoint: metadata.TokenEndpoint}
 	if metadata.JWKSURI != nil {
@@ -456,8 +467,8 @@ func (s *ThirdpartyOAuth2ProviderService) requireCIMDKey(ctx context.Context) er
 		return discoveryFailure("cimd_unavailable")
 	}
 	if err := s.cimdKeyReadiness.RequireUsablePublishedKey(ctx); err != nil {
-		if ctx.Err() != nil {
-			return discoveryFailure("timeout")
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return discoveryReadFailure(ctx, ctxErr, "cimd")
 		}
 		return discoveryFailure("cimd_unavailable")
 	}
@@ -600,12 +611,12 @@ func (s *ThirdpartyOAuth2ProviderService) registerDCRClient(ctx context.Context,
 		return "", model.Secret{}, discoveryFailure("client_registration_invalid")
 	}
 	response, err := s.oauthDiscoveryClient.PostJSON(ctx, endpoint, body)
-	if ctx.Err() != nil {
-		return "", model.Secret{}, discoveryFailure("timeout")
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", model.Secret{}, discoveryReadFailure(ctx, ctxErr, "client_registration")
 	}
 	if err != nil {
 		switch {
-		case errors.Is(err, ports.ErrOAuthDiscoveryTimeout), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		case errors.Is(err, ports.ErrOAuthDiscoveryTimeout), errors.Is(err, context.DeadlineExceeded):
 			return "", model.Secret{}, discoveryFailure("timeout")
 		case errors.Is(err, ports.ErrOAuthDiscoveryUnsafeDestination):
 			return "", model.Secret{}, discoveryFailure("unsafe_destination")

@@ -211,8 +211,32 @@ The broker derives one effective `authorization_params.resource` from verified m
 The explicit value must be a non-empty absolute URI without a fragment.
 This effective resource is distinct from `discovery.resource_url` and the `protected_resources` ownership set.
 The authenticated Admin `GET /api/services/{service-id}` returns the active service and its effective resource without a DCR secret.
-The response `discovery.metadata_url` and `discovery.resource_url` can be null.
-The response `discovery.client_method` can be null for manual and direct-metadata services.
+The same service representation appears in create, read, list, and update responses.
+Its `discovery.authorization_param_resource_strategy` is required, read-only, and nullable:
+
+| Value | Source of `authorization_params.resource` |
+|---|---|
+| `derived` | The verified `discovery.resource_url`. |
+| `pinned` | An administrator-supplied `authorization_params.resource`, even when it equals the verified URL. |
+| `null` | A manual or direct-`metadata_url` service. |
+
+The response `discovery.metadata_url`, `discovery.resource_url`, and `discovery.client_method` can be null.
+The strategy belongs to `discovery`, not to the forwarded `authorization_params` map.
+Do not send the strategy in a create or update request.
+
+These response fragments show a derived audience A, a pinned audience A, and a manual service:
+
+```json
+{"discovery":{"resource_url":"https://files.example/mcp","authorization_param_resource_strategy":"derived"},"authorization_params":{"resource":"https://files.example/mcp"}}
+```
+
+```json
+{"discovery":{"resource_url":"https://files.example/mcp","authorization_param_resource_strategy":"pinned"},"authorization_params":{"resource":"https://files.example/mcp"}}
+```
+
+```json
+{"discovery":{"enable_discovery":false,"authorization_param_resource_strategy":null},"authorization_params":{}}
+```
 
 For example, a DCR create response can contain this service without a client secret:
 
@@ -227,7 +251,8 @@ For example, a DCR create response can contain this service without a client sec
   "discovery": {
     "enable_discovery": true,
     "resource_url": "https://mcp.example.com/mcp",
-    "client_method": "dcr"
+    "client_method": "dcr",
+    "authorization_param_resource_strategy": "derived"
   },
   "endpoints": {
     "token_endpoint": "https://login-a.example.com/token",
@@ -254,7 +279,7 @@ DCR also requires a public HTTPS end-user URL for its registered callback.
 
 The authenticated Admin `PUT /api/services/{service-id}` refreshes protected-resource discovery.
 The request requires `display_name` and `discovery` and omits manual endpoints and credentials.
-For example, this request replaces the derived resource with an explicit resource:
+To pin the audience, supply `authorization_params.resource` in the request, even when it equals the current audience:
 
 ```json
 {
@@ -264,25 +289,33 @@ For example, this request replaces the derived resource with an explicit resourc
     "resource_url": "https://mcp.example.com/mcp"
   },
   "authorization_params": {
-    "resource": "https://mcp.example.com/api"
+    "resource": "https://mcp.example.com/mcp"
   }
 }
 ```
 
-If `authorization_params` is absent, the broker retains its values and the resource source.
-If a replacement object omits `resource`, the broker restores the derived resource.
+Omit unchanged `authorization_params` on PUT to retain the parameter map and its derived or pinned source.
+Supply `resource` in that map to pin the audience. Supply a map without `resource`, such as `{}`, to restore derivation from the verified URL.
+An unchanged explicit audience permits a verified change to `discovery.resource_url`, even while user sessions exist.
+If the effective audience changes, terminate all user sessions first, including expired sessions.
+Otherwise, the broker returns `409` with `{"error":"conflict","message":"resource_change_requires_no_sessions"}` before provider discovery and checks again at commit.
 An omitted `issuer_uri` retains the active issuer only when fresh metadata still advertises it.
-A different issuer requires an explicit selection and no user sessions.
+A different issuer requires an explicit selection and no user sessions. The issuer conflict takes precedence when both the issuer and audience change.
 For an unchanged issuer, the broker keeps the client ID, client method, credential, and exact token authentication method.
-The repository checks for user sessions again when an issuer change commits. A callback from the prior issuer cannot create a session after that change.
-On a full manual replacement, omit `authorization_params` to retain the map. Supply `{}` to clear it. The discovery override marker is always removed.
-A failed refresh keeps the active configuration and service ETag. It updates the stored attempt time and safe reason.
+A callback from the prior issuer or audience cannot create a session after a session-free change.
+On a full manual replacement, omit `authorization_params` to retain the map or supply `{}` to clear it. The response strategy becomes `null` after conversion.
+If that conversion changes the audience while sessions exist, the broker returns the same `409` without a discovery-status write.
+A rejected discovery-backed audience change or failed discovery attempt keeps active configuration, owned resources, sessions, and the service ETag unchanged.
+It writes only the stored attempt time and safe failure reason. For an audience conflict, that reason is `resource_change_requires_no_sessions`.
+An invalid request that stops before discovery does not write status.
+The service ETag covers active configuration and owned protected resources, not this failure-only status.
 
 The authenticated Admin `GET /api/services/{service-id}/discovery-status` reads stored state without provider traffic.
 Its `status` is `ready`, `failed`, or `not_applicable`.
 The response always includes `resource_url`, `issuer_uri`, `client_method`, `last_attempt_at`, `last_success_at`, and `failure_reason`.
 Each of those fields can be `null`. A manual service returns `not_applicable` and null discovery fields.
 After a failed refresh, `resource_url`, `issuer_uri`, and `client_method` describe the last successful active configuration.
+The discovery-status GET has no ETag. A failure-only status update does not change the service version.
 For example, a failed refresh can return:
 
 ```json
@@ -319,7 +352,8 @@ Discovery and registration errors use safe `message` codes. They never include p
 | `400` | Discovery-status GET | Malformed service ID. |
 | `401` | Discovery-status GET | An operator principal is required. |
 | `404` | Update or discovery-status GET | The service does not exist. Missing provider metadata instead returns `400`. |
-| `409` | Create or update | Duplicate client identity or issuer change with active sessions. Manual client-ID conflicts also return `409`. |
+| `409` | Create or update | Duplicate client identity or protected-resource ownership. Manual client-ID conflicts also return `409`. |
+| `409` | Update | An issuer or effective audience change with user sessions, including expired sessions. |
 | `504` | Create or update | Discovery or registration exceeded the 15-second attempt deadline. The `message` is `timeout`. |
 
 Discovery failures use `error: "discovery failed"` and a safe `message` code.
@@ -329,7 +363,7 @@ Authorization-server codes are `authorization_server_metadata_not_found`, `autho
 Other discovery codes are `unsafe_destination` and `response_too_large`.
 Registration failures use `error: "client registration failed"`.
 Their codes are `no_compatible_client_method`, `cimd_unavailable`, `client_name_unconfigured`, `client_registration_rejected`, `client_registration_invalid`, and `client_method_changed`.
-Conflict reasons include `duplicate_client_identity` and `issuer_change_requires_no_sessions`.
+Conflict reasons include `duplicate_client_identity`, `issuer_change_requires_no_sessions`, and `resource_change_requires_no_sessions`.
 Local storage or encryption errors return `500` without a discovery failure code.
 
 ### Outbound CIMD confidential services

@@ -237,7 +237,8 @@ these fields, along with the other service fields:
   "discovery": {
     "enable_discovery": true,
     "resource_url": "https://mcp.example.com/mcp",
-    "client_method": "cimd"
+    "client_method": "cimd",
+    "authorization_param_resource_strategy": "derived"
   },
   "authorization_params": { "resource": "https://mcp.example.com/mcp" }
 }
@@ -294,7 +295,8 @@ even though the broker stores an encrypted credential:
   "discovery": {
     "enable_discovery": true,
     "resource_url": "https://files.example.com/mcp",
-    "client_method": "dcr"
+    "client_method": "dcr",
+    "authorization_param_resource_strategy": "pinned"
   },
   "authorization_params": { "resource": "https://files.example.com/api" }
 }
@@ -309,6 +311,26 @@ registration does not trigger a public retry.
 `authorization_params.resource` is the effective token audience request. The
 separate `protected_resources` list controls RFC 8693 token exchange. It does not
 set this audience.
+
+Create, read, list, and update responses include `discovery.authorization_param_resource_strategy`.
+It is `derived` when the verified URL supplies the audience, or `pinned` when an administrator supplies `authorization_params.resource`.
+The value is `pinned` even when the supplied audience equals the verified URL.
+These response fragments show derived A, pinned A, and a manual service:
+
+```json
+{"discovery":{"resource_url":"https://files.example/mcp","authorization_param_resource_strategy":"derived"},"authorization_params":{"resource":"https://files.example/mcp"}}
+```
+
+```json
+{"discovery":{"resource_url":"https://files.example/mcp","authorization_param_resource_strategy":"pinned"},"authorization_params":{"resource":"https://files.example/mcp"}}
+```
+
+```json
+{"discovery":{"enable_discovery":false,"authorization_param_resource_strategy":null},"authorization_params":{}}
+```
+
+Manual and direct-`metadata_url` services report `null` for the strategy.
+The strategy is response-only. Do not send it in a request or put it in the upstream `authorization_params` map.
 
 ### Select one issuer when the resource advertises several
 
@@ -390,8 +412,8 @@ method, attempt time, and success time. The read does not contact the provider:
 ```
 
 Refresh discovery with `PUT /api/services/{service-id}`. Include the current
-`display_name` and `discovery.resource_url`. Omit `authorization_params` to keep
-an explicit resource override:
+`display_name` and `discovery.resource_url`. Omit unchanged `authorization_params`
+to retain both the parameter map and its derived or pinned source:
 
 ```bash
 curl -X PUT http://localhost:14000/api/services/880e8400-e29b-41d4-a716-446655440003 \
@@ -406,16 +428,55 @@ curl -X PUT http://localhost:14000/api/services/880e8400-e29b-41d4-a716-44665544
   }'
 ```
 
-For a derived resource, a successful refresh updates `authorization_params.resource`
-when the verified resource URL changes. An omitted `authorization_params` retains
-an explicit override. On a successful refresh with the same issuer, the broker
-updates the endpoints but retains the client identity and exact token authentication
-method.
+If no user sessions exist, a derived-audience refresh can update `authorization_params.resource`
+from the new verified resource URL. An omitted `authorization_params` retains a pinned
+audience instead. On a successful refresh with the same issuer, the broker updates
+the endpoints but retains the client identity and exact token authentication method.
 
-To remove an explicit override, send a replacement `authorization_params` object
-without `resource` in a later PUT. For example, use `"authorization_params": {}`
-with the `display_name` and `discovery` fields. The broker then restores the
-verified resource URL.
+For example, a derived service can have both `discovery.resource_url` and
+`authorization_params.resource` set to `https://files.example/mcp` (audience A).
+To pin A without changing the audience, PUT `authorization_params.resource` with that same URI:
+
+```json
+{
+  "display_name": "Files MCP",
+  "discovery": { "enable_discovery": true, "resource_url": "https://files.example/mcp" },
+  "authorization_params": { "resource": "https://files.example/mcp" }
+}
+```
+
+The service response then reports `pinned` while the effective audience remains A.
+To change only the verified resource URL to `https://files.example/new-mcp` (B), omit `authorization_params`:
+
+```json
+{
+  "display_name": "Files MCP",
+  "discovery": { "enable_discovery": true, "resource_url": "https://files.example/new-mcp" }
+}
+```
+
+The effective audience remains A, and the response still reports `pinned`.
+This URL change is allowed with user sessions because the effective audience does not change.
+To restore derivation from B, PUT a map without `resource`, such as `"authorization_params": {}`.
+That operation changes the effective audience. Terminate every user session for this service first, including expired sessions.
+
+Use this order for an audience change:
+
+1. Read the active service with `GET /api/services/{service-id}`. Record its effective audience and service ETag.
+2. Terminate all user sessions for the service, including expired sessions.
+3. PUT the new audience. Include `resource` to pin it, or supply a parameter map without `resource` to derive it.
+4. Read the active service again. Compare its audience and source strategy with the intended values. Record its new ETag.
+
+If sessions still exist, an audience-changing PUT returns HTTP 409:
+
+```json
+{"error":"conflict","message":"resource_change_requires_no_sessions"}
+```
+
+The broker checks for sessions before provider discovery and again when the update commits.
+An issuer change with sessions returns `issuer_change_requires_no_sessions` first.
+If you replace `protected_resources` in the PUT, send the current service ETag in `If-Match`.
+The service ETag covers active configuration and owned protected resources.
 
 If the refresh fails, the PUT can return a safe error such as:
 
@@ -441,13 +502,17 @@ Read discovery status again with the GET request shown earlier. It can report
 }
 ```
 
-The failed PUT changes only the attempt time and safe failure reason. It preserves
-the active issuer, client identity, credential, endpoints, effective resource,
-sessions, success time, and service ETag. An issuer change needs an explicit
-`issuer_uri` and no user sessions. The failure reason is a safe code, not a provider
-response or secret.
+When a discovery attempt fails, the PUT changes only the stored attempt time and safe failure reason.
+It preserves the active issuer, client identity, credential, endpoints, effective audience,
+owned protected resources, sessions, success time, and service ETag. An invalid request before discovery does not write status.
+For an audience conflict, discovery status records `failure_reason: resource_change_requires_no_sessions`.
+The discovery-status GET has no ETag. A failure-only status write does not change the service version.
+If an audience-changing PUT converts a discovery-backed service to manual configuration,
+the broker returns the same 409 without a discovery-status write.
+An issuer change needs an explicit `issuer_uri` and no user sessions.
+The failure reason is a safe code, not a provider response or secret.
 
-The broker checks for user sessions again when the issuer change commits. It rejects an old-issuer callback after the change, before it exchanges the code.
+The broker rejects a callback from the old issuer or audience before it exchanges the code.
 
 Read the active service through the authenticated Admin API:
 

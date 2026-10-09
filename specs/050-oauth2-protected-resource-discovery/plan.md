@@ -37,9 +37,9 @@ The design keeps the existing `ThirdpartyOAuth2ProviderEntity` aggregate. It add
 - No response, status record, or audit record contains a secret, assertion, token, code, URL query, or remote body.
 - Existing manual and direct-metadata services keep their current validation and wire behavior.
 
-**Scale/Scope**: One existing aggregate, 41 mapped acceptance scenarios (US1: 10, US2: 10, US3: 13, US4: 8), one Admin API route, one reversible migration, one new ADR, and one performance measurement. No scheduled discovery or UI.
+**Scale/Scope**: One existing aggregate, 44 mapped functional acceptance scenarios (US1: 10, US2: 10, US3: 13, US4: 11), one Admin API route, one reversible migration, one proposed ADR, and one separate performance measurement. No scheduled discovery or UI.
 
-**NEEDS CLARIFICATION**: None. [research.md](./research.md) resolves the technical questions. Accepted ADR 038 and written review of the canonical OpenAPI response and failure-code delta are implementation preconditions. The latest specification also requires the broker-wide DCR client name and two additional acceptance scenarios.
+**NEEDS CLARIFICATION**: None. [research.md](./research.md) resolves the technical questions. The stakeholder approved the canonical OpenAPI delta and ADR 038's approach. ADR 038 remains proposed pending reviewer acceptance; ADRs 015 and 036 remain binding meanwhile.
 
 ## Constitution Check
 
@@ -300,10 +300,10 @@ Add `GetDiscoveryStatus` to `ServicesHandler`. Mount `GET /api/services/{service
 
 #### Phase 2f: E2E Acceptance Test Design
 
-- Add all 41 functional `It()` blocks and the separate SC-006 performance block before production behavior.
+- The original design added 41 functional `It()` blocks and a separate SC-006 performance block before production behavior. Remediation adds US4-S9–S11. These three cases also failed before their behavior was implemented.
 - Give each functional block `Label("protected-resource-discovery")`.
 - Add `Label("docker")` to US2-S3 and US4-S5.
-- Run the functional filter and record exactly 41 compiling semantic-red results. Run the single-process performance filter and record one semantic-red SC-006 result. Missing Builder symbols or broken fake-host transport do not count as semantic failures.
+- The 2026-10-07 functional red baseline recorded 41 compiling semantic failures. The three remediation cases failed semantically before their fixes. Broken Builder symbols or fake-host transport do not count as semantic failures.
 
 ### Phase 2.5: Foundational Infrastructure
 
@@ -323,7 +323,7 @@ Add `GetDiscoveryStatus` to `ServicesHandler`. Mount `GET /api/services/{service
 
 ### Phase N: Constitution Compliance Verification
 
-- Verify ADR 038, OpenAPI, glossary, SC-006 and security NFRs in `ARCHITECTURE.md`, migration tests, audit safety, Builder wiring, the focused status writer in `internal/ports/storage.go`, and both storage adapters.
+- Verify the proposed ADR 038, OpenAPI, glossary, SC-006 and security NFRs in `ARCHITECTURE.md`, migration tests, audit safety, Builder wiring, the focused status writer in `internal/ports/storage.go`, and both storage adapters.
 - Run `just check`, the focused E2E command, `just test`, `just test-integration`, and `just test-integration-infra`.
 - Run `just verify` as the final gate.
 
@@ -335,7 +335,7 @@ Add `GetDiscoveryStatus` to `ServicesHandler`. Mount `GET /api/services/{service
 
 **Framework**: Ginkgo v2 and Gomega. Every test uses one production `app.Builder` with both Admin and End-user test servers.
 
-**Labels**: Every functional block uses `Label("protected-resource-discovery")`. The PostgreSQL restart scenarios also use `docker`. The SC-006 block uses both `protected-resource-discovery` and `performance`. This command selects exactly 41 functional blocks:
+**Labels**: Every functional block uses `Label("protected-resource-discovery")`. The PostgreSQL restart scenarios also use `docker`. US4-S9–S11 also use `protected-resource-remediation`. The SC-006 block uses `protected-resource-discovery` and `performance`. The following command selects exactly 44 functional blocks:
 
 ```sh
 ginkgo -v --label-filter="protected-resource-discovery && !performance" ./tests/e2e/

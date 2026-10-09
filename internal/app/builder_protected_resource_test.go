@@ -120,18 +120,20 @@ func TestBuilder_DiscoveryUsesInjectedClientWithoutChangingManualServices(t *tes
 	assert.Len(t, client.calls, 3, "manual creation must not probe the resource provider")
 }
 
-func waitBuilderConnectionState(t *testing.T, events <-chan string, remote string) {
+func waitBuilderConnectionState(t *testing.T, events <-chan string, remotes ...string) {
 	t.Helper()
+	pending := make(map[string]struct{}, len(remotes))
+	for _, remote := range remotes {
+		pending[remote] = struct{}{}
+	}
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
-	for {
+	for len(pending) != 0 {
 		select {
 		case observed := <-events:
-			if observed == remote {
-				return
-			}
+			delete(pending, observed)
 		case <-timer.C:
-			t.Fatalf("connection %s did not enter expected state", remote)
+			t.Fatalf("connections %v did not enter expected state", pending)
 		}
 	}
 }
@@ -300,15 +302,13 @@ func TestBuilder_ShutdownClosesProductionSharedAndGuardedPools(t *testing.T) {
 	}
 	first, second := <-requests, <-requests
 	assert.NotEqual(t, first.remote, second.remote, "the two upstream modes must use separate connection pools")
-	waitBuilderConnectionState(t, idle, first.remote)
-	waitBuilderConnectionState(t, idle, second.remote)
+	waitBuilderConnectionState(t, idle, first.remote, second.remote)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	require.NoError(t, app.Shutdown(ctx))
 	stopped = true
-	waitBuilderConnectionState(t, closed, first.remote)
-	waitBuilderConnectionState(t, closed, second.remote)
+	waitBuilderConnectionState(t, closed, first.remote, second.remote)
 }
 
 func TestBuilder_GuardedDiscoveryTracingDoesNotExportURLQueries(t *testing.T) {

@@ -87,6 +87,11 @@ func IsReservedAuthorizationParamName(name string) bool {
 	return reserved
 }
 
+// IsDiscoveryResourceParamName reports whether a parameter would duplicate RFC 8707 resource.
+func IsDiscoveryResourceParamName(name string) bool {
+	return strings.EqualFold(name, "resource")
+}
+
 func validateAuthorizationParams(params map[string]string) error {
 	for name, value := range params {
 		if strings.TrimSpace(name) == "" {
@@ -270,6 +275,11 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateEffectiveDiscoveryResource() er
 	if e.Discovery.ResourceURL == nil {
 		return nil
 	}
+	for name := range e.AuthorizationParams {
+		if name != "resource" && IsDiscoveryResourceParamName(name) {
+			return errors.New("authorization_params contains a duplicate resource parameter")
+		}
+	}
 	resource, present := e.AuthorizationParams["resource"]
 	if !present {
 		return errors.New("authorization_params.resource is required for discovery")
@@ -371,6 +381,11 @@ func (e *ThirdpartyOAuth2ProviderEntity) ValidateDiscoveryRequest() error {
 	if err := validateAuthorizationParams(e.AuthorizationParams); err != nil {
 		return err
 	}
+	for name := range e.AuthorizationParams {
+		if name != "resource" && IsDiscoveryResourceParamName(name) {
+			return errors.New("authorization_params contains a duplicate resource parameter")
+		}
+	}
 	if e.IssuerURI != "" {
 		if err := validateDiscoveryIssuer(e.IssuerURI); err != nil {
 			return err
@@ -446,8 +461,10 @@ func (e *ThirdpartyOAuth2ProviderEntity) validateDiscoverySelection() error {
 	if err != nil {
 		return errors.New("token_endpoint has invalid query parameters")
 	}
-	if _, present := query["resource"]; present {
-		return errors.New("token_endpoint must not contain a resource query parameter")
+	for name := range query {
+		if IsDiscoveryResourceParamName(name) {
+			return errors.New("token_endpoint must not contain a resource query parameter")
+		}
 	}
 	resource, present := e.AuthorizationParams["resource"]
 	if !present {

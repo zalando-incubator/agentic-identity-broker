@@ -1,10 +1,10 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/config"
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/lestrrat-go/jwx/v4/jwt"
 	"github.com/stretchr/testify/require"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/config"
 )
 
 // TestRunAdminJWTPreauthCreatesCIMDKey exercises the same server construction as the broker CLI.

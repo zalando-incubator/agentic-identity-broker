@@ -91,7 +91,7 @@ func discoveryResource(entity *model.ThirdpartyOAuth2ProviderEntity) (string, er
 		return "", errors.New("discovery-backed service requires authorization_params.resource")
 	}
 	for name := range entity.AuthorizationParams {
-		if name != "resource" && strings.EqualFold(name, "resource") {
+		if name != "resource" && model.IsDiscoveryResourceParamName(name) {
 			return "", errors.New("discovery-backed service has duplicate resource parameters")
 		}
 	}
@@ -104,7 +104,7 @@ func discoveryResource(entity *model.ThirdpartyOAuth2ProviderEntity) (string, er
 		return "", errors.New("discovery-backed token endpoint query is invalid")
 	}
 	for name := range query {
-		if strings.EqualFold(name, "resource") {
+		if model.IsDiscoveryResourceParamName(name) {
 			return "", errors.New("discovery-backed token endpoint must not include resource")
 		}
 	}
@@ -169,6 +169,9 @@ func (s *OAuth2SessionService) tokenHTTPClient(entity *model.ThirdpartyOAuth2Pro
 	}
 	if _, err := discoveryResource(entity); err != nil {
 		return nil, err
+	}
+	if err := model.ValidatePublicHTTPSURL(entity.Endpoints.TokenEndpoint); err != nil {
+		return nil, errors.New("discovery-backed token endpoint is unsafe")
 	}
 	if s.discoveryTokenHTTPClient == nil {
 		return nil, errors.New("discovery-backed token client is unavailable")
@@ -412,7 +415,7 @@ func (s *OAuth2SessionService) ValidateStateToken(
 
 	// Validate claims structure
 	if err := claims.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid state token claims: %w", err)
+		return nil, fmt.Errorf("invalid state token claims: %w", ErrInvalidStateToken)
 	}
 
 	// Check expiration
@@ -540,7 +543,7 @@ func safeTokenExchangeError(err error) *OperationError {
 	return NewOperationError(metadata, errors.Join(ErrTokenExchange, err))
 }
 
-func safeDCRTokenExchangeError(err error) error {
+func safeDiscoveredTokenExchangeError(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return context.Canceled
 	}
@@ -619,8 +622,8 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 		if err == nil {
 			return token, nil
 		}
-		if service.Discovery.ClientMethod == model.ClientBootstrapDCR {
-			lastErr = safeDCRTokenExchangeError(err)
+		if service.Discovery.ResourceURL != nil {
+			lastErr = safeDiscoveredTokenExchangeError(err)
 		} else {
 			lastErr = safeTokenExchangeError(err)
 		}
@@ -732,6 +735,7 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	}
 	if service.Discovery.ResourceURL != nil {
 		claims.IssuerURI = service.IssuerURI
+		claims.Resource = service.AuthorizationParams["resource"]
 	}
 	if previous != nil {
 		claims.SessionID = previous.ID
@@ -867,6 +871,7 @@ func (s *OAuth2SessionService) createSession(
 		ServiceID:             serviceID,
 		CallbackID:            uuid.NewString(),
 		ExpectedIssuerURI:     claims.IssuerURI,
+		ExpectedResource:      claims.Resource,
 		EncryptedAccessToken:  encryptedAccess,
 		EncryptedRefreshToken: encryptedRefresh,
 		TokenType:             tokenType,
@@ -926,8 +931,8 @@ func (s *OAuth2SessionService) HandleCallback(
 		return nil, errors.New("DCR token identity does not match the requested service")
 	}
 	if (service.Discovery.ResourceURL != nil) != (claims.IssuerURI != "") ||
-		(service.Discovery.ResourceURL != nil && claims.IssuerURI != service.IssuerURI) {
-		s.logger.Warn("OAuth2 callback issuer mismatch", "service_id", req.ServiceID, "reason", "issuer_mismatch")
+		(service.Discovery.ResourceURL != nil && (claims.IssuerURI != service.IssuerURI || claims.Resource != service.AuthorizationParams["resource"])) {
+		s.logger.Warn("OAuth2 callback discovery state mismatch", "service_id", req.ServiceID, "reason", "issuer_or_resource_mismatch")
 		return nil, ErrInvalidStateToken
 	}
 
@@ -1108,6 +1113,18 @@ type refreshAttemptOutcome struct {
 	retryAfter time.Duration
 }
 
+var errDiscoveredRefresh = errors.New("upstream token refresh failed")
+
+func safeDiscoveredRefreshError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return errDiscoveredRefresh
+}
+
 // refreshOnce performs a single refresh request against the provider's token endpoint.
 func (s *OAuth2SessionService) refreshOnce(
 	ctx context.Context,
@@ -1148,6 +1165,9 @@ func (s *OAuth2SessionService) refreshOnce(
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, entity.Endpoints.TokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
+		if entity.Discovery.ResourceURL != nil {
+			err = safeDiscoveredRefreshError(err)
+		}
 		return nil, refreshAttemptOutcome{}, sessionOperationError(ctx, OperationRefresh, DetailConfiguration, err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1161,6 +1181,9 @@ func (s *OAuth2SessionService) refreshOnce(
 		// A dial failure is safe only before any request in the redirect chain was sent.
 		var dialErr *net.OpError
 		retryable := errors.As(err, &dialErr) && dialErr.Op == "dial" && !dialErr.Timeout() && !wroteHeaders.Load() && ctx.Err() == nil
+		if entity.Discovery.ResourceURL != nil {
+			err = safeDiscoveredRefreshError(err)
+		}
 		return nil, refreshAttemptOutcome{retryable: retryable}, sessionOperationError(ctx, OperationRefresh, DetailProviderUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -1170,7 +1193,7 @@ func (s *OAuth2SessionService) refreshOnce(
 			retryable:  resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 && resp.StatusCode <= 599,
 			retryAfter: retryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
-		failure, complete := thirdpartyRefreshError(resp)
+		failure, complete := thirdpartyRefreshError(resp, entity.Discovery.ResourceURL != nil)
 		outcome.retryable = outcome.retryable && complete
 		return nil, outcome, failure
 	}
@@ -1184,9 +1207,15 @@ func (s *OAuth2SessionService) refreshOnce(
 	}
 	limited := &io.LimitedReader{R: resp.Body, N: maxTokenResponseBytes + 1}
 	if err := json.NewDecoder(limited).Decode(&tokenResp); err != nil {
+		if entity.Discovery.ResourceURL != nil {
+			err = safeDiscoveredRefreshError(err)
+		}
 		return nil, refreshAttemptOutcome{}, refreshResponseError(ctx, resp.StatusCode, err)
 	}
 	if _, err := io.Copy(io.Discard, limited); err != nil {
+		if entity.Discovery.ResourceURL != nil {
+			err = safeDiscoveredRefreshError(err)
+		}
 		return nil, refreshAttemptOutcome{}, refreshResponseError(ctx, resp.StatusCode, err)
 	}
 	if limited.N == 0 {
@@ -1217,7 +1246,7 @@ const maxThirdpartyErrorBodyBytes = 64 << 10
 
 // thirdpartyRefreshError keeps only the HTTP status and an allowlisted OAuth error code so that
 // provider-controlled descriptions, URIs, headers, and bodies never leave this function.
-func thirdpartyRefreshError(resp *http.Response) (error, bool) {
+func thirdpartyRefreshError(resp *http.Response, discovered bool) (error, bool) {
 	retrieveErr := &oauth2.RetrieveError{
 		Response: &http.Response{
 			StatusCode: resp.StatusCode,
@@ -1226,6 +1255,9 @@ func thirdpartyRefreshError(resp *http.Response) (error, bool) {
 	}
 	oauthCode := ""
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxThirdpartyErrorBodyBytes+1))
+	if discovered && err != nil {
+		err = safeDiscoveredRefreshError(err)
+	}
 	if err == nil && len(body) <= maxThirdpartyErrorBodyBytes {
 		var payload struct {
 			Error string `json:"error"`
