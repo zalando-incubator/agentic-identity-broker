@@ -204,6 +204,10 @@ authorization:
   max_body_size: 1048576     # bytes buffered for evaluation (1 MiB)
 ```
 
+With OPA enabled, MCP JSON-RPC bodies with duplicate keys or noncanonical spellings of recognized request fields are denied before policy evaluation. Allowed MCP bodies are re-serialized from the parsed policy input, preserving numeric values and removing duplicate argument keys. Both the received body and the serialized body must fit `max_body_size`; other protocols retain their original body bytes.
+
+For MCP batches, the limit applies to the complete serialized array, not only each element. ExtProc serializes and validates standalone MCP calls before the approval gate runs. A size rejection leaves single-use approvals unconsumed.
+
 :::warning
 Keep `default_decision: "deny"`. If a policy result is undefined or evaluation times out,
 the OPA gate denies the request.

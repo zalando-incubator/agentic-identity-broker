@@ -977,9 +977,13 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can further restrict the request after broker token exchange. The approval gate runs only for a standalone MCP tool call after OPA returns `approval_required`.
 
-**Body input construction**: In OPA mode, ExtProc decodes each body or JSON-RPC batch element once, preserving JSON numbers with `json.Number` and the original raw bytes for `attributes.request.http.body`. MCP fields and approval invocations use the decoded value. `InputBuilder` converts Envoy-compatible headers once per request; batch elements receive independent input documents. The authorizer converts each document to `ast.Value` before policy evaluation. Header-only requests retain their separate input path, and requests without OPA do not inspect bodies.
+**Body input construction**: In OPA mode, ExtProc decodes each body or JSON-RPC batch element once. It preserves JSON numbers with `json.Number` and the original raw bytes for `attributes.request.http.body`. MCP fields and approval invocations use the decoded value. `InputBuilder` converts Envoy-compatible headers once per request, and batch elements receive independent input documents. The authorizer converts each document to `ast.Value` before policy evaluation. Header-only requests retain their separate input path, and requests without OPA do not inspect bodies.
 
-**MCP member ambiguity**: With OPA enabled, ExtProc rejects standalone requests and batch elements with repeated JSON-RPC envelope members, including case-folded variants of `jsonrpc`, `id`, `method`, and `params`. It also rejects repeated `params.name` and `params.arguments`, including case-folded variants, before policy or approval evaluation. Unique case-insensitive spellings of these members are normalized for policy input and approval correlation, while the forwarded body remains unchanged. This keeps decisions aligned with downstream struct decoders.
+**MCP member ambiguity**: With OPA enabled, ExtProc rejects duplicate or case-fold-equivalent JSON-RPC envelope and `params` keys before evaluation, including within batches. It rejects noncanonical spellings of recognized envelope keys and tool-call `name` or `arguments`. OPA and the approval gate use the same parsed tool name and arguments. JSON numbers retain their original lexemes for policy evaluation, request IDs, and forwarding.
+
+**Approval numbers**: Broker approval ingestion and PostgreSQL argument decoding preserve exact numeric values. Approval matching uses shared, notation-independent numeric canonicalization, including nested values.
+
+**MCP forwarding**: After all applicable decisions permit a call, ExtProc forwards a JSON re-serialization of the OPA-parsed body without HTML escaping. The incoming body and the complete serialized MCP body must each fit `authorization.max_body_size`. Non-MCP bodies remain unchanged.
 
 #### 3.2.2. gRPC Server
 
@@ -1689,7 +1693,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **ToolPattern**: The server derives this exact matcher from the approval tool name with `toolpattern.EscapeLiteral`. Browser decisions cannot change it. Together with ParamsPattern it describes the future invocations covered by the decision.
 
-**ParamsPattern**: A map from top-level argument names to glob strings for an approval decision. Argument names absent from the map are unconstrained; a present key must match the canonical rendering of that argument value. An empty map leaves every argument unconstrained.
+**ParamsPattern**: A map from top-level argument names to glob strings for an approval decision. Argument names absent from the map are unconstrained; a present key must match the canonical rendering of that argument value. An empty map leaves every argument unconstrained. JSON-number canonicalization is exact and independent of exponent notation, trailing fractional zeros, and signed zero, also inside arrays and objects. It uses ordinary decimal notation when the rendering fits the 1024-byte pattern limit; otherwise it uses normalized scientific notation to avoid exponent-driven expansion.
 
 **Approval pattern authority**: `arguments_hash` is the exact identity used to de-duplicate pending approvals. `ToolPattern` is server-owned exact coverage, and `ParamsPattern` defines editable coverage consumed by ExtProc's approval matcher. `ComputeArgumentsHash` and `toolpattern.Canonical` intentionally serve different purposes and must not be unified.
 
