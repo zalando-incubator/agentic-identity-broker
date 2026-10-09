@@ -552,6 +552,7 @@ func TestOAuth2AuthorizeHandler_LocalMode_CodeIssuerErrors(t *testing.T) {
 // Helper functions for test setup
 
 type mockAgentRepository struct {
+	ports.AgentRepository
 	agents map[id.AgentID]*storage.Agent
 }
 
@@ -736,7 +737,7 @@ func (m *mockGrantRepository) CountAgentsByPrincipalAndServiceID(ctx context.Con
 	return len(agents), nil
 }
 
-type noopSessionRepository struct{}
+type noopSessionRepository struct{ ports.UserSessionRepository }
 
 func (n *noopSessionRepository) Create(_ context.Context, _ *storage.UserSession) error { return nil }
 func (n *noopSessionRepository) Get(_ context.Context, _ id.SessionID) (*storage.UserSession, error) {

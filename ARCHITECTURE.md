@@ -439,6 +439,8 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 
 **Rate Limiting**: Per (principal, agent) pair using `golang.org/x/time/rate` token bucket. Configured via `approvals.rate_limit.max_pending_per_pair` and `approvals.rate_limit.max_requests_per_minute`.
 
+**Approval creation reads**: A narrow lookup by `(principal, agent_id, tool_name, arguments_hash)` lets existing pending approvals bypass rate limits before insertion. The service rechecks expiry after retrieval so an approval that expires during the lookup is not reused. The partial unique index and repository upsert remain the final concurrent deduplication guard. The separate pair-wide pending count enforces `max_pending_per_pair`; the index cannot replace it.
+
 **Trace Context**: `POST /api/approvals` accepts an optional W3C `traceparent` header. The broker persists the validated remote context so later browser lifecycle spans can link to the originating tool call.
 
 #### 3.1.6. Long-Poll Sync with PostgreSQL LISTEN/NOTIFY
@@ -552,6 +554,8 @@ rejections return 403; media-type rejections return 415. `/health` is excluded.
 - When local issuance is part of the active mode (`local` or `hybrid`), the local strategies are backed by `internal/domain/oauth2server.Provider`, which contains all fosite-specific authorization-server logic.
 
 **Authorization code expiry**: Locally issued codes expire after 60 seconds. Repository lookups exclude expired records in PostgreSQL and memory storage. `FositeStorage` checks the stored expiry before replay handling and hydrates the caller's session for `RandomCodeStrategy` to check again. Expired codes return `invalid_grant` without replay revocation. Unexpired, previously used codes retain replay protection.
+
+**Authorization-code exchange reads**: The provider authenticates the client once and passes it through the request context to fosite's storage handler. Each code-session hydration still reads the code and checks its original client ID and agent ID; invalidation retains its atomic single-use update. No authorization-code record is cached across validation steps, so replay and expiry checks observe current state.
 
 **OAuth2 record retention**: In local and hybrid modes, the builder starts `SessionCleanup` after successful application construction. It deletes expired authorization codes, PKCE sessions, and refresh-token sessions at startup and every minute. A repository error does not stop the remaining deletions or future sweeps. Application shutdown cancels the worker and waits for its current operation to finish. Expiry enforcement does not depend on cleanup success.
 
@@ -718,6 +722,7 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 
 - **OAuth2SessionService**: Transparently encrypts tokens on CreateSession, decrypts on retrieval
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
+- **Listing reads**: Consent delegations and session/consent requirements batch-load existing agents and providers by ID; missing records are omitted. Batch provider reads decrypt static confidential secrets and leave public and CIMD confidential providers unchanged. Consent connection status uses a narrow active-service-ID query instead of loading encrypted tokens per requirement. User-visible session summaries include expired sessions and derive refresh-token presence in PostgreSQL without selecting token ciphertext. PostgreSQL session repository reads and writes use configured read/write timeouts; refresh's row-lock transaction retains separate bounded acquisition and query phases.
 - **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Provider metadata is loaded before the session lock, then automatic and explicit refresh re-read the latest session under that lock. PostgreSQL holds a row lock through the provider exchange and commits rotated encrypted tokens before releasing it; database acquisition, reads, and writes have separate configured timeouts. The in-memory adapter serializes refresh, upsert, and deletion per session while holding its map mutex only for lookup and commit. Replicas therefore use the latest refresh token without racing on a stale one.
 - **Refresh cancellation and audit**: Automatic refresh has an operation deadline covering the configured upstream HTTP timeout and storage work. Caller cancellation stops that caller's wait without aborting a shared refresh that may already have rotated the provider token. Success audit events are emitted only after session persistence succeeds.
 - **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.

@@ -178,6 +178,24 @@ func TestAgentRepository_Get(t *testing.T) {
 	})
 }
 
+func TestAgentRepository_GetByIDs_OmitsMissingAndCopies(t *testing.T) {
+	ctx := context.Background()
+	repo := NewAgentRepository()
+	first := &storage.Agent{ID: id.NewAgentID(), DisplayName: "First", Description: "First agent", PermissionSets: testPermissionSets()}
+	second := &storage.Agent{ID: id.NewAgentID(), DisplayName: "Second", Description: "Second agent", PermissionSets: testPermissionSets()}
+	require.NoError(t, repo.Create(ctx, first))
+	require.NoError(t, repo.Create(ctx, second))
+
+	agents, err := repo.GetByIDs(ctx, []id.AgentID{second.ID, id.NewAgentID(), first.ID, second.ID})
+	require.NoError(t, err)
+	require.Len(t, agents, 2)
+	assert.Equal(t, []id.AgentID{second.ID, first.ID}, []id.AgentID{agents[0].ID, agents[1].ID})
+	agents[0].DisplayName = "Changed"
+	stored, err := repo.Get(ctx, second.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Second", stored.DisplayName)
+}
+
 func TestAgentRepository_Update(t *testing.T) {
 	ctx := context.Background()
 

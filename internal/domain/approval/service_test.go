@@ -3,6 +3,7 @@ package approval
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"reflect"
@@ -13,6 +14,8 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -127,14 +130,24 @@ func (m *mockApprovalRepo) ListAllActive(_ context.Context, principalFilter *id.
 	return approvals, nil
 }
 
-func (m *mockApprovalRepo) ListActiveByPrincipalAndAgent(_ context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error) {
-	var approvals []*storage.ToolApproval
+func (m *mockApprovalRepo) FindPendingByKey(_ context.Context, principal id.Principal, agentID id.AgentID, toolName, hash string) (*storage.ToolApproval, error) {
 	for _, approval := range m.approvals {
-		if approval.Principal == principal && approval.AgentID == agentID {
-			approvals = append(approvals, approval)
+		if approval.Principal == principal && approval.AgentID == agentID && approval.ToolName == toolName && approval.ArgumentsHash == hash &&
+			approval.Status == storage.ApprovalStatusPending && !approval.Consumed && !approval.IsExpired(time.Now()) {
+			return approval, nil
 		}
 	}
-	return approvals, nil
+	return nil, nil
+}
+
+func (m *mockApprovalRepo) CountPendingByPrincipalAndAgent(_ context.Context, principal id.Principal, agentID id.AgentID) (int, error) {
+	count := 0
+	for _, approval := range m.approvals {
+		if approval.Principal == principal && approval.AgentID == agentID && approval.Status == storage.ApprovalStatusPending && !approval.IsExpired(time.Now()) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (m *mockApprovalRepo) ListPermanentByPrincipal(_ context.Context, principal id.Principal) ([]*storage.ToolApproval, error) {
@@ -659,6 +672,42 @@ func TestService_CreatePendingApproval(t *testing.T) {
 		}
 	})
 
+	t.Run("does not reuse a pending approval expired during lookup", func(t *testing.T) {
+		for _, rateLimited := range []bool{false, true} {
+			t.Run(fmt.Sprintf("rate_limited=%t", rateLimited), func(t *testing.T) {
+				repo := newMockApprovalRepo()
+				req := makeRequest()
+				expired := makePendingApproval(principal, agentID)
+				expired.ToolName = req.ToolName
+				expired.ArgumentsHash = storage.ComputeArgumentsHash(req.Arguments)
+				expired.ExpiresAt = time.Now().Add(-time.Minute)
+				queries := &mockQueryRepo{
+					findPendingFunc: func(context.Context, id.Principal, id.AgentID, string, string) (*storage.ToolApproval, error) {
+						return expired, nil
+					},
+				}
+				svc := newTestServiceWithQueries(repo, queries, &mockSyncStateRepo{})
+				svc.rateLimiter = NewApprovalRateLimiter(10, 1)
+				if rateLimited {
+					require.True(t, svc.rateLimiter.AllowCreation(string(principal), agentID.String()))
+				}
+
+				result, err := svc.CreatePendingApproval(context.Background(), req)
+				if rateLimited {
+					assert.ErrorIs(t, err, ErrApprovalRateLimit)
+					assert.Nil(t, result)
+					return
+				}
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				assert.True(t, result.IsNew)
+				assert.NotEqual(t, expired.ID, result.Approval.ID)
+				assert.False(t, result.Approval.IsExpired(time.Now()))
+				assert.Contains(t, repo.approvals, result.Approval.ID)
+			})
+		}
+	})
+
 	t.Run("returns existing approval without charging rate limit", func(t *testing.T) {
 		repo := newMockApprovalRepo()
 		svc := NewService(
@@ -686,6 +735,48 @@ func TestService_CreatePendingApproval(t *testing.T) {
 		}
 	})
 
+	t.Run("duplicate bypass uses the exact pending key before rate limiting", func(t *testing.T) {
+		repo := newMockApprovalRepo()
+		queries := &mockQueryRepo{}
+		svc := NewService(repo, queries, nil, &mockSyncStateRepo{}, nil,
+			NewApprovalRateLimiter(1, 1), NewApprovalSyncBroadcaster(0), 10*time.Minute,
+			"https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)))
+		req := makeRequest()
+		first := makePendingApproval(principal, agentID)
+		first.ToolName = req.ToolName
+		first.ArgumentsHash = storage.ComputeArgumentsHash(req.Arguments)
+		repo.approvals[first.ID] = first
+		queries.approvals = []*storage.ToolApproval{first}
+
+		duplicate, err := svc.CreatePendingApproval(context.Background(), req)
+		require.NoError(t, err)
+		assert.False(t, duplicate.IsNew)
+		assert.Equal(t, first.ID, duplicate.Approval.ID)
+		other := req
+		other.ToolName = "different_tool"
+		_, err = svc.CreatePendingApproval(context.Background(), other)
+		require.NoError(t, err, "the duplicate must not consume the token-bucket allowance")
+	})
+
+	t.Run("pair-wide pending quota still rejects distinct approvals", func(t *testing.T) {
+		repo := newMockApprovalRepo()
+		svc := NewService(repo, repo, repo, &mockSyncStateRepo{}, nil,
+			NewApprovalRateLimiter(1, 10), NewApprovalSyncBroadcaster(0), 10*time.Minute,
+			"https://broker.example.com", slog.New(slog.NewTextHandler(io.Discard, nil)))
+		req := makeRequest()
+		first, err := svc.CreatePendingApproval(context.Background(), req)
+		require.NoError(t, err)
+		duplicate, err := svc.CreatePendingApproval(context.Background(), req)
+		require.NoError(t, err)
+		assert.False(t, duplicate.IsNew)
+		assert.Equal(t, first.Approval.ID, duplicate.Approval.ID)
+		other := req
+		other.ToolName = "different_tool"
+		_, err = svc.CreatePendingApproval(context.Background(), other)
+		assert.ErrorIs(t, err, ErrApprovalRateLimit)
+		assert.Len(t, repo.approvals, 1)
+	})
+
 	t.Run("returns a duplicate found after rate limit exhaustion", func(t *testing.T) {
 		repo := newMockApprovalRepo()
 		queries := &mockQueryRepo{}
@@ -706,12 +797,12 @@ func TestService_CreatePendingApproval(t *testing.T) {
 			t.Fatalf("unexpected error on first request: %v", err)
 		}
 		calls := 0
-		queries.listActiveByPairFunc = func(_ context.Context, _ id.Principal, _ id.AgentID) ([]*storage.ToolApproval, error) {
+		queries.findPendingFunc = func(_ context.Context, _ id.Principal, _ id.AgentID, _, _ string) (*storage.ToolApproval, error) {
 			calls++
 			if calls == 1 {
 				return nil, nil
 			}
-			return []*storage.ToolApproval{first.Approval}, nil
+			return first.Approval, nil
 		}
 		second, err := svc.CreatePendingApproval(context.Background(), req)
 		if err != nil {
@@ -867,8 +958,8 @@ func TestService_CreatePendingApproval(t *testing.T) {
 
 // mockQueryRepo implements ports.ToolApprovalQueryRepository for testing.
 type mockQueryRepo struct {
-	approvals            []*storage.ToolApproval
-	listActiveByPairFunc func(context.Context, id.Principal, id.AgentID) ([]*storage.ToolApproval, error)
+	approvals       []*storage.ToolApproval
+	findPendingFunc func(context.Context, id.Principal, id.AgentID, string, string) (*storage.ToolApproval, error)
 }
 
 func (m *mockQueryRepo) ListAllActive(_ context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) ([]*storage.ToolApproval, error) {
@@ -894,17 +985,18 @@ func (m *mockQueryRepo) ListAllActive(_ context.Context, principalFilter *id.Pri
 	}
 	return result, nil
 }
-func (m *mockQueryRepo) ListActiveByPrincipalAndAgent(_ context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error) {
-	if m.listActiveByPairFunc != nil {
-		return m.listActiveByPairFunc(context.Background(), principal, agentID)
+
+func (m *mockQueryRepo) FindPendingByKey(ctx context.Context, principal id.Principal, agentID id.AgentID, toolName, hash string) (*storage.ToolApproval, error) {
+	if m.findPendingFunc != nil {
+		return m.findPendingFunc(ctx, principal, agentID, toolName, hash)
 	}
-	var result []*storage.ToolApproval
-	for _, a := range m.approvals {
-		if a.Principal == principal && a.AgentID == agentID {
-			result = append(result, a)
+	for _, approval := range m.approvals {
+		if approval.Principal == principal && approval.AgentID == agentID && approval.ToolName == toolName && approval.ArgumentsHash == hash &&
+			approval.Status == storage.ApprovalStatusPending && !approval.Consumed && !approval.IsExpired(time.Now()) {
+			return approval, nil
 		}
 	}
-	return result, nil
+	return nil, nil
 }
 
 func (m *mockQueryRepo) ListPermanentByPrincipal(_ context.Context, principal id.Principal) ([]*storage.ToolApproval, error) {

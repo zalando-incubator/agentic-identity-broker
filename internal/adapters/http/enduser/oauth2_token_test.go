@@ -101,6 +101,7 @@ func (m *mockMultiAgentVerifier) VerifyAgentIDClaim(ctx context.Context, respons
 // correct agent is selected by configuring the stub with the expected agent.
 // Storage-layer routing (fetching the correct agent by ID) is tested in the storage adapter tests.
 type stubAgentRepo struct {
+	ports.AgentRepository
 	agent *storage.Agent
 	err   error
 }
@@ -1788,6 +1789,7 @@ func (m *oauth2TokenNoopBranchKeyManager) Create(_ context.Context, _ domainencr
 }
 
 type oauth2TokenProviderRepo struct {
+	ports.ThirdpartyOAuth2ProviderRepository
 	seenSC  security.SecurityContext
 	seenOK  bool
 	findErr error

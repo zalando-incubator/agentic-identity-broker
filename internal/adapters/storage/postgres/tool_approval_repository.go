@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -865,59 +866,35 @@ func (r *ToolApprovalRepository) ListAllActive(ctx context.Context, principalFil
 	return scanApprovalRows(rows, "ListAllActiveToolApprovals")
 }
 
-// ListActiveByPrincipalAndAgent returns active approvals for a specific (principal, agent) pair.
-func (r *ToolApprovalRepository) ListActiveByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.list_active_by_pair.tool_approval")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "ListActiveByPairToolApprovals"),
-	)
-
+func (r *ToolApprovalRepository) FindPendingByKey(ctx context.Context, principal id.Principal, agentID id.AgentID, toolName, argumentsHash string) (*storage.ToolApproval, error) {
 	if r.adapter.db == nil {
-		return nil, storage.NewStorageError(
-			"ListActiveByPairToolApprovals",
-			storage.ErrorKindConnection,
-			nil,
-			"database not initialized",
-		)
+		return nil, storage.NewStorageError("FindPendingToolApproval", storage.ErrorKindConnection, nil, "database not initialized")
 	}
-
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
-
-	query := `
+	rows, err := r.adapter.db.QueryContext(queryCtx, `
 		SELECT id, principal, agent_id, gateway_client_id, tool_name,
 		       arguments, arguments_hash, description, risk_level,
 		       mcp_session_id, agent_session_id, tool_invocation_id, opentelemetry_traceparent,
 		       status, persistence, consumed, approval_url,
 		       created_at, approved_at, denied_at, consumed_at, expires_at, tool_pattern, params_pattern
 		FROM tool_approvals
-		WHERE principal = $1 AND agent_id = $2 AND consumed = FALSE
-		  AND (status != 'pending' OR expires_at > NOW())
-		ORDER BY created_at DESC
-	`
-
-	rows, err := r.adapter.db.QueryContext(queryCtx, query, principal, agentID)
+		WHERE principal = $1 AND agent_id = $2 AND tool_name = $3 AND arguments_hash = $4
+		  AND status = 'pending' AND consumed = FALSE AND expires_at > NOW()
+	`, principal, agentID, toolName, argumentsHash)
 	if err != nil {
-		if strings.Contains(err.Error(), "context deadline exceeded") {
-			return nil, storage.NewStorageError(
-				"ListActiveByPairToolApprovals",
-				storage.ErrorKindTimeout,
-				err,
-				"operation exceeded timeout",
-			)
+		kind := storage.ErrorKindConnection
+		if errors.Is(err, context.DeadlineExceeded) {
+			kind = storage.ErrorKindTimeout
 		}
-		return nil, storage.NewStorageError(
-			"ListActiveByPairToolApprovals",
-			storage.ErrorKindConnection,
-			err,
-			"failed to list active approvals by pair",
-		)
+		return nil, storage.NewStorageError("FindPendingToolApproval", kind, err, "failed to find pending approval")
 	}
 	defer func() { _ = rows.Close() }()
-
-	return scanApprovalRows(rows, "ListActiveByPairToolApprovals")
+	approvals, err := scanApprovalRows(rows, "FindPendingToolApproval")
+	if err != nil || len(approvals) == 0 {
+		return nil, err
+	}
+	return approvals[0], nil
 }
 
 // ListPermanentByPrincipal returns all permanent approvals and denials for a principal.

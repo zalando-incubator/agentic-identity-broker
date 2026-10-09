@@ -54,6 +54,37 @@ func TestToolApprovalRepository_CreateReplacesExpiredDuplicate(t *testing.T) {
 	require.True(t, old.Consumed)
 }
 
+func TestToolApprovalRepository_FindPendingByKey(t *testing.T) {
+	repo := NewToolApprovalRepository()
+	ctx := context.Background()
+	principal := id.Principal("user@example.com")
+	agentID := id.NewAgentID()
+	approval := &storage.ToolApproval{
+		ID: id.NewApprovalID(), Principal: principal, AgentID: agentID,
+		ToolName: "read_file", ToolPattern: "read_file", ArgumentsHash: "hash",
+		Status: storage.ApprovalStatusPending, ExpiresAt: time.Now().Add(time.Minute),
+	}
+	_, err := repo.Create(ctx, approval)
+	require.NoError(t, err)
+
+	got, err := repo.FindPendingByKey(ctx, principal, agentID, "read_file", "hash")
+	require.NoError(t, err)
+	require.Equal(t, approval.ID, got.ID)
+	got.ToolName = "changed"
+	stored, err := repo.Get(ctx, approval.ID)
+	require.NoError(t, err)
+	require.Equal(t, "read_file", stored.ToolName)
+
+	missing, err := repo.FindPendingByKey(ctx, principal, agentID, "read_file", "different")
+	require.NoError(t, err)
+	require.Nil(t, missing)
+	approval.ExpiresAt = time.Now().Add(-time.Minute)
+	repo.approvals[approval.ID].ExpiresAt = approval.ExpiresAt
+	missing, err = repo.FindPendingByKey(ctx, principal, agentID, "read_file", "hash")
+	require.NoError(t, err)
+	require.Nil(t, missing)
+}
+
 func TestToolApprovalRepository_RevokePermanentClearsPermanentDenial(t *testing.T) {
 	repo := NewToolApprovalRepository()
 	now := time.Now()

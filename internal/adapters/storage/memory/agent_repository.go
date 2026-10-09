@@ -120,6 +120,20 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 	return agent.Copy(), nil
 }
 
+func (r *AgentRepository) GetByIDs(_ context.Context, ids []id.AgentID) ([]*storage.Agent, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agents := make([]*storage.Agent, 0, len(ids))
+	seen := make(map[id.AgentID]bool, len(ids))
+	for _, agentID := range ids {
+		if agent, ok := r.agents[agentID]; ok && !seen[agentID] {
+			agents = append(agents, agent.Copy())
+			seen[agentID] = true
+		}
+	}
+	return agents, nil
+}
+
 func (r *AgentRepository) GetByCanonicalID(_ context.Context, canonicalID string) (*storage.Agent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

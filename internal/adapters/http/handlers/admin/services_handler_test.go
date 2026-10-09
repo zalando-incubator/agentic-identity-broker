@@ -41,6 +41,7 @@ func testConfig() *ports.Config {
 
 // MockProviderRepository is a mock implementation of ports.ThirdpartyOAuth2ProviderRepository.
 type MockProviderRepository struct {
+	ports.ThirdpartyOAuth2ProviderRepository
 	mock.Mock
 }
 
