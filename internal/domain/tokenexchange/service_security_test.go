@@ -113,6 +113,7 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 				grantRepo,
 				nil,
 				nil,
+				nil,
 				slog.Default(),
 			)
 			sessionRepo := &MockSessionRepository{

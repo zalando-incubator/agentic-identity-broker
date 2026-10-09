@@ -57,6 +57,8 @@ type Service struct {
 	grantRepo       ports.UserGrantRepository
 	psService       PermissionSetQuerier
 	sessionRepo     ports.UserSessionRepository
+	refreshRepo     ports.RefreshTokenSessionRepository
+	now             func() time.Time
 	logger          *slog.Logger
 }
 
@@ -66,6 +68,7 @@ func NewService(
 	providerService *thirdparty.ThirdpartyOAuth2ProviderService,
 	grantRepo ports.UserGrantRepository,
 	sessionRepo ports.UserSessionRepository,
+	refreshRepo ports.RefreshTokenSessionRepository,
 	psService PermissionSetQuerier,
 	logger *slog.Logger,
 ) *Service {
@@ -74,8 +77,10 @@ func NewService(
 		providerService: providerService,
 		grantRepo:       grantRepo,
 		sessionRepo:     sessionRepo,
+		refreshRepo:     refreshRepo,
 		psService:       psService,
 		logger:          logger,
+		now:             time.Now,
 	}
 }
 
@@ -360,6 +365,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 		if grantMatchesRequest(existingGrant, req) {
 			return existingGrant.Copy(), nil
 		}
+		expired := existingGrant.ValidUntil != nil && !existingGrant.ValidUntil.UTC().After(s.now().UTC())
 
 		previousFields = []any{
 			"previous_observed_valid_until", grantAuditValidUntil(existingGrant.ValidUntil),
@@ -373,6 +379,11 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 
 		if err := existingGrant.Validate(); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrGrantValidation, err)
+		}
+		if expired {
+			if err := s.revokeRefreshSessions(ctx, req.Principal, req.AgentID, "expired_grant_renewed"); err != nil {
+				return nil, err
+			}
 		}
 
 		if err := s.grantRepo.Update(ctx, existingGrant); err != nil {
@@ -609,9 +620,18 @@ func permissionSetsMatch(left, right []storage.GrantedPermissionSetEntry) bool {
 func (s *Service) RevokeConsent(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
 	err := s.RevokeConsentForPrincipal(ctx, principal, agentID)
 	if errors.Is(err, ErrGrantNotFound) {
-		return nil
+		return s.revokeRefreshSessions(ctx, principal, agentID, "consent_revoked")
 	}
 	return err
+}
+
+func (s *Service) revokeRefreshSessions(ctx context.Context, principal id.Principal, agentID id.AgentID, trigger string) error {
+	count, err := s.refreshRepo.RevokeByPrincipalAndAgent(ctx, principal, agentID)
+	if err != nil {
+		return fmt.Errorf("failed to revoke refresh sessions: %w", err)
+	}
+	s.logger.Info("refresh sessions revoked", "trigger", trigger, "principal", principal, "agent_id", agentID, "row_count", count)
+	return nil
 }
 
 // RevokeConsentForPrincipal revokes the authenticated user's grant for the given agent (FR-014).
@@ -627,6 +647,9 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 			return fmt.Errorf("%w", ErrGrantNotFound)
 		}
 		return fmt.Errorf("failed to revoke consent: %w", err)
+	}
+	if err := s.revokeRefreshSessions(ctx, principal, agentID, "consent_revoked"); err != nil {
+		return err
 	}
 
 	s.logger.InfoContext(ctx, "grant revoked",
@@ -693,7 +716,7 @@ func (s *Service) VerifyAgentAccess(ctx context.Context, principal id.Principal,
 	}
 
 	// Check grant is active (not expired)
-	if !grant.IsActive() {
+	if grant.ValidUntil != nil && !grant.ValidUntil.UTC().After(s.now().UTC()) {
 		return grant.Copy(), fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
 			ErrGrantExpired, grant.ValidUntil.Format(time.RFC3339), principal, agentID)
 	}

@@ -556,6 +556,12 @@ rejections return 403; media-type rejections return 415. `/health` is excluded.
 
 **OAuth2 record retention**: In local and hybrid modes, the builder starts `SessionCleanup` after successful application construction. It deletes expired authorization codes, PKCE sessions, and refresh-token sessions at startup and every minute. A repository error does not stop the remaining deletions or future sweeps. Application shutdown cancels the worker and waits for its current operation to finish. Expiry enforcement does not depend on cleanup success.
 
+**Continuing consent for local refresh (Feature 049)**: Initial refresh issuance binds the active grant ID to the existing refresh row. Before rotation, Fosite storage verifies continuing consent and the grant identity. Legacy rows use UTC creation-time comparison for one rotation. Consent denial revokes the request chain and returns the existing `invalid_grant` response. Infrastructure errors leave the token unchanged.
+
+If targeted revocation wins after the consent lookup, the provider returns canonical `invalid_grant` after Fosite rolls back rotation. A rollback error remains `server_error`.
+
+PostgreSQL rotation locks the agent `FOR KEY SHARE` before refresh rows. Targeted revocation locks the agent `FOR UPDATE` before one update of unused rows. Grant deletion, expired renewal, and credential deletion invoke targeted revocation. Grant and credential repositories do not join this transaction, so a revocation error cannot undo deletion. Old binaries retain their consent-check and lock-order deployment limits. Existing access tokens remain valid until `token_ttl` expires.
+
 **Type Containment**: All [fosite](https://github.com/ory/fosite) OAuth2 server types are contained in `internal/domain/oauth2server/`. This package encapsulates the OAuth2 authorization server domain logic (authorization code storage, client authentication, token signing) and **never leaks fosite types** into ports, adapters/http, or app packages.
 
 **Import Rules**:
@@ -1561,6 +1567,8 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **CredentialService**: Domain service in `internal/domain/oauth2server/credential_service.go` that owns broker credential creation, rotation, and revocation. It checks agent existence and selects creation or replacement through repository ports. The builder injects it into the admin handler through `ClientCredentialManager`. The handler retains HTTP response formatting and existing success logs.
 
 **StorageTransactionManager**: Shared context-based transaction contract in `internal/ports/storage.go`. Participating PostgreSQL repositories select the ambient transaction through `storageExecutor`. The in-memory factory currently returns a no-op transaction manager. The shared name does not imply memory rollback or nested transaction ownership.
+
+**RefreshTokenSession**: An existing stored local refresh token, identified by its signature and Fosite request chain. Its nullable `grant_id` binds refresh authority to one user grant. Null legacy rows require an active grant created no later than the refresh row.
 
 **SigningKey**: An asymmetric key pair scoped to a `key_domain`. `token_signing` keys support ES256 or RS256 and sign locally-issued JWT access tokens; `cimd_client_authentication` keys support ES256 only and sign outbound client assertions. Each domain has separate current-key and activation-grace state, while `kid` remains globally unique. Private material is PEM-encoded and encrypted via `EncryptionPort`; the corresponding public JWK is stored alongside it for publication without decryption. Migration 033 leaves existing public JWKs nullable; the first JWKS rebuild for an older token-signing key derives and backfills its public JWK once. Newly added current keys may wait behind an `activates_at` grace period so JWKS caches can learn them before they begin signing; if local or hybrid mode starts with no active token-signing key, `Builder` calls `SigningKeyService.EnsureInitialKey` to auto-generate one immediately. Keys remain in their public key set until explicitly soft-deleted via `removed_at`. Located in `internal/domain/storage/signing_key.go`.
 

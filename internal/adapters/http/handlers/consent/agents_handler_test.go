@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
@@ -215,7 +216,7 @@ func (m *mockAgentsService) asService() *consent.Service {
 		err:         m.err,
 	}
 
-	return consent.NewService(mockAgentRepo, newTestProviderService(mockServiceRepo), mockGrantRepo, nil, nil, slog.Default())
+	return consent.NewService(mockAgentRepo, newTestProviderService(mockServiceRepo), mockGrantRepo, nil, memory.NewRefreshTokenSessionStore(), nil, slog.Default())
 }
 
 // Mock repository implementations for agents handler tests

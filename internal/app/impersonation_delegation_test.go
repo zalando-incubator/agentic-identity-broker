@@ -19,7 +19,7 @@ func TestUserDelegationVerifier(t *testing.T) {
 	agentID := id.NewAgentID()
 
 	newVerifier := func(repo ports.UserGrantRepository) ports.UserDelegationVerifier {
-		return newUserDelegationVerifier(consent.NewService(nil, nil, repo, nil, nil, nil))
+		return newUserDelegationVerifier(consent.NewService(nil, nil, repo, nil, memorystorage.NewRefreshTokenSessionStore(), nil, nil))
 	}
 	createGrant := func(t *testing.T, repo ports.UserGrantRepository, validUntil time.Time) {
 		t.Helper()

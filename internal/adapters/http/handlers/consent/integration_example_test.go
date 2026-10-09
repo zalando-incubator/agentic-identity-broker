@@ -128,7 +128,7 @@ func TestIntegration_GetAgentDetail(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), testPermissionSetQuerier{}, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), memorystorage.NewRefreshTokenSessionStore(), testPermissionSetQuerier{}, slog.Default())
 	handler := consent.NewAgentDetailHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
 
 	reqCtx := principal.WithPrincipal(ctx, principalValue)
@@ -205,7 +205,7 @@ func TestIntegration_GetAgentGrants(t *testing.T) {
 		t.Fatalf("failed to create grant: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, nil, testPermissionSetQuerier{}, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, nil, memorystorage.NewRefreshTokenSessionStore(), testPermissionSetQuerier{}, slog.Default())
 	handler := consent.NewGrantsHandler(consentSvc, nil, newIntegrationSessionTokenValidator())
 
 	reqCtx := principal.WithPrincipal(ctx, principalValue)
@@ -338,7 +338,7 @@ func TestIntegration_AgentDetailFlow(t *testing.T) {
 		t.Fatalf("failed to create grant: %v", err)
 	}
 
-	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), testPermissionSetQuerier{}, slog.Default())
+	consentSvc := consentservice.NewService(agentRepo, providerService, grantRepo, memorystorage.NewInMemoryUserSessionRepository(), memorystorage.NewRefreshTokenSessionStore(), testPermissionSetQuerier{}, slog.Default())
 
 	t.Run("GetAgentDetail", func(t *testing.T) {
 		handler := consent.NewAgentDetailHandler(consentSvc, nil, newIntegrationSessionTokenValidator())

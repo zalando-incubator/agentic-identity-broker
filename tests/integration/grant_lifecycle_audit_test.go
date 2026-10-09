@@ -95,7 +95,7 @@ func TestGrantLifecycleAudit_ConcurrentInitialConsent(t *testing.T) {
 			require.NoError(t, sessions.Create(ctx, fixtures.SessionForServiceWithScopes(principal.String(), serviceID.String(), []string{"read"})))
 			psService := permissionset.NewPermissionSetService(permissionSets, grants, logger)
 			t.Cleanup(psService.Close)
-			svc := consent.NewService(agents, nil, barrier, sessions, psService, logger)
+			svc := consent.NewService(agents, nil, barrier, sessions, memory.NewRefreshTokenSessionStore(), psService, logger)
 			type mutationResult struct {
 				grant *storage.UserGrant
 				err   error

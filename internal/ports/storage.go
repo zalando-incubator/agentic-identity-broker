@@ -432,6 +432,12 @@ type RefreshTokenSessionRepository interface {
 	// RevokeByRequestID revokes all refresh token sessions for a fosite request ID.
 	RevokeByRequestID(ctx context.Context, requestID string) error
 
+	// RevokeByPrincipalAndAgent consumes unused sessions for one principal-agent pair.
+	RevokeByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (int, error)
+
+	// RevokeByAgent consumes all unused sessions for an agent.
+	RevokeByAgent(ctx context.Context, agentID id.AgentID) (int, error)
+
 	// DeleteExpired removes expired refresh token sessions.
 	DeleteExpired(ctx context.Context) (int, error)
 }
