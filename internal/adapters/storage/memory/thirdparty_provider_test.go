@@ -119,6 +119,39 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_RejectsGlobalResourceConflic
 	requireStorageKind(t, err, storage.ErrorKindNotFound)
 }
 
+func TestInMemoryThirdpartyOAuth2ProviderRepository_OwnershipConflictsAreTypedAndAtomic(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	owner := testProvider(id.NewServiceID(), "https://api.example.com/owned")
+	require.NoError(t, repo.Create(ctx, owner))
+
+	contender := testProvider(id.NewServiceID(), "https://api.example.com/owned/")
+	err := repo.Create(ctx, contender)
+	requireStorageKind(t, err, storage.ErrorKindConflict)
+	require.ErrorIs(t, err, storage.ErrProtectedResourceOwned)
+	_, err = repo.Get(ctx, contender.ID)
+	requireStorageKind(t, err, storage.ErrorKindNotFound)
+
+	contender.ProtectedResources = []string{"https://api.example.com/unowned"}
+	require.NoError(t, repo.Create(ctx, contender))
+	before, err := repo.Get(ctx, contender.ID)
+	require.NoError(t, err)
+	replacement := before.Copy()
+	replacement.DisplayName = "Must not commit"
+	replacement.ProtectedResources = []string{"https://api.example.com/owned"}
+	err = repo.Update(ctx, replacement, &before.Version)
+	requireStorageKind(t, err, storage.ErrorKindConflict)
+	require.ErrorIs(t, err, storage.ErrProtectedResourceOwned)
+	after, err := repo.Get(ctx, contender.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+
+	duplicateID := testProvider(owner.ID)
+	err = repo.Create(ctx, duplicateID)
+	requireStorageKind(t, err, storage.ErrorKindConflict)
+	assert.False(t, errors.Is(err, storage.ErrProtectedResourceOwned))
+}
+
 func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateUsesCASOnlyForResourceReplacement(t *testing.T) {
 	ctx := context.Background()
 	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
@@ -376,7 +409,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_DCRIdentityIsIssuerScoped(t 
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_DCRDuplicatePreservesConfidentialCredentials(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(NewInMemoryUserSessionRepository())
 	firstCiphertext := []byte("first encrypted credential")
 	secondCiphertext := []byte("second encrypted credential")
 	first := testDCRProvider(id.NewServiceID(), "https://first.example.com", model.TokenEndpointAuthMethodClientSecretBasic, model.NewEncryptedSecret(firstCiphertext))
@@ -395,6 +428,8 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_DCRDuplicatePreservesConfide
 	replacement.IssuerURI = second.IssuerURI
 	replacement.Endpoints = second.Endpoints
 	replacement.Secret = model.NewEncryptedSecret([]byte("updated credential"))
+	completedAt := first.DiscoveryStatus.LastAttemptAt.Add(time.Minute)
+	replacement.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
 	updateErr := repo.Update(ctx, replacement, nil)
 	requireStorageKind(t, updateErr, storage.ErrorKindConflict)
 	require.ErrorIs(t, updateErr, storage.ErrDuplicateDCRClientIdentity)
@@ -487,7 +522,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_CreateDiscoveryStateIsOwned(
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateCommitsActiveDiscoveryAndStatusTogether(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(NewInMemoryUserSessionRepository())
 	provider := testCIMDProvider(id.NewServiceID())
 	oldResource := "https://api.example.com/old"
 	initial := time.Date(2026, time.October, 7, 10, 0, 0, 0, time.UTC)
@@ -646,9 +681,156 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_DiscoveryFailureRetainsActiv
 	assert.Equal(t, session.ID, connected.ID)
 }
 
-func TestInMemoryThirdpartyOAuth2ProviderRepository_StaleSuccessCannotEraseNewerFailure(t *testing.T) {
+func TestInMemoryThirdpartyOAuth2ProviderRepository_ResourceChangeRequiresNoSessions(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pinned  bool
+		manual  bool
+		expired bool
+	}{
+		{name: "derived audience with active session"},
+		{name: "pinned audience with expired session", pinned: true, expired: true},
+		{name: "discovery to manual with changed audience", manual: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			sessions := NewInMemoryUserSessionRepository()
+			repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
+			provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
+			const audienceA = "https://audience.example.test/a"
+			const audienceB = "https://audience.example.test/b"
+			if tc.pinned {
+				provider.ResourceExplicit = true
+				provider.AuthorizationParams["resource"] = audienceA
+			} else {
+				resourceURL := audienceA
+				provider.Discovery.ResourceURL = &resourceURL
+				provider.AuthorizationParams["resource"] = audienceA
+			}
+			require.NoError(t, repo.Create(ctx, provider))
+			principal := id.Principal("resource-change@example.test")
+			session := refreshTestSession(principal, provider.ID)
+			session.ExpectedIssuerURI = provider.IssuerURI
+			session.ExpectedResource = audienceA
+			if tc.expired {
+				past := time.Now().Add(-time.Hour)
+				session.RefreshTokenExpiresAt = &past
+			}
+			require.NoError(t, sessions.Create(ctx, session))
+			before, err := repo.Get(ctx, provider.ID)
+			require.NoError(t, err)
+
+			updated := before.Copy()
+			updated.DisplayName = "Rejected change"
+			if tc.manual {
+				updated.Discovery = model.DiscoveryConfig{}
+				updated.DiscoveryStatus = model.DiscoveryStatus{}
+			}
+			if !tc.pinned && !tc.manual {
+				resourceURL := audienceB
+				updated.Discovery.ResourceURL = &resourceURL
+				updated.AuthorizationParams["resource"] = audienceB
+			} else {
+				updated.AuthorizationParams["resource"] = audienceB
+			}
+			if !tc.manual {
+				completedAt := *before.DiscoveryStatus.LastAttemptAt
+				completedAt = completedAt.Add(time.Minute)
+				updated.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
+			}
+			err = repo.Update(ctx, updated, &before.Version)
+			requireStorageKind(t, err, storage.ErrorKindConflict)
+			require.ErrorIs(t, err, storage.ErrResourceChangeHasSessions)
+			after, err := repo.Get(ctx, provider.ID)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			storedSession, err := sessions.FindByPrincipalAndService(ctx, principal, provider.ID)
+			require.NoError(t, err)
+			require.NotNil(t, storedSession)
+			assert.Equal(t, session.ID, storedSession.ID)
+			assert.Equal(t, session.EncryptedAccessToken, storedSession.EncryptedAccessToken)
+			assert.Equal(t, session.EncryptedRefreshToken, storedSession.EncryptedRefreshToken)
+		})
+	}
+}
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_PinnedAudienceSurvivesDiscoveryURLChangeWithSession(t *testing.T) {
+	ctx := context.Background()
+	sessions := NewInMemoryUserSessionRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
+	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
+	const audience = "https://audience.example.test/pinned"
+	provider.AuthorizationParams["resource"] = audience
+	provider.ResourceExplicit = true
+	require.NoError(t, repo.Create(ctx, provider))
+	session := refreshTestSession(id.Principal("pinned@example.test"), provider.ID)
+	session.ExpectedIssuerURI = provider.IssuerURI
+	session.ExpectedResource = audience
+	require.NoError(t, sessions.Create(ctx, session))
+
+	updated := provider.Copy()
+	resourceURL := "https://resource.example.test/new-location"
+	updated.Discovery.ResourceURL = &resourceURL
+	updated.AuthorizationParams = nil
+	completedAt := updated.DiscoveryStatus.LastAttemptAt.Add(time.Minute)
+	updated.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
+	require.NoError(t, repo.Update(ctx, updated, &provider.Version))
+	stored, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, resourceURL, *stored.Discovery.ResourceURL)
+	assert.Equal(t, audience, stored.AuthorizationParams["resource"])
+	assert.True(t, stored.ResourceExplicit)
+	assert.Equal(t, provider.Version+1, stored.Version)
+}
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_EqualStoredMicrosecondKeepsFirstFailure(t *testing.T) {
 	ctx := context.Background()
 	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
+	require.NoError(t, repo.Create(ctx, provider))
+	before, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	failedAt := before.DiscoveryStatus.LastAttemptAt.Add(time.Minute).Truncate(time.Microsecond)
+	require.NoError(t, repo.RecordDiscoveryFailure(ctx, provider.ID, before.Version, failedAt, "resource_metadata_unavailable"))
+	failed, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+
+	// A distinct nanosecond timestamp still occupies the same persisted microsecond.
+	completedAt := failedAt.Add(500 * time.Nanosecond)
+	stale := before.Copy()
+	resourceURL := "https://resource.example.test/replacement"
+	stale.Discovery.ResourceURL = &resourceURL
+	stale.AuthorizationParams["resource"] = resourceURL
+	stale.Endpoints.TokenEndpoint = "https://issuer.example.com/replacement-token"
+	stale.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
+	requireStorageKind(t, repo.Update(ctx, stale, &before.Version), storage.ErrorKindConflict)
+	after, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, failed, after)
+	assert.Equal(t, "failed", after.DiscoveryStatus.Status(after.Discovery.ResourceURL))
+}
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_FailureOnlyTieKeepsFirstOutcome(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
+	require.NoError(t, repo.Create(ctx, provider))
+	ready, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	firstAt := ready.DiscoveryStatus.LastAttemptAt.Add(time.Minute).Truncate(time.Microsecond)
+	require.NoError(t, repo.RecordDiscoveryFailure(ctx, provider.ID, ready.Version, firstAt, "resource_metadata_unavailable"))
+	first, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	requireStorageKind(t, repo.RecordDiscoveryFailure(ctx, provider.ID, ready.Version, firstAt.Add(500*time.Nanosecond), "issuer_mismatch"), storage.ErrorKindConflict)
+	after, err := repo.Get(ctx, provider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, first, after)
+	assert.Equal(t, ready.Version, after.Version)
+}
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_StaleSuccessCannotEraseNewerFailure(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(NewInMemoryUserSessionRepository())
 	ciphertext := []byte("encrypted registered client credential")
 	provider := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodClientSecretBasic, model.NewEncryptedSecret(ciphertext))
 	require.NoError(t, repo.Create(ctx, provider))
@@ -777,7 +959,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_DeleteRemovesDiscoveryStatus
 
 func TestInMemoryThirdpartyOAuth2ProviderRepository_ManualCutoverClearsDiscoveryAudience(t *testing.T) {
 	ctx := context.Background()
-	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(NewInMemoryUserSessionRepository())
 	discovered := testDCRProvider(id.NewServiceID(), "https://issuer.example.com", model.TokenEndpointAuthMethodClientSecretBasic, model.NewEncryptedSecret([]byte("old-sealed-secret")))
 	discovered.AuthorizationParams["prompt"] = "consent"
 	require.NoError(t, repo.Create(ctx, discovered))

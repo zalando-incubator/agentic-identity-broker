@@ -147,10 +147,6 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	if entity == nil || entity.ID.IsZero() {
 		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, nil, "provider and provider ID are required")
 	}
-	record, err := entityToRecord(entity)
-	if err != nil {
-		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to convert entity to record")
-	}
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 	tx, err := r.adapter.db.BeginTx(execCtx, nil)
@@ -160,24 +156,63 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	defer func() { _ = tx.Rollback() }()
 	var previousIssuerURI string
 	var previousResourceURL sql.NullString
-	err = tx.QueryRowContext(execCtx, `SELECT issuer_uri, resource_url FROM thirdparty_oauth2_services WHERE id=$1 FOR UPDATE`, record.ID).
-		Scan(&previousIssuerURI, &previousResourceURL)
+	var previousAuthorizationParams providerAuthorizationParams
+	var previousResourceExplicit bool
+	var previousVersion int64
+	err = tx.QueryRowContext(execCtx, `SELECT issuer_uri, resource_url, authorization_params, resource_explicit, version
+		FROM thirdparty_oauth2_services WHERE id=$1 FOR UPDATE`, entity.ID).
+		Scan(&previousIssuerURI, &previousResourceURL, &previousAuthorizationParams, &previousResourceExplicit, &previousVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
 	}
 	if err != nil {
 		return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to lock provider")
 	}
-	if previousIssuerURI != record.IssuerURI && (previousResourceURL.Valid || record.ResourceURL != nil) {
+	if expectedVersion != nil && previousVersion != *expectedVersion {
+		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider version or discovery attempt is stale")
+	}
+
+	paramsOmitted := entity.AuthorizationParams == nil
+	proposed := *entity
+	if paramsOmitted {
+		proposed.AuthorizationParams = map[string]string(previousAuthorizationParams)
+		proposed.ResourceExplicit = previousResourceExplicit
+	}
+	retainParams := paramsOmitted
+	if proposed.Discovery.ResourceURL != nil {
+		_, hasResource := proposed.AuthorizationParams["resource"]
+		if !paramsOmitted && !hasResource {
+			proposed.ResourceExplicit = false
+		}
+		if !proposed.ResourceExplicit && (paramsOmitted || !hasResource) {
+			if proposed.AuthorizationParams == nil {
+				proposed.AuthorizationParams = make(map[string]string, 1)
+			} else {
+				proposed.AuthorizationParams = maps.Clone(proposed.AuthorizationParams)
+			}
+			proposed.AuthorizationParams["resource"] = *proposed.Discovery.ResourceURL
+			retainParams = false
+		}
+	}
+	record, err := entityToRecord(&proposed)
+	if err != nil {
+		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to convert entity to record")
+	}
+	issuerChanged := previousIssuerURI != record.IssuerURI && (previousResourceURL.Valid || record.ResourceURL != nil)
+	resourceChanged := (previousResourceURL.Valid || record.ResourceURL != nil) &&
+		previousAuthorizationParams["resource"] != record.AuthorizationParams["resource"]
+	if issuerChanged || resourceChanged {
 		var sessionCount int
 		if err := tx.QueryRowContext(execCtx, `SELECT COUNT(*) FROM user_sessions WHERE service_id=$1`, record.ID).Scan(&sessionCount); err != nil {
 			return providerStorageError("UpdateThirdpartyOAuth2Provider", err, "failed to count provider sessions")
 		}
 		if sessionCount != 0 {
-			return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrIssuerChangeHasSessions, "issuer change requires no user sessions")
+			if issuerChanged {
+				return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrIssuerChangeHasSessions, "issuer change requires no user sessions")
+			}
+			return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrResourceChangeHasSessions, "resource change requires no user sessions")
 		}
 	}
-	paramsOmitted := entity.AuthorizationParams == nil
 	canonicalIDOmitted := !entity.ClearCanonicalID && record.CanonicalID == nil
 	query := `UPDATE thirdparty_oauth2_services SET display_name=$2, client_id=$3, client_secret_encrypted=$4,
 		token_endpoint_auth_method=$5, oauth2_flavor=$6, issuer_uri=$7, enable_discovery=$8, metadata_url=$9,
@@ -186,12 +221,12 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 		token_endpoint=$16, authorize_endpoint=$17, scopes=$18, authorization_params=CASE WHEN $19 THEN authorization_params ELSE $20 END,
 		canonical_id=CASE WHEN $21 THEN NULL WHEN $22 THEN canonical_id ELSE $23 END,
 		updated_at=$24, version=version+1 WHERE id=$1
-		AND ($10::text IS NULL OR resource_url IS NULL OR discovery_last_attempt_at <= $13)`
+		AND ($10::text IS NULL OR resource_url IS NULL OR discovery_last_attempt_at < $13)`
 	args := []any{record.ID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
 		record.EnableDiscovery, record.MetadataURL, record.ResourceURL, record.ClientMethod, record.ResourceExplicit,
 		record.DiscoveryLastAttemptAt, record.DiscoveryLastSuccessAt, record.DiscoveryFailureReason,
 		record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes,
-		paramsOmitted, record.AuthorizationParams, entity.ClearCanonicalID, canonicalIDOmitted, record.CanonicalID, record.UpdatedAt}
+		retainParams, record.AuthorizationParams, entity.ClearCanonicalID, canonicalIDOmitted, record.CanonicalID, record.UpdatedAt}
 	if expectedVersion != nil {
 		query += ` AND version=$25`
 		args = append(args, *expectedVersion)
@@ -511,7 +546,12 @@ func protectedResources(ctx context.Context, db providerResourceQuerier, service
 func insertProtectedResources(ctx context.Context, tx *sql.Tx, serviceID id.ServiceID, resources []string) error {
 	for _, resource := range resources {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO service_protected_resources (resource_uri, service_id) VALUES ($1,$2)`, resource, serviceID); err != nil {
-			return providerStorageError("insertProtectedResources", err, "protected resource is already owned")
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "service_protected_resources_pkey" {
+				return storage.NewStorageError("insertProtectedResources", storage.ErrorKindConflict,
+					fmt.Errorf("%w: %w", storage.ErrProtectedResourceOwned, err), "protected resource is already owned")
+			}
+			return providerStorageError("insertProtectedResources", err, "failed to insert protected resources")
 		}
 	}
 	return nil

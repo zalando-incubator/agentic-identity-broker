@@ -764,6 +764,9 @@ func TestDCRIssuerScopedCredentialsSurviveNewPostgresAdapter(t *testing.T) {
 	replacementCiphertext, err := encryption.Encrypt(ctx, []byte("updated-issued-secret"), map[string]string{"service_id": first.ID.String()})
 	require.NoError(t, err)
 	replacement.Secret = model.NewEncryptedSecret(replacementCiphertext)
+	completedAt := *first.DiscoveryStatus.LastAttemptAt
+	completedAt = completedAt.Add(time.Minute)
+	replacement.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
 	err = repo.Update(ctx, replacement, nil)
 	require.ErrorAs(t, err, &storageErr)
 	assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
@@ -903,6 +906,7 @@ func TestDiscoveryFailureAndRecoveryPersistAcrossNewPostgresAdapter(t *testing.T
 	session := &storage.UserSession{
 		ID: id.NewSessionID(), Principal: principal, ServiceID: entity.ID,
 		ExpectedIssuerURI:    entity.IssuerURI,
+		ExpectedResource:     entity.AuthorizationParams["resource"],
 		EncryptedAccessToken: accessCiphertext, EncryptedRefreshToken: refreshCiphertext,
 		TokenType: "Bearer", Scope: []string{"read"},
 		EncryptionContext: storage.EncryptionContext{ServiceID: entity.ID},
@@ -1124,6 +1128,7 @@ func TestDCRIssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
 		EncryptionContext: storage.EncryptionContext{ServiceID: discovered.ID},
 		InitiatedAt:       committedAt, CreatedAt: committedAt, UpdatedAt: committedAt,
 		ExpectedIssuerURI: oldIssuer,
+		ExpectedResource:  discovered.AuthorizationParams["resource"],
 	}
 	err = sessions.Create(ctx, session)
 	var storageErr *storage.StorageError

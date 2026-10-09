@@ -271,12 +271,12 @@ func TestDCRStoredClientUsesPinnedTokenAuthenticationOnConnectionAndRenewal(t *t
 			defer tokenServer.Close()
 
 			serviceID := id.NewServiceID()
-			provider := storedDCRSessionProvider(serviceID, tokenServer.URL+"/token", tc.method, tc.secret, resourceURL, tc.resource)
+			provider := storedDCRSessionProvider(serviceID, "https://auth.example.test/token", tc.method, tc.secret, resourceURL, tc.resource)
 			if tc.method == model.TokenEndpointAuthMethodPrivateKeyJWT {
 				provider.Discovery.ClientMethod = model.ClientBootstrapCIMD
 				provider.ClientID = id.ClientID(cimdClientIDForService(serviceID))
 			}
-			service, repo, providers := newStoredDCRSessionService(t, tokenServer.Client(), provider)
+			service, repo, providers := newStoredDCRSessionService(t, mappedDiscoveryTokenTLSClient(t, tokenServer), provider)
 			signer := &cimdAssertionSignerSpy{}
 			service = service.WithCIMDAssertionSigner(signer)
 			principal := id.Principal("user@example.com")
@@ -398,8 +398,8 @@ func TestDCRConnectionAndRenewalRejectCredentialsWithoutProbingOrBroadeningResou
 				if method == model.TokenEndpointAuthMethodNone {
 					secret = ""
 				}
-				provider := storedDCRSessionProvider(serviceID, tokenServer.URL+"/token", method, secret, resourceURL, resourceURL)
-				service, repo, providers := newStoredDCRSessionService(t, tokenServer.Client(), provider)
+				provider := storedDCRSessionProvider(serviceID, "https://auth.example.test/token", method, secret, resourceURL, resourceURL)
+				service, repo, providers := newStoredDCRSessionService(t, mappedDiscoveryTokenTLSClient(t, tokenServer), provider)
 				principal := id.Principal("user@example.com")
 				flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://broker.example.com/sessions")
 				require.NoError(t, err)
@@ -462,8 +462,8 @@ func TestDCRSessionWithoutRefreshTokenCannotRenewOrRegisterAgain(t *testing.T) {
 	}))
 	defer tokenServer.Close()
 	serviceID := id.NewServiceID()
-	provider := storedDCRSessionProvider(serviceID, tokenServer.URL+"/token", model.TokenEndpointAuthMethodNone, "", resourceURL, resourceURL)
-	service, repo, _ := newStoredDCRSessionService(t, tokenServer.Client(), provider)
+	provider := storedDCRSessionProvider(serviceID, "https://auth.example.test/token", model.TokenEndpointAuthMethodNone, "", resourceURL, resourceURL)
+	service, repo, _ := newStoredDCRSessionService(t, mappedDiscoveryTokenTLSClient(t, tokenServer), provider)
 	principal := id.Principal("user@example.com")
 	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://broker.example.com/sessions")
 	require.NoError(t, err)
@@ -495,11 +495,11 @@ func TestDCRSameClientIDAcrossIssuersKeepsServiceBoundCredentials(t *testing.T) 
 	}))
 	defer tokenServer.Close()
 	firstID, secondID := id.NewServiceID(), id.NewServiceID()
-	first := storedDCRSessionProvider(firstID, tokenServer.URL+"/token", model.TokenEndpointAuthMethodClientSecretBasic, "first-secret", "https://mcp.example.test/first", "https://mcp.example.test/first")
-	second := storedDCRSessionProvider(secondID, tokenServer.URL+"/token", model.TokenEndpointAuthMethodClientSecretBasic, "second-secret", "https://mcp.example.test/second", "https://mcp.example.test/second")
+	first := storedDCRSessionProvider(firstID, "https://auth.example.test/token", model.TokenEndpointAuthMethodClientSecretBasic, "first-secret", "https://mcp.example.test/first", "https://mcp.example.test/first")
+	second := storedDCRSessionProvider(secondID, "https://auth.example.test/token", model.TokenEndpointAuthMethodClientSecretBasic, "second-secret", "https://mcp.example.test/second", "https://mcp.example.test/second")
 	first.IssuerURI = "https://first-issuer.example.test"
 	second.IssuerURI = "https://second-issuer.example.test"
-	service, repo, providers := newStoredDCRSessionService(t, tokenServer.Client(), first, second)
+	service, repo, providers := newStoredDCRSessionService(t, mappedDiscoveryTokenTLSClient(t, tokenServer), first, second)
 	principal := id.Principal("user@example.com")
 	for _, tc := range []struct {
 		provider *model.ThirdpartyOAuth2ProviderEntity

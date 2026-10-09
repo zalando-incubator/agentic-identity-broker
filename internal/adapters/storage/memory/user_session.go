@@ -45,8 +45,8 @@ func (r *InMemoryUserSessionRepository) Create(ctx context.Context, session *sto
 		r.issuerSessionGate.RLock()
 		defer r.issuerSessionGate.RUnlock()
 	}
-	if !r.matchesCurrentIssuer(session) {
-		return storage.NewStorageError("Create", storage.ErrorKindConflict, nil, "provider issuer is no longer current")
+	if !r.matchesCurrentDiscoveryState(session) {
+		return storage.NewStorageError("Create", storage.ErrorKindConflict, nil, "provider issuer or audience is no longer current")
 	}
 
 	key := principalServiceKey(session.Principal, session.ServiceID)
@@ -67,14 +67,15 @@ func (r *InMemoryUserSessionRepository) Create(ctx context.Context, session *sto
 
 	stored := *session
 	stored.ExpectedIssuerURI = ""
+	stored.ExpectedResource = ""
 	r.sessions[stored.ID] = &stored
 	r.index[key] = &stored
 	return nil
 }
 
-func (r *InMemoryUserSessionRepository) matchesCurrentIssuer(session *storage.UserSession) bool {
+func (r *InMemoryUserSessionRepository) matchesCurrentDiscoveryState(session *storage.UserSession) bool {
 	if r.provider == nil {
-		return session.ExpectedIssuerURI == ""
+		return session.ExpectedIssuerURI == "" && session.ExpectedResource == ""
 	}
 	r.provider.mu.RLock()
 	defer r.provider.mu.RUnlock()
@@ -84,9 +85,11 @@ func (r *InMemoryUserSessionRepository) matchesCurrentIssuer(session *storage.Us
 		return false
 	}
 	if current.entity.Discovery.ResourceURL != nil {
-		return session.ExpectedIssuerURI != "" && session.ExpectedIssuerURI == current.entity.IssuerURI
+		return session.ExpectedIssuerURI != "" && session.ExpectedResource != "" &&
+			session.ExpectedIssuerURI == current.entity.IssuerURI &&
+			session.ExpectedResource == current.entity.AuthorizationParams["resource"]
 	}
-	return session.ExpectedIssuerURI == ""
+	return session.ExpectedIssuerURI == "" && session.ExpectedResource == ""
 }
 
 // Get retrieves a session by ID.

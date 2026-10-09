@@ -472,6 +472,43 @@ func TestProtectedResourceDiscovery_ProbeFailureDoesNotReadMetadata(t *testing.T
 	assert.Nil(t, stored)
 }
 
+func TestProtectedResourceDiscovery_AdapterOnlyCancellationIsNotAttemptTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fail     func(*recordingOAuthDiscoveryClient)
+		wantCode string
+	}{
+		{
+			name: "resource probe", wantCode: "resource_metadata_unavailable",
+			fail: func(client *recordingOAuthDiscoveryClient) {
+				client.probes[discoveryResource] = discoveryProbeReply{err: context.Canceled}
+			},
+		},
+		{
+			name: "resource document", wantCode: "resource_metadata_unavailable",
+			fail: func(client *recordingOAuthDiscoveryClient) {
+				client.gets[discoveryResourcePath] = discoveryJSONReply{err: context.Canceled}
+			},
+		},
+		{
+			name: "authorization-server document", wantCode: "authorization_server_metadata_unavailable",
+			fail: func(client *recordingOAuthDiscoveryClient) {
+				client.gets[discoveryIssuerOAuth] = discoveryJSONReply{err: context.Canceled}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := dcrDiscoveryClient(issuerCIMDDocument(discoveryIssuer, discoveryIssuer+"/authorize"))
+			tc.fail(client)
+			stored, err := runDiscoveredCreate(client, discoveredProvider(discoveryResource, ""))
+			var discoveryErr *DiscoveryError
+			require.ErrorAs(t, err, &discoveryErr)
+			assert.Equal(t, tc.wantCode, discoveryErr.Code)
+			assert.Nil(t, stored, "a canceled adapter read cannot create a service")
+		})
+	}
+}
+
 const dcrBrokerOrigin = "https://broker.example.test"
 
 func dcrCallback(serviceID id.ServiceID) string {
@@ -678,6 +715,18 @@ func TestProtectedResourceDiscovery_RejectedConfidentialDCRDoesNotTryPublic(t *t
 	stored, err := runDCRCreate(client, discoveredProvider(discoveryResource, ""), "Example Platform")
 	assert.Equal(t, []string{"probe " + discoveryResource, "get " + discoveryResourcePath, "get " + discoveryIssuerOAuth, "post " + discoveryIssuer + "/register"}, client.calls)
 	require.ErrorContains(t, err, "client_registration_rejected")
+	assert.Nil(t, stored)
+}
+
+func TestProtectedResourceDiscovery_DCRAdapterOnlyCancellationIsRejectedNotTimeout(t *testing.T) {
+	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_basic"}, nil))
+	client.postFn = func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+		return nil, context.Canceled
+	}
+	stored, err := runDCRCreate(client, discoveredProvider(discoveryResource, ""), "Example Platform")
+	var discoveryErr *DiscoveryError
+	require.ErrorAs(t, err, &discoveryErr)
+	assert.Equal(t, "client_registration_rejected", discoveryErr.Code)
 	assert.Nil(t, stored)
 }
 

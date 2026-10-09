@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/netpolicy"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,6 +56,13 @@ func TestDiscoveryClient_RejectsUnsafeURLsBeforeRequest(t *testing.T) {
 
 	for _, rawURL := range []string{
 		"http://resource.example/metadata",
+		"https://127.0.0.1/metadata",
+		"https://169.254.169.254/latest/meta-data/",
+		"https://[::1]/metadata",
+		"https://localhost/metadata",
+		"https://auth.localhost/metadata",
+		"https://auth.local/metadata",
+		"https://bad_host.example/metadata",
 		"https://user:password@resource.example/metadata",
 		"https://resource.example/metadata#fragment",
 		"https:///metadata",
@@ -503,6 +511,7 @@ func TestDiscoveryClient_TransportFailureDoesNotExposeQuery(t *testing.T) {
 	_, postErr := client.PostJSON(context.Background(), url, []byte(`{}`))
 	for _, err := range []error{probeErr, getErr, postErr} {
 		require.Error(t, err)
+		require.ErrorIs(t, err, ports.ErrOAuthDiscoveryUnavailable)
 		assert.NotContains(t, err.Error(), "query-marker")
 		assert.NotContains(t, err.Error(), "upstream-network-marker")
 	}
@@ -604,7 +613,9 @@ func TestSSRFControl_BlocksDNSResolvedPrivateTargetsBeforeConnect(t *testing.T) 
 	resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "udp", dns.LocalAddr().String())
 	}}
-	guard := buildSSRFControl(discoveryURLBlocklist)
+	blocklist, err := netpolicy.NewSSRFBlocklist(nil)
+	require.NoError(t, err)
+	guard := buildSSRFControl(blocklist)
 	transport, err := NewGuardedTransport(nil)
 	require.NoError(t, err)
 	defer transport.CloseIdleConnections()

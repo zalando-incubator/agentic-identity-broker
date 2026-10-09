@@ -10,10 +10,8 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/netpolicy"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -62,59 +60,11 @@ func NewGuardedTransport(extraBlockedCIDRs []string) (*http.Transport, error) {
 	return transport, nil
 }
 
-// The test-injected client still rejects blocked IP literals. DNS-resolved
-// addresses are checked by NewGuardedTransport immediately before connection.
-var discoveryURLBlocklist = func() netpolicy.SSRFBlocklist {
-	blocklist, err := netpolicy.NewSSRFBlocklist(nil)
-	if err != nil {
-		panic("outboundhttp: invalid built-in SSRF blocklist")
-	}
-	return blocklist
-}()
-
 func validateDiscoveryURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Opaque != "" || u.Host == "" || u.User != nil || strings.Contains(raw, "#") {
+	if err := model.ValidatePublicHTTPSURL(raw); err != nil {
 		return ports.ErrOAuthDiscoveryUnsafeDestination
-	}
-	host := u.Hostname()
-	if host == "" || strings.Contains(host, "%") || strings.HasSuffix(u.Host, ":") || strings.HasSuffix(u.Host, "]:") {
-		return ports.ErrOAuthDiscoveryUnsafeDestination
-	}
-	if port := u.Port(); port != "" {
-		n, err := strconv.Atoi(port)
-		if err != nil || n < 1 || n > 65535 {
-			return ports.ErrOAuthDiscoveryUnsafeDestination
-		}
-	}
-	if ip := net.ParseIP(strings.TrimSuffix(host, ".")); ip != nil {
-		if discoveryURLBlocklist.Contains(ip) {
-			return ports.ErrOAuthDiscoveryUnsafeDestination
-		}
-		return nil
-	}
-	if strings.HasPrefix(u.Host, "[") {
-		return ports.ErrOAuthDiscoveryUnsafeDestination
-	}
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
-		return ports.ErrOAuthDiscoveryUnsafeDestination
-	}
-	for label := range strings.SplitSeq(host, ".") {
-		if label == "" || !isDNSAlnum(label[0]) || !isDNSAlnum(label[len(label)-1]) {
-			return ports.ErrOAuthDiscoveryUnsafeDestination
-		}
-		for i := 1; i < len(label)-1; i++ {
-			if !isDNSAlnum(label[i]) && label[i] != '-' {
-				return ports.ErrOAuthDiscoveryUnsafeDestination
-			}
-		}
 	}
 	return nil
-}
-
-func isDNSAlnum(b byte) bool {
-	return b >= 'a' && b <= 'z' || b >= '0' && b <= '9'
 }
 
 func discoveryRequestError(ctx context.Context, err error) error {

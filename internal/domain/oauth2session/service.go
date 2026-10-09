@@ -87,7 +87,7 @@ func discoveryResource(entity *model.ThirdpartyOAuth2ProviderEntity) (string, er
 		return "", errors.New("discovery-backed service requires authorization_params.resource")
 	}
 	for name := range entity.AuthorizationParams {
-		if name != "resource" && strings.EqualFold(name, "resource") {
+		if name != "resource" && model.IsDiscoveryResourceParamName(name) {
 			return "", errors.New("discovery-backed service has duplicate resource parameters")
 		}
 	}
@@ -100,7 +100,7 @@ func discoveryResource(entity *model.ThirdpartyOAuth2ProviderEntity) (string, er
 		return "", errors.New("discovery-backed token endpoint query is invalid")
 	}
 	for name := range query {
-		if strings.EqualFold(name, "resource") {
+		if model.IsDiscoveryResourceParamName(name) {
 			return "", errors.New("discovery-backed token endpoint must not include resource")
 		}
 	}
@@ -165,6 +165,9 @@ func (s *OAuth2SessionService) tokenHTTPClient(entity *model.ThirdpartyOAuth2Pro
 	}
 	if _, err := discoveryResource(entity); err != nil {
 		return nil, err
+	}
+	if err := model.ValidatePublicHTTPSURL(entity.Endpoints.TokenEndpoint); err != nil {
+		return nil, errors.New("discovery-backed token endpoint is unsafe")
 	}
 	if s.discoveryTokenHTTPClient == nil {
 		return nil, errors.New("discovery-backed token client is unavailable")
@@ -386,7 +389,7 @@ func (s *OAuth2SessionService) ValidateStateToken(
 
 	// Validate claims structure
 	if err := claims.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid state token claims: %w", err)
+		return nil, fmt.Errorf("invalid state token claims: %w", ErrInvalidStateToken)
 	}
 
 	// Check expiration
@@ -512,7 +515,7 @@ func safeTokenExchangeError(err error) error {
 	return fmt.Errorf("%w: upstream token request failed", ErrTokenExchange)
 }
 
-func safeDCRTokenExchangeError(err error) error {
+func safeDiscoveredTokenExchangeError(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return context.Canceled
 	}
@@ -589,8 +592,8 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 		if err == nil {
 			return token, nil
 		}
-		if service.Discovery.ClientMethod == model.ClientBootstrapDCR {
-			lastErr = safeDCRTokenExchangeError(err)
+		if service.Discovery.ResourceURL != nil {
+			lastErr = safeDiscoveredTokenExchangeError(err)
 		} else {
 			lastErr = safeTokenExchangeError(err)
 		}
@@ -695,6 +698,7 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	}
 	if service.Discovery.ResourceURL != nil {
 		claims.IssuerURI = service.IssuerURI
+		claims.Resource = service.AuthorizationParams["resource"]
 	}
 
 	// Encrypt state token
@@ -759,7 +763,7 @@ func (s *OAuth2SessionService) createSession(
 	serviceID id.ServiceID,
 	token *oauth2.Token,
 	scope []string,
-	expectedIssuerURI string,
+	expectedIssuerURI, expectedResource string,
 ) (*storage.UserSession, error) {
 	// Check if session already exists for this principal+service
 	existingSession, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, serviceID)
@@ -827,6 +831,7 @@ func (s *OAuth2SessionService) createSession(
 		Principal:             principal,
 		ServiceID:             serviceID,
 		ExpectedIssuerURI:     expectedIssuerURI,
+		ExpectedResource:      expectedResource,
 		EncryptedAccessToken:  encryptedAccess,
 		EncryptedRefreshToken: encryptedRefresh,
 		TokenType:             tokenType,
@@ -879,8 +884,8 @@ func (s *OAuth2SessionService) HandleCallback(
 		return nil, errors.New("DCR token identity does not match the requested service")
 	}
 	if (service.Discovery.ResourceURL != nil) != (claims.IssuerURI != "") ||
-		(service.Discovery.ResourceURL != nil && claims.IssuerURI != service.IssuerURI) {
-		s.logger.Warn("OAuth2 callback issuer mismatch", "service_id", req.ServiceID, "reason", "issuer_mismatch")
+		(service.Discovery.ResourceURL != nil && (claims.IssuerURI != service.IssuerURI || claims.Resource != service.AuthorizationParams["resource"])) {
+		s.logger.Warn("OAuth2 callback discovery state mismatch", "service_id", req.ServiceID, "reason", "issuer_or_resource_mismatch")
 		return nil, ErrInvalidStateToken
 	}
 
@@ -935,7 +940,7 @@ func (s *OAuth2SessionService) HandleCallback(
 	}
 
 	// Create and store session
-	session, err := s.createSession(ctx, principal, req.ServiceID, token, scopes, claims.IssuerURI)
+	session, err := s.createSession(ctx, principal, req.ServiceID, token, scopes, claims.IssuerURI, claims.Resource)
 	if err != nil {
 		s.logger.Error("failed to create session from token", "err", err)
 		return nil, fmt.Errorf("failed to create session: %w", err)
@@ -1002,6 +1007,7 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	}
 
 	isPublicClient := entity.IsPublicClient()
+	isDiscovered := entity.Discovery.ResourceURL != nil
 	isDCRBasic := entity.Discovery.ClientMethod == model.ClientBootstrapDCR && entity.TokenEndpointAuthMethod == model.TokenEndpointAuthMethodClientSecretBasic
 	var clientSecret string
 	if !isPublicClient && !isCIMDClient {
@@ -1043,8 +1049,8 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		if entity.Discovery.ClientMethod == model.ClientBootstrapDCR {
-			return nil, errors.New("failed to create DCR refresh token request")
+		if isDiscovered {
+			return nil, errors.New("failed to create discovered refresh token request")
 		}
 		return nil, fmt.Errorf("failed to create refresh token request: %w", err)
 	}
@@ -1062,14 +1068,14 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
-		if entity.Discovery.ClientMethod == model.ClientBootstrapDCR {
+		if isDiscovered {
 			if errors.Is(err, context.Canceled) {
 				return nil, context.Canceled
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				return nil, context.DeadlineExceeded
 			}
-			return nil, errors.New("failed to call upstream token endpoint for DCR refresh")
+			return nil, errors.New("upstream token refresh failed")
 		}
 		return nil, fmt.Errorf("failed to call upstream token endpoint for refresh: %w", err)
 	}
@@ -1094,11 +1100,29 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
+		if isDiscovered {
+			if errors.Is(err, context.Canceled) {
+				return nil, context.Canceled
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil, context.DeadlineExceeded
+			}
+			return nil, errors.New("upstream token response invalid")
+		}
 		return nil, fmt.Errorf("failed to decode upstream token response: %w", err)
 	}
 	if _, err := io.Copy(io.Discard, limited); err != nil {
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
+		}
+		if isDiscovered {
+			if errors.Is(err, context.Canceled) {
+				return nil, context.Canceled
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil, context.DeadlineExceeded
+			}
+			return nil, errors.New("upstream token response invalid")
 		}
 		return nil, fmt.Errorf("failed to read upstream token response: %w", err)
 	}

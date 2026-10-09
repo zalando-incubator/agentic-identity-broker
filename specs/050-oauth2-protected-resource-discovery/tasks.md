@@ -14,12 +14,12 @@ description: "Task list for protected-resource OAuth2 discovery"
 
 **Goal**: Share the existing CIMD outbound safety boundary without changing CIMD behavior. Submit this phase as a separate PR before feature code.
 
-- [X] T001 Draft and obtain acceptance of `adrs/038-protected-resource-discovery-and-dcr.md` before relocating the ADR 015 adapter; record the new outbound port boundary and supersede ADR 036 decision 2 only for DCR-issued `client_secret_basic` and `client_secret_post`.
+- [X] T001 Draft `adrs/038-protected-resource-discovery-and-dcr.md` and obtain stakeholder approval before relocating the ADR 015 adapter. Record the outbound port boundary and a scoped proposed supersession of ADR 036 decision 2 for DCR-issued `client_secret_basic` and `client_secret_post`. Reviewer acceptance remains outstanding.
 - [X] T002 Relocate `internal/domain/oauth2/cimd/blocklist.go` and its tests to `internal/domain/netpolicy/`; migrate imports without aliases or behavior changes. Retain special-range and operator-CIDR coverage. In the same Phase 0 PR, update the "New Domain Packages" paragraph in the CIMD Subsystem and the `SSRFBlocklist` glossary entry in `ARCHITECTURE.md`. Name `internal/domain/netpolicy/` as the new location.
 - [X] T003 Relocate `internal/adapters/cimd/fetcher.go` and its tests to `internal/adapters/outboundhttp/`; migrate imports and Builder construction without behavior changes. Keep its dedicated timeout and body limit. Do not pass Builder's shared `upstreamClient` to a CIMD constructor that changes `CheckRedirect`. Remove the old adapter package. In the same Phase 0 PR, update the `CIMDFetcher` glossary entry in `ARCHITECTURE.md` to name `internal/adapters/outboundhttp/`.
 - [X] T004 Run `just verify` for the Phase 0 refactor and record its result. The 2026-10-07 stakeholder exception defers unchanged npm advisory remediation until after this feature: the security scanner stopped the full gate, but `just check`, focused Go tests, and 101 existing CIMD E2E cases passed. Confirm `ARCHITECTURE.md` names both new packages and no longer places the blocklist or fetcher in their old packages. Submit the behavior-neutral code and documentation in a separate PR before feature behavior. Do not claim the full gate passed. Phase 0 PR: https://github.com/zalando-incubator/agentic-identity-broker/pull/190.
 
-**Checkpoint**: The existing CIMD scenarios still pass. ADR 038 is accepted before the shared adapter changes.
+**Checkpoint**: The existing CIMD scenarios passed. The stakeholder approved the proposed ADR 038 approach before the shared adapter change; reviewers have not accepted the ADR.
 
 ## Phase 1: Setup
 
@@ -73,7 +73,7 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 
 **Red baseline (2026-10-07)**: The functional filter selected 41 of 688 specs and reported 0 passed, 41 semantic failures, and 0 pending. Both Docker restart cases started PostgreSQL and failed only because discovery-backed service creation returned `400` instead of `201`. The one-process SC-006 filter selected one case and reported 0 of 20 successful registrations (all Admin responses `400`, zero DCR requests). Both gates compiled and ran without unreachable test hosts, missing Builder symbols, or fixture errors.
 
-**Checkpoint**: ADR 038 is accepted, the Admin OpenAPI delta is reviewed, migration 036 is specified, and 41 functional scenarios plus SC-006 fail semantically. The Phase 1 Builder seam compiles before these gates.
+**Checkpoint**: The stakeholder approved proposed ADR 038 and the Admin OpenAPI delta. Migration 036 was specified, and the original 41 functional scenarios plus SC-006 failed semantically. The Phase 1 Builder seam compiled before those gates. Three later remediation cases bring the functional total to 44.
 
 ## Phase 2.5: Foundational Infrastructure
 
@@ -223,7 +223,7 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 
 ### Design Phase Verification (Principles II, IV, V, VII, IX, X, XIII)
 
-- [X] T094 Confirm the glossary, outbound trust flow, accepted ADR 038, and the precise ADR 036/015 relationship in `ARCHITECTURE.md` and `adrs/038-protected-resource-discovery-and-dcr.md`. Confirm that the full SC-006 target and the 15-second/256-KiB limits appear in `ARCHITECTURE.md` (Principles II and V).
+- [X] T094 Confirm the glossary, outbound trust flow, stakeholder-approved proposed ADR 038, and the precise ADR 036/015 relationship in `ARCHITECTURE.md` and `adrs/038-protected-resource-discovery-and-dcr.md`. Confirm that the full SC-006 target and the 15-second/256-KiB limits appear in `ARCHITECTURE.md` (Principles II and V).
 - [X] T095 Confirm the HTTPS public-URL precondition and optional broker-wide DCR client name in `docs/configuration.md`, `examples/config/protected-resource-discovery.yaml`, `examples/config/README.md`, `internal/ports/config.go`, loader and CLI, `charts/agentic-identity-broker/values.yaml`, `values.schema.json`, `templates/configmap.yaml`, and chart README (Principle VII). Verify missing name blocks DCR only.
 - [X] T096 Confirm the stakeholder review record and exact request/response/security/error examples in `api/admin/openapi.yaml` against `specs/050-oauth2-protected-resource-discovery/contracts/admin-api.md` (Principles IV and X).
 - [X] T097 Confirm migration design, guarded down rule, and preservation of manual rows in `specs/050-oauth2-protected-resource-discovery/data-model.md` and `migrations/036_add_protected_resource_discovery.up.sql` (Principle IX).
@@ -248,12 +248,24 @@ Use `tests/e2e/README.md`, the production bootstrap, fresh fixture state, `Descr
 
 **Frontend**: Principle XI and frontend portions of XIII do not apply. This feature changes no React UI, design-system component, Playwright test, or screenshot.
 
+## Phase N+1: Protected Resource Remediation (Completed)
+
+- [X] T107 [US4] Update the audience-change `409` and response-only provenance contract in `api/admin/openapi.yaml`, feature contracts, and operator guides. Clarify service ETag scope, unversioned status, callback binding, outbound trust boundaries, and proposed ADR 038 in governance docs. Record US4-S9–S11 and the 44-case functional target without changing prior evidence.
+- [X] T108 [US4] Add semantic-red domain, callback, adapter, HTTP, and production-Builder Ginkgo cases for US4-S9–S11. Cover session races, unchanged explicit audience, provenance transitions, unchanged ETag and tokens, and status-write boundaries before production edits.
+- [X] T109 [US4] Reject effective audience changes with existing sessions in domain and both storage adapters under their session gates or locks. Keep issuer-conflict precedence, propagate count errors, and map the typed conflict to the approved `409`; write only discovery failure status, never manual-conversion status.
+- [X] T110 [US4] Seal issuer and audience in discovered callback state, reject stale callbacks before token exchange, and guard memory and PostgreSQL session insertion against concurrent audience changes. Preserve manual state rules and existing token encryption context.
+- [X] T111 [US4] Move protected-resource ownership enforcement from the HTTP handler to atomic memory and PostgreSQL storage constraints. Map only typed ownership conflicts to `409`; retain stale `If-Match` precedence and RFC 8693 routing lookup.
+- [X] T112 [US4] Return response-only `discovery.authorization_param_resource_strategy` as `derived`, `pinned`, or null for create, get, list, and update. Keep the effective value in `authorization_params.resource` and retain PUT field-presence rules.
+- [X] T113 [US3] Reuse public HTTPS URL validation for discovery and discovered token endpoints. Reject case-insensitive `resource` parameter collisions in requests and issuer metadata before remote registration; leave direct `metadata_url` and manual flows unchanged.
+- [X] T114 [US3] Remove untrusted outbound error detail from discovered token and refresh failures, Admin logs, status, and audit. Separate caller cancellation from attempt deadlines and retain safe approved failure codes.
+- [X] T115 [US4] Reject equal-microsecond discovery completions in memory and PostgreSQL. Retain the first committed outcome, active fields, ETag, and failed status on ties; record the policy in proposed ADR 038 and architecture docs.
+
 ## Dependencies and Execution Order
 
 ### Phase graph
 
 ```text
-Phase 0 (accepted ADR 038; behavior-neutral refactor, separate PR)
+Phase 0 (stakeholder-approved proposed ADR 038; behavior-neutral refactor, separate PR)
     → Phase 1 (provider, TLS seam, fixtures)
     → Phase 2a–2d (model/glossary, configuration, approved Admin API, DB design)
     → Phase 2f (41 functional plus SC-006 semantic-red cases through the Phase 1 Builder seam)
@@ -263,7 +275,7 @@ Phase 0 (accepted ADR 038; behavior-neutral refactor, separate PR)
     → Phase N (compliance, SC-006 green measurement, full validation)
 ```
 
-Phase 2e is not applicable. Phase 2.7 entity boilerplate is not applicable: `model.ThirdpartyOAuth2ProviderEntity` already owns the status and registration. Phase 2a–2d can proceed in parallel only where files and approvals permit. Finish the OpenAPI review, ADR acceptance, and E2E red gate before implementation.
+Phase 2e is not applicable. Phase 2.7 entity boilerplate is not applicable: `model.ThirdpartyOAuth2ProviderEntity` already owns the status and registration. Phase 2a–2d can proceed in parallel only where files and approvals permit. The original design needed OpenAPI and stakeholder approval before implementation; reviewer acceptance of proposed ADR 038 remains outstanding.
 
 ### Story dependencies
 
@@ -282,8 +294,8 @@ Phase 2e is not applicable. Phase 2.7 entity boilerplate is not applicable: `mod
 
 ## Implementation Strategy
 
-1. Complete the separate Phase 0 refactor PR with accepted ADR 038 and unchanged CIMD behavior.
-2. Complete setup, design preconditions, written Admin API review, the Builder test seam, and all 41 functional plus SC-006 semantic-red cases.
+1. Complete the separate Phase 0 refactor PR with stakeholder approval of proposed ADR 038 and unchanged CIMD behavior.
+2. Complete setup, design preconditions, written Admin API review, the Builder test seam, and the original 41 functional plus SC-006 semantic-red cases. Add three remediation cases for a total of 44 functional scenarios.
 3. Complete the shared foundation with test-first adapter and migration work.
 4. Deliver US1 alone as the MVP. Run its 10 scenarios and the existing CIMD/manual flows.
 5. Add US2, then US3. Run each story's scenarios without changing earlier expectations.

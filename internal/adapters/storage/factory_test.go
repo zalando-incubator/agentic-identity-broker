@@ -241,6 +241,7 @@ func TestMemoryAdapter_IssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
 		EncryptionContext: domainstorage.EncryptionContext{ServiceID: serviceID},
 		InitiatedAt:       nextAt, CreatedAt: nextAt, UpdatedAt: nextAt,
 		ExpectedIssuerURI: provider.IssuerURI,
+		ExpectedResource:  resourceURL,
 	}
 	err = adapter.UserSessions().Create(ctx, session)
 	var storageErr *domainstorage.StorageError
@@ -287,6 +288,7 @@ func TestMemoryAdapter_ConcurrentIssuerSwitchAndCallbackCannotCoexist(t *testing
 			EncryptionContext: domainstorage.EncryptionContext{ServiceID: serviceID},
 			InitiatedAt:       readyAt, CreatedAt: readyAt, UpdatedAt: readyAt,
 			ExpectedIssuerURI: provider.IssuerURI,
+			ExpectedResource:  resourceURL,
 		}
 		start := make(chan struct{})
 		insertResult := make(chan error, 1)
@@ -310,4 +312,64 @@ func TestMemoryAdapter_ConcurrentIssuerSwitchAndCallbackCannotCoexist(t *testing
 			assert.Equal(t, provider.IssuerURI, stored.IssuerURI)
 		}
 	}
+}
+
+func TestMemoryAdapter_StaleAudienceCannotInsertOrReplaceSession(t *testing.T) {
+	ctx := context.Background()
+	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+	require.NoError(t, err)
+	serviceID := id.NewServiceID()
+	const audienceA = "https://mcp.example.test/a"
+	const audienceB = "https://mcp.example.test/b"
+	resourceA := audienceA
+	initialAt := time.Now().UTC().Add(-time.Hour)
+	provider := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: serviceID, DisplayName: "MCP", ClientID: "registered-client", IssuerURI: "https://issuer.example.test",
+		Secret: model.NewAbsentSecret(), TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		Discovery:           model.DiscoveryConfig{EnableDiscovery: true, ResourceURL: &resourceA, ClientMethod: model.ClientBootstrapDCR},
+		AuthorizationParams: map[string]string{"resource": audienceA},
+		DiscoveryStatus:     model.DiscoveryStatus{LastAttemptAt: &initialAt, LastSuccessAt: &initialAt},
+	}
+	require.NoError(t, adapter.Services().Create(ctx, provider))
+	principal := id.Principal("callback@example.test")
+	stale := &domainstorage.UserSession{
+		ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID,
+		EncryptedAccessToken: []byte("stale-access"), EncryptedRefreshToken: []byte("stale-refresh"),
+		TokenType: "Bearer", Scope: []string{"read"},
+		EncryptionContext: domainstorage.EncryptionContext{ServiceID: serviceID},
+		InitiatedAt:       initialAt, CreatedAt: initialAt, UpdatedAt: initialAt,
+		ExpectedIssuerURI: provider.IssuerURI, ExpectedResource: audienceA,
+	}
+	changed := provider.Copy()
+	resourceB := audienceB
+	changed.Discovery.ResourceURL = &resourceB
+	changed.AuthorizationParams["resource"] = audienceB
+	committedAt := initialAt.Add(time.Minute)
+	changed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &committedAt, LastSuccessAt: &committedAt}
+	require.NoError(t, adapter.Services().Update(ctx, changed, &provider.Version))
+
+	err = adapter.UserSessions().Create(ctx, stale)
+	var storageErr *domainstorage.StorageError
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, domainstorage.ErrorKindConflict, storageErr.Kind)
+	count, err := adapter.UserSessions().CountByService(ctx, serviceID)
+	require.NoError(t, err)
+	assert.Zero(t, count)
+
+	current := *stale
+	current.ExpectedResource = audienceB
+	current.EncryptedAccessToken = []byte("current-access")
+	current.EncryptedRefreshToken = []byte("current-refresh")
+	require.NoError(t, adapter.UserSessions().Create(ctx, &current))
+	err = adapter.UserSessions().Create(ctx, stale)
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, domainstorage.ErrorKindConflict, storageErr.Kind)
+	stored, err := adapter.UserSessions().FindByPrincipalAndService(ctx, principal, serviceID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, current.ID, stored.ID)
+	assert.Equal(t, current.EncryptedAccessToken, stored.EncryptedAccessToken)
+	assert.Equal(t, current.EncryptedRefreshToken, stored.EncryptedRefreshToken)
+	assert.Empty(t, stored.ExpectedIssuerURI)
+	assert.Empty(t, stored.ExpectedResource)
 }

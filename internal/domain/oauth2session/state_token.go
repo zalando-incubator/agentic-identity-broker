@@ -28,6 +28,9 @@ type OAuth2StateTokenClaims struct {
 	// Manual and direct-metadata flows leave it empty.
 	IssuerURI string `json:"issuer_uri,omitempty"`
 
+	// Resource binds discovered state to the effective token audience.
+	Resource string `json:"resource,omitempty"`
+
 	// RedirectURI is where to redirect after flow completes.
 	// Must be same-origin with the authorize request.
 	RedirectURI string `json:"redirect_uri"`
@@ -52,6 +55,9 @@ func (c *OAuth2StateTokenClaims) Validate() error {
 	}
 	if c.ServiceID.IsZero() {
 		return errors.New("service_id is required")
+	}
+	if (c.IssuerURI == "") != (c.Resource == "") {
+		return errors.New("issuer_uri and resource must be provided together")
 	}
 	if c.RedirectURI == "" {
 		return errors.New("redirect_uri is required")

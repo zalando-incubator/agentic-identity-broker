@@ -351,6 +351,53 @@ func TestStateTokenClaims_Validate(t *testing.T) {
 	})
 }
 
+func TestStateTokenClaims_DiscoveryIssuerAndAudienceArePaired(t *testing.T) {
+	for _, tc := range []struct {
+		name, issuer, resource string
+		valid                  bool
+	}{
+		{name: "manual has neither", valid: true},
+		{name: "discovered has both", issuer: "https://auth.example.test", resource: "https://mcp.example.test/mcp", valid: true},
+		{name: "old discovered state lacks audience", issuer: "https://auth.example.test"},
+		{name: "audience without issuer", resource: "https://mcp.example.test/mcp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			claims := &oauth2session.OAuth2StateTokenClaims{
+				Principal: id.Principal("user@example.com"), ServiceID: id.NewServiceID(),
+				PKCEVerifier: strings.Repeat("v", 43), RedirectURI: "https://broker.example.com/sessions",
+				IssuerURI: tc.issuer, Resource: tc.resource,
+				IssuedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute),
+			}
+			service, _ := setupTestService(t)
+			sealed, err := service.CreateStateToken(claims)
+			if !tc.valid {
+				require.Error(t, err)
+				assert.Empty(t, sealed)
+				return
+			}
+			require.NoError(t, err)
+			opened, err := service.ValidateStateToken(sealed, claims.Principal, claims.ServiceID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.issuer, opened.IssuerURI)
+			assert.Equal(t, tc.resource, opened.Resource)
+		})
+	}
+}
+
+func TestInitiateOAuth2Flow_ManualStateHasNeitherIssuerNorAudience(t *testing.T) {
+	ctx := context.Background()
+	service, _, _, _, _, providers := setupServiceWithConfig(t, nil)
+	serviceID := id.NewServiceID()
+	require.NoError(t, providers.Create(ctx, createTestService(serviceID)))
+	principal := id.Principal("user@example.com")
+	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
+	require.NoError(t, err)
+	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	require.NoError(t, err)
+	assert.Empty(t, claims.IssuerURI)
+	assert.Empty(t, claims.Resource)
+}
+
 // TestStateToken_TTL tests that state tokens have appropriate TTL.
 func TestStateToken_TTL(t *testing.T) {
 	// Verify state token TTL is configured to be <= 15 minutes for security

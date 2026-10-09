@@ -22,8 +22,8 @@ The 2026-10-06 stakeholder feedback confirms returning validated `authorization_
 |---|---|
 | `DiscoveryConfigRequest` | Add `resource_url`. It requires `enable_discovery: true` and excludes `metadata_url`. |
 | `ServiceCreateRequest` | Accept protected-resource discovery without client or endpoint fields. Make `issuer_uri` optional for this mode. |
-| `ServiceUpdateRequest` | Re-run discovery with full-replacement rules. Preserve unchanged issuer and client identity. |
-| `Service` | Return the discovery source, broker-selected client method, effective resource, and explicit DCR authentication method. Do not return a DCR secret. |
+| `ServiceUpdateRequest` | Re-run discovery with field-presence rules. Reject an effective audience change while any user sessions exist, including expired sessions. Preserve unchanged issuer and client identity. |
+| `Service` | Return the discovery source, broker-selected client method, effective resource, read-only source strategy, and explicit DCR authentication method. Do not return a DCR secret. |
 | `/api/services/{service-id}/discovery-status` | Add an authenticated, read-only status resource. |
 | `ErrorResponse` | Keep `error` and `message`. Add optional `authorization_servers` only for `issuer_selection_required`. Add safe failure-code messages. |
 
@@ -91,15 +91,17 @@ Discovery-backed token calls use a separate guarded client with the configured u
 | Same verified issuer and same client and token authentication methods | Update metadata and endpoints. Keep the client ID, DCR secret, and user sessions. |
 | `issuer_uri` omitted for an existing discovery-backed service | Use the active issuer only if the resource still advertises it. Do not select another advertised issuer. |
 | Explicit different advertised `issuer_uri` | Fail with `409` when the service has user sessions. Otherwise, keep the exact `discovery.client_method` and `token_endpoint_auth_method`. Register a new DCR client only with that saved authentication method. If the new issuer or registration cannot support it, reject the update without public or alternate-method fallback. |
+| Effective `authorization_params.resource` changes while any user session exists | Reject with `409` and `resource_change_requires_no_sessions`, before a provider request and again before commit. An unchanged explicit audience permits a new verified discovery URL. An issuer change retains issuer-conflict precedence. |
 | Different client bootstrap or token authentication method required by metadata | Reject the update, including after explicit issuer selection. This API has no method selector. Keep the active client unchanged. |
 | `authorization_params` omitted on discovery refresh | Keep the current parameter map and explicit/derived source. |
 | `authorization_params` present with `resource` | Store that value as an explicit override. |
 | `authorization_params` present without `resource`, including `{}`, on discovery refresh | Clear the explicit override and use the verified resource URL. |
 | `authorization_params` omitted on replacement with manual configuration | Keep the current parameter map. Clear the discovery source and set the stored `resource_explicit` marker to `false`. |
 | `authorization_params` present as `{}` on replacement with manual configuration | Clear all parameters and the discovery source. Set the stored `resource_explicit` marker to `false`. |
+| Manual replacement changes the effective audience while sessions exist | Reject with the same `409` without a discovery-status write. |
 | Manual configuration without `resource_url` | Apply the existing manual replacement contract. Remove discovery source, DCR credential, and discovery timestamps after success. |
 
-A request-shape error happens before discovery and does not change status. A failure after remote discovery starts updates only `last_attempt_at` and `failure_reason`. It does not change active configuration, `last_success_at`, the service ETag, or user sessions.
+A request-shape error happens before discovery and does not change status. A discovery-backed audience conflict records only `last_attempt_at` and `failure_reason: resource_change_requires_no_sessions`. A failed refresh does not change active configuration, `last_success_at`, the service ETag, or user sessions. A rejected manual conversion does not write status. Terminate all sessions before changing the effective audience.
 
 ## 2. `Service` representation
 
@@ -111,6 +113,16 @@ client_method:
   nullable: true
   enum: [cimd, dcr, null]
   readOnly: true
+```
+
+The response-only `DiscoveryConfig.authorization_param_resource_strategy` is required and nullable. It is `derived` when the verified URL supplied the audience, `pinned` when the administrator supplied `authorization_params.resource` (even if equal to the verified URL), and `null` for manual or direct-metadata services. It never appears in `DiscoveryConfigRequest` or the upstream parameter map.
+
+```yaml
+authorization_param_resource_strategy:
+  type: string
+  nullable: true
+  readOnly: true
+  enum: [derived, pinned, null]
 ```
 
 Extend the read-only response enum for `token_endpoint_auth_method`:
@@ -133,6 +145,15 @@ The new values appear only for discovery-backed DCR clients.
 `none` identifies a public client. Every other non-null method identifies a confidential client. A consumer identifies a DCR client by `issuer_uri` and `client_id` together.
 
 Discovery-backed read, list, create, and update responses always contain `authorization_params.resource`. Its value is the effective value for authorization and token requests.
+These response fragments show the same effective audience with different sources, followed by a manual service:
+
+```json
+[
+  {"discovery":{"resource_url":"https://files.example/mcp","authorization_param_resource_strategy":"derived"},"authorization_params":{"resource":"https://files.example/mcp"}},
+  {"discovery":{"resource_url":"https://files.example/mcp","authorization_param_resource_strategy":"pinned"},"authorization_params":{"resource":"https://files.example/mcp"}},
+  {"discovery":{"enable_discovery":false,"authorization_param_resource_strategy":null},"authorization_params":{}}
+]
+```
 
 ### 2.1 Example response
 
@@ -148,7 +169,8 @@ Discovery-backed read, list, create, and update responses always contain `author
   "discovery": {
     "enable_discovery": true,
     "resource_url": "https://mcp.example.com/mcp",
-    "client_method": "dcr"
+    "client_method": "dcr",
+    "authorization_param_resource_strategy": "derived"
   },
   "endpoints": {
     "token_endpoint": "https://auth.example.com/tenant/token",
@@ -269,6 +291,8 @@ Extend `ErrorResponse` with optional `authorization_servers`. `error` remains re
 | Discovery or registration deadline exceeded | `504` | `discovery failed` | `timeout` |
 | Same-issuer DCR identity already exists | `409` | `conflict` | `duplicate_client_identity` |
 | Explicit issuer change while user sessions exist | `409` | `conflict` | `issuer_change_requires_no_sessions` |
+| Effective audience change with user sessions | `409` | `conflict` | `resource_change_requires_no_sessions` |
+| Protected-resource URI owned by another service | `409` | `conflict` | `protected resource URI already configured for another service` |
 | Existing ETag or version precondition failure | `409`, `412`, or `428` | Existing value | Existing text. |
 | Local storage or encryption failure | `500` | `internal server error` | Omitted. |
 
@@ -318,8 +342,11 @@ Discovery error messages, `failure_reason` values, and audit records use only th
 | `client_registration_invalid` | DCR returned an empty ID, incompatible callback, missing secret, another method, or a non-zero `client_secret_expires_at`. |
 | `client_method_changed` | An update would change `discovery.client_method` or the exact `token_endpoint_auth_method`, including confidential/public mode. |
 | `duplicate_client_identity` | The DCR client ID already exists for the same issuer. |
+| `resource_change_requires_no_sessions` | An audience-changing discovery refresh has user sessions; status records this safe failure. |
 
 No response includes a provider response body, URL query, secret, assertion, code, or token.
+
+The service ETag versions active configuration and owned protected resources. The failure-only discovery status has no ETag and does not advance the service version. A completion tied to an already committed attempt at stored microsecond precision loses to the first outcome.
 
 ## 5. Documentation and confirmation record
 

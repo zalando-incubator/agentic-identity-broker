@@ -11,6 +11,12 @@ var ErrDuplicateDCRClientIdentity = errors.New("DCR client identity already exis
 // ErrIssuerChangeHasSessions marks a service whose sessions block an issuer change.
 var ErrIssuerChangeHasSessions = errors.New("user sessions block issuer change")
 
+// ErrResourceChangeHasSessions marks an effective audience change blocked by sessions.
+var ErrResourceChangeHasSessions = errors.New("user sessions block resource change")
+
+// ErrProtectedResourceOwned marks a URI claimed by another service.
+var ErrProtectedResourceOwned = errors.New("protected resource URI already owned")
+
 // ErrorKind classifies the type of storage error for consistent handling.
 type ErrorKind string
 

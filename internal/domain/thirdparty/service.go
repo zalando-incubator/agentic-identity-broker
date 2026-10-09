@@ -104,7 +104,7 @@ func (s *ThirdpartyOAuth2ProviderService) WithDCRClientName(name string) *Thirdp
 	return s
 }
 
-// WithUserSessions supplies the session count required before an issuer change.
+// WithUserSessions supplies the session count required before an issuer or audience change.
 func (s *ThirdpartyOAuth2ProviderService) WithUserSessions(repo ports.UserSessionRepository) *ThirdpartyOAuth2ProviderService {
 	s.userSessions = repo
 	return s
@@ -115,6 +115,10 @@ func (s *ThirdpartyOAuth2ProviderService) WithDiscoveryStatusWriter(writer ports
 	s.statusWriter = writer
 	return s
 }
+
+// errDiscoveryInfrastructure marks local failures for audit classification. Its
+// message is safe to return when an implementation error may contain secrets.
+var errDiscoveryInfrastructure = errors.New("discovery infrastructure unavailable")
 
 func (s *ThirdpartyOAuth2ProviderService) auditCIMD(serviceID id.ServiceID, operation, outcome string) {
 	s.logger.Info("CIMD confidential service", "service_id", serviceID, "operation", operation, "outcome", outcome)
@@ -132,12 +136,25 @@ func (s *ThirdpartyOAuth2ProviderService) auditDiscovery(entity *model.Thirdpart
 	} else {
 		fields = append(fields, "outcome", "rejected")
 		var discoveryErr *DiscoveryError
-		if errors.As(result, &discoveryErr) {
+		var storageErr *storage.StorageError
+		var encryptionErr *domainencryption.EncryptionError
+		switch {
+		case errors.Is(result, context.Canceled):
+			// The caller stopped the attempt; no discovery failure was recorded.
+		case errors.As(result, &discoveryErr):
 			fields = append(fields, "failure_code", discoveryErr.Code)
-		} else if errors.Is(result, storage.ErrDuplicateDCRClientIdentity) {
+		case errors.Is(result, storage.ErrDuplicateDCRClientIdentity):
 			fields = append(fields, "failure_code", "duplicate_client_identity")
-		} else if errors.Is(result, storage.ErrIssuerChangeHasSessions) {
+		case errors.Is(result, storage.ErrIssuerChangeHasSessions):
 			fields = append(fields, "failure_code", "issuer_change_requires_no_sessions")
+		case errors.Is(result, storage.ErrResourceChangeHasSessions):
+			fields = append(fields, "failure_code", "resource_change_requires_no_sessions")
+		case errors.As(result, &storageErr):
+			if storageErr.Kind == storage.ErrorKindConnection || storageErr.Kind == storage.ErrorKindTimeout || storageErr.Kind == storage.ErrorKindUnknown {
+				fields = append(fields, "failure_code", "internal_failure")
+			}
+		case errors.As(result, &encryptionErr), errors.Is(result, errDiscoveryInfrastructure):
+			fields = append(fields, "failure_code", "internal_failure")
 		}
 	}
 	s.logger.Info("protected-resource discovery", fields...)
@@ -165,11 +182,11 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryCreate(ctx context.Con
 	attemptCtx, cancel := context.WithTimeout(ctx, discoveryAttemptTimeout)
 	defer cancel()
 	selected, err := s.discoverProtectedResource(attemptCtx, *entity.Discovery.ResourceURL, entity.IssuerURI, entity.ID)
+	if err := attemptCtx.Err(); err != nil {
+		return time.Time{}, discoveryReadFailure(attemptCtx, err, "resource_metadata")
+	}
 	if err != nil {
 		return time.Time{}, err
-	}
-	if attemptCtx.Err() != nil {
-		return time.Time{}, discoveryFailure("timeout")
 	}
 	entity.IssuerURI = selected.issuer
 	entity.Endpoints = selected.endpoints
@@ -184,7 +201,7 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryCreate(ctx context.Con
 }
 
 // prepareDiscoveryUpdate refreshes the active issuer without changing the client
-// method. An explicit issuer change first requires zero user sessions.
+// method. Issuer or effective audience changes first require zero user sessions.
 func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryUpdate(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) (completedAt time.Time, persistedResult *model.ThirdpartyOAuth2ProviderEntity, resultErr error) {
 	if entity.ID.IsZero() {
 		return time.Time{}, nil, fmt.Errorf("provider validation failed: provider ID cannot be empty")
@@ -199,21 +216,6 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryUpdate(ctx context.Con
 	if persisted.Discovery.ResourceURL == nil || persisted.Discovery.ClientMethod != model.ClientBootstrapCIMD && persisted.Discovery.ClientMethod != model.ClientBootstrapDCR {
 		return time.Time{}, nil, discoveryFailure("client_method_changed")
 	}
-	issuerChanged := entity.IssuerURI != "" && entity.IssuerURI != persisted.IssuerURI
-	if issuerChanged {
-		if s.userSessions == nil {
-			return time.Time{}, nil, errors.New("user session storage is unavailable")
-		}
-		count, err := s.userSessions.CountByService(ctx, entity.ID)
-		if err != nil {
-			return time.Time{}, nil, fmt.Errorf("count service sessions: %w", err)
-		}
-		if count != 0 {
-			return time.Now().UTC(), persisted, discoveryFailure("issuer_change_requires_no_sessions")
-		}
-	} else {
-		entity.IssuerURI = persisted.IssuerURI
-	}
 	if entity.AuthorizationParams == nil {
 		entity.AuthorizationParams = maps.Clone(persisted.AuthorizationParams)
 		entity.ResourceExplicit = persisted.ResourceExplicit
@@ -222,6 +224,29 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryUpdate(ctx context.Con
 	}
 	if entity.AuthorizationParams == nil {
 		entity.AuthorizationParams = make(map[string]string, 1)
+	}
+	if !entity.ResourceExplicit {
+		entity.AuthorizationParams["resource"] = *entity.Discovery.ResourceURL
+	}
+	issuerChanged := entity.IssuerURI != "" && entity.IssuerURI != persisted.IssuerURI
+	resourceChanged := entity.AuthorizationParams["resource"] != persisted.AuthorizationParams["resource"]
+	if issuerChanged || resourceChanged {
+		if s.userSessions == nil {
+			return time.Time{}, nil, fmt.Errorf("user session storage is unavailable: %w", errDiscoveryInfrastructure)
+		}
+		count, err := s.userSessions.CountByService(ctx, entity.ID)
+		if err != nil {
+			return time.Time{}, nil, fmt.Errorf("count service sessions: %w", err)
+		}
+		if count != 0 {
+			if issuerChanged {
+				return time.Now().UTC(), persisted, discoveryFailure("issuer_change_requires_no_sessions")
+			}
+			return time.Now().UTC(), persisted, discoveryFailure("resource_change_requires_no_sessions")
+		}
+	}
+	if !issuerChanged {
+		entity.IssuerURI = persisted.IssuerURI
 	}
 	attemptCtx, cancel := context.WithTimeout(ctx, discoveryAttemptTimeout)
 	defer func() {
@@ -232,11 +257,11 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryUpdate(ctx context.Con
 	}()
 	defer cancel()
 	issuer, metadata, endpoints, err := s.readProtectedResourceMetadata(attemptCtx, *entity.Discovery.ResourceURL, entity.IssuerURI)
+	if ctxErr := attemptCtx.Err(); ctxErr != nil {
+		return time.Time{}, nil, discoveryReadFailure(attemptCtx, ctxErr, "resource_metadata")
+	}
 	if err != nil {
 		return time.Time{}, nil, err
-	}
-	if attemptCtx.Err() != nil {
-		return time.Time{}, nil, discoveryFailure("timeout")
 	}
 	if issuer != persisted.IssuerURI && !issuerChanged {
 		return time.Time{}, nil, discoveryFailure("client_method_changed")
@@ -269,17 +294,20 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryUpdate(ctx context.Con
 			entity.Secret = persisted.Secret
 		}
 	}
+	if ctxErr := attemptCtx.Err(); ctxErr != nil {
+		return time.Time{}, nil, discoveryReadFailure(attemptCtx, ctxErr, "resource_metadata")
+	}
 	entity.IssuerURI = issuer
 	entity.Endpoints = endpoints
 	entity.Discovery.ClientMethod = persisted.Discovery.ClientMethod
 	entity.TokenEndpointAuthMethod = persisted.TokenEndpointAuthMethod
-	if !entity.ResourceExplicit {
-		entity.AuthorizationParams["resource"] = *entity.Discovery.ResourceURL
-	}
 	return time.Now().UTC(), persisted, nil
 }
 
 func (s *ThirdpartyOAuth2ProviderService) recordFailedDiscoveryUpdate(ctx context.Context, active *model.ThirdpartyOAuth2ProviderEntity, completedAt time.Time, failure error) error {
+	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(failure, context.Canceled) {
+		return context.Canceled
+	}
 	var discoveryErr *DiscoveryError
 	code := ""
 	switch {
@@ -289,11 +317,13 @@ func (s *ThirdpartyOAuth2ProviderService) recordFailedDiscoveryUpdate(ctx contex
 		code = "duplicate_client_identity"
 	case errors.Is(failure, storage.ErrIssuerChangeHasSessions):
 		code = "issuer_change_requires_no_sessions"
+	case errors.Is(failure, storage.ErrResourceChangeHasSessions):
+		code = "resource_change_requires_no_sessions"
 	default:
 		return failure
 	}
 	if s.statusWriter == nil {
-		return errors.New("discovery status storage is unavailable")
+		return fmt.Errorf("discovery status storage is unavailable: %w", errDiscoveryInfrastructure)
 	}
 	if err := s.statusWriter.RecordDiscoveryFailure(ctx, active.ID, active.Version, completedAt, code); err != nil {
 		var storageErr *storage.StorageError
@@ -422,6 +452,12 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 				s.auditCIMD(entity.ID, "create", "rejected")
 			}
 		}
+		if discovered && errors.Is(ctx.Err(), context.Canceled) {
+			return context.Canceled
+		}
+		if discovered {
+			return fmt.Errorf("branch key provisioning failed: %w", errDiscoveryInfrastructure)
+		}
 		return fmt.Errorf("branch key provisioning failed: %w", err)
 	}
 	if !discovered {
@@ -437,6 +473,12 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 		if err != nil {
 			if !discovered {
 				s.logger.Error("encryption_failed", "operation", "create_provider", "service_id", entity.ID, "reason", err)
+			}
+			if discovered && errors.Is(ctx.Err(), context.Canceled) {
+				return context.Canceled
+			}
+			if discovered {
+				return fmt.Errorf("failed to encrypt client secret: %w", errDiscoveryInfrastructure)
 			}
 			return fmt.Errorf("failed to encrypt client secret: %w", err)
 		}
@@ -656,6 +698,12 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 				s.auditCIMD(entity.ID, "update", "rejected")
 			}
 		}
+		if discovered && errors.Is(ctx.Err(), context.Canceled) {
+			return context.Canceled
+		}
+		if discovered {
+			return fmt.Errorf("branch key provisioning failed: %w", errDiscoveryInfrastructure)
+		}
 		return fmt.Errorf("branch key provisioning failed: %w", err)
 	}
 	if !discovered {
@@ -673,6 +721,12 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 			if !discovered {
 				s.logger.Error("encryption_failed", "operation", "update_provider", "service_id", entity.ID, "reason", err)
 			}
+			if discovered && errors.Is(ctx.Err(), context.Canceled) {
+				return context.Canceled
+			}
+			if discovered {
+				return fmt.Errorf("failed to encrypt client secret: %w", errDiscoveryInfrastructure)
+			}
 			return fmt.Errorf("failed to encrypt client secret: %w", err)
 		}
 		entity.Secret = model.NewEncryptedSecret(ciphertext)
@@ -689,7 +743,7 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 			s.auditCIMD(entity.ID, "update", "rejected")
 		}
 		if discovered && persistedDiscovery != nil &&
-			(errors.Is(err, storage.ErrDuplicateDCRClientIdentity) || errors.Is(err, storage.ErrIssuerChangeHasSessions)) {
+			(errors.Is(err, storage.ErrDuplicateDCRClientIdentity) || errors.Is(err, storage.ErrIssuerChangeHasSessions) || errors.Is(err, storage.ErrResourceChangeHasSessions)) {
 			return s.recordFailedDiscoveryUpdate(ctx, persistedDiscovery, time.Now().UTC(), err)
 		}
 		return err

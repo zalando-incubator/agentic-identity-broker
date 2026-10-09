@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -96,7 +97,7 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Create(_ context.Context, e
 
 	for resource := range resources {
 		if owner, claimed := r.resourceOwners[resource]; claimed && owner != entity.ID {
-			return providerStorageError("CreateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "protected resource is already owned")
+			return providerStorageError("CreateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrProtectedResourceOwned, "protected resource is already owned")
 		}
 	}
 
@@ -175,18 +176,60 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	// A failed refresh does not bump the version, so CAS alone cannot prevent an
 	// earlier successful refresh from erasing its newer failure status.
 	if entity.Discovery.ResourceURL != nil && entity.DiscoveryStatus.LastAttemptAt != nil {
-		if lastAttempt := existing.entity.DiscoveryStatus.LastAttemptAt; lastAttempt != nil && entity.DiscoveryStatus.LastAttemptAt.Before(*lastAttempt) {
+		if lastAttempt := existing.entity.DiscoveryStatus.LastAttemptAt; lastAttempt != nil &&
+			!entity.DiscoveryStatus.LastAttemptAt.Truncate(time.Microsecond).After(lastAttempt.Truncate(time.Microsecond)) {
 			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider discovery attempt is no longer current")
 		}
 	}
-	if entity.ClearCanonicalID {
-		entity.CanonicalID = nil
-	} else if entity.CanonicalID == nil {
-		entity.CanonicalID = existing.entity.CanonicalID
+	// Resolve the effective audience before deciding whether sessions block this
+	// commit. An omitted map retains its source; a derived audience follows the
+	// newly verified resource URL, while a pinned audience stays unchanged.
+	authorizationParams := entity.AuthorizationParams
+	resourceExplicit := entity.ResourceExplicit
+	if authorizationParams == nil {
+		authorizationParams = existing.entity.AuthorizationParams
+		resourceExplicit = existing.entity.ResourceExplicit
+	}
+	deriveResource := false
+	if entity.Discovery.ResourceURL == nil {
+		resourceExplicit = false
+	} else if entity.AuthorizationParams == nil {
+		deriveResource = !resourceExplicit
+	} else if _, present := authorizationParams["resource"]; !present {
+		resourceExplicit = false
+		deriveResource = true
+	}
+	proposedResource := authorizationParams["resource"]
+	if deriveResource {
+		proposedResource = *entity.Discovery.ResourceURL
+	}
+	issuerChanged := entity.IssuerURI != existing.entity.IssuerURI
+	resourceChanged := proposedResource != existing.entity.AuthorizationParams["resource"]
+	if (issuerChanged || resourceChanged) && (existing.entity.Discovery.ResourceURL != nil || entity.Discovery.ResourceURL != nil) {
+		if r.sessions == nil {
+			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider session state is unavailable")
+		}
+		count, err := r.sessions.CountByService(ctx, entity.ID)
+		if err != nil {
+			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindUnknown, err, "failed to check provider sessions")
+		}
+		if count != 0 {
+			if issuerChanged {
+				return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrIssuerChangeHasSessions, "provider has user sessions")
+			}
+			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrResourceChangeHasSessions, "provider has user sessions")
+		}
 	}
 
-	if entity.CanonicalID != nil {
-		if existingID, exists := r.canonicalIndex[*entity.CanonicalID]; exists && existingID != entity.ID {
+	canonicalID := entity.CanonicalID
+	if entity.ClearCanonicalID {
+		canonicalID = nil
+	} else if canonicalID == nil {
+		canonicalID = existing.entity.CanonicalID
+	}
+
+	if canonicalID != nil {
+		if existingID, exists := r.canonicalIndex[*canonicalID]; exists && existingID != entity.ID {
 			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider canonical_id already exists")
 		}
 	}
@@ -205,30 +248,29 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 		}
 		for resource := range resourceSet {
 			if owner, claimed := r.resourceOwners[resource]; claimed && owner != entity.ID {
-				return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "protected resource is already owned")
+				return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrProtectedResourceOwned, "protected resource is already owned")
 			}
 		}
 	}
-	if entity.IssuerURI != existing.entity.IssuerURI && (existing.entity.Discovery.ResourceURL != nil || entity.Discovery.ResourceURL != nil) {
-		if r.sessions == nil {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider session state is unavailable")
-		}
-		count, err := r.sessions.CountByService(ctx, entity.ID)
-		if err != nil {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindUnknown, err, "failed to check provider sessions")
-		}
-		if count != 0 {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrIssuerChangeHasSessions, "provider has user sessions")
-		}
-	}
 
-	entity.CreatedAt = existing.entity.CreatedAt
-	entity.Version = existing.entity.Version + 1
-	if entity.AuthorizationParams == nil {
-		entity.AuthorizationParams = existing.entity.Copy().AuthorizationParams
+	proposed := *entity
+	proposed.CanonicalID = canonicalID
+	proposed.CreatedAt = existing.entity.CreatedAt
+	proposed.Version = existing.entity.Version + 1
+	if proposed.AuthorizationParams == nil {
+		proposed.AuthorizationParams = maps.Clone(authorizationParams)
+	} else if deriveResource {
+		proposed.AuthorizationParams = maps.Clone(proposed.AuthorizationParams)
 	}
-	entity.ProtectedResources = resourceSetSlice(resourceSet)
-	record, err := providerEntityToRecord(entity)
+	if deriveResource {
+		if proposed.AuthorizationParams == nil {
+			proposed.AuthorizationParams = make(map[string]string, 1)
+		}
+		proposed.AuthorizationParams["resource"] = proposedResource
+	}
+	proposed.ResourceExplicit = resourceExplicit
+	proposed.ProtectedResources = resourceSetSlice(resourceSet)
+	record, err := providerEntityToRecord(&proposed)
 	if err != nil {
 		return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to store provider")
 	}
@@ -252,9 +294,10 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	if existing.entity.CanonicalID != nil {
 		delete(r.canonicalIndex, *existing.entity.CanonicalID)
 	}
-	if entity.CanonicalID != nil {
-		r.canonicalIndex[*entity.CanonicalID] = entity.ID
+	if canonicalID != nil {
+		r.canonicalIndex[*canonicalID] = entity.ID
 	}
+	*entity = proposed
 	return nil
 }
 
@@ -461,7 +504,8 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) RecordDiscoveryFailure(_ co
 	}
 	status := &entity.DiscoveryStatus
 	if status.LastAttemptAt == nil || status.LastSuccessAt == nil ||
-		!completedAt.After(*status.LastAttemptAt) || !completedAt.After(*status.LastSuccessAt) {
+		!completedAt.Truncate(time.Microsecond).After(status.LastAttemptAt.Truncate(time.Microsecond)) ||
+		!completedAt.Truncate(time.Microsecond).After(status.LastSuccessAt.Truncate(time.Microsecond)) {
 		return providerStorageError(operation, storage.ErrorKindConflict, nil, "provider discovery attempt is no longer current")
 	}
 

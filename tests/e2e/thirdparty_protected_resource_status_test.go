@@ -186,6 +186,19 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 		Expect(call.Form).NotTo(HaveKey("client_id"))
 		Expect(clientID).To(Equal("dcr-client-123"))
 	}
+	verifiedResourceB := func() string {
+		resource := strings.TrimSuffix(scenario.ResourceURL, "/mcp") + "/mcp-v2"
+		provider.SetReply(fixtures.ProtectedResourceReply{
+			Host: "files.example.test", Method: http.MethodGet, Path: "/mcp-v2", Status: http.StatusUnauthorized,
+			Headers: http.Header{"WWW-Authenticate": {`Bearer resource_metadata="https://files.example.test/.well-known/oauth-protected-resource/mcp-v2"`}},
+		})
+		provider.SetReply(fixtures.ProtectedResourceReply{
+			Host: "files.example.test", Method: http.MethodGet, Path: "/.well-known/oauth-protected-resource/mcp-v2", Status: http.StatusOK,
+			Headers: http.Header{"Content-Type": {"application/json"}},
+			Body:    `{"resource":"` + resource + `","authorization_servers":["` + scenario.IssuerURLs[0] + `"]}`,
+		})
+		return resource
+	}
 
 	BeforeEach(func() {
 		logger = bootstrap.TestLogger(slog.LevelWarn)
@@ -473,6 +486,173 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 				}
 			})
 		})
+		// US4-S9 from specs/050-oauth2-protected-resource-discovery/spec.md
+		It("should protect connected sessions when the token audience changes", Label("protected-resource-discovery", "protected-resource-remediation"), func() {
+			serviceID := service["id"].(string)
+			resourceB := verifiedResourceB()
+			connect(serviceID, providerClient)
+
+			assertRejected := func(request map[string]any, discoveryBacked bool) {
+				before, etag := readService(serviceID)
+				beforeStatus := readStatus(serviceID)
+				beforeSession := readSession(serviceID)
+				stored, err := store.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(principal), id.MustParseServiceID(serviceID))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stored).NotTo(BeNil())
+				accessToken, refreshToken := bytes.Clone(stored.EncryptedAccessToken), bytes.Clone(stored.EncryptedRefreshToken)
+				Expect(accessToken).NotTo(BeEmpty())
+				Expect(refreshToken).NotTo(BeEmpty())
+				callsBefore := len(provider.Calls())
+
+				response := update(serviceID, request)
+				Expect(response.StatusCode).To(Equal(http.StatusConflict))
+				Expect(decodeJSON[map[string]any](response)).To(Equal(map[string]any{
+					"error": "conflict", "message": "resource_change_requires_no_sessions",
+				}))
+				after, afterETag := readService(serviceID)
+				Expect(afterETag).To(Equal(etag))
+				Expect(after).To(Equal(before))
+				Expect(readSession(serviceID)).To(Equal(beforeSession))
+				stored, err = store.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(principal), id.MustParseServiceID(serviceID))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stored).NotTo(BeNil())
+				Expect(stored.EncryptedAccessToken).To(Equal(accessToken))
+				Expect(stored.EncryptedRefreshToken).To(Equal(refreshToken))
+				Expect(provider.Calls()).To(HaveLen(callsBefore), "rejected audience changes must not contact the provider")
+				status := readStatus(serviceID)
+				if discoveryBacked {
+					Expect(status).To(HaveKeyWithValue("status", "failed"))
+					Expect(status).To(HaveKeyWithValue("failure_reason", "resource_change_requires_no_sessions"))
+					Expect(status["last_success_at"]).To(Equal(beforeStatus["last_success_at"]))
+					Expect(status["last_attempt_at"]).NotTo(BeNil())
+					Expect(status["resource_url"]).To(Equal(beforeStatus["resource_url"]))
+				} else {
+					Expect(status).To(Equal(beforeStatus), "a manual conversion rejection must not write discovery status")
+				}
+			}
+
+			assertRejected(serviceRequest(resourceB), true)
+			pinA := serviceRequest(scenario.ResourceURL)
+			pinA["authorization_params"] = map[string]string{"resource": scenario.ResourceURL}
+			pinned := update(serviceID, pinA)
+			Expect(pinned.StatusCode).To(Equal(http.StatusOK))
+			Expect(decodeJSON[map[string]any](pinned)["authorization_params"]).To(HaveKeyWithValue("resource", scenario.ResourceURL))
+			assertReady(readStatus(serviceID), scenario.ResourceURL, scenario.IssuerURLs[0], "dcr")
+
+			explicitB := serviceRequest(scenario.ResourceURL)
+			explicitB["authorization_params"] = map[string]string{"resource": resourceB}
+			assertRejected(explicitB, true)
+			unchangedAudience := update(serviceID, serviceRequest(resourceB))
+			Expect(unchangedAudience.StatusCode).To(Equal(http.StatusOK))
+			retained := decodeJSON[map[string]any](unchangedAudience)
+			Expect(retained["discovery"]).To(HaveKeyWithValue("resource_url", resourceB))
+			Expect(retained["authorization_params"]).To(HaveKeyWithValue("resource", scenario.ResourceURL))
+			assertReady(readStatus(serviceID), resourceB, scenario.IssuerURLs[0], "dcr")
+
+			manual := map[string]any{
+				"display_name": "Files MCP", "client_id": fixtures.PublicClientService().ClientID.String(),
+				"token_endpoint_auth_method": "none", "issuer_uri": scenario.IssuerURLs[0],
+				"discovery": map[string]any{"enable_discovery": false},
+				"endpoints": map[string]any{
+					"authorize_endpoint": scenario.IssuerURLs[0] + "/authorize",
+					"token_endpoint":     scenario.IssuerURLs[0] + "/token",
+				},
+				"authorization_params": map[string]string{"resource": resourceB},
+			}
+			assertRejected(manual, false)
+		})
+
+		// US4-S10 from specs/050-oauth2-protected-resource-discovery/spec.md
+		It("should reject an old audience callback before exchanging its code", Label("protected-resource-discovery", "protected-resource-remediation"), func() {
+			serviceID := service["id"].(string)
+			resourceB := verifiedResourceB()
+			begin, err := enduser.AuthenticatedGET(
+				"/api/third-party/"+serviceID+"/oauth2/authorize?redirect_uri="+url.QueryEscape(fixtures.CIMDEndUserPublicURL+"/sessions"), principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(begin.StatusCode).To(Equal(http.StatusFound))
+			providerURL := begin.Header.Get("Location")
+			Expect(begin.Body.Close()).To(Succeed())
+			parsed, err := url.Parse(providerURL)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parsed.Query().Get("resource")).To(Equal(scenario.ResourceURL))
+			visit, err := providerClient.Get(providerURL)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(visit.StatusCode).To(Equal(http.StatusFound))
+			oldCallback, err := url.Parse(visit.Header.Get("Location"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(visit.Body.Close()).To(Succeed())
+			Expect(oldCallback.Path).To(Equal("/api/third-party/" + serviceID + "/oauth2/callback"))
+
+			changed := update(serviceID, serviceRequest(resourceB))
+			Expect(changed.StatusCode).To(Equal(http.StatusOK))
+			Expect(decodeJSON[map[string]any](changed)["authorization_params"]).To(HaveKeyWithValue("resource", resourceB))
+			oldResult, err := enduser.AuthenticatedGET(oldCallback.RequestURI(), principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(oldResult.StatusCode).To(Equal(http.StatusFound))
+			failureURL, err := url.Parse(oldResult.Header.Get("Location"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(oldResult.Body.Close()).To(Succeed())
+			Expect(failureURL.Path).To(Equal("/sessions"))
+			Expect(failureURL.Query().Get("error")).To(Equal("invalid_state"))
+			Expect(provider.Calls()).NotTo(ContainElement(And(HaveField("Method", http.MethodPost), HaveField("Path", "/token"))))
+			session, err := enduser.AuthenticatedGET("/api/third-party/"+serviceID+"/session", principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(session.StatusCode).To(Equal(http.StatusNotFound))
+			Expect(session.Body.Close()).To(Succeed())
+
+			connect(serviceID, providerClient)
+			Expect(provider.Calls()).To(ContainElement(And(HaveField("Path", "/authorize"), HaveField("Query", HaveKeyWithValue("resource", []string{resourceB})))))
+			Expect(provider.Calls()).To(ContainElement(And(HaveField("Path", "/token"), HaveField("Form", HaveKeyWithValue("resource", []string{resourceB})))))
+		})
+
+		// US4-S11 from specs/050-oauth2-protected-resource-discovery/spec.md
+		It("should distinguish pinned and derived audiences with equal URLs", Label("protected-resource-discovery", "protected-resource-remediation"), func() {
+			serviceID := service["id"].(string)
+			resourceA, resourceB := scenario.ResourceURL, verifiedResourceB()
+			Expect(service["authorization_params"]).To(HaveKeyWithValue("resource", resourceA))
+			Expect(service["discovery"]).To(HaveKeyWithValue("authorization_param_resource_strategy", "derived"))
+			derived, _ := readService(serviceID)
+			Expect(derived["discovery"]).To(HaveKeyWithValue("authorization_param_resource_strategy", "derived"))
+			Expect(derived["authorization_params"]).To(HaveKeyWithValue("resource", resourceA))
+
+			pinA := serviceRequest(resourceA)
+			pinA["authorization_params"] = map[string]string{"resource": resourceA}
+			pinnedResponse := update(serviceID, pinA)
+			Expect(pinnedResponse.StatusCode).To(Equal(http.StatusOK))
+			pinned := decodeJSON[map[string]any](pinnedResponse)
+			Expect(pinned["discovery"]).To(HaveKeyWithValue("authorization_param_resource_strategy", "pinned"))
+			Expect(pinned["authorization_params"]).To(HaveKeyWithValue("resource", resourceA))
+			pinned, _ = readService(serviceID)
+			Expect(pinned["discovery"]).To(HaveKeyWithValue("authorization_param_resource_strategy", "pinned"))
+			Expect(pinned["authorization_params"]).To(HaveKeyWithValue("resource", resourceA))
+			listed, err := admin.AuthenticatedGET("/api/services", principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(listed.StatusCode).To(Equal(http.StatusOK))
+			services := decodeJSON[[]map[string]any](listed)
+			Expect(services).To(HaveLen(1))
+			Expect(services[0]["discovery"]).To(HaveKeyWithValue("authorization_param_resource_strategy", "pinned"))
+
+			retainedResponse := update(serviceID, serviceRequest(resourceB))
+			Expect(retainedResponse.StatusCode).To(Equal(http.StatusOK))
+			retained := decodeJSON[map[string]any](retainedResponse)
+			Expect(retained["discovery"]).To(And(HaveKeyWithValue("resource_url", resourceB), HaveKeyWithValue("authorization_param_resource_strategy", "pinned")))
+			Expect(retained["authorization_params"]).To(HaveKeyWithValue("resource", resourceA))
+			retained, _ = readService(serviceID)
+			Expect(retained["discovery"]).To(HaveKeyWithValue("authorization_param_resource_strategy", "pinned"))
+			Expect(retained["authorization_params"]).To(HaveKeyWithValue("resource", resourceA))
+
+			restore := serviceRequest(resourceB)
+			restore["authorization_params"] = map[string]string{}
+			restoredResponse := update(serviceID, restore)
+			Expect(restoredResponse.StatusCode).To(Equal(http.StatusOK))
+			restored := decodeJSON[map[string]any](restoredResponse)
+			Expect(restored["discovery"]).To(HaveKeyWithValue("authorization_param_resource_strategy", "derived"))
+			Expect(restored["authorization_params"]).To(HaveKeyWithValue("resource", resourceB))
+			restored, _ = readService(serviceID)
+			Expect(restored["discovery"]).To(HaveKeyWithValue("authorization_param_resource_strategy", "derived"))
+			Expect(restored["authorization_params"]).To(HaveKeyWithValue("resource", resourceB))
+		})
+
 	})
 
 	Context("when an existing manual service is read", func() {

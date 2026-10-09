@@ -384,6 +384,8 @@ func TestThirdpartyOAuth2ProviderEntity_TokenEndpointResourceQueryIsDiscoveryOnl
 			for _, query := range []string{
 				"?resource=https%3A%2F%2Fother.example.test&resource=https%3A%2F%2Fmcp.example.test%2Fmcp",
 				"?resource=https%3A%2F%2Fother.example.test&res%6Furce=https%3A%2F%2Fmcp.example.test%2Fmcp",
+				"?Resource=https%3A%2F%2Fother.example.test%2Faudience",
+				"?rEsOuRcE=https%3A%2F%2Fother.example.test%2Faudience",
 			} {
 				t.Run(query, func(t *testing.T) {
 					t.Parallel()
@@ -396,6 +398,12 @@ func TestThirdpartyOAuth2ProviderEntity_TokenEndpointResourceQueryIsDiscoveryOnl
 					require.NoError(t, operation.validate(manual), "manual providers retain their existing endpoint query behavior")
 				})
 			}
+
+			metadataURL := "https://auth.example.test/.well-known/oauth-authorization-server"
+			directMetadata := validEndpointSchemeEntity()
+			directMetadata.Discovery = DiscoveryConfig{EnableDiscovery: true, MetadataURL: &metadataURL}
+			directMetadata.Endpoints.TokenEndpoint += "?Resource=https%3A%2F%2Fother.example.test%2Fdata"
+			require.NoError(t, operation.validate(directMetadata), "direct metadata discovery retains its existing endpoint query behavior")
 		})
 	}
 }

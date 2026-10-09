@@ -19,6 +19,9 @@ type UserSession struct {
 	// ExpectedIssuerURI binds a discovered callback to the issuer that initiated it.
 	// Repositories check this value before storage; they do not persist it.
 	ExpectedIssuerURI string `json:"-" db:"-"`
+	// ExpectedResource is the discovered audience sealed in the callback state.
+	// Repositories check it before insert or upsert; they do not persist it.
+	ExpectedResource string `json:"-" db:"-"`
 
 	// EncryptedAccessToken contains the OAuth2 access token ENCRYPTED by OAuth2SessionService
 	// using envelope encryption with service_id as Additional Authenticated Data (AAD).

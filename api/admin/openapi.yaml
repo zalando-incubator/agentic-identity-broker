@@ -536,6 +536,7 @@ paths:
                       issuer_uri: https://github.com
                       discovery:
                         enable_discovery: true
+                        authorization_param_resource_strategy: null
                       endpoints:
                         token_endpoint: https://github.com/login/oauth/access_token
                         authorize_endpoint: https://github.com/login/oauth/authorize
@@ -554,6 +555,7 @@ paths:
                       issuer_uri: https://accounts.google.com
                       discovery:
                         enable_discovery: true
+                        authorization_param_resource_strategy: null
                       endpoints:
                         token_endpoint: https://oauth2.googleapis.com/token
                         authorize_endpoint: https://accounts.google.com/o/oauth2/v2/auth
@@ -664,6 +666,7 @@ paths:
                     issuer_uri: https://github.com
                     discovery:
                       enable_discovery: true
+                      authorization_param_resource_strategy: null
                     endpoints:
                       token_endpoint: https://github.com/login/oauth/access_token
                       authorize_endpoint: https://github.com/login/oauth/authorize
@@ -686,11 +689,54 @@ paths:
                       enable_discovery: true
                       resource_url: https://mcp.example.com/mcp
                       client_method: dcr
+                      authorization_param_resource_strategy: pinned
                     endpoints:
                       token_endpoint: https://auth.example.com/tenant/token
                       authorize_endpoint: https://auth.example.com/tenant/authorize
                     authorization_params:
                       resource: https://mcp.example.com/api
+                    created_at: '2026-10-06T10:00:00Z'
+                    updated_at: '2026-10-06T10:00:00Z'
+                derived_resource:
+                  summary: Discovery derives its effective token audience
+                  value:
+                    id: 880e8400-e29b-41d4-a716-446655440004
+                    display_name: Files MCP
+                    client_id: dcr-files-client
+                    token_endpoint_auth_method: none
+                    oauth2_flavor: standard
+                    issuer_uri: https://auth.example.com/tenant
+                    discovery:
+                      enable_discovery: true
+                      resource_url: https://files.example/mcp
+                      client_method: dcr
+                      authorization_param_resource_strategy: derived
+                    endpoints:
+                      authorize_endpoint: https://auth.example.com/tenant/authorize
+                      token_endpoint: https://auth.example.com/tenant/token
+                    authorization_params:
+                      resource: https://files.example/mcp
+                    created_at: '2026-10-06T10:00:00Z'
+                    updated_at: '2026-10-06T10:00:00Z'
+                pinned_equal_resource:
+                  summary: Administrator pins the same token audience as the discovery URL
+                  value:
+                    id: 880e8400-e29b-41d4-a716-446655440005
+                    display_name: Files MCP
+                    client_id: dcr-files-client-2
+                    token_endpoint_auth_method: none
+                    oauth2_flavor: standard
+                    issuer_uri: https://auth.example.com/tenant
+                    discovery:
+                      enable_discovery: true
+                      resource_url: https://files.example/mcp
+                      client_method: dcr
+                      authorization_param_resource_strategy: pinned
+                    endpoints:
+                      authorize_endpoint: https://auth.example.com/tenant/authorize
+                      token_endpoint: https://auth.example.com/tenant/token
+                    authorization_params:
+                      resource: https://files.example/mcp
                     created_at: '2026-10-06T10:00:00Z'
                     updated_at: '2026-10-06T10:00:00Z'
         '400':
@@ -712,7 +758,7 @@ paths:
                     error: client registration failed
                     message: client_name_unconfigured
         '409':
-          description: Manual client-ID conflict, duplicate issuer-scoped DCR identity, or issuer change with sessions
+          description: Manual client-ID conflict, duplicate issuer-scoped DCR identity, or protected-resource ownership conflict
           content:
             application/json:
               schema:
@@ -722,6 +768,10 @@ paths:
                   value:
                     error: conflict
                     message: duplicate_client_identity
+                protected_resource_owned:
+                  value:
+                    error: conflict
+                    message: protected resource URI already configured for another service
                 manual_duplicate:
                   value:
                     error: conflict
@@ -776,6 +826,7 @@ paths:
                 issuer_uri: https://github.com
                 discovery:
                   enable_discovery: true
+                  authorization_param_resource_strategy: null
                 endpoints:
                   token_endpoint: https://github.com/login/oauth/access_token
                   authorize_endpoint: https://github.com/login/oauth/authorize
@@ -823,15 +874,17 @@ paths:
 
         **Protected-resource refresh**: An omitted `issuer_uri` retains the active issuer
         only if fresh resource metadata still advertises it. A different issuer requires
-        explicit selection and zero user sessions. Keep the client method and the exact
-        token authentication method. Preserve the client ID and secret for an unchanged
-        issuer. For a discovery-backed refresh, omitted `authorization_params` keeps the
-        map and its explicit or derived source. A replacement without `resource` restores
-        the derived resource. On replacement with manual configuration, omission keeps the
-        parameter map but clears the discovery source and resource source marker. For a
-        manual replacement, an explicit empty map clears all parameters. Failed refresh
-        changes only the stored attempt time and safe reason.
-        It keeps the active service ETag.
+        explicit selection and zero user sessions. An effective `authorization_params.resource`
+        change also requires zero user sessions, even when the issuer stays the same.
+        Keep the client method and the exact token authentication method. Preserve the
+        client ID and secret for an unchanged issuer. For a discovery-backed refresh,
+        omitted `authorization_params` keeps the map and its explicit or derived source.
+        A replacement without `resource` restores the derived resource. On replacement
+        with manual configuration, omission keeps the parameter map but clears the
+        discovery source and resource source marker. For a manual replacement, an explicit
+        empty map clears all parameters. A discovery-backed rejection writes a safe
+        failure-only status without changing the active service ETag. A manual conversion
+        rejected for an audience change writes no discovery status.
 
         **Security**: Static confidential-service `client_secret` values are redacted in responses. Public and CIMD service responses omit the property.
         - `protected_resources` omitted or `null`: preserves the current protected-resource set
@@ -910,6 +963,7 @@ paths:
                 issuer_uri: https://github.com
                 discovery:
                   enable_discovery: true
+                  authorization_param_resource_strategy: null
                 endpoints:
                   token_endpoint: https://github.com/login/oauth/access_token
                   authorize_endpoint: https://github.com/login/oauth/authorize
@@ -934,7 +988,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
         '409':
-          description: Conflict with the selected issuer, DCR identity, or existing manual client identity
+          description: Issuer or audience change with sessions, duplicate client identity, or protected-resource ownership conflict
           content:
             application/json:
               schema:
@@ -944,6 +998,14 @@ paths:
                   value:
                     error: conflict
                     message: issuer_change_requires_no_sessions
+                resource_change_with_sessions:
+                  value:
+                    error: conflict
+                    message: resource_change_requires_no_sessions
+                protected_resource_owned:
+                  value:
+                    error: conflict
+                    message: protected resource URI already configured for another service
                 duplicate_dcr_identity:
                   value:
                     error: conflict
@@ -2691,7 +2753,7 @@ components:
             - https://github.com/api/v3
         authorization_params:
           type: object
-          description: Provider authorization parameters. Discovery-backed services include one effective `resource`, derived from verified metadata or explicitly supplied by an administrator.
+          description: Provider authorization parameters. Discovery-backed services include one effective `resource` audience, derived from verified metadata or explicitly supplied by an administrator. The read-only source is in `discovery.authorization_param_resource_strategy`.
           additionalProperties:
             type: string
           example:
@@ -3075,6 +3137,7 @@ components:
       type: object
       required:
         - enable_discovery
+        - authorization_param_resource_strategy
       properties:
         enable_discovery:
           type: boolean
@@ -3102,6 +3165,13 @@ components:
           readOnly: true
           description: Broker-selected client bootstrap method. Null for manual and direct-metadata services.
           example: dcr
+        authorization_param_resource_strategy:
+          type: string
+          nullable: true
+          readOnly: true
+          enum: [derived, pinned, null]
+          description: Source of the effective authorization_params.resource audience. Null for manual and direct-metadata services.
+          example: derived
     ServiceDiscoveryStatus:
       type: object
       required:

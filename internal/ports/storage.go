@@ -255,8 +255,8 @@ type UserSessionRepository interface {
 	// Idempotent: safe to delete non-existent session.
 	DeleteByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) error
 
-	// CountByService counts sessions referencing a service.
-	// Used to enforce deletion protection (cannot delete service with active sessions).
+	// CountByService counts every session referencing a service, including expired ones.
+	// Used to block deletion, issuer changes, and effective-audience changes.
 	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 

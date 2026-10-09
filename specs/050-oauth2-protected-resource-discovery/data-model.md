@@ -114,11 +114,11 @@ erDiagram
 
 For a discovery-backed update, omitting `authorization_params` retains its current map and source marker. A replacement object with `resource` sets an explicit override. A replacement object without `resource` restores a derived value. On a successful transition to manual configuration, an omitted map remains stored, but `resource_explicit` becomes false. An explicit empty map clears all parameters.
 
-An issuer change checks for user sessions before network access and again when it commits. PostgreSQL uses a service-row lock, while memory uses a shared gate. Session insertion uses the matching lock or gate and checks the issuer sealed in OAuth2 state. An old callback cannot create a session after the issuer changes.
+An issuer or effective-audience change checks for all user sessions before network access and again at commit. PostgreSQL uses a service-row lock, while memory uses a shared gate. Session insertion uses the matching lock or gate and checks both the issuer and audience sealed in OAuth2 state. An old callback cannot create a session after either value changes.
 
 ## Persistence design
 
-Migration `036_add_protected_resource_discovery.{up,down}.sql` extends `thirdparty_oauth2_services`. These SQL predicates implement [accepted ADR 038](../../adrs/038-protected-resource-discovery-and-dcr.md). The existing `authorization_params` JSONB column stores the effective resource.
+Migration `036_add_protected_resource_discovery.{up,down}.sql` extends `thirdparty_oauth2_services`. These SQL predicates follow [proposed ADR 038](../../adrs/038-protected-resource-discovery-and-dcr.md), subject to reviewer acceptance. The existing `authorization_params` JSONB column stores the effective resource.
 
 ```sql
 ALTER TABLE thirdparty_oauth2_services

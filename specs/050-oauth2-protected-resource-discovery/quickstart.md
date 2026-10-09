@@ -19,13 +19,14 @@ Do not use private, loopback, or redirected URLs for production validation. The 
 
 ## Run the automated validation
 
-1. Run the 41 functional acceptance scenarios.
+1. Run the 44 functional acceptance scenarios.
 
    ```sh
    ginkgo -v --label-filter="protected-resource-discovery && !performance" ./tests/e2e/
    ```
 
-   The command must select exactly 41 `It()` blocks. Each block must have one `USx-Sy from specs/050-oauth2-protected-resource-discovery/spec.md` reference.
+   The command must select exactly 44 `It()` blocks. Each block must have one `USx-Sy from specs/050-oauth2-protected-resource-discovery/spec.md` reference.
+   US4-S9, US4-S10, and US4-S11 are the three new cases. The separate SC-006 performance case does not count toward the 44.
 
 2. Run the SC-006 performance measurement.
 
