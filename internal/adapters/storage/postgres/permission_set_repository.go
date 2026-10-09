@@ -244,13 +244,13 @@ func (r *PermissionSetRepository) Update(ctx context.Context, ps *storage.Permis
 	return tx.Commit()
 }
 
-// Delete removes a permission set by ID. Idempotent: returns nil if the permission
+// Delete removes a permission set by ID. Idempotent: returns false if the permission
 // set does not exist. Uses a serializable transaction to atomically verify no agents
 // reference the permission set before deleting, preventing TOCTOU races with concurrent
 // agent creates/updates. Retries up to 3 times on serialization failure (PG code 40001).
-func (r *PermissionSetRepository) Delete(ctx context.Context, psID id.PermissionSetID) error {
+func (r *PermissionSetRepository) Delete(ctx context.Context, psID id.PermissionSetID) (bool, error) {
 	if r.adapter.db == nil {
-		return storage.NewStorageError("DeletePermissionSet", storage.ErrorKindConnection, nil, "database not initialized")
+		return false, storage.NewStorageError("DeletePermissionSet", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
@@ -258,28 +258,29 @@ func (r *PermissionSetRepository) Delete(ctx context.Context, psID id.Permission
 
 	jsonFilter, err := json.Marshal([]map[string]string{{"permission_set_id": psID.String()}})
 	if err != nil {
-		return storage.NewStorageError("DeletePermissionSet", storage.ErrorKindUnknown, err, "failed to build JSONB filter")
+		return false, storage.NewStorageError("DeletePermissionSet", storage.ErrorKindUnknown, err, "failed to build JSONB filter")
 	}
 
 	const maxRetries = 3
 	var lastErr error
 	for range maxRetries {
-		lastErr = r.deleteInSerializableTx(ctxTimeout, psID, jsonFilter)
+		var deleted bool
+		deleted, lastErr = r.deleteInSerializableTx(ctxTimeout, psID, jsonFilter)
 		if lastErr == nil {
-			return nil
+			return deleted, nil
 		}
 		var pgErr *pgconn.PgError
 		if !errors.As(lastErr, &pgErr) || pgErr.Code != "40001" {
-			return lastErr
+			return false, lastErr
 		}
 	}
-	return lastErr
+	return false, lastErr
 }
 
-func (r *PermissionSetRepository) deleteInSerializableTx(ctx context.Context, psID id.PermissionSetID, jsonFilter []byte) error {
+func (r *PermissionSetRepository) deleteInSerializableTx(ctx context.Context, psID id.PermissionSetID, jsonFilter []byte) (bool, error) {
 	tx, err := r.adapter.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
-		return storage.NewStorageError("DeletePermissionSet", storage.ErrorKindConnection, err, "failed to begin transaction")
+		return false, storage.NewStorageError("DeletePermissionSet", storage.ErrorKindConnection, err, "failed to begin transaction")
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -288,10 +289,10 @@ func (r *PermissionSetRepository) deleteInSerializableTx(ctx context.Context, ps
 		`SELECT COUNT(*) FROM agents WHERE permission_sets @> $1::jsonb`,
 		jsonFilter,
 	).Scan(&agentCount); err != nil {
-		return r.handlePostgresError("DeletePermissionSet", err)
+		return false, r.handlePostgresError("DeletePermissionSet", err)
 	}
 	if agentCount > 0 {
-		return storage.NewStorageError("DeletePermissionSet", storage.ErrorKindConflict, nil,
+		return false, storage.NewStorageError("DeletePermissionSet", storage.ErrorKindConflict, nil,
 			fmt.Sprintf("cannot delete permission set: %d agent(s) reference it", agentCount))
 	}
 
@@ -300,22 +301,27 @@ func (r *PermissionSetRepository) deleteInSerializableTx(ctx context.Context, ps
 		`SELECT COUNT(*) FROM user_grants WHERE granted_permission_sets @> $1::jsonb AND (valid_until IS NULL OR valid_until > NOW())`,
 		jsonFilter,
 	).Scan(&grantCount); err != nil {
-		return r.handlePostgresError("DeletePermissionSet", err)
+		return false, r.handlePostgresError("DeletePermissionSet", err)
 	}
 	if grantCount > 0 {
-		return storage.NewStorageError("DeletePermissionSet", storage.ErrorKindConflict, nil,
+		return false, storage.NewStorageError("DeletePermissionSet", storage.ErrorKindConflict, nil,
 			fmt.Sprintf("cannot delete permission set: %d user grant(s) reference it", grantCount))
 	}
 
 	// CASCADE on FK will remove permission_set_service_scopes rows
-	if _, err = tx.ExecContext(ctx, `DELETE FROM permission_sets WHERE id = $1`, psID); err != nil {
-		return r.handlePostgresError("DeletePermissionSet", err)
+	result, err := tx.ExecContext(ctx, `DELETE FROM permission_sets WHERE id = $1`, psID)
+	if err != nil {
+		return false, r.handlePostgresError("DeletePermissionSet", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, storage.NewStorageError("DeletePermissionSet", storage.ErrorKindUnknown, err, "failed to get rows affected")
 	}
 
 	if err := tx.Commit(); err != nil {
-		return r.handlePostgresError("DeletePermissionSet", err)
+		return false, r.handlePostgresError("DeletePermissionSet", err)
 	}
-	return nil
+	return rowsAffected > 0, nil
 }
 
 // List returns all permission sets, optionally filtered by service ID.
