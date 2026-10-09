@@ -3,6 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,7 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwt"
 
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
@@ -224,6 +229,145 @@ func TestBuilderMinimalConfiguration(t *testing.T) {
 
 	if app.EnduserHandlers.UserInfo == nil {
 		t.Error("expected UserInfo handler to be created")
+	}
+}
+
+func TestBuilderAdminJWTAuthentication(t *testing.T) {
+	newIssuer := func(keyID string) (string, jwk.Key) {
+		t.Helper()
+		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		key, err := jwk.Import[jwk.Key](privateKey)
+		require.NoError(t, err)
+		require.NoError(t, key.Set(jwk.KeyIDKey, keyID))
+		require.NoError(t, key.Set(jwk.AlgorithmKey, jwa.ES256()))
+		publicKey, err := key.PublicKey()
+		require.NoError(t, err)
+		set := jwk.NewSet()
+		require.NoError(t, set.AddKey(publicKey))
+		jwks, err := json.Marshal(set)
+		require.NoError(t, err)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(jwks)
+		}))
+		t.Cleanup(server.Close)
+		return server.URL, key
+	}
+
+	adminJWKS, adminKey := newIssuer("admin-key")
+	enduserJWKS, enduserKey := newIssuer("enduser-key")
+	adminJWT := &ports.JWTConfig{
+		HeaderName: "Authorization", Verification: "jwks", JWKSURI: adminJWKS,
+		ExpectedIssuer: "admin-issuer", ExpectedAudience: "admin-api",
+		ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
+	}
+	enduserJWT := &ports.JWTConfig{
+		HeaderName: "Authorization", Verification: "jwks", JWKSURI: enduserJWKS,
+		ExpectedIssuer: "enduser-issuer", ExpectedAudience: "enduser-api",
+		ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
+	}
+	sign := func(key jwk.Key, issuer, audience, principal string) string {
+		t.Helper()
+		token, err := jwt.NewBuilder().Issuer(issuer).Audience([]string{audience}).
+			Subject(principal).Expiration(time.Now().Add(time.Hour)).Build()
+		require.NoError(t, err)
+		serialized, err := jwt.Sign(token, jwt.WithKey(jwa.ES256(), key))
+		require.NoError(t, err)
+		return "Bearer " + string(serialized)
+	}
+	adminToken := sign(adminKey, "admin-issuer", "admin-api", "operator@example.com")
+	enduserToken := sign(enduserKey, "enduser-issuer", "enduser-api", "user@example.com")
+
+	newConfig := func(adminConfig *ports.JWTConfig) *ports.Config {
+		return &ports.Config{
+			Log: ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
+			Server: ports.ServerConfig{
+				EndUser: ports.ServerInstanceConfig{
+					Port: 8000, Bind: "::1", PublicURL: "http://localhost:8000",
+					Authentication: ports.AuthenticationConfig{JWT: enduserJWT},
+				},
+				Admin: ports.ServerInstanceConfig{
+					Port: 14000, Bind: "::1", PublicURL: "http://localhost:14000",
+					Authentication: ports.AuthenticationConfig{JWT: adminConfig},
+				},
+				Shutdown: ports.ShutdownConfig{Timeout: 5 * time.Second},
+			},
+			Storage: ports.StorageConfig{
+				Backend: "memory", Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
+			},
+			ThirdPartyOAuth2: ports.ThirdPartyOAuth2Config{
+				JWESigningKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+			},
+			Encryption: ports.EncryptionConfig{Memory: &ports.MemoryConfig{RawKey: testutil.TestKEKBase64}},
+			OAuth2AuthServer: ports.OAuth2AuthServerConfig{
+				Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour},
+			},
+		}
+	}
+	build := func(t *testing.T, adminConfig *ports.JWTConfig) *App {
+		t.Helper()
+		cfg := newConfig(adminConfig)
+		store, err := storage.NewAdapter(&cfg.Storage)
+		require.NoError(t, err)
+		app, err := NewBuilder().WithConfig(cfg).WithStorage(store).
+			WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))).Build()
+		require.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, app.Shutdown(context.Background())) })
+		return app
+	}
+
+	t.Run("configured admin JWT authenticates independently", func(t *testing.T) {
+		app := build(t, adminJWT)
+		require.NotNil(t, app.AdminJWTAuthenticator)
+		authenticated, err := app.AdminJWTAuthenticator.Authenticate(context.Background(), adminToken)
+		require.NoError(t, err)
+		require.NotNil(t, authenticated)
+		assert.Equal(t, "operator@example.com", authenticated.Principal)
+
+		require.NotNil(t, app.JWTAuthenticator)
+		enduser, err := app.JWTAuthenticator.Authenticate(context.Background(), enduserToken)
+		require.NoError(t, err)
+		require.NotNil(t, enduser)
+		assert.Equal(t, "user@example.com", enduser.Principal)
+		_, err = app.JWTAuthenticator.Authenticate(context.Background(), adminToken)
+		assert.Error(t, err, "end-user authenticator must not trust the admin issuer")
+		_, err = app.AdminJWTAuthenticator.Authenticate(context.Background(), enduserToken)
+		assert.Error(t, err, "admin authenticator must not trust the end-user issuer")
+	})
+
+	t.Run("absent admin JWT leaves admin authenticator nil", func(t *testing.T) {
+		app := build(t, nil)
+		assert.Nil(t, app.AdminJWTAuthenticator)
+		require.NotNil(t, app.JWTAuthenticator)
+		enduser, err := app.JWTAuthenticator.Authenticate(context.Background(), enduserToken)
+		require.NoError(t, err)
+		assert.Equal(t, "user@example.com", enduser.Principal)
+	})
+
+	for _, tc := range []struct {
+		name, errorText string
+		configure       func(*ports.Config)
+	}{
+		{name: "unsigned admin JWT fails before adapter construction", errorText: "admin JWT authentication requires JWKS signature verification", configure: func(cfg *ports.Config) {
+			cfg.Server.Admin.Authentication.JWT = &ports.JWTConfig{Verification: "none"}
+		}},
+		{name: "unsigned end-user JWT fails before adapter construction", errorText: "end-user JWT authentication requires JWKS signature verification", configure: func(cfg *ports.Config) {
+			cfg.Server.EndUser.Authentication.JWT = &ports.JWTConfig{Verification: "none"}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := newConfig(nil)
+			tc.configure(cfg)
+			store, err := storage.NewAdapter(&cfg.Storage)
+			require.NoError(t, err)
+			app, err := NewBuilder().WithConfig(cfg).WithStorage(store).
+				WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))).Build()
+			if app != nil {
+				t.Cleanup(func() { require.NoError(t, app.Shutdown(context.Background())) })
+			}
+			require.ErrorContains(t, err, tc.errorText)
+		})
 	}
 }
 

@@ -46,6 +46,18 @@ type Config struct {
 	Telemetry        TelemetryConfig        `mapstructure:"telemetry"`
 	RequestContext   RequestContextConfig   `mapstructure:"request_context"`
 	Approvals        ApprovalsConfig        `mapstructure:"approvals"`
+	TokenRefresh     TokenRefreshConfig     `mapstructure:"token_refresh"`
+}
+
+// TokenRefreshConfig declares the proactive refresh settings for production configuration.
+type TokenRefreshConfig struct {
+	LookaheadDuration time.Duration           `mapstructure:"lookahead_duration"`
+	BackgroundWorkers int                     `mapstructure:"background_workers"`
+	Sweep             TokenRefreshSweepConfig `mapstructure:"sweep"`
+}
+
+type TokenRefreshSweepConfig struct {
+	DefaultPageSize int `mapstructure:"default_page_size"`
 }
 
 // ServerConfig contains configuration for both HTTP servers.
@@ -105,10 +117,9 @@ type AuthenticationConfig struct {
 	// Preauth holds configuration for pre-authentication (reverse proxy) mode
 	Preauth PreauthConfig `mapstructure:"preauth"`
 
-	// JWT holds optional configuration for JWT-based pre-authentication.
-	// When configured, JWTs are validated (signed or unsigned) and claims
-	// are extracted to derive the principal and optional profile attributes.
-	// Nil means JWT pre-auth is not enabled (backward-compatible).
+	// JWT holds optional signed JWT pre-authentication settings. The JWT signature
+	// is verified against JWKS before claims can supply a principal or profile.
+	// Nil leaves plain-header pre-authentication in place.
 	JWT *JWTConfig `mapstructure:"jwt"`
 }
 
@@ -123,17 +134,12 @@ type JWTConfig struct {
 	// Default: "Authorization"
 	HeaderName string `mapstructure:"header_name"`
 
-	// Verification controls JWT signature verification behavior.
-	// "jwks" (default): Signature verified against JWKS endpoint (requires JWKSURI).
-	// "none": Unsigned JWTs accepted (for trusted upstream/service mesh environments).
-	// Mutually exclusive with JWKSURI when set to "none".
-	// Default: "jwks"
+	// Verification permits "jwks" only (also the default when omitted).
+	// Every JWT signature is verified against the configured JWKS endpoint.
 	Verification string `mapstructure:"verification"`
 
-	// JWKSURI is the URL of the JWKS endpoint for signature verification.
-	// Required when Verification is "jwks" (or omitted). Must be HTTPS unless
+	// JWKSURI is required for JWT pre-authentication. It must use HTTPS unless
 	// Security.SkipThirdpartyHTTPSValidation is true.
-	// MUST NOT be set when Verification is "none".
 	JWKSURI string `mapstructure:"jwks_uri"`
 
 	// ExpectedAudience is the expected value in the JWT aud claim.

@@ -199,6 +199,14 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv("approvals.rate_limit.max_pending_per_pair", "APPROVAL_RATE_LIMIT_MAX_PENDING")
 	_ = l.v.BindEnv("approvals.rate_limit.max_requests_per_minute", "APPROVAL_RATE_LIMIT_REQUESTS_PER_MINUTE")
 
+	// Token refresh configuration defaults
+	l.v.SetDefault("token_refresh.lookahead_duration", "5m")
+	l.v.SetDefault("token_refresh.background_workers", 10)
+	l.v.SetDefault("token_refresh.sweep.default_page_size", 100)
+	_ = l.v.BindEnv("token_refresh.lookahead_duration", "IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION")
+	_ = l.v.BindEnv("token_refresh.background_workers", "IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS")
+	_ = l.v.BindEnv("token_refresh.sweep.default_page_size", "IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE")
+
 	// Telemetry configuration defaults
 	telDefaults := ports.DefaultTelemetryConfig()
 	l.v.SetDefault("telemetry.enabled", telDefaults.Enabled)
@@ -286,6 +294,7 @@ func (l *Loader) setDefaults() {
 			"request_context.trace.response_enabled",
 			"third_party_oauth2.state_token_ttl", "third_party_oauth2.pkce_verifier_length",
 			"security.skip_thirdparty_https_validation",
+			"token_refresh.lookahead_duration", "token_refresh.background_workers", "token_refresh.sweep.default_page_size",
 			"telemetry.enabled", "telemetry.service_name",
 			"telemetry.traces.enabled", "telemetry.traces.sampling_rate", "telemetry.traces.propagators",
 			"telemetry.metrics.enabled", "telemetry.metrics.export_interval",
@@ -714,6 +723,23 @@ func (l *Loader) bindFlags() error {
 		enabled, _ := l.cmd.Flags().GetBool("request_context.trace.response_enabled")
 		l.v.Set("request_context.trace.response_enabled", enabled)
 		cliKeys = append(cliKeys, "request_context.trace.response_enabled")
+	}
+
+	// Bind token refresh flags, including explicitly supplied zero values for validation.
+	if l.cmd.Flags().Changed("token_refresh.lookahead_duration") {
+		lookahead, _ := l.cmd.Flags().GetDuration("token_refresh.lookahead_duration")
+		l.v.Set("token_refresh.lookahead_duration", lookahead)
+		cliKeys = append(cliKeys, "token_refresh.lookahead_duration")
+	}
+	if l.cmd.Flags().Changed("token_refresh.background_workers") {
+		workers, _ := l.cmd.Flags().GetInt("token_refresh.background_workers")
+		l.v.Set("token_refresh.background_workers", workers)
+		cliKeys = append(cliKeys, "token_refresh.background_workers")
+	}
+	if l.cmd.Flags().Changed("token_refresh.sweep.default_page_size") {
+		pageSize, _ := l.cmd.Flags().GetInt("token_refresh.sweep.default_page_size")
+		l.v.Set("token_refresh.sweep.default_page_size", pageSize)
+		cliKeys = append(cliKeys, "token_refresh.sweep.default_page_size")
 	}
 
 	// Record CLI source if any flags were set

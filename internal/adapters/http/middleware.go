@@ -115,6 +115,10 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
 func sanitizeLogValue(value string) string {
 	if !strings.ContainsAny(value, "\\\r\n\v\f\u0085\u2028\u2029") {
 		return value

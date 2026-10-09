@@ -9,6 +9,12 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
+// SessionExpiryCursor locates the last (expiry, ID) pair returned by a sweep page.
+type SessionExpiryCursor struct {
+	AccessTokenExpiresAt time.Time
+	ID                   id.SessionID
+}
+
 // UserSession represents an authenticated OAuth2 session between a user and a third-party service.
 // This is an aggregate root - it owns the encrypted tokens and manages session lifecycle.
 // One session per (principal, service_id) pair, enforced by database unique constraint.
@@ -108,6 +114,12 @@ func (s *UserSession) HasValidAccessToken() bool {
 		return true // No expiration set
 	}
 	return time.Now().Before(*s.AccessTokenExpiresAt)
+}
+
+// AccessTokenExpiresBy reports whether the access token expires at or before t.
+// A session without an access-token expiry is never due for refresh.
+func (s *UserSession) AccessTokenExpiresBy(t time.Time) bool {
+	return s.AccessTokenExpiresAt != nil && !s.AccessTokenExpiresAt.After(t)
 }
 
 // CanRefresh returns true if session has a refresh token that hasn't expired.

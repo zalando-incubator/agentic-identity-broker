@@ -90,6 +90,58 @@ func TestContextHandler_UsesSecurityContextFieldsWhenPresent(t *testing.T) {
 	assert.Equal(t, "gateway-client-1", records[0].attrs["calling_peer"])
 }
 
+func TestContextHandler_OmitsIdentityFromSessionEvents(t *testing.T) {
+	t.Parallel()
+
+	ctx := security.WithSecurityContext(context.Background(), security.SecurityContext{
+		TraceID:     "0123456789abcdef0123456789abcdef",
+		Actor:       "user@example.com",
+		CallingPeer: "gateway-client-1",
+	})
+	base := newCaptureContextHandler()
+	logger := slog.New(NewContextHandler(base))
+	logger.InfoContext(ctx, "oauth2_token_refreshed",
+		"event", "session.oauth2.token_refreshed", "session_id", "session-1")
+	logger.InfoContext(ctx, "request handled", "event", "http.request")
+
+	records := *base.records
+	require.Len(t, records, 2)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", records[0].attrs["trace_id"])
+	assert.Equal(t, "session.oauth2.token_refreshed", records[0].attrs["event"])
+	assert.Equal(t, "session-1", records[0].attrs["session_id"])
+	assert.NotContains(t, records[0].attrs, "actor")
+	assert.NotContains(t, records[0].attrs, "calling_peer")
+	assert.Equal(t, "user@example.com", records[1].attrs["actor"])
+	assert.Equal(t, "gateway-client-1", records[1].attrs["calling_peer"])
+}
+
+func TestContextHandler_OmitsIdentityForSessionServiceLogsWithoutEvents(t *testing.T) {
+	t.Parallel()
+
+	ctx := security.WithSecurityContext(context.Background(), security.SecurityContext{
+		TraceID:     "0123456789abcdef0123456789abcdef",
+		Actor:       "user@example.com",
+		CallingPeer: "gateway-client-1",
+	})
+	base := newCaptureContextHandler()
+	logger := slog.New(NewContextHandler(base))
+	sessionLogger := logger.With("component", "oauth2session")
+	sessionLogger.ErrorContext(ctx, "failed to decrypt refresh token")
+	sessionLogger.WithGroup("refresh").WarnContext(ctx, "provider unavailable")
+	logger.InfoContext(ctx, "request handled")
+
+	records := *base.records
+	require.Len(t, records, 3)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", records[0].attrs["trace_id"])
+	assert.NotContains(t, records[0].attrs, "actor")
+	assert.NotContains(t, records[0].attrs, "calling_peer")
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", records[1].attrs["refresh.trace_id"])
+	assert.NotContains(t, records[1].attrs, "refresh.actor")
+	assert.NotContains(t, records[1].attrs, "refresh.calling_peer")
+	assert.Equal(t, "user@example.com", records[2].attrs["actor"])
+	assert.Equal(t, "gateway-client-1", records[2].attrs["calling_peer"])
+}
+
 func TestContextHandler_OmitsEmptyCallingPeer(t *testing.T) {
 	t.Parallel()
 

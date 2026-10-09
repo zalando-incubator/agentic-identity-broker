@@ -154,6 +154,34 @@
         }
       }
     },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Ingress isolation for the broker pods",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Restrict admin pod ingress to a selected proxy"
+        },
+        "adminProxy": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Trusted proxy selectors; both must be set to permit admin ingress",
+          "properties": {
+            "namespaceLabels": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "Required namespace labels of the trusted admin proxy"
+            },
+            "podLabels": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "Required pod labels of the trusted admin proxy"
+            }
+          }
+        }
+      }
+    },
     "ingress": {
       "type": "object",
       "additionalProperties": false,
@@ -1170,6 +1198,37 @@
             }
           }
         },
+        "tokenRefresh": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Proactive third-party access-token refresh configuration",
+          "properties": {
+            "lookaheadDuration": {
+              "type": "string",
+              "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+              "description": "Refresh lookahead as a Go duration; keep shorter than provider access-token lifetimes"
+            },
+            "backgroundWorkers": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "description": "Concurrent background refreshes per replica; cap reserves 5 of 25 database connections"
+            },
+            "sweep": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "External admin session sweep configuration",
+              "properties": {
+                "defaultPageSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000,
+                  "description": "Default sessions per admin sweep page"
+                }
+              }
+            }
+          }
+        },
         "security": {
           "type": "object",
           "additionalProperties": false,
@@ -1507,6 +1566,7 @@
             "jwt": {
               "type": "object",
               "additionalProperties": false,
+              "required": ["jwks_uri"],
               "description": "JWT pre-authentication configuration",
               "properties": {
                 "header_name": {
@@ -1515,11 +1575,13 @@
                 },
                 "verification": {
                   "type": "string",
-                  "description": "Verification method (jwks, none)"
+                  "enum": ["jwks"],
+                  "description": "Signed JWT verification with JWKS (the only supported mode)"
                 },
                 "jwks_uri": {
                   "type": "string",
-                  "description": "JWKS URI (required when verification is jwks)"
+                  "minLength": 1,
+                  "description": "JWKS URI required for signed JWT pre-authentication"
                 },
                 "expected_audience": {
                   "type": "string",

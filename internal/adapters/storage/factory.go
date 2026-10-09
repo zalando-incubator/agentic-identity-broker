@@ -48,6 +48,7 @@ type Adapter struct {
 	userGrants           ports.UserGrantRepository
 	userSessions         ports.UserSessionRepository
 	sessionRefresh       ports.UserSessionRefreshRepository
+	sessionExpiry        ports.UserSessionExpiryRepository
 	toolApprovals        ports.ToolApprovalRepository
 	toolApprovalQueries  ports.ToolApprovalQueryRepository
 	toolApprovalMetrics  ports.ToolApprovalMetricsRepository
@@ -103,6 +104,7 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		userGrants:           userGrants,
 		userSessions:         sessions,
 		sessionRefresh:       sessions,
+		sessionExpiry:        sessions,
 		toolApprovals:        toolApprovalRepo,
 		toolApprovalQueries:  toolApprovalRepo,
 		toolApprovalMetrics:  toolApprovalRepo,
@@ -139,6 +141,7 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		userGrants:           postgres.NewUserGrantRepository(pgAdapter),
 		userSessions:         sessions,
 		sessionRefresh:       sessions,
+		sessionExpiry:        sessions,
 		toolApprovals:        toolApprovalRepo,
 		toolApprovalQueries:  toolApprovalRepo,
 		toolApprovalMetrics:  toolApprovalRepo,
@@ -226,6 +229,11 @@ func (a *Adapter) UserSessions() ports.UserSessionRepository {
 // SessionRefresh returns the refresh transaction interface for user sessions.
 func (a *Adapter) SessionRefresh() ports.UserSessionRefreshRepository {
 	return a.sessionRefresh
+}
+
+// SessionExpiry returns the bounded expiring-session read repository.
+func (a *Adapter) SessionExpiry() ports.UserSessionExpiryRepository {
+	return a.sessionExpiry
 }
 
 // ToolApprovals returns the ToolApprovalRepository interface implementation.

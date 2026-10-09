@@ -13,12 +13,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
 
+	brokerhttp "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/routing"
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
 func TestSetupAdminRoutes_RequestSecurity(t *testing.T) {
@@ -267,6 +270,57 @@ func TestSetupAdminRoutes_HostOnReadsAndHealth(t *testing.T) {
 			require.Equal(t, http.StatusOK, rec.Code)
 		})
 	}
+}
+
+func TestAdminSweepJWTRejectsUnsignedPrincipalHeader(t *testing.T) {
+	jwks := helpers.NewMockJWKSServer()
+	t.Cleanup(jwks.Close)
+	cfg := fixtures.DefaultOAuth2Config()
+	cfg.Security.SkipThirdpartyHTTPSValidation = true
+	cfg.Server.Admin.Authentication.JWT = &ports.JWTConfig{
+		HeaderName: "Authorization", Verification: "jwks", JWKSURI: jwks.JWKSURL(),
+		ExpectedIssuer: "https://auth.example.com", ExpectedAudience: "agentic-identity-broker",
+		ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
+	}
+	store, err := storageadapter.NewAdapter(&cfg.Storage)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close(context.Background())) })
+	var logs strings.Builder
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	application, err := app.NewBuilder().WithConfig(cfg).WithStorage(store).WithLogger(logger).
+		WithJWKSPublisher(&mockJWKSPublisher{}).Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, application.Shutdown(context.Background())) })
+	router := brokerhttp.NewHandler(brokerhttp.ServerConfig{
+		Name: "admin", Authentication: cfg.Server.Admin.Authentication,
+		JWTAuthenticator: application.AdminJWTAuthenticator,
+	}, func(r chi.Router) {
+		routing.SetupAdminRoutes(r, application.AdminHandlers, routing.AdminRouteConfig{PublicURL: cfg.Server.Admin.PublicURL})
+	}, logger)
+
+	signed, err := jwks.SignJWT(helpers.NewJWTClaims().WithSubject("verified-operator").Build())
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, authorization string
+		status              int
+	}{
+		{name: "absent JWT", status: http.StatusInternalServerError},
+		{name: "invalid JWT", authorization: "Bearer forged", status: http.StatusInternalServerError},
+		{name: "signed JWT", authorization: "Bearer " + signed, status: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/sessions/sweep", strings.NewReader(`{"dry_run":true}`))
+			req.Host = "localhost:14000"
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Remote-User", "forged-operator")
+			req.Header.Set("Authorization", tc.authorization)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			require.Equal(t, tc.status, rec.Code, rec.Body.String())
+		})
+	}
+	require.Contains(t, logs.String(), `"operator_principal":"verified-operator"`)
+	require.NotContains(t, logs.String(), `"operator_principal":"forged-operator"`)
 }
 
 func newAdminRouter(t *testing.T, publicURL string) http.Handler {

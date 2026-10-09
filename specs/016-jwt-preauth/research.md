@@ -1,5 +1,7 @@
 # Research: JWT Pre-Authentication & Principal Profile Enrichment
 
+**Security amendment (2026-10-09):** Constitution Principle I supersedes the original unsigned pre-authentication research. Both servers require JWKS signature verification. ADR 031 permits unsigned JWTs only as local-mode OAuth2 impersonation subjects.
+
 **Feature**: 016-jwt-preauth  
 **Date**: 2026-02-27  
 **Status**: Complete
@@ -43,11 +45,9 @@ The middleware sets **both**: the string principal (backward-compatible) and the
 
 Modify `RequirePrincipalMiddleware` and `OptionalPrincipalMiddleware` to accept `AuthenticationConfig` (which now includes `JWT *JWTConfig`). When JWT config is present:
 
-1. Check if the JWT header is present in the request
-2. If present: parse and validate the JWT, extract principal + profile via CEL, set both in context
-3. If present but invalid: reject with 401 (fail-closed, no fallback to plain header — per FR-013)
-4. If absent: fall back to plain-header extraction (per FR-012)
-5. If no JWT config at all: plain-header only (backward-compatible — per FR-011)
+1. If the JWT header is present, verify the signature against JWKS, extract claims, and set the principal and profile in context.
+2. If the JWT is invalid or absent while JWT authentication is configured, reject the protected request without a plain-header fallback (FR-012/FR-013).
+3. If no JWT config is present, use the plain principal header (FR-011).
 
 ### Rationale
 
@@ -84,8 +84,8 @@ type AuthResult struct {
 ```
 
 **Adapter** (`internal/adapters/jwtauth/jwx_authenticator.go`):
-- Uses `lestrrat-go/jwx/v3` for JWT parsing and signature verification
-- Uses `jwk.Cache` for JWKS fetching/caching (reuses existing JWKS adapter pattern from `internal/adapters/jwks/adapter.go`)
+- Uses `lestrrat-go/jwx/v4` to verify JWT signatures against a JWKS key set
+- Uses `jwkfetch.Cache` for independent JWKS fetching and refresh
 - Delegates claim extraction to the CEL evaluator in the domain layer
 
 **CEL Evaluator** (`internal/domain/jwtauth/cel_evaluator.go`):
@@ -101,7 +101,7 @@ type AuthResult struct {
 - **Hexagonal architecture**: Domain defines the contract (`JWTAuthenticator` interface), adapter provides the implementation. Follows Constitution Principle VI.
 - **Reuses proven patterns**: JWKS adapter pattern from token exchange (ADR 008), CEL evaluator pattern from token exchange (ADR 009).
 - **Testable**: Port interface enables mock implementations for unit testing middleware.
-- **Library-first**: `lestrrat-go/jwx/v3` (already v3.0.13 in go.mod) handles all crypto — no custom JWT parsing or signature verification (Constitution Principle III).
+- **Library-first**: `lestrrat-go/jwx/v4` handles JWT signature verification. No custom JWT parsing or signature checks are needed.
 
 ### Alternatives Considered
 
@@ -122,11 +122,11 @@ JWT pre-auth creates its **own** JWKS adapter instance pointing to the `authenti
 
 - **Different key sources**: Token exchange validates client assertion JWTs from the upstream OAuth2 server. JWT pre-auth validates user JWTs from a reverse proxy/gateway — potentially a completely different issuer with different keys.
 - **Independent lifecycle**: Each JWKS cache has its own refresh interval and failure handling. A problem with token exchange JWKS should not affect pre-auth JWKS.
-- **Simple**: No shared state, no coordination logic, no risk of cache pollution. The `jwk.Cache` from `lestrrat-go/jwx/v3` is lightweight.
+- **Simple**: Each pre-authentication JWKS cache is independent; the adapter uses `jwkfetch.Cache`.
 
 ### Alternatives Considered
 
-1. **Shared JWKS adapter with multiple URIs**: Rejected — overcomplicates the adapter; `jwk.Cache` already supports single URI registration per cache instance.
+1. **Shared JWKS adapter with multiple URIs**: Rejected — it adds shared state between distinct trusted issuers; each server's JWKS cache is independent.
 2. **Registry pattern**: Rejected — over-engineered for two instances.
 
 ---
@@ -157,24 +157,15 @@ rawToken = strings.TrimSpace(rawToken)
 
 ---
 
-## Research Topic 6: Configuration Validation & Mutual Exclusivity
+## Research Topic 6: JWT Pre-Authentication Configuration Validation
 
-**Question**: How should the `verification: none` + `jwks_uri` mutual exclusivity be enforced?
+**Decision (amended 2026-10-09):** `internal/config/validator.go` requires signed JWKS verification on both servers:
 
-### Decision: Startup-Time Validation in Config Schema
+1. If `authentication.jwt.verification` is not `jwks` or empty, startup fails with the verification field in the error.
+2. If JWT pre-authentication has no `jwks_uri`, startup fails.
+3. The broker compiles CEL expressions at startup and rejects invalid expressions.
 
-Add a custom validation function in `internal/config/schema.go` that runs during config loading:
-
-1. If `authentication.jwt` is present and `verification` is `"none"` and `jwks_uri` is non-empty → startup error with descriptive message: `"authentication.jwt: verification 'none' and jwks_uri are mutually exclusive"`
-2. If `authentication.jwt` is present and `verification` is `"jwks"` (or empty) and `jwks_uri` is empty → startup error: `"authentication.jwt: jwks_uri is required when verification is 'jwks'"`
-3. CEL expressions validated at startup via CEL compile (fail-fast per ADR 009 pattern)
-4. `principal_expression` required when JWT config present; profile expressions optional
-
-### Rationale
-
-- **Fail-fast**: Constitution Principle I (security-first, fail-closed). Misconfiguration detected immediately, not at first request.
-- **Clear error messages**: Operators get actionable error messages at startup, not cryptic runtime failures.
-- **Consistent with existing patterns**: Config validation in `schema.go` follows the established approach.
+The original mutual-exclusivity rule for `verification: none` and `jwks_uri` is superseded. `none` is invalid with or without a URI. This avoids an unsigned pre-authentication path while retaining ADR 031's separate impersonation-subject exception.
 
 ---
 
@@ -199,25 +190,11 @@ Add a custom validation function in `internal/config/schema.go` that runs during
 
 ---
 
-## Research Topic 8: Unsigned JWT (alg: "none") Handling with lestrrat-go/jwx
+## Research Topic 8: Superseded Unsigned JWT Pre-Authentication Decision
 
-**Question**: How does `lestrrat-go/jwx/v3` handle unsigned JWTs (alg: "none")?
+The original research proposed parsing JWT pre-authentication credentials without signature verification when `verification: none` was set. Constitution Principle I supersedes that proposal. The JWX pre-authentication adapter always verifies signatures against JWKS before it reads claims. It rejects missing or expired `exp` claims after signature verification.
 
-### Decision: Use `jwt.WithVerify(false)` for Unsigned Mode
-
-When `verification` is `"none"`:
-- Parse with `jwt.Parse([]byte(rawToken), jwt.WithVerify(false))` — disables signature verification
-- Still validate `exp` claim via `jwt.WithValidate(true)` — expiry is always enforced regardless of verification mode (per FR-005)
-- Still extract claims normally — JWT structure is preserved even without a signature
-
-When `verification` is `"jwks"`:
-- Parse with `jwt.Parse([]byte(rawToken), jwt.WithKeySet(keyset))` — signature verification against JWKS
-
-### Rationale
-
-- **Library-first**: `lestrrat-go/jwx/v3` natively supports both modes via parse options. No custom JWT parsing logic.
-- **Expiry always enforced**: `jwt.WithValidate(true)` validates temporal claims (`exp`, `nbf`) regardless of signature verification mode. This satisfies FR-005 without additional code.
-- **Secure by default**: `WithVerify(false)` is only used when explicitly configured with `verification: none`. The default path always validates signatures.
+Accepted ADR 031 is a distinct, local-mode OAuth2 impersonation subject rule. It does not authorize unsigned JWTs on the admin or end-user pre-authentication path.
 
 ---
 
@@ -231,7 +208,7 @@ When `verification` is `"jwks"`:
 1. **JWT builder** (`tests/e2e/helpers/jwt_helpers.go`):
    - Generate RSA and EC key pairs at test setup
    - Build signed JWTs with configurable claims (`sub`, `name`, `email`, `picture`, `aud`, `iss`, `exp`)
-   - Build unsigned JWTs (alg: "none") for unsigned mode tests
+   - Build unsigned JWTs only to prove JWKS verification rejects them
    - Build expired JWTs, wrong-audience JWTs, wrong-issuer JWTs
 
 2. **Mock JWKS server** (`tests/e2e/helpers/mock_jwks_server.go`):
@@ -241,7 +218,7 @@ When `verification` is `"jwks"`:
 
 3. **Test fixtures** (`tests/e2e/fixtures/jwt_config.go`):
    - Pre-configured `JWTConfig` structs for common test scenarios
-   - Functions: `SignedJWTConfig(jwksURL)`, `UnsignedJWTConfig()`, `NoJWTConfig()` (backward-compatible)
+   - Functions: `SignedJWTConfig(jwksURL)` and `NoJWTConfig()`; invalid unsigned settings are built in the rejection test
 
 ### Rationale
 

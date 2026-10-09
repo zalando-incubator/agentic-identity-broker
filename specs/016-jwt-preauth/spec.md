@@ -5,6 +5,8 @@
 **Status**: Draft  
 **Input**: User description: "Extend pre-auth to accept signed and unsigned JWTs with CEL-based extraction of principal display name, email, and profile picture URL, reflected in the consent UI"
 
+**Security amendment (2026-10-09):** Constitution Principle I supersedes the original unsigned pre-authentication proposal. Both server instances require JWKS signature verification for JWT pre-authentication. Accepted ADR 031 permits an unsigned JWT only as an OAuth2 impersonation subject in local mode, never as an admin or end-user pre-authentication credential.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Accept Signed JWTs for Pre-Authentication (Priority: P1)
@@ -26,21 +28,16 @@ An operator deploys the identity broker behind a reverse proxy or API gateway th
 
 ---
 
-### User Story 2 - Accept Unsigned (Pre-Authenticated) JWTs (Priority: P2)
+### User Story 2 - Reject Unsigned JWT Pre-Authentication (Priority: P1)
 
-An operator deploys the broker behind a trusted reverse proxy that issues unsigned JWTs (alg: "none") containing user claims. This is common in service mesh environments (e.g., Istio, Linkerd) where the mesh has already authenticated the user and passes claims as an unsigned JWT. The broker must accept these JWTs when explicitly configured to do so, while rejecting unsigned JWTs by default for security.
+An operator configures JWT pre-authentication on the admin or end-user server. The broker requires a JWKS endpoint and rejects unsigned JWTs on both servers. The original service-mesh exception proposed for this story is superseded by Constitution Principle I. ADR 031 applies only to the local-mode OAuth2 impersonation subject role.
 
-**Why this priority**: Supports a valid deployment pattern (service mesh environments) but is lower priority than signed JWTs because unsigned JWTs carry inherent security risk and require careful deployment. This is still critical for completeness of the pre-auth model.
-
-**Independent Test**: Can be tested by configuring `authentication.jwt` with `verification: none` (and no `jwks_uri`) and sending a request with an unsigned JWT containing the principal claim. Must verify that unsigned JWTs are rejected when `verification` is `jwks` or omitted. Must also verify that startup fails if both `verification: none` and `jwks_uri` are specified simultaneously.
+**Independent Test**: Configure JWT pre-authentication with a JWKS endpoint. An unsigned JWT must produce 401 Unauthorized. Both server instances must fail startup if configured with `verification: none`.
 
 **Acceptance Scenarios**:
 
-1. **Given** a server configured with `authentication.jwt` with `verification: none` (and no `jwks_uri`), **When** a request arrives with an unsigned JWT (alg: "none") containing valid claims, **Then** the principal is extracted using the CEL expression and set in the request context.
-2. **Given** a server configured with `authentication.jwt` with `verification: jwks` (the default when omitted), **When** a request arrives with an unsigned JWT (alg: "none"), **Then** the request is rejected with 401 Unauthorized.
-3. **Given** a server configured with `authentication.jwt` with `verification: none`, **When** a request arrives with a signed JWT, **Then** the JWT is still accepted (signature is not checked), and the principal is extracted from claims.
-4. **Given** a server configured with `authentication.jwt` with `verification: none`, **When** a request arrives with a JWT whose `exp` claim is in the past, **Then** the request is rejected with 401 Unauthorized (expiry is always enforced regardless of verification mode).
-5. **Given** a server configured with `authentication.jwt` with both `verification: none` and a `jwks_uri` present, **When** the server starts up, **Then** startup fails with a clear configuration error explaining that `verification: none` and `jwks_uri` are mutually exclusive.
+1. **Given** JWT pre-authentication uses JWKS, **when** a request contains an unsigned JWT (`alg: none`), **then** the broker rejects it with 401 Unauthorized.
+2. **Given** either server has JWT pre-authentication configured with `verification: none`, **when** it starts, **then** startup fails with a configuration error for `authentication.jwt.verification`.
 
 ---
 
@@ -100,7 +97,7 @@ Operators currently using the plain-header pre-auth mode (principal extracted fr
 - What happens when a CEL expression for a profile attribute evaluates to a non-string value? The attribute is ignored (treated as absent) and a warning is logged.
 - What happens when the JWT header contains a value that is not a valid JWT? The request is rejected with 401 Unauthorized.
 - What happens when a JWT has a `kid` not in the cached JWKS? The system relies on `lestrrat-go/jwx`'s built-in refresh behavior. If the key is still not found after any library-initiated refresh, the request is rejected with 401 Unauthorized.
-- What happens when the JWT contains no `exp` claim? When `verification` is `jwks` (or unset), the JWT is rejected with 401 Unauthorized (expiry is mandatory). When `verification` is `none`, a missing `exp` is accepted (unsigned JWTs from trusted upstreams may omit it); if `exp` is present, it is still enforced.
+- What happens when the JWT contains no `exp` claim? The broker rejects it with 401 Unauthorized, including when `verification` is omitted. JWT pre-authentication requires signed JWTs with a non-expired `exp` claim.
 - What happens when both JWT and plain header are configured but the JWT is invalid? The request is rejected with 401 Unauthorized. The system does not silently fall back to the plain header when a JWT is present but invalid (fail-closed).
 
 ## Requirements *(mandatory)*
@@ -109,10 +106,10 @@ Operators currently using the plain-header pre-auth mode (principal extracted fr
 
 - **FR-001**: System MUST support a new `authentication.jwt` configuration block (sibling of `authentication.preauth`) that enables JWT-based authentication alongside the existing plain-header pre-auth mode.
 - **FR-002**: System MUST accept signed JWTs (RS256, RS384, RS512, ES256, ES384, ES512, PS256, PS384, PS512) when `verification` is set to `jwks` (the default when omitted) and a `jwks_uri` is provided.
-- **FR-003**: System MUST accept unsigned JWTs (alg: "none") when `verification` is explicitly set to `none`. Unsigned JWTs MUST be rejected when `verification` is `jwks` or not specified.
-- **FR-003a**: System MUST reject startup (fail closed) if `verification: none` and `jwks_uri` are both present in `authentication.jwt`, as these options are mutually exclusive and represent contradictory intent. The error message MUST state which keys conflict.
+- **FR-003**: System MUST reject unsigned JWTs (`alg: none`) for JWT pre-authentication on both servers. Only `jwks` or its empty default is permitted for `authentication.jwt.verification`. ADR 031's unsigned subject exception does not apply here.
+- **FR-003a**: System MUST reject startup for either server if `authentication.jwt.verification` is `none`, with or without a `jwks_uri`.
 - **FR-004**: System MUST extract the principal from the JWT using a configurable CEL expression (`principal_expression`), defaulting to `claims.sub`.
-- **FR-005**: System MUST validate the JWT `exp` claim and reject expired JWTs with 401 Unauthorized. When `verification` is `jwks` (the default), `exp` MUST be present; absent `exp` is rejected with 401. When `verification` is `none`, `exp` is optional — if present, it MUST be valid (not expired); if absent, it is accepted. No clock skew tolerance is applied in either mode; operators must ensure clock synchronization via NTP.
+- **FR-005**: System MUST require a non-expired JWT `exp` claim and reject missing or expired values with 401 Unauthorized. No clock skew tolerance applies; operators must synchronize clocks via NTP.
 - **FR-006**: System MUST optionally validate the JWT `aud` claim against a configured `expected_audience` value. If configured and the JWT `aud` does not contain the expected value, the request MUST be rejected with 401 Unauthorized.
 - **FR-007**: System MUST optionally validate the JWT `iss` claim against a configured `expected_issuer` value. If configured and the JWT `iss` does not match, the request MUST be rejected with 401 Unauthorized.
 - **FR-008**: System MUST support optional CEL expressions for extracting profile attributes from JWT claims: `display_name_expression`, `email_expression`, and `picture_url_expression`.
@@ -123,7 +120,7 @@ Operators currently using the plain-header pre-auth mode (principal extracted fr
 - **FR-013**: When both `authentication.jwt` and `authentication.preauth.principal_header_name` are configured and a JWT is present but invalid (bad signature, expired, etc.), the request MUST be rejected with 401 Unauthorized. The system MUST NOT silently fall back to the plain header.
 - **FR-014**: All CEL expressions (principal and profile attributes) MUST be validated at startup. Invalid CEL expressions MUST cause startup failure with a descriptive error message.
 - **FR-015**: The JWKS endpoint MUST be fetched and validated at startup when `verification` is `jwks`. Unreachable JWKS endpoints MUST cause startup failure.
-- **FR-016**: JWKS key fetching and caching MUST use the `lestrrat-go/jwx/v3` library's built-in JWKS cache (`jwk.Cache`), which handles background refresh, HTTP cache header honoring, and stale key serving during refresh. No custom JWKS caching logic is required.
+- **FR-016**: JWKS fetching and refresh MUST use the `jwkfetch/v4` cache with `lestrrat-go/jwx/v4` signature verification. No custom JWKS cache is required.
 - **FR-017**: The `email` field MUST be added to the `UserInfo` domain type and the `/api/me` API response as an optional field.
 - **FR-018**: The consent UI header MUST display the user's email as a secondary label when available, replacing the principal display that currently appears below the display name.
 - **FR-019**: The consent UI MUST continue to function correctly when profile attributes are absent (graceful degradation to current behavior).
@@ -147,8 +144,8 @@ Operators currently using the plain-header pre-auth mode (principal extracted fr
 
 **Configuration Parameters**:
 - **authentication.jwt.header_name**: (string) HTTP header containing the JWT. Default: "Authorization". When set to "Authorization", the system automatically strips the "Bearer " prefix before parsing the JWT. For any other header name, the raw header value is used as the JWT directly.
-- **authentication.jwt.verification**: (string) Verification mode. Default: `jwks` (signature-verified, requires `jwks_uri`). Set to `none` to accept unsigned JWTs (alg: "none") from a trusted upstream without signature verification. **Mutually exclusive with `jwks_uri`**: specifying both `verification: none` and a `jwks_uri` is a configuration error and causes startup failure.
-- **authentication.jwt.jwks_uri**: (string) URL of the JWKS endpoint for signature verification. Required when `verification` is `jwks` (or omitted). MUST NOT be set when `verification` is `none`.
+- **authentication.jwt.verification**: (string) Only `jwks` is permitted. The default is `jwks` when omitted. Both server instances reject `none` at startup.
+- **authentication.jwt.jwks_uri**: (string) JWKS endpoint URL. Required whenever JWT pre-authentication is configured.
 - **authentication.jwt.expected_audience**: (string, optional) Expected value in the JWT `aud` claim. If set, JWTs without this audience are rejected.
 - **authentication.jwt.expected_issuer**: (string, optional) Expected value in the JWT `iss` claim. If set, JWTs without this issuer are rejected.
 - **authentication.jwt.claim_extraction.principal_expression**: (string) CEL expression to extract the principal from JWT claims. Default: "claims.sub".
@@ -165,7 +162,7 @@ server:
     port: 8000
     authentication:
       preauth:
-        principal_header_name: X-Remote-User   # fallback when JWT header absent
+        principal_header_name: X-Remote-User   # used only when jwt is not configured
       jwt:
         header_name: Authorization
         # verification: jwks  # default — omit or set explicitly
@@ -180,35 +177,18 @@ server:
 ```
 
 ```yaml
-# Unsigned JWT (service mesh / trusted sidecar injects claims)
-# jwks_uri MUST NOT be set when verification is "none" — startup will fail if both are present
+# INVALID — unsigned JWT pre-authentication is not permitted
 server:
   enduser:
     port: 8000
     authentication:
-      preauth:
-        principal_header_name: X-Remote-User
       jwt:
-        header_name: X-JWT-Claims
-        verification: none
+        verification: none  # ERROR even without a jwks_uri
         claim_extraction:
           principal_expression: "claims.sub"
-          display_name_expression: "claims.preferred_username"
-          email_expression: "claims.email"
 ```
 
-```yaml
-# INVALID — startup fails: verification: none and jwks_uri are mutually exclusive
-server:
-  enduser:
-    port: 8000
-    authentication:
-      jwt:
-        verification: none
-        jwks_uri: https://auth.example.com/.well-known/jwks.json  # ERROR
-        claim_extraction:
-          principal_expression: "claims.sub"
-```
+The same restriction applies to `server.admin.authentication.jwt`.
 
 ```yaml
 # Existing config (unchanged, fully backward compatible)
@@ -233,8 +213,8 @@ server:
 
 ### Security Requirements
 
-- **SR-001**: Unsigned JWTs (alg: "none") MUST be rejected by default. Accepting unsigned JWTs MUST require explicit opt-in via `verification: none`.
-- **SR-002**: JWT signature verification MUST use `lestrrat-go/jwx/v3` (already a project dependency) per Constitution Principle III. This library provides JWT parsing, signature verification, JWKS fetching with caching, and algorithm allowlisting.
+- **SR-001**: JWT pre-authentication MUST reject unsigned JWTs on both server instances. It MUST NOT support `verification: none`. The only unsigned JWT exception is the local-mode impersonation subject defined by ADR 031.
+- **SR-002**: JWT signature verification MUST use `lestrrat-go/jwx/v4` per Constitution Principle III. The JWKS cache must be initialized before accepting requests.
 - **SR-003**: The system MUST fail closed on JWT validation failures: invalid signature, expired token, audience mismatch, issuer mismatch, or CEL extraction failure MUST all result in 401 Unauthorized.
 - **SR-004**: JWKS fetching MUST use HTTPS in production. Allowing HTTP for JWKS URIs MUST require the existing `skip_thirdparty_https_validation` configuration flag to be set to `true`. When `skip_thirdparty_https_validation` is `false` (the default), `jwks_uri` values with an `http://` scheme MUST cause startup failure with a descriptive error message.
 - **SR-005**: JWT validation failures MUST emit structured audit logs including: failure reason, JWT header name, remote address, and timestamp.
@@ -263,7 +243,7 @@ server:
 ### Key Entities
 
 - **PrincipalProfile**: Enriched user identity containing principal identifier (string, required), display name (string, defaults to principal), email (string, optional), picture URL (string, optional). Extracted from pre-auth source (JWT or plain header). Used by `/api/me` endpoint and rendered in consent UI header.
-- **JWTAuthConfig**: Configuration value object defining JWT authentication behavior: header name, verification mode (`jwks` or `none`), JWKS URI (present only when verification is `jwks`), audience/issuer constraints, and CEL extraction expressions. Validation at startup enforces mutual exclusivity of `verification: none` and `jwks_uri`.
+- **JWTAuthConfig**: Configuration value object defining signed JWT pre-authentication: header name, JWKS endpoint, audience/issuer constraints, and CEL extraction expressions. The verification mode is `jwks` only; both server instances enforce this at startup.
 
 *Domain concepts should be added to ARCHITECTURE.md Glossary (per Constitution Principle V)*
 
@@ -282,11 +262,11 @@ server:
 
 ### Session 2026-02-27
 
-- Q: What JWKS cache refresh strategy should be used? → A: Use the existing JWKS caching mechanism provided by lestrrat-go/jwx/v3 (already a project dependency). No custom cache logic needed.
+- Q: What JWKS cache refresh strategy should be used? → A: The original plan referenced `jwk.Cache` in JWX v3. The adapter now uses `jwkfetch/v4` with JWX v4 for signed JWT verification.
 - Q: Should JWT expiry validation include a clock skew tolerance? → A: Zero tolerance (library default). Clocks must be synchronized via NTP; no configurable skew allowance.
 - Q: How should the 'Bearer ' prefix be handled when extracting the JWT from the HTTP header? → A: Auto-detect by header name. When header_name is 'Authorization', strip 'Bearer ' prefix automatically. For any other header name, expect raw JWT.
 - Q: What should happen when a JWT has a 'kid' not found in the cached JWKS? → A: Rely on lestrrat-go/jwx's built-in refresh behavior (library default). No custom on-demand refresh logic.
-- Q: What configuration structure should be used for JWT authentication, and how should signed vs unsigned JWT modes be expressed? → A: Promote `authentication.jwt` as a sibling of `authentication.preauth` (Proposal 2). Single `jwt` block with a `verification` field (`jwks` | `none`; default `jwks`). `verification: none` and `jwks_uri` are mutually exclusive — specifying both is a startup-time configuration error with a descriptive message. `authentication.preauth` is reduced to plain-header trust only.
+- Q: How is JWT pre-authentication configured? → A: The original design placed `authentication.jwt` beside `authentication.preauth` and allowed `jwks` or `none`. Constitution Principle I supersedes the unsigned pre-authentication choice. Both servers require `jwks_uri` and signed JWKS verification. ADR 031 permits `none` only for a local-mode impersonation subject.
 
 ## Assumptions
 

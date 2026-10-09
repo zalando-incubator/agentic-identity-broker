@@ -47,7 +47,7 @@ func (m *noopBranchKeyManager) Create(_ context.Context, _ domainencryption.Bran
 
 func TestCIMDInitiateOAuth2Flow_UsesAdvertisedCallbackWithTrailingPublicURLSlash(t *testing.T) {
 	service, _, _, _, _, providerService := setupServiceWithConfig(t, func(config *oauth2session.Config) {
-		*config = oauth2session.NewConfigFromPorts(ports.ThirdPartyOAuth2Config{}, "https://broker.example.com/")
+		*config = oauth2session.NewConfigFromPorts(ports.ThirdPartyOAuth2Config{}, ports.TokenRefreshConfig{}, "https://broker.example.com/")
 	})
 	providerService.WithCIMDPublicURL("https://broker.example.com/")
 	serviceID := id.NewServiceID()

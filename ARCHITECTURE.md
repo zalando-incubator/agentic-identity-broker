@@ -333,11 +333,13 @@ Tests use `bootstrap.NewInMemoryTracerProvider()` to get a `*tracetest.SpanRecor
 
 **Graceful Shutdown Sequence**:
 
+On normal shutdown, both HTTP servers drain. Then the CLI calls `App.Shutdown` with the configured `server.shutdown.timeout`. Startup failures after application construction also call `App.Shutdown`.
+
 ```
-HTTP servers drain → tp.Shutdown(ctx) → mp.Shutdown(ctx) → lp.Shutdown(ctx) → process exit
+HTTP servers drain → local/hybrid OAuth2 cleanup stops → admitted session refreshes drain → remaining application resources and telemetry shut down → shared upstream transport closes idle connections
 ```
 
-The composite shutdown function is stored as `App.ShutdownTelemetry func(context.Context) error` and called after HTTP servers have drained all in-flight requests.
+The builder composes one `App.Shutdown` function. It stops the local/hybrid `SessionCleanup` worker first. Then `OAuth2SessionService.Close` rejects new submissions and waits for admitted background refreshes within the shutdown deadline. It cancels refresh contexts after the drain or when the deadline expires. Telemetry remains active during this drain, and the shared upstream transport closes idle connections last. Expiry of the deadline can still interrupt a provider call after refresh-token rotation.
 
 **Token exchange diagnostic boundary**:
 
@@ -478,7 +480,7 @@ internal/adapters/storage/postgres/
 
 - **[/api/admin/openapi.yaml](/api/admin/openapi.yaml)** - Admin server (Port 14000)
   - Canonical OpenAPI documentation for all administrative APIs
-  - Endpoints: Health check, agent management (CRUD), service management (CRUD)
+  - Endpoints: Health check, agent management (CRUD), service management (CRUD), and operator-triggered session sweep
   - Authentication: Pre-authentication via reverse proxy (admin-level access controlled upstream)
   - Security emphasis: Client secrets always redacted in responses (SR-003)
   - Referential integrity: 409 Conflict responses when deleting services with active grants
@@ -511,12 +513,13 @@ Admin Server (Port 14000):
   │   ├── GET /{id}
   │   ├── PUT /{id}
   │   └── DELETE /{id}
-  └── /api/services/*
-      ├── POST / (create)
-      ├── GET / (list)
-      ├── GET /{id}
-      ├── PUT /{id}
-      └── DELETE /{id}
+  ├── /api/services/*
+  │   ├── POST / (create)
+  │   ├── GET / (list)
+  │   ├── GET /{id}
+  │   ├── PUT /{id}
+  │   └── DELETE /{id}
+  └── POST /api/sessions/sweep (synchronous operator-triggered sweep)
 ```
 
 **Admin browser boundary**: All admin `/api` routes validate the request Host
@@ -528,6 +531,12 @@ Go's `http.CrossOriginProtection` rejects cross-origin mutations without trusted
 origin exceptions. POST, PUT, and PATCH require `application/json` even without
 a body; any other request carrying a body also requires JSON. Host/cross-origin
 rejections return 403; media-type rejections return 415. `/health` is excluded.
+
+**Admin session sweep**: The builder wires `SessionSweepHandler` through `SessionSweepService` and the focused `UserSessionExpiryRepository`. `POST /api/sessions/sweep` runs synchronously on port 14000. The broker has no scheduler or distributed sweep lock. An external operator schedule calls this route through the authenticated admin proxy. The proxy supplies the operator principal. The request must carry the configured admin Host and `application/json` content type.
+
+The optional `lookahead_duration` accepts a positive ISO 8601 duration in days, hours, minutes, or seconds. `dry_run` previews classifications without provider calls or writes. `page_size` accepts 1 through 1000. Omitted values use configuration defaults. Invalid JSON or unknown fields return 400. A missing operator principal or repository failure returns 500. A completed sweep returns 200 counts even when all candidates fail. The count invariant is `refreshed + skipped + failed = total_evaluated`.
+
+Only this route clears the admin HTTP write deadline. The external caller controls the overall timeout. The sweep checks request cancellation between candidates. An admitted refresh uses its own bounded context to finish token persistence. The handler logs the operator identity for audit separately from the privacy-filtered session-service logs. See [the session-sweep runbook](docs/operations/session-sweep.md) for scheduling and recovery.
 
 **Usage**:
 
@@ -555,6 +564,8 @@ rejections return 403; media-type rejections return 415. `/health` is excluded.
 **Authorization code expiry**: Locally issued codes expire after 60 seconds. Repository lookups exclude expired records in PostgreSQL and memory storage. `FositeStorage` checks the stored expiry before replay handling and hydrates the caller's session for `RandomCodeStrategy` to check again. Expired codes return `invalid_grant` without replay revocation. Unexpired, previously used codes retain replay protection.
 
 **OAuth2 record retention**: In local and hybrid modes, the builder starts `SessionCleanup` after successful application construction. It deletes expired authorization codes, PKCE sessions, and refresh-token sessions at startup and every minute. A repository error does not stop the remaining deletions or future sweeps. Application shutdown cancels the worker and waits for its current operation to finish. Expiry enforcement does not depend on cleanup success.
+
+**Third-party session maintenance**: In every OAuth2 server mode, the builder creates `OAuth2SessionService`, its bounded background refresh pool, and the admin sweep handler. This work is separate from local/hybrid `SessionCleanup`. The broker does not start a session-sweep timer.
 
 **Type Containment**: All [fosite](https://github.com/ory/fosite) OAuth2 server types are contained in `internal/domain/oauth2server/`. This package encapsulates the OAuth2 authorization server domain logic (authorization code storage, client authentication, token signing) and **never leaks fosite types** into ports, adapters/http, or app packages.
 
@@ -657,6 +668,7 @@ A last-resort net in `LoggingMiddleware` finalizes any still-open holder after t
 - **SR-002 / FR-003**: trace IDs reuse the distributed-tracing identifier when present and otherwise use a `crypto/rand` fallback.
 - **SR-003 / FR-009**: the feature is fail-open for observability but does not change fail-closed authentication and authorization behavior.
 - **SR-004 / FR-006**: security-relevant logs carry `trace_id`, `actor`, and optional `calling_peer`.
+- **Session-service privacy (NFR-001)**: The `oauth2session` logger keeps `trace_id` but omits the end-user `actor` and `calling_peer`. The admin sweep audit records the operator principal separately.
 - **SR-005 / FR-012**: credentials, cookies, authorization codes, and query strings are not copied into the security context or its logs.
 - **SR-006 / FR-010**: forwarding headers are ignored unless trusted proxy mode is explicitly enabled; when enabled, the broker treats the right-most configured forwarded-header entry as authoritative.
 - **Log-forging protection**: access and recovery middleware escape line-break characters and literal backslashes in logged methods, paths, client addresses, and panic messages. Escapes preserve distinct values for CR, LF, vertical tab, form feed, NEL, and Unicode line and paragraph separators. Ordinary values use an unchanged, allocation-free fast path. Requests and diagnostic stack traces remain unchanged.
@@ -719,8 +731,14 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 
 - **OAuth2SessionService**: Transparently encrypts tokens on CreateSession, decrypts on retrieval
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
-- **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Provider metadata is loaded before the session lock, then automatic and explicit refresh re-read the latest session under that lock. PostgreSQL holds a row lock through the provider exchange and commits rotated encrypted tokens before releasing it; database acquisition, reads, and writes have separate configured timeouts. The in-memory adapter serializes refresh, upsert, and deletion per session while holding its map mutex only for lookup and commit. Replicas therefore use the latest refresh token without racing on a stale one.
-- **Refresh cancellation and audit**: Automatic refresh has an operation deadline covering the configured upstream HTTP timeout and storage work. Caller cancellation stops that caller's wait without aborting a shared refresh that may already have rotated the provider token. Success audit events are emitted only after session persistence succeeds.
+- **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with in-process `singleflight`. The session service loads provider metadata before `UserSessionRefreshRepository.WithLockedSession`. Under that operation, background, on-demand, and sweep refreshes re-read the current session and check whether it is still due. PostgreSQL holds a row lock through the provider exchange and commits encrypted, rotated tokens before releasing it. The operation updates an existing row only, so deletion cannot recreate a session. Across replicas, a second refresh waits for the lock and skips its provider call when the first already renewed the token. Database acquisition, reads, and writes have separate configured timeouts. The in-memory adapter serializes refresh, upsert, and deletion per session.
+- **Proactive refresh**: If token exchange serves a valid access token within `token_refresh.lookahead_duration`, it submits refresh work without waiting. A token with no expiry is never due. Each replica deduplicates in-flight submissions before acquiring a nonblocking pool slot. A full pool drops new work while the exchange still returns the valid token. Expired tokens retain the synchronous on-demand path.
+- **Refresh cancellation and audit**: Automatic refresh uses a bounded operation context that covers the upstream HTTP timeout and storage work. Caller cancellation stops that caller's wait without aborting a shared refresh that may already have rotated the provider token. Success audit events follow committed session persistence.
+- **Session sweep**: `SessionSweepService` reads due sessions in bounded keyset pages through `UserSessionExpiryRepository`. It fixes one threshold at sweep start and orders rows by access-token expiry, then UUID. A `SessionExpiryCursor` stores the last raw row's pair. A per-invocation ID set prevents a row whose expiry moves forward from receiving a second outcome. This set uses O(unique candidates) memory; the page buffer remains bounded by `page_size`. A real sweep re-checks the current session under `WithLockedSession`. For a listed row with no usable refresh token, a read-only locked recheck skips deleted or already-renewed rows. It reports a still-unrefreshable row as failed without fetching provider credentials. If the user reauthorized after listing, the sweep releases the read-only lock and follows the normal locked refresh path. A terminal row can fail on every invocation until the user reauthorizes or ends the session. Normal refreshes commit encrypted new tokens or report per-session failures. A repository failure aborts the sweep. A dry run classifies listed snapshots without a row lock, provider call, or write.
+- **Refresh configuration**: `token_refresh.lookahead_duration` defaults to `5m` and must be positive. `token_refresh.background_workers` defaults to 10 and accepts 1 through 20. Each locked background refresh holds one database connection during the upstream call; the 20-worker cap reserves capacity in the 25-connection pool. `token_refresh.sweep.default_page_size` defaults to 100 and accepts 1 through 1000. Keep the lookahead shorter than the provider access-token lifetime to prevent a refresh attempt on every exchange.
+- **Session telemetry and privacy**: The `oauth2session` logger marks every session-service record with `component=oauth2session`. The context handler keeps `trace_id` but omits `actor` and `calling_peer` on these records, including errors without an `event`. Refresh events contain session and service IDs, never the user principal or token material. `SessionTokensRefreshed` emits `session.oauth2.token_refreshed` only after commit, with `triggered_by` set to `on-demand`, `background`, or `sweep`. A background refresh starts a new root span linked to the triggering request span, not a child of that request.
+- **Session metrics**: OpenTelemetry `Int64Counter` instruments `proactive_refresh_triggered_total`, `proactive_refresh_dropped_total`, and `proactive_refresh_failed_total` use only `triggered_by=background`. Instruments `session_sweep_refreshed_total` and `session_sweep_failed_total` use only `triggered_by=sweep`. A deduplicated or closed submission and a dry-run result do not increment these counters. No counter uses principal, session ID, or service ID as an attribute.
+- **Session-expiry index**: Migration `036` creates the B-tree index `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at, id)` with `CREATE INDEX CONCURRENTLY`. The key order matches the expiry-then-UUID sweep cursor. Its DOWN uses `DROP INDEX CONCURRENTLY`. The shared directive guard requires the exact no-transaction directive and one matching statement in each file before deployment or Go migration runners execute it. [ADR 039](adrs/039-concurrent-session-expiry-index.md) accepts this named non-atomic exception only. A failed build can leave an invalid index and a dirty `schema_migrations` version. Recovery inspects `pg_index.indisvalid`, both ordered keys, and the migration version before any change. After stopping competing migration jobs, operators drop only a confirmed invalid index with schema-qualified `DROP INDEX CONCURRENTLY` outside a transaction. They use `migrate force 35` or `migrate force 36` only after reviewing actual schema state. Force changes metadata, not the index. See [the runbook](docs/operations/session-sweep.md).
 - **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.
 - **Upstream response limits and retries**: The OAuth2 library already limits code-exchange responses to 1 MiB. The broker also rejects JWKS, refresh, and buffered proxy responses over 1 MiB. Unverified proxied responses stream unchanged. Authorization-code exchange retries network failures and HTTP 5xx, but not permanent OAuth errors.
 - **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of confidential provider `client_secret` values via the `Secret` value object. Public services have no client secret. No other layer touches `EncryptionPort` for provider secrets.
@@ -1460,6 +1478,22 @@ Define any project-specific terms or acronyms.)
 
 **UserSession**: An authenticated OAuth2 session between a user (principal) and a third-party service. Contains encrypted access/refresh tokens, scope, and expiration metadata. One session per (principal, service_id) pair enforced by database unique constraint. Aggregate root that owns the encrypted tokens and manages session lifecycle.
 
+**Refresh Lookahead Window**: The interval before a `UserSession` access token expires. `token_refresh.lookahead_duration` sets its default length. Token exchange returns a still-valid token at once, then submits Proactive Refresh when the token is refreshable. Session Sweep uses this window unless `SweepRequest` overrides it. Tokens without an expiry never enter either path.
+
+**Proactive Refresh**: Background refresh after token exchange serves a valid token inside the Refresh Lookahead Window. Each replica deduplicates submissions before it acquires one of its bounded pool slots. A full pool drops the work without delaying token exchange. The locked, update-only session operation protects persistence across replicas.
+
+**Session Sweep**: A synchronous admin-triggered pass across due `UserSession` records, scheduled by an external operator. It reads bounded expiry-then-UUID keyset pages through `UserSessionExpiryRepository`, tracks evaluated IDs to avoid a second outcome when expiry changes, re-checks each row under the refresh lock, and returns a `SweepResult`. The broker has no sweep scheduler or distributed lock.
+
+**SessionExpiryCursor**: The keyset position of a Session Sweep, containing an access-token expiry and a `UserSession` ID. A zero expiry and zero ID start the scan; exactly one nonzero field is invalid. The read port returns rows in expiry-then-UUID order. The sweep advances this cursor from the last raw row of each page and separately tracks evaluated IDs.
+
+**SweepRequest**: The input value object for a Session Sweep. It holds a lookahead duration, `dry_run`, and page size. Omitted lookahead and page size use the configured defaults. Validation occurs before the sweep evaluates sessions.
+
+**SweepResult**: The result of a Session Sweep: `refreshed`, `skipped`, `failed`, `total_evaluated`, and `dry_run`. In dry-run mode, `refreshed` counts candidates that would be refreshed. Each candidate has one outcome, so `refreshed + skipped + failed = total_evaluated`.
+
+**RefreshTrigger**: The origin of a session token refresh: `on-demand`, `background`, or `sweep`. It supplies the `triggered_by` value for `SessionTokensRefreshed`. The background and sweep metrics use only their respective fixed trigger values.
+
+**SessionTokensRefreshed**: The structured `session.oauth2.token_refreshed` log event after a `UserSession` refresh commits. It records session ID, service ID, and `RefreshTrigger`, but not the user principal. The broker has no event bus.
+
 **OAuth2StateToken**: A JWE-encrypted ephemeral token that binds an OAuth2 callback to the initiating request. Contains principal, PKCE verifier, service_id, and redirect_uri claims. Short-lived (10 min TTL, max 15 min per spec) to limit CSRF exposure. Uses authenticated encryption (A256GCMKW + A256GCM) for tamper detection.
 
 **AuthorizationSessionToken**: A JWE-encrypted ephemeral token that binds a consent session to the initiating authorization request (ADR 016). Contains agent_id, principal, original authorize URL, and optional CIMD metadata snapshot. Short-lived (10 min TTL). Prevents consent screen spoofing by ensuring all displayed metadata originates from server-attested claims. Used for all authorization modes (local, proxy, CIMD).
@@ -1672,11 +1706,11 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **PrincipalProfile**: Enriched user identity value object containing principal identifier, display name, email, and picture URL. Extracted from pre-authentication source (JWT or plain header). Request-scoped, immutable. Stored in request context via `principal.WithProfile()` alongside the string principal. Located in `internal/domain/principal/profile.go`.
 
-**JWTAuthConfig**: Configuration value object defining JWT-based pre-authentication behavior: HTTP header name, verification mode (`jwks` or `none`), JWKS endpoint, audience/issuer constraints, and CEL claim extraction expressions. Validated at startup with mutual exclusivity rules (`verification: none` + `jwks_uri` → startup error). Located in `internal/ports/config.go` as `JWTConfig`.
+**JWTAuthConfig**: Configuration value object for JWT pre-authentication. It defines the HTTP header, required JWKS endpoint, audience and issuer checks, and CEL claim extraction. Both servers require signed JWTs with `verification: jwks`. Located in `internal/ports/config.go` as `JWTConfig`.
 
-**JWTAuthenticator**: Port interface for JWT authentication in the pre-auth layer. Abstracts JWT parsing, signature verification (JWKS or none), temporal validation, and CEL-based claim extraction. Returns `AuthResult` containing extracted principal and optional profile attributes. Implemented by jwx adapter in `internal/adapters/jwtauth/`. Located in `internal/domain/jwtauth/authenticator.go`.
+**JWTAuthenticator**: Port interface for JWT pre-authentication. The jwx adapter verifies signatures against JWKS, requires expiry, and extracts principal and optional profile attributes with CEL. Located in `internal/domain/jwtauth/authenticator.go`.
 
-**JWTVerificationMode**: String enum (`"jwks"` or `"none"`) controlling JWT signature verification behavior. `"jwks"` (default) requires JWKS URI and validates cryptographic signatures against published key sets. `"none"` accepts unsigned JWTs (alg: "none") for trusted upstream environments such as service meshes. Unsigned mode requires explicit opt-in and is mutually exclusive with `jwks_uri`.
+**JWTVerificationMode**: The `JWTConfig.verification` field accepts `jwks` or its empty default for pre-authentication. The `none` setting applies only to the local impersonation subject role under ADR 031. It never disables pre-authentication signature verification.
 
 **JWTValidationFailed**: Domain event emitted when JWT pre-authentication fails. Contains failure reason (e.g., `invalid_signature`, `token_expired`, `audience_mismatch`), header name, and remote address. Logged as structured audit data for security monitoring per FR-020/SR-005. Not persisted — emitted as structured log entries.
 

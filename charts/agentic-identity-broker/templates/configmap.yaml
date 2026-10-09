@@ -78,6 +78,13 @@ data:
     third_party_oauth2:
       jwe_signing_key: ${IDENTITY_BROKER_JWE_SIGNING_KEY}
 
+    # Proactive third-party token refresh configuration
+    token_refresh:
+      lookahead_duration: {{ .Values.broker.tokenRefresh.lookaheadDuration | quote }}
+      background_workers: {{ .Values.broker.tokenRefresh.backgroundWorkers }}
+      sweep:
+        default_page_size: {{ .Values.broker.tokenRefresh.sweep.defaultPageSize }}
+
     {{- if or .Values.broker.encryption.memory.rawKey .Values.broker.encryption.awsKms.keyArn }}
     # Encryption configuration
     encryption:

@@ -1,12 +1,16 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 // InMemoryUserSessionRepository is an in-memory implementation for testing/development.
@@ -132,6 +136,103 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 	}
 	return &session, nil
 }
+
+func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error) {
+	const operation = "ListExpiringSessions"
+	if limit < 1 || limit > 1000 {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "limit must be between 1 and 1000")
+	}
+	if cursor.AccessTokenExpiresAt.IsZero() != cursor.ID.IsZero() {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "cursor expiry and ID must both be set or both be zero")
+	}
+	hasCursor := !cursor.ID.IsZero()
+	if err := ctx.Err(); err != nil {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	// Keep only the earliest limit (expiry, ID) pairs in a max-heap.
+	var selected []*storage.UserSession
+	for _, session := range r.sessions {
+		if err := ctx.Err(); err != nil {
+			return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
+		}
+		if session.AccessTokenExpiresAt == nil || session.AccessTokenExpiresAt.After(threshold) {
+			continue
+		}
+		if hasCursor && compareSessionExpiryKey(session, cursor.AccessTokenExpiresAt, cursor.ID) <= 0 {
+			continue
+		}
+		if selected == nil {
+			selected = make([]*storage.UserSession, 0, limit)
+		}
+		if len(selected) < limit {
+			selected = append(selected, session)
+			for child := len(selected) - 1; child > 0; {
+				parent := (child - 1) / 2
+				if compareSessionExpiryKey(selected[parent], *selected[child].AccessTokenExpiresAt, selected[child].ID) >= 0 {
+					break
+				}
+				selected[parent], selected[child] = selected[child], selected[parent]
+				child = parent
+			}
+		} else if compareSessionExpiryKey(session, *selected[0].AccessTokenExpiresAt, selected[0].ID) < 0 {
+			selected[0] = session
+			for parent := 0; ; {
+				child := parent*2 + 1
+				if child >= len(selected) {
+					break
+				}
+				if right := child + 1; right < len(selected) && compareSessionExpiryKey(selected[right], *selected[child].AccessTokenExpiresAt, selected[child].ID) > 0 {
+					child = right
+				}
+				if compareSessionExpiryKey(selected[parent], *selected[child].AccessTokenExpiresAt, selected[child].ID) >= 0 {
+					break
+				}
+				selected[parent], selected[child] = selected[child], selected[parent]
+				parent = child
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
+	}
+
+	sort.Slice(selected, func(i, j int) bool {
+		return compareSessionExpiryKey(selected[i], *selected[j].AccessTokenExpiresAt, selected[j].ID) < 0
+	})
+	for i, session := range selected {
+		snapshot := *session
+		snapshot.EncryptedAccessToken = bytes.Clone(session.EncryptedAccessToken)
+		snapshot.EncryptedRefreshToken = bytes.Clone(session.EncryptedRefreshToken)
+		snapshot.Scope = append([]string(nil), session.Scope...)
+		if session.AccessTokenExpiresAt != nil {
+			expiry := *session.AccessTokenExpiresAt
+			snapshot.AccessTokenExpiresAt = &expiry
+		}
+		if session.RefreshTokenExpiresAt != nil {
+			expiry := *session.RefreshTokenExpiresAt
+			snapshot.RefreshTokenExpiresAt = &expiry
+		}
+		selected[i] = &snapshot
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
+	}
+	return selected, nil
+}
+
+// compareSessionExpiryKey compares a due session with an expiry/UUID key.
+func compareSessionExpiryKey(session *storage.UserSession, expiry time.Time, sessionID id.SessionID) int {
+	if cmp := session.AccessTokenExpiresAt.Compare(expiry); cmp != 0 {
+		return cmp
+	}
+	return bytes.Compare(session.ID[:], sessionID[:])
+}
+
+var _ ports.UserSessionExpiryRepository = (*InMemoryUserSessionRepository)(nil)
 
 // ListByPrincipal retrieves all sessions for a principal, including expired ones.
 func (r *InMemoryUserSessionRepository) ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {

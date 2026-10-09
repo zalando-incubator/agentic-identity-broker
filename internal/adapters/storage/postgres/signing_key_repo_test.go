@@ -31,8 +31,9 @@ func testSigningKeyInDomain(kid string, domain storage.KeyDomain, isCurrent bool
 		Algorithm:           "ES256",
 		PrivateKeyEncrypted: []byte("encrypted-key-material"),
 		IsCurrent:           isCurrent,
-		ActivatesAt:         now.Add(-time.Hour),
-		CreatedAt:           now,
+		// Keep active fixtures safely in the past relative to the database clock.
+		ActivatesAt: now.Add(-time.Hour),
+		CreatedAt:   now,
 	}
 }
 

@@ -11,6 +11,14 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
+func validTokenRefreshConfig() ports.TokenRefreshConfig {
+	return ports.TokenRefreshConfig{
+		LookaheadDuration: 5 * time.Minute,
+		BackgroundWorkers: 10,
+		Sweep:             ports.TokenRefreshSweepConfig{DefaultPageSize: 100},
+	}
+}
+
 // validTestConfig returns a valid Config for testing with all required fields set.
 func validTestConfig() *ports.Config {
 	return &ports.Config{
@@ -72,7 +80,8 @@ func validTestConfig() *ports.Config {
 				ResponseEnabled: true,
 			},
 		},
-		Security: ports.SecurityConfig{},
+		Security:     ports.SecurityConfig{},
+		TokenRefresh: validTokenRefreshConfig(),
 	}
 }
 
@@ -176,10 +185,7 @@ func TestValidate(t *testing.T) {
 				cfg := validTestConfig()
 				cfg.Server.EndUser.Authentication.Preauth.PrincipalHeaderName = ""
 				cfg.Server.EndUser.Authentication.JWT = &ports.JWTConfig{
-					Verification: "none",
-					ClaimExtraction: ports.JWTClaimExtractionConfig{
-						PrincipalExpression: "claims.sub",
-					},
+					JWKSURI: "https://auth.example.com/.well-known/jwks.json",
 				}
 				return cfg
 			}(),
@@ -297,8 +303,7 @@ func TestValidateTokenExchangeConfig(t *testing.T) {
 }
 
 // TestValidateJWTConfig tests JWT pre-authentication configuration validation.
-// Covers mutual exclusivity checks, required fields, defaults application,
-// and CEL expression validation per FR-003a and SR-004.
+// Covers signed JWKS requirements, defaults, and CEL validation.
 func TestValidateJWTConfig(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -321,7 +326,7 @@ func TestValidateJWTConfig(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name: "valid unsigned JWT config",
+			name: "reject unsigned JWT config without JWKS URI",
 			jwt: &ports.JWTConfig{
 				HeaderName:   "X-JWT-Claims",
 				Verification: "none",
@@ -330,7 +335,8 @@ func TestValidateJWTConfig(t *testing.T) {
 				},
 			},
 			security: nil,
-			wantErr:  false,
+			wantErr:  true,
+			errMsg:   "'jwks' signature verification",
 		},
 		{
 			name: "defaults applied when fields are empty",
@@ -341,14 +347,14 @@ func TestValidateJWTConfig(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name: "mutual exclusivity: verification none + jwks_uri",
+			name: "reject unsigned JWT config with JWKS URI",
 			jwt: &ports.JWTConfig{
 				Verification: "none",
 				JWKSURI:      "https://auth.example.com/.well-known/jwks.json",
 			},
 			security: nil,
 			wantErr:  true,
-			errMsg:   "mutually exclusive",
+			errMsg:   "'jwks' signature verification",
 		},
 		{
 			name: "missing jwks_uri when verification is jwks",
@@ -367,7 +373,7 @@ func TestValidateJWTConfig(t *testing.T) {
 			},
 			security: nil,
 			wantErr:  true,
-			errMsg:   "'jwks' or 'none'",
+			errMsg:   "'jwks' signature verification",
 		},
 		{
 			name: "HTTPS required for JWKS URI by default",
@@ -440,24 +446,6 @@ func TestValidateJWTConfig_DefaultsApplied(t *testing.T) {
 	if jwt.ClaimExtraction.PrincipalExpression != "claims.sub" {
 		t.Errorf("expected PrincipalExpression default 'claims.sub', got %q",
 			jwt.ClaimExtraction.PrincipalExpression)
-	}
-}
-
-// TestValidate_WithJWTConfig tests that full config validation includes JWT
-// validation when JWT config is present.
-func TestValidate_WithJWTConfig(t *testing.T) {
-	cfg := validTestConfig()
-	cfg.Server.EndUser.Authentication.JWT = &ports.JWTConfig{
-		Verification: "none",
-		JWKSURI:      "https://should-not-be-set.example.com",
-	}
-
-	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("expected validation error for mutual exclusivity, got nil")
-	}
-	if !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Errorf("expected 'mutually exclusive' in error, got: %v", err)
 	}
 }
 
@@ -953,5 +941,103 @@ func TestValidate_WithRequestContextConfig(t *testing.T) {
 		t.Errorf("Validate() error type = %T, want *config.ConfigError", err)
 	} else if configErr.Field != "request_context.trusted_proxy.forwarded_header" {
 		t.Errorf("Validate() error field = %q, want %q", configErr.Field, "request_context.trusted_proxy.forwarded_header")
+	}
+}
+
+func TestValidateTokenRefreshConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		lookahead time.Duration
+		workers   int
+		pageSize  int
+		wantField string
+		wantBound string
+	}{
+		{name: "default values", lookahead: 5 * time.Minute, workers: 10, pageSize: 100},
+		{name: "minimum values", lookahead: time.Nanosecond, workers: 1, pageSize: 1},
+		{name: "maximum worker and page limits", lookahead: time.Hour, workers: 20, pageSize: 1000},
+		{name: "zero lookahead", lookahead: 0, workers: 10, pageSize: 100, wantField: "token_refresh.lookahead_duration", wantBound: "greater than 0"},
+		{name: "negative lookahead", lookahead: -time.Second, workers: 10, pageSize: 100, wantField: "token_refresh.lookahead_duration", wantBound: "greater than 0"},
+		{name: "zero workers", lookahead: 5 * time.Minute, workers: 0, pageSize: 100, wantField: "token_refresh.background_workers", wantBound: "1 and 20"},
+		{name: "too many workers", lookahead: 5 * time.Minute, workers: 21, pageSize: 100, wantField: "token_refresh.background_workers", wantBound: "1 and 20"},
+		{name: "zero page size", lookahead: 5 * time.Minute, workers: 10, pageSize: 0, wantField: "token_refresh.sweep.default_page_size", wantBound: "1 and 1000"},
+		{name: "page size exceeds limit", lookahead: 5 * time.Minute, workers: 10, pageSize: 1001, wantField: "token_refresh.sweep.default_page_size", wantBound: "1 and 1000"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			cfg.TokenRefresh = ports.TokenRefreshConfig{
+				LookaheadDuration: tt.lookahead,
+				BackgroundWorkers: tt.workers,
+				Sweep:             ports.TokenRefreshSweepConfig{DefaultPageSize: tt.pageSize},
+			}
+			err := Validate(cfg)
+			if tt.wantField == "" {
+				if err != nil {
+					t.Fatalf("valid token_refresh config rejected: %v", err)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("expected %s validation error", tt.wantField)
+			}
+			configErr, ok := err.(*config.ConfigError)
+			if !ok {
+				t.Fatalf("validation error type = %T, want *config.ConfigError: %v", err, err)
+			}
+			if configErr.Field != tt.wantField {
+				t.Errorf("validation field = %q, want %q", configErr.Field, tt.wantField)
+			}
+			if !strings.Contains(err.Error(), tt.wantBound) {
+				t.Errorf("validation error %q does not explain bound %q", err, tt.wantBound)
+			}
+			if tt.wantField == "token_refresh.background_workers" {
+				for _, detail := range []string{"connection", "25", "20"} {
+					if !strings.Contains(err.Error(), detail) {
+						t.Errorf("worker validation error %q omits pool rationale %q", err, detail)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestValidate_AdminJWTRequiresSignatureVerification(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Server.Admin.Authentication.JWT = &ports.JWTConfig{
+		Verification:    "none",
+		ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("unsigned admin JWT configuration must fail validation")
+	}
+	var configErr *config.ConfigError
+	if !errors.As(err, &configErr) {
+		t.Fatalf("validation error = %T, want *config.ConfigError: %v", err, err)
+	}
+	if configErr.Field != "server.admin.authentication.jwt.verification" {
+		t.Errorf("validation field = %q, want admin JWT verification", configErr.Field)
+	}
+}
+
+func TestValidate_EnduserJWTRequiresSignatureVerification(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Server.EndUser.Authentication.JWT = &ports.JWTConfig{
+		Verification:    "none",
+		ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("unsigned end-user JWT configuration must fail validation")
+	}
+	var configErr *config.ConfigError
+	if !errors.As(err, &configErr) {
+		t.Fatalf("validation error = %T, want *config.ConfigError: %v", err, err)
+	}
+	if configErr.Field != "server.enduser.authentication.jwt.verification" {
+		t.Errorf("validation field = %q, want end-user JWT verification", configErr.Field)
 	}
 }

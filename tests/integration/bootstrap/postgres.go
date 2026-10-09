@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/migrationguard"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -172,12 +173,13 @@ func (pg *SharedPostgres) ConnectionString(dbName string) string {
 func (pg *SharedPostgres) ApplyMigrationsUpTo(t *testing.T, dbName string, migrations []SQLMigration, upTo int) {
 	t.Helper()
 
+	migrationsDir := pg.validatedMigrationsDir(t, dbName)
 	pg.CreateSchemaMigrationsTable(t, dbName)
 	for _, migration := range migrations {
 		if int(migration.Version) > upTo {
 			break
 		}
-		pg.ApplyMigration(t, dbName, migration.File)
+		pg.applyMigration(t, dbName, migrationsDir, migration.File)
 		pg.recordMigrationVersion(t, dbName, migration.Version)
 	}
 }
@@ -195,13 +197,22 @@ func (pg *SharedPostgres) CreateSchemaMigrationsTable(t *testing.T, dbName strin
 func (pg *SharedPostgres) ApplyMigration(t *testing.T, dbName, filename string) {
 	t.Helper()
 
+	pg.applyMigration(t, dbName, pg.validatedMigrationsDir(t, dbName), filename)
+}
+
+func (pg *SharedPostgres) validatedMigrationsDir(t *testing.T, dbName string) string {
+	t.Helper()
 	projectRoot, err := FindProjectRoot()
 	require.NoError(t, err, "Failed to find project root")
+	migrationsDir := filepath.Join(projectRoot, "migrations")
+	require.NoError(t, migrationguard.Validate(migrationsDir, pg.ConnectionString(dbName)), "migration preflight failed")
+	return migrationsDir
+}
 
-	migrationPath := filepath.Join(projectRoot, "migrations", filename)
-	data, err := os.ReadFile(migrationPath) // #nosec G304 -- test helper reads repository-owned migration filenames.
+func (pg *SharedPostgres) applyMigration(t *testing.T, dbName, migrationsDir, filename string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(migrationsDir, filename)) // #nosec G304 -- test helper reads repository-owned migration filenames.
 	require.NoErrorf(t, err, "Failed to read migration file %s", filename)
-
 	pg.ExecuteSQL(t, dbName, string(data))
 }
 

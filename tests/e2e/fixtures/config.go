@@ -416,33 +416,6 @@ func SignedJWTConfigMinimal(jwksURL string) *ports.Config {
 	return config
 }
 
-// UnsignedJWTConfig returns a config with unsigned JWT pre-authentication enabled.
-// Used for testing service mesh environments where the upstream injects unsigned JWTs.
-//
-// Configuration:
-//   - JWT verification: none (unsigned, no JWKS URI)
-//   - JWT header: X-JWT-Claims (custom header, raw JWT value)
-//   - Principal CEL expression: claims.sub
-//   - Display name CEL expression: claims.preferred_username
-//   - Email CEL expression: claims.email
-//   - No audience/issuer validation (trusted upstream)
-//   - Plain header fallback: X-Remote-User
-//
-// All other settings match DefaultOAuth2Config().
-func UnsignedJWTConfig() *ports.Config {
-	config := DefaultOAuth2Config()
-	config.Server.EndUser.Authentication.JWT = &ports.JWTConfig{
-		HeaderName:   "X-JWT-Claims",
-		Verification: "none",
-		ClaimExtraction: ports.JWTClaimExtractionConfig{
-			PrincipalExpression:   "claims.sub",
-			DisplayNameExpression: "claims.preferred_username",
-			EmailExpression:       "claims.email",
-		},
-	}
-	return config
-}
-
 // NoJWTConfig returns a config with no JWT pre-authentication (plain header only).
 // This is the default/backward-compatible configuration where only the X-Remote-User
 // header is used for principal extraction.
@@ -451,22 +424,6 @@ func UnsignedJWTConfig() *ports.Config {
 func NoJWTConfig() *ports.Config {
 	// DefaultOAuth2Config already has no JWT config (JWT field is nil)
 	return DefaultOAuth2Config()
-}
-
-// MutuallyExclusiveJWTConfig returns a config with both verification: none and jwks_uri set.
-// This is an INVALID configuration that should cause startup failure (FR-003a).
-// Used to test mutual exclusivity validation at startup.
-func MutuallyExclusiveJWTConfig(jwksURL string) *ports.Config {
-	config := DefaultOAuth2Config()
-	config.Server.EndUser.Authentication.JWT = &ports.JWTConfig{
-		HeaderName:   "Authorization",
-		Verification: "none",
-		JWKSURI:      jwksURL,
-		ClaimExtraction: ports.JWTClaimExtractionConfig{
-			PrincipalExpression: "claims.sub",
-		},
-	}
-	return config
 }
 
 // SignedJWTConfigWithAudience returns a signed JWT config with a custom expected audience.

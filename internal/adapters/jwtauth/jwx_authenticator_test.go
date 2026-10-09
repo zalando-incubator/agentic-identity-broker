@@ -416,8 +416,7 @@ func TestJWXAuthenticator_ValidAudience(t *testing.T) {
 	assert.Equal(t, "alice@example.com", result.Principal)
 }
 
-// --- Unsigned JWT Tests (Phase 5: US2) ---
-
+// Unsigned JWT rejection under mandatory JWKS verification.
 // createUnsignedJWT creates an unsigned JWT (alg: "none") with the given claims.
 // Asserts that the serialized output is a valid unsecured JWT (compact form with empty signature segment).
 func createUnsignedJWT(t *testing.T, claims map[string]interface{}) string {
@@ -463,36 +462,6 @@ func createUnsignedJWT(t *testing.T, claims map[string]interface{}) string {
 	return tokenStr
 }
 
-func TestJWXAuthenticator_UnsignedJWTAcceptedWhenVerificationNone(t *testing.T) {
-	celConfig := jwtauth.CELEvaluatorConfig{
-		PrincipalExpression: "claims.sub",
-	}
-	celEvaluator, err := jwtauth.NewCELEvaluator(celConfig, testLogger())
-	require.NoError(t, err)
-
-	auth, err := NewJWXAuthenticator(JWXAuthenticatorConfig{
-		JWTConfig: &ports.JWTConfig{
-			HeaderName:   "Authorization",
-			Verification: "none",
-			ClaimExtraction: ports.JWTClaimExtractionConfig{
-				PrincipalExpression: "claims.sub",
-			},
-		},
-		CELEvaluator: celEvaluator,
-		Logger:       testLogger(),
-	})
-	require.NoError(t, err)
-
-	tokenStr := createUnsignedJWT(t, map[string]interface{}{
-		"sub": "alice@example.com",
-		"exp": time.Now().Add(1 * time.Hour),
-	})
-
-	result, err := auth.Authenticate(context.Background(), tokenStr)
-	require.NoError(t, err)
-	assert.Equal(t, "alice@example.com", result.Principal)
-}
-
 func TestJWXAuthenticator_UnsignedJWTRejectedWhenVerificationJWKS(t *testing.T) {
 	_, jwksBytes, _ := generateTestKeyPair(t)
 	jwksServer := startMockJWKSServer(t, jwksBytes)
@@ -515,99 +484,6 @@ func TestJWXAuthenticator_UnsignedJWTRejectedWhenVerificationJWKS(t *testing.T) 
 	require.Error(t, err, "unsigned JWT should be rejected when verification is jwks")
 }
 
-func TestJWXAuthenticator_SignedJWTAcceptedWhenVerificationNone(t *testing.T) {
-	_, _, signingKey := generateTestKeyPair(t)
-
-	celConfig := jwtauth.CELEvaluatorConfig{
-		PrincipalExpression: "claims.sub",
-	}
-	celEvaluator, err := jwtauth.NewCELEvaluator(celConfig, testLogger())
-	require.NoError(t, err)
-
-	auth, err := NewJWXAuthenticator(JWXAuthenticatorConfig{
-		JWTConfig: &ports.JWTConfig{
-			HeaderName:   "Authorization",
-			Verification: "none",
-			ClaimExtraction: ports.JWTClaimExtractionConfig{
-				PrincipalExpression: "claims.sub",
-			},
-		},
-		CELEvaluator: celEvaluator,
-		Logger:       testLogger(),
-	})
-	require.NoError(t, err)
-
-	// Create a signed JWT — should still be accepted in "none" mode (no signature check)
-	tokenStr := createSignedJWT(t, map[string]interface{}{
-		"sub": "alice@example.com",
-		"exp": time.Now().Add(1 * time.Hour),
-	}, signingKey)
-
-	result, err := auth.Authenticate(context.Background(), tokenStr)
-	require.NoError(t, err)
-	assert.Equal(t, "alice@example.com", result.Principal)
-}
-
-func TestJWXAuthenticator_ExpiredJWTRejectedEvenWhenVerificationNone(t *testing.T) {
-	celConfig := jwtauth.CELEvaluatorConfig{
-		PrincipalExpression: "claims.sub",
-	}
-	celEvaluator, err := jwtauth.NewCELEvaluator(celConfig, testLogger())
-	require.NoError(t, err)
-
-	auth, err := NewJWXAuthenticator(JWXAuthenticatorConfig{
-		JWTConfig: &ports.JWTConfig{
-			HeaderName:   "Authorization",
-			Verification: "none",
-			ClaimExtraction: ports.JWTClaimExtractionConfig{
-				PrincipalExpression: "claims.sub",
-			},
-		},
-		CELEvaluator: celEvaluator,
-		Logger:       testLogger(),
-	})
-	require.NoError(t, err)
-
-	tokenStr := createUnsignedJWT(t, map[string]interface{}{
-		"sub": "alice@example.com",
-		"exp": time.Now().Add(-1 * time.Hour),
-	})
-
-	_, err = auth.Authenticate(context.Background(), tokenStr)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, jwtauth.ErrTokenExpired, "expired JWT should be rejected even in 'none' mode")
-}
-
-func TestJWXAuthenticator_NoExpAcceptedWhenVerificationNone(t *testing.T) {
-	celConfig := jwtauth.CELEvaluatorConfig{
-		PrincipalExpression: "claims.sub",
-	}
-	celEvaluator, err := jwtauth.NewCELEvaluator(celConfig, testLogger())
-	require.NoError(t, err)
-
-	auth, err := NewJWXAuthenticator(JWXAuthenticatorConfig{
-		JWTConfig: &ports.JWTConfig{
-			HeaderName:   "Authorization",
-			Verification: "none",
-			ClaimExtraction: ports.JWTClaimExtractionConfig{
-				PrincipalExpression: "claims.sub",
-			},
-		},
-		CELEvaluator: celEvaluator,
-		Logger:       testLogger(),
-	})
-	require.NoError(t, err)
-
-	// JWT without exp claim — accepted in "none" mode (exp is optional)
-	tokenStr := createUnsignedJWT(t, map[string]interface{}{
-		"sub": "alice@example.com",
-	})
-
-	result, err := auth.Authenticate(context.Background(), tokenStr)
-	require.NoError(t, err, "JWT without exp should be accepted when verification is none")
-	assert.Equal(t, "alice@example.com", result.Principal)
-}
-
 func TestJWXAuthenticator_NoExpRejectedWhenVerificationJWKS(t *testing.T) {
 	_, jwksBytes, signingKey := generateTestKeyPair(t)
 	jwksServer := startMockJWKSServer(t, jwksBytes)
@@ -621,7 +497,7 @@ func TestJWXAuthenticator_NoExpRejectedWhenVerificationJWKS(t *testing.T) {
 		},
 	})
 
-	// JWT without exp claim — rejected in "jwks" mode (exp is mandatory)
+	// JWT without exp is rejected even with a valid signature.
 	tokenStr := createSignedJWT(t, map[string]interface{}{
 		"sub": "alice@example.com",
 	}, signingKey)
@@ -629,4 +505,44 @@ func TestJWXAuthenticator_NoExpRejectedWhenVerificationJWKS(t *testing.T) {
 	_, err := auth.Authenticate(context.Background(), tokenStr)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, jwtauth.ErrMissingExpiry, "JWT without exp should be rejected when verification is jwks")
+}
+
+func TestJWXAuthenticator_RejectsUnsignedPreauthConfiguration(t *testing.T) {
+	celEvaluator, err := jwtauth.NewCELEvaluator(jwtauth.CELEvaluatorConfig{
+		PrincipalExpression: "claims.sub",
+	}, testLogger())
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name, mode, jwksURI string
+	}{
+		{name: "unsigned without JWKS", mode: "none"},
+		{name: "unsigned with JWKS", mode: "none", jwksURI: "https://issuer.example/jwks"},
+		{name: "unknown mode with JWKS", mode: "custom", jwksURI: "https://issuer.example/jwks"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			adapter, err := NewJWXAuthenticator(JWXAuthenticatorConfig{
+				JWTConfig:    &ports.JWTConfig{Verification: tc.mode, JWKSURI: tc.jwksURI},
+				CELEvaluator: celEvaluator,
+				Logger:       testLogger(),
+			})
+			require.Nil(t, adapter)
+			require.ErrorContains(t, err, "JWKS signature verification")
+		})
+	}
+}
+
+func TestJWXAuthenticator_RequiresJWKSURI(t *testing.T) {
+	celEvaluator, err := jwtauth.NewCELEvaluator(jwtauth.CELEvaluatorConfig{
+		PrincipalExpression: "claims.sub",
+	}, testLogger())
+	require.NoError(t, err)
+
+	adapter, err := NewJWXAuthenticator(JWXAuthenticatorConfig{
+		JWTConfig:    &ports.JWTConfig{Verification: "jwks"},
+		CELEvaluator: celEvaluator,
+		Logger:       testLogger(),
+	})
+	require.Nil(t, adapter)
+	require.ErrorContains(t, err, "JWKS URI")
 }

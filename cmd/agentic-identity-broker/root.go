@@ -115,13 +115,14 @@ func run(cmd *cobra.Command, args []string) error {
 	// Create server instances with route setup functions
 	adminServer := httpAdapter.NewServer(
 		httpAdapter.ServerConfig{
-			Port:           cfg.Server.Admin.Port,
-			Bind:           cfg.Server.Admin.Bind,
-			PublicURL:      cfg.Server.Admin.PublicURL,
-			Name:           "admin",
-			Telemetry:      cfg.Telemetry,
-			RequestContext: &cfg.RequestContext,
-			Authentication: cfg.Server.Admin.Authentication,
+			Port:             cfg.Server.Admin.Port,
+			Bind:             cfg.Server.Admin.Bind,
+			PublicURL:        cfg.Server.Admin.PublicURL,
+			Name:             "admin",
+			Telemetry:        cfg.Telemetry,
+			RequestContext:   &cfg.RequestContext,
+			Authentication:   cfg.Server.Admin.Authentication,
+			JWTAuthenticator: application.AdminJWTAuthenticator,
 		},
 		adminRouteSetup,
 		application.Logger,
@@ -446,6 +447,11 @@ func init() {
 	rootCmd.PersistentFlags().Int("server.admin.port", 0, "admin server port (default: 14000)")
 	rootCmd.PersistentFlags().String("server.admin.bind", "", "admin server bind address (default: ::)")
 	rootCmd.PersistentFlags().Duration("server.shutdown.timeout", 0, "graceful shutdown timeout (default: 30s)")
+
+	// Token refresh configuration flags
+	rootCmd.PersistentFlags().Duration("token_refresh.lookahead_duration", 0, "refresh lookahead duration (default: 5m)")
+	rootCmd.PersistentFlags().Int("token_refresh.background_workers", 0, "maximum concurrent background refreshes (default: 10)")
+	rootCmd.PersistentFlags().Int("token_refresh.sweep.default_page_size", 0, "default session sweep page size (default: 100)")
 
 	// Request security-context configuration flags
 	rootCmd.PersistentFlags().Bool("request_context.trusted_proxy.enabled", false, "trust configured forwarded header for client IP derivation")

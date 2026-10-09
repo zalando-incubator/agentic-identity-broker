@@ -84,6 +84,16 @@ service:
     # -- Admin API port
     admin: 14000
 
+# Ingress policy for the broker pods. The admin port stays closed until the trusted proxy is selected.
+networkPolicy:
+  # -- Protect the admin pod port. Use only with a CNI that enforces ingress NetworkPolicy.
+  enabled: true
+  adminProxy:
+    # -- Labels on the trusted proxy namespace. Set both selectors before using the admin API.
+    namespaceLabels: {}
+    # -- Labels on trusted proxy pods in that namespace.
+    podLabels: {}
+
 # Ingress configuration for end-user API
 ingress:
   # End-user API Ingress
@@ -359,8 +369,8 @@ broker:
         # See examples/config/jwt-preauth.yaml for full documentation.
         # jwt:
         #   header_name: Authorization
-        #   verification: jwks          # "jwks" or "none"
-        #   jwks_uri: ""                # Required when verification is "jwks"
+        #   verification: jwks          # Optional; the only permitted JWT verification mode
+        #   jwks_uri: https://auth.example.com/.well-known/jwks.json  # Required for JWT pre-auth on either server
         #   expected_audience: ""
         #   expected_issuer: ""
         #   claim_extraction:
@@ -635,6 +645,19 @@ broker:
         expression: "true"
         # -- CEL evaluation timeout (e.g. "100ms", "5s")
         evaluationTimeout: "100ms"
+
+  # Proactive third-party token refresh
+  tokenRefresh:
+    # -- Refresh third-party access tokens this long before expiry (Go duration).
+    # Set this below the access-token lifetime issued by each provider.
+    lookaheadDuration: "5m"
+    # -- Maximum concurrent background refreshes per replica (1-20).
+    # Each refresh holds a database connection; the 20-worker cap reserves 5 of 25
+    # pooled connections for other requests. Excess submissions are dropped.
+    backgroundWorkers: 10
+    sweep:
+      # -- Default page size for the external POST /api/sessions/sweep (1-1000).
+      defaultPageSize: 100
 
   # Security configuration
   security:

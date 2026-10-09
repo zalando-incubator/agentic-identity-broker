@@ -34,6 +34,9 @@ type AdminHandlers struct {
 
 	// CIMDClientKeys manages the dedicated outbound CIMD key lifecycle.
 	CIMDClientKeys *admin.CIMDClientKeysHandler
+
+	// SessionSweep runs the operator-triggered third-party session refresh.
+	SessionSweep *admin.SessionSweepHandler
 }
 
 // EnduserHandlers groups all handler instances needed by the enduser server.

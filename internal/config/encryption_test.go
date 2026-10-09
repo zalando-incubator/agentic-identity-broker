@@ -1,138 +1,15 @@
 package config
 
 import (
-	"strings"
+	"context"
 	"testing"
 	"time"
 
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/aws"
+	aws "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/aws"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/stretchr/testify/require"
 )
-
-// TestEncryptionConfigStructure verifies that the EncryptionConfig is properly integrated into the Config structure
-func TestEncryptionConfigStructure(t *testing.T) {
-	// Test that the EncryptionConfig is properly integrated into the main Config struct
-	var config ports.Config
-
-	// Verify that Encryption field exists and has new backend structure
-	if config.Encryption.AWSKMS != nil {
-		t.Error("Default AWSKMS backend should be nil")
-	}
-	if config.Encryption.Memory != nil {
-		t.Error("Default Memory backend should be nil")
-	}
-
-	// Test assignment of AWS KMS backend
-	config.Encryption.AWSKMS = &ports.AWSKMSConfig{
-		KeyARN: "test-key-arn",
-	}
-	if config.Encryption.AWSKMS == nil || config.Encryption.AWSKMS.KeyARN != "test-key-arn" {
-		t.Error("Failed to assign AWS KMS config")
-	}
-
-	// Test assignment of Memory backend
-	config.Encryption.AWSKMS = nil
-	config.Encryption.Memory = &ports.MemoryConfig{
-		RawKey: "test-raw-key",
-	}
-	if config.Encryption.Memory == nil || config.Encryption.Memory.RawKey != "test-raw-key" {
-		t.Error("Failed to assign Memory config")
-	}
-}
-
-// TestEncryptionConfigValidation verifies the new backend structure validation works
-func TestEncryptionConfigValidation(t *testing.T) {
-	// This is a structural test to verify the EncryptionConfig has proper backend structure
-	var config ports.EncryptionConfig
-
-	// Test that we can assign AWS KMS backend configuration
-	config.AWSKMS = &ports.AWSKMSConfig{
-		KeyARN: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
-	}
-	if config.AWSKMS == nil || config.AWSKMS.KeyARN == "" {
-		t.Error("Failed to assign AWS KMS backend configuration")
-	}
-
-	// Test that we can assign Memory backend configuration
-	config.AWSKMS = nil
-	config.Memory = &ports.MemoryConfig{
-		RawKey: "${ENCRYPTION_KEK}",
-	}
-	if config.Memory == nil || config.Memory.RawKey != "${ENCRYPTION_KEK}" {
-		t.Error("Failed to assign Memory backend configuration")
-	}
-}
-
-// TestEncryptionConfigFieldTags verifies the struct tags are correct
-func TestEncryptionConfigFieldTags(t *testing.T) {
-	// Verify that the configuration integrates properly at the type level
-	var mainConfig ports.Config
-
-	// Ensure the Encryption field is present and accessible with new backend structure
-	mainConfig.Encryption.AWSKMS = &ports.AWSKMSConfig{
-		KeyARN: "test-value",
-	}
-
-	if mainConfig.Encryption.AWSKMS == nil || mainConfig.Encryption.AWSKMS.KeyARN != "test-value" {
-		t.Error("Encryption AWS KMS backend field not properly accessible in main Config struct")
-	}
-
-	// Test that all expected configuration sections exist
-	// This ensures the EncryptionConfig is properly integrated alongside other configs
-	testConfigs := map[string]interface{}{
-		"Log":              mainConfig.Log,
-		"Server":           mainConfig.Server,
-		"Storage":          mainConfig.Storage,
-		"ThirdPartyOAuth2": mainConfig.ThirdPartyOAuth2,
-		"OAuth2AuthServer": mainConfig.OAuth2AuthServer,
-		"Security":         mainConfig.Security,
-		"Encryption":       mainConfig.Encryption,
-	}
-
-	for name, config := range testConfigs {
-		if config == nil {
-			// Some configs might be zero values, that's okay
-			t.Logf("Config section %s has zero value (this is normal)", name)
-		}
-	}
-}
-
-// TestEncryptionConfigDefaults verifies default values
-func TestEncryptionConfigDefaults(t *testing.T) {
-	var config ports.EncryptionConfig
-
-	// Defaults should be nil (backends must be explicitly configured)
-	if config.AWSKMS != nil {
-		t.Error("Default AWSKMS backend should be nil")
-	}
-	if config.Memory != nil {
-		t.Error("Default Memory backend should be nil")
-	}
-}
-
-// TestEncryptionConfigFieldTypes verifies field types are correct
-func TestEncryptionConfigFieldTypes(t *testing.T) {
-	var config ports.EncryptionConfig
-
-	// Test AWS KMS backend assignment
-	awsKMSConfig := &ports.AWSKMSConfig{
-		KeyARN: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
-	}
-	config.AWSKMS = awsKMSConfig
-	if config.AWSKMS != awsKMSConfig {
-		t.Error("Failed to assign AWS KMS config")
-	}
-
-	// Test Memory backend assignment
-	memoryConfig := &ports.MemoryConfig{
-		RawKey: generateBase64EncodedString(t, 32),
-	}
-	config.Memory = memoryConfig
-	if config.Memory != memoryConfig {
-		t.Error("Failed to assign Memory config")
-	}
-}
 
 // ============================================================================
 // Backend Configuration Tests
@@ -159,6 +36,7 @@ func TestEncryptionConfigBackend_AWSKMSBackend(t *testing.T) {
 			Memory: nil, // Only AWS KMS backend should be set
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
+		TokenRefresh:     validTokenRefreshConfig(),
 	}
 
 	err := Validate(cfg)
@@ -192,6 +70,7 @@ func TestEncryptionConfigBackend_MemoryBackend(t *testing.T) {
 			},
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
+		TokenRefresh:     validTokenRefreshConfig(),
 	}
 
 	err := Validate(cfg)
@@ -227,6 +106,7 @@ func TestEncryptionConfigBackend_BothBackends(t *testing.T) {
 			},
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
+		TokenRefresh:     validTokenRefreshConfig(),
 	}
 
 	err := Validate(cfg)
@@ -259,6 +139,7 @@ func TestEncryptionConfigBackend_NoBackends(t *testing.T) {
 			Memory: nil,
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
+		TokenRefresh:     validTokenRefreshConfig(),
 	}
 
 	err := Validate(cfg)
@@ -367,6 +248,7 @@ func TestEncryptionConfigValidation_AWSKMSValidation(t *testing.T) {
 					Memory: nil,
 				},
 				OAuth2AuthServer: createValidOAuth2Config(),
+				TokenRefresh:     validTokenRefreshConfig(),
 			}
 
 			err := Validate(cfg)
@@ -446,6 +328,7 @@ func TestEncryptionConfigValidation_MemoryValidation(t *testing.T) {
 					Memory: tt.memoryConfig,
 				},
 				OAuth2AuthServer: createValidOAuth2Config(),
+				TokenRefresh:     validTokenRefreshConfig(),
 			}
 
 			err := Validate(cfg)
@@ -469,142 +352,44 @@ func TestEncryptionConfigValidation_MemoryValidation(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// Environment Variable Binding Tests
-// ============================================================================
-
-// TestEncryptionConfig_EnvironmentVariableBinding verifies environment variable binding works
-func TestEncryptionConfig_EnvironmentVariableBinding(t *testing.T) {
-	// This test verifies that the new structure supports environment variable binding
-	// The actual binding is tested in loader tests, but this ensures field names are correct
-
-	// Test AWS KMS environment variables should map to:
-	// ENCRYPTION_AWS_KMS_KEY_ARN -> encryption.aws_kms.key_arn
-	// ENCRYPTION_AWS_KMS_DYNAMODB_TABLE_NAME -> encryption.aws_kms.dynamodb_table_name
-	// ENCRYPTION_AWS_KMS_BRANCH_KEY_TTL -> encryption.aws_kms.branch_key_ttl
-	// ENCRYPTION_AWS_KMS_DYNAMODB_REGION -> encryption.aws_kms.dynamodb_region
-	// ENCRYPTION_AWS_KMS_DYNAMODB_TIMEOUT -> encryption.aws_kms.dynamodb_timeout
-
-	// Test Memory environment variables should map to:
-	// ENCRYPTION_MEMORY_RAW_KEY -> encryption.memory.raw_key
-
-	// Verify struct tags exist and are correctly formatted
-	// This is a compile-time check that ensures mapstructure tags are correct
-	cfg := ports.EncryptionConfig{}
-
-	// These assignments should compile without error, validating struct field existence
-	if cfg.AWSKMS != nil {
-		_ = cfg.AWSKMS.KeyARN
-		_ = cfg.AWSKMS.DynamoDBTableName
-		_ = cfg.AWSKMS.BranchKeyTTL
-		_ = cfg.AWSKMS.DynamoDBRegion
-		_ = cfg.AWSKMS.DynamoDBTimeout
-	}
-
-	if cfg.Memory != nil {
-		_ = cfg.Memory.RawKey
-	}
-
-	// This test passes if compilation succeeds
-	t.Log("Environment variable binding structure validation passed")
-}
-
-// ============================================================================
-// Adapter Factory Tests
-// ============================================================================
-
-// TestEncryptionConfigFactory_AdapterFactory verifies the adapter factory pattern works with new config
 func TestEncryptionConfigFactory_AdapterFactory(t *testing.T) {
-	// Test that NewEncryptionAdapter factory function works with new config structure
-	tests := []struct {
-		name          string
-		config        *ports.EncryptionConfig
-		shouldFail    bool
-		expectedError string
+	t.Run("memory backend encrypts and binds its context", func(t *testing.T) {
+		adapter, manager, err := aws.NewEncryptionAdapter(&ports.EncryptionConfig{
+			Memory: &ports.MemoryConfig{RawKey: generateBase64EncodedString(t, 32)},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, adapter)
+		require.Nil(t, manager)
+		binding := map[string]string{"service_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
+		plain := []byte("private-session-token")
+		ciphertext, err := adapter.Encrypt(context.Background(), plain, binding)
+		require.NoError(t, err)
+		require.NotEqual(t, plain, ciphertext)
+		decrypted, err := adapter.Decrypt(context.Background(), ciphertext, binding)
+		require.NoError(t, err)
+		require.Equal(t, plain, decrypted)
+		_, err = adapter.Decrypt(context.Background(), ciphertext, map[string]string{"service_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"})
+		require.Error(t, err)
+	})
+
+	for _, tc := range []struct {
+		name string
+		cfg  ports.EncryptionConfig
 	}{
-		{
-			name: "aws_kms_backend",
-			config: &ports.EncryptionConfig{
-				AWSKMS: &ports.AWSKMSConfig{
-					KeyARN: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
-				},
-				Memory: nil,
-			},
-			// Note: This test will fail because it tries to access real AWS KMS
-			// In a real environment, this would require valid AWS credentials
-			// For unit tests, we expect this to fail with AWS access error
-			shouldFail:    true,
-			expectedError: "KMS key not accessible",
-		},
-		{
-			name: "memory_backend",
-			config: &ports.EncryptionConfig{
-				AWSKMS: nil,
-				Memory: &ports.MemoryConfig{
-					RawKey: generateBase64EncodedString(t, 32),
-				},
-			},
-			shouldFail: false,
-		},
-		{
-			name: "no_backend_configured",
-			config: &ports.EncryptionConfig{
-				AWSKMS: nil,
-				Memory: nil,
-			},
-			shouldFail:    true,
-			expectedError: "exactly one encryption backend must be configured (aws_kms or memory)",
-		},
-		{
-			name: "both_backends_configured",
-			config: &ports.EncryptionConfig{
-				AWSKMS: &ports.AWSKMSConfig{
-					KeyARN: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
-				},
-				Memory: &ports.MemoryConfig{
-					RawKey: generateBase64EncodedString(t, 32),
-				},
-			},
-			shouldFail:    true,
-			expectedError: "exactly one encryption backend must be configured, not both aws_kms and memory",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// This calls the new factory function from the aws package
-			adapter, manager, err := aws.NewEncryptionAdapter(tt.config)
-
-			if tt.shouldFail {
-				if err == nil {
-					t.Errorf("Test %s: Expected error, got nil", tt.name)
-				}
-				if tt.expectedError != "" && err != nil {
-					// For AWS KMS tests, we check if error contains the expected substring
-					// because AWS errors can have varying details
-					if tt.name == "aws_kms_backend" {
-						if !strings.Contains(err.Error(), tt.expectedError) {
-							t.Errorf("Test %s: Expected error containing '%s', got: %s", tt.name, tt.expectedError, err.Error())
-						}
-					} else {
-						if err.Error() != tt.expectedError {
-							t.Errorf("Test %s: Expected error '%s', got: %s", tt.name, tt.expectedError, err.Error())
-						}
-					}
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Test %s: Expected success, got error: %v", tt.name, err)
-				}
-				if adapter == nil {
-					t.Errorf("Test %s: Expected non-nil adapter", tt.name)
-				}
-				// Note: manager can be nil for base64 memory scenarios (raw AES keyring)
-				// For AWS KMS scenarios, manager should not be nil
-				if tt.name == "aws_kms_backend" && manager == nil {
-					t.Errorf("Test %s: Expected non-nil branch key manager for AWS KMS backend", tt.name)
-				}
-			}
+		{name: "missing backend"},
+		{name: "conflicting backends", cfg: ports.EncryptionConfig{
+			Memory: &ports.MemoryConfig{RawKey: generateBase64EncodedString(t, 32)},
+			AWSKMS: &ports.AWSKMSConfig{KeyARN: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"},
+		}},
+		{name: "invalid AWS TTL fails before KMS access", cfg: ports.EncryptionConfig{
+			AWSKMS: &ports.AWSKMSConfig{KeyARN: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012", BranchKeyTTL: "not-a-duration"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			adapter, manager, err := aws.NewEncryptionAdapter(&tc.cfg)
+			require.Error(t, err)
+			require.Nil(t, adapter)
+			require.Nil(t, manager)
 		})
 	}
 }
@@ -624,6 +409,7 @@ func TestValidateEncryptionConfigMissingBackend(t *testing.T) {
 			Memory: nil,
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
+		TokenRefresh:     validTokenRefreshConfig(),
 	}
 
 	err := Validate(cfg)
@@ -654,6 +440,7 @@ func TestValidateEncryptionConfigValidAWSKMSARN(t *testing.T) {
 			Memory: nil,
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
+		TokenRefresh:     validTokenRefreshConfig(),
 	}
 
 	err := Validate(cfg)
@@ -679,6 +466,7 @@ func TestValidateEncryptionConfigValidMemoryBackend(t *testing.T) {
 			},
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
+		TokenRefresh:     validTokenRefreshConfig(),
 	}
 
 	err := Validate(cfg)
@@ -704,6 +492,7 @@ func TestValidateEncryptionConfigInvalidMemoryKey(t *testing.T) {
 			},
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
+		TokenRefresh:     validTokenRefreshConfig(),
 	}
 
 	err := Validate(cfg)
@@ -732,6 +521,7 @@ func TestValidateEncryptionConfigWrongMemoryKeyLength(t *testing.T) {
 			},
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
+		TokenRefresh:     validTokenRefreshConfig(),
 	}
 
 	err := Validate(cfg)
@@ -757,6 +547,7 @@ func TestValidateEncryptionConfigInvalidAWSKMSARN(t *testing.T) {
 			Memory: nil,
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
+		TokenRefresh:     validTokenRefreshConfig(),
 	}
 
 	err := Validate(cfg)

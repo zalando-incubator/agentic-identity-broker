@@ -3,20 +3,22 @@
 **Branch**: `016-jwt-preauth` | **Date**: 2026-02-27 | **Spec**: [spec.md](specs/016-jwt-preauth/spec.md)
 **Input**: Feature specification from `/specs/016-jwt-preauth/spec.md`
 
+**Security amendment (2026-10-09):** Constitution Principle I supersedes unsigned JWT pre-authentication. Admin and end-user JWT pre-authentication require JWKS signature verification. ADR 031 permits unsigned JWTs only as local-mode OAuth2 impersonation subjects.
+
 ## Summary
 
-Extend the identity broker's pre-authentication layer to accept signed and unsigned JWTs alongside the existing plain-header mode. JWT claims are extracted via configurable CEL expressions to derive the principal identifier and optional profile attributes (display name, email, picture URL). The enriched profile is surfaced through the `/api/me` endpoint and rendered in the consent UI header. Implementation uses `lestrrat-go/jwx/v3` (already a dependency at v3.0.13) for JWT parsing, signature verification, and JWKS caching, and `google/cel-go` (already at v0.27.0) for claim extraction expressions. No new database tables are required; changes are confined to configuration, authentication middleware, the `/api/me` handler, and the consent UI header.
+The identity broker supports signed JWT pre-authentication alongside plain-header mode. It verifies JWTs against JWKS before CEL extracts the principal and optional profile attributes. The `/api/me` endpoint and consent UI use the enriched profile. The JWX v4 adapter and `google/cel-go` implement verification and claim extraction. No database tables change.
 
 ## Technical Context
 
 **Language/Version**: Go 1.23.0+ (backend), TypeScript 5.3+ / React 18.2+ (frontend)  
-**Primary Dependencies**: `lestrrat-go/jwx/v3` v3.0.13 (JWT/JWKS), `google/cel-go` v0.27.0 (CEL expressions), Chi (HTTP router), Viper/Cobra (config), Tailwind CSS v4 / Headless UI (frontend)  
+**Primary Dependencies**: `lestrrat-go/jwx/v4` (JWT verification), `google/cel-go` (claim extraction), Chi (HTTP router), Viper/Cobra (config), Tailwind CSS v4 (frontend)
 **Storage**: N/A — no new persistence entities or migrations; enriched profile is request-scoped  
 **Testing**: Go `testing` + Ginkgo/Gomega (E2E), Go Playwright (frontend E2E), table-driven tests for validation  
 **Target Platform**: Linux server (Docker/Kubernetes), browser SPA  
 **Project Type**: web (Go backend + React SPA frontend)  
 **Performance Goals**: JWT validation < 50ms p95 (per SC-004); JWKS cache refresh handled by `jwx` library background goroutine  
-**Constraints**: Zero clock skew tolerance for JWT expiry; JWKS must be reachable at startup (fail-closed); unsigned JWTs rejected by default  
+**Constraints**: A non-expired `exp` claim and signed JWKS verification are mandatory; the JWKS endpoint must be reachable at startup. Both servers reject `verification: none`.
 **Scale/Scope**: Adds ~6 new Go source files (JWT authenticator, CEL evaluator, config types, middleware integration), ~2 frontend file changes (AppLayout header, TypeScript types), OpenAPI schema update, E2E test file
 
 ## Constitution Check
@@ -32,9 +34,9 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 - [x] **Domain Concepts**: Will new domain terms be added to ARCHITECTURE.md Glossary?
   - New terms: PrincipalProfile, JWTAuthConfig, JWTValidationResult, JWTVerificationMode. Will be added during implementation.
 - [x] **Configuration Design**: Have all config requirements been identified with YAML examples?
-  - Full `authentication.jwt` block designed: `header_name`, `verification`, `jwks_uri`, `expected_audience`, `expected_issuer`, `claim_extraction.*`. Four YAML examples in spec (signed, unsigned, invalid combo, backward-compatible).
+  - `authentication.jwt` contains `header_name`, optional `verification: jwks`, required `jwks_uri`, optional audience/issuer, and CEL claim expressions. The spec shows signed, invalid-unsigned, and plain-header-only configurations.
 - [x] **Config Examples**: Will example YAML snippets be added to examples/config/?
-  - `examples/config/jwt-preauth.yaml` will be created with all three valid configurations (signed, unsigned, header-only).
+  - `examples/config/jwt-preauth.yaml` shows signed JWT and plain-header-only configurations.
 - [x] **API Design First**: Will APIs be designed (OpenAPI spec) and confirmed BEFORE implementation?
   - Only change: additive `email` field on `UserInfo` schema in `/api/enduser/openapi.yaml`. Non-breaking. OpenAPI updated before implementation.
 - [x] **API Documentation**: Will OpenAPI specs be created in `/api/enduser/` or `/api/admin/` as applicable?
@@ -44,7 +46,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 - [x] **Database Design**: Will all schema changes use go-migrate naming in `/migrations/`?
   - N/A — no database changes. Profile enrichment is request-scoped (extracted from JWT per-request, not stored).
 - [x] **E2E Acceptance Tests**: Will E2E tests be written for ALL spec scenarios BEFORE implementation?
-  - Yes. `tests/e2e/jwt_preauth_test.go` will cover 19 backend acceptance scenarios (US1-3, US5, edge cases). US4 (3 frontend scenarios) covered by Go Playwright E2E tests in `tests/e2e/jwt_preauth_test.go` using page objects from `tests/e2e/pages/`.
+  - The active spec has 19 scenarios: six signed, two unsigned-rejection, four profile, three UI, three plain-header, and one invalid-JWT edge scenario.
 - [x] **E2E Test Mapping**: Will each acceptance scenario map 1:1 to one It() block in tests/e2e/?
   - Yes. Each scenario maps to one `It()` with spec reference comment.
 - [x] **E2E Red Phase**: Will E2E tests FAIL initially, proving they test actual functionality?
@@ -53,13 +55,13 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 **Implementation Considerations**:
 
 - [x] **Security-First**: Are security features enabled by default? No bypasses or optional security?
-  - JWT signature verification defaults to `jwks` (signed). Unsigned JWTs require explicit `verification: none`. Fail-closed: invalid JWT → 401. No fallback from invalid JWT to plain header.
+  - JWT signature verification requires JWKS on both servers; an unsigned pre-authentication credential fails closed. ADR 031 applies only to the impersonation subject role.
 - [x] **Architecture Docs**: Will ARCHITECTURE.md be updated if this touches architecture?
   - Yes — Glossary additions for PrincipalProfile, JWTAuthConfig. Configuration subsystem section update to document JWT auth.
 - [ ] **ADRs**: Does this require an ADR in adrs/ for major decisions?
-  - No new ADR needed. Reuses existing patterns: CEL (ADR 009), JWKS adapter (ADR 008), hexagonal architecture. `lestrrat-go/jwx/v3` is already a project dependency for the same purpose (token exchange JWKS).
+  - No new ADR was required for signed pre-authentication. The later ADR 031 exception applies only to impersonation subjects.
 - [x] **Library-First Security**: Are we using vetted libraries for crypto/security (no custom implementations)?
-  - `lestrrat-go/jwx/v3` (already in go.mod at v3.0.13) for JWT parsing, signature verification, JWKS cache. `google/cel-go` (already at v0.27.0) for CEL evaluation. No custom crypto.
+  - `lestrrat-go/jwx/v4` verifies JWTs against JWKS; `google/cel-go` evaluates claim expressions. No custom crypto.
 - [x] **Zalando Guidelines**: Will APIs follow Zalando RESTful API and Event Guidelines?
   - Additive field on existing `UserInfo` response. Follows existing `{"data": ...}` envelope pattern.
 - [x] **End-User Docs**: Will API documentation be rendered in `docs/api/` with examples?
@@ -108,7 +110,7 @@ internal/
 │   └── profile.go                         # PrincipalProfile value object (enriches existing principal package)
 ├── adapters/
 │   ├── jwtauth/                           # NEW — JWT authentication adapter
-│   │   └── jwx_authenticator.go           # lestrrat-go/jwx v3 implementation
+│   │   └── jwx_authenticator.go           # lestrrat-go/jwx v4 implementation
 │   └── http/
 │       ├── middleware/
 │       │   └── principal_middleware.go     # MODIFY — add JWT authentication path
@@ -139,7 +141,7 @@ examples/config/
 
 # E2E Tests
 tests/e2e/
-├── jwt_preauth_test.go                    # NEW — E2E tests (19 backend scenarios)
+├── jwt_preauth_test.go                    # JWT pre-authentication E2E scenarios
 ├── fixtures/
 │   └── jwt_config.go                      # NEW — JWT test configuration fixtures
 └── helpers/
@@ -163,7 +165,7 @@ tests/e2e/
 
 **Test Organization**:
 - **Top-level Describe**: "JWT Pre-Authentication"
-- **Nested Describe**: Per User Story ("Signed JWT Authentication", "Unsigned JWT Authentication", etc.)
+- **Nested Describe**: Per User Story ("Signed JWT Authentication", "Unsigned JWT Rejection", etc.)
 - **Context blocks**: Preconditions ("when JWT is valid", "when JWT has expired", etc.)
 - **It blocks**: Individual acceptance scenarios (one per scenario from spec.md)
 
@@ -177,11 +179,8 @@ tests/e2e/
 | US1 Scenario 4 | `jwt_preauth_test.go` | `It("should reject request without JWT header on protected route with 401")` |
 | US1 Scenario 5 | `jwt_preauth_test.go` | `It("should reject JWT with wrong audience with 401")` |
 | US1 Scenario 6 | `jwt_preauth_test.go` | `It("should reject JWT with wrong issuer with 401")` |
-| US2 Scenario 1 | `jwt_preauth_test.go` | `It("should accept unsigned JWT when verification is none")` |
-| US2 Scenario 2 | `jwt_preauth_test.go` | `It("should reject unsigned JWT when verification is jwks")` |
-| US2 Scenario 3 | `jwt_preauth_test.go` | `It("should accept signed JWT without checking signature when verification is none")` |
-| US2 Scenario 4 | `jwt_preauth_test.go` | `It("should reject expired JWT even when verification is none")` |
-| US2 Scenario 5 | `jwt_preauth_test.go` | `It("should fail startup when verification none and jwks_uri both present")` |
+| US2 Scenario 1 | `jwt_preauth_test.go` | `It("should reject unsigned JWT when verification is jwks")` |
+| US2 Scenario 2 | `jwt_preauth_test.go` | `It("should reject unsigned end-user JWT configuration at startup")` |
 | US3 Scenario 1 | `jwt_preauth_test.go` | `It("should return display name, email, and picture URL from JWT claims in /api/me")` |
 | US3 Scenario 2 | `jwt_preauth_test.go` | `It("should omit missing profile attributes from /api/me response")` |
 | US3 Scenario 3 | `jwt_preauth_test.go` | `It("should derive display name from principal when no display name expression configured")` |
@@ -203,7 +202,7 @@ tests/e2e/
 - New helper: `tests/e2e/helpers/jwt_helpers.go` (JWT creation, signing, JWKS server mock)
 
 **Test Execution Flow**:
-1. **Phase 2f (Design)**: Write E2E tests for all 22 spec scenarios (US4 frontend scenarios use Go Playwright page objects)
+1. **Phase 2f (Design)**: Write E2E tests for the active spec scenarios, including unsigned rejection.
 2. **Verify Red Phase**: `ginkgo -v ./tests/e2e/ --focus="JWT Pre-Authentication"` — all tests FAIL
 3. **Implementation**: Implement feature incrementally (config → domain → adapter → middleware → handler → frontend)
 4. **Verify Green Phase**: E2E tests turn GREEN as implementation satisfies acceptance criteria
@@ -213,13 +212,13 @@ tests/e2e/
 - Tests use production bootstrap via `tests/e2e/bootstrap/` (`app.Builder`, HTTP server, routing)
 - Fresh server and storage for each test (`BeforeEach`/`AfterEach` isolation)
 - Mock JWKS server via `httptest.NewServer` serving a test JWK set (reuse pattern from `helpers/mock_upstream.go`)
-- JWT config variations per test context (signed, unsigned, with/without profile extraction)
+- JWT config variations per test context (signed JWKS, invalid-unsigned startup, with/without profile extraction)
 
 **Helper Utilities**:
 - Custom matchers needed: none — existing HTTP response matchers sufficient
 - HTTP helpers: extend existing `helpers/http_helpers.go` with JWT header injection
 - Mock services: `helpers/mock_jwks_server.go` — serves test JWKS endpoint; reuses pattern from `helpers/mock_upstream.go`
-- JWT builders: `helpers/jwt_helpers.go` — create signed/unsigned test JWTs with configurable claims
+- JWT builders: `helpers/jwt_helpers.go` — create signed test JWTs and unsigned JWTs for rejection tests
 
 ### Unit & Integration Tests
 
@@ -228,7 +227,7 @@ tests/e2e/
 - `internal/domain/jwtauth/principal_profile_test.go` — PrincipalProfile construction and defaults
 - `internal/adapters/jwtauth/jwx_authenticator_test.go` — JWT parsing, signature verification, claim extraction
 - `internal/adapters/http/middleware/principal_middleware_test.go` — JWT path integration with existing middleware
-- `internal/config/schema_test.go` — JWT config validation (mutual exclusivity, required fields)
+- `internal/config/validator_test.go` — JWKS-only validation, required URI, and defaults
 - Strategy: TDD — write tests FIRST, verify they FAIL, then implement
 
 **Integration Tests**:
@@ -237,7 +236,7 @@ tests/e2e/
 
 **Test Coverage Goals**:
 - Unit test coverage: All domain logic (CEL evaluator, profile construction, config validation)
-- E2E test coverage: 100% of acceptance scenarios (22 scenarios in Go E2E tests: 19 API + 3 Playwright frontend, mandatory per Principle XIII)
+- E2E test coverage: the active signed, rejection, profile, UI, and plain-header scenarios map to the spec
 - Frontend test coverage: Header component rendering with all profile attribute combinations (Go Playwright E2E)
 
 ## Complexity Tracking
@@ -245,14 +244,14 @@ tests/e2e/
 > No Constitution Check violations. All preconditions pass without exceptions.
 > 
 > **Post-Design Re-evaluation (Phase 1 complete)**:
-> - Principle I (Security-First): ✅ JWT verification defaults to `jwks`, unsigned requires explicit opt-in, fail-closed on all failures
-> - Principle III (Library-First): ✅ `lestrrat-go/jwx/v3` + `google/cel-go` — no custom crypto
+> - Principle I (Security-First): JWT verification requires JWKS on both servers. The original unsigned opt-in is superseded by Principle I; ADR 031 applies only to impersonation subjects.
+> - Principle III (Library-First): `lestrrat-go/jwx/v4` and `google/cel-go` implement JWT verification and claim extraction.
 > - Principle IV/X (API-First): ✅ Single additive field (`email`) on `UserInfo` — non-breaking, documented in contracts/
 > - Principle V (Domain Model): ✅ `PrincipalProfile`, `AuthResult`, `JWTConfig` documented in data-model.md
 > - Principle VI (Hexagonal): ✅ `JWTAuthenticator` port interface with jwx adapter
-> - Principle VII (Configuration): ✅ Full `authentication.jwt` block with validation, YAML examples, mutual exclusivity
+> - Principle VII (Configuration): `authentication.jwt` requires signed JWKS verification and a JWKS URI.
 > - Principle IX (Persistence): ✅ N/A — no database changes
 > - Principle XI (Design System): ✅ Uses existing Avatar primitive, semantic tokens
 > - Principle XII (Builder/DI): ✅ JWT authenticator created in `Build()`, passed via routing config
-> - Principle XIII (E2E Tests): ✅ 22 scenarios mapped 1:1 to spec acceptance criteria (all in Go E2E: 19 API + 3 Playwright frontend)
+> - Principle XIII (E2E Tests): 19 active scenarios remain after removal of unsigned acceptance (16 API + 3 frontend).
 | [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |

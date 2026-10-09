@@ -3,6 +3,8 @@
 **Feature**: 016-jwt-preauth  
 **Date**: 2026-02-27
 
+**Security amendment (2026-10-09):** Constitution Principle I supersedes unsigned JWT pre-authentication. Both server instances require JWKS signature verification. ADR 031 permits an unsigned JWT only as a local-mode OAuth2 impersonation subject.
+
 ---
 
 ## Overview
@@ -84,13 +86,13 @@ profile := principal.NewProfile(principalValue)
 | Field | Type | Required | Default | Validation |
 |-------|------|----------|---------|------------|
 | `HeaderName` | `string` | No | `"Authorization"` | Min 1 char |
-| `Verification` | `string` | No | `"jwks"` | Must be `"jwks"` or `"none"` |
-| `JWKSURI` | `string` | Conditional | — | Required when `Verification` is `"jwks"`. Must be valid URL. Forbidden when `Verification` is `"none"`. |
+| `Verification` | `string` | No | `"jwks"` | Only `"jwks"` is permitted |
+| `JWKSURI` | `string` | Yes | — | Required for JWT pre-authentication. Must be a valid URL. |
 | `ExpectedAudience` | `string` | No | — | If set, JWT `aud` must contain this value |
 | `ExpectedIssuer` | `string` | No | — | If set, JWT `iss` must match |
 | `ClaimExtraction` | `JWTClaimExtractionConfig` | No | See below | CEL expressions for claim extraction |
 
-**Mutual Exclusivity**: `Verification: "none"` + `JWKSURI` present → startup error (FR-003a).
+**Startup rule**: Either server rejects `Verification: "none"` with or without a JWKS URI. JWT pre-authentication requires a JWKS URI.
 
 ```go
 type JWTConfig struct {
@@ -190,7 +192,7 @@ type JWTAuthenticator interface {
 }
 ```
 
-**Adapter**: `internal/adapters/jwtauth/jwx_authenticator.go` — implements `JWTAuthenticator` using `lestrrat-go/jwx/v3`.
+**Adapter**: `internal/adapters/jwtauth/jwx_authenticator.go` implements `JWTAuthenticator` using `lestrrat-go/jwx/v4` and `jwkfetch/v4`.
 
 ---
 
@@ -290,7 +292,7 @@ Not persisted — emitted as structured log entries per FR-020/SR-005.
 | Term | Definition |
 |------|-----------|
 | **PrincipalProfile** | Enriched user identity value object containing principal identifier, display name, email, and picture URL. Extracted from pre-authentication source (JWT or plain header). Request-scoped, immutable. Stored in request context via `principal.WithProfile()`. |
-| **JWTAuthConfig** | Configuration value object defining JWT-based pre-authentication behavior: HTTP header name, verification mode (`jwks` or `none`), JWKS endpoint, audience/issuer constraints, and CEL claim extraction expressions. Validated at startup with mutual exclusivity rules. |
-| **JWTAuthenticator** | Port interface for JWT authentication in the pre-auth layer. Abstracts JWT parsing, signature verification (JWKS or none), temporal validation, and CEL-based claim extraction. Implemented by jwx adapter. |
-| **JWTVerificationMode** | String enum (`"jwks"` or `"none"`) controlling JWT signature verification behavior. `"jwks"` (default) requires JWKS URI and validates signatures. `"none"` accepts unsigned JWTs for trusted upstream environments (service mesh). |
+| **JWTAuthConfig** | Configuration value object for signed JWT pre-authentication. It defines the header name, JWKS endpoint, audience/issuer checks, and CEL claim expressions. Both servers require JWKS verification. |
+| **JWTAuthenticator** | Port interface for signed JWT pre-authentication. It abstracts JWKS signature verification, temporal validation, and CEL claim extraction. The jwx adapter implements it. |
+| **JWTVerificationMode** | The only permitted value is `"jwks"`. The broker requires a JWKS URI and verifies signatures on both servers. |
 | **JWTValidationFailed** | Domain event emitted when JWT pre-authentication fails. Contains failure reason, header name, and remote address. Logged as structured audit data for security monitoring (SR-005). |

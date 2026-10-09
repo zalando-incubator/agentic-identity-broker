@@ -14,6 +14,8 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/migrationguard"
 )
 
 type PostgresFixture struct {
@@ -96,6 +98,9 @@ func (f *PostgresFixture) initialize(ctx context.Context) error {
 		return fmt.Errorf("locate E2E bootstrap source")
 	}
 	migrationsDir := filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "migrations")
+	if err := migrationguard.Validate(migrationsDir, f.ConnectionURL); err != nil {
+		return fmt.Errorf("E2E migration preflight failed: %w", err)
+	}
 	migrationRunner, err := migrate.New("file://"+migrationsDir, f.ConnectionURL)
 	if err != nil {
 		return err

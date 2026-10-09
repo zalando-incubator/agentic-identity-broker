@@ -13,6 +13,7 @@ import (
 	domjwtauth "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -462,6 +463,52 @@ func TestOptionalPrincipalMiddleware_NoRejection(t *testing.T) {
 
 			// Should always return 200 OK
 			assert.Equal(t, http.StatusOK, rr.Code, "optional middleware should never reject requests")
+		})
+	}
+}
+
+func TestOptionalPrincipalMiddleware_JWTConfiguredWithoutAuthenticatorDoesNotTrustPreauthHeader(t *testing.T) {
+	tests := []struct {
+		name              string
+		jwt               *ports.JWTConfig
+		wantPrincipal     string
+		wantAuthenticated bool
+	}{
+		{
+			name: "JWT configured without authenticator ignores forged preauth header",
+			jwt:  &ports.JWTConfig{HeaderName: "Authorization"},
+		},
+		{
+			name:              "header-only mode accepts configured preauth header",
+			wantPrincipal:     "forged-operator",
+			wantAuthenticated: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authConfig := testAuthConfig("X-Remote-User")
+			authConfig.JWT = tt.jwt
+
+			var gotPrincipal string
+			var hasPrincipal, hasProfile bool
+			router := chi.NewRouter()
+			router.Use(OptionalPrincipalMiddleware(authConfig, nil, createTestLogger()))
+			router.Post("/api/sessions/sweep", func(w http.ResponseWriter, r *http.Request) {
+				gotPrincipal, hasPrincipal = principal.FromContext(r.Context())
+				_, hasProfile = principal.ProfileFromContext(r.Context())
+				w.WriteHeader(http.StatusOK)
+			})
+
+			req := httptest.NewRequest(http.MethodPost, "/api/sessions/sweep", nil)
+			req.Header.Set("X-Remote-User", "forged-operator")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+			assert.Equal(t, tt.wantAuthenticated, hasPrincipal)
+			assert.Equal(t, tt.wantPrincipal, gotPrincipal)
+			assert.Equal(t, tt.wantAuthenticated, hasProfile)
 		})
 	}
 }

@@ -53,6 +53,19 @@ build-linux-amd64:
     GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/linux/amd64/{{NAME}} ./cmd/{{NAME}}
     @echo "✓ Built: bin/linux/amd64/{{NAME}}"
 
+# Build the static migration guard for both migration image architectures
+migration-guard-build-linux-arm64:
+    @echo "Building migration guard Linux binary for arm64..."
+    @mkdir -p bin/linux/arm64
+    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/linux/arm64/migration-guard ./cmd/migration-guard
+    @echo "✓ Built: bin/linux/arm64/migration-guard"
+
+migration-guard-build-linux-amd64:
+    @echo "Building migration guard Linux binary for amd64..."
+    @mkdir -p bin/linux/amd64
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="{{LDFLAGS}}" -o bin/linux/amd64/migration-guard ./cmd/migration-guard
+    @echo "✓ Built: bin/linux/amd64/migration-guard"
+
 # Build macOS binary for arm64 (Apple Silicon)
 build-darwin-arm64:
     @echo "Building macOS binary for arm64..."
@@ -623,7 +636,7 @@ build-all: build web-build
 
 # Create and push multi-architecture Docker images to registry.
 # Builds broker, migrate, and extproc images for linux/amd64 and linux/arm64.
-docker-push: build-linux-amd64 build-linux-arm64 extproc-build-linux-amd64 extproc-build-linux-arm64 web-build
+docker-push: build-linux-amd64 build-linux-arm64 migration-guard-build-linux-amd64 migration-guard-build-linux-arm64 extproc-build-linux-amd64 extproc-build-linux-arm64 web-build
     docker buildx build --rm -t "{{IMAGE_NAME}}:{{VERSION}}" --build-arg BASE_IMAGE="{{BASE_IMAGE}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file build/docker/Dockerfile --push .
     docker buildx build --rm -t "{{IMAGE_NAME}}-migrate:{{VERSION}}" --build-arg BASE_IMAGE="{{BASE_IMAGE}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file build/docker/Dockerfile.migrate --push .
     docker buildx build --rm -t "{{IMAGE_NAME}}-extproc:{{VERSION}}" --build-arg BASE_IMAGE="{{BASE_IMAGE}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file build/docker/Dockerfile.extproc --push .
@@ -640,7 +653,7 @@ docker-promote:
     cdp-promote-image {{IMAGE_NAME}}-extproc:{{VERSION}}
 
 # Build multi-architecture migrate Docker image (validates both platforms, no output).
-docker-build-migrate:
+docker-build-migrate: migration-guard-build-linux-amd64 migration-guard-build-linux-arm64
     @echo "Building migrate image: {{IMAGE_NAME}}-migrate:{{VERSION}}..."
     docker buildx build --rm -t "{{IMAGE_NAME}}-migrate:{{VERSION}}" --build-arg BASE_IMAGE="{{BASE_IMAGE}}" --build-arg VERSION="{{VERSION}}" --build-arg REVISION="{{REVISION}}" --build-arg CREATED="{{CREATED}}" --platform linux/amd64,linux/arm64 --file build/docker/Dockerfile.migrate .
     @echo "✓ Migrate image validated: {{IMAGE_NAME}}-migrate:{{VERSION}}"

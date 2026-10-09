@@ -70,6 +70,7 @@ type MockUpstreamOAuth2Server struct {
 	errorDescription        string
 	responseDelay           time.Duration
 	blockTokenUntilCanceled bool
+	tokenResponseGate       chan struct{}
 	accessToken             string
 	refreshToken            string
 	tokenType               string
@@ -196,6 +197,28 @@ func (m *MockUpstreamOAuth2Server) WithTokenHangUntilCanceled() *MockUpstreamOAu
 	m.blockTokenUntilCanceled = true
 	m.responseDelay = 0
 	return m
+}
+
+// WithTokenResponseGate blocks token responses until release is called or the
+// request is canceled. Requests are captured before they wait. Release is safe
+// to call more than once; a later gate can be installed independently.
+func (m *MockUpstreamOAuth2Server) WithTokenResponseGate() (release func()) {
+	gate := make(chan struct{})
+	m.requestMutex.Lock()
+	m.tokenResponseGate = gate
+	m.requestMutex.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.requestMutex.Lock()
+			defer m.requestMutex.Unlock()
+			close(gate)
+			if m.tokenResponseGate == gate {
+				m.tokenResponseGate = nil
+			}
+		})
+	}
 }
 
 // WithStrictPublicClientMode makes the token endpoint reject client credentials
@@ -409,7 +432,15 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 		Body:   body,
 	})
 	m.tokenCalled = true
+	gate := m.tokenResponseGate
 	m.requestMutex.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-r.Context().Done():
+			return
+		}
+	}
 
 	if status, errorCode := m.strictPublicClientTokenError(r); errorCode != "" {
 		w.Header().Set("Content-Type", "application/json")

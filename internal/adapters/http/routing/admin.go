@@ -99,6 +99,8 @@ func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig) 
 			})
 		}
 
+		r.Post("/sessions/sweep", h.SessionSweep.Sweep)
+
 		// Signing key management routes
 		if h.SigningKeys != nil {
 			r.Route("/oauth2-server/signing-keys", func(r chi.Router) {

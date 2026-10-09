@@ -17,6 +17,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/postgres"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/migrationguard"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	testbootstrap "github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 	"github.com/golang-migrate/migrate/v4"
@@ -738,6 +739,7 @@ func newProjectMigrationRunner(t *testing.T, connStr string) *migrate.Migrate {
 	require.NoError(t, err)
 	migrationsDir, err := filepath.Abs(filepath.Join(projectRoot, "migrations"))
 	require.NoError(t, err)
+	require.NoError(t, migrationguard.Validate(migrationsDir, connStr), "migration preflight failed")
 	migrationRunner, err := migrate.New("file://"+migrationsDir, connStr)
 	require.NoError(t, err)
 	return migrationRunner

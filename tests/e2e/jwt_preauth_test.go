@@ -205,137 +205,9 @@ var _ = Describe("JWT Pre-Authentication", func() {
 	})
 
 	// ============================================================================
-	// User Story 2: Accept Unsigned (Pre-Authenticated) JWTs (Priority: P2)
+	// User Story 2: Reject Unsigned JWTs
 	// ============================================================================
-	Describe("Unsigned JWT Authentication (US2)", func() {
-
-		Context("when verification is none", func() {
-			BeforeEach(func() {
-				logger = slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{
-					Level: slog.LevelDebug,
-				}))
-
-				mockUpstream = helpers.NewMockUpstreamOAuth2Server()
-
-				config = fixtures.UnsignedJWTConfig()
-				config.OAuth2AuthServer.Proxy.UpstreamIssuerURI = mockUpstream.URL()
-				config.OAuth2AuthServer.Proxy.UpstreamAuthorizeEndpoint = mockUpstream.URL() + "/oauth/authorize"
-				config.OAuth2AuthServer.Proxy.UpstreamTokenEndpoint = mockUpstream.URL() + "/oauth/token"
-
-				storageFactory = bootstrap.NewStorageFactory(logger)
-				var err error
-				testStorage, err = storageFactory.NewTestStorage()
-				Expect(err).NotTo(HaveOccurred())
-
-				serverFactory = bootstrap.NewServerFactory(config, logger)
-				app, err := serverFactory.BuildApp(testStorage)
-				Expect(err).NotTo(HaveOccurred())
-
-				enduserServer, err = bootstrap.NewEndUserTestServer(app, logger)
-				Expect(err).NotTo(HaveOccurred())
-
-				principal = fixtures.DefaultPrincipal().String()
-			})
-
-			AfterEach(func() {
-				if enduserServer != nil {
-					enduserServer.Close()
-				}
-				if mockUpstream != nil {
-					mockUpstream.Close()
-				}
-				if storageFactory != nil && testStorage != nil {
-					_ = storageFactory.CloseStorage(testStorage)
-				}
-			})
-
-			// Scenario 2.1 from specs/016-jwt-preauth/spec.md (User Story 2)
-			It("should accept unsigned JWT when verification is none", func() {
-				claims := helpers.NewJWTClaims().
-					WithSubject(principal).
-					WithClaim("preferred_username", "testuser").
-					WithEmail("user@example.com").
-					Build()
-
-				unsignedJWT, err := helpers.CreateUnsignedJWT(claims)
-				Expect(err).NotTo(HaveOccurred())
-
-				resp, err := enduserServer.DirectRequest("GET", "/api/me", "", map[string]string{
-					"X-JWT-Claims": unsignedJWT,
-				}, nil)
-				Expect(err).NotTo(HaveOccurred())
-				defer func() { _ = resp.Body.Close() }()
-
-				Expect(resp.StatusCode).To(Equal(http.StatusOK))
-
-				body, err := io.ReadAll(resp.Body)
-				Expect(err).NotTo(HaveOccurred())
-
-				var apiResp jwtPreauthAPIResponse
-				err = json.Unmarshal(body, &apiResp)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(apiResp.Data.Principal).To(Equal(principal))
-			})
-
-			// Scenario 2.3 from specs/016-jwt-preauth/spec.md (User Story 2)
-			It("should accept signed JWT without checking signature when verification is none", func() {
-				claims := helpers.NewJWTClaims().
-					WithSubject(principal).
-					Build()
-
-				privateKey, _, err := helpers.GenerateTestRSAKeyPair()
-				Expect(err).NotTo(HaveOccurred())
-
-				signedJWT, err := helpers.SignTestJWT(claims, privateKey)
-				Expect(err).NotTo(HaveOccurred())
-
-				resp, err := enduserServer.DirectRequest("GET", "/api/me", "", map[string]string{
-					"X-JWT-Claims": signedJWT,
-				}, nil)
-				Expect(err).NotTo(HaveOccurred())
-				defer func() { _ = resp.Body.Close() }()
-
-				Expect(resp.StatusCode).To(Equal(http.StatusOK))
-			})
-
-			// Scenario: JWT without exp accepted when verification is none
-			It("should accept JWT without exp claim when verification is none", func() {
-				claims := helpers.NewJWTClaims().
-					WithSubject(principal).
-					WithoutExpiry().
-					Build()
-
-				tokenWithoutExp, err := helpers.CreateUnsignedJWT(claims)
-				Expect(err).NotTo(HaveOccurred())
-
-				resp, err := enduserServer.DirectRequest("GET", "/api/me", "", map[string]string{
-					"X-JWT-Claims": tokenWithoutExp,
-				}, nil)
-				Expect(err).NotTo(HaveOccurred())
-				defer func() { _ = resp.Body.Close() }()
-
-				Expect(resp.StatusCode).To(Equal(http.StatusOK))
-			})
-
-			// Scenario 2.4 from specs/016-jwt-preauth/spec.md (User Story 2)
-			It("should reject expired JWT even when verification is none", func() {
-				claims := helpers.NewJWTClaims().
-					WithSubject(principal).
-					WithExpired().
-					Build()
-
-				expiredJWT, err := helpers.CreateUnsignedJWT(claims)
-				Expect(err).NotTo(HaveOccurred())
-
-				resp, err := enduserServer.DirectRequest("GET", "/api/me", "", map[string]string{
-					"X-JWT-Claims": expiredJWT,
-				}, nil)
-				Expect(err).NotTo(HaveOccurred())
-				defer func() { _ = resp.Body.Close() }()
-
-				Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
-			})
-		})
+	Describe("Unsigned JWT Rejection (US2)", func() {
 
 		Context("when verification is jwks (default)", func() {
 			BeforeEach(func() {
@@ -381,7 +253,7 @@ var _ = Describe("JWT Pre-Authentication", func() {
 				}
 			})
 
-			// Scenario 2.2 from specs/016-jwt-preauth/spec.md (User Story 2)
+			// Scenario 2.1 from specs/016-jwt-preauth/spec.md (User Story 2)
 			It("should reject unsigned JWT when verification is jwks", func() {
 				claims := helpers.NewJWTClaims().
 					WithSubject(principal).
@@ -400,31 +272,29 @@ var _ = Describe("JWT Pre-Authentication", func() {
 			})
 		})
 
-		Context("when verification none and jwks_uri both present", func() {
-			// Scenario 2.5 from specs/016-jwt-preauth/spec.md (User Story 2)
-			It("should fail startup when verification none and jwks_uri both present", func() {
-				logger = slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{
-					Level: slog.LevelDebug,
-				}))
-
-				mockUpstream = helpers.NewMockUpstreamOAuth2Server()
-				defer mockUpstream.Close()
-
-				invalidConfig := fixtures.MutuallyExclusiveJWTConfig("http://localhost:9999/.well-known/jwks.json")
-				invalidConfig.Security.SkipThirdpartyHTTPSValidation = true
-				invalidConfig.OAuth2AuthServer.Proxy.UpstreamIssuerURI = mockUpstream.URL()
-				invalidConfig.OAuth2AuthServer.Proxy.UpstreamAuthorizeEndpoint = mockUpstream.URL() + "/oauth/authorize"
-				invalidConfig.OAuth2AuthServer.Proxy.UpstreamTokenEndpoint = mockUpstream.URL() + "/oauth/token"
-
+		Context("when verification is none", func() {
+			BeforeEach(func() {
+				logger = bootstrap.TestLogger(slog.LevelDebug)
+				config = fixtures.NoJWTConfig()
+				config.Server.EndUser.Authentication.JWT = &ports.JWTConfig{Verification: "none"}
 				storageFactory = bootstrap.NewStorageFactory(logger)
-				testStorage, err := storageFactory.NewTestStorage()
+				var err error
+				testStorage, err = storageFactory.NewTestStorage()
 				Expect(err).NotTo(HaveOccurred())
-				defer func() { _ = storageFactory.CloseStorage(testStorage) }()
+				serverFactory = bootstrap.NewServerFactory(config, logger)
+			})
 
-				serverFactory = bootstrap.NewServerFactory(invalidConfig, logger)
-				_, err = serverFactory.BuildApp(testStorage)
+			AfterEach(func() {
+				if testStorage != nil {
+					_ = storageFactory.CloseStorage(testStorage)
+				}
+			})
 
-				Expect(err).To(HaveOccurred(), "Expected startup to fail with mutually exclusive JWT config")
+			// Scenario 2.2 from specs/016-jwt-preauth/spec.md (User Story 2)
+			It("should reject unsigned end-user JWT configuration at startup", func() {
+				_, err := serverFactory.BuildApp(testStorage)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("JWKS signature verification"))
 			})
 		})
 	})
