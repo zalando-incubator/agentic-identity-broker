@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2075,14 +2076,16 @@ func TestServer_OPA_BodyPhase_RequestTooLarge_DeniesWithoutAuthorizerCall(t *tes
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "request_too_large")
 }
 
-// Spec: A batch where every element is allowed must evaluate each element and echo the full body.
-func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
+// Spec: An allowed batch forwards the decoded values while policy sees each raw element body.
+func TestServer_OPA_BatchBodyPhase_Allow_ForwardsCanonicalBody(t *testing.T) {
 	var seenToolNames, seenElementBodies []string
+	var seenParsedBodies []any
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
 			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "batch element must expose parsed MCP input")
 			seenToolNames = append(seenToolNames, mcp["tool_name"].(string))
+			seenParsedBodies = append(seenParsedBodies, input["parsed_body"])
 			attributes := input["attributes"].(map[string]any)
 			request := attributes["request"].(map[string]any)
 			http := request["http"].(map[string]any)
@@ -2107,12 +2110,124 @@ func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
 
 	require.NotNil(t, bodyResp)
 	requestBodyResp, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
-	require.True(t, ok, "allowed batch must echo a RequestBody response")
+	require.True(t, ok, "allowed batch must return a RequestBody response")
 	streamed, ok := requestBodyResp.RequestBody.Response.BodyMutation.Mutation.(*extprocv3.BodyMutation_StreamedResponse)
-	require.True(t, ok, "allowed batch must use streamed body echo")
-	assert.Equal(t, batch, streamed.StreamedResponse.Body)
+	require.True(t, ok, "allowed batch must stream the canonical body")
+	var forwarded []any
+	decoder := json.NewDecoder(bytes.NewReader(streamed.StreamedResponse.Body))
+	decoder.UseNumber()
+	require.NoError(t, decoder.Decode(&forwarded))
+	assert.Equal(t, seenParsedBodies, forwarded)
+	require.Len(t, forwarded, 2)
+	assert.Equal(t, json.Number("9007199254740993"), forwarded[1].(map[string]any)["id"])
+	assert.NotEqual(t, batch, streamed.StreamedResponse.Body, "MCP forwarding must serialize the authorized values, not echo raw bytes")
+	assert.True(t, streamed.StreamedResponse.EndOfStream)
 	assert.Equal(t, []string{"list_files", "read_config"}, seenToolNames)
 	assert.Equal(t, []string{first, second}, seenElementBodies)
+}
+
+func TestServer_OPA_AllowedMCPBodyPreservesNumericLexemes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"standalone", `{"jsonrpc":"2.0","method":"tools/call","id":9007199254740993,"params":{"name":"deploy","arguments":{"count":9007199254740993}}}`},
+		{"batch", `[{"jsonrpc":"2.0","method":"tools/call","id":9007199254740993,"params":{"name":"deploy","arguments":{"count":9007199254740993}}}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var policyBodies []any
+			auth := &mockAuthorizer{evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
+				mcpInput, ok := input["mcp"].(map[string]any)
+				require.True(t, ok, "policy must receive the decoded MCP map")
+				assert.Equal(t, json.Number("9007199254740993"), mcpInput["id"])
+				assert.Equal(t, json.Number("9007199254740993"), mcpInput["arguments"].(map[string]any)["count"])
+				policyBodies = append(policyBodies, input["parsed_body"])
+				return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
+			}}
+			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{Token: "exchanged-token"}, nil
+			}}
+			client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
+			defer cleanup()
+
+			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, []byte(tc.body))
+			streamed := bodyResp.GetRequestBody().GetResponse().GetBodyMutation().GetStreamedResponse()
+			require.NotNil(t, streamed)
+			var forwarded any
+			decoder := json.NewDecoder(bytes.NewReader(streamed.Body))
+			decoder.UseNumber()
+			require.NoError(t, decoder.Decode(&forwarded))
+			require.Len(t, policyBodies, 1)
+			if tc.name == "batch" {
+				assert.Equal(t, policyBodies, forwarded)
+			} else {
+				assert.Equal(t, policyBodies[0], forwarded)
+			}
+			assert.Equal(t, 2, bytes.Count(streamed.Body, []byte("9007199254740993")))
+			assert.NotContains(t, string(streamed.Body), "9007199254740992")
+		})
+	}
+}
+
+func TestServer_OPA_RejectsExpandedMCPBody(t *testing.T) {
+	element := `{"jsonrpc":"2.0","method":"initialize","params":{"text":"` + strings.Repeat("\u2028", 30) + `"}}`
+	for _, tc := range []struct {
+		name    string
+		body    string
+		element string
+	}{
+		{"standalone", element, ""},
+		{"batch", "[" + element + "]", ""},
+		{"aggregate batch", "[" + element + "," + element + "]", element},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testConfig()
+			cfg.Authorization.MaxBodySize = len(tc.body) + 1
+			auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+				return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
+			}}
+			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{Token: "exchanged-token"}, nil
+			}}
+			client, cleanup := startTestServerWithAuthorizerConfig(t, cfg, exchanger, auth)
+			defer cleanup()
+
+			if tc.element != "" {
+				_, single := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, []byte(tc.element))
+				streamed := single.GetRequestBody().GetResponse().GetBodyMutation().GetStreamedResponse()
+				require.NotNil(t, streamed, "each serialized element must fit the cap")
+				require.LessOrEqual(t, len(streamed.Body), cfg.Authorization.MaxBodySize)
+				require.Greater(t, 2*len(streamed.Body)+3, cfg.Authorization.MaxBodySize, "the complete serialized array must exceed the cap")
+			}
+
+			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, []byte(tc.body))
+			immediate := bodyResp.GetImmediateResponse()
+			require.NotNil(t, immediate, "expanded body must not be forwarded")
+			assert.Equal(t, httpv3.StatusCode_Forbidden, immediate.Status.Code)
+			assert.Contains(t, string(immediate.Body), "request_too_large")
+		})
+	}
+}
+
+func TestServer_OPA_AllowsHTMLAtBodyLimitWithoutEscaping(t *testing.T) {
+	body := []byte(`{"jsonrpc":"2.0","method":"initialize","params":{"text":"` + strings.Repeat("<", 40) + `"}}`)
+	cfg := testConfig()
+	cfg.Authorization.MaxBodySize = len(body)
+	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+		return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
+	}}
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		return server.ExchangeResult{Token: "exchanged-token"}, nil
+	}}
+	client, cleanup := startTestServerWithAuthorizerConfig(t, cfg, exchanger, auth)
+	defer cleanup()
+
+	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{":method": "POST"}, body)
+	streamed := bodyResp.GetRequestBody().GetResponse().GetBodyMutation().GetStreamedResponse()
+	require.NotNil(t, streamed)
+	assert.Equal(t, 40, bytes.Count(streamed.Body, []byte("<")))
+	assert.NotContains(t, string(streamed.Body), `\u003c`)
+	assert.LessOrEqual(t, len(streamed.Body), cfg.Authorization.MaxBodySize)
 }
 
 // Spec: A denied batch must aggregate reasons from every denying element into one 403.
@@ -2253,7 +2368,15 @@ result := {"action": "allow"} if {
 				require.True(t, ok, "policy must allow the exact large ID")
 				streamed, ok := response.RequestBody.Response.BodyMutation.Mutation.(*extprocv3.BodyMutation_StreamedResponse)
 				require.True(t, ok)
-				assert.Equal(t, tc.body, streamed.StreamedResponse.Body)
+				var forwarded []map[string]any
+				decoder := json.NewDecoder(bytes.NewReader(streamed.StreamedResponse.Body))
+				decoder.UseNumber()
+				require.NoError(t, decoder.Decode(&forwarded))
+				assert.Equal(t, []map[string]any{{
+					"jsonrpc": "2.0",
+					"method":  "initialize",
+					"id":      json.Number("9007199254740993"),
+				}}, forwarded)
 				return
 			}
 			immediate, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
@@ -2267,19 +2390,20 @@ result := {"action": "allow"} if {
 func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
-		idKey        string
 		id           json.RawMessage
-		params       string
 		invocationID string
 	}{
-		{name: "numeric id", idKey: "id", id: json.RawMessage(`42`), invocationID: "42"},
-		{name: "case-insensitive numeric id", idKey: "ID", id: json.RawMessage(`42`), invocationID: "42"},
-		{name: "case-insensitive tool params", idKey: "ID", id: json.RawMessage(`42`), params: `{"Name":"deploy","Arguments":{"environment":"production"}}`, invocationID: "42"},
-		{name: "string id", idKey: "id", id: json.RawMessage(`"call-42"`), invocationID: "call-42"},
-		{name: "large numeric id", idKey: "id", id: json.RawMessage(`9007199254740993`), invocationID: "9007199254740993"},
-		{name: "exponent id", idKey: "id", id: json.RawMessage(`1e+3`), invocationID: "1e+3"},
+		{name: "numeric id", id: json.RawMessage(`42`), invocationID: "42"},
+		{name: "string id", id: json.RawMessage(`"call-42"`), invocationID: "call-42"},
+		{name: "null id", id: json.RawMessage(`null`)},
+		{name: "large numeric id", id: json.RawMessage(`9007199254740993`), invocationID: "9007199254740993"},
+		{name: "exponent id", id: json.RawMessage(`1e+3`), invocationID: "1e+3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			var expectedID any
+			decoder := json.NewDecoder(bytes.NewReader(tc.id))
+			decoder.UseNumber()
+			require.NoError(t, decoder.Decode(&expectedID))
 			var mu sync.Mutex
 			var gotPrincipal, gotSubjectToken string
 			var gotSessionIDs []string
@@ -2312,10 +2436,10 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 					}
 					if mcpInput, ok := input["mcp"].(map[string]any); ok {
 						gotMCPSession, _ = mcpInput["session_id"].(string)
-						assert.Equal(t, tc.invocationID, fmt.Sprint(mcpInput["id"]))
+						assert.Equal(t, expectedID, mcpInput["id"])
 					}
 					parsedBody := input["parsed_body"].(map[string]any)
-					assert.Equal(t, tc.invocationID, fmt.Sprint(parsedBody["id"]))
+					assert.Equal(t, expectedID, parsedBody["id"])
 					mu.Unlock()
 					return &authorization.OPADecision{Action: authorization.ActionApprovalRequired, ApprovalContext: &authorization.ApprovalContext{Description: "Review deployment", RiskLevel: "medium"}}, nil
 				},
@@ -2332,11 +2456,7 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, cfg, exchanger, auth, gate)
 			defer cleanup()
 
-			params := tc.params
-			if params == "" {
-				params = `{"name":"deploy","arguments":{"environment":"production"}}`
-			}
-			body := []byte(`{"jsonrpc":"2.0","method":"tools/call","` + tc.idKey + `":` + string(tc.id) + `,"params":` + params + `}`)
+			body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":` + string(tc.id) + `,"params":{"name":"deploy","arguments":{"environment":"production"}}}`)
 			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
 				":method":         "POST",
 				":path":           "http://mcp-server:9003/mcp",
@@ -2366,7 +2486,7 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 			}
 			require.NoError(t, json.Unmarshal(immediate.ImmediateResponse.Body, &response))
 			assert.Equal(t, "2.0", response.JSONRPC)
-			assert.JSONEq(t, string(tc.id), string(response.ID))
+			assert.Equal(t, string(tc.id), string(response.ID))
 			assert.Equal(t, -32042, response.Error.Code)
 			require.Len(t, response.Error.Data.Elicitations, 1)
 			assert.Equal(t, "url", response.Error.Data.Elicitations[0].Mode)
@@ -4063,13 +4183,16 @@ func TestServer_OPA_BodyPhase_MCPServerMetadata_PropagatedToOPAInput(t *testing.
 	_, bodyResp := sendHeadersThenBodyWithMetadata(t, client, map[string]string{
 		":method": "POST",
 	}, tokenExchangeMetadataWithMCPServer("github-mcp"),
-		[]byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}}`))
+		[]byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{"path":"/tmp","path":"/prod"}}}`))
 
 	require.NotNil(t, bodyResp)
 	_, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
-	require.True(t, ok, "allowed request must echo a RequestBody response")
+	require.True(t, ok, "allowed request must return a RequestBody response")
 	assert.True(t, sawMCPInput)
 	assert.Equal(t, "github-mcp", seenTargetServerName)
+	streamed := bodyResp.GetRequestBody().GetResponse().GetBodyMutation().GetStreamedResponse()
+	require.NotNil(t, streamed)
+	assert.Equal(t, 1, bytes.Count(streamed.Body, []byte(`"path"`)), "allowed standalone request must not forward duplicate argument keys")
 }
 
 // Spec 044 FR-004: absent mcp_server metadata for an MCP-protocol request MUST be
@@ -4154,14 +4277,16 @@ func TestServer_OPA_HeadersOnly_MCPServerMetadata_PropagatedToOPAInput(t *testin
 
 // Spec 044 Edge Case (batch requests): every element in a JSON-RPC batch must receive
 // the identical mcp.target_server_name value, sourced once from the agentgateway
-// metadata at the headers phase.
+// metadata at the headers phase; the allowed batch forwards the parsed elements.
 func TestServer_OPA_BatchBodyPhase_SameTargetServerNameAcrossElements(t *testing.T) {
 	var seenServers []string
+	var opaBodies []any
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
 			mcp, ok := input["mcp"].(map[string]any)
 			require.True(t, ok, "batch element must expose parsed MCP input")
 			seenServers = append(seenServers, mcp["target_server_name"].(string))
+			opaBodies = append(opaBodies, input["parsed_body"])
 			return &authorization.OPADecision{Action: "allow"}, nil
 		},
 	}
@@ -4173,14 +4298,21 @@ func TestServer_OPA_BatchBodyPhase_SameTargetServerNameAcrossElements(t *testing
 	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
 	defer cleanup()
 
-	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}},{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"read_config","arguments":{}}}]`)
+	batch := []byte(`[ {"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"list_files","arguments":{}}}, {"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"read_config","arguments":{"path":"/tmp","path":"/prod"}}} ]`)
 	_, bodyResp := sendHeadersThenBodyWithMetadata(t, client, map[string]string{
 		":method": "POST",
 	}, tokenExchangeMetadataWithMCPServer("github-mcp"), batch)
 
-	require.NotNil(t, bodyResp)
-	_, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
-	require.True(t, ok, "allowed batch must echo a RequestBody response")
-	assert.Equal(t, []string{"github-mcp", "github-mcp"}, seenServers,
-		"every batch element must receive the identical mcp.target_server_name value")
+	requestBodyResp, ok := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody)
+	require.True(t, ok)
+	streamed, ok := requestBodyResp.RequestBody.Response.BodyMutation.Mutation.(*extprocv3.BodyMutation_StreamedResponse)
+	require.True(t, ok)
+	var upstreamBodies []any
+	decoder := json.NewDecoder(bytes.NewReader(streamed.StreamedResponse.Body))
+	decoder.UseNumber()
+	require.NoError(t, decoder.Decode(&upstreamBodies))
+	assert.True(t, streamed.StreamedResponse.EndOfStream)
+	assert.Equal(t, opaBodies, upstreamBodies)
+	assert.Equal(t, 1, bytes.Count(streamed.StreamedResponse.Body, []byte(`"path"`)), "allowed batch must not forward duplicate argument keys")
+	assert.Equal(t, []string{"github-mcp", "github-mcp"}, seenServers)
 }

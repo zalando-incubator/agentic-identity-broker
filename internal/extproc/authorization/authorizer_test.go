@@ -349,7 +349,7 @@ func TestOPAAuthorizer_Evaluate_TraceSpanOmitsCallerTargetServerName(t *testing.
 
 // TestOPAAuthorizer_Evaluate_TraceSpanOmitsTargetServerNameWhenAbsent verifies
 // that the target_server_name span attribute is omitted (not set to "") when
-// MCPInput.TargetServerName is empty.
+// input.mcp.target_server_name is absent.
 func TestOPAAuthorizer_Evaluate_TraceSpanOmitsTargetServerNameWhenAbsent(t *testing.T) {
 	spanRecorder := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
@@ -421,6 +421,35 @@ result := {"action": "allow"} if {
 	decision, err := auth.Evaluate(context.Background(), input)
 	require.NoError(t, err)
 	assert.Equal(t, authorization.ActionAllow, decision.Action)
+}
+
+func TestOPAAuthorizer_PreservesNumericInputForPolicy(t *testing.T) {
+	path := writePolicy(t, `package aib.extproc.authz
+import rego.v1
+
+result := {"action": "allow"} if {
+	input.mcp.id == 9007199254740993
+	input.mcp.arguments.count == 9007199254740993
+} else := {"action": "deny"}
+`)
+	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), nil)
+	require.NoError(t, err)
+	defer auth.Stop(context.Background())
+
+	for _, tc := range []struct {
+		count  string
+		action string
+	}{
+		{"9007199254740993", authorization.ActionAllow},
+		{"9007199254740992", authorization.ActionDeny},
+	} {
+		body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":9007199254740993,"params":{"name":"deploy","arguments":{"count":` + tc.count + `}}}`)
+		input, err := buildOPAInput(t, "mcp", body, nil, testTargetServerName, authorization.ContextInput{})
+		require.NoError(t, err)
+		decision, err := auth.Evaluate(context.Background(), input)
+		require.NoError(t, err)
+		assert.Equal(t, tc.action, decision.Action)
+	}
 }
 
 func TestOPAAuthorizer_Deny(t *testing.T) {

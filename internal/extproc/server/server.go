@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocfilterv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
@@ -540,7 +541,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 // processRequestBody handles the RequestBody phase when OPA is enabled.
 // Token exchange has already occurred in the headers phase; this phase only
 // evaluates OPA policy using the body and returns:
-//   - allow: echo the request body unchanged (Authorization was already set)
+//   - allow: forward the parsed MCP body (or echo non-MCP bodies)
 //   - deny: 403 ImmediateResponse with JSON access_denied body
 func (s *Server) processRequestBody(ctx context.Context, state *requestState, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
 	ctx, logger := s.withRequestLogger(ctx)
@@ -593,14 +594,18 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 			logDiagnostic(ctx, logger, slog.LevelWarn, "OPA approval-required action is not an MCP tool call", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
-		invocation, rawID, invocationErr := approvalInvocation(opaInput["parsed_body"].(map[string]any), state, decision)
+		invocation, rawID, invocationErr := approvalInvocation(opaInput, state, decision)
 		if invocationErr != nil {
 			logDiagnostic(ctx, logger, slog.LevelWarn, "OPA approval-required request is not a standalone tool call", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
+		forward := canonicalMCPBody(opaInput["parsed_body"], body, maxSize)
+		if forward.GetImmediateResponse() != nil {
+			return forward
+		}
 		outcome := s.approvalGate.Evaluate(ctx, invocation)
 		if outcome.Proceed {
-			return echoRequestBody(body)
+			return forward
 		}
 		if outcome.URL != "" {
 			return urlElicitationResponse(outcome.URL, "approval required", rawID)
@@ -614,7 +619,10 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		logDiagnostic(ctx, logger, slog.LevelInfo, "OPA denied request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 		return accessDeniedResponse(decision.Reasons)
 	}
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed request, echoing body", SuccessDiagnostic(ExchangeUnknown))
+	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed request", SuccessDiagnostic(ExchangeUnknown))
+	if state.protocol == "mcp" {
+		return canonicalMCPBody(opaInput["parsed_body"], body, s.cfg.Authorization.MaxBodySize)
+	}
 	return echoRequestBody(body)
 }
 
@@ -689,24 +697,22 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 			`{"error":"access_denied","error_description":"failed to parse batch request"}`)
 	}
 
+	inputs := make([]authorization.OPAInput, len(messages))
+	for i, message := range messages {
+		opaInput, buildErr := builder.Build(message.raw, message.parsed)
+		if buildErr != nil {
+			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "OPA: failed to build input for batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+			return accessDeniedResponse([]string{"failed to parse batch element"})
+		}
+		inputs[i] = opaInput
+	}
 	var (
 		denied      bool
 		denyReasons []string
 	)
-	for i, message := range messages {
-		if _, err := authorization.ParseMCPMessage(message.parsed); err != nil {
-			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "OPA: invalid batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
-			denied = true
-			denyReasons = append(denyReasons, "batch element could not be evaluated")
-			continue
-		}
-		opaInput, buildErr := builder.Build(message.raw, message.parsed)
-		if buildErr != nil {
-			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "OPA: failed to build input for batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
-			denied = true
-			denyReasons = append(denyReasons, "failed to parse batch element")
-			continue
-		}
+	parsedBodies := make([]any, len(inputs))
+	for i, opaInput := range inputs {
+		parsedBodies[i] = opaInput["parsed_body"]
 		decision, evalErr := s.authorizer.Evaluate(ctx, opaInput)
 		if evalErr != nil {
 			logDiagnostic(ctx, logger.With("index", i), slog.LevelError, "OPA evaluation error for batch element — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
@@ -733,8 +739,8 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 		return accessDeniedResponse(denyReasons)
 	}
 
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed batch, echoing body", SuccessDiagnostic(ExchangeUnknown))
-	return echoRequestBody(body)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed batch", SuccessDiagnostic(ExchangeUnknown))
+	return canonicalMCPBody(parsedBodies, body, s.cfg.Authorization.MaxBodySize)
 }
 
 func decodeJSONBody(body []byte, isMCP bool) any {
@@ -766,29 +772,32 @@ func decodeMCPMessage(decoder *json.Decoder) (map[string]any, error) {
 
 func decodeMCPObject(decoder *json.Decoder, params bool) (map[string]any, error) {
 	object := make(map[string]any)
+	seen := make(map[string]struct{})
 	for decoder.More() {
 		token, err := decoder.Token()
 		if err != nil {
 			return nil, err
 		}
 		key := token.(string)
-		if params {
-			switch {
-			case strings.EqualFold(key, "name"):
-				key = "name"
-			case strings.EqualFold(key, "arguments"):
-				key = "arguments"
-			}
-		} else {
-			for _, field := range [...]string{"jsonrpc", "id", "method", "params"} {
-				if strings.EqualFold(key, field) {
-					key = field
-					break
+		folded := strings.Map(func(r rune) rune {
+			minimum := r
+			for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+				if next < minimum {
+					minimum = next
 				}
 			}
-		}
-		if _, exists := object[key]; exists {
+			return minimum
+		}, key)
+		if _, exists := seen[folded]; exists {
 			return nil, errors.New("duplicate MCP object member")
+		}
+		seen[folded] = struct{}{}
+		if !params {
+			for _, field := range [...]string{"jsonrpc", "id", "method", "params"} {
+				if key != field && strings.EqualFold(key, field) {
+					return nil, errors.New("noncanonical MCP envelope member")
+				}
+			}
 		}
 		var value any
 		if !params && key == "params" {
@@ -1319,21 +1328,18 @@ func configuredHeader(headers map[string]string, name string) string {
 	return ""
 }
 
-func approvalInvocation(message map[string]any, state *requestState, decision *authorization.OPADecision) (approval.Invocation, json.RawMessage, error) {
-	params, _ := message["params"].(map[string]any)
-	name, _ := params["name"].(string)
-	if message["method"] != "tools/call" || name == "" {
+func approvalInvocation(input authorization.OPAInput, state *requestState, decision *authorization.OPADecision) (approval.Invocation, json.RawMessage, error) {
+	mcpInput, ok := input["mcp"].(map[string]any)
+	name, _ := mcpInput["tool_name"].(string)
+	if input["type"] != "mcp_tool_call" || !ok || mcpInput["method"] != "tools/call" || name == "" {
 		return approval.Invocation{}, nil, errors.New("request is not an MCP tools/call")
 	}
-	arguments, ok := params["arguments"].(map[string]any)
-	if params["arguments"] != nil && !ok {
-		return approval.Invocation{}, nil, errors.New("MCP tool arguments must be an object")
-	}
+	arguments, _ := mcpInput["arguments"].(map[string]any)
 	if arguments == nil {
 		arguments = map[string]any{}
 	}
 	var rawID json.RawMessage
-	id := message["id"]
+	id := mcpInput["id"]
 	if id != nil {
 		var err error
 		rawID, err = json.Marshal(id)
@@ -1341,7 +1347,8 @@ func approvalInvocation(message map[string]any, state *requestState, decision *a
 			return approval.Invocation{}, nil, err
 		}
 	}
-	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: name, Arguments: arguments, AgentSessionID: state.agentSessionID, MCPSessionID: configuredHeader(state.headers, "Mcp-Session-Id"), RequestID: semanticRequestID(id, rawID), SubjectToken: state.subjectToken}
+	sessionID, _ := mcpInput["session_id"].(string)
+	invocation := approval.Invocation{Identity: approval.Identity{Principal: state.principal, AgentID: state.agentID}, ToolName: name, Arguments: arguments, AgentSessionID: state.agentSessionID, MCPSessionID: sessionID, RequestID: semanticRequestID(id, rawID), SubjectToken: state.subjectToken}
 	if decision.ApprovalContext != nil {
 		invocation.Description = decision.ApprovalContext.Description
 		invocation.RiskLevel = decision.ApprovalContext.RiskLevel
@@ -1367,6 +1374,25 @@ func passThrough() *extprocv3.ProcessingResponse {
 			RequestHeaders: &extprocv3.HeadersResponse{},
 		},
 	}
+}
+
+// canonicalMCPBody forwards only values present in the body OPA evaluated.
+func canonicalMCPBody(parsed any, body *extprocv3.HttpBody, maxSize int) *extprocv3.ProcessingResponse {
+	if parsed == nil {
+		return accessDeniedResponse([]string{"failed to serialize authorized request"})
+	}
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(parsed); err != nil {
+		return accessDeniedResponse([]string{"failed to serialize authorized request"})
+	}
+	canonical := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	if maxSize > 0 && len(canonical) > maxSize {
+		return immediateResponse(httpv3.StatusCode_Forbidden,
+			`{"error":"request_too_large","error_description":"request body exceeds maximum allowed size"}`)
+	}
+	return echoRequestBody(&extprocv3.HttpBody{Body: canonical, EndOfStream: body.GetEndOfStream()})
 }
 
 // echoRequestBody echoes the request body bytes back unchanged using StreamedBodyResponse.
