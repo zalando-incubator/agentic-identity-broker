@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -156,6 +157,41 @@ func TestPermissionSetRepositoryDeleteRetryOutcomes(t *testing.T) {
 			assert.Equal(t, tc.wantDeleted, deleted)
 			assert.Len(t, queries, tc.wantQueries)
 			assert.Len(t, execs, tc.wantExecs)
+		})
+	}
+}
+
+func TestAgentRepositoryRowIterationErrors(t *testing.T) {
+	for _, operation := range []string{"ListAgents", "GetAgentsByIDs"} {
+		t.Run(operation, func(t *testing.T) {
+			cases := []struct {
+				name string
+				err  error
+				kind storage.ErrorKind
+			}{
+				{name: "deadline", err: context.DeadlineExceeded, kind: storage.ErrorKindTimeout},
+				{name: "wrapped deadline", err: fmt.Errorf("iteration: %w", context.DeadlineExceeded), kind: storage.ErrorKindTimeout},
+				{name: "connection failure", err: errors.New("connection lost"), kind: storage.ErrorKindConnection},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					adapter := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{rowsErr: tc.err}).adapter
+					repo := NewAgentRepository(adapter)
+					var agents []*storage.Agent
+					var err error
+					if operation == "ListAgents" {
+						agents, err = repo.List(context.Background())
+					} else {
+						agents, err = repo.GetByIDs(context.Background(), []id.AgentID{id.NewAgentID()})
+					}
+					require.ErrorIs(t, err, tc.err)
+					assert.Nil(t, agents)
+					var storageErr *storage.StorageError
+					require.ErrorAs(t, err, &storageErr)
+					assert.Equal(t, tc.kind, storageErr.Kind)
+					assert.Equal(t, operation, storageErr.Operation)
+				})
+			}
 		})
 	}
 }

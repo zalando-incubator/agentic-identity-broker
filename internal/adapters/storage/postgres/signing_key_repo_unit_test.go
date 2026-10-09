@@ -39,6 +39,7 @@ type signingKeyRepoTestConfig struct {
 	queryErr        error
 	queryColumns    []string
 	queryRows       [][]driver.Value
+	rowsErr         error
 	queryResults    []signingKeyRepoTestQueryResult
 	commitErr       error
 	rowsAffected    int64
@@ -158,7 +159,7 @@ func (c *signingKeyRepoTestConn) QueryContext(_ context.Context, query string, _
 		rows[i] = append([]driver.Value(nil), row...)
 	}
 
-	return &signingKeyRepoTestRows{columns: columns, rows: rows}, nil
+	return &signingKeyRepoTestRows{columns: columns, rows: rows, err: c.cfg.rowsErr}, nil
 }
 
 func (t *signingKeyRepoTestTx) Commit() error {
@@ -173,6 +174,7 @@ type signingKeyRepoTestRows struct {
 	columns []string
 	rows    [][]driver.Value
 	index   int
+	err     error
 }
 
 func (r *signingKeyRepoTestRows) Columns() []string {
@@ -184,6 +186,9 @@ func (r *signingKeyRepoTestRows) Close() error {
 }
 
 func (r *signingKeyRepoTestRows) Next(dest []driver.Value) error {
+	if r.err != nil {
+		return r.err
+	}
 	if r.index >= len(r.rows) {
 		return io.EOF
 	}

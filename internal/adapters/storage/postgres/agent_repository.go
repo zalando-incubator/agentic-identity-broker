@@ -606,7 +606,11 @@ func (r *AgentRepository) scanAgentRows(ctx context.Context, rows *sql.Rows, ope
 		agents = append(agents, agent)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, storage.NewStorageError(operation, storage.ErrorKindConnection, err, "error iterating agent rows")
+		kind := storage.ErrorKindConnection
+		if errors.Is(err, context.DeadlineExceeded) {
+			kind = storage.ErrorKindTimeout
+		}
+		return nil, storage.NewStorageError(operation, kind, err, "error iterating agent rows")
 	}
 	if len(agents) == 0 {
 		return agents, nil

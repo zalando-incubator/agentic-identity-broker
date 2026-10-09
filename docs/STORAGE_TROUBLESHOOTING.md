@@ -83,6 +83,10 @@ Expected tables:
 
 **Symptoms**: `ErrorKindTimeout` with "operation exceeded timeout"
 
+For PostgreSQL agent listing and batch retrieval, a deadline exceeded during row
+iteration is also classified as `ErrorKindTimeout`; other iteration failures are
+classified as `ErrorKindConnection`.
+
 **Likely Causes**:
 
 1. **Database is slow**
