@@ -113,6 +113,11 @@ The ServiceAccount will be automatically annotated with `iam.amazonaws.com/role`
 
 See [values.yaml](values.yaml) for the complete list of configuration options.
 
+Keep AWS TLS certificate verification enabled in production. If
+`broker.extraEnv` sets `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL=true`,
+startup requires explicit `GO_ENV=development`. Production, staging, unset,
+and unknown environments reject that development-only bypass.
+
 ### Key Configuration Parameters
 
 | Parameter | Description | Default |

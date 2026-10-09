@@ -327,6 +327,8 @@ migration:
 # Broker application configuration
 broker:
   # -- Additional broker environment variables (supports value or valueFrom)
+  # Keep IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL false in production.
+  # True requires explicit GO_ENV=development; all other environments reject it.
   extraEnv: []
 
   # Logging
