@@ -27,7 +27,7 @@ var (
 	ErrAgentAccessDenied = errors.New("agent access denied")
 	// ErrGrantExpired is returned when a user grant has expired.
 	ErrGrantExpired = errors.New("grant expired")
-	// ErrGrantNotFound is returned by RevokeConsentForPrincipal when no active grant exists
+	// ErrGrantNotFound is returned by RevokeConsentForPrincipal when no grant exists
 	// for the (principal, agent) pair. The handler maps this to HTTP 404.
 	ErrGrantNotFound = errors.New("grant not found")
 	// ErrUnconnectedServices is returned when the submission includes services without active sessions.
@@ -354,11 +354,18 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 	}
 
 	var grant *storage.UserGrant
+	var previousFields []any
+	action, message := "grant_created", "grant created"
 	if existingGrant != nil {
 		if grantMatchesRequest(existingGrant, req) {
 			return existingGrant.Copy(), nil
 		}
 
+		previousFields = []any{
+			"previous_observed_valid_until", grantAuditValidUntil(existingGrant.ValidUntil),
+			"previous_observed_updated_at", existingGrant.UpdatedAt.UTC().Format(time.RFC3339Nano),
+			"previous_observed_granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: existingGrant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+		}
 		// Update existing grant (FR-013)
 		existingGrant.ValidUntil = req.ValidUntil
 		existingGrant.GrantedPermissionSets = req.GrantedPermissionSets
@@ -372,6 +379,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			return nil, fmt.Errorf("failed to update grant: %w", err)
 		}
 		grant = existingGrant
+		action, message = "grant_updated", "grant updated"
 	} else {
 		// Create new grant (FR-011)
 		grant = &storage.UserGrant{
@@ -388,12 +396,36 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			return nil, fmt.Errorf("%w: %w", ErrGrantValidation, err)
 		}
 
+		candidateID := grant.ID
 		if err := s.grantRepo.Create(ctx, grant); err != nil {
 			return nil, fmt.Errorf("failed to create grant: %w", err)
 		}
+		if grant.ID != candidateID {
+			action, message = "grant_updated", "grant updated"
+		}
 	}
 
+	fields := []any{
+		"action", action,
+		"principal", grant.Principal,
+		"agent_id", grant.AgentID,
+		"grant_id", grant.ID,
+		"valid_until", grantAuditValidUntil(grant.ValidUntil),
+		"created_at", grant.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at", grant.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: grant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+	}
+	fields = append(fields, previousFields...)
+	s.logger.InfoContext(ctx, message, fields...)
+
 	return grant.Copy(), nil
+}
+
+func grantAuditValidUntil(validUntil *time.Time) any {
+	if validUntil == nil {
+		return nil
+	}
+	return validUntil.UTC().Format(time.RFC3339Nano)
 }
 
 // ValidateSubmission validates that every service in the grant's included_service_ids
@@ -574,47 +606,38 @@ func permissionSetsMatch(left, right []storage.GrantedPermissionSetEntry) bool {
 
 // RevokeConsent deletes a user grant (FR-014).
 // Idempotent: returns nil if the grant doesn't exist (absence is not an error).
-// Used by the POST /grants path with empty tokens.
 func (s *Service) RevokeConsent(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	if err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID); err != nil {
-		if errors.Is(err, ports.ErrNotFound) {
-			return nil // idempotent: absence is not an error
-		}
-		return fmt.Errorf("failed to revoke consent: %w", err)
+	err := s.RevokeConsentForPrincipal(ctx, principal, agentID)
+	if errors.Is(err, ErrGrantNotFound) {
+		return nil
 	}
-	return nil
+	return err
 }
 
 // RevokeConsentForPrincipal revokes the authenticated user's grant for the given agent (FR-014).
-// This is the user-facing revocation entry point for DELETE /api/consent/agent/{agent-id}/grants.
+// This is the user-facing revocation entry point for DELETE /api/consent/agents/{agent-id}/grants.
 //
-// Unlike RevokeConsent, this method:
+// Revocation behavior:
 // - Is NOT idempotent: absence of grant returns ErrGrantNotFound (handler maps to 404)
-// - Emits a structured audit log on success with action, principal, agent_id, and grant_id
+// - Emits a structured audit log on success from the atomically deleted grant snapshot
 func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	// Phase 1: look up the grant to capture the ID for the audit log.
-	grant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agentID)
+	grant, err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
 			return fmt.Errorf("%w", ErrGrantNotFound)
 		}
-		return fmt.Errorf("failed to find grant: %w", err)
-	}
-
-	// Phase 2: delete the grant.
-	if err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID); err != nil {
-		if errors.Is(err, ports.ErrNotFound) {
-			// Concurrent revocation raced us — treat as not found.
-			return fmt.Errorf("%w", ErrGrantNotFound)
-		}
 		return fmt.Errorf("failed to revoke consent: %w", err)
 	}
 
-	s.logger.Info("grant revoked",
+	s.logger.InfoContext(ctx, "grant revoked",
 		"action", "grant_revoked",
-		"principal", principal,
-		"agent_id", agentID,
-		"grant_id", grant.ID)
+		"principal", grant.Principal,
+		"agent_id", grant.AgentID,
+		"grant_id", grant.ID,
+		"valid_until", grantAuditValidUntil(grant.ValidUntil),
+		"updated_at", grant.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: grant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+		"revoked_at", time.Now().UTC().Format(time.RFC3339Nano))
 
 	return nil
 }
@@ -641,7 +664,7 @@ func (s *Service) GetActiveGrants(ctx context.Context, principal id.Principal, a
 
 // VerifyAgentAccess verifies that a user has granted an agent access.
 // This method checks for grant existence, expiration, and revocation status.
-// Returns the active grant if valid, or an error if missing, expired, or revoked.
+// Returns a defensive copy of a found active or expired grant; callers must check the error first.
 //
 // Error handling:
 // - ErrAgentAccessDenied: User has not granted the agent any access
@@ -671,7 +694,7 @@ func (s *Service) VerifyAgentAccess(ctx context.Context, principal id.Principal,
 
 	// Check grant is active (not expired)
 	if !grant.IsActive() {
-		return nil, fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
+		return grant.Copy(), fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
 			ErrGrantExpired, grant.ValidUntil.Format(time.RFC3339), principal, agentID)
 	}
 

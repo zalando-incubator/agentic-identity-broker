@@ -169,6 +169,8 @@ func NewTokenExchangeService(
 // - T078: CRITICAL - Grant check MUST occur BEFORE session check to prevent information leakage
 func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeRequest) (_ *TokenExchangeResponse, err error) {
 	var serviceRef ServiceRef
+	var registeredAgentID id.AgentID
+	var grant *storage.UserGrant
 	stage := StageRequestValidation
 	defer func() {
 		if err == nil {
@@ -186,7 +188,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) && !errors.As(err, &sessionErr) {
 			diagnostic = NewDiagnostic(diagnostic.Stage(), DetailCallerCanceled)
 		}
-		err = tokenErr.WithDiagnostic(diagnostic).WithService(serviceRef)
+		err = tokenErr.WithObservation(diagnostic, serviceRef, authorizationRef(registeredAgentID, grant))
 	}()
 	if ctx.Err() != nil {
 		return nil, NewServerErrorWithCause("token exchange canceled", ctx.Err()).WithDiagnostic(NewDiagnostic(stage, DetailCallerCanceled))
@@ -286,6 +288,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		}
 		return nil, NewServerErrorWithCause("failed to lookup agent", err).WithDiagnostic(NewDiagnostic(stage, DetailAgentRepositoryUnavailable))
 	}
+	registeredAgentID = agent.ID
 	// T061-T065: Delegate grant verification to ConsentService using internal agent UUID
 	// ConsentService.VerifyAgentAccess checks:
 	// - T061: Query UserGrant by principal + agent UUID
@@ -294,7 +297,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// - T064: Return error for revoked grant
 	// - T065: Return error for expired grant
 	stage = StageGrantAuthorization
-	grant, err := s.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
+	grant, err = s.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
 	if err != nil {
 		// Map ConsentService errors to TokenExchange errors
 		if errors.Is(err, consent.ErrAgentAccessDenied) {
@@ -317,17 +320,17 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	// nor ServiceRequirements are not exempt.
 	if len(grant.GrantedPermissionSets) == 0 {
 		return nil, NewAccessDeniedError("grant has no permission set entries; re-consent required").
-			WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, DetailGrantInsufficient))
+			WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, DetailGrantEmpty))
 	}
-	effectiveScopes, err := s.resolveEffectiveScopes(ctx, grant, agent)
+	effectiveScopes, coverageDetail, err := s.resolveEffectiveScopes(ctx, grant, agent, service.ID)
 	if err != nil {
 		return nil, err
 	}
-	serviceScopes, covered := effectiveScopes[service.ID]
-	if !covered {
+	if coverageDetail != DetailNone {
 		return nil, NewAccessDeniedError("service is not authorized by the grant; re-consent required").
-			WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, DetailGrantInsufficient))
+			WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, coverageDetail))
 	}
+	serviceScopes := effectiveScopes[service.ID]
 
 	// Step 10: Get valid access token with session metadata (with transparent refresh if needed)
 	// This single call handles:
@@ -401,8 +404,23 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	response.Principal = principal
 	response.AgentID = agent.ID.String()
 	response.Service = serviceRef
+	response.Authorization = authorizationRef(registeredAgentID, grant)
 
 	return response, nil
+}
+
+func authorizationRef(agentID id.AgentID, grant *storage.UserGrant) AuthorizationRef {
+	ref := AuthorizationRef{AgentID: agentID}
+	if grant == nil {
+		return ref
+	}
+	ref.GrantID = grant.ID
+	ref.GrantUpdatedAt = grant.UpdatedAt
+	if grant.ValidUntil != nil {
+		ref.GrantValidUntil = *grant.ValidUntil
+		ref.GrantHasValidUntil = true
+	}
+	return ref
 }
 
 func (s *TokenExchangeService) agentConsentURL(agentID id.AgentID) string {
@@ -413,13 +431,14 @@ func (s *TokenExchangeService) agentConsentURL(agentID id.AgentID) string {
 // per-service effective scopes by taking the union across all permission sets
 // and intersecting with the agent's service requirement scope ceiling (FR-013).
 //
-// Returns a map of service ID → effective scopes (only scopes present in both
-// PS definitions and agent SR are included).
+// Coverage details describe the requested service; structural reference and repository
+// failures retain their diagnostic on the error and return DetailNone separately.
 func (s *TokenExchangeService) resolveEffectiveScopes(
 	ctx context.Context,
 	grant *storage.UserGrant,
 	agent *storage.Agent,
-) (map[id.ServiceID][]string, error) {
+	requestedServiceID id.ServiceID,
+) (map[id.ServiceID][]string, FailureDetail, error) {
 	declaredPS := make(map[id.PermissionSetID]bool, len(agent.PermissionSets))
 	for _, aps := range agent.PermissionSets {
 		declaredPS[aps.PermissionSetID] = true
@@ -429,8 +448,8 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 	psIDs := make([]id.PermissionSetID, len(grant.GrantedPermissionSets))
 	for i, entry := range grant.GrantedPermissionSets {
 		if !declaredPS[entry.PermissionSetID] {
-			return nil, NewAccessDeniedError("grant references a permission set not declared by the agent; re-consent required").
-				WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantInsufficient))
+			return nil, DetailNone, NewAccessDeniedError("grant references a permission set not declared by the agent; re-consent required").
+				WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantPermissionSetUndeclared))
 		}
 		psIDs[i] = entry.PermissionSetID
 	}
@@ -438,7 +457,7 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 	// Resolve permission sets (TTL cache transparent)
 	resolvedSets, err := s.permissionSetService.GetByIDs(ctx, psIDs)
 	if err != nil {
-		return nil, NewServerErrorWithCause("failed to resolve permission sets", err).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantRepositoryUnavailable))
+		return nil, DetailNone, NewServerErrorWithCause("failed to resolve permission sets", err).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantRepositoryUnavailable))
 	}
 
 	// Index resolved PSets by ID for lookup
@@ -460,18 +479,25 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 	// Compute per-service scope union across all permission sets,
 	// filtering to only included_service_ids per grant entry
 	perServiceScopes := make(map[id.ServiceID]map[string]bool)
+	requestedServiceIncluded, requestedServiceDefined := false, false
 	for _, entry := range grant.GrantedPermissionSets {
 		ps, ok := psIndex[entry.PermissionSetID]
 		if !ok {
 			// Fail closed: any PS referenced by a stored grant must still exist.
 			// Whether mandatory or optional, a missing PS means the grant is stale.
-			return nil, NewAccessDeniedError("grant references a missing permission set; re-consent required").
-				WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantInsufficient))
+			return nil, DetailNone, NewAccessDeniedError("grant references a missing permission set; re-consent required").
+				WithErrorURI(s.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(StageGrantAuthorization, DetailGrantPermissionSetMissing))
 		}
 		included := grantIndex[entry.PermissionSetID]
+		if included[requestedServiceID] {
+			requestedServiceIncluded = true
+		}
 		for _, ss := range ps.ServiceScopes {
 			if !included[ss.ServiceID] {
 				continue // Service not included in this grant entry
+			}
+			if ss.ServiceID == requestedServiceID {
+				requestedServiceDefined = true
 			}
 			if perServiceScopes[ss.ServiceID] == nil {
 				perServiceScopes[ss.ServiceID] = make(map[string]bool)
@@ -503,10 +529,14 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 	// services are intersected with their required_scopes ceiling. Agents with no SR use
 	// PS-derived scopes directly.
 	effectiveScopes := make(map[id.ServiceID][]string, len(perServiceScopes))
+	coverageDetail := DetailNone
 	for svcID, scopeSet := range perServiceScopes {
 		_, hasCeiling := srCeiling[svcID]
 		allScopes := srAllScopes[svcID]
 		if hasSR && !hasCeiling && !allScopes {
+			if svcID == requestedServiceID {
+				coverageDetail = DetailGrantServiceRequirementExcluded
+			}
 			continue // service not declared in agent service_requirements
 		}
 		var scopes []string
@@ -524,10 +554,19 @@ func (s *TokenExchangeService) resolveEffectiveScopes(
 		}
 		sort.Strings(scopes)
 		if len(scopes) == 0 && len(scopeSet) > 0 {
+			if svcID == requestedServiceID {
+				coverageDetail = DetailGrantScopeIntersectionEmpty
+			}
 			continue // fully capped out — drop (fail-closed for a zero-scope ceiling)
 		}
 		effectiveScopes[svcID] = scopes
 	}
 
-	return effectiveScopes, nil
+	if !requestedServiceIncluded {
+		return effectiveScopes, DetailGrantServiceOmitted, nil
+	}
+	if !requestedServiceDefined {
+		return effectiveScopes, DetailGrantServiceDefinitionMissing, nil
+	}
+	return effectiveScopes, coverageDetail, nil
 }
