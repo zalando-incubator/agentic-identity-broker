@@ -60,6 +60,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Initialize logger
 	logger := initializeLogger(cfg.Log)
+	slog.SetDefault(logger)
 	logger.Info("Agentic Identity Broker starting",
 		"log_level", cfg.Log.Level,
 		"log_format", cfg.Log.Format)
@@ -446,6 +447,8 @@ func init() {
 	rootCmd.PersistentFlags().Int("server.admin.port", 0, "admin server port (default: 14000)")
 	rootCmd.PersistentFlags().String("server.admin.bind", "", "admin server bind address (default: ::)")
 	rootCmd.PersistentFlags().Duration("server.shutdown.timeout", 0, "graceful shutdown timeout (default: 30s)")
+
+	rootCmd.PersistentFlags().String("third_party_oauth2.credential_files", "{}", "JSON object mapping exact service canonical IDs to client_id_file and client_secret_file absolute paths")
 
 	// Request security-context configuration flags
 	rootCmd.PersistentFlags().Bool("request_context.trusted_proxy.enabled", false, "trust configured forwarded header for client IP derivation")

@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 )
 
 // OAuth2StateTokenClaims contains the claims embedded in a JWE state token.
@@ -23,6 +24,10 @@ type OAuth2StateTokenClaims struct {
 	// ServiceID is the third-party service being authorized.
 	// Must match the serviceId path parameter at callback.
 	ServiceID id.ServiceID `json:"service_id"`
+
+	// UpstreamClientID binds eligible callbacks to their initiating client identity.
+	// Nil denotes a legacy context, not permission to infer the current identity.
+	UpstreamClientID *id.ClientID `json:"upstream_client_id,omitempty"`
 
 	// RedirectURI is where to redirect after flow completes.
 	// Must be same-origin with the authorize request.
@@ -48,6 +53,9 @@ func (c *OAuth2StateTokenClaims) Validate() error {
 	}
 	if c.ServiceID.IsZero() {
 		return errors.New("service_id is required")
+	}
+	if c.UpstreamClientID != nil && c.UpstreamClientID.IsZero() {
+		return model.NewCredentialSourceError(model.CredentialSourceReasonIdentityMissing)
 	}
 	if c.RedirectURI == "" {
 		return errors.New("redirect_uri is required")

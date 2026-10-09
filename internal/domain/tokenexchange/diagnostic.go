@@ -84,6 +84,7 @@ const (
 	DetailSessionEncryptionFailed         FailureDetail = "session_encryption_failed"
 	DetailSessionPersistenceFailed        FailureDetail = "session_persistence_failed"
 	DetailSessionConfiguration            FailureDetail = "session_configuration"
+	DetailCredentialSourceUnavailable     FailureDetail = "credential_source_unavailable"
 	DetailSessionScopeInsufficient        FailureDetail = "session_scope_insufficient"
 	DetailResponseWriteFailed             FailureDetail = "response_write_failed"
 	DetailInternalUnclassified            FailureDetail = "internal_unclassified"
@@ -147,7 +148,7 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 	case DetailProviderRejected, DetailProviderUnavailable, DetailProviderResponseInvalid:
 		d.stage = StageRefresh
 	case DetailSessionRepositoryUnavailable, DetailSessionDecryptionFailed, DetailSessionEncryptionFailed, DetailSessionPersistenceFailed,
-		DetailJWKSUnavailable, DetailCELEvaluationFailed, DetailInternalUnclassified:
+		DetailCredentialSourceUnavailable, DetailJWKSUnavailable, DetailCELEvaluationFailed, DetailInternalUnclassified:
 		// These failures can occur at more than one stage; retain the origin's stage.
 	case DetailSessionScopeInsufficient:
 		d.stage, d.outcome, d.action, d.target = StageScopeValidation, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession

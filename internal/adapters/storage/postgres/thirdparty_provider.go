@@ -23,7 +23,7 @@ const providerColumns = `
 	s.enable_discovery, s.metadata_url, s.token_endpoint, s.authorize_endpoint, s.scopes,
 	COALESCE((SELECT array_agg(pr.resource_uri ORDER BY pr.resource_uri)
 	          FROM service_protected_resources pr WHERE pr.service_id = s.id), ARRAY[]::text[]),
-	s.authorization_params, s.created_at, s.updated_at, s.version`
+	s.authorization_params, s.created_at, s.updated_at, s.version, s.credential_source, s.credential_source_transitioned`
 
 type PostgresThirdpartyOAuth2ProviderRepository struct{ adapter *Adapter }
 
@@ -52,11 +52,11 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Create(ctx context.Context,
 	_, err = tx.ExecContext(execCtx, `INSERT INTO thirdparty_oauth2_services (
 		id, canonical_id, display_name, client_id, client_secret_encrypted, token_endpoint_auth_method, oauth2_flavor, issuer_uri,
 		enable_discovery, metadata_url, token_endpoint, authorize_endpoint, scopes,
-		authorization_params, created_at, updated_at, version
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1)`,
+		authorization_params, created_at, updated_at, credential_source, credential_source_transitioned, version
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,FALSE,1)`,
 		record.ID, record.CanonicalID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
 		record.EnableDiscovery, record.MetadataURL, record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes,
-		record.AuthorizationParams, record.CreatedAt, record.UpdatedAt)
+		record.AuthorizationParams, record.CreatedAt, record.UpdatedAt, record.CredentialSource)
 	if err != nil {
 		return providerStorageError("CreateThirdpartyOAuth2Provider", err, "failed to create provider")
 	}
@@ -67,6 +67,8 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Create(ctx context.Context,
 		return providerStorageError("CreateThirdpartyOAuth2Provider", err, "failed to commit transaction")
 	}
 	entity.Version = 1
+	entity.CredentialSource = model.CredentialSource(record.CredentialSource)
+	entity.CredentialSourceTransitioned = false
 	return nil
 }
 
@@ -160,20 +162,24 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 		token_endpoint_auth_method=$5, oauth2_flavor=$6, issuer_uri=$7, enable_discovery=$8, metadata_url=$9,
 		token_endpoint=$10, authorize_endpoint=$11, scopes=$12, authorization_params=CASE WHEN $13 THEN authorization_params ELSE $14 END,
 		canonical_id=CASE WHEN $15 THEN NULL WHEN $16 THEN canonical_id ELSE $17 END,
+		credential_source_transitioned=credential_source_transitioned OR credential_source IS DISTINCT FROM $19,
+		credential_source=$19,
 		updated_at=$18, version=version+1 WHERE id=$1`
 	args := []any{record.ID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
 		record.EnableDiscovery, record.MetadataURL, record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes,
-		paramsOmitted, record.AuthorizationParams, entity.ClearCanonicalID, canonicalIDOmitted, record.CanonicalID, record.UpdatedAt}
+		paramsOmitted, record.AuthorizationParams, entity.ClearCanonicalID, canonicalIDOmitted, record.CanonicalID, record.UpdatedAt, record.CredentialSource}
 	if expectedVersion != nil {
-		query += ` AND version=$19`
+		query += ` AND version=$20`
 		args = append(args, *expectedVersion)
 	}
-	query += ` RETURNING created_at, authorization_params, version, canonical_id`
+	query += ` RETURNING created_at, authorization_params, version, canonical_id, credential_source, credential_source_transitioned`
 	var createdAt time.Time
 	var authorizationParams providerAuthorizationParams
 	var version int64
 	var canonicalID *string
-	err = tx.QueryRowContext(execCtx, query, args...).Scan(&createdAt, &authorizationParams, &version, &canonicalID)
+	var source string
+	var transitioned bool
+	err = tx.QueryRowContext(execCtx, query, args...).Scan(&createdAt, &authorizationParams, &version, &canonicalID, &source, &transitioned)
 	if errors.Is(err, sql.ErrNoRows) {
 		if expectedVersion != nil {
 			var exists bool
@@ -203,6 +209,8 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	entity.CreatedAt, entity.UpdatedAt, entity.Version = createdAt, record.UpdatedAt, version
 	entity.CanonicalID = canonicalID
 	entity.AuthorizationParams = maps.Clone(map[string]string(authorizationParams))
+	entity.CredentialSource = model.CredentialSource(source)
+	entity.CredentialSourceTransitioned = transitioned
 	return nil
 }
 
@@ -451,7 +459,7 @@ type providerResourceQuerier interface {
 
 func scanProvider(scanner providerRowScanner) (*ThirdpartyOAuth2ProviderRecord, error) {
 	var record ThirdpartyOAuth2ProviderRecord
-	err := scanner.Scan(&record.ID, &record.CanonicalID, &record.DisplayName, &record.ClientID, &record.SecretCiphertext, &record.TokenEndpointAuthMethod, &record.Flavor, &record.IssuerURI, &record.EnableDiscovery, &record.MetadataURL, &record.TokenEndpoint, &record.AuthorizeEndpoint, &record.Scopes, pq.Array(&record.ProtectedResources), &record.AuthorizationParams, &record.CreatedAt, &record.UpdatedAt, &record.Version)
+	err := scanner.Scan(&record.ID, &record.CanonicalID, &record.DisplayName, &record.ClientID, &record.SecretCiphertext, &record.TokenEndpointAuthMethod, &record.Flavor, &record.IssuerURI, &record.EnableDiscovery, &record.MetadataURL, &record.TokenEndpoint, &record.AuthorizeEndpoint, &record.Scopes, pq.Array(&record.ProtectedResources), &record.AuthorizationParams, &record.CreatedAt, &record.UpdatedAt, &record.Version, &record.CredentialSource, &record.CredentialSourceTransitioned)
 	return &record, err
 }
 func protectedResources(ctx context.Context, db providerResourceQuerier, serviceID id.ServiceID) ([]string, error) {

@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -72,6 +73,9 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Create(_ context.Context, e
 	if err != nil {
 		return providerStorageError("CreateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to store provider")
 	}
+	record.entity.CredentialSourceTransitioned = false
+	entity.CredentialSource = record.entity.CredentialSource
+	entity.CredentialSourceTransitioned = false
 	r.providers[entity.ID] = record
 	r.resources[entity.ID] = resources
 	if entity.CanonicalID != nil {
@@ -133,10 +137,18 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(_ context.Context, e
 	if expectedVersion != nil && existing.entity.Version != *expectedVersion {
 		return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider version does not match")
 	}
+	previousSource := existing.entity.CredentialSource
+	if previousSource == "" {
+		previousSource = model.CredentialSourceStored
+	}
+	if entity.CredentialSource == "" && !entity.CredentialSourceProvided {
+		entity.CredentialSource = previousSource
+	}
 	if entity.ClearCanonicalID {
 		entity.CanonicalID = nil
-	} else if entity.CanonicalID == nil {
-		entity.CanonicalID = existing.entity.CanonicalID
+	} else if entity.CanonicalID == nil && existing.entity.CanonicalID != nil {
+		canonicalID := *existing.entity.CanonicalID
+		entity.CanonicalID = &canonicalID
 	}
 
 	if entity.CanonicalID != nil {
@@ -162,13 +174,14 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(_ context.Context, e
 	entity.CreatedAt = existing.entity.CreatedAt
 	entity.Version = existing.entity.Version + 1
 	if entity.AuthorizationParams == nil {
-		entity.AuthorizationParams = existing.entity.Copy().AuthorizationParams
+		entity.AuthorizationParams = maps.Clone(existing.entity.AuthorizationParams)
 	}
 	entity.ProtectedResources = resourceSetSlice(resourceSet)
 	record, err := providerEntityToRecord(entity)
 	if err != nil {
 		return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to store provider")
 	}
+	record.entity.CredentialSourceTransitioned = existing.entity.CredentialSourceTransitioned || previousSource != record.entity.CredentialSource
 
 	if expectedVersion != nil {
 		for resource := range r.resources[entity.ID] {
@@ -186,6 +199,8 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(_ context.Context, e
 	if entity.CanonicalID != nil {
 		r.canonicalIndex[*entity.CanonicalID] = entity.ID
 	}
+	entity.CredentialSource = record.entity.CredentialSource
+	entity.CredentialSourceTransitioned = record.entity.CredentialSourceTransitioned
 	return nil
 }
 

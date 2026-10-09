@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/canonical"
 	domconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
@@ -403,6 +405,21 @@ func validateThirdPartyOAuth2Config(cfg *ports.ThirdPartyOAuth2Config) error {
 		}
 	}
 
+	return validateCredentialFiles(cfg.CredentialFiles)
+}
+
+func validateCredentialFiles(bindings map[string]ports.CredentialFileBinding) error {
+	for key, pair := range bindings {
+		if err := canonical.Validate(&key); err != nil {
+			return credentialFilesConfigError("", "canonical IDs using 1-128 ASCII letters, digits, '.', '_', or '-', excluding UUID-shaped strings")
+		}
+		if strings.TrimSpace(pair.ClientIDFile) == "" || !filepath.IsAbs(pair.ClientIDFile) {
+			return credentialFilesConfigError("", "client_id_file must be a non-empty, non-whitespace-only absolute path")
+		}
+		if strings.TrimSpace(pair.ClientSecretFile) == "" || !filepath.IsAbs(pair.ClientSecretFile) {
+			return credentialFilesConfigError("", "client_secret_file must be a non-empty, non-whitespace-only absolute path")
+		}
+	}
 	return nil
 }
 

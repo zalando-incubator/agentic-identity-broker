@@ -37,8 +37,8 @@ API. Create the service with `POST /api/services`.
 The core fields:
 
 - `display_name` — The human-readable name in the admin interface.
-- `client_id` / `client_secret` — The OAuth2 client credentials from the provider. The broker
-  encrypts the secret at rest. Each read returns `"REDACTED"`.
+- `credential_source` — Select `stored` or `filesystem`. Omitted creation selects `stored`. Omitted PUT preserves the current source.
+- `client_id` / `client_secret` — Inline credentials for stored shared-secret services. The broker encrypts the secret and returns `"REDACTED"`.
 - `issuer_uri` — The provider issuer. It must be an HTTPS URL.
 - `discovery.enable_discovery` — When `true`, the broker gets provider endpoints from
   `{issuer_uri}/.well-known/oauth-authorization-server`. When `false`, provide
@@ -114,7 +114,7 @@ For an IdP that does not accept scopes, omit `scopes` entirely:
 Add this service to a permission set with `"scopes": []`. A mandatory service still requires
 a user session. It does not require a scope match.
 
-The response contains a system-generated service `id` (a UUID). It redacts `client_secret`.
+The response contains a generated service `id` and its `credential_source`. Stored shared-secret responses redact the secret. Filesystem responses omit both credential fields.
 Record the `id`. Permission sets reference it.
 
 :::note
@@ -122,6 +122,66 @@ The broker prevents deletion of a service that a grant references. `DELETE
 /api/services/{service-id}` returns **409 `conflict`**. Revoke or migrate dependent grants
 before you delete the service.
 :::
+
+## Register and update a filesystem service
+
+Filesystem mode supports standard and GitHub shared-secret authentication. Public, CIMD confidential, and Google services retain stored mode.
+The operator configures both paths in `third_party_oauth2.credential_files`, keyed by the exact, case-sensitive canonical ID.
+See [credential file configuration](/docs/configuration#third-party-oauth2-credential-files) for configuration sources and publication rules.
+
+Create a complete request without either inline credential field, including null-valued fields:
+
+```bash
+cat > service-request.json <<'JSON'
+{
+  "canonical_id": "corporate-api",
+  "display_name": "Corporate API",
+  "credential_source": "filesystem",
+  "issuer_uri": "https://idp.corp.example.com",
+  "discovery": {"enable_discovery": false},
+  "endpoints": {
+    "authorize_endpoint": "https://idp.corp.example.com/oauth/authorize",
+    "token_endpoint": "https://idp.corp.example.com/oauth/token"
+  },
+  "scopes": []
+}
+JSON
+curl --fail-with-body -X POST http://localhost:14000/api/services \
+  -H 'X-Remote-User: admin@example.com' -H 'Content-Type: application/json' \
+  --data-binary @service-request.json
+```
+
+Registration and metadata operations read no files. Missing bindings or files fail only when authentication requires them.
+For the returned UUID in `$SERVICE_ID`, inspect metadata without resolving credentials:
+
+```bash
+curl --fail-with-body -H 'X-Remote-User: admin@example.com' \
+  "http://localhost:14000/api/services/${SERVICE_ID}"
+```
+
+A full PUT can preserve filesystem mode by omitting `credential_source`. Keep the canonical ID, or omit it to preserve the existing ID.
+To switch from stored to filesystem, send the complete filesystem request. The update atomically removes both stored credentials.
+
+```bash
+curl --fail-with-body -X PUT \
+  -H 'X-Remote-User: admin@example.com' -H 'Content-Type: application/json' \
+  --data-binary @service-request.json \
+  "http://localhost:14000/api/services/${SERVICE_ID}"
+```
+
+To return to stored, send a complete request with `credential_source: "stored"` and both explicit, non-empty inline credentials.
+Do not copy `REDACTED` from a response. The broker encrypts the supplied secret and imports no file value.
+Set provider-issued credentials in the `PROVIDER_CLIENT_ID` and `PROVIDER_CLIENT_SECRET` environment variables for this request:
+
+```bash
+jq '. + {credential_source:"stored", client_id:env.PROVIDER_CLIENT_ID, client_secret:env.PROVIDER_CLIENT_SECRET}' \
+  service-request.json | curl --fail-with-body -X PUT \
+  -H 'X-Remote-User: admin@example.com' -H 'Content-Type: application/json' \
+  --data-binary @- "http://localhost:14000/api/services/${SERVICE_ID}"
+```
+
+For protected-resource replacement, retain the existing strong `If-Match` requirement. A source transition never changes established client identities.
+Matching recorded identities can continue. Different or missing identities require a new connection after a transition, including a return to stored.
 
 ## Register a broker-hosted outbound CIMD confidential service
 

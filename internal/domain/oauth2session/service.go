@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
@@ -55,22 +56,23 @@ func addProviderAuthorizationParams(values url.Values, params map[string]string)
 }
 
 // OAuth2SessionService orchestrates OAuth2 authorization flows and session management.
-// It retrieves confidential services with client secrets decrypted when available. Public
-// services intentionally retain an absent Secret, so their OAuth2 configurations omit a client
-// secret.
+// It retrieves decrypted stored credentials when needed and selects filesystem
+// credentials only for the current authentication operation. Public and CIMD
+// clients retain their secretless or signed-assertion authentication.
 type OAuth2SessionService struct {
-	providerService     *thirdparty.ThirdpartyOAuth2ProviderService // Domain service that handles encryption/decryption
-	sessionRepo         ports.UserSessionRepository
-	refreshRepo         ports.UserSessionRefreshRepository
-	refreshGroup        singleflight.Group
-	grantRepo           ports.UserGrantRepository // For dependent agents
-	agentRepo           ports.AgentRepository     // For agent display names
-	encryption          ports.EncryptionPort
-	httpClient          *http.Client // For upstream OAuth2 token endpoint calls
-	jweTokenService     *domjwe.TokenService
-	cimdAssertionSigner ports.CIMDClientAssertionSigner
-	config              Config
-	logger              *slog.Logger
+	providerService      *thirdparty.ThirdpartyOAuth2ProviderService // Domain service that handles encryption/decryption
+	sessionRepo          ports.UserSessionRepository
+	refreshRepo          ports.UserSessionRefreshRepository
+	refreshGroup         singleflight.Group
+	grantRepo            ports.UserGrantRepository // For dependent agents
+	agentRepo            ports.AgentRepository     // For agent display names
+	encryption           ports.EncryptionPort
+	httpClient           *http.Client // For upstream OAuth2 token endpoint calls
+	jweTokenService      *domjwe.TokenService
+	cimdAssertionSigner  ports.CIMDClientAssertionSigner
+	credentialFileReader ports.CredentialFileReader
+	config               Config
+	logger               *slog.Logger
 }
 
 // Config holds configuration for the OAuth2 session service.
@@ -81,6 +83,7 @@ type Config struct {
 	MaxRetries            int           // Default: 3
 	RetryBaseDelay        time.Duration // Default: 1 second
 	RefreshStorageTimeout time.Duration // Budget for provider lookup and session storage operations
+	CredentialFiles       map[string]ports.CredentialFileBinding
 }
 
 // DefaultConfig returns configuration with sensible defaults.
@@ -101,6 +104,7 @@ func NewConfigFromPorts(portsCfg ports.ThirdPartyOAuth2Config, callbackBaseURL s
 		CallbackBaseURL: strings.TrimRight(callbackBaseURL, "/"),
 		MaxRetries:      3,           // Not yet in ports config, use default
 		RetryBaseDelay:  time.Second, // Not yet in ports config, use default
+		CredentialFiles: portsCfg.CredentialFiles,
 	}
 
 	// Use configured values if provided, otherwise use defaults
@@ -146,6 +150,7 @@ func NewOAuth2SessionService(
 	if config.RetryBaseDelay == 0 {
 		config.RetryBaseDelay = time.Second
 	}
+	config.CredentialFiles = maps.Clone(config.CredentialFiles)
 
 	return &OAuth2SessionService{
 		providerService: providerService,
@@ -164,6 +169,11 @@ func NewOAuth2SessionService(
 // WithCIMDAssertionSigner injects the narrow signer used only by CIMD confidential services.
 func (s *OAuth2SessionService) WithCIMDAssertionSigner(signer ports.CIMDClientAssertionSigner) *OAuth2SessionService {
 	s.cimdAssertionSigner = signer
+	return s
+}
+
+func (s *OAuth2SessionService) WithCredentialFileReader(reader ports.CredentialFileReader) *OAuth2SessionService {
+	s.credentialFileReader = reader
 	return s
 }
 
@@ -224,6 +234,9 @@ type SessionWithAgents struct {
 // CreateStateToken encrypts the state token claims into a JWE string.
 func (s *OAuth2SessionService) CreateStateToken(claims *OAuth2StateTokenClaims) (string, error) {
 	if err := claims.Validate(); err != nil {
+		if errors.Is(err, model.ErrCredentialSourceUnavailable) {
+			return "", err
+		}
 		return "", fmt.Errorf("invalid state token claims: %w", err)
 	}
 
@@ -256,6 +269,9 @@ func (s *OAuth2SessionService) ValidateStateToken(
 
 	// Validate claims structure
 	if err := claims.Validate(); err != nil {
+		if errors.Is(err, model.ErrCredentialSourceUnavailable) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("invalid state token claims: %w", err)
 	}
 
@@ -303,8 +319,8 @@ func (s *OAuth2SessionService) ValidateStateToken(
 // GROUP 2: OAuth2 Helpers
 // =============================================================================
 
-// buildOAuth2Config creates an oauth2.Config from a third-party provider entity.
-// Confidential client secrets must be in plaintext state (decrypted by ThirdpartyOAuth2ProviderService.Get).
+// buildOAuth2Config creates an operation-local config. Credentials are selected at
+// initiation or immediately before each exchange attempt, not from this template.
 func (s *OAuth2SessionService) buildOAuth2Config(
 	entity *model.ThirdpartyOAuth2ProviderEntity,
 	callbackURL string,
@@ -312,7 +328,6 @@ func (s *OAuth2SessionService) buildOAuth2Config(
 	if err := entity.ValidateOutboundCredentials(); err != nil {
 		return nil, fmt.Errorf("invalid outbound client authentication: %w", err)
 	}
-
 	// Extract scopes from entity
 	scopes := make([]string, 0, len(entity.Scopes))
 	for _, scope := range entity.Scopes {
@@ -320,10 +335,8 @@ func (s *OAuth2SessionService) buildOAuth2Config(
 	}
 
 	config := &oauth2.Config{
-		ClientID:     entity.ClientID.String(),
-		ClientSecret: "",
-		RedirectURL:  callbackURL,
-		Scopes:       scopes,
+		RedirectURL: callbackURL,
+		Scopes:      scopes,
 		Endpoint: oauth2.Endpoint{
 			AuthURL:  entity.Endpoints.AuthorizeEndpoint,
 			TokenURL: entity.Endpoints.TokenEndpoint,
@@ -331,14 +344,7 @@ func (s *OAuth2SessionService) buildOAuth2Config(
 	}
 	if entity.IsPublicClient() || entity.IsCIMDConfidentialClient() {
 		config.Endpoint.AuthStyle = oauth2.AuthStyleInParams
-		return config, nil
 	}
-
-	clientSecret, err := entity.Secret.GetPlaintext()
-	if err != nil {
-		return nil, fmt.Errorf("provider secret not in plaintext state; ensure entity was fetched via ThirdpartyOAuth2ProviderService.Get: %w", err)
-	}
-	config.ClientSecret = clientSecret
 
 	return config, nil
 }
@@ -397,6 +403,7 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 	ctx context.Context,
 	config *oauth2.Config,
 	service *model.ThirdpartyOAuth2ProviderEntity,
+	established *id.ClientID,
 	code string,
 	verifier string,
 	authorizationParams map[string]string,
@@ -418,6 +425,10 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 		for name, values := range params {
 			opts = append(opts, oauth2.SetAuthURLParam(name, values[0]))
 		}
+		clientID, clientSecret, err := s.selectCredentials(ctx, service, credentialOperationExchange, established)
+		if err != nil {
+			return nil, err
+		}
 		if service.IsCIMDConfidentialClient() {
 			if s.cimdAssertionSigner == nil {
 				return nil, NewOperationError(NewErrorMetadata(OperationCodeExchange, DetailConfiguration).WithDependency(DependencySigning), ports.ErrCIMDKeyUnavailable)
@@ -432,9 +443,15 @@ func (s *OAuth2SessionService) exchangeCodeWithRetry(
 				oauth2.SetAuthURLParam("client_assertion", assertion),
 			)
 		}
+		config.ClientID = clientID.String()
+		config.ClientSecret = clientSecret
 		token, err := config.Exchange(ctx, code, opts...)
 		if err == nil {
 			return token, nil
+		}
+		var retrieveErr *oauth2.RetrieveError
+		if service.CredentialSource == model.CredentialSourceFilesystem && errors.As(err, &retrieveErr) && retrieveErr.Response != nil {
+			s.auditCredentialProviderRejection(ctx, service.ID, credentialOperationExchange)
 		}
 		lastErr = safeTokenExchangeError(err)
 		if service.IsCIMDConfidentialClient() && tokenExchangeErrorIsPermanent(err) {
@@ -515,6 +532,10 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 		s.logger.ErrorContext(ctx, "failed to fetch service for authorization", "service_id", serviceID, "oauth2_session", failure.Metadata())
 		return nil, failure
 	}
+	clientID, clientSecret, err := s.selectCredentials(ctx, service, credentialOperationInitiation, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	// Generate PKCE
 	verifier := oauth2.GenerateVerifier()
@@ -529,6 +550,9 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 		ConsentStateID: consentStateID,
 		IssuedAt:       now,
 		ExpiresAt:      now.Add(s.config.StateTokenTTL),
+	}
+	if credentialSourceEligible(service) {
+		claims.UpstreamClientID = &clientID
 	}
 
 	// Encrypt state token
@@ -545,9 +569,12 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	callbackURL := s.config.CallbackBaseURL + "/api/third-party/" + serviceID.String() + "/oauth2/callback"
 	cfg, err := s.buildOAuth2Config(service, callbackURL)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "failed to build oauth2 config", "service_id", serviceID, "oauth2_session", NewErrorMetadata(OperationCodeExchange, DetailConfiguration))
-		return nil, fmt.Errorf("failed to build oauth2 config: %w", err)
+		failure := sessionOperationError(ctx, OperationCodeExchange, DetailConfiguration, errors.Join(ErrInvalidConfiguration, err))
+		s.logger.ErrorContext(ctx, "failed to build oauth2 config", "service_id", serviceID, "oauth2_session", failure.Metadata())
+		return nil, failure
 	}
+	cfg.ClientID = clientID.String()
+	cfg.ClientSecret = clientSecret
 
 	// Generate authorization URL with PKCE
 	authURL := cfg.AuthCodeURL(stateToken, oauth2.S256ChallengeOption(verifier))
@@ -585,6 +612,7 @@ func (s *OAuth2SessionService) createSession(
 	serviceID id.ServiceID,
 	token *oauth2.Token,
 	scope []string,
+	established *id.ClientID,
 ) (*storage.UserSession, error) {
 	// Check if session already exists for this principal+service
 	existingSession, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, serviceID)
@@ -654,6 +682,7 @@ func (s *OAuth2SessionService) createSession(
 		ID:                    sessionID,
 		Principal:             principal,
 		ServiceID:             serviceID,
+		UpstreamClientID:      established,
 		EncryptedAccessToken:  encryptedAccess,
 		EncryptedRefreshToken: encryptedRefresh,
 		TokenType:             tokenType,
@@ -693,6 +722,11 @@ func (s *OAuth2SessionService) HandleCallback(
 	// Validate state token (checks expiration, principal mismatch, tampering)
 	claims, err := s.ValidateStateToken(req.State, principal, req.ServiceID)
 	if err != nil {
+		if errors.Is(err, model.ErrCredentialSourceUnavailable) {
+			failure := sessionOperationError(ctx, OperationCodeExchange, DetailCredentialSourceUnavailable, err)
+			s.auditCredentialSourceFailure(ctx, req.ServiceID, credentialOperationExchange, failure)
+			return nil, failure
+		}
 		s.logger.ErrorContext(ctx, "state token validation failed", "service_id", req.ServiceID, "oauth2_session", NewErrorMetadata(OperationCodeExchange, DetailConfiguration))
 		return nil, fmt.Errorf("state token validation failed: %w", err)
 	}
@@ -716,8 +750,11 @@ func (s *OAuth2SessionService) HandleCallback(
 
 	// Exchange authorization code for tokens (with retry)
 	s.logger.InfoContext(ctx, "exchanging authorization code for token", "service_id", req.ServiceID, "operation", OperationCodeExchange)
-	token, err := s.exchangeCodeWithRetry(ctx, cfg, service, req.Code, claims.PKCEVerifier, service.AuthorizationParams)
+	token, err := s.exchangeCodeWithRetry(ctx, cfg, service, claims.UpstreamClientID, req.Code, claims.PKCEVerifier, service.AuthorizationParams)
 	if err != nil {
+		if errors.Is(err, model.ErrCredentialSourceUnavailable) {
+			return nil, err
+		}
 		if service.IsCIMDConfidentialClient() {
 			s.auditCIMDTokenAcquisition(service.ID, "code_exchange", "rejected")
 		}
@@ -756,7 +793,7 @@ func (s *OAuth2SessionService) HandleCallback(
 	}
 
 	// Create and store session
-	session, err := s.createSession(ctx, principal, req.ServiceID, token, scopes)
+	session, err := s.createSession(ctx, principal, req.ServiceID, token, scopes, claims.UpstreamClientID)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "failed to create session from token", "service_id", req.ServiceID, "oauth2_session", sessionFailureMetadata(err))
 		return nil, fmt.Errorf("failed to create session: %w", err)
@@ -780,6 +817,8 @@ func (s *OAuth2SessionService) HandleCallback(
 
 // RefreshAccessToken calls the upstream OAuth2 service's token endpoint to refresh an expired access token.
 // Uses the provided refresh token to obtain a new access token from the service.
+// This low-level entry point has no established identity and applies the legacy
+// absence rule. Session refresh paths pass their recorded identity under the lock.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout control
@@ -793,12 +832,22 @@ func (s *OAuth2SessionService) HandleCallback(
 // Per RFC 6749 Section 6, sends a POST request to the token endpoint with:
 //   - grant_type=refresh_token
 //   - refresh_token=<the provided refresh token>
-//   - client_id=<from service config>
-//   - client_secret=<from service config, confidential clients only>
+//   - client_id=<selected for this operation>
+//   - client_secret=<selected for this operation, shared-secret clients only>
 func (s *OAuth2SessionService) RefreshAccessToken(
 	ctx context.Context,
 	entity *model.ThirdpartyOAuth2ProviderEntity,
 	refreshToken string,
+) (*oauth2.Token, error) {
+	return s.refreshAccessToken(ctx, entity, refreshToken, nil)
+}
+
+// refreshAccessToken authenticates only after validating the session's established identity.
+func (s *OAuth2SessionService) refreshAccessToken(
+	ctx context.Context,
+	entity *model.ThirdpartyOAuth2ProviderEntity,
+	refreshToken string,
+	established *id.ClientID,
 ) (resultToken *oauth2.Token, resultErr error) {
 	defer func() {
 		if resultErr != nil && ctx.Err() != nil && ctx.Value(sharedRefreshContextKey{}) != true {
@@ -827,19 +876,18 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	}
 
 	isPublicClient := entity.IsPublicClient()
-	var clientSecret string
-	if !isPublicClient && !isCIMDClient {
-		var err error
-		clientSecret, err = entity.Secret.GetPlaintext()
-		if err != nil {
-			return nil, sessionOperationError(ctx, OperationRefresh, DetailDecryptionFailed, err)
+	clientID, clientSecret, err := s.selectCredentials(ctx, entity, credentialOperationRefresh, established)
+	if err != nil {
+		if isCIMDClient {
+			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
+		return nil, err
 	}
 
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
-	data.Set("client_id", entity.ClientID.String())
+	data.Set("client_id", clientID.String())
 	if !isPublicClient && !isCIMDClient {
 		data.Set("client_secret", clientSecret)
 	}
@@ -883,6 +931,9 @@ func (s *OAuth2SessionService) RefreshAccessToken(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if entity.CredentialSource == model.CredentialSourceFilesystem {
+			s.auditCredentialProviderRejection(ctx, entity.ID, credentialOperationRefresh)
+		}
 		if isCIMDClient {
 			s.auditCIMDTokenAcquisition(entity.ID, "refresh", "rejected")
 		}
@@ -1440,8 +1491,11 @@ func (s *OAuth2SessionService) refreshSessionTokens(ctx context.Context, session
 		return sessionOperationError(ctx, OperationRefresh, DetailRefreshUnavailable, ErrRefreshNotAvailable)
 	}
 
-	newToken, err := s.RefreshAccessToken(ctx, service, refreshToken)
+	newToken, err := s.refreshAccessToken(ctx, service, refreshToken, session.UpstreamClientID)
 	if err != nil {
+		if errors.Is(err, model.ErrCredentialSourceUnavailable) {
+			return err
+		}
 		s.logger.ErrorContext(ctx, "oauth2_refresh_failed",
 			"event", "session.oauth2.refresh_failed",
 			"service_id", serviceID,

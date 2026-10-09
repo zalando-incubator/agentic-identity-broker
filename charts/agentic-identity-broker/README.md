@@ -118,6 +118,51 @@ Keep AWS TLS certificate verification enabled in production. If
 startup requires explicit `GO_ENV=development`. Production, staging, unset,
 and unknown environments reject that development-only bypass.
 
+Use `broker.extraVolumes` and `broker.extraVolumeMounts` to append standard Kubernetes volumes and container mounts. Both default to empty lists. Mount names must reference a pod volume; use names other than the chart's built-in `config` and `tmp`. Create any referenced Secrets or ConfigMaps in the broker's namespace before deploying it.
+
+For example, mount an existing ConfigMap read-only:
+
+```yaml
+broker:
+  extraVolumes:
+    - name: supplemental-config
+      configMap:
+        name: broker-settings
+  extraVolumeMounts:
+    - name: supplemental-config
+      mountPath: /etc/broker/settings
+      readOnly: true
+```
+
+### Filesystem OAuth2 credentials
+
+`broker.thirdPartyOauth2.credentialFiles` maps exact service canonical IDs to two paths. The default `{}` renders no broker binding. Keys preserve case and dots. Both `client_id_file` and `client_secret_file` are required strings. Broker startup validates absolute, non-empty paths and the full canonical-ID grammar without opening files.
+
+The chart does not register services or choose their credential source. Register an eligible service through Admin API 2.0.0 with `credential_source: filesystem` and no inline `client_id` or `client_secret`, including null or empty fields. Stored services ignore bindings. A filesystem service without its exact binding fails closed at use. Use a feature-capable broker image with this contract.
+
+```yaml
+broker:
+  thirdPartyOauth2:
+    credentialFiles:
+      zalando-platform:
+        client_id_file: /meta/credentials/employee-client-id
+        client_secret_file: /meta/credentials/employee-client-secret
+  extraVolumes:
+    - name: credentials
+      secret:
+        secretName: agentic-platform-credentials
+  extraVolumeMounts:
+    - name: credentials
+      mountPath: /meta/credentials
+      readOnly: true
+```
+
+Use the existing volume inputs for a read-only directory mount. Do not use credential-file `subPath`. Preserve the built-in `config` and `tmp` mounts. The non-root pod identity must read both files and traverse every parent directory. Read-only mounting does not grant those permissions.
+
+Publish each replacement pair together through fresh immutable targets. Never modify published targets or republish retired targets during acquisition. Code exchange and refresh acquire both values and revalidate their targets. A detected change produces `generation_changed` before authentication without acquisition retries. Publication after validation can leave an in-flight operation using its validated pair. Later operations acquire current targets.
+
+Authorization initiation reads only the client-ID file. Metadata reads resolve neither file. Same-client secret rotation requires no restart or registration update. A changed client ID requires new connections for old codes or sessions. Provider validity overlap remains an operator responsibility, not an uninterrupted-rotation guarantee.
+
 ### Key Configuration Parameters
 
 | Parameter | Description | Default |
@@ -126,6 +171,8 @@ and unknown environments reject that development-only bypass.
 | `image.repository` | Broker container image repository | `agentic-identity-broker` |
 | `image.tag` | Broker image tag | Chart appVersion |
 | `broker.extraEnv` | Additional broker environment variables (`value` or `valueFrom`) | `[]` |
+| `broker.extraVolumes` | Additional Kubernetes volumes for the broker pod | `[]` |
+| `broker.extraVolumeMounts` | Additional Kubernetes volume mounts for the broker container | `[]` |
 | `migration.image.repository` | Migration container image repository | `agentic-identity-broker-migrate` |
 | `migration.image.tag` | Migration image tag | Chart appVersion |
 | `storage.type` | Storage backend (`memory` or `postgres`) | `memory` |
@@ -143,6 +190,7 @@ and unknown environments reject that development-only bypass.
 | `postgresql.operator.secretSuffix` | Operator credentials secret suffix | `postgresql.acid.zalan.do` |
 | `broker.thirdPartyOauth2.jweSigningKeySecret` | Secret ref for JWE signing key | `{name: "", key: signing-key}` |
 | `broker.thirdPartyOauth2.jweSigningKeyBase64` | Base64-encoded JWE signing key (highest precedence) | `""` |
+| `broker.thirdPartyOauth2.credentialFiles` | Exact canonical-ID object with required `client_id_file` and `client_secret_file` string paths in each binding | `{}` |
 | `broker.encryption.memory.rawKey` | Base64-encoded memory encryption key | `""` |
 | `broker.encryption.awsKms.keyArn` | AWS KMS key ARN | `""` |
 | `broker.encryption.awsKms.dynamodbTableName` | DynamoDB table for branch keys | `IdentityBrokerEncryptionBranchKeys` |

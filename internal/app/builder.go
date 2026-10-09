@@ -23,6 +23,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	adaptercmd "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/cimd"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/credentialfile"
 	awsencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/aws"
 	encryptionnoop "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/enduser"
@@ -620,7 +621,7 @@ func (b *Builder) Build() (*App, error) {
 		jweTokenService,
 		cfg,
 		b.logger,
-	).WithCIMDAssertionSigner(app.CIMDAssertionSigner)
+	).WithCIMDAssertionSigner(app.CIMDAssertionSigner).WithCredentialFileReader(credentialfile.New())
 
 	// Create agent domain service (used by admin handlers and CEL resolver)
 	agentService := agentsservice.NewService(

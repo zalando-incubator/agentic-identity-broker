@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
@@ -54,9 +55,18 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 		return nil, err
 	}
 
-	// Phase 3: Load YAML (User Story 2)
-	if err := l.loadYAML(); err != nil {
+	credentialFiles, credentialSource, err := l.credentialFilesJSONOverride()
+	if err != nil {
 		return nil, err
+	}
+
+	// Phase 3: Load YAML (User Story 2)
+	yamlCredentialFiles, err := l.loadYAML(credentialSource != "")
+	if err != nil {
+		return nil, err
+	}
+	if credentialSource == "" {
+		credentialFiles = yamlCredentialFiles
 	}
 
 	// Phase 4: Expand environment variables (User Story 2)
@@ -79,6 +89,7 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 			Err:      err,
 		}
 	}
+	cfg.ThirdPartyOAuth2.CredentialFiles = credentialFiles
 
 	// Phase 6: Validate configuration (User Story 4)
 	if cfg.Encryption.AWSKMS != nil && cfg.Encryption.AWSKMS.DisableSSL && os.Getenv("GO_ENV") != "development" {
@@ -160,6 +171,7 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv("third_party_oauth2.jwe_signing_key", "IDENTITY_BROKER_JWE_SIGNING_KEY")
 	_ = l.v.BindEnv("third_party_oauth2.state_token_ttl", "IDENTITY_BROKER_STATE_TOKEN_TTL")
 	_ = l.v.BindEnv("third_party_oauth2.pkce_verifier_length", "IDENTITY_BROKER_PKCE_VERIFIER_LENGTH")
+	_ = l.v.BindEnv(credentialFilesConfigKey, credentialFilesEnvKey)
 	// Bind encryption configuration to environment variables
 	// AWS KMS backend - KMS key and DynamoDB cache configuration
 	_ = l.v.BindEnv("encryption.aws_kms.key_arn", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_KEY_ARN")
@@ -182,6 +194,7 @@ func (l *Loader) setDefaults() {
 	// Set OAuth2 configuration defaults
 	l.v.SetDefault("third_party_oauth2.state_token_ttl", "10m")
 	l.v.SetDefault("third_party_oauth2.pkce_verifier_length", 32)
+	l.v.SetDefault(credentialFilesConfigKey, "{}")
 
 	// Note: No encryption configuration defaults set here to avoid creating
 	// both backend structs. Defaults are handled in the adapter factory functions.
@@ -285,6 +298,7 @@ func (l *Loader) setDefaults() {
 			"request_context.trusted_proxy.forwarded_header",
 			"request_context.trace.response_enabled",
 			"third_party_oauth2.state_token_ttl", "third_party_oauth2.pkce_verifier_length",
+			credentialFilesConfigKey,
 			"security.skip_thirdparty_https_validation",
 			"telemetry.enabled", "telemetry.service_name",
 			"telemetry.traces.enabled", "telemetry.traces.sampling_rate", "telemetry.traces.propagators",
@@ -371,7 +385,11 @@ func (l *Loader) loadEnvFile(filename string) error {
 			viperKey = after
 		}
 		// Convert to lowercase with dots
-		viperKey = strings.ToLower(strings.ReplaceAll(viperKey, "_", "."))
+		if key == credentialFilesEnvKey {
+			viperKey = credentialFilesConfigKey
+		} else {
+			viperKey = strings.ToLower(strings.ReplaceAll(viperKey, "_", "."))
+		}
 		l.v.Set(viperKey, value)
 		keys = append(keys, viperKey)
 	}
@@ -392,9 +410,12 @@ func (l *Loader) loadEnvFile(filename string) error {
 // File path is determined by --config flag or IDENTITY_BROKER_CONFIG_PATH env var.
 // If neither is set, looks for config.yaml in the current directory.
 // Records source metadata for audit logging.
-func (l *Loader) loadYAML() error {
+func (l *Loader) loadYAML(skipCredentialFiles bool) (map[string]ports.CredentialFileBinding, error) {
 	// Determine config file path
 	configPath := os.Getenv("IDENTITY_BROKER_CONFIG_PATH")
+	if l.cmd != nil && l.cmd.Flags().Changed("config") {
+		configPath, _ = l.cmd.Flags().GetString("config")
+	}
 	if configPath == "" {
 		configPath = "config.yaml"
 	}
@@ -402,13 +423,13 @@ func (l *Loader) loadYAML() error {
 	// Check if file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) { // #nosec G703 -- config path is local operator configuration, not an HTTP input.
 		// Config file is optional
-		return nil
+		return nil, nil
 	}
 
 	// Get absolute path
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
-		return &config.ConfigError{
+		return nil, &config.ConfigError{
 			Field:    "config_file",
 			Value:    configPath,
 			Expected: "valid file path",
@@ -419,11 +440,12 @@ func (l *Loader) loadYAML() error {
 	// Set config file in Viper
 	l.v.SetConfigFile(absPath)
 
-	// Read config file
-	if err := l.v.ReadInConfig(); err != nil {
+	// Read the selected file once, retaining its original credential key spelling.
+	data, err := os.ReadFile(absPath) // #nosec G703 -- the path is local operator configuration.
+	if err != nil {
 		// Check for specific error types
 		if os.IsPermission(err) {
-			return &config.ConfigError{
+			return nil, &config.ConfigError{
 				Field:    "config_file",
 				Value:    absPath,
 				Expected: "readable file with proper permissions",
@@ -431,7 +453,24 @@ func (l *Loader) loadYAML() error {
 				Err:      err,
 			}
 		}
-		return &config.ConfigError{
+		return nil, &config.ConfigError{
+			Field:    "config_file",
+			Value:    absPath,
+			Expected: "valid YAML syntax",
+			Source:   "yaml",
+			Err:      err,
+		}
+	}
+
+	var credentialFiles map[string]ports.CredentialFileBinding
+	if !skipCredentialFiles {
+		credentialFiles, err = l.decodeCredentialFilesYAML(data)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := l.v.ReadConfig(bytes.NewReader(data)); err != nil {
+		return nil, &config.ConfigError{
 			Field:    "config_file",
 			Value:    absPath,
 			Expected: "valid YAML syntax",
@@ -452,7 +491,7 @@ func (l *Loader) loadYAML() error {
 		Keys:       keys,
 	})
 
-	return nil
+	return credentialFiles, nil
 }
 
 // expandEnvVars expands environment variable references in configuration values.
@@ -463,6 +502,9 @@ func (l *Loader) expandEnvVars() error {
 	allKeys := l.v.AllKeys()
 
 	for _, key := range allKeys {
+		if key == credentialFilesConfigKey || strings.HasPrefix(key, credentialFilesConfigKey+".") {
+			continue
+		}
 		value := l.v.GetString(key)
 		if value == "" {
 			continue
@@ -640,12 +682,6 @@ func (l *Loader) bindFlags() error {
 	// Track which keys came from CLI flags
 	cliKeys := make([]string, 0)
 
-	// Bind config file path flag
-	if l.cmd.Flags().Changed("config") {
-		configPath, _ := l.cmd.Flags().GetString("config")
-		_ = os.Setenv("IDENTITY_BROKER_CONFIG_PATH", configPath)
-	}
-
 	// Bind log.level flag
 	if l.cmd.Flags().Changed("log-level") {
 		logLevel, _ := l.cmd.Flags().GetString("log-level")
@@ -714,6 +750,15 @@ func (l *Loader) bindFlags() error {
 		enabled, _ := l.cmd.Flags().GetBool("request_context.trace.response_enabled")
 		l.v.Set("request_context.trace.response_enabled", enabled)
 		cliKeys = append(cliKeys, "request_context.trace.response_enabled")
+	}
+
+	if flag := l.cmd.Flags().Lookup(credentialFilesConfigKey); flag != nil {
+		if err := l.v.BindPFlag(credentialFilesConfigKey, flag); err != nil {
+			return credentialFilesConfigError("cli", "a bindable JSON object string flag")
+		}
+		if flag.Changed {
+			cliKeys = append(cliKeys, credentialFilesConfigKey)
+		}
 	}
 
 	// Record CLI source if any flags were set

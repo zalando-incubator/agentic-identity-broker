@@ -26,6 +26,7 @@ func TestErrorMetadataBoundsAndClassification(t *testing.T) {
 		{DetailProviderRejected, KindProvider, DependencyProvider},
 		{DetailProviderUnavailable, KindInfrastructure, DependencyProvider},
 		{DetailProviderResponseInvalid, KindProvider, DependencyProvider},
+		{DetailCredentialSourceUnavailable, KindInfrastructure, DependencyCredentialSource},
 		{DetailRepositoryUnavailable, KindInfrastructure, DependencySessionRepository},
 		{DetailDecryptionFailed, KindInfrastructure, DependencyEncryption},
 		{DetailEncryptionFailed, KindInfrastructure, DependencyEncryption},
@@ -46,6 +47,7 @@ func TestErrorMetadataBoundsAndClassification(t *testing.T) {
 	assert.Equal(t, OperationUnknown, metadata.Operation())
 	assert.Equal(t, DetailInternalUnclassified, metadata.Detail())
 	assert.Equal(t, DependencyNone, metadata.WithDependency(Dependency("secret-dependency")).Dependency())
+	assert.Equal(t, DependencyCredentialSource, metadata.WithDependency(DependencyCredentialSource).Dependency())
 	for _, status := range []int{-1, 99, 600, 1000} {
 		assert.Zero(t, metadata.WithProviderResponse(status, "secret-code").StatusCode())
 	}

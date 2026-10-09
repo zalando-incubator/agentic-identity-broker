@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/canonical"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 )
 
@@ -26,16 +27,47 @@ func providerEntityCopy(entity *model.ThirdpartyOAuth2ProviderEntity) (*model.Th
 	if err := entity.TokenEndpointAuthMethod.Validate(); err != nil {
 		return nil, err
 	}
-	if (entity.IsPublicClient() || entity.IsCIMDConfidentialClient()) != entity.Secret.IsAbsent() {
-		return nil, errors.New("token_endpoint_auth_method and client_secret state must agree")
+	source := entity.CredentialSource
+	if source == "" && !entity.CredentialSourceProvided {
+		source = model.CredentialSourceStored
 	}
-	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
-		if _, err := entity.Secret.GetCiphertext(); err != nil {
-			return nil, fmt.Errorf("entity secret must be encrypted with non-empty ciphertext: %w", err)
+	switch source {
+	case model.CredentialSourceStored:
+		if entity.ClientID.IsZero() {
+			return nil, errors.New("client_id is required for stored credential_source")
 		}
+		if (entity.IsPublicClient() || entity.IsCIMDConfidentialClient()) != entity.Secret.IsAbsent() {
+			return nil, errors.New("token_endpoint_auth_method and client_secret state must agree")
+		}
+		if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
+			if _, err := entity.Secret.GetCiphertext(); err != nil {
+				return nil, fmt.Errorf("entity secret must be encrypted with non-empty ciphertext: %w", err)
+			}
+		}
+	case model.CredentialSourceFilesystem:
+		if !entity.TokenEndpointAuthMethod.IsAbsent() || (entity.Flavor != "" && entity.Flavor != model.OAuth2FlavorStandard && entity.Flavor != model.OAuth2FlavorGitHub) {
+			return nil, errors.New("filesystem credential_source requires standard or github shared-secret authentication")
+		}
+		if entity.CanonicalID == nil || entity.ClearCanonicalID {
+			return nil, errors.New("canonical_id is required for filesystem credential_source")
+		}
+		if err := canonical.Validate(entity.CanonicalID); err != nil {
+			return nil, err
+		}
+		if entity.ClientIDProvided || entity.ClientSecretProvided || !entity.ClientID.IsZero() || !entity.Secret.IsAbsent() {
+			return nil, errors.New("inline credentials must be absent for filesystem credential_source")
+		}
+	default:
+		return nil, errors.New("credential_source must be stored or filesystem")
 	}
 
-	return entity.Copy(), nil
+	copy := entity.Copy()
+	copy.CredentialSource = source
+	copy.ClearCanonicalID = false
+	copy.CredentialSourceProvided = false
+	copy.ClientIDProvided = false
+	copy.ClientSecretProvided = false
+	return copy, nil
 }
 
 func providerEntityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*thirdpartyOAuth2ProviderRecord, error) {

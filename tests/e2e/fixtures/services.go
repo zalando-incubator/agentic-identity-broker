@@ -209,3 +209,33 @@ func ValidGitHubServiceRequest() map[string]interface{} {
 		"protected_resources": []string{"https://api.github.com"},
 	}
 }
+
+const (
+	CredentialClientID          = "synthetic-client-A"
+	CredentialClientSecret      = "synthetic-secret-A"
+	AlternateCredentialClientID = "synthetic-client-B"
+	RotatedCredentialSecret     = "synthetic-secret-B"
+)
+
+func CredentialServiceRequest(canonicalID, providerURL, source string) map[string]any {
+	request := map[string]any{
+		"canonical_id": canonicalID,
+		"display_name": "Credential source service",
+		"issuer_uri":   providerURL,
+		"discovery":    map[string]any{"enable_discovery": false},
+		"endpoints": map[string]any{
+			"authorize_endpoint": providerURL + "/oauth/authorize",
+			"token_endpoint":     providerURL + "/oauth/token",
+		},
+		"scopes":              []map[string]any{{"scope_value": "profile", "description": "Synthetic profile"}},
+		"protected_resources": []string{providerURL + "/resource"},
+	}
+	if source != "" {
+		request["credential_source"] = source
+	}
+	if source != "filesystem" {
+		request["client_id"] = CredentialClientID
+		request["client_secret"] = CredentialClientSecret
+	}
+	return request
+}

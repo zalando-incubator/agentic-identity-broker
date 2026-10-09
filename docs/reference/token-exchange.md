@@ -292,6 +292,8 @@ Their OAuth response is `invalid_grant` with the sessions landing page as `error
 Provider refresh rejection and recorded local expiry are distinct causes.
 Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
 Provider client-authentication rejection instead indicates broker configuration failure.
+Credential-source failures use `credential_source_unavailable` with outcome `infrastructure_error` at the affected session stage.
+They return `server_error` without a recovery URI and never trigger provider-session recovery.
 
 Session `OperationError` carries immutable operation/detail/kind/dependency/status/allowlisted-code metadata.
 Origin metadata maps to exchange diagnostics without inspecting error text.

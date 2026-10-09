@@ -48,12 +48,25 @@ third_party_oauth2:
   # Higher values provide more entropy but no practical security benefit beyond 32.
   pkce_verifier_length: 32
 
+  # Bindings never select a service's credential source. The default supplies none.
+  credential_files: {}
+
+  # Replace the empty mapping with one filesystem binding:
+  # credential_files:
+  #   zalando-platform:
+  #     client_id_file: /meta/credentials/employee-client-id
+  #     client_secret_file: /meta/credentials/employee-client-secret
+
+  # Select credential_source: filesystem without inline credentials on the service.
+  # README.md documents multiple pairs, source precedence, and JSON environment/CLI input.
+
 # Environment-Specific Overrides
 #
 # You can override these settings using environment variables:
 # - IDENTITY_BROKER_JWE_SIGNING_KEY (required, no default)
 # - IDENTITY_BROKER_STATE_TOKEN_TTL (optional, default: 10m)
 # - IDENTITY_BROKER_PKCE_VERIFIER_LENGTH (optional, default: 32)
+# - IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CREDENTIAL_FILES (JSON object, default: {})
 #
 # Example:
 #   export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"
