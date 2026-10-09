@@ -80,6 +80,12 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 		}
 	}
 
+	// These are read directly rather than decoded: a map key containing a
+	// literal dot (e.g. "service.namespace") is indistinguishable from nesting
+	// once Viper flattens config paths, so Unmarshal can't represent it.
+	cfg.Telemetry.ResourceAttributes = l.v.GetStringMapString("telemetry.resource_attributes")
+	cfg.Telemetry.Exporter.Headers = l.v.GetStringMapString("telemetry.exporter.headers")
+
 	// Phase 6: Validate configuration (User Story 4)
 	if cfg.Encryption.AWSKMS != nil && cfg.Encryption.AWSKMS.DisableSSL && os.Getenv("GO_ENV") != "development" {
 		return nil, formatValidationError(

@@ -921,6 +921,65 @@ func TestLoadFromViper_TelemetryDefaults(t *testing.T) {
 	assert.Equal(t, "none", cfg.Telemetry.Exporter.Compression)
 }
 
+// Regression test: a dotted resource attribute key (e.g. "service.namespace")
+// used to crash Unmarshal nondeterministically. Looped to catch flakes.
+func TestLoadFromViper_TelemetryResourceAttributesDottedKey(t *testing.T) {
+	yamlConfig := []byte(`
+oauth2:
+  token_endpoint: "https://idp.example.com/oauth2/token"
+  issuer: "https://idp.example.com"
+  client_id: "test-client"
+  client_secret: "test-secret"
+telemetry:
+  resource_attributes:
+    service.namespace: "zap-agentgateway"
+    k8s.pod.name: "central-extproc-abc123"
+`)
+
+	for i := 0; i < 500; i++ {
+		v := viper.New()
+		v.SetConfigType("yaml")
+		require.NoError(t, v.ReadConfig(strings.NewReader(string(yamlConfig))))
+
+		cfg, err := config.LoadFromViper(v)
+		require.NoError(t, err, "iteration %d: dotted resource attribute key must not break config loading", i)
+
+		assert.Equal(t, map[string]string{
+			"service.namespace": "zap-agentgateway",
+			"k8s.pod.name":      "central-extproc-abc123",
+		}, cfg.Telemetry.ResourceAttributes, "iteration %d: dotted keys must be preserved flat, not nested", i)
+	}
+}
+
+func TestLoadFromViper_TelemetryExporterHeadersDottedKey(t *testing.T) {
+	yamlConfig := []byte(`
+oauth2:
+  token_endpoint: "https://idp.example.com/oauth2/token"
+  issuer: "https://idp.example.com"
+  client_id: "test-client"
+  client_secret: "test-secret"
+telemetry:
+  exporter:
+    headers:
+      x.custom.header: "value"
+      authorization: "Bearer token"
+`)
+
+	for i := 0; i < 500; i++ {
+		v := viper.New()
+		v.SetConfigType("yaml")
+		require.NoError(t, v.ReadConfig(strings.NewReader(string(yamlConfig))))
+
+		cfg, err := config.LoadFromViper(v)
+		require.NoError(t, err, "iteration %d: dotted exporter header key must not break config loading", i)
+
+		assert.Equal(t, map[string]string{
+			"x.custom.header": "value",
+			"authorization":   "Bearer token",
+		}, cfg.Telemetry.Exporter.Headers, "iteration %d: dotted keys must be preserved flat, not nested", i)
+	}
+}
+
 func TestLoadFromViper_TelemetryEnabledEnvVar(t *testing.T) {
 	t.Setenv("EXTPROC_TELEMETRY_ENABLED", "true")
 	t.Setenv("EXTPROC_TELEMETRY_EXPORTER_ENDPOINT", "collector:4317")

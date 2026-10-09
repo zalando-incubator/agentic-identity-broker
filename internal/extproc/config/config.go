@@ -106,9 +106,10 @@ type SessionExtractionConfig struct {
 // Mirror of ports.TelemetryConfig — structurally identical, defined locally
 // to avoid importing internal/ports in the ExtProc service.
 type TelemetryConfig struct {
-	Enabled            bool               `mapstructure:"enabled"`
-	ServiceName        string             `mapstructure:"service_name"`
-	ResourceAttributes map[string]string  `mapstructure:"resource_attributes"`
+	Enabled     bool   `mapstructure:"enabled"`
+	ServiceName string `mapstructure:"service_name"`
+	// Populated manually in loader.go; see there for why.
+	ResourceAttributes map[string]string  `mapstructure:"-"`
 	Traces             TracesConfig       `mapstructure:"traces"`
 	Metrics            MetricsConfig      `mapstructure:"metrics"`
 	Logs               LogsConfig         `mapstructure:"logs"`
@@ -135,9 +136,10 @@ type LogsConfig struct {
 
 // OTLPExporterConfig contains OTLP exporter connection parameters.
 type OTLPExporterConfig struct {
-	Protocol    string            `mapstructure:"protocol"`
-	Endpoint    string            `mapstructure:"endpoint"`
-	Headers     map[string]string `mapstructure:"headers"`
+	Protocol string `mapstructure:"protocol"`
+	Endpoint string `mapstructure:"endpoint"`
+	// Populated manually in loader.go; see there for why.
+	Headers     map[string]string `mapstructure:"-"`
 	Timeout     time.Duration     `mapstructure:"timeout"`
 	Insecure    bool              `mapstructure:"insecure"`
 	Compression string            `mapstructure:"compression"`
