@@ -87,6 +87,7 @@ Deployment: Containerized service (Docker), deployable to Kubernetes, AWS ECS, o
 - **Adapter** (internal/config/loader.go): Viper-based implementation loading from multiple sources
 - **Domain Types** (internal/domain/config/): LogLevel, LogFormat enums with validation
 - **Domain Errors** (internal/domain/config/errors.go): ConfigError with error wrapping support
+- **Shared Utility** (internal/configutil/viper.go): Viper construction and structural paths for both services, using `::` to preserve literal dots in map keys. Each service owns its defaults and loading policy.
 
 **Configuration Sources** (in precedence order, lowest to highest):
 

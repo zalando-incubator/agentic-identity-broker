@@ -558,10 +558,10 @@ The following configuration sections are planned for future releases. This table
 
 The configuration system follows consistent naming patterns across all sources:
 
-1. **YAML Paths**: Use dot notation with lowercase keys (e.g., `log.level`, `server.tls.enabled`)
+1. **YAML Paths**: Use nested mappings with lowercase structural keys. This guide uses dotted paths, such as `log.level`, as shorthand.
 2. **Environment Variables**: Prefix + uppercase + underscores (e.g., `IDENTITY_BROKER_LOG_LEVEL`, `IDENTITY_BROKER_SERVER_TLS_ENABLED`)
 3. **CLI Flags**: Lowercase with hyphens (e.g., `--log-level`, `--server-tls-enabled`)
-4. **Nested Config**: Each level adds a separator (`.` in YAML, `_` in env vars, `-` in flags)
+4. **Nested Configuration**: YAML nesting defines the structure. Flat keys such as `telemetry.exporter.endpoint` are literal keys, not structural paths.
 
 ### Configuration by Use Case
 
@@ -1416,7 +1416,7 @@ For HTTP/HTTPS, configure the collector URL without a signal path. AIB sends tra
 
 ### Environment Variable Mapping
 
-All OTel settings can be overridden via environment variables using the `IDENTITY_BROKER_TELEMETRY_` prefix, following the same Viper binding rules as other settings. For example:
+Scalar OTel settings with environment bindings accept the `IDENTITY_BROKER_TELEMETRY_` prefix. Resource attributes and exporter headers use YAML maps, not whole-map environment strings. For example:
 
 ```bash
 IDENTITY_BROKER_TELEMETRY_ENABLED=true
@@ -1424,6 +1424,32 @@ IDENTITY_BROKER_TELEMETRY_EXPORTER_ENDPOINT=otel-collector:4317
 IDENTITY_BROKER_TELEMETRY_EXPORTER_INSECURE=true
 IDENTITY_BROKER_TELEMETRY_SERVICE_NAME=my-broker-instance
 ```
+
+### Literal Map Keys
+
+Both the broker and ExtProc preserve literal dots in resource attribute names and exporter header names:
+
+```yaml
+telemetry:
+  resource_attributes:
+    service: broker
+    service.namespace: production
+    service.version: release
+  exporter:
+    headers:
+      x.vendor.token: ${OTLP_TOKEN}
+      x.vendor.region: eu
+```
+
+`service` and `service.namespace` remain separate string keys. Nested maps where string values are expected cause a decoding error. Missing maps and explicit `{}` maps decode to nil, which consumers treat as empty.
+
+The broker expands `${VAR}` in both maps. ExtProc expands exporter header values but leaves resource attribute values unchanged.
+
+The shared `internal/configutil` utility reserves `::` for structural Viper paths. It does not own service defaults or loading policy. For caller-created ExtProc instances, call `configutil.NewViper()` before populating the instance for `LoadFromViper`. Address a literal leaf with `configutil.Key("telemetry", "resource_attributes", "service.namespace")`.
+
+Nested YAML and public CLI names remain unchanged. For example, ExtProc keeps `--telemetry.exporter.endpoint` and `EXTPROC_TELEMETRY_EXPORTER_ENDPOINT`. The broker keeps `IDENTITY_BROKER_TELEMETRY_EXPORTER_ENDPOINT`. Source metadata continues to show readable dotted paths.
+
+ExtProc replaces both `::` and literal dots with underscores for environment lookup. Known YAML leaf keys retain their existing environment overrides. This conversion is not unambiguous for arbitrary map keys. Keys containing `::` are outside this contract. Viper remains case-insensitive and does not preserve attribute-name case.
 
 ### What is Instrumented
 

@@ -2,12 +2,15 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/configutil"
 	domainconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/spf13/cobra"
@@ -545,4 +548,431 @@ oauth2_authorization_server:
 			assert.Equal(t, tt.skip, cfg.Security.SkipCIMDSSRFValidation)
 		})
 	}
+}
+
+func TestConfigLoaderTelemetryLiteralMaps(t *testing.T) {
+	tests := []struct {
+		name       string
+		yaml       string
+		attributes map[string]string
+		headers    map[string]string
+	}{
+		{
+			name: "literal dotted resource and header keys",
+			yaml: `telemetry:
+  resource_attributes:
+    service.namespace: production
+    deployment.environment.name: staging
+  exporter:
+    headers:
+      x.vendor.token: secret
+      x.vendor.region: eu
+`,
+			attributes: map[string]string{"service.namespace": "production", "deployment.environment.name": "staging"},
+			headers:    map[string]string{"x.vendor.token": "secret", "x.vendor.region": "eu"},
+		},
+		{
+			name: "scalar keys coexist with dotted keys",
+			yaml: `telemetry:
+  resource_attributes:
+    service: broker
+    service.namespace: production
+    service.version: release
+  exporter:
+    headers:
+      x: ordinary
+      x.vendor.token: secret
+      x.vendor.region: eu
+`,
+			attributes: map[string]string{"service": "broker", "service.namespace": "production", "service.version": "release"},
+			headers:    map[string]string{"x": "ordinary", "x.vendor.token": "secret", "x.vendor.region": "eu"},
+		},
+		{
+			name: "multiple keys sharing several prefixes",
+			yaml: `telemetry:
+  resource_attributes:
+    service.namespace: production
+    service.namespace.region: eu
+    deployment.environment.name: staging
+    deployment.environment.region: us
+  exporter:
+    headers:
+      x.vendor.token: secret
+      x.vendor.token.scope: traces
+      x.region.name: eu
+      x.region.zone: west
+`,
+			attributes: map[string]string{
+				"service.namespace": "production", "service.namespace.region": "eu",
+				"deployment.environment.name": "staging", "deployment.environment.region": "us",
+			},
+			headers: map[string]string{
+				"x.vendor.token": "secret", "x.vendor.token.scope": "traces",
+				"x.region.name": "eu", "x.region.zone": "west",
+			},
+		},
+		{
+			name: "ordinary string map keys",
+			yaml: `telemetry:
+  resource_attributes:
+    region: eu
+    environment: staging
+  exporter:
+    headers:
+      authorization: Bearer secret
+      tenant: production
+`,
+			attributes: map[string]string{"region": "eu", "environment": "staging"},
+			headers:    map[string]string{"authorization": "Bearer secret", "tenant": "production"},
+		},
+		{name: "missing maps stay nil", yaml: "telemetry: {}\n"},
+		{
+			name: "explicit empty maps stay nil",
+			yaml: "telemetry:\n  resource_attributes: {}\n  exporter:\n    headers: {}\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMinimalConfigEnv(t)
+			setConfigYAML(t, tt.yaml)
+			loader := NewLoader()
+
+			cfg, err := loader.GetConfig(context.Background())
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.attributes, cfg.Telemetry.ResourceAttributes)
+			assert.Equal(t, tt.headers, cfg.Telemetry.Exporter.Headers)
+		})
+	}
+}
+
+func TestConfigLoaderRejectsNestedTelemetryMaps(t *testing.T) {
+	tests := []struct {
+		name  string
+		yaml  string
+		field string
+	}{
+		{
+			name:  "nested resource attributes are not string values",
+			yaml:  "telemetry:\n  resource_attributes:\n    service:\n      namespace: production\n",
+			field: "resource_attributes",
+		},
+		{
+			name:  "nested exporter headers are not string values",
+			yaml:  "telemetry:\n  exporter:\n    headers:\n      x:\n        vendor: secret\n",
+			field: "headers",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMinimalConfigEnv(t)
+			setConfigYAML(t, tt.yaml)
+
+			_, err := NewLoader().GetConfig(context.Background())
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.field)
+			assert.Contains(t, err.Error(), "string")
+		})
+	}
+}
+
+func TestConfigLoaderTelemetryMapInterpolation(t *testing.T) {
+	tests := []struct {
+		name      string
+		namespace string
+		token     string
+	}{
+		{name: "production map values", namespace: "production", token: "production-secret"},
+		{name: "staging map values", namespace: "staging", token: "staging-secret"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMinimalConfigEnv(t)
+			t.Setenv("BROKER_RESOURCE_NAMESPACE", tt.namespace)
+			t.Setenv("BROKER_EXPORTER_TOKEN", tt.token)
+			setConfigYAML(t, `telemetry:
+  resource_attributes:
+    service: broker
+    service.namespace: ${BROKER_RESOURCE_NAMESPACE}
+    service.namespace.region: eu
+  exporter:
+    headers:
+      x.vendor.token: Bearer ${BROKER_EXPORTER_TOKEN}
+      x.vendor.region: eu
+`)
+
+			cfg, err := NewLoader().GetConfig(context.Background())
+
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{
+				"service": "broker", "service.namespace": tt.namespace, "service.namespace.region": "eu",
+			}, cfg.Telemetry.ResourceAttributes)
+			assert.Equal(t, map[string]string{
+				"x.vendor.token": "Bearer " + tt.token, "x.vendor.region": "eu",
+			}, cfg.Telemetry.Exporter.Headers)
+		})
+	}
+}
+
+func TestConfigLoaderTelemetryMapsUnmarshalDoesNotMutateSource(t *testing.T) {
+	loader := NewLoader()
+	loader.v.SetConfigType("yaml")
+	require.NoError(t, loader.v.ReadConfig(strings.NewReader(`telemetry:
+  resource_attributes:
+    service: broker
+    service.namespace: production
+    service.namespace.region: eu
+  exporter:
+    headers:
+      x.vendor.token: secret
+      x.vendor.token.scope: traces
+`)))
+	source := loader.v.Get(configutil.Key("telemetry"))
+	snapshot, err := json.Marshal(source)
+	require.NoError(t, err)
+	var first ports.Config
+	require.NoError(t, loader.v.Unmarshal(&first))
+	afterFirst, err := json.Marshal(source)
+	require.NoError(t, err)
+	assert.Equal(t, snapshot, afterFirst, "the first Unmarshal must preserve the deep source snapshot")
+	var second ports.Config
+	require.NoError(t, loader.v.Unmarshal(&second))
+
+	attributes := map[string]string{"service": "broker", "service.namespace": "production", "service.namespace.region": "eu"}
+	headers := map[string]string{"x.vendor.token": "secret", "x.vendor.token.scope": "traces"}
+	assert.Equal(t, attributes, first.Telemetry.ResourceAttributes)
+	assert.Equal(t, headers, first.Telemetry.Exporter.Headers)
+	assert.Equal(t, attributes, second.Telemetry.ResourceAttributes)
+	assert.Equal(t, headers, second.Telemetry.Exporter.Headers)
+	assert.Equal(t, first.Telemetry, second.Telemetry)
+	unchanged, err := json.Marshal(source)
+	require.NoError(t, err)
+	assert.Equal(t, snapshot, unchanged, "Unmarshal must not modify the original nested source maps")
+	current, err := json.Marshal(loader.v.Get(configutil.Key("telemetry")))
+	require.NoError(t, err)
+	assert.Equal(t, snapshot, current, "the same Viper instance must retain its original maps")
+}
+
+func TestConfigLoaderScalarPrecedence(t *testing.T) {
+	const scalarYAML = `log:
+  level: warn
+server:
+  enduser:
+    port: 8100
+  shutdown:
+    timeout: 25s
+`
+	tests := []struct {
+		name        string
+		yaml        string
+		envLevel    string
+		envPort     string
+		envTimeout  string
+		flags       []string
+		wantLevel   string
+		wantPort    int
+		wantTimeout time.Duration
+	}{
+		{
+			name: "CLI overrides environment YAML and defaults", yaml: scalarYAML,
+			envLevel: "debug", envPort: "8200", envTimeout: "40s",
+			flags:     []string{"--log-level=error", "--server.enduser.port=8300", "--server.shutdown.timeout=45s"},
+			wantLevel: "error", wantPort: 8300, wantTimeout: 45 * time.Second,
+		},
+		{
+			name: "environment overrides YAML and defaults", yaml: scalarYAML,
+			envLevel: "debug", envPort: "8200", envTimeout: "40s",
+			wantLevel: "debug", wantPort: 8200, wantTimeout: 40 * time.Second,
+		},
+		{
+			name: "YAML overrides defaults", yaml: scalarYAML,
+			wantLevel: "warn", wantPort: 8100, wantTimeout: 25 * time.Second,
+		},
+		{
+			name: "defaults remain when higher sources are absent", yaml: "{}\n",
+			wantLevel: "info", wantPort: ports.DefaultServerConfig().EndUser.Port,
+			wantTimeout: ports.DefaultServerConfig().Shutdown.Timeout,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMinimalConfigEnv(t)
+			setConfigYAML(t, tt.yaml)
+			t.Setenv("IDENTITY_BROKER_LOG_LEVEL", tt.envLevel)
+			t.Setenv("IDENTITY_BROKER_SERVER_ENDUSER_PORT", tt.envPort)
+			t.Setenv("IDENTITY_BROKER_SERVER_SHUTDOWN_TIMEOUT", tt.envTimeout)
+			cmd := &cobra.Command{Use: "test"}
+			cmd.Flags().String("log-level", "info", "")
+			cmd.Flags().Int("server.enduser.port", 8000, "")
+			cmd.Flags().Duration("server.shutdown.timeout", 30*time.Second, "")
+			require.NoError(t, cmd.ParseFlags(tt.flags))
+			loader := NewLoader()
+			loader.SetCommand(cmd)
+
+			cfg, err := loader.GetConfig(context.Background())
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantLevel, string(cfg.Log.Level))
+			assert.Equal(t, tt.wantPort, cfg.Server.EndUser.Port)
+			assert.Equal(t, tt.wantTimeout, cfg.Server.Shutdown.Timeout)
+		})
+	}
+}
+
+func TestConfigLoaderCLIFlagsPreservePublicNames(t *testing.T) {
+	setMinimalConfigEnv(t)
+	setConfigYAML(t, "{}\n")
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().String("log-level", "info", "")
+	cmd.Flags().String("log-format", "text", "")
+	cmd.Flags().Int("server.enduser.port", 8000, "")
+	cmd.Flags().String("server.enduser.bind", "::", "")
+	cmd.Flags().Int("server.admin.port", 14000, "")
+	cmd.Flags().String("server.admin.bind", "::", "")
+	cmd.Flags().Duration("server.shutdown.timeout", 30*time.Second, "")
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--log-level=debug", "--log-format=json",
+		"--server.enduser.port=8100", "--server.enduser.bind=127.0.0.1",
+		"--server.admin.port=14100", "--server.admin.bind=::1",
+		"--server.shutdown.timeout=45s",
+	}))
+	loader := NewLoader()
+	loader.SetCommand(cmd)
+
+	cfg, err := loader.GetConfig(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, "debug", string(cfg.Log.Level))
+	assert.Equal(t, "json", string(cfg.Log.Format))
+	assert.Equal(t, 8100, cfg.Server.EndUser.Port)
+	assert.Equal(t, "127.0.0.1", cfg.Server.EndUser.Bind)
+	assert.Equal(t, 14100, cfg.Server.Admin.Port)
+	assert.Equal(t, "::1", cfg.Server.Admin.Bind)
+	assert.Equal(t, 45*time.Second, cfg.Server.Shutdown.Timeout)
+	for _, source := range loader.GetSources() {
+		if source.Type != ports.SourceTypeCLI {
+			continue
+		}
+		assert.ElementsMatch(t, []string{
+			"log.level", "log.format", "server.enduser.port", "server.enduser.bind",
+			"server.admin.port", "server.admin.bind", "server.shutdown.timeout",
+		}, source.Keys)
+		return
+	}
+	t.Fatal("CLI source not found")
+}
+
+func TestConfigLoaderFalseAndZeroOverrides(t *testing.T) {
+	tests := []struct {
+		name        string
+		yaml        string
+		envResponse string
+		envSampling string
+		flags       []string
+	}{
+		{
+			name: "YAML false and zero override defaults",
+			yaml: "request_context:\n  trace:\n    response_enabled: false\ntelemetry:\n  traces:\n    sampling_rate: 0\n",
+		},
+		{
+			name:        "environment false and zero override YAML",
+			yaml:        "request_context:\n  trace:\n    response_enabled: true\ntelemetry:\n  traces:\n    sampling_rate: 0.5\n",
+			envResponse: "false", envSampling: "0",
+		},
+		{
+			name:        "CLI false overrides true environment and YAML",
+			yaml:        "request_context:\n  trace:\n    response_enabled: true\ntelemetry:\n  traces:\n    sampling_rate: 0.5\n",
+			envResponse: "true", envSampling: "0",
+			flags: []string{"--request_context.trace.response_enabled=false"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMinimalConfigEnv(t)
+			setConfigYAML(t, tt.yaml)
+			t.Setenv("IDENTITY_BROKER_REQUEST_CONTEXT_TRACE_RESPONSE_ENABLED", tt.envResponse)
+			t.Setenv("IDENTITY_BROKER_TELEMETRY_TRACES_SAMPLING_RATE", tt.envSampling)
+			t.Setenv("IDENTITY_BROKER_TELEMETRY_ENABLED", "true")
+			t.Setenv("IDENTITY_BROKER_TELEMETRY_EXPORTER_ENDPOINT", "collector:4317")
+			cmd := &cobra.Command{Use: "test"}
+			cmd.Flags().Bool("request_context.trace.response_enabled", true, "")
+			require.NoError(t, cmd.ParseFlags(tt.flags))
+			loader := NewLoader()
+			loader.SetCommand(cmd)
+
+			cfg, err := loader.GetConfig(context.Background())
+
+			require.NoError(t, err)
+			assert.False(t, cfg.RequestContext.Trace.ResponseEnabled)
+			assert.Zero(t, cfg.Telemetry.Traces.SamplingRate)
+		})
+	}
+}
+
+func TestConfigLoaderSourceMetadataRemainsDotReadable(t *testing.T) {
+	t.Run("YAML keys preserve readable structural and literal dots", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		setConfigYAML(t, `log:
+  level: warn
+server:
+  enduser:
+    port: 8100
+telemetry:
+  resource_attributes:
+    service.namespace: production
+  exporter:
+    headers:
+      x.vendor.token: secret
+`)
+		loader := NewLoader()
+		_, err := loader.GetConfig(context.Background())
+		require.NoError(t, err)
+		for _, source := range loader.GetSources() {
+			for _, key := range source.Keys {
+				assert.NotContains(t, key, configutil.Delimiter)
+			}
+			if source.Type != ports.SourceTypeYAML {
+				continue
+			}
+			assert.Contains(t, source.Keys, "log.level")
+			assert.Contains(t, source.Keys, "server.enduser.port")
+			assert.Contains(t, source.Keys, "telemetry.resource_attributes.service.namespace")
+			assert.Contains(t, source.Keys, "telemetry.exporter.headers.x.vendor.token")
+			return
+		}
+		t.Fatal("YAML source not found")
+	})
+
+	t.Run("env file paths use internal delimiter and readable metadata", func(t *testing.T) {
+		t.Setenv("IDENTITY_BROKER_LOG_LEVEL", "")
+		t.Setenv("IDENTITY_BROKER_SERVER_ENDUSER_PORT", "")
+		t.Setenv("CUSTOM_VALUE", "")
+		envPath := filepath.Join(t.TempDir(), ".env")
+		require.NoError(t, os.WriteFile(envPath, []byte("IDENTITY_BROKER_LOG_LEVEL=debug\nIDENTITY_BROKER_SERVER_ENDUSER_PORT=8200\nCUSTOM_VALUE=ordinary\n"), 0o600))
+		loader := NewLoader()
+		loader.setDefaults()
+		require.NoError(t, loader.loadEnvFile(envPath))
+		var cfg ports.Config
+		require.NoError(t, loader.v.Unmarshal(&cfg))
+		assert.Equal(t, "debug", string(cfg.Log.Level))
+		assert.Equal(t, 8200, cfg.Server.EndUser.Port)
+		assert.Equal(t, "ordinary", loader.v.GetString(configutil.Key("custom", "value")))
+		for _, source := range loader.GetSources() {
+			if source.Type != ports.SourceTypeEnvFile {
+				continue
+			}
+			assert.ElementsMatch(t, []string{"log.level", "server.enduser.port", "custom.value"}, source.Keys)
+			return
+		}
+		t.Fatal("env file source not found")
+	})
+}
+
+func setConfigYAML(t *testing.T, contents string) {
+	t.Helper()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(contents), 0o600))
+	t.Setenv("IDENTITY_BROKER_CONFIG_PATH", configPath)
 }
