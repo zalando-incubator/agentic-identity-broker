@@ -258,6 +258,7 @@ Configure exactly one of `encryption.aws_kms` or `encryption.memory`.
 | `encryption.aws_kms.branch_key_ttl` | duration string | `1h` | Go duration string | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_BRANCH_KEY_TTL` | N/A | Lifetime of cached branch keys in DynamoDB. |
 | `encryption.aws_kms.dynamodb_region` | string | AWS SDK default region | AWS region | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_REGION` | N/A | Optional region override for DynamoDB branch-key storage. |
 | `encryption.aws_kms.dynamodb_timeout` | duration string | - | Positive Go duration string | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_TIMEOUT` | N/A | Optional timeout applied to AWS-backed encryption operations. |
+| `encryption.aws_kms.disable_ssl` | boolean | `false` | `true` only with explicit `GO_ENV=development` | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL` | N/A | Disable AWS TLS certificate verification for development emulator testing only. Startup rejects this in every other environment. |
 | `encryption.memory.raw_key` | string | - | Base64-encoded 32-byte AES-256 key | Yes when `encryption.memory` is set | `IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY` | N/A | Raw AES key for the in-memory backend. Sensitive - redacted in logs. |
 
 **Encryption Configuration Notes:**
@@ -692,6 +693,13 @@ IDENTITY_BROKER_ENCRYPTION_AWS_KMS_BRANCH_KEY_TTL=1h
 ```
 
 `key_arn` accepts both KMS key ARNs and alias ARNs.
+
+TLS certificate verification is enabled by default. Never enable `disable_ssl` in production.
+Setting it to `true` requires explicit `GO_ENV=development`; production, staging, unset,
+and unknown environments abort startup before AWS clients are created. The default
+development environment used for `.env` file selection does not authorize this bypass.
+HTTP emulator endpoints do not require `disable_ssl`; leave it `false` in
+[`config.aws-emulator.yaml`](../examples/config/config.aws-emulator.yaml).
 
 #### encryption.memory.raw_key
 
