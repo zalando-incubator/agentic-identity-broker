@@ -844,6 +844,8 @@ OAuth2 /authorize request
 
 **Security Properties**: SSRF blocked at TCP-connect time (TOCTOU-safe). The fetcher rejects non-global IP addresses, known private and special-purpose ranges, and IPv6 translation/tunnel prefixes that can reach IPv4 destinations. Authorization context never relays through browser URL as plain params (JWE session_token seals context server-side, SR-013/SR-014). All agent modes (local, proxy, CIMD) use session_token — no redirect_uri fallback.
 
+**CIMD bypass configuration**: The configuration loader rejects `security.skip_cimd_ssrf_validation: true` unless `GO_ENV` is explicitly `development`. This check runs before application initialization, even when CIMD is disabled. The flag disables both the dial-time IP blocklist and TLS certificate verification for local CIMD mock testing. The startup configuration summary reports its effective value and source for configuration audits.
+
 **Redirect URI Matching**: `urivalidation.MatchesRedirectURI` (`internal/domain/urivalidation/redirect.go`) compares a registered URI against the runtime request URI. For loopback hosts (`localhost`, `127.0.0.1`, `::1`) the port component is ignored per RFC 8252 §7.3 and OAuth 2.1 §2.3.1 — any ephemeral port is accepted as long as scheme, host, and path match exactly. For all other hosts all four URI components (scheme, host, port, path) must match exactly. This rule applies to both CIMD clients (redirect_uris from the fetched document) and opaque clients (redirect_uris registered on the Agent entity).
 
 **See Also**: ADR 015 — CIMD Fetcher Architecture (SSRF hardening, caching, strategy pattern)
