@@ -635,6 +635,16 @@ func TestRequirePrincipalMiddleware_PanicsWhenJWTConfiguredButAuthenticatorNil(t
 	}, "middleware factory should panic when JWT is configured but JWTAuthenticator is nil")
 }
 
+func TestOptionalPrincipalMiddleware_PanicsWhenJWTConfiguredButAuthenticatorNil(t *testing.T) {
+	authConfig := ports.AuthenticationConfig{
+		Preauth: ports.PreauthConfig{PrincipalHeaderName: "X-Remote-User"},
+		JWT:     &ports.JWTConfig{HeaderName: "X-Userinfo"},
+	}
+	require.Panics(t, func() {
+		_ = OptionalPrincipalMiddleware(authConfig, nil, createTestLogger())
+	}, "configured JWT authentication must not fall back to the plain principal header")
+}
+
 // TestRequirePrincipalMiddleware_RejectInvalidJWTNoFallback tests fail-closed behavior:
 // when JWT header is present but invalid, reject with 401 even when plain header is present (FR-013).
 func TestRequirePrincipalMiddleware_RejectInvalidJWTNoFallback(t *testing.T) {

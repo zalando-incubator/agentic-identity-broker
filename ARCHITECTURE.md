@@ -472,14 +472,14 @@ internal/adapters/storage/postgres/
 - **[/api/enduser/openapi.yaml](/api/enduser/openapi.yaml)** - End-user server (Port 8000)
   - Canonical OpenAPI documentation for all end-user facing APIs
   - Endpoints: Health check, user info, consent management (agent delegations, service grants)
-  - Authentication: Pre-authentication via reverse proxy (X-Remote-User header) + session-based
+  - Authentication: Reverse-proxy pre-authentication (plain principal header or configured JWT) + session-based
   - Response envelope: Consistent `{"data": ...}` structure for resource endpoints
   - Error handling: Standardized error response format with code and message
 
 - **[/api/admin/openapi.yaml](/api/admin/openapi.yaml)** - Admin server (Port 14000)
   - Canonical OpenAPI documentation for all administrative APIs
   - Endpoints: Health check, agent management (CRUD), service management (CRUD)
-  - Authentication: Pre-authentication via reverse proxy (admin-level access controlled upstream)
+  - Authentication: Reverse-proxy pre-authentication (plain principal header or configured JWT); admin access controlled upstream
   - Security emphasis: Client secrets always redacted in responses (SR-003)
   - Referential integrity: 409 Conflict responses when deleting services with active grants
   - OAuth2 support: Service metadata for OIDC discovery
@@ -1671,6 +1671,10 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 **RBAC**: Role-Based Access Control
 
 ### JWT Pre-Authentication
+
+At startup the application builder constructs an authenticator independently for each configured `server.enduser.authentication.jwt` and `server.admin.authentication.jwt`. Each HTTP server receives only its own authenticator and claim-extraction settings; shutdown closes both authenticator caches. The common optional-principal middleware never falls back to a plain principal header when JWT authentication is configured. Admin CIMD key mutations require an extracted operator principal before key generation.
+
+`verification: none` trusts the identity-bearing header without a signature. Its trust boundary is the authenticated gateway or mesh: only it can reach the broker ports, and it must remove every inbound client-supplied copy of the JWT header before setting the verified user's claims. The bearer token used to authenticate at the gateway is not a broker operator principal. Without these deployment controls, a caller could forge an unsigned JWT and become an operator.
 
 **PrincipalProfile**: Enriched user identity value object containing principal identifier, display name, email, and picture URL. Extracted from pre-authentication source (JWT or plain header). Request-scoped, immutable. Stored in request context via `principal.WithProfile()` alongside the string principal. Located in `internal/domain/principal/profile.go`.
 
