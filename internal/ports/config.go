@@ -886,8 +886,7 @@ type SecurityConfig struct {
 
 	// SkipCIMDSSRFValidation disables the SSRF IP blocklist and TLS certificate verification
 	// for CIMD document fetches.
-	// WARNING: This is ONLY for development/test environments with a local mock CIMD server!
-	// NEVER enable this in production.
+	// Requires GO_ENV=development for local mock servers. Never enable in production.
 	SkipCIMDSSRFValidation bool `mapstructure:"skip_cimd_ssrf_validation"`
 }
 

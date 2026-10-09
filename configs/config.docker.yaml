@@ -88,7 +88,7 @@ security:
   # Skip HTTPS validation for third-party OAuth2 services (dev/test only!)
   # Allows HTTP connections to mock OAuth2 services during development
   skip_thirdparty_https_validation: true
-  # Skip SSRF blocklist and TLS verification for CIMD fetches (dev/test only!)
+  # Skip SSRF blocklist and TLS verification for CIMD fetches (requires GO_ENV=development).
   # Allows fetching from private IPs (docker network) with self-signed certs.
   skip_cimd_ssrf_validation: true
 

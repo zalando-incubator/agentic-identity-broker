@@ -87,6 +87,12 @@ func (l *Loader) GetConfig(ctx context.Context) (*ports.Config, error) {
 			"false unless GO_ENV is explicitly set to development for AWS emulator testing", nil,
 		)
 	}
+	if cfg.Security.SkipCIMDSSRFValidation && os.Getenv("GO_ENV") != "development" {
+		return nil, formatValidationError(
+			"security.skip_cimd_ssrf_validation", "true",
+			"false unless GO_ENV is explicitly set to development for local CIMD mock testing", nil,
+		)
+	}
 	if err := Validate(&cfg); err != nil {
 		return nil, err
 	}
