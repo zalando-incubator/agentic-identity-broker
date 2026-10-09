@@ -1,7 +1,8 @@
 // Package config — loader.go provides Viper-based configuration loading for the
 // ExtProc Token Exchange Service. It uses the EXTPROC_ env prefix and maps
-// dotted YAML keys to underscored env vars (e.g. oauth2.token_endpoint →
-// EXTPROC_OAUTH2_TOKEN_ENDPOINT). All string values support ${VAR} notation.
+// nested YAML keys to underscored env vars (e.g. oauth2.token_endpoint →
+// EXTPROC_OAUTH2_TOKEN_ENDPOINT). Supported string fields expand ${VAR};
+// telemetry resource attribute values remain literal.
 package config
 
 import (
@@ -11,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/configutil"
 )
 
 // Load reads configuration from env vars (EXTPROC_ prefix) and an optional
@@ -22,7 +25,7 @@ import (
 //  2. YAML config file (if provided)
 //  3. Defaults
 func Load() (*Config, error) {
-	v := viper.New()
+	v := configutil.NewViper()
 	return LoadFromViper(v)
 }
 
@@ -36,12 +39,13 @@ func Load() (*Config, error) {
 //  3. YAML config file (if provided)
 //  4. Defaults
 func LoadWithCommand(cmd *cobra.Command) (*Config, error) {
-	v := viper.New()
+	v := configutil.NewViper()
 	return loadFromViperWithCommand(v, cmd)
 }
 
 // LoadFromViper loads configuration from the provided Viper instance.
-// Useful for testing with a pre-configured Viper.
+// Callers MUST create it with configutil.NewViper before populating it.
+// Do not rebuild the instance after setting values or reading configuration.
 func LoadFromViper(v *viper.Viper) (*Config, error) {
 	return loadFromViperWithCommand(v, nil)
 }
@@ -105,7 +109,7 @@ func RegisterFlags(cmd *cobra.Command) {
 func loadFromViperWithCommand(v *viper.Viper, cmd *cobra.Command) (*Config, error) {
 	// Configure env var prefix and key replacer
 	v.SetEnvPrefix("EXTPROC")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.SetEnvKeyReplacer(strings.NewReplacer(configutil.Delimiter, "_", ".", "_"))
 	v.AutomaticEnv()
 
 	// Apply defaults. Empty-string defaults for required fields are intentional:
@@ -138,7 +142,7 @@ func loadFromViperWithCommand(v *viper.Viper, cmd *cobra.Command) (*Config, erro
 		return nil, fmt.Errorf("failed to unmarshal configuration: %w", err)
 	}
 
-	// Expand ${VAR} notation in all string fields
+	// Expand ${VAR} notation in supported string fields and exporter headers.
 	expandEnvVars(cfg)
 
 	// Validate
@@ -167,158 +171,158 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 
 	bindings := []flagBinding{
 		{
-			"grpc.bind", "grpc.bind",
+			"grpc.bind", configutil.Key("grpc", "bind"),
 			func() interface{} { s, _ := cmd.Flags().GetString("grpc.bind"); return s },
 		},
 		{
-			"grpc.port", "grpc.port",
+			"grpc.port", configutil.Key("grpc", "port"),
 			func() interface{} { i, _ := cmd.Flags().GetInt("grpc.port"); return i },
 		},
 		{
-			"grpc.max_concurrent_streams", "grpc.max_concurrent_streams",
+			"grpc.max_concurrent_streams", configutil.Key("grpc", "max_concurrent_streams"),
 			func() interface{} { i, _ := cmd.Flags().GetInt("grpc.max_concurrent_streams"); return i },
 		},
 		{
-			"oauth2.token_endpoint", "oauth2.token_endpoint",
+			"oauth2.token_endpoint", configutil.Key("oauth2", "token_endpoint"),
 			func() interface{} { s, _ := cmd.Flags().GetString("oauth2.token_endpoint"); return s },
 		},
 		{
-			"oauth2.issuer", "oauth2.issuer",
+			"oauth2.issuer", configutil.Key("oauth2", "issuer"),
 			func() interface{} { s, _ := cmd.Flags().GetString("oauth2.issuer"); return s },
 		},
 		{
-			"oauth2.client_id", "oauth2.client_id",
+			"oauth2.client_id", configutil.Key("oauth2", "client_id"),
 			func() interface{} { s, _ := cmd.Flags().GetString("oauth2.client_id"); return s },
 		},
 		{
-			"oauth2.client_secret", "oauth2.client_secret",
+			"oauth2.client_secret", configutil.Key("oauth2", "client_secret"),
 			func() interface{} { s, _ := cmd.Flags().GetString("oauth2.client_secret"); return s },
 		},
 		{
-			"oauth2.client_credentials_endpoint", "oauth2.client_credentials_endpoint",
+			"oauth2.client_credentials_endpoint", configutil.Key("oauth2", "client_credentials_endpoint"),
 			func() interface{} { s, _ := cmd.Flags().GetString("oauth2.client_credentials_endpoint"); return s },
 		},
 		{
-			"oauth2.client_credentials_scopes", "oauth2.client_credentials_scopes",
+			"oauth2.client_credentials_scopes", configutil.Key("oauth2", "client_credentials_scopes"),
 			func() interface{} { ss, _ := cmd.Flags().GetStringSlice("oauth2.client_credentials_scopes"); return ss },
 		},
 		{
-			"oauth2.exchange_timeout", "oauth2.exchange_timeout",
+			"oauth2.exchange_timeout", configutil.Key("oauth2", "exchange_timeout"),
 			func() interface{} { d, _ := cmd.Flags().GetDuration("oauth2.exchange_timeout"); return d },
 		},
 		{
-			"cache.default_ttl", "cache.default_ttl",
+			"cache.default_ttl", configutil.Key("cache", "default_ttl"),
 			func() interface{} { d, _ := cmd.Flags().GetDuration("cache.default_ttl"); return d },
 		},
 		{
-			"cache.max_ttl", "cache.max_ttl",
+			"cache.max_ttl", configutil.Key("cache", "max_ttl"),
 			func() interface{} { d, _ := cmd.Flags().GetDuration("cache.max_ttl"); return d },
 		},
 		{
-			"log.level", "log.level",
+			"log.level", configutil.Key("log", "level"),
 			func() interface{} { s, _ := cmd.Flags().GetString("log.level"); return s },
 		},
 		{
-			"log.format", "log.format",
+			"log.format", configutil.Key("log", "format"),
 			func() interface{} { s, _ := cmd.Flags().GetString("log.format"); return s },
 		},
 		{
-			"circuit_breaker.enabled", "circuit_breaker.enabled",
+			"circuit_breaker.enabled", configutil.Key("circuit_breaker", "enabled"),
 			func() interface{} { b, _ := cmd.Flags().GetBool("circuit_breaker.enabled"); return b },
 		},
 		{
-			"circuit_breaker.max_failures", "circuit_breaker.max_failures",
+			"circuit_breaker.max_failures", configutil.Key("circuit_breaker", "max_failures"),
 			func() interface{} { i, _ := cmd.Flags().GetInt("circuit_breaker.max_failures"); return i },
 		},
 		{
-			"circuit_breaker.reset_timeout", "circuit_breaker.reset_timeout",
+			"circuit_breaker.reset_timeout", configutil.Key("circuit_breaker", "reset_timeout"),
 			func() interface{} { d, _ := cmd.Flags().GetDuration("circuit_breaker.reset_timeout"); return d },
 		},
 		{
-			"authorization.enabled", "authorization.enabled",
+			"authorization.enabled", configutil.Key("authorization", "enabled"),
 			func() interface{} { b, _ := cmd.Flags().GetBool("authorization.enabled"); return b },
 		},
 		{
-			"authorization.policy.path", "authorization.policy.path",
+			"authorization.policy.path", configutil.Key("authorization", "policy", "path"),
 			func() interface{} { s, _ := cmd.Flags().GetString("authorization.policy.path"); return s },
 		},
 		{
-			"authorization.policy.config_file", "authorization.policy.config_file",
+			"authorization.policy.config_file", configutil.Key("authorization", "policy", "config_file"),
 			func() interface{} { s, _ := cmd.Flags().GetString("authorization.policy.config_file"); return s },
 		},
 		{
-			"authorization.policy.package", "authorization.policy.package",
+			"authorization.policy.package", configutil.Key("authorization", "policy", "package"),
 			func() interface{} { s, _ := cmd.Flags().GetString("authorization.policy.package"); return s },
 		},
 		{
-			"authorization.policy.decision", "authorization.policy.decision",
+			"authorization.policy.decision", configutil.Key("authorization", "policy", "decision"),
 			func() interface{} { s, _ := cmd.Flags().GetString("authorization.policy.decision"); return s },
 		},
 		{
-			"authorization.default_decision", "authorization.default_decision",
+			"authorization.default_decision", configutil.Key("authorization", "default_decision"),
 			func() interface{} { s, _ := cmd.Flags().GetString("authorization.default_decision"); return s },
 		},
 		{
-			"authorization.evaluation_timeout", "authorization.evaluation_timeout",
+			"authorization.evaluation_timeout", configutil.Key("authorization", "evaluation_timeout"),
 			func() interface{} { d, _ := cmd.Flags().GetDuration("authorization.evaluation_timeout"); return d },
 		},
 		{
-			"authorization.max_body_size", "authorization.max_body_size",
+			"authorization.max_body_size", configutil.Key("authorization", "max_body_size"),
 			func() interface{} { i, _ := cmd.Flags().GetInt("authorization.max_body_size"); return i },
 		},
 		{
-			"tool_approvals.enabled", "tool_approvals.enabled",
+			"tool_approvals.enabled", configutil.Key("tool_approvals", "enabled"),
 			func() interface{} { b, _ := cmd.Flags().GetBool("tool_approvals.enabled"); return b },
 		},
 		{
-			"tool_approvals.url", "tool_approvals.url",
+			"tool_approvals.url", configutil.Key("tool_approvals", "url"),
 			func() interface{} { s, _ := cmd.Flags().GetString("tool_approvals.url"); return s },
 		},
 		{
-			"tool_approvals.long_poll_timeout_seconds", "tool_approvals.long_poll_timeout_seconds",
+			"tool_approvals.long_poll_timeout_seconds", configutil.Key("tool_approvals", "long_poll_timeout_seconds"),
 			func() interface{} { i, _ := cmd.Flags().GetInt("tool_approvals.long_poll_timeout_seconds"); return i },
 		},
 		{
-			"tool_approvals.approval_cache_idle_ttl", "tool_approvals.approval_cache_idle_ttl",
+			"tool_approvals.approval_cache_idle_ttl", configutil.Key("tool_approvals", "approval_cache_idle_ttl"),
 			func() interface{} {
 				d, _ := cmd.Flags().GetDuration("tool_approvals.approval_cache_idle_ttl")
 				return d
 			},
 		},
 		{
-			"tool_approvals.request_timeout", "tool_approvals.request_timeout",
+			"tool_approvals.request_timeout", configutil.Key("tool_approvals", "request_timeout"),
 			func() interface{} { d, _ := cmd.Flags().GetDuration("tool_approvals.request_timeout"); return d },
 		},
 		{
-			"tool_approvals.max_staleness", "tool_approvals.max_staleness",
+			"tool_approvals.max_staleness", configutil.Key("tool_approvals", "max_staleness"),
 			func() interface{} { d, _ := cmd.Flags().GetDuration("tool_approvals.max_staleness"); return d },
 		},
 		{
-			"sessions.extraction.http_header", "sessions.extraction.http_header",
+			"sessions.extraction.http_header", configutil.Key("sessions", "extraction", "http_header"),
 			func() interface{} { s, _ := cmd.Flags().GetString("sessions.extraction.http_header"); return s },
 		},
 		{
-			"telemetry.enabled", "telemetry.enabled",
+			"telemetry.enabled", configutil.Key("telemetry", "enabled"),
 			func() interface{} { b, _ := cmd.Flags().GetBool("telemetry.enabled"); return b },
 		},
 		{
-			"telemetry.service_name", "telemetry.service_name",
+			"telemetry.service_name", configutil.Key("telemetry", "service_name"),
 			func() interface{} { s, _ := cmd.Flags().GetString("telemetry.service_name"); return s },
 		},
 		{
-			"telemetry.traces.sampling_rate", "telemetry.traces.sampling_rate",
+			"telemetry.traces.sampling_rate", configutil.Key("telemetry", "traces", "sampling_rate"),
 			func() interface{} { s, _ := cmd.Flags().GetString("telemetry.traces.sampling_rate"); return s },
 		},
 		{
-			"telemetry.exporter.insecure", "telemetry.exporter.insecure",
+			"telemetry.exporter.insecure", configutil.Key("telemetry", "exporter", "insecure"),
 			func() interface{} { b, _ := cmd.Flags().GetBool("telemetry.exporter.insecure"); return b },
 		},
 		{
-			"telemetry.exporter.protocol", "telemetry.exporter.protocol",
+			"telemetry.exporter.protocol", configutil.Key("telemetry", "exporter", "protocol"),
 			func() interface{} { s, _ := cmd.Flags().GetString("telemetry.exporter.protocol"); return s },
 		},
 		{
-			"telemetry.exporter.endpoint", "telemetry.exporter.endpoint",
+			"telemetry.exporter.endpoint", configutil.Key("telemetry", "exporter", "endpoint"),
 			func() interface{} { s, _ := cmd.Flags().GetString("telemetry.exporter.endpoint"); return s },
 		},
 	}
@@ -335,68 +339,66 @@ func bindFlags(v *viper.Viper, cmd *cobra.Command) {
 // key with Viper so that AutomaticEnv (EXTPROC_* env vars) can supply values
 // during Unmarshal. Keys unknown to Viper are not traversed on Unmarshal.
 func applyDefaults(v *viper.Viper) {
-	v.SetDefault("grpc.bind", "0.0.0.0")
-	v.SetDefault("grpc.port", 50051)
-	v.SetDefault("grpc.max_concurrent_streams", 100)
+	v.SetDefault(configutil.Key("grpc", "bind"), "0.0.0.0")
+	v.SetDefault(configutil.Key("grpc", "port"), 50051)
+	v.SetDefault(configutil.Key("grpc", "max_concurrent_streams"), 100)
 	// Required fields: empty defaults register the keys so env vars are read.
-	v.SetDefault("oauth2.token_endpoint", "")
-	v.SetDefault("oauth2.issuer", "")
-	v.SetDefault("oauth2.client_id", "")
-	v.SetDefault("oauth2.client_secret", "")
-	v.SetDefault("oauth2.client_credentials_endpoint", "")
-	v.SetDefault("oauth2.client_credentials_scopes", []string{})
+	v.SetDefault(configutil.Key("oauth2", "token_endpoint"), "")
+	v.SetDefault(configutil.Key("oauth2", "issuer"), "")
+	v.SetDefault(configutil.Key("oauth2", "client_id"), "")
+	v.SetDefault(configutil.Key("oauth2", "client_secret"), "")
+	v.SetDefault(configutil.Key("oauth2", "client_credentials_endpoint"), "")
+	v.SetDefault(configutil.Key("oauth2", "client_credentials_scopes"), []string{})
 	// Optional fields with non-empty defaults.
-	v.SetDefault("oauth2.exchange_timeout", "5s")
-	v.SetDefault("oauth2.client_assertion_type", "id_token")
-	v.SetDefault("oauth2.tls.insecure_skip_verify", false)
-	v.SetDefault("oauth2.tls.ca_bundle_path", "")
-	v.SetDefault("oauth2.tls.allow_http", false)
-	v.SetDefault("cache.default_ttl", "5m")
-	v.SetDefault("cache.max_ttl", "1h")
-	v.SetDefault("log.level", "info")
-	v.SetDefault("log.format", "text")
-	v.SetDefault("circuit_breaker.enabled", true)
-	v.SetDefault("circuit_breaker.max_failures", 5)
-	v.SetDefault("circuit_breaker.reset_timeout", "30s")
+	v.SetDefault(configutil.Key("oauth2", "exchange_timeout"), "5s")
+	v.SetDefault(configutil.Key("oauth2", "client_assertion_type"), "id_token")
+	v.SetDefault(configutil.Key("oauth2", "tls", "insecure_skip_verify"), false)
+	v.SetDefault(configutil.Key("oauth2", "tls", "ca_bundle_path"), "")
+	v.SetDefault(configutil.Key("oauth2", "tls", "allow_http"), false)
+	v.SetDefault(configutil.Key("cache", "default_ttl"), "5m")
+	v.SetDefault(configutil.Key("cache", "max_ttl"), "1h")
+	v.SetDefault(configutil.Key("log", "level"), "info")
+	v.SetDefault(configutil.Key("log", "format"), "text")
+	v.SetDefault(configutil.Key("circuit_breaker", "enabled"), true)
+	v.SetDefault(configutil.Key("circuit_breaker", "max_failures"), 5)
+	v.SetDefault(configutil.Key("circuit_breaker", "reset_timeout"), "30s")
 	// Authorization defaults — disabled by default (fail-closed).
-	v.SetDefault("authorization.enabled", false)
+	v.SetDefault(configutil.Key("authorization", "enabled"), false)
 	// Empty defaults for policy source fields register the Viper keys so that
 	// AutomaticEnv (e.g. EXTPROC_AUTHORIZATION_POLICY_PATH) can supply values.
-	v.SetDefault("authorization.policy.path", "")
-	v.SetDefault("authorization.policy.config_file", "")
-	v.SetDefault("authorization.policy.package", "aib.extproc.authz")
-	v.SetDefault("authorization.policy.decision", "result")
-	v.SetDefault("authorization.default_decision", "deny")
-	v.SetDefault("authorization.evaluation_timeout", "100ms")
-	v.SetDefault("authorization.max_body_size", 1048576)
-	v.SetDefault("tool_approvals.enabled", false)
-	v.SetDefault("tool_approvals.url", "")
-	v.SetDefault("tool_approvals.long_poll_timeout_seconds", 30)
-	v.SetDefault("tool_approvals.approval_cache_idle_ttl", "5m")
-	v.SetDefault("tool_approvals.request_timeout", "5s")
-	v.SetDefault("tool_approvals.max_staleness", "60s")
-	v.SetDefault("sessions.extraction.http_header", "Mcp-Session-Id")
+	v.SetDefault(configutil.Key("authorization", "policy", "path"), "")
+	v.SetDefault(configutil.Key("authorization", "policy", "config_file"), "")
+	v.SetDefault(configutil.Key("authorization", "policy", "package"), "aib.extproc.authz")
+	v.SetDefault(configutil.Key("authorization", "policy", "decision"), "result")
+	v.SetDefault(configutil.Key("authorization", "default_decision"), "deny")
+	v.SetDefault(configutil.Key("authorization", "evaluation_timeout"), "100ms")
+	v.SetDefault(configutil.Key("authorization", "max_body_size"), 1048576)
+	v.SetDefault(configutil.Key("tool_approvals", "enabled"), false)
+	v.SetDefault(configutil.Key("tool_approvals", "url"), "")
+	v.SetDefault(configutil.Key("tool_approvals", "long_poll_timeout_seconds"), 30)
+	v.SetDefault(configutil.Key("tool_approvals", "approval_cache_idle_ttl"), "5m")
+	v.SetDefault(configutil.Key("tool_approvals", "request_timeout"), "5s")
+	v.SetDefault(configutil.Key("tool_approvals", "max_staleness"), "60s")
+	v.SetDefault(configutil.Key("sessions", "extraction", "http_header"), "Mcp-Session-Id")
 	applyTelemetryDefaults(v)
 }
 
 // applyTelemetryDefaults sets OpenTelemetry configuration defaults.
 // Telemetry is disabled by default; other values are production-safe defaults.
 func applyTelemetryDefaults(v *viper.Viper) {
-	v.SetDefault("telemetry.enabled", false)
-	v.SetDefault("telemetry.service_name", "extproc-token-exchange")
-	v.SetDefault("telemetry.resource_attributes", map[string]string{})
-	v.SetDefault("telemetry.traces.enabled", true)
-	v.SetDefault("telemetry.traces.sampling_rate", 1.0)
-	v.SetDefault("telemetry.traces.propagators", []string{"tracecontext", "ottrace", "b3multi", "baggage"})
-	v.SetDefault("telemetry.metrics.enabled", true)
-	v.SetDefault("telemetry.metrics.export_interval", "30s")
-	v.SetDefault("telemetry.logs.enabled", true)
-	v.SetDefault("telemetry.exporter.protocol", "grpc")
-	v.SetDefault("telemetry.exporter.endpoint", "")
-	v.SetDefault("telemetry.exporter.headers", map[string]string{})
-	v.SetDefault("telemetry.exporter.timeout", "10s")
-	v.SetDefault("telemetry.exporter.insecure", false)
-	v.SetDefault("telemetry.exporter.compression", "none")
+	v.SetDefault(configutil.Key("telemetry", "enabled"), false)
+	v.SetDefault(configutil.Key("telemetry", "service_name"), "extproc-token-exchange")
+	v.SetDefault(configutil.Key("telemetry", "traces", "enabled"), true)
+	v.SetDefault(configutil.Key("telemetry", "traces", "sampling_rate"), 1.0)
+	v.SetDefault(configutil.Key("telemetry", "traces", "propagators"), []string{"tracecontext", "ottrace", "b3multi", "baggage"})
+	v.SetDefault(configutil.Key("telemetry", "metrics", "enabled"), true)
+	v.SetDefault(configutil.Key("telemetry", "metrics", "export_interval"), "30s")
+	v.SetDefault(configutil.Key("telemetry", "logs", "enabled"), true)
+	v.SetDefault(configutil.Key("telemetry", "exporter", "protocol"), "grpc")
+	v.SetDefault(configutil.Key("telemetry", "exporter", "endpoint"), "")
+	v.SetDefault(configutil.Key("telemetry", "exporter", "timeout"), "10s")
+	v.SetDefault(configutil.Key("telemetry", "exporter", "insecure"), false)
+	v.SetDefault(configutil.Key("telemetry", "exporter", "compression"), "none")
 }
 
 // expandEnvVars processes ${VAR} notation in string config fields.

@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/configutil"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 )
 
@@ -439,13 +439,13 @@ func TestValidate(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLoadFromViper_Defaults(t *testing.T) {
-	v := viper.New()
+	v := configutil.NewViper()
 
 	// Set only required fields via Viper directly (simulate env vars)
-	v.Set("oauth2.token_endpoint", "https://idp.example.com/oauth2/token")
-	v.Set("oauth2.issuer", "https://idp.example.com")
-	v.Set("oauth2.client_id", "test-client")
-	v.Set("oauth2.client_secret", "test-secret")
+	v.Set(configutil.Key("oauth2", "token_endpoint"), "https://idp.example.com/oauth2/token")
+	v.Set(configutil.Key("oauth2", "issuer"), "https://idp.example.com")
+	v.Set(configutil.Key("oauth2", "client_id"), "test-client")
+	v.Set(configutil.Key("oauth2", "client_secret"), "test-secret")
 
 	cfg, err := config.LoadFromViper(v)
 	require.NoError(t, err)
@@ -471,11 +471,11 @@ func TestLoadFromViper_EnvVarExpansion(t *testing.T) {
 	// Set an environment variable to be expanded
 	t.Setenv("TEST_EXTPROC_SECRET", "expanded-secret-value")
 
-	v := viper.New()
-	v.Set("oauth2.token_endpoint", "https://idp.example.com/oauth2/token")
-	v.Set("oauth2.issuer", "https://idp.example.com")
-	v.Set("oauth2.client_id", "test-client")
-	v.Set("oauth2.client_secret", "${TEST_EXTPROC_SECRET}")
+	v := configutil.NewViper()
+	v.Set(configutil.Key("oauth2", "token_endpoint"), "https://idp.example.com/oauth2/token")
+	v.Set(configutil.Key("oauth2", "issuer"), "https://idp.example.com")
+	v.Set(configutil.Key("oauth2", "client_id"), "test-client")
+	v.Set(configutil.Key("oauth2", "client_secret"), "${TEST_EXTPROC_SECRET}")
 
 	cfg, err := config.LoadFromViper(v)
 	require.NoError(t, err)
@@ -488,13 +488,13 @@ func TestLoadFromViper_EnvVarExpansion_LogFields(t *testing.T) {
 	t.Setenv("TEST_LOG_LEVEL", "debug")
 	t.Setenv("TEST_LOG_FORMAT", "json")
 
-	v := viper.New()
-	v.Set("oauth2.token_endpoint", "https://idp.example.com/oauth2/token")
-	v.Set("oauth2.issuer", "https://idp.example.com")
-	v.Set("oauth2.client_id", "test-client")
-	v.Set("oauth2.client_secret", "test-secret")
-	v.Set("log.level", "${TEST_LOG_LEVEL}")
-	v.Set("log.format", "${TEST_LOG_FORMAT}")
+	v := configutil.NewViper()
+	v.Set(configutil.Key("oauth2", "token_endpoint"), "https://idp.example.com/oauth2/token")
+	v.Set(configutil.Key("oauth2", "issuer"), "https://idp.example.com")
+	v.Set(configutil.Key("oauth2", "client_id"), "test-client")
+	v.Set(configutil.Key("oauth2", "client_secret"), "test-secret")
+	v.Set(configutil.Key("log", "level"), "${TEST_LOG_LEVEL}")
+	v.Set(configutil.Key("log", "format"), "${TEST_LOG_FORMAT}")
 
 	cfg, err := config.LoadFromViper(v)
 	require.NoError(t, err)
@@ -506,18 +506,18 @@ func TestLoadFromViper_EnvVarExpansion_LogFields(t *testing.T) {
 func TestLoadFromViper_EnvVarExpansion_AuthorizationDefaultDecisionRejectsAllow(t *testing.T) {
 	t.Setenv("TEST_DEFAULT_DECISION", "allow")
 
-	v := viper.New()
-	v.Set("oauth2.token_endpoint", "https://idp.example.com/oauth2/token")
-	v.Set("oauth2.issuer", "https://idp.example.com")
-	v.Set("oauth2.client_id", "test-client")
-	v.Set("oauth2.client_secret", "test-secret")
-	v.Set("authorization.enabled", true)
-	v.Set("authorization.policy.package", "aib.extproc.authz")
-	v.Set("authorization.policy.decision", "result")
-	v.Set("authorization.policy.path", t.TempDir())
-	v.Set("authorization.evaluation_timeout", "100ms")
-	v.Set("authorization.max_body_size", 1048576)
-	v.Set("authorization.default_decision", "${TEST_DEFAULT_DECISION}")
+	v := configutil.NewViper()
+	v.Set(configutil.Key("oauth2", "token_endpoint"), "https://idp.example.com/oauth2/token")
+	v.Set(configutil.Key("oauth2", "issuer"), "https://idp.example.com")
+	v.Set(configutil.Key("oauth2", "client_id"), "test-client")
+	v.Set(configutil.Key("oauth2", "client_secret"), "test-secret")
+	v.Set(configutil.Key("authorization", "enabled"), true)
+	v.Set(configutil.Key("authorization", "policy", "package"), "aib.extproc.authz")
+	v.Set(configutil.Key("authorization", "policy", "decision"), "result")
+	v.Set(configutil.Key("authorization", "policy", "path"), t.TempDir())
+	v.Set(configutil.Key("authorization", "evaluation_timeout"), "100ms")
+	v.Set(configutil.Key("authorization", "max_body_size"), 1048576)
+	v.Set(configutil.Key("authorization", "default_decision"), "${TEST_DEFAULT_DECISION}")
 
 	_, err := config.LoadFromViper(v)
 	require.Error(t, err)
@@ -536,7 +536,7 @@ func TestLoadFromViper_AuthorizationPolicyPathFromEnv(t *testing.T) {
 	t.Setenv("EXTPROC_OAUTH2_CLIENT_ID", "client")
 	t.Setenv("EXTPROC_OAUTH2_CLIENT_SECRET", "secret")
 
-	v := viper.New()
+	v := configutil.NewViper()
 	v.SetEnvPrefix("EXTPROC")
 	v.SetEnvKeyReplacer(replaceDotsWithUnderscores())
 	v.AutomaticEnv()
@@ -564,7 +564,7 @@ func TestLoadFromViper_AuthorizationPolicyConfigFileFromEnv(t *testing.T) {
 	t.Setenv("EXTPROC_OAUTH2_CLIENT_ID", "client")
 	t.Setenv("EXTPROC_OAUTH2_CLIENT_SECRET", "secret")
 
-	v := viper.New()
+	v := configutil.NewViper()
 	v.SetEnvPrefix("EXTPROC")
 	v.SetEnvKeyReplacer(replaceDotsWithUnderscores())
 	v.AutomaticEnv()
@@ -586,7 +586,7 @@ func TestLoadFromViper_AuthorizationPolicySourceRequiresEnabled(t *testing.T) {
 	t.Setenv("EXTPROC_OAUTH2_CLIENT_ID", "client")
 	t.Setenv("EXTPROC_OAUTH2_CLIENT_SECRET", "secret")
 
-	v := viper.New()
+	v := configutil.NewViper()
 	v.SetEnvPrefix("EXTPROC")
 	v.SetEnvKeyReplacer(replaceDotsWithUnderscores())
 	v.AutomaticEnv()
@@ -631,15 +631,15 @@ func TestLoadFromViper_EnvVarOverridesDefault(t *testing.T) {
 	// Set EXTPROC_GRPC_PORT env var — t.Setenv auto-restores after test
 	t.Setenv("EXTPROC_GRPC_PORT", "9090")
 
-	v := viper.New()
+	v := configutil.NewViper()
 	v.SetEnvPrefix("EXTPROC")
 	v.SetEnvKeyReplacer(replaceDotsWithUnderscores())
 	v.AutomaticEnv()
 
-	v.Set("oauth2.token_endpoint", "https://idp.example.com/oauth2/token")
-	v.Set("oauth2.issuer", "https://idp.example.com")
-	v.Set("oauth2.client_id", "test-client")
-	v.Set("oauth2.client_secret", "test-secret")
+	v.Set(configutil.Key("oauth2", "token_endpoint"), "https://idp.example.com/oauth2/token")
+	v.Set(configutil.Key("oauth2", "issuer"), "https://idp.example.com")
+	v.Set(configutil.Key("oauth2", "client_id"), "test-client")
+	v.Set(configutil.Key("oauth2", "client_secret"), "test-secret")
 
 	cfg, err := config.LoadFromViper(v)
 	require.NoError(t, err)
@@ -649,7 +649,7 @@ func TestLoadFromViper_EnvVarOverridesDefault(t *testing.T) {
 }
 
 func TestLoadFromViper_MissingRequiredField_ReturnsError(t *testing.T) {
-	v := viper.New()
+	v := configutil.NewViper()
 	// Do not set token_endpoint — should fail validation
 
 	_, err := config.LoadFromViper(v)
@@ -659,8 +659,8 @@ func TestLoadFromViper_MissingRequiredField_ReturnsError(t *testing.T) {
 }
 
 func TestLoadFromViper_InvalidConfigFile_ReturnsError(t *testing.T) {
-	v := viper.New()
-	v.Set("config_path", "/nonexistent/path/config.yaml")
+	v := configutil.NewViper()
+	v.Set(configutil.Key("config_path"), "/nonexistent/path/config.yaml")
 
 	_, err := config.LoadFromViper(v)
 	require.Error(t, err, "nonexistent config file should return error")
@@ -884,10 +884,10 @@ func TestLoadWithCommand_AuthorizationDefaultDecisionFlagOverridesEnv(t *testing
 		"--authorization.default_decision CLI flag must override EXTPROC_AUTHORIZATION_DEFAULT_DECISION env var")
 }
 
-// replaceDotsWithUnderscores returns a string replacer for Viper key mapping.
+// replaceDotsWithUnderscores maps structural delimiters and literal dots to env separators.
 // Used in tests that set up their own Viper instance with env prefix.
 func replaceDotsWithUnderscores() *strings.Replacer {
-	return strings.NewReplacer(".", "_")
+	return strings.NewReplacer(configutil.Delimiter, "_", ".", "_")
 }
 
 // ---------------------------------------------------------------------------
@@ -895,11 +895,11 @@ func replaceDotsWithUnderscores() *strings.Replacer {
 // ---------------------------------------------------------------------------
 
 func TestLoadFromViper_TelemetryDefaults(t *testing.T) {
-	v := viper.New()
-	v.Set("oauth2.token_endpoint", "https://idp.example.com/oauth2/token")
-	v.Set("oauth2.issuer", "https://idp.example.com")
-	v.Set("oauth2.client_id", "test-client")
-	v.Set("oauth2.client_secret", "test-secret")
+	v := configutil.NewViper()
+	v.Set(configutil.Key("oauth2", "token_endpoint"), "https://idp.example.com/oauth2/token")
+	v.Set(configutil.Key("oauth2", "issuer"), "https://idp.example.com")
+	v.Set(configutil.Key("oauth2", "client_id"), "test-client")
+	v.Set(configutil.Key("oauth2", "client_secret"), "test-secret")
 
 	cfg, err := config.LoadFromViper(v)
 	require.NoError(t, err)
@@ -907,7 +907,7 @@ func TestLoadFromViper_TelemetryDefaults(t *testing.T) {
 	// Verify telemetry defaults
 	assert.False(t, cfg.Telemetry.Enabled, "telemetry should be disabled by default")
 	assert.Equal(t, "extproc-token-exchange", cfg.Telemetry.ServiceName)
-	assert.Empty(t, cfg.Telemetry.ResourceAttributes)
+	assert.Nil(t, cfg.Telemetry.ResourceAttributes)
 	assert.True(t, cfg.Telemetry.Traces.Enabled)
 	assert.Equal(t, 1.0, cfg.Telemetry.Traces.SamplingRate)
 	assert.Equal(t, []string{"tracecontext", "ottrace", "b3multi", "baggage"}, cfg.Telemetry.Traces.Propagators)
@@ -916,6 +916,7 @@ func TestLoadFromViper_TelemetryDefaults(t *testing.T) {
 	assert.True(t, cfg.Telemetry.Logs.Enabled)
 	assert.Equal(t, "grpc", cfg.Telemetry.Exporter.Protocol)
 	assert.Equal(t, "", cfg.Telemetry.Exporter.Endpoint)
+	assert.Nil(t, cfg.Telemetry.Exporter.Headers)
 	assert.Equal(t, 10*time.Second, cfg.Telemetry.Exporter.Timeout)
 	assert.False(t, cfg.Telemetry.Exporter.Insecure)
 	assert.Equal(t, "none", cfg.Telemetry.Exporter.Compression)
@@ -929,7 +930,7 @@ func TestLoadFromViper_TelemetryEnabledEnvVar(t *testing.T) {
 	t.Setenv("EXTPROC_OAUTH2_CLIENT_ID", "test-client")
 	t.Setenv("EXTPROC_OAUTH2_CLIENT_SECRET", "test-secret")
 
-	v := viper.New()
+	v := configutil.NewViper()
 	v.SetEnvPrefix("EXTPROC")
 	v.SetEnvKeyReplacer(replaceDotsWithUnderscores())
 	v.AutomaticEnv()
@@ -948,7 +949,7 @@ func TestLoadFromViper_TelemetryExporterEndpointEnvVar(t *testing.T) {
 	t.Setenv("EXTPROC_OAUTH2_CLIENT_SECRET", "test-secret")
 	t.Setenv("EXTPROC_TELEMETRY_EXPORTER_ENDPOINT", "otel-collector.monitoring.svc:4317")
 
-	v := viper.New()
+	v := configutil.NewViper()
 	v.SetEnvPrefix("EXTPROC")
 	v.SetEnvKeyReplacer(replaceDotsWithUnderscores())
 	v.AutomaticEnv()
@@ -1199,15 +1200,15 @@ func TestLoadFromViper_TelemetryExporterHeadersStructureSupported(t *testing.T) 
 	// is properly applied via the expandEnvVars() function (SR-002).
 	t.Setenv("TELEMETRY_SECRET", "secret-value-123")
 
-	v := viper.New()
-	v.Set("oauth2.token_endpoint", "https://idp.example.com/oauth2/token")
-	v.Set("oauth2.issuer", "https://idp.example.com")
-	v.Set("oauth2.client_id", "test-client")
-	v.Set("oauth2.client_secret", "test-secret")
-	v.Set("telemetry.enabled", true)
-	v.Set("telemetry.exporter.endpoint", "collector.example.com:4317")
-	v.Set("telemetry.exporter.protocol", "grpc")
-	v.Set("telemetry.exporter.headers.authorization", "${TELEMETRY_SECRET}")
+	v := configutil.NewViper()
+	v.Set(configutil.Key("oauth2", "token_endpoint"), "https://idp.example.com/oauth2/token")
+	v.Set(configutil.Key("oauth2", "issuer"), "https://idp.example.com")
+	v.Set(configutil.Key("oauth2", "client_id"), "test-client")
+	v.Set(configutil.Key("oauth2", "client_secret"), "test-secret")
+	v.Set(configutil.Key("telemetry", "enabled"), true)
+	v.Set(configutil.Key("telemetry", "exporter", "endpoint"), "collector.example.com:4317")
+	v.Set(configutil.Key("telemetry", "exporter", "protocol"), "grpc")
+	v.Set(configutil.Key("telemetry", "exporter", "headers", "authorization"), "${TELEMETRY_SECRET}")
 
 	cfg, err := config.LoadFromViper(v)
 	require.NoError(t, err)

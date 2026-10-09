@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/configutil"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -32,7 +33,7 @@ type Loader struct {
 // This prevents test conflicts from global Viper state.
 func NewLoader() *Loader {
 	return &Loader{
-		v:       viper.New(),
+		v:       configutil.NewViper(),
 		sources: make([]ports.ConfigSource, 0),
 	}
 }
@@ -116,164 +117,164 @@ func (l *Loader) Reload(ctx context.Context) error {
 // Records source metadata for audit logging.
 func (l *Loader) setDefaults() {
 	// Log configuration defaults
-	l.v.SetDefault("log.level", string(config.LogLevelInfo))
-	l.v.SetDefault("log.format", string(config.LogFormatText))
+	l.v.SetDefault(configutil.Key("log", "level"), string(config.LogLevelInfo))
+	l.v.SetDefault(configutil.Key("log", "format"), string(config.LogFormatText))
 
 	// Server configuration defaults
 	serverDefaults := ports.DefaultServerConfig()
-	l.v.SetDefault("server.enduser.port", serverDefaults.EndUser.Port)
-	l.v.SetDefault("server.enduser.bind", serverDefaults.EndUser.Bind)
-	l.v.SetDefault("server.enduser.public_url", serverDefaults.EndUser.PublicURL)
+	l.v.SetDefault(configutil.Key("server", "enduser", "port"), serverDefaults.EndUser.Port)
+	l.v.SetDefault(configutil.Key("server", "enduser", "bind"), serverDefaults.EndUser.Bind)
+	l.v.SetDefault(configutil.Key("server", "enduser", "public_url"), serverDefaults.EndUser.PublicURL)
 	// No default for principal_header_name — must be explicitly configured to avoid trust boundary exposure
-	l.v.SetDefault("server.admin.port", serverDefaults.Admin.Port)
-	l.v.SetDefault("server.admin.bind", serverDefaults.Admin.Bind)
-	l.v.SetDefault("server.admin.public_url", serverDefaults.Admin.PublicURL)
+	l.v.SetDefault(configutil.Key("server", "admin", "port"), serverDefaults.Admin.Port)
+	l.v.SetDefault(configutil.Key("server", "admin", "bind"), serverDefaults.Admin.Bind)
+	l.v.SetDefault(configutil.Key("server", "admin", "public_url"), serverDefaults.Admin.PublicURL)
 	// No default for principal_header_name — must be explicitly configured to avoid trust boundary exposure
-	l.v.SetDefault("server.shutdown.timeout", serverDefaults.Shutdown.Timeout)
+	l.v.SetDefault(configutil.Key("server", "shutdown", "timeout"), serverDefaults.Shutdown.Timeout)
 
 	// Storage configuration defaults
-	l.v.SetDefault("storage.backend", "memory")
-	l.v.SetDefault("storage.timeouts.read", "5s")
-	l.v.SetDefault("storage.timeouts.write", "10s")
+	l.v.SetDefault(configutil.Key("storage", "backend"), "memory")
+	l.v.SetDefault(configutil.Key("storage", "timeouts", "read"), "5s")
+	l.v.SetDefault(configutil.Key("storage", "timeouts", "write"), "10s")
 
 	requestContextDefaults := ports.DefaultRequestContextConfig()
-	l.v.SetDefault("request_context.trusted_proxy.enabled", requestContextDefaults.TrustedProxy.Enabled)
-	l.v.SetDefault("request_context.trusted_proxy.forwarded_header", requestContextDefaults.TrustedProxy.ForwardedHeader)
-	l.v.SetDefault("request_context.trace.response_enabled", requestContextDefaults.Trace.ResponseEnabled)
+	l.v.SetDefault(configutil.Key("request_context", "trusted_proxy", "enabled"), requestContextDefaults.TrustedProxy.Enabled)
+	l.v.SetDefault(configutil.Key("request_context", "trusted_proxy", "forwarded_header"), requestContextDefaults.TrustedProxy.ForwardedHeader)
+	l.v.SetDefault(configutil.Key("request_context", "trace", "response_enabled"), requestContextDefaults.Trace.ResponseEnabled)
 
 	// Bind environment variables explicitly
 	// This ensures env vars override YAML config (proper precedence)
 	// Note: BindEnv errors are not critical - viper will continue with defaults
-	_ = l.v.BindEnv("log.level", "IDENTITY_BROKER_LOG_LEVEL")
-	_ = l.v.BindEnv("log.format", "IDENTITY_BROKER_LOG_FORMAT")
-	_ = l.v.BindEnv("server.enduser.port", "IDENTITY_BROKER_SERVER_ENDUSER_PORT")
-	_ = l.v.BindEnv("server.enduser.bind", "IDENTITY_BROKER_SERVER_ENDUSER_BIND")
-	_ = l.v.BindEnv("server.enduser.public_url", "IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL")
-	_ = l.v.BindEnv("server.enduser.authentication.preauth.principal_header_name", "IDENTITY_BROKER_SERVER_ENDUSER_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME")
-	_ = l.v.BindEnv("server.admin.port", "IDENTITY_BROKER_SERVER_ADMIN_PORT")
-	_ = l.v.BindEnv("server.admin.bind", "IDENTITY_BROKER_SERVER_ADMIN_BIND")
-	_ = l.v.BindEnv("server.admin.public_url", "IDENTITY_BROKER_SERVER_ADMIN_PUBLIC_URL")
-	_ = l.v.BindEnv("server.admin.authentication.preauth.principal_header_name", "IDENTITY_BROKER_SERVER_ADMIN_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME")
-	_ = l.v.BindEnv("server.shutdown.timeout", "IDENTITY_BROKER_SERVER_SHUTDOWN_TIMEOUT")
+	_ = l.v.BindEnv(configutil.Key("log", "level"), "IDENTITY_BROKER_LOG_LEVEL")
+	_ = l.v.BindEnv(configutil.Key("log", "format"), "IDENTITY_BROKER_LOG_FORMAT")
+	_ = l.v.BindEnv(configutil.Key("server", "enduser", "port"), "IDENTITY_BROKER_SERVER_ENDUSER_PORT")
+	_ = l.v.BindEnv(configutil.Key("server", "enduser", "bind"), "IDENTITY_BROKER_SERVER_ENDUSER_BIND")
+	_ = l.v.BindEnv(configutil.Key("server", "enduser", "public_url"), "IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL")
+	_ = l.v.BindEnv(configutil.Key("server", "enduser", "authentication", "preauth", "principal_header_name"), "IDENTITY_BROKER_SERVER_ENDUSER_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME")
+	_ = l.v.BindEnv(configutil.Key("server", "admin", "port"), "IDENTITY_BROKER_SERVER_ADMIN_PORT")
+	_ = l.v.BindEnv(configutil.Key("server", "admin", "bind"), "IDENTITY_BROKER_SERVER_ADMIN_BIND")
+	_ = l.v.BindEnv(configutil.Key("server", "admin", "public_url"), "IDENTITY_BROKER_SERVER_ADMIN_PUBLIC_URL")
+	_ = l.v.BindEnv(configutil.Key("server", "admin", "authentication", "preauth", "principal_header_name"), "IDENTITY_BROKER_SERVER_ADMIN_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME")
+	_ = l.v.BindEnv(configutil.Key("server", "shutdown", "timeout"), "IDENTITY_BROKER_SERVER_SHUTDOWN_TIMEOUT")
 	// CORS configuration (list values are best set via YAML; these env vars cover single-origin scenarios)
-	_ = l.v.BindEnv("server.enduser.cors.max_age", "IDENTITY_BROKER_SERVER_ENDUSER_CORS_MAX_AGE")
-	_ = l.v.BindEnv("server.admin.cors.max_age", "IDENTITY_BROKER_SERVER_ADMIN_CORS_MAX_AGE")
-	_ = l.v.BindEnv("storage.backend", "IDENTITY_BROKER_STORAGE_BACKEND")
-	_ = l.v.BindEnv("storage.postgres.connection_url", "IDENTITY_BROKER_STORAGE_POSTGRES_URL")
-	_ = l.v.BindEnv("request_context.trusted_proxy.enabled", "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_ENABLED")
-	_ = l.v.BindEnv("request_context.trusted_proxy.forwarded_header", "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_FORWARDED_HEADER")
-	_ = l.v.BindEnv("request_context.trace.response_enabled", "IDENTITY_BROKER_REQUEST_CONTEXT_TRACE_RESPONSE_ENABLED")
-	_ = l.v.BindEnv("third_party_oauth2.jwe_signing_key", "IDENTITY_BROKER_JWE_SIGNING_KEY")
-	_ = l.v.BindEnv("third_party_oauth2.state_token_ttl", "IDENTITY_BROKER_STATE_TOKEN_TTL")
-	_ = l.v.BindEnv("third_party_oauth2.pkce_verifier_length", "IDENTITY_BROKER_PKCE_VERIFIER_LENGTH")
+	_ = l.v.BindEnv(configutil.Key("server", "enduser", "cors", "max_age"), "IDENTITY_BROKER_SERVER_ENDUSER_CORS_MAX_AGE")
+	_ = l.v.BindEnv(configutil.Key("server", "admin", "cors", "max_age"), "IDENTITY_BROKER_SERVER_ADMIN_CORS_MAX_AGE")
+	_ = l.v.BindEnv(configutil.Key("storage", "backend"), "IDENTITY_BROKER_STORAGE_BACKEND")
+	_ = l.v.BindEnv(configutil.Key("storage", "postgres", "connection_url"), "IDENTITY_BROKER_STORAGE_POSTGRES_URL")
+	_ = l.v.BindEnv(configutil.Key("request_context", "trusted_proxy", "enabled"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("request_context", "trusted_proxy", "forwarded_header"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_FORWARDED_HEADER")
+	_ = l.v.BindEnv(configutil.Key("request_context", "trace", "response_enabled"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRACE_RESPONSE_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "jwe_signing_key"), "IDENTITY_BROKER_JWE_SIGNING_KEY")
+	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "state_token_ttl"), "IDENTITY_BROKER_STATE_TOKEN_TTL")
+	_ = l.v.BindEnv(configutil.Key("third_party_oauth2", "pkce_verifier_length"), "IDENTITY_BROKER_PKCE_VERIFIER_LENGTH")
 	// Bind encryption configuration to environment variables
 	// AWS KMS backend - KMS key and DynamoDB cache configuration
-	_ = l.v.BindEnv("encryption.aws_kms.key_arn", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_KEY_ARN")
-	_ = l.v.BindEnv("encryption.aws_kms.dynamodb_table_name", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_TABLE_NAME")
-	_ = l.v.BindEnv("encryption.aws_kms.branch_key_ttl", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_BRANCH_KEY_TTL")
-	_ = l.v.BindEnv("encryption.aws_kms.dynamodb_region", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_REGION")
-	_ = l.v.BindEnv("encryption.aws_kms.dynamodb_timeout", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_TIMEOUT")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "key_arn"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_KEY_ARN")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "dynamodb_table_name"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_TABLE_NAME")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "branch_key_ttl"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_BRANCH_KEY_TTL")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "dynamodb_region"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_REGION")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "dynamodb_timeout"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_TIMEOUT")
 	// AWS SDK configuration (region, endpoints, credentials, role assumption)
-	_ = l.v.BindEnv("encryption.aws_kms.region", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_REGION")
-	_ = l.v.BindEnv("encryption.aws_kms.kms_endpoint", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_ENDPOINT")
-	_ = l.v.BindEnv("encryption.aws_kms.dynamodb_endpoint", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_ENDPOINT")
-	_ = l.v.BindEnv("encryption.aws_kms.profile", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_PROFILE")
-	_ = l.v.BindEnv("encryption.aws_kms.access_key_id", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_ACCESS_KEY_ID")
-	_ = l.v.BindEnv("encryption.aws_kms.secret_access_key", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_SECRET_ACCESS_KEY")
-	_ = l.v.BindEnv("encryption.aws_kms.assume_role_arn", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_ASSUME_ROLE_ARN")
-	_ = l.v.BindEnv("encryption.aws_kms.disable_ssl", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "region"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_REGION")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "kms_endpoint"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_ENDPOINT")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "dynamodb_endpoint"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_ENDPOINT")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "profile"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_PROFILE")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "access_key_id"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_ACCESS_KEY_ID")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "secret_access_key"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_SECRET_ACCESS_KEY")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "assume_role_arn"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_ASSUME_ROLE_ARN")
+	_ = l.v.BindEnv(configutil.Key("encryption", "aws_kms", "disable_ssl"), "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL")
 	// Memory backend
-	_ = l.v.BindEnv("encryption.memory.raw_key", "IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY")
+	_ = l.v.BindEnv(configutil.Key("encryption", "memory", "raw_key"), "IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY")
 
 	// Set OAuth2 configuration defaults
-	l.v.SetDefault("third_party_oauth2.state_token_ttl", "10m")
-	l.v.SetDefault("third_party_oauth2.pkce_verifier_length", 32)
+	l.v.SetDefault(configutil.Key("third_party_oauth2", "state_token_ttl"), "10m")
+	l.v.SetDefault(configutil.Key("third_party_oauth2", "pkce_verifier_length"), 32)
 
 	// Note: No encryption configuration defaults set here to avoid creating
 	// both backend structs. Defaults are handled in the adapter factory functions.
 
 	// Set security configuration defaults
-	l.v.SetDefault("security.skip_thirdparty_https_validation", false)
+	l.v.SetDefault(configutil.Key("security", "skip_thirdparty_https_validation"), false)
 
 	// Approval configuration defaults
-	l.v.SetDefault("approvals.pending_ttl", "10m")
-	l.v.SetDefault("approvals.sync_coalesce_window", "1s")
-	l.v.SetDefault("approvals.rate_limit.max_pending_per_pair", 50)
-	l.v.SetDefault("approvals.rate_limit.max_requests_per_minute", 10)
-	_ = l.v.BindEnv("approvals.pending_ttl", "APPROVAL_PENDING_TTL")
-	_ = l.v.BindEnv("approvals.sync_coalesce_window", "APPROVAL_SYNC_COALESCE_WINDOW")
-	_ = l.v.BindEnv("approvals.rate_limit.max_pending_per_pair", "APPROVAL_RATE_LIMIT_MAX_PENDING")
-	_ = l.v.BindEnv("approvals.rate_limit.max_requests_per_minute", "APPROVAL_RATE_LIMIT_REQUESTS_PER_MINUTE")
+	l.v.SetDefault(configutil.Key("approvals", "pending_ttl"), "10m")
+	l.v.SetDefault(configutil.Key("approvals", "sync_coalesce_window"), "1s")
+	l.v.SetDefault(configutil.Key("approvals", "rate_limit", "max_pending_per_pair"), 50)
+	l.v.SetDefault(configutil.Key("approvals", "rate_limit", "max_requests_per_minute"), 10)
+	_ = l.v.BindEnv(configutil.Key("approvals", "pending_ttl"), "APPROVAL_PENDING_TTL")
+	_ = l.v.BindEnv(configutil.Key("approvals", "sync_coalesce_window"), "APPROVAL_SYNC_COALESCE_WINDOW")
+	_ = l.v.BindEnv(configutil.Key("approvals", "rate_limit", "max_pending_per_pair"), "APPROVAL_RATE_LIMIT_MAX_PENDING")
+	_ = l.v.BindEnv(configutil.Key("approvals", "rate_limit", "max_requests_per_minute"), "APPROVAL_RATE_LIMIT_REQUESTS_PER_MINUTE")
 
 	// Telemetry configuration defaults
 	telDefaults := ports.DefaultTelemetryConfig()
-	l.v.SetDefault("telemetry.enabled", telDefaults.Enabled)
-	l.v.SetDefault("telemetry.service_name", telDefaults.ServiceName)
-	l.v.SetDefault("telemetry.traces.enabled", telDefaults.Traces.Enabled)
-	l.v.SetDefault("telemetry.traces.sampling_rate", telDefaults.Traces.SamplingRate)
-	l.v.SetDefault("telemetry.traces.propagators", telDefaults.Traces.Propagators)
-	l.v.SetDefault("telemetry.metrics.enabled", telDefaults.Metrics.Enabled)
-	l.v.SetDefault("telemetry.metrics.export_interval", telDefaults.Metrics.ExportInterval)
-	l.v.SetDefault("telemetry.logs.enabled", telDefaults.Logs.Enabled)
-	l.v.SetDefault("telemetry.exporter.protocol", telDefaults.Exporter.Protocol)
-	l.v.SetDefault("telemetry.exporter.timeout", telDefaults.Exporter.Timeout)
-	l.v.SetDefault("telemetry.exporter.insecure", telDefaults.Exporter.Insecure)
-	l.v.SetDefault("telemetry.exporter.compression", telDefaults.Exporter.Compression)
+	l.v.SetDefault(configutil.Key("telemetry", "enabled"), telDefaults.Enabled)
+	l.v.SetDefault(configutil.Key("telemetry", "service_name"), telDefaults.ServiceName)
+	l.v.SetDefault(configutil.Key("telemetry", "traces", "enabled"), telDefaults.Traces.Enabled)
+	l.v.SetDefault(configutil.Key("telemetry", "traces", "sampling_rate"), telDefaults.Traces.SamplingRate)
+	l.v.SetDefault(configutil.Key("telemetry", "traces", "propagators"), telDefaults.Traces.Propagators)
+	l.v.SetDefault(configutil.Key("telemetry", "metrics", "enabled"), telDefaults.Metrics.Enabled)
+	l.v.SetDefault(configutil.Key("telemetry", "metrics", "export_interval"), telDefaults.Metrics.ExportInterval)
+	l.v.SetDefault(configutil.Key("telemetry", "logs", "enabled"), telDefaults.Logs.Enabled)
+	l.v.SetDefault(configutil.Key("telemetry", "exporter", "protocol"), telDefaults.Exporter.Protocol)
+	l.v.SetDefault(configutil.Key("telemetry", "exporter", "timeout"), telDefaults.Exporter.Timeout)
+	l.v.SetDefault(configutil.Key("telemetry", "exporter", "insecure"), telDefaults.Exporter.Insecure)
+	l.v.SetDefault(configutil.Key("telemetry", "exporter", "compression"), telDefaults.Exporter.Compression)
 
 	// Bind telemetry env vars
-	_ = l.v.BindEnv("telemetry.enabled", "IDENTITY_BROKER_TELEMETRY_ENABLED")
-	_ = l.v.BindEnv("telemetry.service_name", "IDENTITY_BROKER_TELEMETRY_SERVICE_NAME")
-	_ = l.v.BindEnv("telemetry.traces.enabled", "IDENTITY_BROKER_TELEMETRY_TRACES_ENABLED")
-	_ = l.v.BindEnv("telemetry.traces.sampling_rate", "IDENTITY_BROKER_TELEMETRY_TRACES_SAMPLING_RATE")
-	_ = l.v.BindEnv("telemetry.metrics.enabled", "IDENTITY_BROKER_TELEMETRY_METRICS_ENABLED")
-	_ = l.v.BindEnv("telemetry.metrics.export_interval", "IDENTITY_BROKER_TELEMETRY_METRICS_EXPORT_INTERVAL")
-	_ = l.v.BindEnv("telemetry.logs.enabled", "IDENTITY_BROKER_TELEMETRY_LOGS_ENABLED")
-	_ = l.v.BindEnv("telemetry.exporter.protocol", "IDENTITY_BROKER_TELEMETRY_EXPORTER_PROTOCOL")
-	_ = l.v.BindEnv("telemetry.exporter.endpoint", "IDENTITY_BROKER_TELEMETRY_EXPORTER_ENDPOINT")
-	_ = l.v.BindEnv("telemetry.exporter.timeout", "IDENTITY_BROKER_TELEMETRY_EXPORTER_TIMEOUT")
-	_ = l.v.BindEnv("telemetry.exporter.insecure", "IDENTITY_BROKER_TELEMETRY_EXPORTER_INSECURE")
-	_ = l.v.BindEnv("telemetry.exporter.compression", "IDENTITY_BROKER_TELEMETRY_EXPORTER_COMPRESSION")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "enabled"), "IDENTITY_BROKER_TELEMETRY_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "service_name"), "IDENTITY_BROKER_TELEMETRY_SERVICE_NAME")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "traces", "enabled"), "IDENTITY_BROKER_TELEMETRY_TRACES_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "traces", "sampling_rate"), "IDENTITY_BROKER_TELEMETRY_TRACES_SAMPLING_RATE")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "metrics", "enabled"), "IDENTITY_BROKER_TELEMETRY_METRICS_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "metrics", "export_interval"), "IDENTITY_BROKER_TELEMETRY_METRICS_EXPORT_INTERVAL")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "logs", "enabled"), "IDENTITY_BROKER_TELEMETRY_LOGS_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "exporter", "protocol"), "IDENTITY_BROKER_TELEMETRY_EXPORTER_PROTOCOL")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "exporter", "endpoint"), "IDENTITY_BROKER_TELEMETRY_EXPORTER_ENDPOINT")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "exporter", "timeout"), "IDENTITY_BROKER_TELEMETRY_EXPORTER_TIMEOUT")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "exporter", "insecure"), "IDENTITY_BROKER_TELEMETRY_EXPORTER_INSECURE")
+	_ = l.v.BindEnv(configutil.Key("telemetry", "exporter", "compression"), "IDENTITY_BROKER_TELEMETRY_EXPORTER_COMPRESSION")
 
 	// Bind OAuth2 authorization server env vars
-	_ = l.v.BindEnv("oauth2_authorization_server.mode", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_MODE", "IDENTITY_BROKER_OAUTH2_MODE")
-	_ = l.v.BindEnv("oauth2_authorization_server.proxy.upstream_issuer_uri", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_ISSUER_URI")
-	_ = l.v.BindEnv("oauth2_authorization_server.proxy.upstream_authorize_endpoint", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_AUTHORIZE_ENDPOINT")
-	_ = l.v.BindEnv("oauth2_authorization_server.proxy.upstream_token_endpoint", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_TOKEN_ENDPOINT")
-	_ = l.v.BindEnv("oauth2_authorization_server.proxy.upstream_timeout", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_TIMEOUT")
-	_ = l.v.BindEnv("oauth2_authorization_server.supported_scopes", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_SUPPORTED_SCOPES")
-	_ = l.v.BindEnv("oauth2_authorization_server.local.refresh_token_ttl", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_TTL")
-	_ = l.v.BindEnv("oauth2_authorization_server.local.token_ttl", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL")
-	_ = l.v.BindEnv("oauth2_authorization_server.local.token_claims_expression", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION")
-	_ = l.v.BindEnv("oauth2_authorization_server.local.signing_keys.bootstrap_timeout", "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "mode"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_MODE", "IDENTITY_BROKER_OAUTH2_MODE")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "proxy", "upstream_issuer_uri"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_ISSUER_URI")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "proxy", "upstream_authorize_endpoint"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_AUTHORIZE_ENDPOINT")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "proxy", "upstream_token_endpoint"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_TOKEN_ENDPOINT")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "proxy", "upstream_timeout"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_PROXY_UPSTREAM_TIMEOUT")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "supported_scopes"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_SUPPORTED_SCOPES")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "refresh_token_ttl"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_REFRESH_TOKEN_TTL")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "token_ttl"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "token_claims_expression"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "signing_keys", "bootstrap_timeout"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT")
 
 	// Set CIMD configuration defaults
 	cimdDefaults := ports.DefaultCIMDConfig()
-	l.v.SetDefault("oauth2_authorization_server.cimd.enabled", cimdDefaults.Enabled)
-	l.v.SetDefault("oauth2_authorization_server.cimd.fetch_timeout", cimdDefaults.FetchTimeout)
-	l.v.SetDefault("oauth2_authorization_server.cimd.max_response_bytes", cimdDefaults.MaxResponseBytes)
-	l.v.SetDefault("oauth2_authorization_server.cimd.cache.max_ttl", cimdDefaults.Cache.MaxTTL)
-	l.v.SetDefault("oauth2_authorization_server.cimd.cache.min_ttl", cimdDefaults.Cache.MinTTL)
-	l.v.SetDefault("oauth2_authorization_server.cimd.cache.max_entries", cimdDefaults.Cache.MaxEntries)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "enabled"), cimdDefaults.Enabled)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "fetch_timeout"), cimdDefaults.FetchTimeout)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "max_response_bytes"), cimdDefaults.MaxResponseBytes)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_ttl"), cimdDefaults.Cache.MaxTTL)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "cache", "min_ttl"), cimdDefaults.Cache.MinTTL)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_entries"), cimdDefaults.Cache.MaxEntries)
 
 	// Bind CIMD env vars
-	_ = l.v.BindEnv("oauth2_authorization_server.cimd.enabled", "IDENTITY_BROKER_CIMD_ENABLED")
-	_ = l.v.BindEnv("oauth2_authorization_server.cimd.fetch_timeout", "IDENTITY_BROKER_CIMD_FETCH_TIMEOUT")
-	_ = l.v.BindEnv("oauth2_authorization_server.cimd.max_response_bytes", "IDENTITY_BROKER_CIMD_MAX_RESPONSE_BYTES")
-	_ = l.v.BindEnv("oauth2_authorization_server.cimd.cache.max_ttl", "IDENTITY_BROKER_CIMD_CACHE_MAX_TTL")
-	_ = l.v.BindEnv("oauth2_authorization_server.cimd.cache.min_ttl", "IDENTITY_BROKER_CIMD_CACHE_MIN_TTL")
-	_ = l.v.BindEnv("oauth2_authorization_server.cimd.cache.max_entries", "IDENTITY_BROKER_CIMD_CACHE_MAX_ENTRIES")
-	_ = l.v.BindEnv("oauth2_authorization_server.cimd.ssrf.extra_blocked_cidrs", "IDENTITY_BROKER_CIMD_SSRF_EXTRA_BLOCKED_CIDRS")
-	_ = l.v.BindEnv("oauth2_authorization_server.cimd.client_name_blocklist", "IDENTITY_BROKER_CIMD_CLIENT_NAME_BLOCKLIST")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "enabled"), "IDENTITY_BROKER_CIMD_ENABLED")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "fetch_timeout"), "IDENTITY_BROKER_CIMD_FETCH_TIMEOUT")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "max_response_bytes"), "IDENTITY_BROKER_CIMD_MAX_RESPONSE_BYTES")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_ttl"), "IDENTITY_BROKER_CIMD_CACHE_MAX_TTL")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "cache", "min_ttl"), "IDENTITY_BROKER_CIMD_CACHE_MIN_TTL")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_entries"), "IDENTITY_BROKER_CIMD_CACHE_MAX_ENTRIES")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "ssrf", "extra_blocked_cidrs"), "IDENTITY_BROKER_CIMD_SSRF_EXTRA_BLOCKED_CIDRS")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_name_blocklist"), "IDENTITY_BROKER_CIMD_CLIENT_NAME_BLOCKLIST")
 
 	// Set token exchange configuration defaults
 	// expected_audience defaults to the well-known "token-exchange-broker" value.
 	// Operators can override it to match whatever audience their JWTs carry.
-	l.v.SetDefault("token_exchange.expected_audience", tokenexchange.DefaultBrokerAudience)
-	_ = l.v.BindEnv("token_exchange.expected_audience", "IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE")
-	_ = l.v.BindEnv("token_exchange.client_assertion.issuer_uri", "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI")
-	_ = l.v.BindEnv("token_exchange.client_assertion.jwks_uri", "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI")
-	_ = l.v.BindEnv("token_exchange.client_assertion.jwks_min_refresh", "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MIN_REFRESH")
-	_ = l.v.BindEnv("token_exchange.client_assertion.jwks_max_refresh", "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MAX_REFRESH")
+	l.v.SetDefault(configutil.Key("token_exchange", "expected_audience"), tokenexchange.DefaultBrokerAudience)
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "issuer_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_min_refresh"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MIN_REFRESH")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_max_refresh"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MAX_REFRESH")
 
 	// Record defaults source
 	l.sources = append(l.sources, ports.ConfigSource{
@@ -376,10 +377,10 @@ func (l *Loader) loadEnvFile(filename string) error {
 		if after, ok := strings.CutPrefix(strings.ToUpper(key), "IDENTITY_BROKER_"); ok {
 			viperKey = after
 		}
-		// Convert to lowercase with dots
-		viperKey = strings.ToLower(strings.ReplaceAll(viperKey, "_", "."))
+		// Keep underscore-separated segments as structural Viper paths.
+		viperKey = configutil.Key(strings.Split(strings.ToLower(viperKey), "_")...)
 		l.v.Set(viperKey, value)
-		keys = append(keys, viperKey)
+		keys = append(keys, strings.ReplaceAll(viperKey, configutil.Delimiter, "."))
 	}
 
 	// Record source metadata
@@ -448,6 +449,9 @@ func (l *Loader) loadYAML() error {
 
 	// Get all keys from the config file
 	keys := l.v.AllKeys()
+	for i, key := range keys {
+		keys[i] = strings.ReplaceAll(key, configutil.Delimiter, ".")
+	}
 
 	// Record source metadata
 	l.sources = append(l.sources, ports.ConfigSource{
@@ -655,70 +659,70 @@ func (l *Loader) bindFlags() error {
 	// Bind log.level flag
 	if l.cmd.Flags().Changed("log-level") {
 		logLevel, _ := l.cmd.Flags().GetString("log-level")
-		l.v.Set("log.level", logLevel)
+		l.v.Set(configutil.Key("log", "level"), logLevel)
 		cliKeys = append(cliKeys, "log.level")
 	}
 
 	// Bind log.format flag
 	if l.cmd.Flags().Changed("log-format") {
 		logFormat, _ := l.cmd.Flags().GetString("log-format")
-		l.v.Set("log.format", logFormat)
+		l.v.Set(configutil.Key("log", "format"), logFormat)
 		cliKeys = append(cliKeys, "log.format")
 	}
 
 	// Bind server.enduser.port flag
 	if l.cmd.Flags().Changed("server.enduser.port") {
 		port, _ := l.cmd.Flags().GetInt("server.enduser.port")
-		l.v.Set("server.enduser.port", port)
+		l.v.Set(configutil.Key("server", "enduser", "port"), port)
 		cliKeys = append(cliKeys, "server.enduser.port")
 	}
 
 	// Bind server.enduser.bind flag
 	if l.cmd.Flags().Changed("server.enduser.bind") {
 		bind, _ := l.cmd.Flags().GetString("server.enduser.bind")
-		l.v.Set("server.enduser.bind", bind)
+		l.v.Set(configutil.Key("server", "enduser", "bind"), bind)
 		cliKeys = append(cliKeys, "server.enduser.bind")
 	}
 
 	// Bind server.admin.port flag
 	if l.cmd.Flags().Changed("server.admin.port") {
 		port, _ := l.cmd.Flags().GetInt("server.admin.port")
-		l.v.Set("server.admin.port", port)
+		l.v.Set(configutil.Key("server", "admin", "port"), port)
 		cliKeys = append(cliKeys, "server.admin.port")
 	}
 
 	// Bind server.admin.bind flag
 	if l.cmd.Flags().Changed("server.admin.bind") {
 		bind, _ := l.cmd.Flags().GetString("server.admin.bind")
-		l.v.Set("server.admin.bind", bind)
+		l.v.Set(configutil.Key("server", "admin", "bind"), bind)
 		cliKeys = append(cliKeys, "server.admin.bind")
 	}
 
 	// Bind server.shutdown.timeout flag
 	if l.cmd.Flags().Changed("server.shutdown.timeout") {
 		timeout, _ := l.cmd.Flags().GetDuration("server.shutdown.timeout")
-		l.v.Set("server.shutdown.timeout", timeout)
+		l.v.Set(configutil.Key("server", "shutdown", "timeout"), timeout)
 		cliKeys = append(cliKeys, "server.shutdown.timeout")
 	}
 
 	// Bind request_context.trusted_proxy.enabled flag
 	if l.cmd.Flags().Changed("request_context.trusted_proxy.enabled") {
 		enabled, _ := l.cmd.Flags().GetBool("request_context.trusted_proxy.enabled")
-		l.v.Set("request_context.trusted_proxy.enabled", enabled)
+		l.v.Set(configutil.Key("request_context", "trusted_proxy", "enabled"), enabled)
 		cliKeys = append(cliKeys, "request_context.trusted_proxy.enabled")
 	}
 
 	// Bind request_context.trusted_proxy.forwarded_header flag
 	if l.cmd.Flags().Changed("request_context.trusted_proxy.forwarded_header") {
 		header, _ := l.cmd.Flags().GetString("request_context.trusted_proxy.forwarded_header")
-		l.v.Set("request_context.trusted_proxy.forwarded_header", header)
+		l.v.Set(configutil.Key("request_context", "trusted_proxy", "forwarded_header"), header)
 		cliKeys = append(cliKeys, "request_context.trusted_proxy.forwarded_header")
 	}
 
 	// Bind request_context.trace.response_enabled flag
 	if l.cmd.Flags().Changed("request_context.trace.response_enabled") {
 		enabled, _ := l.cmd.Flags().GetBool("request_context.trace.response_enabled")
-		l.v.Set("request_context.trace.response_enabled", enabled)
+		l.v.Set(configutil.Key("request_context", "trace", "response_enabled"), enabled)
 		cliKeys = append(cliKeys, "request_context.trace.response_enabled")
 	}
 
