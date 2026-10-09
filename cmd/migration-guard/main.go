@@ -94,5 +94,8 @@ func migrationArgs(args []string) (dir, databaseURL string, err error) {
 	if dir == "" || databaseURL == "" {
 		return "", "", fmt.Errorf("-path and -database are required")
 	}
+	if dir != "/app/migrations" {
+		return "", "", fmt.Errorf("migration path must be /app/migrations")
+	}
 	return dir, databaseURL, nil
 }

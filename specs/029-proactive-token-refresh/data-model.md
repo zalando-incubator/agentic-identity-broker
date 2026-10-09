@@ -19,12 +19,12 @@ The fields this feature reads and writes are unchanged (spec "Key Entities"):
 
 | Field | Type | Read by | Written by |
 |---|---|---|---|
-| `ID` | `id.SessionID` (UUID v4) | sweep cursor, logs | — |
+| `ID` | `id.SessionID` (UUID v4) | expiry/UUID sweep cursor, visited-ID set, logs | — |
 | `Principal` | `id.Principal` | lock key, singleflight key | — (never logged) |
 | `ServiceID` | `id.ServiceID` | provider lookup, encryption context, logs | — |
 | `EncryptedAccessToken` | `[]byte` | `DecryptAccessToken` | `setSessionTokens` (all triggers) |
 | `EncryptedRefreshToken` | `[]byte` | `DecryptRefreshToken`, `CanRefresh` | `setSessionTokens` when the provider rotates it |
-| `AccessTokenExpiresAt` | `*time.Time` | `AccessTokenExpiresBy`, sweep query | `setSessionTokens` |
+| `AccessTokenExpiresAt` | `*time.Time` | `AccessTokenExpiresBy`, sweep query and cursor | `setSessionTokens` |
 | `RefreshTokenExpiresAt` | `*time.Time` | `CanRefresh` | — (unchanged; current behavior, out of scope) |
 | `UpdatedAt` | `time.Time` | — | `setSessionTokens` |
 
@@ -50,8 +50,21 @@ when the lock callback switches predicates.
 ### New index
 
 `idx_user_sessions_access_token_expires_at` is a plain B-tree index on
-`user_sessions (access_token_expires_at)`. It serves `ListExpiringSessions` (DB-003, SC-006).
-ADR 039 accepts a named non-atomic exception for the concurrent index. The guarded migration `036` and its PostgreSQL recovery tests pass (research R4).
+`user_sessions (access_token_expires_at, id)`. Migration `036` builds it concurrently for expiry-then-UUID keyset reads (DB-001, DB-003, SC-006).
+ADR 039 accepts the named non-atomic exception for this migration only. The directive guard remains required. PostgreSQL 15 lifecycle and interrupted-build recovery tests passed with the two-key index. Operators still use the manual invalid-index and dirty-version recovery procedure (research R4).
+
+### New value object: `SessionExpiryCursor`
+
+**Location**: `internal/domain/storage/user_session.go` | **Port**: `UserSessionExpiryRepository.ListExpiringSessions`
+
+```go
+type SessionExpiryCursor struct {
+    AccessTokenExpiresAt time.Time
+    ID                   id.SessionID
+}
+```
+
+Both fields zero start the scan. Exactly one zero field is a validation error. A later page contains only rows with `(access_token_expires_at, id) > (cursor.AccessTokenExpiresAt, cursor.ID)`. The order compares expiry first and UUID bytes second. Rows without an expiry never enter the scan.
 
 ## New enumeration: `RefreshTrigger`
 
@@ -93,16 +106,14 @@ A violation returns an error that wraps `ErrInvalidSweepRequest`, and the handle
 | `Refreshed` | `int` | Candidates refreshed. In dry-run mode: candidates that would be refreshed (lock-free evaluation shows them due and `CanRefresh`). |
 | `Skipped` | `int` | Candidates that no longer required action when evaluated: not due under the lock (refreshed concurrently by another trigger or replica), or deleted mid-sweep. |
 | `Failed` | `int` | Candidates that required action but could not be refreshed: no usable refresh token, upstream error, provider misconfiguration, or encryption failure. |
-| `TotalEvaluated` | `int` | Candidates returned by `ListExpiringSessions` and evaluated. |
+| `TotalEvaluated` | `int` | Unique session IDs returned by `ListExpiringSessions` and evaluated during this invocation. |
 | `DryRun` | `bool` | Echo of the effective `DryRun`. |
 | `EffectiveLookahead` | `time.Duration` | Resolved lookahead after configuration defaults; used only in the operator audit. |
 | `EffectivePageSize` | `int` | Resolved page size after configuration defaults; used only in the operator audit. |
 
 Only the first five fields appear in the HTTP `SessionSweepResult` response. The two effective controls remain internal metadata.
 
-**Invariant** (SC-004): `Refreshed + Skipped + Failed == TotalEvaluated`. Each listed candidate is
-classified exactly once. Sessions that `ListExpiringSessions` never returns (healthy, `NULL` expiry,
-or past the cursor) contribute to no count.
+**Invariant** (SC-004): `Refreshed + Skipped + Failed == TotalEvaluated`. A per-invocation visited-ID set classifies each candidate once in both real and dry runs. A moved row with a visited ID does not cause another lock, upstream call, metric, log, or count. The visited set uses O(unique candidates) broker memory. Pages hold at most `page_size` full session snapshots. Healthy sessions, `NULL` expiries, and rows behind the cursor do not contribute to counts unless evaluated earlier.
 
 ## Sweep candidate classification (state transitions)
 
@@ -113,6 +124,8 @@ calls.
 ```mermaid
 stateDiagram-v2
     [*] --> Listed: ListExpiringSessions(threshold, cursor, limit)
+    Listed --> AlreadySeen: ID in visited set (no count)
+    AlreadySeen --> [*]
     Listed --> Skipped: locked row missing (deleted mid-sweep)
     Listed --> Skipped: !AccessTokenExpiresBy(threshold) (already refreshed)
     Listed --> Failed: !CanRefresh() (refresh token absent/expired)
@@ -136,9 +149,7 @@ write (US2-S3, US3-S2).
 both the query and the locked re-check, so a candidate's classification never depends on how long
 the sweep has run.
 
-**Cursor progression**: `cursor₀ = id.SessionID{}` (zero UUID). `cursorₙ₊₁ = page[len(page)-1].ID`.
-The sweep stops when `len(page) < limit`, or when it is aborted or cancelled. The cursor strictly
-increases, so the sweep terminates (research R3).
+**Cursor progression**: The first cursor is `storage.SessionExpiryCursor{}` (zero time and zero ID). Each full page uses the last raw row for the next cursor. The sweep takes the value `*last.AccessTokenExpiresAt` and `last.ID`, including when every row was already seen. The tuple must increase strictly. A nil expiry or non-increasing tuple aborts through the repository-failure path. The sweep stops after a short page, cancellation, or an aborting error (research R3). A refreshed or deleted earlier row does not hide later rows ahead of the cursor. A new row behind the cursor is not visited. If a refreshed row moves forward but stays due, the visited set prevents a second evaluation.
 
 ## New process-scoped component: `backgroundRefresher`
 
@@ -235,6 +246,7 @@ parameter, and every caller must be updated, confirmed with `lsp references` dur
 | **Refresh Lookahead Window** | The interval before access-token expiry, `token_refresh.lookahead_duration`, in which a token is still served but is refreshed proactively. | Evaluated on `UserSession.AccessTokenExpiresAt`; drives Proactive Refresh and the default Session Sweep window. |
 | **Proactive Refresh** | A non-blocking background refresh of a `UserSession`, triggered when token exchange serves a token inside the Refresh Lookahead Window. It is bounded per replica and dropped on saturation. | Shares per-replica deduplication with on-demand refresh; persists through the locked session update. |
 | **Session Sweep** | An admin-triggered, externally scheduled pass that refreshes every `UserSession` whose access token expires within a lookahead window, in keyset pages. | Produces a `SweepResult`; scheduled by an operator CronJob. |
+| **SessionExpiryCursor** | The internal `(AccessTokenExpiresAt, ID)` keyset value for Session Sweep, ordered by expiry then UUID bytes. | A zero-time/zero-ID value starts `ListExpiringSessions`; partial cursors are invalid. |
 | **SweepRequest** | The input value object for a Session Sweep: lookahead, dry-run flag, and page size. | Applies the configured defaults and validation before the sweep evaluates a `UserSession`. |
 | **SweepResult** | The value object summarizing a Session Sweep: `refreshed`, `skipped`, `failed`, `total_evaluated`, `dry_run`. | `refreshed + skipped + failed = total_evaluated`. |
 | **RefreshTrigger** | The origin of a token refresh: `on-demand`, `background`, or `sweep`. Recorded as `triggered_by`. | Attribute of `SessionTokensRefreshed` and the refresh counters. |

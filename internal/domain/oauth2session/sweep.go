@@ -1,6 +1,7 @@
 package oauth2session
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -64,8 +67,8 @@ func NewSessionSweepService(expiry ports.UserSessionExpiryRepository, sessions *
 	}
 }
 
-// Sweep evaluates due sessions in ID order. A fixed threshold and the locked
-// refresh re-check ensure that concurrent refreshes are counted as skipped.
+// Sweep evaluates due sessions in expiry/ID order. A fixed threshold and the
+// locked refresh re-check ensure that concurrent refreshes are counted as skipped.
 func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (SweepResult, error) {
 	result := SweepResult{DryRun: req.DryRun}
 	if req.Lookahead == 0 {
@@ -84,7 +87,8 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 	}
 
 	threshold := time.Now().Add(req.Lookahead)
-	var cursor id.SessionID
+	var cursor storage.SessionExpiryCursor
+	seen := make(map[id.SessionID]struct{})
 	for {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -98,10 +102,21 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 			s.logAbort(ctx, result, failure)
 			return result, failure
 		}
+		nextCursor, err := nextSweepCursor(page, cursor)
+		if err != nil {
+			failure := sessionOperationError(ctx, OperationSessionLookup, DetailRepositoryUnavailable, err)
+			s.logAbort(ctx, result, failure)
+			return result, failure
+		}
+		cursor = nextCursor
 		for _, candidate := range page {
 			if err := ctx.Err(); err != nil {
 				return result, err
 			}
+			if _, exists := seen[candidate.ID]; exists {
+				continue
+			}
+			seen[candidate.ID] = struct{}{}
 			if req.DryRun {
 				switch {
 				case !candidate.AccessTokenExpiresBy(threshold):
@@ -113,7 +128,18 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 				}
 			} else {
 				refreshCtx, cancel := s.sessions.refreshOperationContext(context.WithoutCancel(ctx))
-				_, refreshed, provider, refreshErr := s.sessions.refreshDueSession(refreshCtx, candidate.Principal, candidate.ServiceID, threshold, RefreshTriggerSweep)
+				var refreshed bool
+				var provider *model.ThirdpartyOAuth2ProviderEntity
+				var refreshErr error
+				if !candidate.CanRefresh() {
+					var needsRefresh bool
+					needsRefresh, refreshErr = s.sessions.checkUnrefreshableSweepCandidate(refreshCtx, candidate.Principal, candidate.ServiceID, threshold)
+					if refreshErr == nil && needsRefresh {
+						_, refreshed, provider, refreshErr = s.sessions.refreshDueSession(refreshCtx, candidate.Principal, candidate.ServiceID, threshold, RefreshTriggerSweep)
+					}
+				} else {
+					_, refreshed, provider, refreshErr = s.sessions.refreshDueSession(refreshCtx, candidate.Principal, candidate.ServiceID, threshold, RefreshTriggerSweep)
+				}
 				cancel()
 				if refreshErr != nil {
 					metadata := sessionFailureMetadata(refreshErr)
@@ -160,8 +186,24 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 			}
 			return result, nil
 		}
-		cursor = page[len(page)-1].ID
 	}
+}
+
+func nextSweepCursor(page []*storage.UserSession, previous storage.SessionExpiryCursor) (storage.SessionExpiryCursor, error) {
+	for _, candidate := range page {
+		if candidate == nil || candidate.AccessTokenExpiresAt == nil || candidate.AccessTokenExpiresAt.IsZero() || candidate.ID.IsZero() {
+			return previous, errors.New("session expiry repository returned an invalid cursor tuple")
+		}
+		next := storage.SessionExpiryCursor{AccessTokenExpiresAt: *candidate.AccessTokenExpiresAt, ID: candidate.ID}
+		if !previous.ID.IsZero() {
+			order := next.AccessTokenExpiresAt.Compare(previous.AccessTokenExpiresAt)
+			if order < 0 || (order == 0 && bytes.Compare(next.ID[:], previous.ID[:]) <= 0) {
+				return previous, errors.New("session expiry repository returned a non-increasing cursor tuple")
+			}
+		}
+		previous = next
+	}
+	return previous, nil
 }
 
 func (s *SessionSweepService) logAbort(ctx context.Context, result SweepResult, err error) {

@@ -137,11 +137,15 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 	return &session, nil
 }
 
-func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context, threshold time.Time, cursor id.SessionID, limit int) ([]*storage.UserSession, error) {
+func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error) {
 	const operation = "ListExpiringSessions"
 	if limit < 1 || limit > 1000 {
 		return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "limit must be between 1 and 1000")
 	}
+	if cursor.AccessTokenExpiresAt.IsZero() != cursor.ID.IsZero() {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "cursor expiry and ID must both be set or both be zero")
+	}
+	hasCursor := !cursor.ID.IsZero()
 	if err := ctx.Err(); err != nil {
 		return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
 	}
@@ -149,13 +153,16 @@ func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Keep only the smallest limit IDs in a max-heap, independent of map size.
+	// Keep only the earliest limit (expiry, ID) pairs in a max-heap.
 	var selected []*storage.UserSession
 	for _, session := range r.sessions {
 		if err := ctx.Err(); err != nil {
 			return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
 		}
-		if session.AccessTokenExpiresAt == nil || session.AccessTokenExpiresAt.After(threshold) || bytes.Compare(session.ID[:], cursor[:]) <= 0 {
+		if session.AccessTokenExpiresAt == nil || session.AccessTokenExpiresAt.After(threshold) {
+			continue
+		}
+		if hasCursor && compareSessionExpiryKey(session, cursor.AccessTokenExpiresAt, cursor.ID) <= 0 {
 			continue
 		}
 		if selected == nil {
@@ -165,23 +172,23 @@ func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context
 			selected = append(selected, session)
 			for child := len(selected) - 1; child > 0; {
 				parent := (child - 1) / 2
-				if bytes.Compare(selected[parent].ID[:], selected[child].ID[:]) >= 0 {
+				if compareSessionExpiryKey(selected[parent], *selected[child].AccessTokenExpiresAt, selected[child].ID) >= 0 {
 					break
 				}
 				selected[parent], selected[child] = selected[child], selected[parent]
 				child = parent
 			}
-		} else if bytes.Compare(session.ID[:], selected[0].ID[:]) < 0 {
+		} else if compareSessionExpiryKey(session, *selected[0].AccessTokenExpiresAt, selected[0].ID) < 0 {
 			selected[0] = session
 			for parent := 0; ; {
 				child := parent*2 + 1
 				if child >= len(selected) {
 					break
 				}
-				if right := child + 1; right < len(selected) && bytes.Compare(selected[right].ID[:], selected[child].ID[:]) > 0 {
+				if right := child + 1; right < len(selected) && compareSessionExpiryKey(selected[right], *selected[child].AccessTokenExpiresAt, selected[child].ID) > 0 {
 					child = right
 				}
-				if bytes.Compare(selected[parent].ID[:], selected[child].ID[:]) >= 0 {
+				if compareSessionExpiryKey(selected[parent], *selected[child].AccessTokenExpiresAt, selected[child].ID) >= 0 {
 					break
 				}
 				selected[parent], selected[child] = selected[child], selected[parent]
@@ -194,7 +201,7 @@ func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context
 	}
 
 	sort.Slice(selected, func(i, j int) bool {
-		return bytes.Compare(selected[i].ID[:], selected[j].ID[:]) < 0
+		return compareSessionExpiryKey(selected[i], *selected[j].AccessTokenExpiresAt, selected[j].ID) < 0
 	})
 	for i, session := range selected {
 		snapshot := *session
@@ -215,6 +222,14 @@ func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context
 		return nil, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
 	}
 	return selected, nil
+}
+
+// compareSessionExpiryKey compares a due session with an expiry/UUID key.
+func compareSessionExpiryKey(session *storage.UserSession, expiry time.Time, sessionID id.SessionID) int {
+	if cmp := session.AccessTokenExpiresAt.Compare(expiry); cmp != 0 {
+		return cmp
+	}
+	return bytes.Compare(session.ID[:], sessionID[:])
 }
 
 var _ ports.UserSessionExpiryRepository = (*InMemoryUserSessionRepository)(nil)

@@ -16,9 +16,9 @@ the hot path in two ways:
    session already in flight consume no slot. When the pool is saturated, the refresh is dropped.
    The caller already holds a valid token, so this is safe.
 2. **Admin session sweep (US3)**: `POST /api/sessions/sweep` on the admin server pages through
-   `user_sessions` by keyset and refreshes every session expiring within a window. This covers users
-   with no active agent traffic. An operator CronJob schedules it. The broker runs no scheduler and
-   no distributed lock.
+   `user_sessions` in access-token expiry, then UUID-byte order. It refreshes sessions due within a
+   fixed window, including those with no active agent traffic. An operator CronJob schedules it.
+   The broker runs no scheduler and no distributed lock.
 
 Research found that much of the spec already exists, and the design builds on it. The expired-token
 path (US2) is implemented, with a `singleflight` group and a row-locked, update-only refresh
@@ -47,9 +47,7 @@ Two codebase facts shape the design:
 ADR 011), Viper/Cobra (config). **No new module dependency**; the ISO 8601 parser uses the Go standard library (R10).
 
 **Storage**: PostgreSQL (production) and in-memory (dev/test). There is no table or column change.
-Accepted ADR 039 permits a concurrent expiry-index build under a narrow, non-atomic Principle IX
-exception. Migration `036` and the no-transaction directive guard are implemented on each runner path
-(research R4). The PostgreSQL suite and packaged guarded CLI passed their final checks.
+Accepted ADR 039 permits a concurrent, two-key B-tree index on `(access_token_expires_at, id)` under a narrow, non-atomic Principle IX exception. The guard, migration lifecycle and recovery, packaged v4.17.0 CLI, and normal-planner pagination checks passed on PostgreSQL 15 (research R4).
 
 **Testing**: stdlib `testing` + testify (unit, table-driven). Ginkgo/Gomega E2E in `tests/e2e/`.
 testcontainers `postgres:15-alpine` for repository, migration, and `EXPLAIN` integration tests (`-tags=integration`).
@@ -66,8 +64,10 @@ testcontainers `postgres:15-alpine` for repository, migration, and `EXPLAIN` int
   on it (SC-002).
 - Per-session refresh dedup: at most one upstream refresh in flight per session per replica (FR-003).
   The row lock adds cross-replica suppression after commit (SC-003).
-- Sweep: sequential, about 1/upstream-latency sessions per second per request. Memory is bounded by
-  `page_size ≤ 1000` (FR-008).
+- Sweep: sequential, about 1/upstream-latency sessions per second per request. Each page holds at
+  most `page_size ≤ 1000` sessions (FR-008). A visited-ID set prevents repeated accounting when a
+  refreshed row moves forward within the threshold. Memory is O(page_size + unique candidates),
+  not strictly page-bounded.
 
 **Constraints**:
 - Fail closed. Tokens are never persisted unencrypted (SR-001) and never logged. Responses contain
@@ -101,11 +101,11 @@ implementation.
   process-scoped `backgroundRefresher`. Sweep and background state machines are diagrammed. The
   `SessionTokensRefreshed` domain event is realized as the existing `session.oauth2.token_refreshed`
   structured event. The codebase has no event bus.
-- [x] **Domain Concepts**: Seven glossary entries go to `ARCHITECTURE.md` (data-model.md → Glossary
-  additions): Refresh Lookahead Window, Proactive Refresh, Session Sweep, SweepRequest,
-  SweepResult, RefreshTrigger, and SessionTokensRefreshed.
-- [x] **Entity IDs**: N/A. There is no new entity with a UUID key. `id.SessionID` is reused as the
-  sweep cursor.
+- [x] **Domain Concepts**: The original seven glossary entries go to `ARCHITECTURE.md` (data-model.md
+  → Glossary additions): Refresh Lookahead Window, Proactive Refresh, Session Sweep, SweepRequest,
+  SweepResult, RefreshTrigger, and SessionTokensRefreshed. The amended design adds SessionExpiryCursor.
+- [x] **Entity IDs**: N/A. There is no new entity with a UUID key. `SessionExpiryCursor` holds
+  `AccessTokenExpiresAt time.Time` and `ID id.SessionID` for the expiry-then-UUID keyset.
 - [x] **Configuration Design**: The `token_refresh` section has three keys, defaults, environment
   variables, CLI flags, and validation bounds in [contracts/configuration.md](contracts/configuration.md).
 - [x] **Config Examples**: The example YAML and README entry are specified in the configuration
@@ -125,7 +125,7 @@ implementation.
   unknown-field rejection with `400`, and missing operator principal with `500`. ADR 038 records
   those choices. This is user approval in this conversation, not a claim of a PR review comment.
   T018 records this approval before endpoint implementation.
-- [x] **Database Design and Migration — VERIFIED**: ADR 039 accepts a named non-atomic exception to Principle IX. The shared validator guards every migration runner. Migration `036` applies, rolls back, and reapplies on PostgreSQL 15. An interrupted build left an invalid index and dirty version; the recovery test inspected both, removed the invalid index, repaired metadata, and retried successfully. The normal-planner SC-006 test remains T032 in Phase 2.5.
+- [x] **Database Design and Migration — VERIFIED**: ADR 039 accepts the named non-atomic exception for the two-key migration `036`. The shared validator guards every runner. PostgreSQL 15 tests covered UP, DOWN, reapply, an invalid interrupted build, and dirty-version recovery. First, middle, and late sparse-due pages used the valid composite index under normal planner settings. Recovery remains non-atomic.
 - [x] **E2E Acceptance Tests**: All 10 acceptance scenarios get E2E tests in
   `tests/e2e/proactive_token_refresh_test.go` before implementation (Testing Strategy).
 - [x] **E2E Test Mapping**: 1:1 scenario-to-`It()` mapping, tabulated below.
@@ -161,34 +161,32 @@ implementation.
 - [x] **End-User Docs**: N/A for `docs/api/` (admin API). Operator docs:
   `docs/operations/session-sweep.md` (runbook and reference CronJob) and the `docs/configuration.md`
   Token Refresh section.
-- [x] **Migration Testing**: The final PostgreSQL suite passed migration `036` apply, rollback,
-  reapply, invalid-index recovery, directive rejection, and normal-planner `EXPLAIN` checks.
-  The packaged migration guard applied version `36` with a valid index. A malformed directive
-  failed before SQL or version changes. Recovery is not atomic rollback (research R4, ADR 039).
+- [x] **Migration Testing — VERIFIED**: The two-key index passed PostgreSQL lifecycle, invalid-index recovery, directive rejection, and normal-planner first/middle/late `EXPLAIN` checks. The packaged v4.17.0 guard applied, rolled back, and reapplied valid migration `036` on a disposable database. An alternate image path failed before validation or exec. The manual recovery procedure does not make concurrent DDL atomic (research R4, ADR 039).
 - [x] **Hexagonal Architecture**: The domain (`oauth2session`) depends on the
   `UserSessionExpiryRepository` and `UserSessionRefreshRepository` ports. The admin handler parses
   input only, and defaulting, bounds, and classification live in `SessionSweepService`. No adapter
   imports another. The wiring is in `builder.go`, and routing receives the handler.
 - [x] **Persistence Patterns**: A new focused ISP port (one method) beside the existing
-  `UserSessionRefreshRepository` precedent. sqlx `SelectContext`, adapter read timeout,
-  `StorageError` wrapping, both adapters, and contract tests shared across adapters (R2,
-  contracts/ports.md §1).
+  `UserSessionRefreshRepository` precedent. `SessionExpiryCursor` uses expiry and UUID bytes in
+  both adapters. PostgreSQL uses first-page and later-page composite-keyset queries with sqlx
+  `SelectContext`, the adapter read timeout, and `StorageError` wrapping (R2, contracts/ports.md §1).
 
-**Gate status**: ADR 039, the admin API contract, and both migration runner versions have written approval and execution proof. Migration `036` and its non-atomic recovery tests pass. Phase 2.5 can begin; the production-query planner test remains a foundational task.
+**Gate status**: ADR 039 and the admin API have written approval. Both migration runners, both Helm modes, the packaged image, and the two-key PostgreSQL lifecycle and planner checks have execution proof. Migration recovery remains non-atomic.
 
 **Post-Design Re-check**: DB-002 names the existing locked, update-only refresh. DB-003 uses the
-focused expiry port. The domain model names `SessionSweepService` and defines the logged
-`SessionTokensRefreshed` event. `ForceRefreshSession` uses `triggered_by=on-demand`. The 15-second
-admin write timeout still requires the Phase 0 deadline-lift refactor. R4 records the accepted
-non-atomic exception. The directive guard and migration `036` are implemented and verified.
+focused expiry port with `SessionExpiryCursor{AccessTokenExpiresAt, ID}` and expiry-then-UUID order.
+The domain model names `SessionSweepService` and the logged `SessionTokensRefreshed` event.
+`ForceRefreshSession` uses `triggered_by=on-demand`. The admin write timeout requires the Phase 0
+deadline-lift refactor. R4 records the non-atomic exception and the verified two-key migration, guard, and query plans.
 
 ## Spec Alignment
 
 The specification and design agree on DB-002, DB-003, the `SessionSweepService` diagram,
-`SessionTokensRefreshed` log semantics, and the on-demand trigger. The clarification and FR-003,
-FR-009 name the locked re-check instead of idempotent refresh upserts. API-002 names the
-restricted ISO 8601 grammar. DB-001 names the accepted non-atomic exception in ADR 039.
-The concurrent path still requires an enforced directive and cannot provide atomic rollback (research R4).
+`SessionTokensRefreshed` log semantics, and the on-demand trigger. DB-003 uses a composite cursor
+in `(access_token_expires_at, id)` order. The clarification and FR-003, FR-009 name the locked
+re-check instead of idempotent refresh upserts. API-002 names the restricted ISO 8601 grammar.
+DB-001 names the accepted non-atomic exception in ADR 039. The concurrent path requires an enforced
+directive and cannot provide atomic rollback (research R4).
 
 ## Project Structure
 
@@ -219,8 +217,8 @@ adrs/
 api/admin/openapi.yaml                                   # MODIFIED — Sessions tag, /api/sessions/sweep, 2 schemas
 
 migrations/
-├── 036_user_sessions_access_token_expiry_index.up.sql   # BLOCKED — runner guard not yet proven
-└── 036_user_sessions_access_token_expiry_index.down.sql # BLOCKED — runner guard not yet proven
+├── 036_user_sessions_access_token_expiry_index.up.sql   # VERIFIED — guarded two-key concurrent index
+└── 036_user_sessions_access_token_expiry_index.down.sql # VERIFIED — guarded concurrent drop
 
 internal/ports/
 ├── config.go                                            # MODIFIED — TokenRefreshConfig, Config.TokenRefresh
@@ -298,7 +296,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 |-------|---------|-----------|
 | **Phase 0** | Pre-implementation refactoring: `Unwrap` on response wrappers; extract `refreshDueSession` | Included |
 | **Phase 1** | Setup: confirm no dependency change | Required (no-op) |
-| **Phase 2** | Design Preconditions: accepted ADRs and API, glossary, config + Helm, guarded index migration, E2E red | **MANDATORY; blocked by runner and migration implementation gates** |
+| **Phase 2** | Design Preconditions: accepted ADRs and API, glossary, config + Helm, guarded index migration, E2E red | **MANDATORY; gates passed** |
 | **Phase 2.7** | Entity Boilerplate | Skipped |
 | **Phase 2.5** | Foundational: expiry port + adapters + contract and `EXPLAIN` tests; `RefreshTrigger`; predicate | Required |
 | **Phase 3** | US1 (P1): background refresher, lookahead submission, shutdown drain, metrics and logs | Required |
@@ -335,7 +333,8 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 **2a — Domain model & ADR**
 2. Record the separate written acceptance of `adrs/038-proactive-token-refresh.md` on
    2026-10-09 for PR #196. The scoped same-PR approval applies to feature 029 only.
-3. Add the seven glossary entries to `ARCHITECTURE.md` (data-model.md → Glossary additions).
+3. Add the seven original glossary entries and `SessionExpiryCursor` to `ARCHITECTURE.md`
+   (data-model.md → Glossary additions).
 
 **2b — Configuration**
 4. Add `ports.TokenRefreshConfig` and `Config.TokenRefresh`. Register the three persistent CLI
@@ -348,8 +347,8 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 7. Merge the fragment into `api/admin/openapi.yaml`. ADR 038 records the four admin API choices.
    The user approved them in writing on 2026-10-09 for PR #196, before endpoint implementation.
 
-**2d — Database (COMPLETE)**
-8. ADR 039 accepts the named non-atomic exception. The shared guard protects the migration image, both Helm Job modes, and every Go runner listed in ADR 039. Migration `036` contains single-statement concurrent UP and DOWN files. PostgreSQL tests verify apply, rollback, reapply, invalid-index failure, dirty-version recovery, and unchanged session data. The packaged CLI and Go driver execute the statements outside explicit transactions. Phase 2.5 can begin.
+**2d — Database (TWO-KEY MIGRATION VERIFIED)**
+8. ADR 039 accepts the named non-atomic exception for migration `036`. The shared guard protects the image, both Helm Job modes, and every Go runner listed in ADR 039. PostgreSQL 15 tests proved the two-key index lifecycle and invalid-index/dirty-version recovery without changing sessions. The packaged v4.17.0 CLI applied, dropped, and reapplied migration `036` on a disposable database. The Go driver completed the same lifecycle and recovery tests.
 
 **2e — Frontend**: N/A.
 
@@ -362,9 +361,13 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 
 ### Phase 2.5: Foundational
 
-11. `ports.UserSessionExpiryRepository`, the memory and PostgreSQL `ListExpiringSessions`, and the
-    factory `SessionExpiry()`. Shared contract tests E1–E7 first (contracts/ports.md §1).
-12. After the Phase 2d gate passes, write the SC-006 `EXPLAIN (FORMAT JSON)` test against the production query (R4).
+11. `ports.UserSessionExpiryRepository`, `storage.SessionExpiryCursor{AccessTokenExpiresAt time.Time, ID id.SessionID}`,
+    the memory and PostgreSQL `ListExpiringSessions`, and the factory `SessionExpiry()`. Zero/zero
+    starts a scan; reject a cursor with only one populated field. Both adapters order by expiry and
+    then UUID bytes. Test E1–E7 with mutations and ciphertext snapshots (contracts/ports.md §1).
+12. After the migration guard passes, test the named valid two-key index with normal-planner
+    `EXPLAIN (FORMAT JSON)` for first, middle, and late small-limit pages. Seed sparse due rows and
+    run `ANALYZE`; do not disable sequential scans (R4, SC-006).
 13. `RefreshTrigger` and the five counters. Instruments are created once in constructors.
 
 ### Phase 3: US1 — Zero-latency exchange for active users (P1)
@@ -391,11 +394,13 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 ### Phase 5: US3 — Admin sweep (P2)
 
 21. `parseISO8601Duration`, table-tested first (R10).
-22. `SessionSweepService`, unit-tested first: defaulting and bounds, `ErrInvalidSweepRequest`,
-    pagination across pages, the sum invariant, every classification row in R11 (including
-    provider-unavailable continues and repository-unavailable aborts), dry run with zero upstream
-    calls and zero counters, a cancellation check between sessions, and per-session refresh under a
-    detached, time-bounded context.
+22. `SessionSweepService`, unit-tested first: defaulting, bounds, and `ErrInvalidSweepRequest`.
+    Hold one threshold and advance `SessionExpiryCursor` from the last raw page row, even if that
+    page contains only previously seen IDs. Track visited IDs per invocation for real and dry runs.
+    A row whose refresh moves it forward within the threshold is evaluated once. Reject a nil
+    expiry or non-increasing tuple as a repository failure. Also cover the count invariant,
+    classification (R11), dry runs without writes, upstream calls, or metrics, cancellation between
+    sessions, and bounded detached refresh.
 23. `SessionSweepHandler`: operator-principal requirement, 4 KiB limit, unknown-field rejection,
     write-deadline lift, error mapping, audit line. Handler unit tests use a fake `sessionSweeper`.
 24. Add the route in `SetupAdminRoutes` and update the route-tree comment. Wire
@@ -405,7 +410,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 ### Phase 6: Documentation
 
 26. Update the `ARCHITECTURE.md` admin route tree, worker shutdown, refresh concurrency, and
-    row-lock sections. Add the seven glossary entries from Phase 2a.
+    row-lock sections. Add `SessionExpiryCursor` beside the seven original glossary entries.
 27. `docs/operations/session-sweep.md`: purpose, reference CronJob, schedule and lookahead
     guidance, `concurrencyPolicy: Forbid`, caller timeout, admin-proxy access, counts and metrics,
     and the approved migration failure procedure after the Phase 2d gate passes.
@@ -516,7 +521,8 @@ fixture-only changes during implementation.
 - `internal/domain/oauth2session/background_refresh_test.go`: pool and lifecycle behavior (Phase 3,
   step 14). A gated fake provider makes the tests deterministic, with no sleeps.
 - `internal/domain/oauth2session/sweep_test.go`: classification table (R11), invariants, dry run,
-  cancellation, and abort.
+  cancellation, abort, visited-ID dedup after an expiry moves forward, and rejection of nil or
+  non-increasing cursor tuples.
 - `internal/adapters/http/handlers/admin/iso8601_duration_test.go`: accepted and rejected grammar,
   overflow.
 - `internal/adapters/http/handlers/admin/session_sweep_handler_test.go`: input parsing, error
@@ -527,9 +533,12 @@ fixture-only changes during implementation.
 
 **Integration Tests** (`-tags=integration`, testcontainers PostgreSQL 15):
 - `internal/adapters/storage/postgres/user_session_test.go`: `ListExpiringSessions` contract E1–E7,
-  and the SC-006 `EXPLAIN` index-usage assertion under normal planner settings.
-- `tests/integration/migrations/`: After the Phase 2d gate, test the guarded runner, `036` UP,
-  DOWN, reapply, directive rejection, invalid-index failure, and dirty-version recovery.
+  and the SC-006 normal-planner `EXPLAIN (FORMAT JSON)` assertion for first, middle, and late pages
+  against the named valid two-key index. Inspect `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` for
+  actual rows and buffers without turning off sequential scans.
+- `tests/integration/migrations/`: Verify guarded migration `036` UP, DOWN, reapply, directive
+  rejection, invalid-index failure, dirty-version recovery, and exactly two ordered B-tree key
+  columns, `(access_token_expires_at, id)`.
 
 **Test Coverage Goals**:
 - Unit: every branch of `backgroundRefresher.submit` and `Close`, every R11 classification row,
@@ -541,5 +550,5 @@ fixture-only changes during implementation.
 ## Complexity Tracking
 
 No TDD exception is planned. Every feature E2E case must compile and fail semantically before
-implementation. The accepted ADR 039 permits only migration `036` to be non-atomic. Phase 2d
-remains blocked until the directive guard and guarded migration are implemented and proven.
+implementation. ADR 039 permits only migration `036` to be non-atomic. The original guard and
+migration passed their checks. The amended two-key migration and planner still need verification.

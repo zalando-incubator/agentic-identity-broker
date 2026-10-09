@@ -12,7 +12,7 @@ const (
 	noTransactionDirective = "-- migrate:no-transaction"
 	indexUpFile            = "036_user_sessions_access_token_expiry_index.up.sql"
 	indexDownFile          = "036_user_sessions_access_token_expiry_index.down.sql"
-	upStatement            = "CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at);"
+	upStatement            = "CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at, id);"
 	downStatement          = "DROP INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at;"
 )
 

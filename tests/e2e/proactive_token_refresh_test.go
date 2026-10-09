@@ -448,6 +448,12 @@ var _ = Describe("Proactive Token Refresh", func() {
 				Expect(*storedSession(failed).AccessTokenExpiresAt).To(Equal(oldFailedExpiry))
 				Expect(storedSession(failed).EncryptedAccessToken).To(Equal(oldFailed))
 				Expect(storedSession(succeeding).EncryptedAccessToken).NotTo(Equal(oldSucceeding))
+				second := proactiveSweepBody(proactiveSweep(admin, `{"lookahead_duration":"PT10M","page_size":1}`))
+				Expect(second).To(Equal(proactiveSweepSummary{Failed: 1, TotalEvaluated: 1}))
+				Expect(upstream.GetTokenRequests()).To(HaveLen(1))
+				Expect(storedSession(failed).EncryptedRefreshToken).To(Equal(oldFailedRefresh))
+				Expect(*storedSession(failed).AccessTokenExpiresAt).To(Equal(oldFailedExpiry))
+				Expect(storedSession(failed).EncryptedAccessToken).To(Equal(oldFailed))
 			})
 		})
 

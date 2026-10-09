@@ -64,7 +64,7 @@ The broker does not schedule sweeps or use a distributed lock. An operator sched
 **Acceptance Scenarios**:
 
 1. **Given** the admin sweep endpoint is called with a lookahead window, **When** there are sessions expiring within the window and sessions not expiring within the window, **Then** only the expiring sessions are candidates for the sweep and sessions outside the window do not contribute to `refreshed`, `skipped`, or `failed` counts.
-2. **Given** a session's refresh token has expired (cannot be refreshed), **When** the sweep processes that session, **Then** the sweep does not refresh the session and records it as a failure — distinct from skipped candidates that no longer require work at evaluation time — in the response summary, and continues processing remaining sessions.
+2. **Given** an expired refresh token and another refreshable session, **When** two sweeps run, **Then** each reports the still-due session in `failed` without requesting its provider's credentials or tokens. The first sweep refreshes the other session. The failed ciphertext and expiry remain unchanged until that user reauthorizes or ends the session.
 3. **Given** multiple broker replicas receive a sweep request for the same session, **When** both process it concurrently, **Then** the final stored session is valid. The row lock and re-check prevent duplicate upstream refreshes and partial updates.
 4. **Given** the sweep endpoint is called with `dry_run: true` in the request body, **When** there are sessions that would be refreshed, **Then** the response returns the count of sessions that would be refreshed but no actual refresh calls are made to upstream providers.
 
@@ -89,13 +89,13 @@ The broker does not schedule sweeps or use a distributed lock. An operator sched
 - **FR-005**: When a refresh token is absent or expired, the system MUST return an error indicating re-authentication is required rather than attempting a refresh.
 - **FR-006**: The admin server MUST expose an endpoint to trigger a sweep of sessions with access tokens expiring within a caller-specified lookahead duration.
 - **FR-007**: The sweep endpoint MUST accept a `dry_run` request body parameter. When `dry_run: true`, it MUST report how many sessions would be refreshed without performing any upstream calls.
-- **FR-008**: The sweep MUST process sessions in pages to prevent loading the entire session table into memory.
+- **FR-008**: The sweep MUST read sessions in keyset pages, not load the entire session table into memory. It MUST retain visited session IDs for one invocation so a refreshed row that moves forward cannot be evaluated twice. The visited set uses O(unique candidates) broker memory, while each page holds at most `page_size` session snapshots.
 - **FR-009**: The sweep MUST be safe to invoke concurrently from multiple broker replicas. A row lock and a re-check of the stored session MUST prevent duplicate upstream refreshes and partial updates. Refresh MUST NOT re-create a deleted session.
 - **FR-010**: The sweep MUST report a per-sweep summary in its response: sessions refreshed, candidate sessions skipped because they no longer require action at evaluation time, sessions failed (refresh token expired or upstream error), and total sessions evaluated.
 - **FR-011**: A failed refresh for one session during a sweep MUST NOT abort the sweep — the sweep MUST continue processing remaining sessions.
 - **FR-012**: The proactive refresh lookahead window MUST be configurable via the standard configuration port. The default value is `5m`.
 - **FR-013**: Sessions with no expiry set (`access_token_expires_at IS NULL`) MUST be excluded from both background proactive refresh and admin sweep processing.
-- **FR-014**: The database MUST have an index on `access_token_expires_at` to support efficient sweep range queries.
+- **FR-014**: The database MUST have the named B-tree index `idx_user_sessions_access_token_expires_at` on `(access_token_expires_at, id)` to support the expiry-then-UUID sweep query.
 
 ### Domain Model
 
@@ -205,11 +205,11 @@ token_refresh:
 
 ### Database Requirements
 
-- **DB-001**: A migration MUST add an index on `user_sessions(access_token_expires_at)` for efficient sweep queries. For a large table, it MUST use `CREATE INDEX CONCURRENTLY` with an enforced no-transaction directive (`AGENTS.md`). Principle IX normally requires full application or full rollback on failure. The concurrent build cannot meet that rule.
+- **DB-001**: Migration `036` MUST add `idx_user_sessions_access_token_expires_at` on `user_sessions (access_token_expires_at, id)` with `CREATE INDEX CONCURRENTLY` and an enforced no-transaction directive (`AGENTS.md`). Principle IX normally requires full application or full rollback on failure. The concurrent build cannot meet that rule.
   **Accepted named exception**: On 2026-10-09, the user accepted ADR 039 and the Principle IX non-atomic exception in the feature discussion for PR #196. This exception applies only to feature 029, migration `036`, and the named index. Both concurrent UP and DOWN directions MUST have a directive that every production or test runner able to execute `036` recognizes and enforces. Failure recovery MUST inspect `pg_index.indisvalid`, remove an inspected invalid index, and repair any dirty version before retry. This recovery is not atomic rollback.
-  The shared directive guard runs on the migration image and every Go runner path. Migration `036` applies, rolls back, and reapplies on PostgreSQL 15. An interrupted concurrent build leaves an invalid index and dirty version, which the recovery test inspects and repairs before retry. ADR 038 and the four admin API choices received written user approval on 2026-10-09. Phase 2.5 can now begin; SC-006 normal-planner verification remains T032.
+  The shared directive guard runs on the migration image and every Go runner path. PostgreSQL 15 tests applied, rolled back, and reapplied the valid two-key index. They inspected an interrupted build's invalid index and dirty version before recovery. The guarded v4.17.0 image also applied, rolled back, and reapplied migration `036` on a disposable database. Normal-planner first, middle, and late page checks passed for SC-006. ADR 038 and the four admin API choices received written user approval on 2026-10-09.
 - **DB-002**: The existing `user_sessions` table structure MUST NOT change. Initial session creation keeps the existing upsert. Proactive, on-demand, and sweep refreshes MUST use the existing `UserSessionRefreshRepository.WithLockedSession` operation. The locked callback re-checks the current session and updates tokens only when the row still exists. A deleted session MUST NOT be re-created.
-- **DB-003**: A focused `UserSessionExpiryRepository` port MUST define `ListExpiringSessions(ctx, threshold time.Time, cursor id.SessionID, limit int) ([]*storage.UserSession, error)`. Both the in-memory and PostgreSQL adapters MUST implement it. `UserSessionRepository` remains unchanged.
+- **DB-003**: A focused `UserSessionExpiryRepository` port MUST define `ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error)`. Both in-memory and PostgreSQL adapters MUST return non-NULL expiries at or before the fixed threshold in `(access_token_expires_at, id)` order. `SessionExpiryCursor{AccessTokenExpiresAt time.Time, ID id.SessionID}` uses zero time and zero ID for the first page; exactly one zero field is invalid. Later pages return only tuples greater than the cursor. `UserSessionRepository` remains unchanged.
 
 ### Non-Functional Requirements
 
@@ -228,6 +228,7 @@ token_refresh:
 ### Key Entities
 
 - **UserSession**: Existing entity. The refresh feature reads and updates `EncryptedAccessToken`, `EncryptedRefreshToken`, `AccessTokenExpiresAt`, `RefreshTokenExpiresAt`. No new fields required.
+- **SessionExpiryCursor**: Internal keyset value `{AccessTokenExpiresAt time.Time, ID id.SessionID}` for expiry-then-UUID sweep pages. It is not part of the admin API.
 - **SweepResult**: Value object representing the outcome of a sweep operation: `{Refreshed int, Skipped int, Failed int, TotalEvaluated int, DryRun bool}`.
 
 ## Success Criteria *(mandatory)*
@@ -237,9 +238,9 @@ token_refresh:
 - **SC-001**: Token exchange requests for sessions with valid, non-expiring access tokens complete with no upstream OAuth2 calls — measurable by observing zero upstream refresh calls in traces for healthy sessions.
 - **SC-002**: Token exchange requests for sessions whose access token is near expiry (within the lookahead window) return the current token on the non-blocking fast path — measurable by asserting that the response is returned before the mocked background refresh completes, and that the request path makes zero blocking upstream OAuth2 calls.
 - **SC-003**: Concurrent token exchanges MUST trigger at most one upstream refresh per session while that refresh is in flight. Across replicas, a locked re-check MUST prevent a second upstream refresh of a session that another replica already renewed. A failed attempt can be retried on a later exchange.
-- **SC-004**: The admin sweep endpoint processes all sessions expiring within the configured window and returns a correct summary — measurable by asserting that `refreshed + skipped + failed = total_evaluated` and that healthy sessions excluded by the repository query do not appear in those counts.
+- **SC-004**: The admin sweep processes each unique session ID at most once, even if a refreshed expiry moves forward within the window. Its summary satisfies `refreshed + skipped + failed = total_evaluated`; healthy sessions excluded by the repository query do not contribute.
 - **SC-005**: The admin sweep can be invoked concurrently from multiple broker replicas without producing corrupted session state — the final stored tokens are always consistent.
-- **SC-006**: An infra-backed PostgreSQL verification of `ListExpiringSessions(...)` shows that the sweep query uses the `access_token_expires_at` index under normal operation.
+- **SC-006**: With sparse due rows and normal PostgreSQL planner settings, first, middle, and late `ListExpiringSessions(...)` pages use the valid named two-key B-tree index `idx_user_sessions_access_token_expires_at` for `(access_token_expires_at, id)` keyset order. `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` must show that later pages do not rescan the full due set.
 
 ## Assumptions
 

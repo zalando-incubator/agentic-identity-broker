@@ -56,7 +56,7 @@ re-check and update-only write.
 
 ```go
 type UserSessionExpiryRepository interface {
-    ListExpiringSessions(ctx context.Context, threshold time.Time, cursor id.SessionID, limit int) ([]*storage.UserSession, error)
+    ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error)
 }
 ```
 
@@ -68,56 +68,57 @@ mirrors how `SessionRefresh()` exposes the refresh port
 **Rationale**: `UserSessionRepository` already declares 8 methods (`internal/ports/storage.go:213-253`),
 which exceeds the constitution's 5–7 method ISP limit (Principle IX). Adding a ninth would widen the
 violation. The refresh port split is the established precedent for a focused session capability.
-The method signature is exactly the one DB-003 specifies.
+The method signature is exactly the one in the amended DB-003 contract.
 
-**Spec alignment**: DB-003 now assigns the method to the focused
-`UserSessionExpiryRepository` port. The method signature is unchanged.
+**Spec alignment**: DB-003 assigns the method to the focused `UserSessionExpiryRepository` port. Its one method takes `storage.SessionExpiryCursor` with expiry and ID.
 
 **Alternatives considered**: The original spec draft put the method on `UserSessionRepository`.
 That would exceed the Principle IX limit, so the focused port was selected.
 
 ## R3 — Keyset pagination and ordering (FR-008)
 
-**Decision**: Use keyset pagination on `id`, with the threshold fixed when the sweep starts:
+**Decision**: Use a composite `(access_token_expires_at, id)` keyset with a threshold fixed at sweep start. `storage.SessionExpiryCursor{AccessTokenExpiresAt time.Time, ID id.SessionID}` holds the last raw page row's two keys.
+
+The first page uses the zero-time, zero-ID cursor and this query:
 
 ```sql
 SELECT * FROM user_sessions
 WHERE access_token_expires_at IS NOT NULL
-  AND access_token_expires_at <= $1      -- threshold = sweepStart + lookahead
-  AND id > $2                            -- cursor; zero UUID on the first page
-ORDER BY id
-LIMIT $3
+  AND access_token_expires_at <= $1
+ORDER BY access_token_expires_at, id
+LIMIT $2
 ```
 
-The next cursor is the `ID` of the last row on the page. The sweep stops when a page returns fewer
-than `limit` rows. The memory adapter orders by `bytes.Compare` over the 16 UUID bytes. This matches
-PostgreSQL's `uuid` ordering, so both adapters return identical pages.
+Later pages use a complete cursor and this query:
+
+```sql
+SELECT * FROM user_sessions
+WHERE access_token_expires_at IS NOT NULL
+  AND access_token_expires_at <= $1
+  AND (access_token_expires_at, id) > ($2, $3)
+ORDER BY access_token_expires_at, id
+LIMIT $4
+```
+
+Exactly one zero cursor field is invalid. A zero-time, zero-ID cursor starts the scan. The memory adapter compares expiries first and uses `bytes.Compare` on the 16 UUID bytes for equal expiries. PostgreSQL `uuid` uses the same tie order.
+
+The sweep advances its cursor from the last raw row of every full page, even if it already evaluated every row in that page. It stops after a short page. A nil expiry or non-increasing tuple from the read port aborts through the repository-failure path instead of causing a panic or loop.
 
 **Rationale**:
-- `SessionID` is a random v4 UUID (`id.NewSessionID()` → `uuid.New()`;
-  `internal/domain/id/uuid_ids_gen.go:118-142`). Ordering by `id` therefore has no temporal meaning,
-  but it is a stable total order, which is all keyset traversal needs.
-- The candidate set changes during a sweep, because refreshed rows move beyond the threshold. An
-  `id` cursor is immune to that: rows already passed never come back, and refreshed rows ahead of
-  the cursor are simply no longer returned. An `OFFSET` cursor would skip rows whenever earlier rows
-  leave the set.
-- Termination is guaranteed. The cursor strictly increases over a finite table, and the threshold is
-  constant for the sweep.
-- `IS NOT NULL` satisfies FR-013 explicitly. `<=` already excludes NULLs, but stating the predicate
-  documents the intent and matches the domain predicate in R5.
+- A prior row that expires after the threshold or is deleted disappears without shifting later keyset pages. Rows inserted behind the cursor are not included. Remaining rows ahead of the cursor stay eligible.
+- A refreshed row can remain within the threshold and move ahead of its old key. A per-invocation `map[id.SessionID]struct{}` skips its later occurrence without another lock, upstream call, metric, log, or count. The same rule applies to dry runs.
+- This visited-ID set costs O(unique candidates) broker memory. The limit bounds only the session snapshots in one page, not total broker memory. The fixed threshold excludes new rows with later expiries.
+- `IS NOT NULL` satisfies FR-013. The tuple predicate and order match the two-key index, so late pages can seek instead of sorting and rescanning all due rows.
 
 **Alternatives considered**:
-- *`(access_token_expires_at, id)` composite cursor*: This has a better index-ordered plan, but the
-  cursor would need two values, and DB-003 fixes the signature to `cursor id.SessionID`. Refreshed
-  rows also move in the sort order. Rejected.
-- *`LIMIT/OFFSET`*: The precedent is `UserFilter` (`internal/ports/storage.go:56-60`). It skips rows
-  under mutation. Rejected.
+- *UUID-only keyset*: A one-key `id` cursor does not follow the expiry index's sort order. It can require sorting or scanning the full due set on later pages. Rejected by the approved amendment.
+- *`LIMIT/OFFSET`*: The precedent is `UserFilter` (`internal/ports/storage.go:56-60`). It skips rows under mutation. Rejected.
 
 ## R4 — Index migration and the no-transaction directive (DB-001, FR-014, SC-006)
 
-**Decision: ACCEPTED EXCEPTION; GUARDED MIGRATION VERIFIED.** On 2026-10-09, the user accepted ADR 039 and its named Principle IX non-atomic exception in the feature discussion for PR #196. The same-PR approval overrides only the general new-ADR proposal rule for feature 029. The user separately accepted ADR 038 and the four exact admin API choices in writing on 2026-10-09.
+**Decision: ACCEPTED EXCEPTION; TWO-KEY AMENDMENT.** On 2026-10-09, the user accepted ADR 039 and its named Principle IX non-atomic exception in the feature discussion for PR #196. The stakeholder approved changing the same named migration `036` index to `(access_token_expires_at, id)`. The exception scope, directive guard, and manual recovery remain unchanged. The user separately accepted ADR 038 and the four exact admin API choices in writing on 2026-10-09.
 
-T019's directive guard and T020's migration `036` are implemented and proven. The PostgreSQL tests observe both a valid index lifecycle and non-atomic invalid-index recovery. Phase 2.5 can begin.
+The amended two-key SQL passed the guarded migration lifecycle and interrupted-build recovery tests on PostgreSQL 15. First, middle, and late page queries used the named valid index under normal planner settings.
 
 **Why the exception is necessary**: DB-001 and `AGENTS.md:200-202` require a concurrent build and a no-transaction directive for a large table. Constitution Principle IX requires migrations to fully apply or fully roll back. PostgreSQL 15 cannot run `CREATE INDEX CONCURRENTLY` inside a transaction block. A failed build can leave an `INVALID` index in `pg_index` that the planner cannot use but writes still maintain. The user-selected operational risk does not satisfy atomic rollback. Constitution lines 565–571 require an accepted ADR before implementation.
 
@@ -125,17 +126,19 @@ T019's directive guard and T020's migration `036` are implemented and proven. Th
 
 The shared guard rejects an incomplete or malformed `036` pair, other SQL, transaction controls, unreadable files, `x-multi-statement=true`, and this directive on unrelated migrations. It checks the exact first line and one approved concurrent statement per file. The image entrypoint validates before it passes the original arguments to `migrate`.
 
-**Guard proof (2026-10-09)**: `TestValidate` and `TestMigrationArgs` pass. Both migration image architectures build. An incomplete pair failed image validation before PostgreSQL received any DDL. Both the packaged CLI v4.17.0 and Go driver v4.20.1 applied, dropped, and reapplied the named index against PostgreSQL 15. Both Helm grants modes render the guarded image arguments. Permanent migration `036` passed `TestMigration036SessionExpiryIndexLifecycle` and `TestMigration036InterruptedBuildRecovery` with a real PostgreSQL container. The `Migrate(35)` test fixture remains pinned at 35 to exercise the preceding CIMD schema; migration 036 does not change that entity.
+**Earlier guard proof (2026-10-09)**: `TestValidate` and `TestMigrationArgs` passed. Both migration image architectures built. An incomplete pair failed image validation before PostgreSQL received any DDL. Both the packaged CLI v4.17.0 and Go driver v4.20.1 applied, dropped, and reapplied the earlier single-key index against PostgreSQL 15. Both Helm grants modes rendered the guarded image arguments. The earlier migration `036` passed `TestMigration036SessionExpiryIndexLifecycle` and `TestMigration036InterruptedBuildRecovery` with a real PostgreSQL container. The `Migrate(35)` test fixture remains pinned at 35 to exercise the preceding CIMD schema; migration 036 does not change that entity.
 
-**Implemented index**: Migration `036` creates a plain B-tree named `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at)` with `CREATE INDEX CONCURRENTLY`. DOWN uses `DROP INDEX CONCURRENTLY`. Neither direction uses `IF NOT EXISTS`. Each file has only the recognized directive and one statement.
+**Amended index contract**: Migration `036` alone creates the plain B-tree `idx_user_sessions_access_token_expires_at` with `CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at, id);`. DOWN uses the existing `DROP INDEX CONCURRENTLY`. Neither direction uses `IF NOT EXISTS`. Each file retains the recognized directive and one statement. The guard must recognize only the amended UP statement.
 
 **Failure handling**: A failed Helm migration Job blocks the release. Read `schema_migrations.version` and `dirty`. Then query the named index in `pg_index` for `indisvalid`, the table, and `pg_get_indexdef`. Do not use `IF NOT EXISTS` or an automatic retry to conceal the error. At dirty UP version 36, drop an inspected invalid index **concurrently outside a transaction** and confirm its absence.
 
 Use `migrate force 35` only after the schema matches version 35. Then retry through the guarded runner. If the expected index is valid, the build can have finished before version recording failed. Review it before `migrate force 36`. For failed DOWN at dirty version 35, inspect whether the index remains before you choose `force 36` and retry DOWN, or `force 35` when the drop completed. `force` repairs metadata only. ADR 039 gives the full stop-and-review procedure, including clean-version mismatches. This procedure is not atomic rollback.
 
-**Implementation evidence**: `tests/integration/migrations/migrations_test.go` verifies guarded apply, DOWN, reapply, invalid-index failure, dirty-version recovery, and preserved session data against real PostgreSQL. `internal/adapters/storage/postgres/user_session_test.go` still needs the SC-006 normal-planner index assertion in Phase 2.5. Seed about 5,000 sessions with at most 2% due and some NULL expiries.
+**Verification (2026-10-09)**: The PostgreSQL suite applied, dropped, and reapplied the valid two-key index. It inspected an interrupted invalid index and dirty version, then repaired both before retry. The guard rejected reversed and missing ID keys. Both Helm grants modes rendered `-path /app/migrations` without overriding the image entrypoint.
 
-Run `ANALYZE user_sessions` and `EXPLAIN (FORMAT JSON)` for the production query. Assert that the named, valid index appears in a normal planner plan. Do not set `enable_seqscan = off`. Do not treat ordinary lifecycle tests as proof of atomicity.
+The packaged v4.17.0 guard rejected an alternate path before preflight or exec. Against disposable PostgreSQL 15, it applied, rolled back, and reapplied migration `036`. Each successful UP ended at clean version `36` with a valid two-key index; DOWN ended at clean version `35` with the index absent.
+
+The adapter test seeded 5,000 rows with 60 due and 50 NULL expiries, then ran `ANALYZE user_sessions`. Normal-planner first, middle, and late `EXPLAIN (FORMAT JSON)` plans used the named composite index without a sort or disabled sequential scans. `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` returned two index rows per page. Each observed sample read three shared-hit blocks and zero shared-read blocks. Later-page index conditions included the full `(access_token_expires_at, id)` tuple. Recovery remains non-atomic.
 
 **Rejected approaches**: A blocking transaction can preserve atomic failure semantics but can block writes on the large session table. The user chose the concurrent policy instead. A bare `-- +migrate notransaction` comment is ignored by golang-migrate. A driver change or operator cleanup alone cannot grant a Principle IX exception.
 
@@ -329,8 +332,7 @@ and `internal/config/validator.go` validates centrally:
   (`internal/adapters/storage/postgres/adapter.go:100`). A cap of 20 keeps at least five connections
   for request traffic, so background refresh cannot starve the latency-sensitive exchange path this
   feature exists to protect. The validator error message names this coupling.
-- `default_page_size ≤ 1000`: this bounds per-page memory (FR-008). The same bound applies to the
-  request body's `page_size` (R10).
+- `default_page_size ≤ 1000`: this bounds session snapshots per page (FR-008). A per-sweep visited-ID set uses O(unique candidates) additional broker memory. The same page bound applies to the request body's `page_size` (R10).
 - Nothing can disable proactive refresh. The spec defines none, and `background_workers ≥ 1` keeps
   the behavior always on.
 

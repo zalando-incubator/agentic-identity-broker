@@ -9,6 +9,12 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
+// SessionExpiryCursor locates the last (expiry, ID) pair returned by a sweep page.
+type SessionExpiryCursor struct {
+	AccessTokenExpiresAt time.Time
+	ID                   id.SessionID
+}
+
 // UserSession represents an authenticated OAuth2 session between a user and a third-party service.
 // This is an aggregate root - it owns the encrypted tokens and manages session lifecycle.
 // One session per (principal, service_id) pair, enforced by database unique constraint.

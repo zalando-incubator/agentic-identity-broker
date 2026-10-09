@@ -1411,23 +1411,7 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 			return false, nil
 		}
 		if !current.CanRefresh() {
-			if len(current.EncryptedRefreshToken) > 0 {
-				cause := error(ErrRefreshTokenExpired)
-				if threshold == nil {
-					cause = errors.Join(ErrRefreshNotAvailable, cause)
-				} else {
-					cause = errors.Join(ErrSessionExpired, cause)
-				}
-				return false, sessionOperationError(ctx, OperationRefresh, DetailRefreshTokenExpired, cause)
-			}
-			if threshold == nil {
-				return false, sessionOperationError(ctx, OperationRefresh, DetailRefreshUnavailable, ErrRefreshNotAvailable)
-			}
-			detail := DetailRefreshUnavailable
-			if current.AccessTokenExpiresAt != nil && !current.AccessTokenExpiresAt.After(time.Now()) {
-				detail = DetailAccessTokenExpired
-			}
-			return false, sessionOperationError(ctx, OperationRefresh, detail, errors.Join(ErrSessionExpired, ErrRefreshNotAvailable))
+			return false, refreshUnavailableError(ctx, current, threshold)
 		}
 		if providerErr != nil {
 			return false, providerErr
@@ -1452,6 +1436,47 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 		s.logRefreshSuccess(ctx, current.ID, serviceID, trigger, provider)
 	}
 	return current, refreshed, provider, nil
+}
+
+func refreshUnavailableError(ctx context.Context, current *storage.UserSession, threshold *time.Time) error {
+	if len(current.EncryptedRefreshToken) > 0 {
+		cause := error(ErrRefreshTokenExpired)
+		if threshold == nil {
+			cause = errors.Join(ErrRefreshNotAvailable, cause)
+		} else {
+			cause = errors.Join(ErrSessionExpired, cause)
+		}
+		return sessionOperationError(ctx, OperationRefresh, DetailRefreshTokenExpired, cause)
+	}
+	if threshold == nil {
+		return sessionOperationError(ctx, OperationRefresh, DetailRefreshUnavailable, ErrRefreshNotAvailable)
+	}
+	detail := DetailRefreshUnavailable
+	if current.AccessTokenExpiresAt != nil && !current.AccessTokenExpiresAt.After(time.Now()) {
+		detail = DetailAccessTokenExpired
+	}
+	return sessionOperationError(ctx, OperationRefresh, detail, errors.Join(ErrSessionExpired, ErrRefreshNotAvailable))
+}
+
+func (s *OAuth2SessionService) checkUnrefreshableSweepCandidate(ctx context.Context, principal id.Principal, serviceID id.ServiceID, threshold time.Time) (bool, error) {
+	needsRefresh := false
+	current, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
+		if current == nil || !current.AccessTokenExpiresBy(threshold) {
+			return false, nil
+		}
+		if !current.CanRefresh() {
+			return false, refreshUnavailableError(ctx, current, &threshold)
+		}
+		needsRefresh = true
+		return false, nil
+	})
+	if err != nil {
+		return false, sessionRepositoryError(ctx, DetailRepositoryUnavailable, err)
+	}
+	if current == nil {
+		return false, nil
+	}
+	return needsRefresh, nil
 }
 
 func (s *OAuth2SessionService) refreshOperationContext(ctx context.Context) (context.Context, context.CancelFunc) {

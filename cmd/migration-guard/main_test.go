@@ -12,11 +12,12 @@ func TestMigrationArgs(t *testing.T) {
 	)
 
 	tests := []struct {
-		name    string
-		args    []string
-		wantDir string
-		wantURL string
-		wantErr bool
+		name        string
+		args        []string
+		wantDir     string
+		wantURL     string
+		wantErr     bool
+		wantMessage string
 	}{
 		{
 			name:    "Helm job arguments",
@@ -41,6 +42,42 @@ func TestMigrationArgs(t *testing.T) {
 			args:    []string{"-path=" + path, "-database", url, "down", "1"},
 			wantDir: path,
 			wantURL: url,
+		},
+		{
+			name:        "alternate short path",
+			args:        []string{"-path", "/tmp/alternate", "-database", url, "up"},
+			wantErr:     true,
+			wantMessage: "migration path must be /app/migrations",
+		},
+		{
+			name:        "alternate long path",
+			args:        []string{"--path", "/tmp/alternate", "-database", url, "up"},
+			wantErr:     true,
+			wantMessage: "migration path must be /app/migrations",
+		},
+		{
+			name:        "alternate short equals path",
+			args:        []string{"-path=/tmp/alternate", "-database", url, "up"},
+			wantErr:     true,
+			wantMessage: "migration path must be /app/migrations",
+		},
+		{
+			name:        "alternate long equals path",
+			args:        []string{"--path=/tmp/alternate", "-database", url, "up"},
+			wantErr:     true,
+			wantMessage: "migration path must be /app/migrations",
+		},
+		{
+			name:        "trailing slash is not the image path",
+			args:        []string{"-path", "/app/migrations/", "-database", url, "up"},
+			wantErr:     true,
+			wantMessage: "migration path must be /app/migrations",
+		},
+		{
+			name:        "dot segment is not the image path",
+			args:        []string{"-path", "/app/./migrations", "-database", url, "up"},
+			wantErr:     true,
+			wantMessage: "migration path must be /app/migrations",
 		},
 		{
 			name:    "missing path flag",
@@ -110,6 +147,9 @@ func TestMigrationArgs(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("migrationArgs(%q) returned no error", tt.args)
+				}
+				if tt.wantMessage != "" && err.Error() != tt.wantMessage {
+					t.Errorf("migrationArgs error = %q, want %q", err, tt.wantMessage)
 				}
 				for _, secret := range []string{"private-password", "second-secret", url} {
 					if strings.Contains(err.Error(), secret) {

@@ -381,6 +381,10 @@ func expirySessionIDs(sessions []*storage.UserSession) []id.SessionID {
 	return ids
 }
 
+func expiryCursor(session *storage.UserSession) storage.SessionExpiryCursor {
+	return storage.SessionExpiryCursor{AccessTokenExpiresAt: *session.AccessTokenExpiresAt, ID: session.ID}
+}
+
 func TestUserSessionListExpiringSessions(t *testing.T) {
 	threshold := time.Date(2030, time.January, 1, 12, 0, 0, 0, time.UTC)
 	due := threshold.Add(-time.Hour)
@@ -395,84 +399,131 @@ func TestUserSessionListExpiringSessions(t *testing.T) {
 		repo := NewUserSessionRepository(adapter)
 		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(4), nil)
 		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(3), &future)
-		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(2), &threshold)
-		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(1), &due)
-		page, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 10)
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(1), &threshold)
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(2), &due)
+		page, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 10)
 		require.NoError(t, err)
-		assert.Equal(t, []id.SessionID{expiryTestID(1), expiryTestID(2)}, expirySessionIDs(page))
+		assert.Equal(t, []id.SessionID{expiryTestID(2), expiryTestID(1)}, expirySessionIDs(page))
 	})
 
-	t.Run("E2 keyset pages have no gaps or duplicates", func(t *testing.T) {
+	t.Run("E2 expiry then UUID keyset pages have no gaps or duplicates", func(t *testing.T) {
 		adapter, cleanup := setupUserSessionTestDB(t)
 		defer cleanup()
 		serviceID := id.NewServiceID()
 		insertTestService(t, adapter, serviceID)
 		repo := NewUserSessionRepository(adapter)
-		for n := 5; n >= 1; n-- {
-			seedExpiryTestSession(t, adapter, serviceID, expiryTestID(n), &due)
+		early := due.Add(-time.Minute)
+		late := due.Add(time.Minute)
+		for _, item := range []struct {
+			id     int
+			expiry time.Time
+		}{{5, due}, {4, early}, {3, due}, {2, early}, {1, late}} {
+			seedExpiryTestSession(t, adapter, serviceID, expiryTestID(item.id), &item.expiry)
 		}
-		all, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 1000)
+		expected := []id.SessionID{expiryTestID(2), expiryTestID(4), expiryTestID(3), expiryTestID(5), expiryTestID(1)}
+		all, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1000)
 		require.NoError(t, err)
-		expected := []id.SessionID{expiryTestID(1), expiryTestID(2), expiryTestID(3), expiryTestID(4), expiryTestID(5)}
 		require.Equal(t, expected, expirySessionIDs(all))
-		var combined []id.SessionID
-		cursor := id.SessionID{}
-		for _, wantSize := range []int{2, 2, 1} {
-			page, err := repo.ListExpiringSessions(ctx, threshold, cursor, 2)
-			require.NoError(t, err)
-			require.Len(t, page, wantSize)
-			combined = append(combined, expirySessionIDs(page)...)
-			cursor = page[len(page)-1].ID
+		for _, pageSize := range []int{1, 2} {
+			t.Run(fmt.Sprintf("page_size_%d", pageSize), func(t *testing.T) {
+				var combined []id.SessionID
+				cursor := storage.SessionExpiryCursor{}
+				for len(combined) < len(expected) {
+					page, err := repo.ListExpiringSessions(ctx, threshold, cursor, pageSize)
+					require.NoError(t, err)
+					require.NotEmpty(t, page, "page ended before all due sessions were returned")
+					combined = append(combined, expirySessionIDs(page)...)
+					cursor = expiryCursor(page[len(page)-1])
+				}
+				assert.Equal(t, expected, combined)
+				last, err := repo.ListExpiringSessions(ctx, threshold, cursor, pageSize)
+				require.NoError(t, err)
+				assert.Empty(t, last)
+			})
 		}
-		assert.Equal(t, expected, combined)
-		last, err := repo.ListExpiringSessions(ctx, threshold, cursor, 2)
-		require.NoError(t, err)
-		assert.Empty(t, last)
 	})
 
-	t.Run("E3 moving a returned row past the threshold does not skip later rows", func(t *testing.T) {
+	t.Run("E3 deleting or refreshing an earlier row does not skip later rows", func(t *testing.T) {
+		for _, mutation := range []string{"delete", "refresh"} {
+			t.Run(mutation, func(t *testing.T) {
+				adapter, cleanup := setupUserSessionTestDB(t)
+				defer cleanup()
+				serviceID := id.NewServiceID()
+				insertTestService(t, adapter, serviceID)
+				repo := NewUserSessionRepository(adapter)
+				early := due.Add(-time.Minute)
+				seedExpiryTestSession(t, adapter, serviceID, expiryTestID(1), &due)
+				seedExpiryTestSession(t, adapter, serviceID, expiryTestID(2), &early)
+				seedExpiryTestSession(t, adapter, serviceID, expiryTestID(3), &early)
+				seedExpiryTestSession(t, adapter, serviceID, expiryTestID(4), &threshold)
+				first, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1)
+				require.NoError(t, err)
+				require.Equal(t, []id.SessionID{expiryTestID(2)}, expirySessionIDs(first))
+				if mutation == "delete" {
+					_, err = adapter.db.ExecContext(ctx, `DELETE FROM user_sessions WHERE id = $1`, first[0].ID)
+				} else {
+					_, err = adapter.db.ExecContext(ctx, `UPDATE user_sessions SET access_token_expires_at = $1 WHERE id = $2`, future, first[0].ID)
+				}
+				require.NoError(t, err)
+				cursor := expiryCursor(first[0])
+				var remaining []id.SessionID
+				for range 3 {
+					page, err := repo.ListExpiringSessions(ctx, threshold, cursor, 1)
+					require.NoError(t, err)
+					require.Len(t, page, 1)
+					remaining = append(remaining, page[0].ID)
+					cursor = expiryCursor(page[0])
+				}
+				assert.Equal(t, []id.SessionID{expiryTestID(3), expiryTestID(1), expiryTestID(4)}, remaining)
+				last, err := repo.ListExpiringSessions(ctx, threshold, cursor, 1)
+				require.NoError(t, err)
+				assert.Empty(t, last)
+			})
+		}
+	})
+
+	t.Run("E4 inserting at an earlier expiry never revisits the new row", func(t *testing.T) {
 		adapter, cleanup := setupUserSessionTestDB(t)
 		defer cleanup()
 		serviceID := id.NewServiceID()
 		insertTestService(t, adapter, serviceID)
 		repo := NewUserSessionRepository(adapter)
-		for n := 1; n <= 4; n++ {
-			seedExpiryTestSession(t, adapter, serviceID, expiryTestID(n), &due)
-		}
-		first, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 2)
-		require.NoError(t, err)
-		require.Equal(t, []id.SessionID{expiryTestID(1), expiryTestID(2)}, expirySessionIDs(first))
-		_, err = adapter.db.ExecContext(ctx, `UPDATE user_sessions SET access_token_expires_at = $1 WHERE id = $2`, future, first[0].ID)
-		require.NoError(t, err)
-		second, err := repo.ListExpiringSessions(ctx, threshold, first[1].ID, 2)
-		require.NoError(t, err)
-		assert.Equal(t, []id.SessionID{expiryTestID(3), expiryTestID(4)}, expirySessionIDs(second))
-	})
-
-	t.Run("E4 inserting behind the cursor never revisits that row", func(t *testing.T) {
-		adapter, cleanup := setupUserSessionTestDB(t)
-		defer cleanup()
-		serviceID := id.NewServiceID()
-		insertTestService(t, adapter, serviceID)
-		repo := NewUserSessionRepository(adapter)
-		for _, n := range []int{1, 3, 5} {
-			seedExpiryTestSession(t, adapter, serviceID, expiryTestID(n), &due)
-		}
-		first, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 2)
+		early := due.Add(-time.Minute)
+		late := due.Add(time.Minute)
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(1), &early)
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(3), &due)
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(5), &late)
+		first, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 2)
 		require.NoError(t, err)
 		require.Equal(t, []id.SessionID{expiryTestID(1), expiryTestID(3)}, expirySessionIDs(first))
-		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(2), &due)
-		second, err := repo.ListExpiringSessions(ctx, threshold, first[1].ID, 2)
+		// UUID 4 is after the cursor's UUID 3 but its expiry is behind the tuple.
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(4), &early)
+		second, err := repo.ListExpiringSessions(ctx, threshold, expiryCursor(first[1]), 2)
 		require.NoError(t, err)
 		assert.Equal(t, []id.SessionID{expiryTestID(5)}, expirySessionIDs(second))
 	})
 
-	t.Run("E5 invalid page sizes fail before database access", func(t *testing.T) {
+	t.Run("E5 invalid page sizes and partial cursors fail before database access", func(t *testing.T) {
 		repo := NewUserSessionRepository(&Adapter{})
 		for _, limit := range []int{-1, 0, 1001} {
 			t.Run(fmt.Sprintf("limit_%d", limit), func(t *testing.T) {
-				_, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, limit)
+				_, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, limit)
 				require.Error(t, err, "limit %d must be rejected without a database connection", limit)
+				var validation *storage.StorageError
+				require.ErrorAs(t, err, &validation)
+				assert.Equal(t, storage.ErrorKindValidation, validation.Kind)
+			})
+		}
+		adapter, cleanup := setupUserSessionTestDB(t)
+		defer cleanup()
+		partialRepo := NewUserSessionRepository(adapter)
+		for name, cursor := range map[string]storage.SessionExpiryCursor{
+			"missing_id":     {AccessTokenExpiresAt: due},
+			"missing_expiry": {ID: expiryTestID(1)},
+		} {
+			t.Run(name, func(t *testing.T) {
+				_, err := partialRepo.ListExpiringSessions(ctx, threshold, cursor, 1)
+				require.Error(t, err, "partial cursor must be rejected")
 				var validation *storage.StorageError
 				require.ErrorAs(t, err, &validation)
 				assert.Equal(t, storage.ErrorKindValidation, validation.Kind)
@@ -480,23 +531,33 @@ func TestUserSessionListExpiringSessions(t *testing.T) {
 		}
 	})
 
-	t.Run("E6 returned tokens are unchanged ciphertext", func(t *testing.T) {
+	t.Run("E6 returned sessions preserve full ciphertext snapshots", func(t *testing.T) {
 		adapter, cleanup := setupUserSessionTestDB(t)
 		defer cleanup()
 		serviceID := id.NewServiceID()
 		insertTestService(t, adapter, serviceID)
 		repo := NewUserSessionRepository(adapter)
 		original := seedExpiryTestSession(t, adapter, serviceID, expiryTestID(1), &due)
-		page, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 1)
+		page, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1)
 		require.NoError(t, err)
 		require.Len(t, page, 1)
+		assert.Equal(t, original.ID, page[0].ID)
+		assert.Equal(t, original.Principal, page[0].Principal)
+		assert.Equal(t, original.ServiceID, page[0].ServiceID)
 		assert.Equal(t, original.EncryptedAccessToken, page[0].EncryptedAccessToken)
 		assert.Equal(t, original.EncryptedRefreshToken, page[0].EncryptedRefreshToken)
-		assert.Equal(t, original.EncryptionContext, page[0].EncryptionContext)
+		assert.Equal(t, original.TokenType, page[0].TokenType)
+		require.NotNil(t, page[0].AccessTokenExpiresAt)
+		assert.True(t, original.AccessTokenExpiresAt.Equal(*page[0].AccessTokenExpiresAt))
+		assert.Nil(t, page[0].RefreshTokenExpiresAt)
 		assert.Equal(t, original.Scope, page[0].Scope)
+		assert.Equal(t, original.EncryptionContext, page[0].EncryptionContext)
+		assert.True(t, original.InitiatedAt.Equal(page[0].InitiatedAt))
+		assert.True(t, original.CreatedAt.Equal(page[0].CreatedAt))
+		assert.True(t, original.UpdatedAt.Equal(page[0].UpdatedAt))
 	})
 
-	t.Run("E7 UUID byte order determines the returned order", func(t *testing.T) {
+	t.Run("E7 UUID byte order breaks equal-expiry ties", func(t *testing.T) {
 		adapter, cleanup := setupUserSessionTestDB(t)
 		defer cleanup()
 		serviceID := id.NewServiceID()
@@ -513,20 +574,27 @@ func TestUserSessionListExpiringSessions(t *testing.T) {
 			seedExpiryTestSession(t, adapter, serviceID, sessionID, &due)
 		}
 		sort.Slice(ids, func(i, j int) bool { return bytes.Compare(ids[i][:], ids[j][:]) < 0 })
-		page, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, len(ids))
+		page, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, len(ids))
 		require.NoError(t, err)
 		assert.Equal(t, ids, expirySessionIDs(page))
 	})
 }
 
 type expiryExplainPlan struct {
-	NodeType  string              `json:"Node Type"`
-	IndexName string              `json:"Index Name"`
-	Plans     []expiryExplainPlan `json:"Plans"`
+	NodeType         string              `json:"Node Type"`
+	IndexName        string              `json:"Index Name"`
+	IndexCond        string              `json:"Index Cond"`
+	ActualRows       float64             `json:"Actual Rows"`
+	SharedHitBlocks  int                 `json:"Shared Hit Blocks"`
+	SharedReadBlocks int                 `json:"Shared Read Blocks"`
+	Plans            []expiryExplainPlan `json:"Plans"`
 }
 
 func expiryPlanUsesIndex(plan expiryExplainPlan, indexName string) bool {
-	if plan.IndexName == indexName && (plan.NodeType == "Index Scan" || plan.NodeType == "Index Only Scan" || plan.NodeType == "Bitmap Index Scan") {
+	if plan.NodeType == "Sort" || plan.NodeType == "Incremental Sort" {
+		return false
+	}
+	if plan.IndexName == indexName && (plan.NodeType == "Index Scan" || plan.NodeType == "Index Only Scan") {
 		return true
 	}
 	for _, child := range plan.Plans {
@@ -535,6 +603,18 @@ func expiryPlanUsesIndex(plan expiryExplainPlan, indexName string) bool {
 		}
 	}
 	return false
+}
+
+func expiryIndexScan(plan *expiryExplainPlan, indexName string) *expiryExplainPlan {
+	if plan.IndexName == indexName && (plan.NodeType == "Index Scan" || plan.NodeType == "Index Only Scan") {
+		return plan
+	}
+	for i := range plan.Plans {
+		if found := expiryIndexScan(&plan.Plans[i], indexName); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 func TestUserSessionExpiryQueryUsesValidIndex(t *testing.T) {
@@ -546,19 +626,29 @@ func TestUserSessionExpiryQueryUsesValidIndex(t *testing.T) {
 	threshold := time.Date(2030, time.January, 1, 12, 0, 0, 0, time.UTC)
 	const indexName = "idx_user_sessions_access_token_expires_at"
 	var valid bool
-	require.NoError(t, adapter.db.GetContext(ctx, &valid, `
-		SELECT indisvalid FROM pg_index
-		WHERE indexrelid = to_regclass('idx_user_sessions_access_token_expires_at')
-	`))
+	var keyCount int
+	var firstColumn, secondColumn, indexMethod string
+	require.NoError(t, adapter.db.QueryRowxContext(ctx, `
+		SELECT i.indisvalid, i.indnkeyatts,
+			pg_get_indexdef(i.indexrelid, 1, true), pg_get_indexdef(i.indexrelid, 2, true), am.amname
+		FROM pg_index AS i
+		JOIN pg_class AS idx ON idx.oid = i.indexrelid
+		JOIN pg_am AS am ON am.oid = idx.relam
+		WHERE i.indexrelid = to_regclass($1)
+	`, indexName).Scan(&valid, &keyCount, &firstColumn, &secondColumn, &indexMethod))
 	require.True(t, valid, "%s must be valid", indexName)
+	require.Equal(t, 2, keyCount, "%s must have two key columns", indexName)
+	require.Equal(t, "access_token_expires_at", firstColumn)
+	require.Equal(t, "id", secondColumn)
+	require.Equal(t, "btree", indexMethod)
 
-	// Generate a representative table in one statement: 1% due, 1% NULL, 98% healthy.
+	// One sparse due range with distinct expiry tiers among 5000 sessions.
 	_, err := adapter.db.ExecContext(ctx, `
 		INSERT INTO user_sessions
 			(principal, service_id, encrypted_access_token, encrypted_refresh_token, access_token_expires_at)
 		SELECT 'planner-' || n || '@example.com', $1, $3::bytea, $4::bytea,
-			CASE WHEN n <= 50 THEN $2::timestamptz - interval '1 minute'
-			     WHEN n <= 100 THEN NULL
+			CASE WHEN n <= 60 THEN $2::timestamptz - interval '1 day' + n * interval '1 minute'
+			     WHEN n <= 110 THEN NULL
 			     ELSE $2::timestamptz + interval '1 day' END
 		FROM generate_series(1, 5000) AS n
 	`, serviceID, threshold, []byte{0, 255, 17}, []byte{128, 1, 0})
@@ -570,17 +660,51 @@ func TestUserSessionExpiryQueryUsesValidIndex(t *testing.T) {
 		FROM user_sessions
 	`, threshold).Scan(&total, &dueCount, &nullCount))
 	require.Equal(t, 5000, total)
-	require.LessOrEqual(t, dueCount*100, total*2)
-	require.Positive(t, nullCount)
+	require.Equal(t, 60, dueCount)
+	require.Equal(t, 50, nullCount)
 	_, err = adapter.db.ExecContext(ctx, `ANALYZE user_sessions`)
 	require.NoError(t, err)
 
-	var raw []byte
-	require.NoError(t, adapter.db.GetContext(ctx, &raw, `EXPLAIN (FORMAT JSON) `+listExpiringSessionsQuery, threshold, id.SessionID{}, 1000))
-	var explain []struct {
-		Plan expiryExplainPlan `json:"Plan"`
+	// Select real middle/late expiry tuples so each page starts inside the due range.
+	var middleCursor, lateCursor storage.SessionExpiryCursor
+	for _, page := range []struct {
+		offset int
+		cursor *storage.SessionExpiryCursor
+	}{{24, &middleCursor}, {49, &lateCursor}} {
+		require.NoError(t, adapter.db.QueryRowxContext(ctx, `
+			SELECT access_token_expires_at, id FROM user_sessions WHERE access_token_expires_at <= $1
+			ORDER BY access_token_expires_at, id OFFSET $2 LIMIT 1
+		`, threshold, page.offset).Scan(&page.cursor.AccessTokenExpiresAt, &page.cursor.ID))
 	}
-	require.NoError(t, json.Unmarshal(raw, &explain))
-	require.Len(t, explain, 1)
-	assert.True(t, expiryPlanUsesIndex(explain[0].Plan, indexName), "normal planner did not use %s for production query; plan: %s", indexName, raw)
+	for _, page := range []struct {
+		name   string
+		cursor storage.SessionExpiryCursor
+	}{{"first", storage.SessionExpiryCursor{}}, {"middle", middleCursor}, {"late", lateCursor}} {
+		t.Run(page.name, func(t *testing.T) {
+			var raw []byte
+			query := listExpiringSessionsFirstPageQuery
+			args := []any{threshold, 2}
+			if !page.cursor.ID.IsZero() {
+				query = listExpiringSessionsAfterCursorQuery
+				args = []any{threshold, page.cursor.AccessTokenExpiresAt, page.cursor.ID, 2}
+			}
+			require.NoError(t, adapter.db.GetContext(ctx, &raw, `EXPLAIN (FORMAT JSON) `+query, args...))
+			var explain []struct {
+				Plan expiryExplainPlan `json:"Plan"`
+			}
+			require.NoError(t, json.Unmarshal(raw, &explain))
+			require.Len(t, explain, 1)
+			assert.True(t, expiryPlanUsesIndex(explain[0].Plan, indexName), "normal planner did not use %s for ordered %s page; plan: %s", indexName, page.name, raw)
+			require.NoError(t, adapter.db.GetContext(ctx, &raw, `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) `+query, args...))
+			require.NoError(t, json.Unmarshal(raw, &explain))
+			require.Len(t, explain, 1)
+			scan := expiryIndexScan(&explain[0].Plan, indexName)
+			require.NotNil(t, scan, "actual plan must use the named index: %s", raw)
+			assert.Equal(t, float64(2), scan.ActualRows, "each page returns only the requested rows: %s", raw)
+			if !page.cursor.ID.IsZero() {
+				assert.Contains(t, scan.IndexCond, "ROW(access_token_expires_at, id) > ROW(", "later pages must seek past the full cursor tuple")
+			}
+			t.Logf("%s page: index rows=%.0f, shared hit blocks=%d, shared read blocks=%d, condition=%s", page.name, scan.ActualRows, scan.SharedHitBlocks, scan.SharedReadBlocks, scan.IndexCond)
+		})
+	}
 }

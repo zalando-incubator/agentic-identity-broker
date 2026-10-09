@@ -13,7 +13,7 @@ import (
 const (
 	upFile   = "036_user_sessions_access_token_expiry_index.up.sql"
 	downFile = "036_user_sessions_access_token_expiry_index.down.sql"
-	upSQL    = "-- migrate:no-transaction\nCREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at);\n"
+	upSQL    = "-- migrate:no-transaction\nCREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at, id);\n"
 	downSQL  = "-- migrate:no-transaction\nDROP INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at;\n"
 	dbURL    = "postgres://migrator:unguessable-password@localhost:5432/broker?sslmode=disable"
 )
@@ -44,12 +44,12 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name: "one statement may have surrounding whitespace",
-			up:   "-- migrate:no-transaction\n\n  CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at);\n\n",
+			up:   "-- migrate:no-transaction\n\n  CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at, id);\n\n",
 			down: "-- migrate:no-transaction\n  DROP INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at;\n",
 		},
 		{
 			name:          "missing UP directive is rejected",
-			up:            "CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at);\n",
+			up:            "CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at, id);\n",
 			wantErrorFile: upFile,
 		},
 		{
@@ -88,8 +88,18 @@ func TestValidate(t *testing.T) {
 			wantErrorFile: upFile,
 		},
 		{
-			name:          "UP must index only the expiry column",
-			up:            strings.Replace(upSQL, "(access_token_expires_at)", "(refresh_token_expires_at)", 1),
+			name:          "UP must index expiry then ID",
+			up:            strings.Replace(upSQL, "(access_token_expires_at, id)", "(refresh_token_expires_at, id)", 1),
+			wantErrorFile: upFile,
+		},
+		{
+			name:          "UP must not reverse index keys",
+			up:            strings.Replace(upSQL, "(access_token_expires_at, id)", "(id, access_token_expires_at)", 1),
+			wantErrorFile: upFile,
+		},
+		{
+			name:          "UP must not omit the ID key",
+			up:            strings.Replace(upSQL, "(access_token_expires_at, id)", "(access_token_expires_at)", 1),
 			wantErrorFile: upFile,
 		},
 		{

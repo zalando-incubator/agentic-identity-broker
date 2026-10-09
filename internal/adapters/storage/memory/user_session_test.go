@@ -141,14 +141,20 @@ func createExpiringTestSession(t *testing.T, repo *InMemoryUserSessionRepository
 	return session
 }
 
+func expiryTestCursor(session *storage.UserSession) storage.SessionExpiryCursor {
+	return storage.SessionExpiryCursor{AccessTokenExpiresAt: *session.AccessTokenExpiresAt, ID: session.ID}
+}
+
 func TestListExpiringSessionsThresholdAndCiphertext(t *testing.T) {
 	repo := NewInMemoryUserSessionRepository()
 	ctx := context.Background()
 	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	before, after := threshold.Add(-time.Hour), threshold.Add(time.Second)
+	refreshExpiry := threshold.Add(24 * time.Hour)
 	earlier := refreshTestSession(id.Principal("ciphertext@example.com"), id.NewServiceID())
 	earlier.ID = expiryTestID(0x80)
 	earlier.AccessTokenExpiresAt = &before
+	earlier.RefreshTokenExpiresAt = &refreshExpiry
 	earlier.EncryptedAccessToken = []byte{0, 0xff, 0x01, 0x80}
 	earlier.EncryptedRefreshToken = []byte{0xfe, 0, 0xfd}
 	require.NoError(t, repo.Create(ctx, earlier))
@@ -156,36 +162,61 @@ func TestListExpiringSessionsThresholdAndCiphertext(t *testing.T) {
 	createExpiringTestSession(t, repo, 0x10, &after)
 	createExpiringTestSession(t, repo, 0xf0, nil)
 
-	got, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 1000)
+	got, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1000)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
-	assert.Equal(t, []id.SessionID{atBoundary.ID, earlier.ID}, []id.SessionID{got[0].ID, got[1].ID})
-	assert.Equal(t, []byte{0, 0xff, 0x01, 0x80}, got[1].EncryptedAccessToken)
-	assert.Equal(t, []byte{0xfe, 0, 0xfd}, got[1].EncryptedRefreshToken)
-	assert.Equal(t, earlier.EncryptionContext, got[1].EncryptionContext)
+	require.Equal(t, []id.SessionID{earlier.ID, atBoundary.ID}, []id.SessionID{got[0].ID, got[1].ID})
+	assert.Equal(t, earlier, got[0], "the candidate must include its complete encrypted session")
+	assert.NotSame(t, earlier, got[0], "the candidate must be a snapshot")
+	assert.Equal(t, atBoundary, got[1])
 
-	empty, err := repo.ListExpiringSessions(ctx, before.Add(-time.Second), id.SessionID{}, 1000)
+	empty, err := repo.ListExpiringSessions(ctx, before.Add(-time.Second), storage.SessionExpiryCursor{}, 1000)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
+
+	// Changing stored data after listing must not change the encrypted page snapshot.
+	earlier.EncryptedAccessToken[0] = 0x42
+	earlier.EncryptedRefreshToken[0] = 0x42
+	earlier.Scope[0] = "changed"
+	*earlier.AccessTokenExpiresAt = after
+	*earlier.RefreshTokenExpiresAt = after
+	assert.Equal(t, []byte{0, 0xff, 0x01, 0x80}, got[0].EncryptedAccessToken)
+	assert.Equal(t, []byte{0xfe, 0, 0xfd}, got[0].EncryptedRefreshToken)
+	assert.Equal(t, []string{"repo"}, got[0].Scope)
+	assert.Equal(t, threshold.Add(-time.Hour), *got[0].AccessTokenExpiresAt)
+	assert.Equal(t, threshold.Add(24*time.Hour), *got[0].RefreshTokenExpiresAt)
 }
 
 func TestListExpiringSessionsKeysetPages(t *testing.T) {
 	repo := NewInMemoryUserSessionRepository()
 	ctx := context.Background()
 	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
-	for _, prefix := range []byte{0xf0, 0x40, 0x02, 0x80, 0x10} {
-		createExpiringTestSession(t, repo, prefix, &threshold)
+	firstExpiry := threshold.Add(-3 * time.Hour)
+	sharedExpiry := threshold.Add(-2 * time.Hour)
+	laterExpiry := threshold.Add(-time.Hour)
+	for _, item := range []struct {
+		prefix byte
+		expiry *time.Time
+	}{
+		{0x80, &sharedExpiry}, {0x10, &threshold}, {0xf0, &firstExpiry},
+		{0x40, &laterExpiry}, {0x02, &sharedExpiry},
+	} {
+		createExpiringTestSession(t, repo, item.prefix, item.expiry)
+	}
+	expected := []id.SessionID{
+		expiryTestID(0xf0), expiryTestID(0x02), expiryTestID(0x80),
+		expiryTestID(0x40), expiryTestID(0x10),
 	}
 
-	all, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 1000)
+	all, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1000)
 	require.NoError(t, err)
-	require.Len(t, all, 5)
-	single, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 1)
+	require.Len(t, all, len(expected))
+	single, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1)
 	require.NoError(t, err)
 	require.Len(t, single, 1)
-	assert.Equal(t, expiryTestID(0x02), single[0].ID)
+	assert.Equal(t, expected[0], single[0].ID)
 
-	var cursor id.SessionID
+	var cursor storage.SessionExpiryCursor
 	var pages []int
 	var paged []id.SessionID
 	for {
@@ -198,56 +229,131 @@ func TestListExpiringSessionsKeysetPages(t *testing.T) {
 		for _, session := range page {
 			paged = append(paged, session.ID)
 		}
-		cursor = page[len(page)-1].ID
+		cursor = expiryTestCursor(page[len(page)-1])
 		if len(page) < 2 {
 			break
 		}
 	}
 	assert.Equal(t, []int{2, 2, 1}, pages)
-	assert.Equal(t, []id.SessionID{expiryTestID(0x02), expiryTestID(0x10), expiryTestID(0x40), expiryTestID(0x80), expiryTestID(0xf0)}, paged)
+	assert.Equal(t, expected, paged)
 	allIDs := make([]id.SessionID, 0, len(all))
 	for _, session := range all {
 		allIDs = append(allIDs, session.ID)
 	}
-	assert.Equal(t, allIDs, paged)
+	assert.Equal(t, expected, allIDs)
 }
 
 func TestListExpiringSessionsAdvancesAcrossMutations(t *testing.T) {
-	repo := NewInMemoryUserSessionRepository()
-	ctx := context.Background()
 	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
-	for _, prefix := range []byte{0x90, 0x50, 0x10, 0x70, 0x30} {
-		createExpiringTestSession(t, repo, prefix, &threshold)
+	firstExpiry := threshold.Add(-4 * time.Hour)
+	secondExpiry := threshold.Add(-3 * time.Hour)
+	thirdExpiry := threshold.Add(-2 * time.Hour)
+	fourthExpiry := threshold.Add(-time.Hour)
+	behindExpiry := firstExpiry.Add(-time.Minute)
+	aheadExpiry := secondExpiry.Add(time.Minute)
+	for _, tc := range []struct {
+		name      string
+		pageSize  int
+		refresh   bool
+		firstIDs  []id.SessionID
+		remaining []id.SessionID
+	}{
+		{
+			name: "one_row_deletes_previous_candidate", pageSize: 1,
+			firstIDs:  []id.SessionID{expiryTestID(0x90)},
+			remaining: []id.SessionID{expiryTestID(0x30), expiryTestID(0x60), expiryTestID(0x10), expiryTestID(0x70), expiryTestID(0xf0)},
+		},
+		{
+			name: "one_row_refreshes_previous_candidate", pageSize: 1, refresh: true,
+			firstIDs:  []id.SessionID{expiryTestID(0x90)},
+			remaining: []id.SessionID{expiryTestID(0x30), expiryTestID(0x60), expiryTestID(0x10), expiryTestID(0x70), expiryTestID(0xf0)},
+		},
+		{
+			name: "two_rows_refresh_and_delete_previous_candidates", pageSize: 2, refresh: true,
+			firstIDs:  []id.SessionID{expiryTestID(0x90), expiryTestID(0x30)},
+			remaining: []id.SessionID{expiryTestID(0x60), expiryTestID(0x10), expiryTestID(0x70), expiryTestID(0xf0)},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := NewInMemoryUserSessionRepository()
+			ctx := context.Background()
+			for _, item := range []struct {
+				prefix byte
+				expiry *time.Time
+			}{
+				{0x70, &fourthExpiry}, {0x90, &firstExpiry}, {0x10, &thirdExpiry},
+				{0xf0, &fourthExpiry}, {0x30, &secondExpiry},
+			} {
+				createExpiringTestSession(t, repo, item.prefix, item.expiry)
+			}
+			first, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, tc.pageSize)
+			require.NoError(t, err)
+			require.Len(t, first, tc.pageSize)
+			firstIDs := make([]id.SessionID, 0, len(first))
+			for _, session := range first {
+				firstIDs = append(firstIDs, session.ID)
+			}
+			assert.Equal(t, tc.firstIDs, firstIDs)
+			cursor := expiryTestCursor(first[len(first)-1])
+
+			if tc.refresh {
+				updated := *first[0]
+				noLongerDue := threshold.Add(time.Second)
+				updated.AccessTokenExpiresAt = &noLongerDue
+				require.NoError(t, repo.Create(ctx, &updated))
+			}
+			if !tc.refresh || tc.pageSize == 2 {
+				require.NoError(t, repo.Delete(ctx, first[len(first)-1].ID))
+			}
+			createExpiringTestSession(t, repo, 0x20, &behindExpiry)
+			createExpiringTestSession(t, repo, 0x60, &aheadExpiry)
+
+			var remaining []id.SessionID
+			for {
+				page, err := repo.ListExpiringSessions(ctx, threshold, cursor, tc.pageSize)
+				require.NoError(t, err)
+				if len(page) == 0 {
+					break
+				}
+				for _, session := range page {
+					remaining = append(remaining, session.ID)
+				}
+				cursor = expiryTestCursor(page[len(page)-1])
+				if len(page) < tc.pageSize {
+					break
+				}
+			}
+			assert.Equal(t, tc.remaining, remaining, "no remaining candidate may be skipped or repeated")
+		})
 	}
-	first, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 2)
-	require.NoError(t, err)
-	require.Len(t, first, 2)
-	assert.Equal(t, []id.SessionID{expiryTestID(0x10), expiryTestID(0x30)}, []id.SessionID{first[0].ID, first[1].ID})
-	cursor := first[len(first)-1].ID
-
-	updated := *first[1]
-	after := threshold.Add(time.Second)
-	updated.AccessTokenExpiresAt = &after
-	require.NoError(t, repo.Create(ctx, &updated))
-	require.NoError(t, repo.Delete(ctx, expiryTestID(0x50)))
-	createExpiringTestSession(t, repo, 0x20, &threshold)
-	createExpiringTestSession(t, repo, 0x60, &threshold)
-
-	second, err := repo.ListExpiringSessions(ctx, threshold, cursor, 2)
-	require.NoError(t, err)
-	require.Len(t, second, 2)
-	assert.Equal(t, []id.SessionID{expiryTestID(0x60), expiryTestID(0x70)}, []id.SessionID{second[0].ID, second[1].ID})
-	third, err := repo.ListExpiringSessions(ctx, threshold, second[len(second)-1].ID, 2)
-	require.NoError(t, err)
-	require.Len(t, third, 1)
-	assert.Equal(t, expiryTestID(0x90), third[0].ID)
 }
 
 func TestListExpiringSessionsLimitValidation(t *testing.T) {
 	repo := NewInMemoryUserSessionRepository()
 	for _, limit := range []int{-1, 0, 1001} {
 		t.Run(fmt.Sprintf("limit_%d", limit), func(t *testing.T) {
-			got, err := repo.ListExpiringSessions(context.Background(), time.Now(), id.SessionID{}, limit)
+			got, err := repo.ListExpiringSessions(context.Background(), time.Now(), storage.SessionExpiryCursor{}, limit)
+			assert.Empty(t, got)
+			var storageErr *storage.StorageError
+			require.ErrorAs(t, err, &storageErr)
+			assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+		})
+	}
+}
+
+func TestListExpiringSessionsRejectsPartialCursor(t *testing.T) {
+	repo := NewInMemoryUserSessionRepository()
+	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+	createExpiringTestSession(t, repo, 0x20, &threshold)
+	for _, tc := range []struct {
+		name   string
+		cursor storage.SessionExpiryCursor
+	}{
+		{"expiry_without_ID", storage.SessionExpiryCursor{AccessTokenExpiresAt: threshold}},
+		{"ID_without_expiry", storage.SessionExpiryCursor{ID: expiryTestID(0x10)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := repo.ListExpiringSessions(context.Background(), threshold, tc.cursor, 1)
 			assert.Empty(t, got)
 			var storageErr *storage.StorageError
 			require.ErrorAs(t, err, &storageErr)
@@ -268,7 +374,7 @@ func TestListExpiringSessionsOrdersUUIDBytes(t *testing.T) {
 	sort.Slice(expected, func(i, j int) bool {
 		return bytes.Compare(expected[i][:], expected[j][:]) < 0
 	})
-	got, err := repo.ListExpiringSessions(context.Background(), threshold, id.SessionID{}, len(expected))
+	got, err := repo.ListExpiringSessions(context.Background(), threshold, storage.SessionExpiryCursor{}, len(expected))
 	require.NoError(t, err)
 	require.Len(t, got, len(expected))
 	for i, session := range got {

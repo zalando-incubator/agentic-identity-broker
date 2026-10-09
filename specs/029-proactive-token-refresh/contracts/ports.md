@@ -7,16 +7,23 @@ this file is amended.
 
 **File**: `internal/ports/storage.go`, placed directly after `UserSessionRefreshRepository` (research R2).
 
+`SessionExpiryCursor` is defined in `internal/domain/storage/user_session.go`. The port uses that value type and does not add a second expiry-read method.
+
 ```go
-// UserSessionExpiryRepository lists sessions whose access tokens expire at or before a threshold,
-// for the admin session sweep. Sessions without an access-token expiry are never returned.
+// SessionExpiryCursor is the last returned (expiry, ID) tuple.
+// Both fields zero start the scan; exactly one zero field is invalid.
+type SessionExpiryCursor struct {
+    AccessTokenExpiresAt time.Time
+    ID                   id.SessionID
+}
+
+// UserSessionExpiryRepository lists sessions whose access tokens expire at or before a threshold.
+// Sessions without an access-token expiry are never returned.
 type UserSessionExpiryRepository interface {
-    // ListExpiringSessions returns up to limit sessions with
-    // access_token_expires_at IS NOT NULL AND access_token_expires_at <= threshold AND id > cursor,
-    // ordered by id ascending. A zero cursor starts from the beginning.
-    // Returns an empty slice (not an error) when no rows match.
-    // Errors are domain StorageErrors; limit must be in 1..1000.
-    ListExpiringSessions(ctx context.Context, threshold time.Time, cursor id.SessionID, limit int) ([]*storage.UserSession, error)
+    // ListExpiringSessions returns at most limit full encrypted sessions in ascending
+    // (access_token_expires_at, id) order, strictly after a nonzero cursor.
+    // It returns an empty slice when no rows match and rejects partial cursors and limits outside 1..1000.
+    ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error)
 }
 ```
 
@@ -25,17 +32,14 @@ type UserSessionExpiryRepository interface {
 | # | Given | Then |
 |---|---|---|
 | E1 | rows expiring at `t-1h`, `t`, `t+1s`, `NULL` | `threshold=t` returns the `t-1h` and `t` rows only (boundary inclusive; `NULL` excluded) |
-| E2 | 5 matching rows, `limit=2` | pages `[2,2,1]`; concatenation equals a single `limit=1000` call; no duplicates, no gaps |
-| E3 | a returned row is updated to expire after the threshold before the next page | it is not returned again; rows after the cursor are unaffected |
-| E4 | a row with id < cursor is inserted mid-traversal | it is not returned (keyset monotonicity) |
-| E5 | `limit` ∉ 1..1000 | validation error; no query executed |
-| E6 | returned sessions | tokens remain ciphertext (storage contract unchanged) |
-| E7 | ordering | the memory adapter's order equals the PostgreSQL `ORDER BY id` order for the same UUID set (`bytes.Compare` on the 16 bytes) |
+| E2 | five due rows at unequal and equal expiries, `limit=2`, zero-time/zero-ID cursor | pages `[2,2,1]` in expiry-then-UUID order; concatenation equals one `limit=1000` call without gaps or duplicate tuples |
+| E3 | an earlier row is refreshed after the threshold or deleted between pages; another refreshed row moves forward but stays due | remaining candidates ahead of the tuple cursor are returned without gaps; the moved row can reappear but the sweep evaluates its ID only once |
+| E4 | a new due row is inserted behind the tuple cursor mid-traversal | the new row is not returned; a new due row ahead of the cursor remains eligible |
+| E5 | `limit` ∉ 1..1000, or exactly one cursor field is zero | validation error; no query executed |
+| E6 | returned sessions | full access and refresh token ciphertext snapshots remain encrypted (storage contract unchanged) |
+| E7 | differing expiry values and equal-expiry UUIDs | the memory adapter's order matches PostgreSQL `ORDER BY access_token_expires_at, id`; ties compare the 16 UUID bytes |
 
-**PostgreSQL specifics**: use the adapter read timeout (`r.adapter.timeouts.Read`). Wrap errors with
-the existing `wrapError`. Use sqlx `SelectContext` into `[]userSessionRecord`, then `recordToSession`.
-The query text is the one in research R3, so the SC-006 `EXPLAIN` test exercises the production
-statement. Expose it as an unexported package-level `const` that the test imports.
+**PostgreSQL specifics**: The first page uses `access_token_expires_at IS NOT NULL AND access_token_expires_at <= $1 ORDER BY access_token_expires_at, id LIMIT $2`. Later pages add `(access_token_expires_at, id) > ($2, $3)` with `LIMIT $4`. Both queries use the adapter read timeout (`r.adapter.timeouts.Read`) and wrap errors with the existing `wrapError`. Use sqlx `SelectContext` into `[]userSessionRecord`, then `recordToSession`. The SC-006 `EXPLAIN` checks these production queries against the valid B-tree `idx_user_sessions_access_token_expires_at` on `user_sessions (access_token_expires_at, id)` without disabling sequential scans.
 
 **Factory**: `internal/adapters/storage/factory.go` gains `SessionExpiry() ports.UserSessionExpiryRepository`.
 It returns the same instance as `UserSessions()` and `SessionRefresh()`. A compile-time assertion
@@ -106,9 +110,9 @@ func NewSessionSweepService(expiry ports.UserSessionExpiryRepository, sessions *
 func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (SweepResult, error)
 ```
 
-The sweep invokes `sessions.refreshDueSession(refreshOperationContext(context.WithoutCancel(ctx)), …, threshold, RefreshTriggerSweep)`
-per candidate. It does **not** use `refreshGroup` (research R8). It checks `ctx.Err()` before each
-candidate. It owns the counters `session_sweep_refreshed_total` and `session_sweep_failed_total`.
+The sweep advances the `storage.SessionExpiryCursor` from the last raw page row before processing the next page, even when all rows were seen before. It rejects nil expiry or non-increasing tuples from the read port as repository failures. A per-invocation `map[id.SessionID]struct{}` tracks unique evaluated candidates for both real and dry runs. It skips later occurrences without another lock, upstream call, metric, log, or count. The broker holds at most `page_size` session snapshots per page and O(unique candidates) visited IDs. The sweep stops only after a short page, cancellation, or an aborting error.
+
+The sweep invokes `sessions.refreshDueSession(refreshOperationContext(context.WithoutCancel(ctx)), …, threshold, RefreshTriggerSweep)` per new candidate. It does **not** use `refreshGroup` (research R8). It checks `ctx.Err()` before each candidate. It owns the counters `session_sweep_refreshed_total` and `session_sweep_failed_total`.
 
 **Error contract for callers**:
 

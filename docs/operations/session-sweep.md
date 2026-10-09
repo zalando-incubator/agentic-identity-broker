@@ -115,6 +115,16 @@ The broker emits five OpenTelemetry counters when metrics are enabled. They are 
 
 These counters have only the fixed-cardinality `triggered_by` attribute. They do not include session IDs, service IDs, or principals. Dry runs add no sweep counts. The session-service logs identify refresh events without end-user principals or token material. The separate `session sweep` audit event records the operator principal, counts, duration, and outcome. A background refresh creates a root span linked to the request span that triggered it.
 
+## Resolve repeated session failures
+
+An absent or expired refresh token leaves its session due. Each scheduled sweep reports that session in `failed` without contacting its provider. The count remains until the affected user reauthorizes or ends the session. A provider rejection can also recur without a recorded refresh-token expiry. That case still contacts the provider on each sweep.
+
+Compare `failed` counts across consecutive responses. Inspect `session_sweep_failed_total`. Compare sweep durations with the 900-second caller timeout. A `200` response with persistent failures still requires the existing `failed` alert. If a sweep approaches the caller timeout, review provider latency and the external schedule before another run.
+
+For sustained failures, ask the affected user to reauthorize through `GET /api/third-party/{serviceId}/oauth2/authorize`. The user can instead end their own session through `DELETE /api/third-party/{serviceId}/session`. That request deletes stored tokens and can interrupt dependent agents. It does not revoke tokens at the provider.
+
+Do not auto-delete another user's session. Do not silently filter it from future sweeps. The admin response contains counts, not user identities. Use the approved user-support process to arrange reauthentication. The sweep does not add retry state or new admin request or response fields.
+
 ## Recover migration `036` (ADR 039)
 
 CAUTION: Migration `036` uses concurrent PostgreSQL index DDL outside a transaction. Invalid-index cleanup is **not** atomic rollback.
@@ -133,7 +143,7 @@ LEFT JOIN pg_index AS i ON i.indexrelid = c.oid
 WHERE c.relname = 'idx_user_sessions_access_token_expires_at';
 ```
 
-Confirm that the expected index is a plain B-tree index on `user_sessions(access_token_expires_at)` in the migration schema. `pg_index.indisvalid = false` means the index is invalid; it can still add write overhead. If there is no row, the index is absent. If another relation owns the name, stop and investigate. Do not delete that relation. A clean version `36` with a missing or invalid index also requires database review.
+Confirm that the expected index is a plain B-tree on `user_sessions(access_token_expires_at, id)` in the migration schema. Confirm that its two key columns have this order. `pg_index.indisvalid = false` means the index is invalid; it can still add write overhead. If there is no row, the index is absent. If another relation owns the name, stop and investigate. Do not delete that relation. A clean version `36` with a missing or invalid index also requires database review.
 
 If UP stopped at **dirty version 36** and the inspected index is invalid, drop only that index. Substitute its *verified* schema for `confirmed_schema` in this example. Run the statement with an autocommit SQL client. Do not use `BEGIN`, `COMMIT`, or `psql -1`:
 

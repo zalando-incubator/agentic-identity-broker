@@ -39,7 +39,7 @@ ginkgo -v --label-filter="!performance" --focus="Proactive Token Refresh" ./test
 | US2-S2 | Both tokens expired | `400 invalid_grant` with recovery `error_uri`, zero upstream calls, and one ERROR `session.oauth2.refresh_failed` event with `session_id` and `triggered_by=on-demand` |
 | US2-S3 | Provider answers `invalid_grant` | `400` re-auth error, stored ciphertext and expiry unchanged, and one ERROR `session.oauth2.refresh_failed` event with `session_id` and `triggered_by=on-demand` |
 | US3-S1 | Seed: +2 min, expired-with-refresh, +2 h, `NULL` expiry; sweep `{"lookahead_duration":"PT10M","page_size":1}` | `200` `{refreshed:2, skipped:0, failed:0, total_evaluated:2, dry_run:false}`; the +2 h and `NULL` rows are unchanged; two upstream requests |
-| US3-S2 | One due session with an expired refresh token plus one refreshable | `{refreshed:1, failed:1, total_evaluated:2}`; the failed row is unchanged |
+| US3-S2 | One due session with an expired refresh token plus one refreshable, swept twice | First `200`: `{refreshed:1, failed:1, total_evaluated:2}`. Second `200`: `{failed:1, total_evaluated:1}`. The failed row's ciphertext and expiry do not change; there is only one upstream request. |
 | US3-S3 | Two `App`s on one storage; concurrent sweeps on both admin servers | Both `200`; `refreshed` summed across responses equals the seeded count; upstream requests equal the seeded count; a follow-up exchange returns the refreshed token |
 | US3-S4 | `{"dry_run":true}` | `refreshed` equals the due count, `dry_run:true`, zero upstream requests, rows unchanged |
 
@@ -69,18 +69,18 @@ Key assertions to look for in `-v` output:
 | `backgroundRefresher` | Saturation drops (`dropped` counter +1, WARN), in-flight dedup consumes no slot, `Close` is idempotent, drains before cancelling, and rejects submissions after close |
 | Background refresh: session deleted mid-flight | No error and no row re-created (L2) |
 | Background refresh: upstream 503 | The caller's token is unaffected; `proactive_refresh_failed_total` +1; the row is unchanged |
-| `SessionSweepService` | `refreshed+skipped+failed == total_evaluated`; provider-unavailable → `failed` (no abort); repository-unavailable → abort; cancellation is checked between sessions |
+| `SessionSweepService` | `refreshed+skipped+failed == total_evaluated` for unique IDs; a refreshed row that moves forward within the fixed threshold is not evaluated twice; nil or non-increasing cursor tuples abort; provider-unavailable → `failed`; repository-unavailable → abort; cancellation is checked between sessions |
 | `parseISO8601Duration` table | Accepts `PT5M`, `P1D`, `PT1.5S`; rejects `P1Y`, `P1W`, `PT`, `P`, `5m`, overflow, and zero |
 | Admin `responseWriter.Unwrap` + real `http.Server{WriteTimeout: 200ms}` | A sweep handler that sleeps 500 ms still delivers `200` through the full `NewHandler` chain |
 | Config loader and validator | Rejects lookahead ≤ 0, workers outside 1–20, and page sizes outside 1–1000. CLI flags override environment variables, file values, and defaults for all three keys. |
-| `ListExpiringSessions` (memory) | Contract rows E1–E7 ([contracts/ports.md](contracts/ports.md)) |
+| `ListExpiringSessions` (memory) | Contract E1–E7: expiry then UUID-byte order, zero/partial cursor handling, small-page mutations, and full ciphertext snapshots ([contracts/ports.md](contracts/ports.md)) |
 
 The tests are deterministic. The background tests synchronize on the gated fake provider and
 `Close`, not on sleeps.
 
 ## 4. PostgreSQL: migration, repository, index (SC-006)
 
-ADR 039 accepts a named non-atomic exception for migration `036`. The directive guard and migration lifecycle tests pass on PostgreSQL. Run the full infrastructure suite:
+ADR 039 accepts the named non-atomic exception for migration `036`. The two-key PostgreSQL lifecycle, interrupted-index recovery, guarded image, and normal-planner pagination checks passed. Run the full infrastructure suite:
 
 ```bash
 just test-integration-infra
@@ -88,18 +88,50 @@ just test-integration-infra
 
 | Check | Location | Pass condition |
 |---|---|---|
-| Migration 036 applies, recovers from an invalid index, rolls back, and reapplies | `tests/integration/migrations/` | The guarded lifecycle and dirty-version recovery tests pass. Recovery is not atomic rollback. |
-| `ListExpiringSessions` contract E1–E7 | `internal/adapters/storage/postgres/user_session_test.go` | Same table as the memory adapter, green |
-| Index used under normal planning | same file | `EXPLAIN (FORMAT JSON)` of the production query, after seeding about 5,000 rows (≤2% due) and running `ANALYZE`, references `idx_user_sessions_access_token_expires_at`. `enable_seqscan` is **not** altered. |
+| Migration 036 applies, recovers from an invalid index, rolls back, and reapplies | `tests/integration/migrations/` | Clean version `36` after UP, a valid B-tree with exactly two ordered keys `(access_token_expires_at, id)`, no index after DOWN, and successful dirty-version recovery. Recovery is not atomic rollback. |
+| `ListExpiringSessions` contract E1–E7 | `internal/adapters/storage/postgres/user_session_test.go` | The same expiry-then-UUID and ciphertext behavior as the memory adapter. |
+| Index used under normal planning | same file | With sparse due rows and `ANALYZE`, `EXPLAIN (FORMAT JSON)` references the named valid two-key index for first, middle, and late small-limit pages. Keep `enable_seqscan` unchanged. |
 
-Manual spot check against a dev database:
+For a manual check on a **dev** database, seed at least 61 due rows among many non-due rows.
+Run this script with `psql`. It captures one cutoff and samples two composite cursor values.
+The `OFFSET` clauses select sample cursors only. The production page queries use no `OFFSET`:
 
 ```sql
-EXPLAIN SELECT * FROM user_sessions
-WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= now() + interval '5 minutes'
-  AND id > '00000000-0000-0000-0000-000000000000' ORDER BY id LIMIT 100;
--- Expect: Index Scan / Bitmap Index Scan using idx_user_sessions_access_token_expires_at
+ANALYZE user_sessions;
+SELECT now() + interval '5 minutes' AS cutoff \gset
+SELECT access_token_expires_at AS middle_expiry, id AS middle_id
+FROM user_sessions
+WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
+ORDER BY access_token_expires_at, id OFFSET 20 LIMIT 1 \gset
+SELECT access_token_expires_at AS late_expiry, id AS late_id
+FROM user_sessions
+WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
+ORDER BY access_token_expires_at, id OFFSET 60 LIMIT 1 \gset
+
+-- First page: the zero/zero SessionExpiryCursor uses the query without a tuple predicate.
+EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+SELECT * FROM user_sessions
+WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
+ORDER BY access_token_expires_at, id LIMIT 2;
+
+-- Middle page: use the expiry and ID from the same row.
+EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+SELECT * FROM user_sessions
+WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
+  AND (access_token_expires_at, id) > (:'middle_expiry'::timestamptz, :'middle_id'::uuid)
+ORDER BY access_token_expires_at, id LIMIT 2;
+
+-- Late page: keep the same cutoff and move both cursor fields forward.
+EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+SELECT * FROM user_sessions
+WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= :'cutoff'::timestamptz
+  AND (access_token_expires_at, id) > (:'late_expiry'::timestamptz, :'late_id'::uuid)
+ORDER BY access_token_expires_at, id LIMIT 2;
 ```
+
+Each normal-planner result must reference the valid `idx_user_sessions_access_token_expires_at`
+index. Inspect actual rows and buffers for all three pages. The later pages must not rescan the
+full due set. Do not disable sequential scans or set a wall-clock performance limit.
 
 ADR 039 requires inspection of `pg_index.indisvalid` and the migration version before manual recovery. This procedure handles the accepted non-atomic failure mode; it does not make the concurrent build atomic.
 

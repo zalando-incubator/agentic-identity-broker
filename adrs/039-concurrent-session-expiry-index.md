@@ -6,7 +6,7 @@
 
 ## Context
 
-DB-001 requires an index on `user_sessions(access_token_expires_at)` for the session sweep. `AGENTS.md` requires `CREATE INDEX CONCURRENTLY` and a no-transaction directive for large tables. A normal index build can block writes to a live session table.
+DB-001 requires an index on `user_sessions(access_token_expires_at, id)` for the session sweep. `AGENTS.md` requires `CREATE INDEX CONCURRENTLY` and a no-transaction directive for large tables. A normal index build can block writes to a live session table.
 
 Constitution Principle IX requires each migration to fully apply or fully roll back on failure. PostgreSQL cannot run `CREATE INDEX CONCURRENTLY` or `DROP INDEX CONCURRENTLY` inside a transaction block. A failed concurrent build can leave an invalid index behind. That index is not usable for queries and can still add write overhead. The user selected a concurrent build with this operational risk instead of a blocking, transactional build.
 
@@ -20,7 +20,7 @@ Migration `030_cimd_client_uri_pattern_index.up.sql` already contains a concurre
 
 On 2026-10-09, the user explicitly accepted this ADR and the named Principle IX non-atomic exception in the feature discussion for PR #196. This same-PR approval applies only to feature 029, despite the general new-ADR proposal rule in `AGENTS.md`.
 
-Migration `036_user_sessions_access_token_expiry_index.{up,down}.sql` is the **only** permitted non-atomic migration under this decision. The exception applies only to a plain B-tree index named `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at)`. It does not change the atomicity requirement for other migrations or permit ad-hoc schema changes.
+Migration `036_user_sessions_access_token_expiry_index.{up,down}.sql` is the **only** permitted non-atomic migration under this decision. On 2026-10-09, the stakeholder approved amending this same migration-036-only exception from a single-column index to a plain B-tree index named `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at, id)`. The UP statement is exactly `CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at, id);`. The index keys follow the sweep's expiry-then-UUID keyset order. This amendment does not change the atomicity requirement for other migrations or permit ad-hoc schema changes.
 
 The UP file will contain the recognized `-- migrate:no-transaction` directive and one `CREATE INDEX CONCURRENTLY` statement. The DOWN file will contain the same directive and one `DROP INDEX CONCURRENTLY` statement. Neither file will contain `BEGIN`, `COMMIT`, or additional SQL statements. UP will not use `IF NOT EXISTS`: that clause treats an invalid index with the same name as success. Both files will use the existing `NNN_description.{up,down}.sql` naming scheme.
 
@@ -62,7 +62,7 @@ FROM pg_index AS i
 WHERE i.indexrelid = to_regclass('idx_user_sessions_access_token_expires_at');
 ```
 
-Match the table and definition to this ADR. A `pg_index.indisvalid` value of `false` means that the index is invalid. No row with a non-NULL `relation` means that another relation owns the name. Investigate that collision. Do not delete that relation. A NULL `relation` means that the index is absent.
+Match the table and the ordered B-tree keys `(access_token_expires_at, id)` to this ADR. A `pg_index.indisvalid` value of `false` means that the index is invalid. No row with a non-NULL `relation` means that another relation owns the name. Investigate that collision. Do not delete that relation. A NULL `relation` means that the index is absent.
 
 For an interrupted or failed UP at **dirty version 36**:
 
@@ -79,7 +79,7 @@ For an interrupted or failed DOWN at **dirty version 35**:
 
 ### Required implementation evidence
 
-Tests in `tests/integration/migrations/migrations_test.go` must use real PostgreSQL and the shared validator. They must cover UP, DOWN, reapply, and an interrupted-build state with an invalid index and dirty version. They must reject a missing or malformed directive before execution and exercise the documented recovery path. The Helm migration image needs a smoke check of its real entrypoint. The index test in `internal/adapters/storage/postgres/user_session_test.go` must check validity and normal-planner `EXPLAIN` use for SC-006. Document the recovery commands in `docs/operations/session-sweep.md` when the guarded migration is implemented.
+Tests in `tests/integration/migrations/migrations_test.go` must use real PostgreSQL and the shared validator. They must cover UP, DOWN, reapply, and an interrupted-build state with an invalid index and dirty version. They must confirm both ordered index keys, reject a missing or malformed directive before execution, and exercise the documented recovery path. The Helm migration image needs a smoke check of its real entrypoint. The index test in `internal/adapters/storage/postgres/user_session_test.go` must check validity and normal-planner `EXPLAIN` use across first, middle, and late pages for SC-006. Document the recovery commands in `docs/operations/session-sweep.md` when the guarded migration is implemented.
 
 ## Consequences and alternatives
 
@@ -89,7 +89,7 @@ A blocking `CREATE INDEX` inside a transaction can meet Principle IX, but it can
 
 ## Implementation gate
 
-The accepted exception does not make concurrent DDL atomic. The shared validator guards the image entrypoint and every listed Go runner. On 2026-10-09, both runner versions applied, dropped, and reapplied the named index against PostgreSQL 15. The image rejected an incomplete pair before SQL. Permanent migration `036` passed apply, rollback, reapply, and interrupted-build recovery tests. ADR 038 and the four admin API choices received written user approval in this conversation for PR #196.
+The accepted exception does not make concurrent DDL atomic. The shared validator guards the image entrypoint and every listed Go runner. On 2026-10-09, the Go v4.20.1 runner applied, dropped, and reapplied the amended two-key index against PostgreSQL 15. Integration tests also inspected an invalid index and dirty version, then followed the manual recovery path. The packaged v4.17.0 image rejected an alternate migration path before preflight. It applied, dropped, and reapplied the valid two-key index on a disposable PostgreSQL 15 database, with clean versions `36`, `35`, and `36`. Both Helm grants modes passed the unchanged `-path /app/migrations` argument without overriding the image entrypoint. ADR 038 and the four admin API choices received written user approval in this conversation for PR #196.
 
 ## References
 

@@ -818,28 +818,30 @@ func requireSessionExpiryIndexAbsent(t *testing.T, f *MigrationTestFramework) {
 
 func requireSessionExpiryIndex(t *testing.T, f *MigrationTestFramework, valid bool) {
 	t.Helper()
-	var actualValid, correctTable, unique, plainColumn, noPredicate, noExpression bool
-	var method, key, definition string
+	var actualValid, correctTable, unique, exactKeyCount, noPredicate, noExpression bool
+	var method, firstKey, secondKey, definition string
 	err := f.db.QueryRowContext(context.Background(), `
 		SELECT i.indisvalid, i.indrelid = 'public.user_sessions'::regclass,
-		       i.indisunique, i.indnatts = 1 AND i.indnkeyatts = 1,
+		       i.indisunique, i.indnatts = 2 AND i.indnkeyatts = 2,
 		       i.indpred IS NULL, i.indexprs IS NULL, am.amname,
-		       pg_get_indexdef(i.indexrelid, 1, true), pg_get_indexdef(i.indexrelid)
+		       pg_get_indexdef(i.indexrelid, 1, true),
+		       pg_get_indexdef(i.indexrelid, 2, true), pg_get_indexdef(i.indexrelid)
 		FROM pg_index AS i
 		JOIN pg_class AS c ON c.oid = i.indexrelid
 		JOIN pg_am AS am ON am.oid = c.relam
 		WHERE i.indexrelid = to_regclass('idx_user_sessions_access_token_expires_at')
-	`).Scan(&actualValid, &correctTable, &unique, &plainColumn, &noPredicate, &noExpression,
-		&method, &key, &definition)
+	`).Scan(&actualValid, &correctTable, &unique, &exactKeyCount, &noPredicate, &noExpression,
+		&method, &firstKey, &secondKey, &definition)
 	require.NoError(t, err, "named session expiry index must exist")
 	require.Equal(t, valid, actualValid, "index definition: %s", definition)
 	require.True(t, correctTable, "index definition: %s", definition)
 	require.False(t, unique, "index definition: %s", definition)
-	require.True(t, plainColumn, "index definition: %s", definition)
+	require.True(t, exactKeyCount, "index definition: %s", definition)
 	require.True(t, noPredicate, "index definition: %s", definition)
 	require.True(t, noExpression, "index definition: %s", definition)
 	require.Equal(t, "btree", method, "index definition: %s", definition)
-	require.Equal(t, "access_token_expires_at", key, "index definition: %s", definition)
+	require.Equal(t, "access_token_expires_at", firstKey, "index definition: %s", definition)
+	require.Equal(t, "id", secondKey, "index definition: %s", definition)
 }
 
 func TestMigration036SessionExpiryIndexLifecycle(t *testing.T) {
@@ -886,7 +888,7 @@ func TestMigration036RejectsMalformedDirectiveBeforeSQL(t *testing.T) {
 		"035_preflight_sentinel.up.sql":   "CREATE TABLE migration_036_preflight_sentinel (id integer);\n",
 		"035_preflight_sentinel.down.sql": "DROP TABLE migration_036_preflight_sentinel;\n",
 		"036_user_sessions_access_token_expiry_index.up.sql": "-- migrate:no-transaction \n" +
-			"CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at);\n",
+			"CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at, id);\n",
 		"036_user_sessions_access_token_expiry_index.down.sql": "-- migrate:no-transaction\n" +
 			"DROP INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at;\n",
 	} {
