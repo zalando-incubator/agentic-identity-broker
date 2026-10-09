@@ -641,7 +641,7 @@ func (s *Service) GetActiveGrants(ctx context.Context, principal id.Principal, a
 
 // VerifyAgentAccess verifies that a user has granted an agent access.
 // This method checks for grant existence, expiration, and revocation status.
-// Returns the active grant if valid, or an error if missing, expired, or revoked.
+// Returns a defensive copy of a found active or expired grant; callers must check the error first.
 //
 // Error handling:
 // - ErrAgentAccessDenied: User has not granted the agent any access
@@ -671,7 +671,7 @@ func (s *Service) VerifyAgentAccess(ctx context.Context, principal id.Principal,
 
 	// Check grant is active (not expired)
 	if !grant.IsActive() {
-		return nil, fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
+		return grant.Copy(), fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
 			ErrGrantExpired, grant.ValidUntil.Format(time.RFC3339), principal, agentID)
 	}
 

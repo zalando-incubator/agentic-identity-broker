@@ -299,6 +299,17 @@ ExtProc `OperationError` captures its diagnostic once at construction. Callers c
 Individual caller cancellation is `canceled` at its current stage. Shared-operation and dependency deadlines remain infrastructure failures.
 
 Telemetry identifies registered services with `token_exchange.service.id`, not requested URIs or service display names.
+Broker exchange logs and spans also carry scalar resolved authorization context; these fields are not metric labels or response fields:
+
+| Attribute | Presence |
+|---|---|
+| `token_exchange.agent.id` | Only after the broker resolves a registered agent. |
+| `token_exchange.grant.id` | Only when the user-agent grant was found, including an expired grant. |
+| `token_exchange.grant.updated_at` | Found grant's nonzero stored timestamp, UTC RFC3339Nano. |
+| `token_exchange.grant.valid_until` | Found grant's explicit expiry, UTC RFC3339Nano; omitted for indefinite grants. |
+
+The same available context survives authorization and session denials, cancellation, and response-write failures. Missing grants have no invented grant metadata; parsed but unregistered agent candidates are not exported. Impersonation does not acquire third-party grant context. The existing authenticated actor, calling peer, and trace ID remain the request identity.
+
 Session failures also carry bounded `token_exchange.session.*` metadata.
 Telemetry excludes descriptions, causes, unvalidated JWT claims, JOSE headers, provider bodies/headers, endpoint URLs, resource paths, and recovery URIs.
 Established authenticated actor and calling-peer audit fields remain unchanged.

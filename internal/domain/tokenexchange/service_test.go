@@ -304,11 +304,13 @@ func (m *MockServiceRepository) ListProtectedResources(_ context.Context, _ id.S
 }
 
 type MockGrantRepository struct {
-	grant *storagedomain.UserGrant
-	err   error
+	grant                        *storagedomain.UserGrant
+	err                          error
+	findByPrincipalAndAgentCalls int
 }
 
 func (m *MockGrantRepository) FindByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storagedomain.UserGrant, error) {
+	m.findByPrincipalAndAgentCalls++
 	return m.grant, m.err
 }
 
@@ -360,6 +362,7 @@ type MockSessionRepository struct {
 	session                        *storagedomain.UserSession
 	err                            error
 	findByPrincipalAndServiceCalls int
+	findByPrincipalAndServiceFunc  func(context.Context, id.Principal, id.ServiceID) (*storagedomain.UserSession, error)
 }
 
 type MockEncryption struct {
@@ -376,6 +379,9 @@ func (m *MockEncryption) Decrypt(ctx context.Context, ciphertext []byte, context
 
 func (m *MockSessionRepository) FindByPrincipalAndService(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storagedomain.UserSession, error) {
 	m.findByPrincipalAndServiceCalls++
+	if m.findByPrincipalAndServiceFunc != nil {
+		return m.findByPrincipalAndServiceFunc(ctx, principal, serviceID)
+	}
 	return m.session, m.err
 }
 
@@ -1548,9 +1554,13 @@ func TestExchange_AgentLookup_InvalidUUIDIsConfigurationError(t *testing.T) {
 type singleAgentRepo struct {
 	agentID id.AgentID
 	agent   *storagedomain.Agent
+	err     error
 }
 
 func (r *singleAgentRepo) Get(_ context.Context, agentID id.AgentID) (*storagedomain.Agent, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
 	if agentID == r.agentID {
 		return r.agent, nil
 	}
@@ -1804,6 +1814,15 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 			assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
 			assert.Equal(t, TargetConsent, tokenErr.Diagnostic().RecoveryTarget())
 			assert.Equal(t, "https://broker.example.com/agents/"+fixture.agentID.String(), tokenErr.ErrorURI())
+			assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
+			assert.Equal(t, AuthorizationRef{
+				AgentID:            fixture.agentID,
+				GrantID:            fixture.grant.ID,
+				GrantUpdatedAt:     fixture.grant.UpdatedAt,
+				GrantValidUntil:    *fixture.grant.ValidUntil,
+				GrantHasValidUntil: true,
+			}, tokenErr.Authorization())
+			assert.Equal(t, 1, fixture.grantRepo.findByPrincipalAndAgentCalls)
 			assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "uncovered service must be rejected before token-vault lookup")
 			assert.Equal(t, tt.wantPSCalls, fixture.psRepo.getByIDsCalls, "permission sets must be resolved at most once")
 		})
@@ -1963,6 +1982,14 @@ func TestExchange_PermissionSetRepositoryFailureBeforeSessionLookup(t *testing.T
 	assert.Equal(t, "server_error", tokenErr.Code())
 	assert.Equal(t, http.StatusInternalServerError, tokenErr.HTTPStatus())
 	assert.Equal(t, DetailGrantRepositoryUnavailable, tokenErr.Diagnostic().Detail())
+	assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
+	assert.Equal(t, AuthorizationRef{
+		AgentID:            fixture.agentID,
+		GrantID:            fixture.grant.ID,
+		GrantUpdatedAt:     fixture.grant.UpdatedAt,
+		GrantValidUntil:    *fixture.grant.ValidUntil,
+		GrantHasValidUntil: true,
+	}, tokenErr.Authorization())
 	assert.Equal(t, StageGrantAuthorization, tokenErr.Diagnostic().Stage())
 	assert.Equal(t, OutcomeInfrastructureError, tokenErr.Diagnostic().Outcome())
 	assert.Equal(t, RecoveryRetry, tokenErr.Diagnostic().RecoveryAction())
@@ -2092,6 +2119,7 @@ type exchangeFixture struct {
 	permissionSetID id.PermissionSetID
 	agent           *storagedomain.Agent
 	grant           *storagedomain.UserGrant
+	grantRepo       *MockGrantRepository
 	psRepo          *MockPermissionSetRepository
 }
 
@@ -2226,7 +2254,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		"",
 	)
 	return exchangeFixture{svc: svc, req: req, agentID: agentID, serviceID: requestedServiceID,
-		permissionSetID: permissionSetID, agent: agent, grant: grant, psRepo: psRepo}
+		permissionSetID: permissionSetID, agent: agent, grant: grant, grantRepo: grantRepo, psRepo: psRepo}
 }
 
 func TestExchange_FinalizesSecurityContextWithDistinctCallingPeer(t *testing.T) {
@@ -2393,4 +2421,213 @@ func TestExchange_FinalizesSecurityContextWhenAuthorizationDenied(t *testing.T) 
 	assert.Equal(t, "user@example.com", sc.Actor)
 	assert.Equal(t, "privileged-client-1", sc.CallingPeer)
 	assert.Equal(t, "aaaabbbbccccddddeeeeffff00001111", sc.TraceID)
+}
+
+func TestExchange_AuthorizationContext(t *testing.T) {
+	t.Parallel()
+	dependencyCause := errors.New("grant repository unavailable")
+	for _, tc := range []struct {
+		name             string
+		mutate           func(exchangeFixture, *MockSessionRepository)
+		wantDetail       FailureDetail
+		wantCode         string
+		wantStatus       int
+		wantGrant        bool
+		wantCause        error
+		wantSessionCalls int
+	}{
+		{name: "success with expiring grant", wantDetail: DetailNone, wantGrant: true, wantSessionCalls: 1},
+		{name: "success with indefinite grant", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			f.grant.ValidUntil = nil
+		}, wantDetail: DetailNone, wantGrant: true, wantSessionCalls: 1},
+		{name: "missing grant", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			f.grantRepo.grant = nil
+			f.grantRepo.err = ports.ErrNotFound
+		}, wantDetail: DetailGrantMissing, wantCode: "access_denied", wantStatus: http.StatusForbidden, wantCause: consent.ErrAgentAccessDenied},
+		{name: "nil grant fails closed", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			f.grantRepo.grant = nil
+		}, wantDetail: DetailGrantMissing, wantCode: "access_denied", wantStatus: http.StatusForbidden, wantCause: consent.ErrAgentAccessDenied},
+		{name: "expired grant remains observable", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			*f.grant.ValidUntil = time.Date(2020, time.January, 1, 2, 3, 4, 987654321, time.FixedZone("stored", 3600))
+		}, wantDetail: DetailGrantExpired, wantCode: "access_denied", wantStatus: http.StatusForbidden, wantGrant: true, wantCause: consent.ErrGrantExpired},
+		{name: "grant repository error discards returned grant", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			f.grantRepo.err = dependencyCause
+		}, wantDetail: DetailGrantRepositoryUnavailable, wantCode: "server_error", wantStatus: http.StatusInternalServerError, wantCause: dependencyCause},
+		{name: "missing session retains found grant", mutate: func(_ exchangeFixture, repo *MockSessionRepository) {
+			repo.session = nil
+		}, wantDetail: DetailSessionMissing, wantCode: "invalid_grant", wantStatus: http.StatusBadRequest, wantGrant: true, wantSessionCalls: 1},
+		{name: "session scope denial retains found grant", mutate: func(f exchangeFixture, _ *MockSessionRepository) {
+			f.psRepo.psMap[f.permissionSetID].ServiceScopes[0].Scopes = []string{"read"}
+		}, wantDetail: DetailSessionScopeInsufficient, wantCode: "invalid_grant", wantStatus: http.StatusBadRequest, wantGrant: true, wantSessionCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			future := time.Now().Add(time.Hour)
+			sessionRepo := &MockSessionRepository{session: &storagedomain.UserSession{
+				ID:                   id.NewSessionID(),
+				Principal:            id.Principal("user@example.com"),
+				EncryptedAccessToken: []byte("access-token"),
+				AccessTokenExpiresAt: &future,
+				TokenType:            BearerTokenType,
+			}}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{
+				callbackBaseURL: "https://broker.example.com",
+				sessionRepo:     sessionRepo,
+				encryption:      &MockEncryption{},
+			})
+			sessionRepo.session.ServiceID = fixture.serviceID
+			fixture.grant.UpdatedAt = time.Date(2026, time.January, 1, 2, 3, 4, 123456789, time.FixedZone("stored", 3600))
+			if tc.mutate != nil {
+				tc.mutate(fixture, sessionRepo)
+			}
+			wantAuthorization := AuthorizationRef{AgentID: fixture.agentID}
+			if tc.wantGrant {
+				wantAuthorization.GrantID = fixture.grant.ID
+				wantAuthorization.GrantUpdatedAt = fixture.grant.UpdatedAt
+				if fixture.grant.ValidUntil != nil {
+					wantAuthorization.GrantValidUntil = *fixture.grant.ValidUntil
+					wantAuthorization.GrantHasValidUntil = true
+				}
+			}
+			response, err := fixture.svc.Exchange(context.Background(), fixture.req)
+			var actual AuthorizationRef
+			if tc.wantDetail == DetailNone {
+				require.NoError(t, err)
+				require.NotNil(t, response)
+				assert.Equal(t, ServiceRef{ID: fixture.serviceID}, response.Service)
+				assert.Equal(t, fixture.agentID.String(), response.AgentID)
+				assert.Equal(t, fixture.grant.Principal.String(), response.Principal)
+				assert.Equal(t, map[string][]string{fixture.permissionSetID.String(): {fixture.serviceID.String()}}, response.GrantedPermissionSets)
+				actual = response.Authorization
+			} else {
+				assert.Nil(t, response)
+				var tokenErr *TokenExchangeError
+				require.ErrorAs(t, err, &tokenErr)
+				assert.Equal(t, tc.wantDetail, tokenErr.Diagnostic().Detail())
+				assert.Equal(t, tc.wantCode, tokenErr.Code())
+				assert.Equal(t, tc.wantStatus, tokenErr.HTTPStatus())
+				assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
+				if tc.wantCause != nil {
+					assert.ErrorIs(t, err, tc.wantCause)
+				}
+				actual = tokenErr.Authorization()
+			}
+			assert.Equal(t, wantAuthorization, actual)
+			assert.Equal(t, 1, fixture.grantRepo.findByPrincipalAndAgentCalls, "observation must not query the grant twice")
+			assert.Equal(t, tc.wantSessionCalls, sessionRepo.findByPrincipalAndServiceCalls)
+			if fixture.grant.ValidUntil != nil {
+				*fixture.grant.ValidUntil = fixture.grant.ValidUntil.Add(24 * time.Hour)
+			}
+			fixture.grant.UpdatedAt = fixture.grant.UpdatedAt.Add(time.Hour)
+			fixture.grant.ID = id.NewGrantID()
+			if response != nil {
+				assert.Equal(t, wantAuthorization, response.Authorization, "response observation must not alias stored grant metadata")
+			} else {
+				var tokenErr *TokenExchangeError
+				require.ErrorAs(t, err, &tokenErr)
+				assert.Equal(t, wantAuthorization, tokenErr.Authorization(), "error observation must not alias stored grant metadata")
+			}
+		})
+	}
+}
+
+func TestExchange_UnresolvedAgentDoesNotExportCandidateIdentity(t *testing.T) {
+	t.Parallel()
+	dependencyCause := errors.New("agent repository unavailable")
+	for _, tc := range []struct {
+		name            string
+		agentExpression string
+		repoErr         error
+		wantDetail      FailureDetail
+		wantService     bool
+	}{
+		{name: "unregistered candidate UUID", repoErr: ports.ErrNotFound, wantDetail: DetailAgentMissing, wantService: true},
+		{name: "agent repository error", repoErr: dependencyCause, wantDetail: DetailAgentRepositoryUnavailable, wantService: true},
+		{name: "invalid candidate UUID", agentExpression: "'not-a-valid-uuid'", wantDetail: DetailAgentInvalid, wantService: true},
+		{name: "agent claim cannot resolve", agentExpression: "subject_token.missing_agent", wantDetail: DetailCELEvaluationFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sessionRepo := &MockSessionRepository{}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{sessionRepo: sessionRepo, encryption: &MockEncryption{}})
+			fixture.svc.agentRepository.(*singleAgentRepo).err = tc.repoErr
+			if tc.agentExpression != "" {
+				evaluator, err := NewCELEvaluator(CELEvaluatorConfig{
+					PrincipalExpression:     "subject_token.sub",
+					AgentIDExpression:       tc.agentExpression,
+					AuthorizationExpression: "true",
+					EvaluationTimeout:       100 * time.Millisecond,
+				})
+				require.NoError(t, err)
+				fixture.svc.celEvaluator = evaluator
+			}
+			response, err := fixture.svc.Exchange(context.Background(), fixture.req)
+			assert.Nil(t, response)
+			var tokenErr *TokenExchangeError
+			require.ErrorAs(t, err, &tokenErr)
+			assert.Equal(t, tc.wantDetail, tokenErr.Diagnostic().Detail())
+			assert.Equal(t, "server_error", tokenErr.Code())
+			assert.Equal(t, http.StatusInternalServerError, tokenErr.HTTPStatus())
+			assert.Equal(t, AuthorizationRef{}, tokenErr.Authorization())
+			wantService := ServiceRef{}
+			if tc.wantService {
+				wantService.ID = fixture.serviceID
+			}
+			assert.Equal(t, wantService, tokenErr.Service())
+			if tc.repoErr != nil {
+				assert.ErrorIs(t, err, tc.repoErr)
+			}
+			assert.Zero(t, fixture.grantRepo.findByPrincipalAndAgentCalls)
+			assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls)
+		})
+	}
+}
+
+func TestExchange_CancellationPreservesOnlyResolvedAuthorizationContext(t *testing.T) {
+	t.Parallel()
+	for _, early := range []bool{true, false} {
+		name := "session lookup cancellation retains agent and grant"
+		if early {
+			name = "early cancellation has no resolved context"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			sessionRepo := &MockSessionRepository{findByPrincipalAndServiceFunc: func(context.Context, id.Principal, id.ServiceID) (*storagedomain.UserSession, error) {
+				cancel()
+				return nil, ctx.Err()
+			}}
+			fixture := newExchangeFixture(t, exchangeFixtureConfig{sessionRepo: sessionRepo, encryption: &MockEncryption{}})
+			wantService := ServiceRef{ID: fixture.serviceID}
+			wantAuthorization := AuthorizationRef{
+				AgentID:            fixture.agentID,
+				GrantID:            fixture.grant.ID,
+				GrantUpdatedAt:     fixture.grant.UpdatedAt,
+				GrantValidUntil:    *fixture.grant.ValidUntil,
+				GrantHasValidUntil: true,
+			}
+			wantStage := StageSessionLookup
+			wantCalls := 1
+			if early {
+				cancel()
+				wantService = ServiceRef{}
+				wantAuthorization = AuthorizationRef{}
+				wantStage = StageRequestValidation
+				wantCalls = 0
+			}
+			response, err := fixture.svc.Exchange(ctx, fixture.req)
+			assert.Nil(t, response)
+			var tokenErr *TokenExchangeError
+			require.ErrorAs(t, err, &tokenErr)
+			assert.ErrorIs(t, err, context.Canceled)
+			assert.Equal(t, DetailCallerCanceled, tokenErr.Diagnostic().Detail())
+			assert.Equal(t, OutcomeCanceled, tokenErr.Diagnostic().Outcome())
+			assert.Equal(t, wantStage, tokenErr.Diagnostic().Stage())
+			assert.Equal(t, wantService, tokenErr.Service())
+			assert.Equal(t, wantAuthorization, tokenErr.Authorization())
+			assert.Equal(t, wantCalls, fixture.grantRepo.findByPrincipalAndAgentCalls)
+			assert.Equal(t, wantCalls, sessionRepo.findByPrincipalAndServiceCalls)
+		})
+	}
 }

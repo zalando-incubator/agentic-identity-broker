@@ -2,6 +2,7 @@ package consent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -409,10 +410,12 @@ func (m *mockUserSessionRepo) CountByService(ctx context.Context, serviceID id.S
 }
 
 type mockGrantRepo struct {
-	grants      map[id.GrantID]*storage.UserGrant
-	err         error
-	createCalls int
-	updateCalls int
+	grants                      map[id.GrantID]*storage.UserGrant
+	err                         error
+	createCalls                 int
+	updateCalls                 int
+	findCalls                   int
+	findByPrincipalAndAgentFunc func(context.Context, id.Principal, id.AgentID) (*storage.UserGrant, error)
 }
 
 func (m *mockGrantRepo) Create(ctx context.Context, grant *storage.UserGrant) error {
@@ -473,6 +476,10 @@ func (m *mockGrantRepo) ListByPrincipalAndAgent(ctx context.Context, principal i
 }
 
 func (m *mockGrantRepo) FindByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	m.findCalls++
+	if m.findByPrincipalAndAgentFunc != nil {
+		return m.findByPrincipalAndAgentFunc(ctx, principal, agentID)
+	}
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -2006,4 +2013,83 @@ func TestService_ValidateSubmission(t *testing.T) {
 		assert.ErrorIs(t, err, ErrUnconnectedServices)
 		assert.Contains(t, err.Error(), svcID3.String())
 	})
+}
+
+func TestService_VerifyAgentAccessReturnsDefensiveFoundGrant(t *testing.T) {
+	t.Parallel()
+	principal := id.Principal("user@example.com")
+	agentID := id.NewAgentID()
+	for _, expired := range []bool{false, true} {
+		name := "active"
+		validUntil := time.Now().Add(time.Hour)
+		if expired {
+			name = "expired"
+			validUntil = time.Now().Add(-time.Hour)
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			stored := &storage.UserGrant{
+				ID:         id.NewGrantID(),
+				Principal:  principal,
+				AgentID:    agentID,
+				ValidUntil: &validUntil,
+				UpdatedAt:  time.Date(2026, time.January, 1, 2, 3, 4, 123456789, time.UTC),
+				GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{
+					PermissionSetID:    id.NewPermissionSetID(),
+					IncludedServiceIDs: []id.ServiceID{id.NewServiceID()},
+				}},
+			}
+			repo := &mockGrantRepo{findByPrincipalAndAgentFunc: func(_ context.Context, actualPrincipal id.Principal, actualAgentID id.AgentID) (*storage.UserGrant, error) {
+				assert.Equal(t, principal, actualPrincipal)
+				assert.Equal(t, agentID, actualAgentID)
+				return stored, nil
+			}}
+			service := NewService(nil, nil, repo, nil, nil, nil)
+			grant, err := service.VerifyAgentAccess(context.Background(), principal, agentID)
+			if expired {
+				require.ErrorIs(t, err, ErrGrantExpired)
+			} else {
+				require.NoError(t, err)
+			}
+			require.NotNil(t, grant, "a found expired grant accompanies its error without authorizing access")
+			assert.Equal(t, stored, grant)
+			assert.NotSame(t, stored, grant)
+			assert.NotSame(t, stored.ValidUntil, grant.ValidUntil)
+			want := grant.Copy()
+			*stored.ValidUntil = stored.ValidUntil.Add(time.Hour)
+			stored.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
+			stored.UpdatedAt = stored.UpdatedAt.Add(time.Hour)
+			assert.Equal(t, want, grant)
+			grant.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
+			assert.NotEqual(t, stored.GrantedPermissionSets[0].IncludedServiceIDs[0], grant.GrantedPermissionSets[0].IncludedServiceIDs[0])
+			assert.Equal(t, 1, repo.findCalls)
+		})
+	}
+}
+
+func TestService_VerifyAgentAccessUnavailableGrantReturnsNil(t *testing.T) {
+	t.Parallel()
+	dependencyCause := errors.New("grant repository unavailable")
+	for _, tc := range []struct {
+		name      string
+		grant     *storage.UserGrant
+		err       error
+		wantCause error
+	}{
+		{name: "not found", err: ports.ErrNotFound, wantCause: ErrAgentAccessDenied},
+		{name: "nil result", wantCause: ErrAgentAccessDenied},
+		{name: "repository error", err: dependencyCause, wantCause: dependencyCause},
+		{name: "repository error with uncommitted result", grant: &storage.UserGrant{ID: id.NewGrantID()}, err: dependencyCause, wantCause: dependencyCause},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := &mockGrantRepo{findByPrincipalAndAgentFunc: func(context.Context, id.Principal, id.AgentID) (*storage.UserGrant, error) {
+				return tc.grant, tc.err
+			}}
+			grant, err := NewService(nil, nil, repo, nil, nil, nil).VerifyAgentAccess(context.Background(), id.Principal("user@example.com"), id.NewAgentID())
+			assert.Nil(t, grant)
+			assert.ErrorIs(t, err, tc.wantCause)
+			assert.Equal(t, 1, repo.findCalls)
+		})
+	}
 }
