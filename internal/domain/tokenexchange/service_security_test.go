@@ -196,9 +196,12 @@ func TestExchange_RejectsUndeclaredPermissionSets(t *testing.T) {
 			var tokenErr *TokenExchangeError
 			require.ErrorAs(t, err, &tokenErr)
 			assert.Equal(t, "access_denied", tokenErr.Code())
+			assert.Equal(t, 403, tokenErr.HTTPStatus())
+			assert.Equal(t, FailureDetail("grant_permission_set_undeclared"), tokenErr.Diagnostic().Detail())
 			assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
 			assert.Equal(t, "https://broker.example.com/agents/"+agentID.String(), tokenErr.ErrorURI())
 			assert.Zero(t, sessionRepo.findByPrincipalAndServiceCalls, "undeclared permission sets must be rejected before token-vault lookup")
+			assert.Zero(t, psRepo.getByIDsCalls, "undeclared references must be rejected before repository resolution")
 		})
 	}
 }
@@ -247,17 +250,22 @@ func TestResolveEffectiveScopes_RejectsRemovedDeclaration(t *testing.T) {
 		},
 	}
 
-	scopes, err := svc.resolveEffectiveScopes(context.Background(), grant, agent)
+	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, serviceID)
 	require.NoError(t, err)
+	assert.Equal(t, DetailNone, detail)
+	assert.Equal(t, 1, psRepo.getByIDsCalls)
 	require.Equal(t, map[id.ServiceID][]string{serviceID: {"read", "write"}}, scopes)
 
 	// Keep the definitions and cached service; only the agent declaration changes.
 	agent.PermissionSets = agent.PermissionSets[:1]
-	scopes, err = svc.resolveEffectiveScopes(context.Background(), grant, agent)
+	scopes, detail, err = svc.resolveEffectiveScopes(context.Background(), grant, agent, serviceID)
 	assert.Nil(t, scopes)
+	assert.Equal(t, DetailNone, detail, "structural reference failure must retain its detail on the error only")
+	assert.Equal(t, 1, psRepo.getByIDsCalls, "removed declaration must fail before querying even a cached definition")
 	var tokenErr *TokenExchangeError
 	if assert.ErrorAs(t, err, &tokenErr) {
 		assert.Equal(t, "access_denied", tokenErr.Code())
+		assert.Equal(t, FailureDetail("grant_permission_set_undeclared"), tokenErr.Diagnostic().Detail())
 		assert.Equal(t, RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
 		assert.Equal(t, "https://broker.example.com/agents/"+agent.ID.String(), tokenErr.ErrorURI())
 	}

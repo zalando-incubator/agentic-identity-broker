@@ -1068,7 +1068,17 @@ func (r *builderTestAgentRepo) Get(_ context.Context, agentID id.AgentID) (*doms
 
 func (r *builderTestAgentRepo) Update(context.Context, *domstorage.Agent) error { return nil }
 
-func (r *builderTestAgentRepo) Delete(context.Context, id.AgentID) error { return nil }
+func (r *builderTestAgentRepo) Delete(_ context.Context, agentID id.AgentID) (bool, error) {
+	_, existed := r.byID[agentID]
+	delete(r.byID, agentID)
+	for clientID, agent := range r.byClientID {
+		if agent.ID == agentID {
+			existed = true
+			delete(r.byClientID, clientID)
+		}
+	}
+	return existed, nil
+}
 
 func (r *builderTestAgentRepo) List(context.Context) ([]*domstorage.Agent, error) { return nil, nil }
 

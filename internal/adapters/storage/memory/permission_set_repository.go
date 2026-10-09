@@ -187,14 +187,14 @@ func (r *PermissionSetRepository) Update(ctx context.Context, ps *storage.Permis
 }
 
 // Delete removes a permission set by ID.
-func (r *PermissionSetRepository) Delete(ctx context.Context, id id.PermissionSetID) error {
+func (r *PermissionSetRepository) Delete(ctx context.Context, id id.PermissionSetID) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	ps, exists := r.permissionSets[id]
 	if !exists {
 		// Idempotent: safe to delete non-existent
-		return nil
+		return false, nil
 	}
 
 	delete(r.permissionSets, id)
@@ -203,7 +203,7 @@ func (r *PermissionSetRepository) Delete(ctx context.Context, id id.PermissionSe
 		delete(r.canonicalIndex, *ps.CanonicalID)
 	}
 
-	return nil
+	return true, nil
 }
 
 // List returns all permission sets, optionally filtered by service ID.

@@ -32,7 +32,7 @@ func testSigningKeyInDomain(kid string, domain storage.KeyDomain, isCurrent bool
 		PrivateKeyEncrypted: []byte("encrypted-key-material"),
 		IsCurrent:           isCurrent,
 		// Keep active fixtures safely in the past relative to the database clock.
-		ActivatesAt: now.Add(-time.Minute),
+		ActivatesAt: now.Add(-time.Hour),
 		CreatedAt:   now,
 	}
 }
@@ -171,7 +171,7 @@ func TestSigningKeyRepo_PublicJWK(t *testing.T) {
 		PrivateKeyEncrypted: []byte("encrypted-key-material"),
 		PublicJWK:           first,
 		IsCurrent:           true,
-		ActivatesAt:         now,
+		ActivatesAt:         now.Add(-time.Hour),
 		CreatedAt:           now,
 	}
 	require.NoError(t, repo.Create(ctx, key))

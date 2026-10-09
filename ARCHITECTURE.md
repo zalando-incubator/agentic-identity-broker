@@ -1521,6 +1521,10 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
 
+**AuthorizationRef**: Scalar observation context for the registered agent and found user-agent grant evaluated by third-party token exchange. It holds IDs, the stored grant update time, and optional expiry by value, including on expired-grant errors. Responses exclude it from JSON; only broker logs and spans project it, never metric labels. It retains no credentials or grant pointer.
+
+**Grant and Definition Lifecycle Audit**: A domain-owned structured operational log emitted after a successful grant, agent, or permission-set mutation. Committed grant metadata and atomic deletion outcomes identify the actual mutation; unchanged consent and absent deletes do not emit success. Typed purpose-limited snapshots exclude credentials and profile text. The request-security logger supplies actor/trace context, distinct from grant ownership. `previous_observed_*` fields represent state read before a write, not a transactionally guaranteed predecessor. These logs are not a durable audit ledger, outbox, protocol field or metric label.
+
 **Diagnostic**: Immutable token-exchange classification: outcome, failure stage/detail, recovery recommendation/target, and exchange kind. It contains no credentials or free-form errors.
 
 **Session Operation Metadata**: Immutable classification at a session-operation origin, with bounded operation, detail, kind, dependency, HTTP status, and allowlisted OAuth code. Exchange diagnostics derive from this metadata, not error descriptions.
