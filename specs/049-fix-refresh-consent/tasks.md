@@ -56,5 +56,6 @@
 - [x] Verify domain/port/adapter boundaries and builder wiring (VI, XII).
 - [x] Verify no configuration or frontend changes (VII, XI).
 - [x] Run build, vet, lint, race unit tests, PostgreSQL integration, and backend E2E (VIII, IX, XIII).
+- [x] Fix CI integration compilation by handling `AgentRepository.Delete`'s `(bool, error)` result in the revocation/rotation race test; verify both agent-deletion orderings against PostgreSQL.
 - [x] Update continuing-consent documentation and record compatibility limits (II, IV).
 - [x] Measure additions against both budgets and create small conventional commits.

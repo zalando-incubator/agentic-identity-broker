@@ -64,7 +64,8 @@ func TestRefreshTokenSessionRepoRevocationRotation(t *testing.T) {
 					case "agent revocation":
 						return repo.RevokeByAgent(ctx, agent.ID)
 					default:
-						return 0, NewAgentRepository(adapter).Delete(ctx, agent.ID)
+						_, err := NewAgentRepository(adapter).Delete(ctx, agent.ID)
+						return 0, err
 					}
 				}
 				type result struct {
