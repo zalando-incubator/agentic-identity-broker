@@ -260,6 +260,17 @@ type UserSessionRefreshRepository interface {
 	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
 }
 
+// UserSessionExpiryRepository lists sessions due for a bounded admin sweep.
+// Sessions without a recorded access-token expiry are never returned.
+type UserSessionExpiryRepository interface {
+	// ListExpiringSessions returns at most limit ciphertext-only sessions with
+	// access_token_expires_at <= threshold and id > cursor, ordered by id.
+	// A zero cursor starts at the first row; limit must be in [1, 1000].
+	// No matches return an empty slice and no error. Failures return domain
+	// storage.StorageError values.
+	ListExpiringSessions(ctx context.Context, threshold time.Time, cursor id.SessionID, limit int) ([]*storage.UserSession, error)
+}
+
 // PermissionSetRepository defines storage operations for permission set entities.
 // Permission sets are admin-defined bundles of OAuth2 scopes spanning one or more third-party services.
 // Following Interface Segregation Principle: focused interface for permission set operations.

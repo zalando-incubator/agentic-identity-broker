@@ -13,6 +13,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"log/slog"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -772,4 +775,251 @@ func TestMigration035PrivateKeyJWTAuthentication(t *testing.T) {
 	`)
 	require.NoError(t, err)
 	assert.Equal(t, "true", strings.TrimSpace(legacyRowsPreserved), "migration replay must preserve legacy static and public services")
+}
+
+func seedSessionExpiryMigration(t *testing.T, f *MigrationTestFramework) {
+	t.Helper()
+	require.NoError(t, f.ExecuteSQL(t, `
+		INSERT INTO thirdparty_oauth2_services
+			(id, display_name, client_id, client_secret_encrypted, issuer_uri, enable_discovery, scopes)
+		VALUES
+			('36000000-0000-0000-0000-000000000001', 'expiry migration service', 'expiry-client',
+			 '\x01', 'https://oauth.example.com', false, '[]');
+		INSERT INTO user_sessions
+			(id, principal, service_id, encrypted_access_token, access_token_expires_at)
+		VALUES
+			('36000000-0000-0000-0000-000000000002', 'expiry@example.com',
+			 '36000000-0000-0000-0000-000000000001', '\x010203', '2030-01-02 03:04:05+00');
+	`))
+}
+
+func requireSessionExpiryMigrationData(t *testing.T, f *MigrationTestFramework) {
+	t.Helper()
+	var principal string
+	var ciphertext []byte
+	var expiry time.Time
+	err := f.db.QueryRowContext(context.Background(), `
+		SELECT principal, encrypted_access_token, access_token_expires_at
+		FROM user_sessions WHERE id = '36000000-0000-0000-0000-000000000002'
+	`).Scan(&principal, &ciphertext, &expiry)
+	require.NoError(t, err)
+	require.Equal(t, "expiry@example.com", principal)
+	require.Equal(t, []byte{1, 2, 3}, ciphertext)
+	require.True(t, expiry.Equal(time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)), "expiry instant changed: %s", expiry)
+}
+
+func requireSessionExpiryIndexAbsent(t *testing.T, f *MigrationTestFramework) {
+	t.Helper()
+	var absent bool
+	require.NoError(t, f.db.QueryRowContext(context.Background(),
+		`SELECT to_regclass('idx_user_sessions_access_token_expires_at') IS NULL`).Scan(&absent))
+	require.True(t, absent, "session expiry index must be absent")
+}
+
+func requireSessionExpiryIndex(t *testing.T, f *MigrationTestFramework, valid bool) {
+	t.Helper()
+	var actualValid, correctTable, unique, plainColumn, noPredicate, noExpression bool
+	var method, key, definition string
+	err := f.db.QueryRowContext(context.Background(), `
+		SELECT i.indisvalid, i.indrelid = 'public.user_sessions'::regclass,
+		       i.indisunique, i.indnatts = 1 AND i.indnkeyatts = 1,
+		       i.indpred IS NULL, i.indexprs IS NULL, am.amname,
+		       pg_get_indexdef(i.indexrelid, 1, true), pg_get_indexdef(i.indexrelid)
+		FROM pg_index AS i
+		JOIN pg_class AS c ON c.oid = i.indexrelid
+		JOIN pg_am AS am ON am.oid = c.relam
+		WHERE i.indexrelid = to_regclass('idx_user_sessions_access_token_expires_at')
+	`).Scan(&actualValid, &correctTable, &unique, &plainColumn, &noPredicate, &noExpression,
+		&method, &key, &definition)
+	require.NoError(t, err, "named session expiry index must exist")
+	require.Equal(t, valid, actualValid, "index definition: %s", definition)
+	require.True(t, correctTable, "index definition: %s", definition)
+	require.False(t, unique, "index definition: %s", definition)
+	require.True(t, plainColumn, "index definition: %s", definition)
+	require.True(t, noPredicate, "index definition: %s", definition)
+	require.True(t, noExpression, "index definition: %s", definition)
+	require.Equal(t, "btree", method, "index definition: %s", definition)
+	require.Equal(t, "access_token_expires_at", key, "index definition: %s", definition)
+}
+
+func TestMigration036SessionExpiryIndexLifecycle(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+	require.NoError(t, f.Up(t, 35))
+	version, dirty, err := f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(35), version)
+	require.False(t, dirty)
+	requireSessionExpiryIndexAbsent(t, f)
+	seedSessionExpiryMigration(t, f)
+
+	require.NoError(t, f.Up(t, 36))
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(36), version)
+	require.False(t, dirty)
+	requireSessionExpiryIndex(t, f, true)
+
+	require.NoError(t, f.Down(t, 35))
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(35), version)
+	require.False(t, dirty)
+	requireSessionExpiryIndexAbsent(t, f)
+	requireSessionExpiryMigrationData(t, f)
+
+	require.NoError(t, f.Up(t, 36))
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(36), version)
+	require.False(t, dirty)
+	requireSessionExpiryIndex(t, f, true)
+	requireSessionExpiryMigrationData(t, f)
+}
+
+func TestMigration036RejectsMalformedDirectiveBeforeSQL(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+
+	f.migrationsDir = t.TempDir()
+	for name, contents := range map[string]string{
+		"035_preflight_sentinel.up.sql":   "CREATE TABLE migration_036_preflight_sentinel (id integer);\n",
+		"035_preflight_sentinel.down.sql": "DROP TABLE migration_036_preflight_sentinel;\n",
+		"036_user_sessions_access_token_expiry_index.up.sql": "-- migrate:no-transaction \n" +
+			"CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at);\n",
+		"036_user_sessions_access_token_expiry_index.down.sql": "-- migrate:no-transaction\n" +
+			"DROP INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at;\n",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(f.migrationsDir, name), []byte(contents), 0600))
+	}
+
+	beforeVersion, beforeDirty, err := f.Version(t)
+	require.NoError(t, err)
+	require.Zero(t, beforeVersion)
+	require.False(t, beforeDirty)
+
+	err = f.Up(t, 36)
+	require.ErrorContains(t, err, "036_user_sessions_access_token_expiry_index.up.sql")
+	require.ErrorContains(t, err, "first-line directive")
+	parsedURL, parseErr := url.Parse(f.connStr)
+	require.NoError(t, parseErr)
+	require.NotNil(t, parsedURL.User)
+	password, hasPassword := parsedURL.User.Password()
+	require.True(t, hasPassword)
+	require.NotEmpty(t, password)
+	require.NotContains(t, err.Error(), password, "migration errors must not expose database credentials")
+
+	exists, err := f.TableExists(t, "migration_036_preflight_sentinel")
+	require.NoError(t, err)
+	require.False(t, exists, "version 35 SQL must not execute before rejecting malformed version 36")
+	version, dirty, err := f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, beforeVersion, version, "preflight must reject before any version update")
+	require.Equal(t, beforeDirty, dirty, "preflight must not leave a dirty version")
+}
+
+func TestMigration036InterruptedBuildRecovery(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+	require.NoError(t, f.Up(t, 35))
+	seedSessionExpiryMigration(t, f)
+	requireSessionExpiryIndexAbsent(t, f)
+
+	// An older writer holds the concurrent build after PostgreSQL registers its invalid index.
+	blocker, err := f.db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer func() { _ = blocker.Rollback() }()
+	_, err = blocker.ExecContext(context.Background(), `
+		UPDATE user_sessions SET encrypted_access_token = '\x010203'
+		WHERE id = '36000000-0000-0000-0000-000000000002'
+	`)
+	require.NoError(t, err)
+
+	m, err := f.newMigrationRunner(t)
+	require.NoError(t, err)
+	result := make(chan error, 1)
+	go func() { result <- m.Migrate(36) }()
+	var buildErr error
+	buildStopped := false
+	var buildPID int
+	migrationDone := false
+	defer func() {
+		_ = blocker.Rollback()
+		if !migrationDone {
+			if buildPID != 0 {
+				_, _ = f.db.ExecContext(context.Background(), `SELECT pg_cancel_backend($1)`, buildPID)
+			}
+			select {
+			case <-result:
+			case <-time.After(10 * time.Second):
+				t.Error("concurrent index build did not stop during cleanup")
+			}
+		}
+		_, _ = m.Close()
+	}()
+
+	// Wait for the catalog entry and dirty version, not an arbitrary build duration.
+	require.Eventually(t, func() bool {
+		select {
+		case buildErr = <-result:
+			migrationDone = true
+			buildStopped = true
+			return true
+		default:
+		}
+		return f.db.QueryRowContext(context.Background(), `
+			SELECT a.pid
+			FROM pg_stat_activity AS a
+			JOIN pg_index AS i ON i.indexrelid = to_regclass('idx_user_sessions_access_token_expires_at')
+			JOIN schema_migrations AS sm ON sm.version = 36 AND sm.dirty
+			WHERE a.datname = current_database() AND a.pid <> pg_backend_pid()
+			  AND a.state = 'active' AND NOT i.indisvalid
+			  AND position('CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at' IN a.query) > 0
+		`).Scan(&buildPID) == nil
+	}, 10*time.Second, 20*time.Millisecond, "build must reach an invalid index and dirty version before cancellation")
+	require.False(t, buildStopped, "concurrent build ended before invalid index state: %v", buildErr)
+
+	var cancelled bool
+	require.NoError(t, f.db.QueryRowContext(context.Background(),
+		`SELECT pg_cancel_backend($1)`, buildPID).Scan(&cancelled))
+	require.True(t, cancelled, "cancel the inspected concurrent build backend")
+	select {
+	case err := <-result:
+		migrationDone = true
+		require.Error(t, err, "an interrupted concurrent build must fail")
+	case <-time.After(10 * time.Second):
+		t.Fatal("interrupted concurrent build did not terminate")
+	}
+	require.NoError(t, blocker.Rollback())
+
+	version, dirty, err := f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(36), version)
+	require.True(t, dirty, "failure is not an atomic rollback")
+	requireSessionExpiryIndex(t, f, false)
+	requireSessionExpiryMigrationData(t, f)
+
+	// A dirty version cannot be retried; inspect and remove only the matching invalid index first.
+	require.Error(t, f.Up(t, 36))
+	requireSessionExpiryIndex(t, f, false)
+	require.NoError(t, f.ExecuteSQL(t, `DROP INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at`))
+	requireSessionExpiryIndexAbsent(t, f)
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(36), version)
+	require.True(t, dirty)
+
+	require.NoError(t, f.Force(t, 35))
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(35), version)
+	require.False(t, dirty)
+	requireSessionExpiryIndexAbsent(t, f)
+	require.NoError(t, f.Up(t, 36))
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(36), version)
+	require.False(t, dirty)
+	requireSessionExpiryIndex(t, f, true)
+	requireSessionExpiryMigrationData(t, f)
 }

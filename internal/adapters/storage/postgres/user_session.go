@@ -8,8 +8,16 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/lib/pq"
 )
+
+const listExpiringSessionsQuery = `SELECT * FROM user_sessions
+WHERE access_token_expires_at IS NOT NULL
+  AND access_token_expires_at <= $1
+  AND id > $2
+ORDER BY id
+LIMIT $3`
 
 // userSessionRecord is an adapter-local database record struct for user_sessions.
 // It maps directly to the table schema. The Scope field uses pq.StringArray to
@@ -57,6 +65,8 @@ func recordToSession(r *userSessionRecord) *storage.UserSession {
 type PostgresUserSessionRepository struct {
 	adapter *Adapter
 }
+
+var _ ports.UserSessionExpiryRepository = (*PostgresUserSessionRepository)(nil)
 
 // NewUserSessionRepository creates a new PostgreSQL user session repository.
 func NewUserSessionRepository(adapter *Adapter) *PostgresUserSessionRepository {
@@ -242,6 +252,27 @@ func (r *PostgresUserSessionRepository) ListActiveByPrincipal(ctx context.Contex
 	sessions := make([]*storage.UserSession, len(records))
 	for i, rec := range records {
 		sessions[i] = recordToSession(rec)
+	}
+	return sessions, nil
+}
+
+// ListExpiringSessions lists sessions due for the admin sweep.
+func (r *PostgresUserSessionRepository) ListExpiringSessions(ctx context.Context, threshold time.Time, cursor id.SessionID, limit int) ([]*storage.UserSession, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, storage.NewStorageError("ListExpiringSessions", storage.ErrorKindValidation, nil, "limit must be between 1 and 1000")
+	}
+
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+
+	var records []userSessionRecord
+	if err := r.adapter.db.SelectContext(queryCtx, &records, listExpiringSessionsQuery, threshold, cursor, limit); err != nil {
+		return nil, r.wrapError(err, "ListExpiringSessions")
+	}
+
+	sessions := make([]*storage.UserSession, len(records))
+	for i := range records {
+		sessions[i] = recordToSession(&records[i])
 	}
 	return sessions, nil
 }

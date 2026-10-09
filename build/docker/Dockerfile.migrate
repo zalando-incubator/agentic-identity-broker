@@ -1,5 +1,5 @@
 # Agentic Identity Broker - Migration Docker Image
-# This Dockerfile packages only the golang-migrate tool and migration files
+# This Dockerfile packages golang-migrate, its prebuilt guard, and migration files only
 # Used exclusively by Kubernetes migration Jobs with schema-level permissions
 # BASE_IMAGE lets internal release pipelines override the public default
 # with an internally-mirrored/allowed base image (see delivery.yaml).
@@ -46,6 +46,9 @@ RUN apk add --no-cache curl ca-certificates && \
     apk del curl && \
     rm -rf /var/cache/apk/*
 
+# Select the prebuilt static guard for this image's architecture.
+COPY --chown=1000:1000 ./bin/linux/${TARGETARCH}/migration-guard /usr/local/bin/migration-guard
+
 # Copy database migration files only
 # Application binary and frontend assets are NOT included
 COPY --chown=1000:1000 ./migrations /app/migrations
@@ -53,8 +56,8 @@ COPY --chown=1000:1000 ./migrations /app/migrations
 # Switch to non-root user for container execution
 USER 1000:1000
 
-# Migration-specific entrypoint
-ENTRYPOINT ["/usr/local/bin/migrate"]
+# Validate migrations before handing the original arguments to golang-migrate.
+ENTRYPOINT ["/usr/local/bin/migration-guard"]
 
 # Default help command (override with actual migration args in Kubernetes Job)
 CMD ["-help"]

@@ -4,12 +4,15 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 
@@ -343,4 +346,241 @@ func TestUserSessionRefreshAllowsUpstreamWorkLongerThanStorageWriteTimeout(t *te
 	persisted, err := repo.FindByPrincipalAndService(ctx, principal, serviceID)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("new-refresh"), persisted.EncryptedRefreshToken)
+}
+
+func expiryTestID(n int) id.SessionID {
+	return id.MustParseSessionID(fmt.Sprintf("00000000-0000-4000-8000-%012x", n))
+}
+
+func seedExpiryTestSession(t *testing.T, adapter *Adapter, serviceID id.ServiceID, sessionID id.SessionID, expiry *time.Time) *storage.UserSession {
+	t.Helper()
+	now := time.Date(2030, time.January, 1, 12, 0, 0, 0, time.UTC)
+	session := &storage.UserSession{
+		ID:                    sessionID,
+		Principal:             id.Principal(sessionID.String() + "@example.com"),
+		ServiceID:             serviceID,
+		EncryptedAccessToken:  []byte{0, 255, 17, 128},
+		EncryptedRefreshToken: []byte{128, 1, 0, 254},
+		TokenType:             "Bearer",
+		AccessTokenExpiresAt:  expiry,
+		Scope:                 []string{"repo", "email"},
+		EncryptionContext:     storage.EncryptionContext{ServiceID: serviceID},
+		InitiatedAt:           now,
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}
+	require.NoError(t, NewUserSessionRepository(adapter).Create(context.Background(), session))
+	return session
+}
+
+func expirySessionIDs(sessions []*storage.UserSession) []id.SessionID {
+	ids := make([]id.SessionID, len(sessions))
+	for i, session := range sessions {
+		ids[i] = session.ID
+	}
+	return ids
+}
+
+func TestUserSessionListExpiringSessions(t *testing.T) {
+	threshold := time.Date(2030, time.January, 1, 12, 0, 0, 0, time.UTC)
+	due := threshold.Add(-time.Hour)
+	future := threshold.Add(time.Second)
+	ctx := context.Background()
+
+	t.Run("E1 inclusive boundary and null exclusion", func(t *testing.T) {
+		adapter, cleanup := setupUserSessionTestDB(t)
+		defer cleanup()
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		repo := NewUserSessionRepository(adapter)
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(4), nil)
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(3), &future)
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(2), &threshold)
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(1), &due)
+		page, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 10)
+		require.NoError(t, err)
+		assert.Equal(t, []id.SessionID{expiryTestID(1), expiryTestID(2)}, expirySessionIDs(page))
+	})
+
+	t.Run("E2 keyset pages have no gaps or duplicates", func(t *testing.T) {
+		adapter, cleanup := setupUserSessionTestDB(t)
+		defer cleanup()
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		repo := NewUserSessionRepository(adapter)
+		for n := 5; n >= 1; n-- {
+			seedExpiryTestSession(t, adapter, serviceID, expiryTestID(n), &due)
+		}
+		all, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 1000)
+		require.NoError(t, err)
+		expected := []id.SessionID{expiryTestID(1), expiryTestID(2), expiryTestID(3), expiryTestID(4), expiryTestID(5)}
+		require.Equal(t, expected, expirySessionIDs(all))
+		var combined []id.SessionID
+		cursor := id.SessionID{}
+		for _, wantSize := range []int{2, 2, 1} {
+			page, err := repo.ListExpiringSessions(ctx, threshold, cursor, 2)
+			require.NoError(t, err)
+			require.Len(t, page, wantSize)
+			combined = append(combined, expirySessionIDs(page)...)
+			cursor = page[len(page)-1].ID
+		}
+		assert.Equal(t, expected, combined)
+		last, err := repo.ListExpiringSessions(ctx, threshold, cursor, 2)
+		require.NoError(t, err)
+		assert.Empty(t, last)
+	})
+
+	t.Run("E3 moving a returned row past the threshold does not skip later rows", func(t *testing.T) {
+		adapter, cleanup := setupUserSessionTestDB(t)
+		defer cleanup()
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		repo := NewUserSessionRepository(adapter)
+		for n := 1; n <= 4; n++ {
+			seedExpiryTestSession(t, adapter, serviceID, expiryTestID(n), &due)
+		}
+		first, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 2)
+		require.NoError(t, err)
+		require.Equal(t, []id.SessionID{expiryTestID(1), expiryTestID(2)}, expirySessionIDs(first))
+		_, err = adapter.db.ExecContext(ctx, `UPDATE user_sessions SET access_token_expires_at = $1 WHERE id = $2`, future, first[0].ID)
+		require.NoError(t, err)
+		second, err := repo.ListExpiringSessions(ctx, threshold, first[1].ID, 2)
+		require.NoError(t, err)
+		assert.Equal(t, []id.SessionID{expiryTestID(3), expiryTestID(4)}, expirySessionIDs(second))
+	})
+
+	t.Run("E4 inserting behind the cursor never revisits that row", func(t *testing.T) {
+		adapter, cleanup := setupUserSessionTestDB(t)
+		defer cleanup()
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		repo := NewUserSessionRepository(adapter)
+		for _, n := range []int{1, 3, 5} {
+			seedExpiryTestSession(t, adapter, serviceID, expiryTestID(n), &due)
+		}
+		first, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 2)
+		require.NoError(t, err)
+		require.Equal(t, []id.SessionID{expiryTestID(1), expiryTestID(3)}, expirySessionIDs(first))
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(2), &due)
+		second, err := repo.ListExpiringSessions(ctx, threshold, first[1].ID, 2)
+		require.NoError(t, err)
+		assert.Equal(t, []id.SessionID{expiryTestID(5)}, expirySessionIDs(second))
+	})
+
+	t.Run("E5 invalid page sizes fail before database access", func(t *testing.T) {
+		repo := NewUserSessionRepository(&Adapter{})
+		for _, limit := range []int{-1, 0, 1001} {
+			t.Run(fmt.Sprintf("limit_%d", limit), func(t *testing.T) {
+				_, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, limit)
+				require.Error(t, err, "limit %d must be rejected without a database connection", limit)
+				var validation *storage.StorageError
+				require.ErrorAs(t, err, &validation)
+				assert.Equal(t, storage.ErrorKindValidation, validation.Kind)
+			})
+		}
+	})
+
+	t.Run("E6 returned tokens are unchanged ciphertext", func(t *testing.T) {
+		adapter, cleanup := setupUserSessionTestDB(t)
+		defer cleanup()
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		repo := NewUserSessionRepository(adapter)
+		original := seedExpiryTestSession(t, adapter, serviceID, expiryTestID(1), &due)
+		page, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, 1)
+		require.NoError(t, err)
+		require.Len(t, page, 1)
+		assert.Equal(t, original.EncryptedAccessToken, page[0].EncryptedAccessToken)
+		assert.Equal(t, original.EncryptedRefreshToken, page[0].EncryptedRefreshToken)
+		assert.Equal(t, original.EncryptionContext, page[0].EncryptionContext)
+		assert.Equal(t, original.Scope, page[0].Scope)
+	})
+
+	t.Run("E7 UUID byte order determines the returned order", func(t *testing.T) {
+		adapter, cleanup := setupUserSessionTestDB(t)
+		defer cleanup()
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		repo := NewUserSessionRepository(adapter)
+		ids := []id.SessionID{
+			id.MustParseSessionID("f0000000-0000-4000-8000-000000000001"),
+			id.MustParseSessionID("0f000000-0000-4000-8000-000000000001"),
+			id.MustParseSessionID("10000000-0000-4000-8000-000000000001"),
+			id.MustParseSessionID("0f000000-0000-4000-8000-0000000000ff"),
+			id.MustParseSessionID("00000000-0000-4000-8000-000000000001"),
+		}
+		for _, sessionID := range ids {
+			seedExpiryTestSession(t, adapter, serviceID, sessionID, &due)
+		}
+		sort.Slice(ids, func(i, j int) bool { return bytes.Compare(ids[i][:], ids[j][:]) < 0 })
+		page, err := repo.ListExpiringSessions(ctx, threshold, id.SessionID{}, len(ids))
+		require.NoError(t, err)
+		assert.Equal(t, ids, expirySessionIDs(page))
+	})
+}
+
+type expiryExplainPlan struct {
+	NodeType  string              `json:"Node Type"`
+	IndexName string              `json:"Index Name"`
+	Plans     []expiryExplainPlan `json:"Plans"`
+}
+
+func expiryPlanUsesIndex(plan expiryExplainPlan, indexName string) bool {
+	if plan.IndexName == indexName && (plan.NodeType == "Index Scan" || plan.NodeType == "Index Only Scan" || plan.NodeType == "Bitmap Index Scan") {
+		return true
+	}
+	for _, child := range plan.Plans {
+		if expiryPlanUsesIndex(child, indexName) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestUserSessionExpiryQueryUsesValidIndex(t *testing.T) {
+	adapter, cleanup := setupUserSessionTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	serviceID := id.NewServiceID()
+	insertTestService(t, adapter, serviceID)
+	threshold := time.Date(2030, time.January, 1, 12, 0, 0, 0, time.UTC)
+	const indexName = "idx_user_sessions_access_token_expires_at"
+	var valid bool
+	require.NoError(t, adapter.db.GetContext(ctx, &valid, `
+		SELECT indisvalid FROM pg_index
+		WHERE indexrelid = to_regclass('idx_user_sessions_access_token_expires_at')
+	`))
+	require.True(t, valid, "%s must be valid", indexName)
+
+	// Generate a representative table in one statement: 1% due, 1% NULL, 98% healthy.
+	_, err := adapter.db.ExecContext(ctx, `
+		INSERT INTO user_sessions
+			(principal, service_id, encrypted_access_token, encrypted_refresh_token, access_token_expires_at)
+		SELECT 'planner-' || n || '@example.com', $1, $3::bytea, $4::bytea,
+			CASE WHEN n <= 50 THEN $2::timestamptz - interval '1 minute'
+			     WHEN n <= 100 THEN NULL
+			     ELSE $2::timestamptz + interval '1 day' END
+		FROM generate_series(1, 5000) AS n
+	`, serviceID, threshold, []byte{0, 255, 17}, []byte{128, 1, 0})
+	require.NoError(t, err)
+	var total, dueCount, nullCount int
+	require.NoError(t, adapter.db.QueryRowxContext(ctx, `
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE access_token_expires_at <= $1),
+			COUNT(*) FILTER (WHERE access_token_expires_at IS NULL)
+		FROM user_sessions
+	`, threshold).Scan(&total, &dueCount, &nullCount))
+	require.Equal(t, 5000, total)
+	require.LessOrEqual(t, dueCount*100, total*2)
+	require.Positive(t, nullCount)
+	_, err = adapter.db.ExecContext(ctx, `ANALYZE user_sessions`)
+	require.NoError(t, err)
+
+	var raw []byte
+	require.NoError(t, adapter.db.GetContext(ctx, &raw, `EXPLAIN (FORMAT JSON) `+listExpiringSessionsQuery, threshold, id.SessionID{}, 1000))
+	var explain []struct {
+		Plan expiryExplainPlan `json:"Plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &explain))
+	require.Len(t, explain, 1)
+	assert.True(t, expiryPlanUsesIndex(explain[0].Plan, indexName), "normal planner did not use %s for production query; plan: %s", indexName, raw)
 }

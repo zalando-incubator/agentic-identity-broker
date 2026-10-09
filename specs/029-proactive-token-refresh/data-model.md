@@ -51,8 +51,7 @@ when the lock callback switches predicates.
 
 `idx_user_sessions_access_token_expires_at` is a plain B-tree index on
 `user_sessions (access_token_expires_at)`. It serves `ListExpiringSessions` (DB-003, SC-006).
-Migration `036` is blocked until its design satisfies DB-001, `AGENTS.md`, and constitution
-Principle IX (research R4).
+ADR 039 accepts a named non-atomic exception for the concurrent index. The guarded migration `036` and its PostgreSQL recovery tests pass (research R4).
 
 ## New enumeration: `RefreshTrigger`
 
@@ -96,6 +95,10 @@ A violation returns an error that wraps `ErrInvalidSweepRequest`, and the handle
 | `Failed` | `int` | Candidates that required action but could not be refreshed: no usable refresh token, upstream error, provider misconfiguration, or encryption failure. |
 | `TotalEvaluated` | `int` | Candidates returned by `ListExpiringSessions` and evaluated. |
 | `DryRun` | `bool` | Echo of the effective `DryRun`. |
+| `EffectiveLookahead` | `time.Duration` | Resolved lookahead after configuration defaults; used only in the operator audit. |
+| `EffectivePageSize` | `int` | Resolved page size after configuration defaults; used only in the operator audit. |
+
+Only the first five fields appear in the HTTP `SessionSweepResult` response. The two effective controls remain internal metadata.
 
 **Invariant** (SC-004): `Refreshed + Skipped + Failed == TotalEvaluated`. Each listed candidate is
 classified exactly once. Sessions that `ListExpiringSessions` never returns (healthy, `NULL` expiry,

@@ -35,13 +35,14 @@ There is no Prometheus registry, no `/metrics` endpoint, and no `/health` counte
 
 ## Structured log events
 
-The principal is never logged by the session service. Token material is never logged anywhere.
+Refresh, sweep, flow-initiation, state-validation, and session-lookup logs omit end-user principals and token material. Established session-creation and termination audit events retain their principal fields.
+The session and sweep services mark their loggers with `component=oauth2session`. The context handler keeps `trace_id` but omits `actor` and `calling_peer` from every marked record, including eventless errors. The separate operator audit records `operator_principal`.
 
 | `event` / message | Level | Emitted by | Attributes | Requirement |
 |---|---|---|---|---|
 | `session.oauth2.token_refreshed` | INFO | `OAuth2SessionService` after the locked `UPDATE` commits | `session_id`, `service_id`, `triggered_by`, `public_client`, `reason=token_refresh_succeeded`, `timestamp` | NFR-001, `SessionTokensRefreshed` |
 | `session.oauth2.proactive_refresh_dropped` | WARN | `backgroundRefresher.submit` | `session_id`, `service_id`, `triggered_by=background`, `workers` | NFR-002 |
-| `session.oauth2.refresh_failed` | WARN or ERROR per research R11 | trigger-aware caller of `refreshDueSession` | `session_id`, `service_id`, `triggered_by`, `public_client`, `oauth2_session` (bounded `ErrorMetadata`: operation, detail, kind, dependency, provider status) | NFR-003 |
+| `session.oauth2.refresh_failed` | WARN or ERROR per research R11 | trigger-aware caller of `refreshDueSession` | `session_id`, `service_id`, `triggered_by`, `oauth2_session` (bounded `ErrorMetadata`: operation, detail, kind, dependency, provider status); `public_client` only when already known | NFR-003 |
 | `session.oauth2.sweep_aborted` | ERROR | `SessionSweepService` | `triggered_by=sweep`, `oauth2_session` metadata, partial `refreshed`/`skipped`/`failed`/`total_evaluated` | NFR-003 (infrastructure) |
 | `session sweep` (audit) | INFO | `SessionSweepHandler` | `operator_principal`, `dry_run`, `lookahead`, `page_size`, `refreshed`, `skipped`, `failed`, `total_evaluated`, `duration_ms`, `outcome` ∈ {`completed`, `rejected`, `aborted`, `canceled`} | Principle I (auditable security operations) |
 

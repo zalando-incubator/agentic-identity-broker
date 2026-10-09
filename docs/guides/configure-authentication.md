@@ -1,18 +1,16 @@
 ---
 title: "Configure authentication"
-description: Configure the trusted reverse proxy that authenticates users and sends the principal header. You can also validate a signed JWT and extract a user profile.
+description: Configure proxy pre-authentication with an explicit principal header or a signed JWT from a JWKS endpoint.
 ---
 
 # Configure authentication
 
-The broker does not authenticate users. A trusted reverse proxy does this work. The proxy
-can be oauth2-proxy, an nginx `auth_request`, an API gateway, or a service mesh. The proxy
-authenticates each request with your identity provider. It sends the user identity in a
-request header. The broker uses that value as the **principal**. It accepts the value only
-from a source that you control.
+The broker accepts an identity from a trusted reverse proxy. The proxy authenticates users
+with your identity provider. It sends either a principal header or a signed JWT to the
+broker. The broker accepts this identity only from a source that you control.
 
-This page explains the proxy trust boundary for both server ports. It also describes an
-optional JWT mode that validates a signed token and extracts a user profile. See
+This page explains the proxy trust boundary for both server ports. It also describes JWT
+pre-authentication and optional profile extraction. See
 [architecture](/docs/concepts/architecture) for the system context.
 
 ## What you need
@@ -23,19 +21,18 @@ optional JWT mode that validates a signed token and extracts a user profile. See
   14000.
 - Access to the broker YAML configuration. See the
   [configuration reference](/docs/configuration).
-- For JWT pre-authentication, a JWKS endpoint for proxy-signed tokens. A trusted mesh can
-  instead inject unsigned claims.
+- For JWT pre-authentication, a JWKS endpoint for the signed tokens that your proxy sends.
 
 ## Reverse-proxy pre-authentication
 
-This is the baseline mode for every deployment. The proxy sets a header that contains a
-principal identifier, such as an email, username, or opaque ID. The broker uses this value
-as the authenticated user for the request.
+Without JWT configuration, the proxy sets a header that contains a principal identifier,
+such as an email, username, or opaque ID. The broker uses this value as the authenticated
+user for the request.
 
 ### Set the principal header
 
-Configure `authentication.preauth.principal_header_name` for each server port. Set it in
-both the `enduser` and `admin` blocks. The default value is `X-Remote-User`.
+Set `authentication.preauth.principal_header_name` explicitly for each server that uses
+plain-header pre-authentication. There is no global default principal header.
 
 ```yaml
 server:
@@ -77,38 +74,38 @@ unremoved header defeats the delegation model.
 
 ### Enforce admin privilege at the proxy
 
-The admin API on port 14000 accepts the same principal header. The broker does not identify
-administrators. The proxy enforces administrator privilege before requests reach the admin
-port. Restrict the admin route with your proxy access controls. You can use group
-membership, an allowlist, a separate authentication policy, or a dedicated ingress. Keep
-the admin port internal. Do not expose it with the public end-user port. See the
-[API reference](/docs/reference/api) for the admin surface.
+The broker does not identify administrators. The proxy enforces administrator privilege
+before requests reach the admin port. This rule applies to both plain-header and JWT
+pre-authentication. Restrict the admin route with proxy access controls, such as group
+membership or an allowlist. Keep the admin port internal and separate from the public
+end-user port. See the [API reference](/docs/reference/api) for the admin surface.
 
 ## JWT pre-authentication (optional)
 
-If your proxy or mesh sends a JWT, you can enable JWT pre-authentication. The broker reads
-the token from a header. It can validate the signature. It then extracts the principal and
-a profile with CEL. The profile can contain a display name, email address, and picture. The
-consent interface can show this profile instead of a bare ID.
+If your proxy or mesh sends a signed JWT, enable JWT pre-authentication for that server.
+The broker validates its signature against the configured JWKS endpoint. It requires an
+`exp` claim. Then it extracts the principal and optional profile values with CEL.
+The consent interface can show the profile instead of a bare ID.
 
-Configure this mode in `server.enduser.authentication.jwt`. Configure
-`server.admin.authentication.jwt` when the admin proxy also sends JWTs. Keep the `preauth`
-block. The server still requires `principal_header_name`. With `jwt` enabled, a missing
-`header_name` returns `401 Unauthorized`. The broker does not use the plain header instead.
+Configure `server.enduser.authentication.jwt` for the end-user server. Configure
+`server.admin.authentication.jwt` only if the admin proxy sends signed JWTs. Otherwise,
+configure the admin server's explicit `preauth.principal_header_name` for plain-header mode.
+When a server has JWT configuration, it ignores the plain principal header. Protected end-user routes
+return `401 Unauthorized` for a missing or invalid JWT. The admin sweep returns
+`500 server_misconfiguration` without an operator principal. The admin proxy must reject
+unauthorized requests before they reach any admin route.
 
 ### Use a JWKS
 
-Use this mode when the proxy sends signed JWTs. Set `verification: jwks`. This is the
-default when `jwks_uri` is present. Set the expected audience and issuer. The broker then
-rejects tokens that were issued for other services.
+Set `verification: jwks` and a `jwks_uri` for a signed JWT. The JWT must contain an `exp`
+claim. Set the expected audience and issuer when the proxy provides these claims. The
+broker rejects a token when a configured audience or issuer does not match.
 
 ```yaml
 server:
   enduser:
     port: 8000
     authentication:
-      preauth:
-        principal_header_name: "X-Remote-User"   # still configured, but not used as a runtime fallback
       jwt:
         header_name: "Authorization"             # strips the "Bearer " prefix
         verification: "jwks"
@@ -122,37 +119,17 @@ server:
           picture_url_expression: "claims.picture"
 ```
 
-### Use a trusted mesh without signature validation (`verification: none`)
-
-Use this mode only in a network where you control JWT injection. For example, use a
-mutual-TLS service mesh such as Istio or Linkerd. You can also use a trusted sidecar that
-already authenticated the user. With `verification: none`, the broker reads claims without
-validating a signature.
-
-```yaml
-server:
-  enduser:
-    port: 8000
-    authentication:
-      preauth:
-        principal_header_name: "X-Remote-User"
-      jwt:
-        header_name: "X-JWT-Claims"
-        verification: "none"
-        claim_extraction:
-          principal_expression: "claims.sub"
-          display_name_expression: "claims.preferred_username"
-          email_expression: "claims.email"
-```
-
-Do not set `jwks_uri` with `verification: none`. These settings are mutually exclusive. The
-broker does not start when both settings are present.
+The broker rejects `verification: none` at startup for either server. A trusted mesh does
+not make unsigned JWT pre-authentication valid. If the proxy cannot send a signed JWT,
+configure an explicit principal header instead. The proxy must remove client-supplied
+copies before it sets that header. The unsigned impersonation subject exception in ADR 031
+does not apply to pre-authentication.
 
 ### Extract the principal and profile with CEL
 
 Each `claim_extraction` value is a CEL expression for the token `claims` object.
-`principal_expression` is required. It must return the principal string. The optional profile
-expressions populate values for the consent interface:
+`principal_expression` defaults to `claims.sub`. It must return a non-empty principal
+string. The optional profile expressions populate values for the consent interface:
 
 | Expression | Populates | Typical claim |
 |---|---|---|
@@ -165,16 +142,21 @@ Adjust each expression to match the claim names your identity provider emits.
 
 ## Troubleshooting
 
-- **Every request returns 401.** The principal is missing or empty. Make sure that the proxy
-  sends the configured header to the broker. Make sure that the proxy header name exactly
-  matches `principal_header_name`. With JWT pre-authentication, make sure that the token is
-  in `header_name` and `principal_expression` returns a non-empty value.
+- **Protected end-user requests return 401.** In plain-header mode, make sure that the proxy sends the
+  configured principal header with a non-empty value. In JWT mode, make sure that the proxy
+  sends a signed token in `header_name`. Make sure that it has an `exp` claim and that
+  `principal_expression` returns a non-empty value. A plain header cannot replace a missing
+  or invalid JWT.
+- **The admin sweep returns `500 server_misconfiguration`.** The broker did not receive an operator
+  principal. Confirm the proxy's configured admin header or signed JWT and its authorization policy.
+  The broker does not run the sweep without an operator identity.
 - **The wrong user is authenticated, or outside clients authenticate.** The broker accepts
   the header from an untrusted source. Make sure that only the proxy can reach broker ports.
   Make sure that the proxy removes each client-supplied copy before it adds its own value.
-- **The broker does not start with a JWT error.** `verification: none` and `jwks_uri` are
-  both set. Remove `jwks_uri` for an unsigned mesh. Or set `verification: jwks` to validate
-  the JWT.
+- **The broker does not start with a JWT error.** `verification: none` is not supported for
+  pre-authentication on either server. Set `verification: jwks` and a `jwks_uri` for signed
+  tokens. If the proxy cannot sign JWTs, remove the JWT block and configure an explicit
+  `preauth.principal_header_name` instead.
 - **The consent interface shows a bare ID.** A profile expression did not return a claim.
   Make sure that the JWT contains the claim. Make sure that
   `display_name_expression`, `email_expression`, and `picture_url_expression` use the

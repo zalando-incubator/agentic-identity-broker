@@ -3,6 +3,8 @@
 **Feature**: 016-jwt-preauth  
 **Date**: 2026-02-27
 
+**Security amendment (2026-10-09):** Admin and end-user JWT pre-authentication require signed JWKS verification. The original unsigned pre-authentication steps are superseded by Constitution Principle I. ADR 031 permits unsigned JWTs only as local-mode OAuth2 impersonation subjects.
+
 ---
 
 ## Overview
@@ -23,12 +25,12 @@ The feature should be implemented in this sequence, with each step building on t
 
 **Key decisions**:
 - `JWT` is a `*JWTConfig` (pointer) — `nil` means "not configured" (backward-compatible)
-- `Verification` defaults to `"jwks"` — set in `defaultConfig()` function in `schema.go`
+- `Verification` defaults to `"jwks"` in the validator. No unsigned mode is available.
 - `PrincipalExpression` defaults to `"claims.sub"`
 
-**Validation** (in `internal/config/schema.go`):
-- `verification: none` + `jwks_uri` present → startup error (FR-003a)
-- `verification: jwks` + `jwks_uri` empty → startup error
+**Validation** (in `internal/config/validator.go`):
+- `verification: none` on either server → startup error, even if `jwks_uri` is present
+- Missing `jwks_uri` with JWT pre-authentication → startup error
 - CEL expressions validated at startup (delegate to CEL evaluator constructor)
 
 ### Step 2: Domain Value Objects (`internal/domain/principal/profile.go`)
@@ -61,17 +63,15 @@ The feature should be implemented in this sequence, with each step building on t
 
 ### Step 4: JWT Adapter (`internal/adapters/jwtauth/jwx_authenticator.go`)
 
-**What**: Implement `JWTAuthenticator` using `lestrrat-go/jwx/v3`.
+**What**: Implement `JWTAuthenticator` using `lestrrat-go/jwx/v4`.
 
 **Pattern to follow**: 
 - JWKS caching: `internal/adapters/jwks/adapter.go` (same library, same cache pattern)
-- JWT parsing: `lestrrat-go/jwx/v3/jwt` and `lestrrat-go/jwx/v3/jwk`
+- JWT parsing: `lestrrat-go/jwx/v4/jwt` and `lestrrat-go/jwx/v4/jwk`
 
 **Key decisions**:
-- Signed mode (`jwks`): `jwt.Parse(rawToken, jwt.WithKeySet(keyset, jws.WithInferAlgorithmFromKey(true)))` + `jwt.WithValidate(true)`
-- Unsigned mode (`none`): `jwt.Parse(rawToken, jwt.WithVerify(false))` + `jwt.WithValidate(true)`
-- Expiry always validated via `jwt.WithValidate(true)` (handles `exp` check)
-- Audience/issuer validated via parsed token's claims after parsing
+- Parse and verify with `jwt.Parse(rawToken, jwt.WithKeySet(keyset, jws.WithInferAlgorithmFromKey(true)), jwt.WithValidate(false))`.
+- After signature verification, reject missing or expired `exp` and check configured audience/issuer claims.
 - Claims extracted as `map[string]interface{}` → passed to CEL evaluator
 
 ### Step 5: Middleware Extension (`internal/adapters/http/middleware/principal_middleware.go`)
@@ -83,8 +83,8 @@ The feature should be implemented in this sequence, with each step building on t
 **Key decisions**:
 - JWT authenticator is optional (nil when no JWT config) — injected via builder
 - Flow: JWT header present? → Yes: authenticate JWT → Success: set principal + profile → Failure: 401
-- JWT header absent? → Fallback to plain header (existing logic)
-- JWT present but invalid? → 401, NO fallback to plain header (FR-013)
+- JWT header absent while JWT pre-authentication is configured? → No fallback to plain-header pre-authentication; reject on protected routes.
+- JWT present but invalid? → Reject with 401; do not use the plain-header value.
 - Both `WithPrincipal(ctx, string)` and `WithProfile(ctx, profile)` set on success
 
 ### Step 6: Handler Update (`internal/adapters/http/handlers/consent/user_info_handler.go`)
@@ -105,22 +105,22 @@ The feature should be implemented in this sequence, with each step building on t
 **Pattern to follow**: Conditional service creation at `builder.go` line ~275 (token exchange service pattern).
 
 **Key decisions**:
-- If `config.Server.Enduser.Authentication.JWT != nil`:
-  1. Create CEL evaluator (fail-fast on invalid expressions)
-  2. Create JWKS adapter if verification is `jwks` (fail-fast if JWKS unreachable)
-  3. Create jwx authenticator with CEL evaluator + JWKS adapter
-  4. Pass authenticator to enduser route config
-- If JWT config is nil: no authenticator created (plain-header only)
+- If JWT pre-authentication is configured on either server:
+  1. Create the CEL evaluator (fail fast on invalid expressions).
+  2. Require JWKS verification and an explicit JWKS URI.
+  3. Create the JWX authenticator with a ready JWKS cache.
+  4. Pass the authenticator to the matching server's route config.
+- If JWT config is nil on a server, that server uses plain-header pre-authentication only.
 
-### Step 8: Routing Update (`internal/adapters/http/routing/enduser.go`)
+### Step 8: Routing Update (`internal/adapters/http/routing/`)
 
-**What**: Pass JWT authenticator to middleware via `EnduserRouteConfig`.
+**What**: Pass each configured server's JWT authenticator to its authentication middleware.
 
 **Pattern to follow**: Existing `EnduserRouteConfig` struct.
 
 **Key decisions**:
-- Add `JWTAuthenticator jwtauth.JWTAuthenticator` field to `EnduserRouteConfig` (optional, nil when not configured)
-- Pass to `RequirePrincipalMiddleware` and `OptionalPrincipalMiddleware`
+- Add a `JWTAuthenticator` field to each server's route configuration (optional when JWT pre-authentication is not configured).
+- Pass the authenticator to that server's principal middleware.
 
 ### Step 9: OpenAPI Update (`api/enduser/openapi.yaml`)
 
@@ -156,7 +156,7 @@ The feature should be implemented in this sequence, with each step building on t
 | Principal context | `internal/domain/principal/context.go` | Profile context storage |
 | Port interface | `internal/ports/encryption.go` | JWTAuthenticator interface |
 | Conditional builder wiring | `internal/app/builder.go:275+` | JWT authenticator creation |
-| Config validation | `internal/config/schema.go` | Mutual exclusivity rules |
+| Config validation | `internal/config/validator.go` | Require signed JWKS verification and a JWKS URI |
 | E2E test with mock server | `tests/e2e/helpers/mock_upstream.go` | Mock JWKS server |
 
 ---
@@ -164,10 +164,10 @@ The feature should be implemented in this sequence, with each step building on t
 ## Testing Checklist
 
 - [ ] Unit tests for CEL evaluator (compile errors, string extraction, non-string handling, timeout)
-- [ ] Unit tests for jwx authenticator (signed/unsigned, expired, bad audience/issuer, bad signature)
+- [ ] Unit tests for the JWX authenticator (signed, expired, missing `exp`, wrong audience/issuer, unsigned rejection)
 - [ ] Unit tests for PrincipalProfile (construction, defaults, context storage/retrieval)
-- [ ] Unit tests for config validation (mutual exclusivity, required fields, defaults)
-- [ ] Unit tests for middleware (JWT path, fallback path, invalid JWT no-fallback)
+- [ ] Unit tests for config validation (JWKS-only verification, required URI, defaults)
+- [ ] Unit tests for middleware (signed JWT, plain-header-only, missing JWT without fallback, invalid JWT rejection)
 - [ ] Unit tests for UserInfoHandler (enriched profile, plain profile, backward-compatible)
-- [ ] E2E tests for all 22 acceptance scenarios (Ginkgo/Gomega + Go Playwright for US4 frontend)
+- [ ] E2E tests for active signed, unsigned-rejection, profile, plain-header, and UI acceptance scenarios
 - [ ] Frontend tests for header display (with email, without email, with picture, initials fallback)

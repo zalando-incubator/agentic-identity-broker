@@ -37,6 +37,8 @@ the broker's default `http://localhost:14000`. Admin `/api` requests must match
 this URL's Host authority; ingress and other reverse proxies must preserve it.
 Forwarded Host headers are not trusted. `/health` probes remain unrestricted.
 
+The chart installs an ingress NetworkPolicy by default. It permits the end-user port but denies the admin port until you select trusted proxy pods. The cluster CNI must enforce ingress NetworkPolicy. See [Admin proxy access](#admin-proxy-access) before you enable the admin API.
+
 ### Install with External PostgreSQL
 
 For production deployments with an existing PostgreSQL database:
@@ -128,6 +130,9 @@ See [values.yaml](values.yaml) for the complete list of configuration options.
 | `serviceAccount.irsa.role` | IAM role ARN for IRSA | `""` |
 | `ingress.enduser.enabled` | Enable Ingress for end-user API | `false` |
 | `ingress.admin.enabled` | Enable Ingress for admin API | `false` |
+| `networkPolicy.enabled` | Apply a broker ingress policy. A supported CNI must enforce it. | `true` |
+| `networkPolicy.adminProxy.namespaceLabels` | Select the trusted admin proxy namespace. Empty denies admin ingress. | `{}` |
+| `networkPolicy.adminProxy.podLabels` | Select trusted admin proxy pods in that namespace. Empty denies admin ingress. | `{}` |
 | `resources.requests.cpu` | CPU request | `100m` |
 | `resources.requests.memory` | Memory request | `128Mi` |
 | `commonLabels` | Labels applied to all chart resources | `{}` |
@@ -158,6 +163,9 @@ See [values.yaml](values.yaml) for the complete list of configuration options.
 | `broker.tokenExchange.clientAssertion.jwksUri` | Explicit client-assertion JWKS endpoint; empty discovers it from the issuer. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMinRefresh` | Minimum client-assertion JWKS refresh interval (Go duration); empty defaults to `15m`. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMaxRefresh` | Maximum client-assertion JWKS refresh interval (Go duration); empty defaults to `max(jwksMinRefresh, 1h)`. | `""` |
+| `broker.tokenRefresh.lookaheadDuration` | String (Go duration): refresh before expiry; set below each provider access-token lifetime. | `"5m"` |
+| `broker.tokenRefresh.backgroundWorkers` | Integer (1–20): concurrent refreshes per replica. The 20-worker cap reserves 5 of 25 pooled database connections. | `10` |
+| `broker.tokenRefresh.sweep.defaultPageSize` | Integer (1–1000): default sessions per page for the externally triggered admin sweep. | `100` |
 | `broker.telemetry.serviceName` | Service name reported in every telemetry signal | `agentic-identity-broker` |
 | `broker.telemetry.resourceAttributes` | Additional OTel resource attributes (map) | `{}` |
 | `broker.telemetry.traces.enabled` | Enable trace export via OTLP | `true` |
@@ -278,6 +286,29 @@ ingress:
           - path: /
             pathType: ImplementationSpecific
 ```
+
+### Admin proxy access
+
+CAUTION: Do not expose the admin pod port to untrusted workloads. A direct client can forge the plain principal header.
+
+The default policy permits port `8000` from any source and denies port `14000`. Select the namespace and pods of your authenticated admin proxy to permit admin traffic:
+
+```yaml
+networkPolicy:
+  adminProxy:
+    namespaceLabels:
+      kubernetes.io/metadata.name: ingress-nginx
+    podLabels:
+      app.kubernetes.io/name: ingress-nginx
+```
+
+Replace the example labels with labels from your proxy deployment. The chart requires both label maps when you permit admin ingress. The proxy must authorize operators. In plain-header mode, it must remove caller-supplied principal headers and set the configured admin header. In JWT mode, it must forward a signed operator JWT that the configured JWKS validates. Route the sweep CronJob through that proxy.
+
+The chart requires `service.type: ClusterIP` while this policy is enabled. A `NodePort` or `LoadBalancer` can bypass pod ingress policy on some networks. If you disable `networkPolicy.enabled`, install an equivalent ingress restriction before you serve admin requests. Make sure that your CNI enforces the policy and that no other NetworkPolicy permits port `14000`.
+
+Set `service.ports.enduser` equal to `broker.server.enduser.port` and `service.ports.admin` equal to `broker.server.admin.port`. The two listener ports must differ. The chart rejects mismatches even when its policy is disabled.
+
+If you configure JWT pre-authentication on either server, set `verification: jwks` and a JWKS URI. The broker rejects unsigned pre-authentication JWT configuration at startup.
 
 ## Database Migration
 

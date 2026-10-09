@@ -74,7 +74,7 @@ spec:
           {{- toYaml .Values.securityContext | nindent 10 }}
         image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
-        # Uses migration image entrypoint (/usr/local/bin/migrate)
+        # The image guard validates migrations before execing /usr/local/bin/migrate.
         args:
           - "-path"
           - "/app/migrations"
@@ -163,7 +163,7 @@ spec:
           {{- toYaml .Values.securityContext | nindent 10 }}
         image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
-        # Uses migration image entrypoint (/usr/local/bin/migrate)
+        # The image guard validates migrations before execing /usr/local/bin/migrate.
         args:
           - "-path"
           - "/app/migrations"

@@ -88,6 +88,7 @@ type App struct {
 
 	// JWT pre-authentication (optional, nil when not configured)
 	JWTAuthenticator             domjwtauth.JWTAuthenticator
+	AdminJWTAuthenticator        domjwtauth.JWTAuthenticator
 	ApprovalRequestAuthenticator *httpmiddleware.ApprovalRequestAuthenticator
 
 	// Handler groups for routing
@@ -297,6 +298,12 @@ func (b *Builder) Build() (*App, error) {
 	}
 	if b.logger == nil {
 		return nil, fmt.Errorf("logger is required")
+	}
+	if jwt := b.config.Server.EndUser.Authentication.JWT; jwt != nil && jwt.Verification == "none" {
+		return nil, fmt.Errorf("end-user JWT authentication requires JWKS signature verification")
+	}
+	if jwt := b.config.Server.Admin.Authentication.JWT; jwt != nil && jwt.Verification == "none" {
+		return nil, fmt.Errorf("admin JWT authentication requires JWKS signature verification")
 	}
 
 	oauthCfg, err := b.config.OAuth2AuthServer.Resolve()
@@ -589,7 +596,7 @@ func (b *Builder) Build() (*App, error) {
 
 	// Build service configuration from application config
 	// Constitution Principle VII: Configuration-Driven Design
-	cfg := oauth2session.NewConfigFromPorts(b.config.ThirdPartyOAuth2, b.config.Server.EndUser.PublicURL)
+	cfg := oauth2session.NewConfigFromPorts(b.config.ThirdPartyOAuth2, b.config.TokenRefresh, b.config.Server.EndUser.PublicURL)
 	readTimeout := b.config.Storage.Timeouts.Read
 	if readTimeout <= 0 {
 		readTimeout = 5 * time.Second
@@ -737,37 +744,11 @@ func (b *Builder) Build() (*App, error) {
 
 	// Create JWT pre-authentication adapter if configured
 	// Per Constitution Principle VII: Configuration-Driven Design — only create when JWT block present
-	if b.config.Server.EndUser.Authentication.JWT != nil {
-		jwtCfg := b.config.Server.EndUser.Authentication.JWT
-
-		// Validate JWT config mutual exclusivity (defense-in-depth, also checked by config validator)
-		if jwtCfg.Verification == "none" && jwtCfg.JWKSURI != "" {
-			return nil, fmt.Errorf("authentication.jwt: verification 'none' and jwks_uri are mutually exclusive")
-		}
-
-		// Create CEL evaluator for JWT claim extraction (domain layer)
-		celConfig := domjwtauth.CELEvaluatorConfig{
-			PrincipalExpression:   jwtCfg.ClaimExtraction.PrincipalExpression,
-			DisplayNameExpression: jwtCfg.ClaimExtraction.DisplayNameExpression,
-			EmailExpression:       jwtCfg.ClaimExtraction.EmailExpression,
-			PictureURLExpression:  jwtCfg.ClaimExtraction.PictureURLExpression,
-		}
-		celEval, err := domjwtauth.NewCELEvaluator(celConfig, b.logger)
+	if jwtCfg := b.config.Server.EndUser.Authentication.JWT; jwtCfg != nil {
+		jwtAuthenticator, err := b.newJWTAuthenticator(jwtCfg)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create CEL evaluator for JWT pre-auth: %w", err)
+			return nil, fmt.Errorf("failed to create end-user JWT authenticator: %w", err)
 		}
-
-		// Create JWT authenticator adapter (uses lestrrat-go/jwx v4)
-		jwtAuthenticator, err := jwtauthadapter.NewJWXAuthenticator(jwtauthadapter.JWXAuthenticatorConfig{
-			JWTConfig:    jwtCfg,
-			CELEvaluator: celEval,
-			HTTPClient:   &http.Client{Timeout: 10 * time.Second},
-			Logger:       b.logger,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create JWT authenticator: %w", err)
-		}
-
 		app.JWTAuthenticator = jwtAuthenticator
 		prevShutdown := app.Shutdown
 		app.Shutdown = func(ctx context.Context) error {
@@ -778,6 +759,28 @@ func (b *Builder) Build() (*App, error) {
 			return errors.Join(jwtAuthenticator.Shutdown(ctx), prevErr)
 		}
 		b.logger.Info("JWT pre-authentication enabled",
+			"header_name", jwtCfg.HeaderName,
+			"verification", jwtCfg.Verification,
+			"has_audience", jwtCfg.ExpectedAudience != "",
+			"has_issuer", jwtCfg.ExpectedIssuer != "",
+		)
+	}
+
+	if jwtCfg := b.config.Server.Admin.Authentication.JWT; jwtCfg != nil {
+		jwtAuthenticator, err := b.newJWTAuthenticator(jwtCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create admin JWT authenticator: %w", err)
+		}
+		app.AdminJWTAuthenticator = jwtAuthenticator
+		prevShutdown := app.Shutdown
+		app.Shutdown = func(ctx context.Context) error {
+			var prevErr error
+			if prevShutdown != nil {
+				prevErr = prevShutdown(ctx)
+			}
+			return errors.Join(jwtAuthenticator.Shutdown(ctx), prevErr)
+		}
+		b.logger.Info("admin JWT pre-authentication enabled",
 			"header_name", jwtCfg.HeaderName,
 			"verification", jwtCfg.Verification,
 			"has_audience", jwtCfg.ExpectedAudience != "",
@@ -829,6 +832,8 @@ func (b *Builder) Build() (*App, error) {
 		PermissionSets:     admin.NewPermissionSetsHandler(app.PermissionSetService, app.ProviderService, b.logger),
 		CIMDClientKeys:     admin.NewCIMDClientKeysHandler(app.CIMDKeyService, b.logger),
 	}
+	app.AdminHandlers.SessionSweep = admin.NewSessionSweepHandler(
+		oauth2session.NewSessionSweepService(b.storage.SessionExpiry(), app.OAuth2SessionService, b.logger), b.logger)
 
 	agentDetailHandler := consent.NewAgentDetailHandler(app.ConsentService, b.logger, app.SessionTokenService)
 
@@ -1172,6 +1177,16 @@ func (b *Builder) Build() (*App, error) {
 		SPA:                  handlers.NewSPAHandler(b.staticWebResourcesPath, b.logger),
 	}
 
+	// Drain admitted refreshes while telemetry and the upstream transport are still live.
+	prevSessionShutdown := app.Shutdown
+	app.Shutdown = func(ctx context.Context) error {
+		refreshErr := app.OAuth2SessionService.Close(ctx)
+		if prevSessionShutdown != nil {
+			return errors.Join(refreshErr, prevSessionShutdown(ctx))
+		}
+		return refreshErr
+	}
+
 	// Start maintenance only after all fallible construction has completed.
 	switch oauthCfg.(type) {
 	case *ports.LocalOAuth2Config, *ports.HybridOAuth2Config:
@@ -1207,6 +1222,29 @@ func (b *Builder) Build() (*App, error) {
 	}
 
 	return app, nil
+}
+
+func (b *Builder) newJWTAuthenticator(jwtCfg *ports.JWTConfig) (*jwtauthadapter.JWXAuthenticator, error) {
+	celEval, err := domjwtauth.NewCELEvaluator(domjwtauth.CELEvaluatorConfig{
+		PrincipalExpression:   jwtCfg.ClaimExtraction.PrincipalExpression,
+		DisplayNameExpression: jwtCfg.ClaimExtraction.DisplayNameExpression,
+		EmailExpression:       jwtCfg.ClaimExtraction.EmailExpression,
+		PictureURLExpression:  jwtCfg.ClaimExtraction.PictureURLExpression,
+	}, b.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CEL evaluator for JWT pre-auth: %w", err)
+	}
+
+	jwtAuthenticator, err := jwtauthadapter.NewJWXAuthenticator(jwtauthadapter.JWXAuthenticatorConfig{
+		JWTConfig:    jwtCfg,
+		CELEvaluator: celEval,
+		HTTPClient:   &http.Client{Timeout: 10 * time.Second},
+		Logger:       b.logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JWT authenticator: %w", err)
+	}
+	return jwtAuthenticator, nil
 }
 
 func normalizedIssuerURI(raw string) string {

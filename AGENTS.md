@@ -35,11 +35,13 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 
 `cmd/agentic-identity-broker/` | Broker CLI, configuration, and dual-server startup
 `cmd/extproc-token-exchange/` | ExtProc CLI, telemetry bridge, and gRPC startup
+`cmd/migration-guard/` | Migration-image entrypoint; enforces the index-036 directive before SQL
+`internal/migrationguard/` | Shared preflight for the image and PostgreSQL test runners
 
 ### API Contracts
 
 `api/enduser/openapi.yaml` | End-user API: consent, OAuth2, sessions, and approvals
-`api/admin/openapi.yaml` | Admin API: agents, services, resources, and permission sets
+`api/admin/openapi.yaml` | Admin API: agents, services, resources, permission sets, and session sweep
 
 ### Specs (Feature Requirements)
 
@@ -112,6 +114,8 @@ It can use routing middleware and configuration. Do not let adapters import each
 
 Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. Treat a new ADR in the same PR only as a proposal.
 
+For feature 029 only, the stakeholder accepted ADRs 038 and 039 in writing in this conversation on 2026-10-09. This same-PR exception does not apply to other ADRs. It does not clear the migration `036` directive-guard gate.
+
 | ADR | File | Decision |
 |---|---|---|
 | 002 | `adrs/002-configuration-libraries.md` | Viper + Cobra + godotenv config |
@@ -146,6 +150,8 @@ Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. 
 | 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
+| 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
+| 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic exception for concurrent session-expiry index migration `036` |
 
 ## Domain Glossary
 

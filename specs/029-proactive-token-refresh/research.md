@@ -113,37 +113,31 @@ PostgreSQL's `uuid` ordering, so both adapters return identical pages.
 - *`LIMIT/OFFSET`*: The precedent is `UserFilter` (`internal/ports/storage.go:56-60`). It skips rows
   under mutation. Rejected.
 
-## R4 — Index migration and the "no-transaction directive" (DB-001, FR-014, SC-006)
+## R4 — Index migration and the no-transaction directive (DB-001, FR-014, SC-006)
 
-**Decision**: BLOCKED. DB-001 and `AGENTS.md` require a concurrent index build with a no-transaction directive for a large table. Constitution Principle IX requires every migration to fully apply or fully roll back on failure. PostgreSQL does not make concurrent index creation atomic; a driver change alone does not resolve this conflict. The current golang-migrate driver also has no such directive. Do not implement migration 036 until a design meets every binding rule.
+**Decision: ACCEPTED EXCEPTION; GUARDED MIGRATION VERIFIED.** On 2026-10-09, the user accepted ADR 039 and its named Principle IX non-atomic exception in the feature discussion for PR #196. The same-PR approval overrides only the general new-ADR proposal rule for feature 029. The user separately accepted ADR 038 and the four exact admin API choices in writing on 2026-10-09.
 
-The proposed statements are not an approved migration:
+T019's directive guard and T020's migration `036` are implemented and proven. The PostgreSQL tests observe both a valid index lifecycle and non-atomic invalid-index recovery. Phase 2.5 can begin.
 
-- `up`: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at);`
-- `down`: `DROP INDEX CONCURRENTLY IF EXISTS idx_user_sessions_access_token_expires_at;`
+**Why the exception is necessary**: DB-001 and `AGENTS.md:200-202` require a concurrent build and a no-transaction directive for a large table. Constitution Principle IX requires migrations to fully apply or fully roll back. PostgreSQL 15 cannot run `CREATE INDEX CONCURRENTLY` inside a transaction block. A failed build can leave an `INVALID` index in `pg_index` that the planner cannot use but writes still maintain. The user-selected operational risk does not satisfy atomic rollback. Constitution lines 565–571 require an accepted ADR before implementation.
 
-**Evidence**:
-- golang-migrate v4.17.0 sends a single-statement migration without an explicit transaction (`build/docker/Dockerfile.migrate:30-57`; ADR 009). It does not interpret a no-transaction directive. The existing `030` migration follows that behavior, but precedent does not override `AGENTS.md`.
-- PostgreSQL can leave an `INVALID` index after a failed concurrent build. `IF NOT EXISTS` does not remove that index. Operator recovery is not an atomic rollback.
-- The stakeholder accepts an invalid index after a failed build. This operational risk acceptance does not satisfy Principle IX's atomic rollback requirement.
-- Adding an ignored directive comment would falsely claim compliance. An explicit design resolution must precede migration creation and the SC-006 index test.
+**Runner and directive dependency**: `build/docker/Dockerfile.migrate` packages the `golang-migrate` v4.17.0 CLI behind `cmd/migration-guard`. Both Helm grants modes use that image. Go v4.20.1 migration runners in integration, E2E, and adapter tests call `migrationguard.Validate` before SQL (ADR 039 lists their callsites). Neither CLI nor library natively recognizes `-- migrate:no-transaction`; the shared guard enforces it. Their PostgreSQL driver executes migration SQL without an explicit migration-wide transaction. Separate version transactions do not make concurrent DDL atomic.
 
-If the design gate passes, `036` is the next free migration number. Review the `Migrate(35)` pin in `tests/integration/storage/infra/thirdparty_service_test.go` when migration 036 lands.
+The shared guard rejects an incomplete or malformed `036` pair, other SQL, transaction controls, unreadable files, `x-multi-statement=true`, and this directive on unrelated migrations. It checks the exact first line and one approved concurrent statement per file. The image entrypoint validates before it passes the original arguments to `migrate`.
 
-**Index shape**: Use a plain B-tree on `access_token_expires_at`, as DB-001 states. A partial index
-`WHERE access_token_expires_at IS NOT NULL` was considered. NULL-expiry rows are rare, and the plain
-index is exactly what the spec names. Rejected as premature.
+**Guard proof (2026-10-09)**: `TestValidate` and `TestMigrationArgs` pass. Both migration image architectures build. An incomplete pair failed image validation before PostgreSQL received any DDL. Both the packaged CLI v4.17.0 and Go driver v4.20.1 applied, dropped, and reapplied the named index against PostgreSQL 15. Both Helm grants modes render the guarded image arguments. Permanent migration `036` passed `TestMigration036SessionExpiryIndexLifecycle` and `TestMigration036InterruptedBuildRecovery` with a real PostgreSQL container. The `Migrate(35)` test fixture remains pinned at 35 to exercise the preceding CIMD schema; migration 036 does not change that entity.
 
-**SC-006 verification**: Add a PostgreSQL integration test in
-`internal/adapters/storage/postgres/user_session_test.go` (`//go:build integration`). It seeds a
-realistic distribution: about 5,000 sessions, ≤2% expiring within the window, and some NULL
-expiries. It runs `ANALYZE user_sessions` and then
-`EXPLAIN (FORMAT JSON) <ListExpiringSessions query>`, and asserts that the plan references
-`idx_user_sessions_access_token_expires_at`. It does **not** set `enable_seqscan = off`. The
-existing grants test does that (`thirdparty_provider_test.go:252-270`), but a forced plan does not
-show index use "under normal operation".
+**Implemented index**: Migration `036` creates a plain B-tree named `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at)` with `CREATE INDEX CONCURRENTLY`. DOWN uses `DROP INDEX CONCURRENTLY`. Neither direction uses `IF NOT EXISTS`. Each file has only the recognized directive and one statement.
 
-**Rejected workaround**: A `-- +migrate notransaction` comment is ignored by golang-migrate. It does not meet the repository rule or the constitution's atomicity requirement.
+**Failure handling**: A failed Helm migration Job blocks the release. Read `schema_migrations.version` and `dirty`. Then query the named index in `pg_index` for `indisvalid`, the table, and `pg_get_indexdef`. Do not use `IF NOT EXISTS` or an automatic retry to conceal the error. At dirty UP version 36, drop an inspected invalid index **concurrently outside a transaction** and confirm its absence.
+
+Use `migrate force 35` only after the schema matches version 35. Then retry through the guarded runner. If the expected index is valid, the build can have finished before version recording failed. Review it before `migrate force 36`. For failed DOWN at dirty version 35, inspect whether the index remains before you choose `force 36` and retry DOWN, or `force 35` when the drop completed. `force` repairs metadata only. ADR 039 gives the full stop-and-review procedure, including clean-version mismatches. This procedure is not atomic rollback.
+
+**Implementation evidence**: `tests/integration/migrations/migrations_test.go` verifies guarded apply, DOWN, reapply, invalid-index failure, dirty-version recovery, and preserved session data against real PostgreSQL. `internal/adapters/storage/postgres/user_session_test.go` still needs the SC-006 normal-planner index assertion in Phase 2.5. Seed about 5,000 sessions with at most 2% due and some NULL expiries.
+
+Run `ANALYZE user_sessions` and `EXPLAIN (FORMAT JSON)` for the production query. Assert that the named, valid index appears in a normal planner plan. Do not set `enable_seqscan = off`. Do not treat ordinary lifecycle tests as proof of atomicity.
+
+**Rejected approaches**: A blocking transaction can preserve atomic failure semantics but can block writes on the large session table. The user chose the concurrent policy instead. A bare `-- +migrate notransaction` comment is ignored by golang-migrate. A driver change or operator cleanup alone cannot grant a Principle IX exception.
 
 ## R5 — Lookahead predicate and where it lives (FR-001, FR-002, FR-013)
 
@@ -207,11 +201,13 @@ Rejected.
   re-check (R1, R5) prevents duplicate upstream calls even when two flights race. Singleflight and
   the in-flight map are latency and resource optimizations.
 
-**Flight result shape**: The flight returns `*storage.UserSession`, not the decrypted token. Each
-on-demand joiner decrypts its own copy after the flight resolves. Today the shared result carries
-plaintext (`tokenResult{session, token}`, `service.go:1325-1341`). Removing plaintext from the shared
-singleflight result narrows SR-003 exposure, and the cost is one local AES-GCM decrypt per joiner,
-served from the branch-key cache.
+**Flight result shape**: The flight returns `refreshFlightResult{session, refreshed, trigger, client}`.
+The session contains encrypted tokens, never the decrypted token. Each on-demand joiner decrypts
+its own copy after the flight resolves. The `refreshed` flag prevents a background joiner from
+renewing a freshly issued short-lived token again. If an on-demand leader made no change and the
+session remains due within lookahead, the background joiner re-checks under the row lock.
+This narrows SR-003 exposure. Each joiner decrypts locally with the branch-key cache.
+The shared value carries only the provider's known/public boolean, never decrypted provider credentials.
 
 **Known operational behavior**:
 - If the provider keeps failing, each request in the window can start a new background attempt once

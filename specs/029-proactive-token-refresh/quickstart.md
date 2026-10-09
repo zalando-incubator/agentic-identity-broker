@@ -80,9 +80,7 @@ The tests are deterministic. The background tests synchronize on the gated fake 
 
 ## 4. PostgreSQL: migration, repository, index (SC-006)
 
-**BLOCKED**: Do not create or run migration 036 until the Phase 2d design satisfies DB-001,
-`AGENTS.md`, and constitution Principle IX. The proposed concurrent migration cannot prove
-atomic rollback on failure (research R4). After that gate passes, run:
+ADR 039 accepts a named non-atomic exception for migration `036`. The directive guard and migration lifecycle tests pass on PostgreSQL. Run the full infrastructure suite:
 
 ```bash
 just test-integration-infra
@@ -90,7 +88,7 @@ just test-integration-infra
 
 | Check | Location | Pass condition |
 |---|---|---|
-| Migration 036 applies, fails safely, rolls back, and reapplies | `tests/integration/migrations/` | A compliant design proves atomic failure behavior and the lifecycle tests pass. |
+| Migration 036 applies, recovers from an invalid index, rolls back, and reapplies | `tests/integration/migrations/` | The guarded lifecycle and dirty-version recovery tests pass. Recovery is not atomic rollback. |
 | `ListExpiringSessions` contract E1–E7 | `internal/adapters/storage/postgres/user_session_test.go` | Same table as the memory adapter, green |
 | Index used under normal planning | same file | `EXPLAIN (FORMAT JSON)` of the production query, after seeding about 5,000 rows (≤2% due) and running `ANALYZE`, references `idx_user_sessions_access_token_expires_at`. `enable_seqscan` is **not** altered. |
 
@@ -103,8 +101,7 @@ WHERE access_token_expires_at IS NOT NULL AND access_token_expires_at <= now() +
 -- Expect: Index Scan / Bitmap Index Scan using idx_user_sessions_access_token_expires_at
 ```
 
-The previous manual invalid-index cleanup described a non-atomic failure. It is not an
-approved substitute for the Phase 2d migration gate.
+ADR 039 requires inspection of `pg_index.indisvalid` and the migration version before manual recovery. This procedure handles the accepted non-atomic failure mode; it does not make the concurrent build atomic.
 
 ## 5. Manual sweep against a running broker
 
@@ -112,6 +109,12 @@ This is an endpoint-contract smoke test. The E2E suite covers populated-session 
 uses defaults: in-memory storage, admin on `:14000` with `public_url` `http://localhost:14000`, and
 `token_refresh` defaults. Admin authentication has no default principal header, so set one; without
 it the sweep answers `500 server_misconfiguration` by design.
+
+The checked-in `config.yaml` uses the mock issuer at `127.0.0.1:9001`. Start that issuer in another terminal before you run the broker:
+
+```bash
+go -C mocks/upstream-oauth2-server run ./cmd/mock-upstream-oauth2-server/main.go
+```
 
 ```bash
 IDENTITY_BROKER_SERVER_ADMIN_AUTHENTICATION_PREAUTH_PRINCIPAL_HEADER_NAME=X-Remote-User \

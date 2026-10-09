@@ -5,9 +5,9 @@ package jwtauth
 
 import "context"
 
-// JWTAuthenticator is the domain port interface for JWT authentication.
-// It abstracts JWT parsing, signature verification (JWKS or none), temporal validation,
-// and CEL-based claim extraction from the middleware layer.
+// JWTAuthenticator is the domain port for signed JWT pre-authentication.
+// It abstracts JWKS signature verification, temporal validation, and CEL-based
+// claim extraction from the middleware layer.
 //
 // Implementations:
 //   - internal/adapters/jwtauth/jwx_authenticator.go (lestrrat-go/jwx v4)

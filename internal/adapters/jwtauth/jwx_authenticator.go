@@ -62,14 +62,19 @@ type JWXAuthenticator struct {
 	logger       *slog.Logger
 }
 
-// NewJWXAuthenticator creates a new JWX-based JWT authenticator.
-// It initializes the JWKS cache (for "jwks" verification mode) and validates configuration.
+// NewJWXAuthenticator creates an authenticator with a required JWKS cache.
 func NewJWXAuthenticator(cfg JWXAuthenticatorConfig) (*JWXAuthenticator, error) {
 	if cfg.JWTConfig == nil {
 		return nil, fmt.Errorf("JWTConfig is required")
 	}
 	if cfg.CELEvaluator == nil {
 		return nil, fmt.Errorf("CELEvaluator is required")
+	}
+	if cfg.JWTConfig.Verification != "" && cfg.JWTConfig.Verification != "jwks" {
+		return nil, fmt.Errorf("JWTConfig requires JWKS signature verification")
+	}
+	if cfg.JWTConfig.JWKSURI == "" {
+		return nil, fmt.Errorf("JWTConfig requires a JWKS URI")
 	}
 
 	logger := cfg.Logger
@@ -84,50 +89,48 @@ func NewJWXAuthenticator(cfg JWXAuthenticatorConfig) (*JWXAuthenticator, error) 
 		logger:       logger,
 	}
 
-	// Initialize JWKS cache for signed verification mode
-	if cfg.JWTConfig.Verification == "jwks" || cfg.JWTConfig.Verification == "" {
-		httpClient := cfg.HTTPClient
-		if httpClient == nil {
-			httpClient = http.DefaultClient
-		}
-
-		cache, err := jwkfetch.NewCache(
-			context.Background(),
-			httprc.NewClient(),
-			jwkfetch.WithHTTPClient(httpClient),
-			jwkfetch.WithParseOptions(jwk.WithStrictKeySetParsing(true)),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create JWKS cache: %w", err)
-		}
-
-		err = cache.Register(
-			context.Background(),
-			cfg.JWTConfig.JWKSURI,
-			jwkfetch.WithMinInterval(DefaultJWKSMinRefreshInterval),
-			jwkfetch.WithMaxInterval(DefaultJWKSMaxRefreshInterval),
-			jwkfetch.WithWaitReady(false),
-		)
-		if err != nil {
-			return nil, errors.Join(
-				fmt.Errorf("failed to register JWKS URL: %w", err),
-				cache.Shutdown(context.Background()),
-			)
-		}
-
-		// Force an initial refresh with a 30-second timeout so startup fails fast
-		// if the JWKS endpoint is unreachable (fail-closed per spec FR-004).
-		initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if _, err = cache.Refresh(initCtx, cfg.JWTConfig.JWKSURI); err != nil {
-			return nil, errors.Join(
-				fmt.Errorf("failed to fetch JWKS on startup from %s (verify URL is reachable and returns valid JWKS): %w", cfg.JWTConfig.JWKSURI, err),
-				cache.Shutdown(context.Background()),
-			)
-		}
-
-		auth.jwksCache = cache
+	// Initialize the JWKS cache before accepting any tokens.
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
 	}
+
+	cache, err := jwkfetch.NewCache(
+		context.Background(),
+		httprc.NewClient(),
+		jwkfetch.WithHTTPClient(httpClient),
+		jwkfetch.WithParseOptions(jwk.WithStrictKeySetParsing(true)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create JWKS cache: %w", err)
+	}
+
+	err = cache.Register(
+		context.Background(),
+		cfg.JWTConfig.JWKSURI,
+		jwkfetch.WithMinInterval(DefaultJWKSMinRefreshInterval),
+		jwkfetch.WithMaxInterval(DefaultJWKSMaxRefreshInterval),
+		jwkfetch.WithWaitReady(false),
+	)
+	if err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("failed to register JWKS URL: %w", err),
+			cache.Shutdown(context.Background()),
+		)
+	}
+
+	// Force an initial refresh with a 30-second timeout so startup fails fast
+	// if the JWKS endpoint is unreachable (fail-closed per spec FR-004).
+	initCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err = cache.Refresh(initCtx, cfg.JWTConfig.JWKSURI); err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("failed to fetch JWKS on startup from %s (verify URL is reachable and returns valid JWKS): %w", cfg.JWTConfig.JWKSURI, err),
+			cache.Shutdown(context.Background()),
+		)
+	}
+
+	auth.jwksCache = cache
 
 	return auth, nil
 }
@@ -140,10 +143,9 @@ func (a *JWXAuthenticator) Shutdown(ctx context.Context) error {
 	return a.jwksCache.Shutdown(ctx)
 }
 
-// Authenticate implements jwtauth.JWTAuthenticator.
-// It parses the raw JWT string, verifies signature (JWKS mode), validates temporal claims,
-// and extracts principal + profile via CEL expressions.
-// All validation failures are logged as structured audit events (FR-020/SR-005).
+// Authenticate implements jwtauth.JWTAuthenticator. It verifies the JWT against JWKS,
+// validates temporal claims, and extracts principal and profile values via CEL.
+// Validation failures are logged as structured audit events (FR-020/SR-005).
 func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jwtauth.AuthResult, error) {
 	// Strip Bearer prefix for Authorization header
 	tokenStr := a.stripBearerPrefix(rawJWT)
@@ -214,35 +216,22 @@ func (a *JWXAuthenticator) stripBearerPrefix(rawJWT string) string {
 
 // parseAndVerify parses the JWT and verifies its signature using JWKS.
 func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) (jwt.Token, error) {
-	if a.jwksCache != nil {
-		// JWKS verification mode: ensure cache is ready, then fetch keyset
-		if !a.jwksCache.Ready(ctx, a.jwksURL) {
-			if _, err := a.jwksCache.Refresh(ctx, a.jwksURL); err != nil {
-				a.logger.Error("failed to fetch JWKS", "url", a.jwksURL, "error", err)
-				return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
-			}
-		}
-
-		keySet, err := a.jwksCache.Lookup(ctx, a.jwksURL)
-		if err != nil {
+	if !a.jwksCache.Ready(ctx, a.jwksURL) {
+		if _, err := a.jwksCache.Refresh(ctx, a.jwksURL); err != nil {
 			a.logger.Error("failed to fetch JWKS", "url", a.jwksURL, "error", err)
 			return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
 		}
-
-		token, err := jwt.Parse([]byte(tokenStr),
-			jwt.WithKeySet(keySet, jws.WithInferAlgorithmFromKey(true)),
-			jwt.WithValidate(false), // We do our own validation below
-		)
-		if err != nil {
-			return nil, a.classifyParseError(err)
-		}
-		return token, nil
 	}
 
-	// Unsigned mode: parse without verification
+	keySet, err := a.jwksCache.Lookup(ctx, a.jwksURL)
+	if err != nil {
+		a.logger.Error("failed to fetch JWKS", "url", a.jwksURL, "error", err)
+		return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
+	}
+
 	token, err := jwt.Parse([]byte(tokenStr),
-		jwt.WithVerify(false),
-		jwt.WithValidate(false),
+		jwt.WithKeySet(keySet, jws.WithInferAlgorithmFromKey(true)),
+		jwt.WithValidate(false), // Validate claims below, after signature verification.
 	)
 	if err != nil {
 		return nil, a.classifyParseError(err)
@@ -250,21 +239,14 @@ func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) 
 	return token, nil
 }
 
-// validateClaims validates the expiration claim (exp) and optional aud/iss claims.
-// When verification is "none", exp is validated only if present in the token.
-// When verification is "jwks" (or the default), exp must be present.
+// validateClaims requires a non-expired exp claim and checks configured aud/iss claims.
 func (a *JWXAuthenticator) validateClaims(token jwt.Token) error {
 	exp, hasExp := token.Expiration()
 
-	// In "none" mode, exp is optional — only validate if the claim is present.
-	// In signed ("jwks") mode, exp is mandatory.
 	if !hasExp || exp.IsZero() {
-		if a.config.Verification != "none" {
-			return jwtauth.ErrMissingExpiry
-		}
-		// none mode + no exp: skip expiry check
-	} else if time.Now().After(exp) {
-		// exp is present and the token has expired — reject regardless of mode
+		return jwtauth.ErrMissingExpiry
+	}
+	if time.Now().After(exp) {
 		return jwtauth.ErrTokenExpired
 	}
 

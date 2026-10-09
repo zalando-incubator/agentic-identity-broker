@@ -452,3 +452,92 @@ func TestRequestContextConfigurationCLIOverridesEnvironment(t *testing.T) {
 
 	t.Fatal("CLI source not found")
 }
+
+func TestTokenRefreshConfigurationPrecedence(t *testing.T) {
+	tests := []struct {
+		name      string
+		file      string
+		env       bool
+		cli       bool
+		lookahead time.Duration
+		workers   int
+		pageSize  int
+	}{
+		{name: "defaults", lookahead: 5 * time.Minute, workers: 10, pageSize: 100},
+		{name: "file overrides defaults", file: "token_refresh:\n  lookahead_duration: 7m\n  background_workers: 3\n  sweep:\n    default_page_size: 125\n", lookahead: 7 * time.Minute, workers: 3, pageSize: 125},
+		{name: "environment overrides file", file: "token_refresh:\n  lookahead_duration: 7m\n  background_workers: 3\n  sweep:\n    default_page_size: 125\n", env: true, lookahead: 8 * time.Minute, workers: 4, pageSize: 250},
+		{name: "CLI overrides environment and file", file: "token_refresh:\n  lookahead_duration: 7m\n  background_workers: 3\n  sweep:\n    default_page_size: 125\n", env: true, cli: true, lookahead: 9 * time.Minute, workers: 5, pageSize: 375},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMinimalConfigEnv(t)
+			file := tt.file
+			if file == "" {
+				file = "{}\n"
+			}
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(path, []byte(file), 0o600))
+			t.Setenv("IDENTITY_BROKER_CONFIG_PATH", path)
+
+			if tt.env {
+				t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION", "8m")
+				t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS", "4")
+				t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE", "250")
+			}
+
+			loader := NewLoader()
+			if tt.cli {
+				cmd := &cobra.Command{Use: "test"}
+				cmd.Flags().Duration("token_refresh.lookahead_duration", 0, "")
+				cmd.Flags().Int("token_refresh.background_workers", 0, "")
+				cmd.Flags().Int("token_refresh.sweep.default_page_size", 0, "")
+				require.NoError(t, cmd.ParseFlags([]string{
+					"--token_refresh.lookahead_duration=9m",
+					"--token_refresh.background_workers=5",
+					"--token_refresh.sweep.default_page_size=375",
+				}))
+				loader.SetCommand(cmd)
+			}
+
+			cfg, err := loader.GetConfig(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, tt.lookahead, cfg.TokenRefresh.LookaheadDuration)
+			assert.Equal(t, tt.workers, cfg.TokenRefresh.BackgroundWorkers)
+			assert.Equal(t, tt.pageSize, cfg.TokenRefresh.Sweep.DefaultPageSize)
+		})
+	}
+}
+
+func TestTokenRefreshConfigurationRejectsInvalidSettings(t *testing.T) {
+	tests := []struct {
+		name  string
+		env   string
+		value string
+		field string
+	}{
+		{"zero lookahead", "IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION", "0s", "token_refresh.lookahead_duration"},
+		{"workers above pool cap", "IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS", "21", "token_refresh.background_workers"},
+		{"page size above maximum", "IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE", "1001", "token_refresh.sweep.default_page_size"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMinimalConfigEnv(t)
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(path, []byte("{}\n"), 0o600))
+			t.Setenv("IDENTITY_BROKER_CONFIG_PATH", path)
+			t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION", "5m")
+			t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS", "10")
+			t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE", "100")
+			t.Setenv(tt.env, tt.value)
+
+			_, err := NewLoader().GetConfig(context.Background())
+			require.ErrorContains(t, err, tt.field)
+			if tt.field == "token_refresh.background_workers" {
+				assert.Contains(t, err.Error(), "25")
+				assert.Contains(t, err.Error(), "connection")
+			}
+		})
+	}
+}

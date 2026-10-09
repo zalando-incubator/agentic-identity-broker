@@ -44,11 +44,12 @@ Two codebase facts shape the design:
 
 **Primary Dependencies**: chi v5 (admin routing), sqlx + pgx v5 (PostgreSQL), `golang.org/x/sync/singleflight`
 (already a direct dependency, `go.mod:62`), OpenTelemetry Go v1.46 (`metric`, `trace`; global providers per
-ADR 011), Viper/Cobra (config). **No new module dependency** (ISO 8601 parsing is a 15-line boundary parser, R10).
+ADR 011), Viper/Cobra (config). **No new module dependency**; the ISO 8601 parser uses the Go standard library (R10).
 
 **Storage**: PostgreSQL (production) and in-memory (dev/test). There is no table or column change.
-The required expiry index has no approved migration design. Migration `036` remains blocked by the
-atomicity and no-transaction-directive conflict in research R4.
+Accepted ADR 039 permits a concurrent expiry-index build under a narrow, non-atomic Principle IX
+exception. Migration `036` and the no-transaction directive guard are implemented on each runner path
+(research R4). The PostgreSQL suite and packaged guarded CLI passed their final checks.
 
 **Testing**: stdlib `testing` + testify (unit, table-driven). Ginkgo/Gomega E2E in `tests/e2e/`.
 testcontainers `postgres:15-alpine` for repository, migration, and `EXPLAIN` integration tests (`-tags=integration`).
@@ -79,12 +80,14 @@ testcontainers `postgres:15-alpine` for repository, migration, and `EXPLAIN` int
 - The per-route write-deadline lift applies to `POST /api/sessions/sweep` only. The caller owns the
   sweep timeout (R8).
 
-**Scale/Scope**: 1 ADR, 1 migration pair, 1 new port method (2 adapters), 3 new domain files
-(`refresh_trigger.go`, `background_refresh.go`, `sweep.go`), 1 admin handler + 1 parser, config +
-Helm + docs, 1 E2E file (10 scenarios), and about 250 lines changed in `oauth2session/service.go`.
+**Scale/Scope**: Two separately accepted ADRs (038 for refresh, 039 for the index exception), one
+gated migration pair, one new port method (two adapters), three new domain files
+(`refresh_trigger.go`, `background_refresh.go`, `sweep.go`), one admin handler and parser, config,
+Helm, docs, one E2E file (10 scenarios), and about 250 lines changed in `oauth2session/service.go`.
 
-Research R1–R3 and R5–R13 resolve their design questions. R4 remains blocked by the
-concurrent-index and atomic-migration conflict. No implementation can begin while it remains open.
+Research R1–R13 resolve the design questions. R4 records the accepted non-atomic exception, the
+implemented runner guard, and the migration recovery proof. The design gates passed before feature
+implementation.
 
 ## Constitution Check
 
@@ -117,21 +120,19 @@ concurrent-index and atomic-migration conflict. No implementation can begin whil
 - [x] **API Documentation**: The fragment merges into `api/admin/openapi.yaml` in Phase 2c (new
   `Sessions` tag, path, and two schemas). `docs/api/` is for end-user APIs only, so it is N/A for an
   admin endpoint.
-- [x] **API Changes**: The endpoint is additive. **Stakeholder sign-off is a Phase 2c gate.**
-  The contract fragment identifies four decisions requiring written confirmation: the page-size
-  cap and duration grammar now stated in API-002, plus unknown-field rejection and the missing
-  operator-principal `500` response. Record approval in the PR or issue before implementation.
-- [ ] **Database Design — BLOCKED**: DB-001 and `AGENTS.md` require a concurrent index build with
-  a no-transaction directive for a large table. Principle IX requires atomic migrations.
-  golang-migrate has no such directive, and a failed concurrent build can leave an invalid index
-  (research R4). No migration file or index test can proceed until one design satisfies all rules.
+- [x] **API Changes**: The endpoint is additive. On 2026-10-09, the user approved all four admin
+  API choices in writing for PR #196: the page-size cap of 1000, the restricted ISO 8601 grammar,
+  unknown-field rejection with `400`, and missing operator principal with `500`. ADR 038 records
+  those choices. This is user approval in this conversation, not a claim of a PR review comment.
+  T018 records this approval before endpoint implementation.
+- [x] **Database Design and Migration — VERIFIED**: ADR 039 accepts a named non-atomic exception to Principle IX. The shared validator guards every migration runner. Migration `036` applies, rolls back, and reapplies on PostgreSQL 15. An interrupted build left an invalid index and dirty version; the recovery test inspected both, removed the invalid index, repaired metadata, and retried successfully. The normal-planner SC-006 test remains T032 in Phase 2.5.
 - [x] **E2E Acceptance Tests**: All 10 acceptance scenarios get E2E tests in
   `tests/e2e/proactive_token_refresh_test.go` before implementation (Testing Strategy).
 - [x] **E2E Test Mapping**: 1:1 scenario-to-`It()` mapping, tabulated below.
 - [x] **E2E Red-Phase Design**: All ten scenarios now include an expectation that fails semantically
   before implementation. US1-S1 observes a missing saturation-drop WARN event. US2-S1..S3
   require new trigger-aware success or failure events. US1-S2/S3 and US3-S1..S4 already target
-  missing proactive refresh or sweep behavior. T025 must record the actual red results.
+  missing proactive refresh or sweep behavior. T025 records the actual red results below.
 - [x] **Frontend Playwright E2E**: N/A. No React UI change.
 - [x] **Frontend Screenshots**: N/A. No React UI change.
 
@@ -145,9 +146,10 @@ concurrent-index and atomic-migration conflict. No implementation can begin whil
 - [x] **Architecture Docs**: `ARCHITECTURE.md` is updated in the same PR: the admin route tree
   (`:463-533`), worker shutdown (`:538-556`), session refresh and concurrency (`:664-726`, including
   the existing singleflight description at `:721-723`), and the glossary.
-- [x] **ADRs**: **REQUIRED.** `adrs/038-proactive-token-refresh.md` (Accepted) in Phase 2a, before
-  implementation (R13). It is consistent with ADR 004 (storage), ADR 011 (OTel providers), and
-  ADR 012. ADR 012 governs ExtProc's own cache, which is unaffected.
+- [x] **ADRs — ACCEPTED FOR FEATURE 029**: On 2026-10-09, the user separately accepted
+  `adrs/038-proactive-token-refresh.md` and `adrs/039-concurrent-session-expiry-index.md` in
+  writing for PR #196. The same-PR approval is scoped to feature 029 despite the general
+  proposal rule in `AGENTS.md`. ADR 009 still governs the dedicated migration image.
 - [x] **Library-First Security**: No cryptography is introduced. Encryption stays behind
   `ports.EncryptionPort` (AWS Encryption SDK / memory). The ISO 8601 parser is not a security
   primitive.
@@ -159,9 +161,10 @@ concurrent-index and atomic-migration conflict. No implementation can begin whil
 - [x] **End-User Docs**: N/A for `docs/api/` (admin API). Operator docs:
   `docs/operations/session-sweep.md` (runbook and reference CronJob) and the `docs/configuration.md`
   Token Refresh section.
-- [ ] **Migration Testing — BLOCKED**: Apply, rollback, reapply, and SC-006 index tests follow a
-  compliant migration design. Do not treat the existing lifecycle harness as proof of atomicity
-  after an interrupted concurrent build (research R4).
+- [x] **Migration Testing**: The final PostgreSQL suite passed migration `036` apply, rollback,
+  reapply, invalid-index recovery, directive rejection, and normal-planner `EXPLAIN` checks.
+  The packaged migration guard applied version `36` with a valid index. A malformed directive
+  failed before SQL or version changes. Recovery is not atomic rollback (research R4, ADR 039).
 - [x] **Hexagonal Architecture**: The domain (`oauth2session`) depends on the
   `UserSessionExpiryRepository` and `UserSessionRefreshRepository` ports. The admin handler parses
   input only, and defaulting, bounds, and classification live in `SessionSweepService`. No adapter
@@ -171,22 +174,21 @@ concurrent-index and atomic-migration conflict. No implementation can begin whil
   `StorageError` wrapping, both adapters, and contract tests shared across adapters (R2,
   contracts/ports.md §1).
 
-**Gate status**: Phase 2 database design is blocked. The API still needs T018 written sign-off,
-and ADR 038 must be accepted. Do not start Phase 2.5 or feature implementation while a gate is open.
+**Gate status**: ADR 039, the admin API contract, and both migration runner versions have written approval and execution proof. Migration `036` and its non-atomic recovery tests pass. Phase 2.5 can begin; the production-query planner test remains a foundational task.
 
-**Post-Design Re-check**: DB-002 now names the existing locked, update-only refresh. DB-003 uses
-the focused expiry port. The domain model names `SessionSweepService` and defines the logged
+**Post-Design Re-check**: DB-002 names the existing locked, update-only refresh. DB-003 uses the
+focused expiry port. The domain model names `SessionSweepService` and defines the logged
 `SessionTokensRefreshed` event. `ForceRefreshSession` uses `triggered_by=on-demand`. The 15-second
-admin write timeout still requires the Phase 0 deadline-lift refactor. The migration conflict
-remains unresolved and is not an accepted constitution exception.
+admin write timeout still requires the Phase 0 deadline-lift refactor. R4 records the accepted
+non-atomic exception. The directive guard and migration `036` are implemented and verified.
 
 ## Spec Alignment
 
-The specification and design now agree on DB-002, DB-003, the `SessionSweepService` diagram,
+The specification and design agree on DB-002, DB-003, the `SessionSweepService` diagram,
 `SessionTokensRefreshed` log semantics, and the on-demand trigger. The clarification and FR-003,
-FR-009 also name the locked re-check instead of idempotent refresh upserts. API-002 names the
-restricted ISO 8601 grammar. DB-001 remains blocked: research R4 does not supply a migration
-that meets both `AGENTS.md` and constitution Principle IX.
+FR-009 name the locked re-check instead of idempotent refresh upserts. API-002 names the
+restricted ISO 8601 grammar. DB-001 names the accepted non-atomic exception in ADR 039.
+The concurrent path still requires an enforced directive and cannot provide atomic rollback (research R4).
 
 ## Project Structure
 
@@ -211,13 +213,14 @@ specs/029-proactive-token-refresh/
 
 ```text
 adrs/
-└── 038-proactive-token-refresh.md                       # NEW — binding decisions (R13)
+├── 038-proactive-token-refresh.md                       # ACCEPTED — feature 029 refresh behavior
+└── 039-concurrent-session-expiry-index.md                # ACCEPTED — feature 029 Principle IX exception
 
 api/admin/openapi.yaml                                   # MODIFIED — Sessions tag, /api/sessions/sweep, 2 schemas
 
 migrations/
-├── 036_user_sessions_access_token_expiry_index.up.sql   # BLOCKED — no approved migration design
-└── 036_user_sessions_access_token_expiry_index.down.sql # BLOCKED — no approved migration design
+├── 036_user_sessions_access_token_expiry_index.up.sql   # BLOCKED — runner guard not yet proven
+└── 036_user_sessions_access_token_expiry_index.down.sql # BLOCKED — runner guard not yet proven
 
 internal/ports/
 ├── config.go                                            # MODIFIED — TokenRefreshConfig, Config.TokenRefresh
@@ -295,7 +298,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 |-------|---------|-----------|
 | **Phase 0** | Pre-implementation refactoring: `Unwrap` on response wrappers; extract `refreshDueSession` | Included |
 | **Phase 1** | Setup: confirm no dependency change | Required (no-op) |
-| **Phase 2** | Design Preconditions: ADR, glossary, config + Helm, API merge + sign-off, compliant migration, E2E red | **MANDATORY; blocked by migration design** |
+| **Phase 2** | Design Preconditions: accepted ADRs and API, glossary, config + Helm, guarded index migration, E2E red | **MANDATORY; blocked by runner and migration implementation gates** |
 | **Phase 2.7** | Entity Boilerplate | Skipped |
 | **Phase 2.5** | Foundational: expiry port + adapters + contract and `EXPLAIN` tests; `RefreshTrigger`; predicate | Required |
 | **Phase 3** | US1 (P1): background refresher, lookahead submission, shutdown drain, metrics and logs | Required |
@@ -304,7 +307,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 | **Phase 6** | Documentation: ARCHITECTURE.md, runbook, configuration docs | Required |
 | **Phase N** | Constitution Compliance verification | **MANDATORY** |
 
-- [x] Phase 0 (refactoring): **include**, as a separate PR with no behavior change.
+- [x] Phase 0 (refactoring): **include** without behavior change. The stakeholder waived a separate PR on 2026-10-09; this refactor remains in the feature branch.
   1. Add `Unwrap() http.ResponseWriter` to `responseWriter` (`internal/adapters/http/middleware.go:107`).
      Confirm that every other wrapper on the admin chain (otelchi, `tokenEndpointTelemetry`) passes
      `http.ResponseController` through. Add the `NewHandler` + real `http.Server{WriteTimeout}` test
@@ -312,8 +315,9 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
   2. Replace `refreshExpiredSession` with `refreshDueSession(ctx, principal, serviceID, threshold, trigger)`,
      called only as `(…, time.Now(), RefreshTriggerOnDemand)`. Add `UserSession.AccessTokenExpiresBy`
      and use it in the lock callback (equivalent to the current `HasValidAccessToken` check, asserted
-     by test). Make the singleflight flight return `*storage.UserSession` and decrypt per joiner. All
-     existing `oauth2session` and token-exchange tests must pass unchanged.
+     by test). Return a ciphertext-bearing session through singleflight and decrypt per joiner.
+     The final shared result also records whether the leader refreshed and which trigger ran, so a
+     background joiner does not refresh a short-lived token again. Existing token-exchange tests pass.
 
   Reason: Both are structural prerequisites that reviewers can approve without understanding
   proactive refresh. Item 2 is the seam that US1 and US3 plug into.
@@ -329,8 +333,8 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 ### Phase 2: Design Preconditions
 
 **2a — Domain model & ADR**
-2. Write `adrs/038-proactive-token-refresh.md` (Context, Decision, Consequences, Status: Accepted)
-   per research R13. Add it to the AGENTS.md ADR index.
+2. Record the separate written acceptance of `adrs/038-proactive-token-refresh.md` on
+   2026-10-09 for PR #196. The scoped same-PR approval applies to feature 029 only.
 3. Add the seven glossary entries to `ARCHITECTURE.md` (data-model.md → Glossary additions).
 
 **2b — Configuration**
@@ -341,13 +345,11 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 6. Add Helm `broker.tokenRefresh` to values, schema, ConfigMap, and README (configuration.md → Helm).
 
 **2c — API**
-7. Merge the contract fragment into `api/admin/openapi.yaml`. Obtain and record stakeholder
-   confirmation of the fragment's four flagged decisions. **Gate: no Phase 5 work before sign-off.**
+7. Merge the fragment into `api/admin/openapi.yaml`. ADR 038 records the four admin API choices.
+   The user approved them in writing on 2026-10-09 for PR #196, before endpoint implementation.
 
-**2d — Database (BLOCKED)**
-8. Resolve the `AGENTS.md` directive and Principle IX atomicity conflict in research R4 before
-   writing migration `036`. Do not implement the candidate concurrent index statements while
-   the design gate is open. After resolution, test apply, failure rollback, rollback, and reapply.
+**2d — Database (COMPLETE)**
+8. ADR 039 accepts the named non-atomic exception. The shared guard protects the migration image, both Helm Job modes, and every Go runner listed in ADR 039. Migration `036` contains single-statement concurrent UP and DOWN files. PostgreSQL tests verify apply, rollback, reapply, invalid-index failure, dirty-version recovery, and unchanged session data. The packaged CLI and Go driver execute the statements outside explicit transactions. Phase 2.5 can begin.
 
 **2e — Frontend**: N/A.
 
@@ -411,10 +413,11 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 ### Phase N: Constitution Compliance Verification
 
 28. Run `just check`, `just test`, `just test-integration-infra`, and `just test-e2e-backend`.
-29. Walk the constitution Implementation-Phase checklist against the diff. In particular, confirm:
-    no principal in session logs or metric attributes; an API matching the merged OpenAPI exactly;
-    the ADR accepted; Helm rendering; migrations tested; a builder-only wiring diff; a routing-only
-    route registration.
+29. Walk the constitution Implementation-Phase checklist against the diff. Cite the written
+    2026-10-09 approval of the four admin API choices and separate ADR 038 and ADR 039 acceptance
+    for PR #196. Confirm that the directive runner, migration image, PostgreSQL recovery tests,
+    and Helm paths meet ADR 039.
+    Check that session logs and metrics omit principals and that builder-only wiring remains intact.
 
 ## Testing Strategy
 
@@ -433,19 +436,18 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 
 | Spec Scenario | E2E Test Location | Test Description |
 |---------------|-------------------|------------------|
-| US1-S1 | `tests/e2e/proactive_token_refresh_test.go` | `It("[US1-S1] drops a due refresh without blocking and leaves a healthy session untouched when the pool is full")` |
-| US1-S2 | same | `It("[US1-S2] returns the current token immediately and refreshes the session in the background when expiry is inside the lookahead window")` |
-| US1-S3 | same | `It("[US1-S3] does not wait for or duplicate a background refresh already in flight")` |
-| US2-S1 | same | `It("[US2-S1] refreshes an expired token and logs the committed on-demand success")` |
-| US2-S2 | same | `It("[US2-S2] requires re-authentication and logs the on-demand failure when both tokens expire")` |
-| US2-S3 | same | `It("[US2-S3] preserves the stored session and logs one on-demand provider failure")` |
-| US3-S1 | same | `It("[US3-S1] refreshes only sessions expiring within the window across pages")` |
-| US3-S2 | same | `It("[US3-S2] records an unrefreshable session as failed and continues")` |
-| US3-S3 | same | `It("[US3-S3] keeps sessions consistent when two replicas sweep concurrently")` |
-| US3-S4 | same | `It("[US3-S4] reports would-be refreshes without contacting providers in dry-run mode")` |
+| US1-S1 | `tests/e2e/proactive_token_refresh_test.go` | Drops a saturated refresh without delaying due or healthy exchanges. |
+| US1-S2 | same | Returns the old token before a background renewal commits. |
+| US1-S3 | same | Deduplicates exchanges during an in-flight refresh. |
+| US2-S1 | same | Renews once and logs success after persistence. |
+| US2-S2 | same | Requires reauthentication without an upstream call. |
+| US2-S3 | same | Preserves encrypted tokens after provider rejection. |
+| US3-S1 | same | Paginates due rows and excludes healthy and timeless rows. |
+| US3-S2 | same | Counts an expired refresh token as a failure and continues. |
+| US3-S3 | same | Refreshes a shared session once across concurrent replicas. |
+| US3-S4 | same | Counts due rows without provider calls or writes. |
 
-*Line numbers are filled in during Phase 2f.* The concrete observations and pass conditions per
-scenario are in [quickstart.md §2](quickstart.md#2-acceptance-scenarios-e2e-principle-xiii).
+See [quickstart.md §2](quickstart.md#2-acceptance-scenarios-e2e-principle-xiii) for pass conditions.
 
 **Red Phase Requirements**:
 - US1-S1 fails because the baseline cannot admit one background refresh or emit the saturation
@@ -457,6 +459,26 @@ scenario are in [quickstart.md §2](quickstart.md#2-acceptance-scenarios-e2e-pri
 - US3-S1..S4 fail on the absent route and the exact expected counts.
 - `XIt`, `PIt`, `XDescribe`, `PDescribe`, `XContext`, `PContext`, and `Skip()` are forbidden. No
   red-phase comments.
+
+**Observed Red Phase (2026-10-08)**:
+
+`go run github.com/onsi/ginkgo/v2/ginkgo --label-filter='!performance' --focus='Proactive Token Refresh' ./tests/e2e/` compiled and ran all ten cases with the pinned CLI.
+The result was 0 passed, 10 failed, and 0 pending. The focus filter excluded 646 unrelated specs.
+
+| Scenario | Concrete pre-implementation failure |
+|---|---|
+| US1-S1 | No `session.oauth2.proactive_refresh_dropped` WARN event appeared; expected one. |
+| US1-S2 | The provider received zero background refresh requests; expected one. |
+| US1-S3 | The provider received zero requests for the in-flight refresh; expected one. |
+| US2-S1 | The committed refresh INFO event lacked `session_id`. |
+| US2-S2 | No `session.oauth2.refresh_failed` ERROR event appeared; expected one. |
+| US2-S3 | The provider-rejection ERROR event lacked `session_id`. |
+| US3-S1 | The absent admin route returned 404; expected a 200 sweep summary. |
+| US3-S2 | The absent admin route returned 404; expected a 200 sweep summary. |
+| US3-S3 | The absent admin route returned 404; expected a 200 sweep summary. |
+| US3-S4 | The absent admin route returned 404; expected a 200 dry-run summary. |
+
+The existing success and provider-rejection events include the raw `actor` principal. The new tests reject that value after they check trigger fields. This privacy requirement remains open.
 
 **Test Data Strategy**:
 - Fixtures: `fixtures.DefaultPrincipal()`, `fixtures.ValidAgent()`, `fixtures.GitHubService()`
@@ -506,7 +528,8 @@ fixture-only changes during implementation.
 **Integration Tests** (`-tags=integration`, testcontainers PostgreSQL 15):
 - `internal/adapters/storage/postgres/user_session_test.go`: `ListExpiringSessions` contract E1–E7,
   and the SC-006 `EXPLAIN` index-usage assertion under normal planner settings.
-- `tests/integration/migrations/`: 036 in the apply/rollback/reapply cycle.
+- `tests/integration/migrations/`: After the Phase 2d gate, test the guarded runner, `036` UP,
+  DOWN, reapply, directive rejection, invalid-index failure, and dirty-version recovery.
 
 **Test Coverage Goals**:
 - Unit: every branch of `backgroundRefresher.submit` and `Close`, every R11 classification row,
@@ -518,5 +541,5 @@ fixture-only changes during implementation.
 ## Complexity Tracking
 
 No TDD exception is planned. Every feature E2E case must compile and fail semantically before
-implementation. The unresolved concurrent-index migration is a Phase 2d blocker, not an
-accepted exception to constitution Principle IX.
+implementation. The accepted ADR 039 permits only migration `036` to be non-atomic. Phase 2d
+remains blocked until the directive guard and guarded migration are implemented and proven.

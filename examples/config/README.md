@@ -126,6 +126,7 @@ Third-party OAuth2 session management configuration. Demonstrates:
 - Security-focused comments explaining each setting
 - Environment variable substitution for sensitive keys
 - A stable public HTTPS `server.enduser.public_url` for CIMD confidential services
+- Proactive token refresh with a 5m lookahead, 10 background workers, and 100 sessions per sweep page
 
 
 This configuration is required when enabling OAuth2 session management with third-party
@@ -148,22 +149,22 @@ tokens during the authorization flow. Compromise allows state token forgery and 
 
 ### `jwt-preauth.yaml`
 
-JWT Pre-Authentication configuration. Demonstrates:
-- Signed JWT validation with JWKS endpoint (production recommended)
-- Unsigned JWT support for service mesh environments (`verification: none`)
-- CEL expressions for principal and profile attribute extraction (display name, email, picture URL)
-- Fail-closed behavior when `authentication.jwt` is configured (no plain-header fallback)
-- Mutual exclusivity enforcement (`verification: none` + `jwks_uri` → startup error)
+JWT pre-authentication configuration for either server. It demonstrates:
+- Signed JWT verification against a required JWKS endpoint
+- CEL expressions that extract the principal, display name, email, and picture URL
+- Fail-closed behavior without a plain-header fallback when JWT pre-authentication is configured
+- Plain-header pre-authentication when JWT pre-authentication is not configured
 
 **Usage:**
-```bash
-# Include jwt section in your main configuration file under server.enduser.authentication
-# See jwt-preauth.yaml for complete examples of signed, unsigned, and plain-header-only configurations
+```yaml
+# Add this section to the server.enduser or server.admin authentication configuration.
+# See jwt-preauth.yaml for signed JWT and plain-header examples.
 server:
   enduser:
     authentication:
       jwt:
         jwks_uri: https://auth.example.com/.well-known/jwks.json
+        verification: jwks
         claim_extraction:
           principal_expression: "claims.sub"
           email_expression: "claims.email"
@@ -171,7 +172,6 @@ server:
 
 **Key Features:**
 - Cryptographic JWT signature verification via JWKS (default mode)
-- Optional unsigned JWT support for trusted environments (explicit opt-in)
 - CEL-based claim extraction for principal, display name, email, and picture URL
 - Enriched `/api/me` response with profile attributes
 - Fail-closed security: invalid JWTs always rejected, no silent fallback

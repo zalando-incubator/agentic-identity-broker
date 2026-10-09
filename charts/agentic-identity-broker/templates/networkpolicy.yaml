@@ -1,0 +1,48 @@
+{{- if ne (int .Values.service.ports.enduser) (int .Values.broker.server.enduser.port) -}}
+{{- fail "enduser port must match between service.ports.enduser and broker.server.enduser.port" -}}
+{{- end -}}
+{{- if ne (int .Values.service.ports.admin) (int .Values.broker.server.admin.port) -}}
+{{- fail "admin port must match between service.ports.admin and broker.server.admin.port" -}}
+{{- end -}}
+{{- if eq (int .Values.service.ports.enduser) (int .Values.service.ports.admin) -}}
+{{- fail "enduser and admin ports must differ" -}}
+{{- end -}}
+{{- if .Values.networkPolicy.enabled -}}
+{{- if ne .Values.service.type "ClusterIP" -}}
+{{- fail "networkPolicy.enabled requires service.type=ClusterIP; NodePort and LoadBalancer can bypass pod ingress policy" -}}
+{{- end -}}
+{{- $namespaceLabels := .Values.networkPolicy.adminProxy.namespaceLabels -}}
+{{- $podLabels := .Values.networkPolicy.adminProxy.podLabels -}}
+{{- if ne (empty $namespaceLabels) (empty $podLabels) -}}
+{{- fail "networkPolicy.adminProxy requires both namespaceLabels and podLabels; leave both empty to deny admin traffic" -}}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agentic-identity-broker.fullname" . }}-ingress
+  namespace: {{ include "agentic-identity-broker.namespace" . }}
+  labels:
+    {{- include "agentic-identity-broker.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agentic-identity-broker.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.service.ports.enduser }}
+    {{- if $namespaceLabels }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $namespaceLabels | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.ports.admin }}
+    {{- end }}
+{{- end }}

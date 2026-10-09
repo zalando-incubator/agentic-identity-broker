@@ -64,6 +64,9 @@ func Validate(cfg *ports.Config) error {
 	if err := validateTokenExchangeConfig(&cfg.TokenExchange, &cfg.Security); err != nil {
 		return err
 	}
+	if err := validateTokenRefreshConfig(&cfg.TokenRefresh); err != nil {
+		return err
+	}
 
 	// Validate encryption configuration
 	if err := validateEncryptionConfig(&cfg.Encryption); err != nil {
@@ -569,10 +572,8 @@ func validateMemoryConfig(cfg *ports.MemoryConfig) error {
 	return nil
 }
 
-// validateJWTConfig validates JWT pre-authentication configuration.
-// Applies defaults for HeaderName, Verification, and PrincipalExpression when not set.
-// Enforces mutual exclusivity between verification: none and jwks_uri.
-// Enforces HTTPS for JWKS URI per SR-004.
+// validateJWTConfig applies defaults and requires signed JWKS verification.
+// It enforces HTTPS for the JWKS URI per SR-004.
 func validateJWTConfig(jwt *ports.JWTConfig, prefix string, security *ports.SecurityConfig) error {
 	// Apply defaults for fields that have default values
 	if jwt.HeaderName == "" {
@@ -586,27 +587,17 @@ func validateJWTConfig(jwt *ports.JWTConfig, prefix string, security *ports.Secu
 	}
 
 	// Validate verification mode
-	if jwt.Verification != "jwks" && jwt.Verification != "none" {
+	if jwt.Verification != "jwks" {
 		return formatValidationError(
 			prefix+".verification",
 			jwt.Verification,
-			"'jwks' or 'none'",
+			"'jwks' signature verification",
 			nil,
 		)
 	}
 
-	// Mutual exclusivity: verification: none + jwks_uri → startup error (FR-003a)
-	if jwt.Verification == "none" && jwt.JWKSURI != "" {
-		return formatValidationError(
-			prefix,
-			"verification: none with jwks_uri: "+jwt.JWKSURI,
-			"verification 'none' and jwks_uri are mutually exclusive",
-			nil,
-		)
-	}
-
-	// Required jwks_uri when verification is jwks
-	if jwt.Verification == "jwks" && jwt.JWKSURI == "" {
+	// Signed JWTs require a JWKS endpoint.
+	if jwt.JWKSURI == "" {
 		return formatValidationError(
 			prefix+".jwks_uri",
 			"",
@@ -678,6 +669,19 @@ func validateTokenExchangeConfig(cfg *ports.TokenExchangeConfig, security *ports
 	}
 	if clientAssertion.JWKSMaxRefresh < 0 {
 		return formatValidationError("token_exchange.client_assertion.jwks_max_refresh", clientAssertion.JWKSMaxRefresh.String(), "non-negative duration", nil)
+	}
+	return nil
+}
+
+func validateTokenRefreshConfig(cfg *ports.TokenRefreshConfig) error {
+	if cfg.LookaheadDuration <= 0 {
+		return formatValidationError("token_refresh.lookahead_duration", cfg.LookaheadDuration.String(), "greater than 0", nil)
+	}
+	if cfg.BackgroundWorkers < 1 || cfg.BackgroundWorkers > 20 {
+		return formatValidationError("token_refresh.background_workers", strconv.Itoa(cfg.BackgroundWorkers), "between 1 and 20; each in-flight refresh holds a database connection; at most 20 of the 25 pooled connections may be used by background refresh", nil)
+	}
+	if cfg.Sweep.DefaultPageSize < 1 || cfg.Sweep.DefaultPageSize > 1000 {
+		return formatValidationError("token_refresh.sweep.default_page_size", strconv.Itoa(cfg.Sweep.DefaultPageSize), "between 1 and 1000", nil)
 	}
 	return nil
 }

@@ -205,7 +205,11 @@ func OptionalPrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// JWT authentication path (optional)
-			if authenticator != nil && jwtHeaderName != "" {
+			if jwtHeaderName != "" {
+				if authenticator == nil {
+					next.ServeHTTP(w, r)
+					return
+				}
 				jwtHeaderValue := r.Header.Get(jwtHeaderName)
 				if jwtHeaderValue != "" {
 					result, err := authenticator.Authenticate(r.Context(), jwtHeaderValue)

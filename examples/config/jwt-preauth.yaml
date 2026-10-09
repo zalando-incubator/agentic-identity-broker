@@ -1,9 +1,8 @@
 # JWT Pre-Authentication Configuration Examples
 #
-# These examples demonstrate how to configure JWT-based pre-authentication
-# for the Agentic Identity Broker. JWT pre-auth extracts the principal and
-# optional profile attributes from a signed or unsigned JWT provided by an
-# upstream reverse proxy, API gateway, or service mesh.
+# Configure JWT pre-authentication with a JWKS endpoint on either server.
+# The broker verifies each JWT signature before it reads principal or profile
+# claims from a reverse proxy, API gateway, or service mesh.
 #
 # When `authentication.jwt` is configured, requests missing the JWT header
 # fail closed with 401. The plain pre-auth header is not used as a runtime
@@ -12,10 +11,10 @@
 # For full documentation see: docs/configuration.md
 
 # =============================================================================
-# Example 1: Signed JWT with JWKS Verification (Production Recommended)
+# Example 1: Signed JWT with JWKS Verification
 # =============================================================================
-# Use when: Your reverse proxy (oauth2-proxy, Envoy, etc.) issues signed JWTs
-# and you want cryptographic verification of user identity.
+# Use when a reverse proxy or gateway issues signed JWTs.
+# The JWT must include an unexpired exp claim.
 #
 # server:
 #   enduser:
@@ -36,51 +35,7 @@
 #           picture_url_expression: "claims.picture"
 
 # =============================================================================
-# Example 2: Unsigned JWT (Service Mesh / Trusted Sidecar)
-# =============================================================================
-# Use when: Your service mesh (Istio, Linkerd) or trusted sidecar injects
-# unsigned JWTs with user claims. The upstream has already authenticated the
-# user; signature verification is not needed.
-#
-# ⚠️ Security: Only use verification: none in network environments where you
-# trust that JWT injection is controlled (e.g., mutual TLS service mesh).
-# jwks_uri MUST NOT be set when verification is "none" — startup will fail
-# if both are present.
-#
-# server:
-#   enduser:
-#     port: 8000
-#     authentication:
-#       preauth:
-#         principal_header_name: X-Remote-User
-#       jwt:
-#         header_name: X-JWT-Claims
-#         verification: none
-#         claim_extraction:
-#           principal_expression: "claims.sub"
-#           display_name_expression: "claims.preferred_username"
-#           email_expression: "claims.email"
-
-# =============================================================================
-# Example 3: Invalid Configuration (Startup Fails)
-# =============================================================================
-# This is an INVALID configuration that will cause a startup error.
-# verification: none and jwks_uri are mutually exclusive.
-#
-# server:
-#   enduser:
-#     port: 8000
-#     authentication:
-#       jwt:
-#         verification: none
-#         jwks_uri: https://auth.example.com/.well-known/jwks.json  # ❌ CONFLICT
-#         claim_extraction:
-#           principal_expression: "claims.sub"
-#
-# Error: "authentication.jwt: verification 'none' and jwks_uri are mutually exclusive"
-
-# =============================================================================
-# Example 4: Plain Header Pre-Authentication
+# Example 2: Plain Header Pre-Authentication
 # =============================================================================
 # This configuration extracts principals from the X-Remote-User header.
 # JWT authentication is not enabled.

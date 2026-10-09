@@ -3,6 +3,8 @@
 **Input**: Design documents from `/specs/016-jwt-preauth/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
 
+**Security amendment (2026-10-09):** Constitution Principle I supersedes the checked unsigned pre-authentication tasks. Both servers require signed JWKS verification. ADR 031 permits unsigned JWTs only as local-mode OAuth2 impersonation subjects. The task descriptions that follow record the signed-only outcome.
+
 **Tests**: Per Constitution Principle VIII (Test-Driven Development & Automated Testing), automated tests are MANDATORY for all features. Test tasks are included in each user story below and MUST be written before or alongside implementation.
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
@@ -20,7 +22,7 @@
 **Purpose**: Create directories and skeleton files for the JWT pre-auth feature
 
 - [x] T001 Create domain directory `internal/domain/jwtauth/` and adapter directory `internal/adapters/jwtauth/`
-- [x] T002 [P] Create configuration example file `examples/config/jwt-preauth.yaml` with signed, unsigned, and backward-compatible YAML examples from spec.md
+- [x] T002 [P] Create `examples/config/jwt-preauth.yaml` with signed JWT and plain-header-only examples; show `verification: none` as invalid
 - [x] T003 [P] Update `examples/config/README.md` to reference the new `jwt-preauth.yaml` configuration section
 
 ---
@@ -48,7 +50,7 @@
 - [x] T005 Define `JWTConfig` and `JWTClaimExtractionConfig` types in `internal/ports/config.go` with mapstructure tags
 - [x] T005a Extend `AuthenticationConfig` in `internal/ports/config.go` with `JWT *JWTConfig` pointer field
 - [x] T005b [P] Set defaults for JWT config in `DefaultServerConfig()` in `internal/ports/config.go`: `HeaderName: "Authorization"`, `Verification: "jwks"`, `PrincipalExpression: "claims.sub"`
-- [x] T005c [P] Verify `examples/config/jwt-preauth.yaml` committed (from T002) covers signed, unsigned, invalid-combo, and backward-compatible configs
+- [x] T005c [P] Confirm `examples/config/jwt-preauth.yaml` covers signed and plain-header modes without an unsigned acceptance example
 
 **Checkpoint**: Configuration requirements designed with YAML examples
 
@@ -85,8 +87,8 @@
 
 - [X] T009 Create E2E test helper `tests/e2e/helpers/mock_jwks_server.go` — mock JWKS server via `httptest.NewServer` serving test JWK set (reuse pattern from `tests/e2e/helpers/mock_upstream.go`)
 - [X] T009a [P] Create E2E test helper `tests/e2e/helpers/jwt_helpers.go` — JWT builder functions for signed/unsigned/expired/wrong-audience/wrong-issuer JWTs
-- [X] T009b [P] Create E2E test fixtures — add `SignedJWTConfig(jwksURL)`, `UnsignedJWTConfig()`, `NoJWTConfig()` fixture functions in `tests/e2e/fixtures/config.go` (extend existing file if present, create if not)
-- [X] T010 Write E2E acceptance tests in `tests/e2e/jwt_preauth_test.go` for all 22 acceptance scenarios from spec.md (US1: 6, US2: 5, US3: 4, US4: 3 via Go Playwright page objects, US5: 3, Edge: 1).
+- [X] T009b [P] Add `SignedJWTConfig(jwksURL)` and `NoJWTConfig()` to `tests/e2e/fixtures/config.go`
+- [X] T010 Write E2E acceptance tests in `tests/e2e/jwt_preauth_test.go` for active signed JWT, unsigned rejection, profile, UI, and plain-header scenarios
 - [X] T010a Map each acceptance scenario to one `It()` block with hierarchical structure: `Describe("JWT Pre-Authentication")` → `Describe("Signed JWT Authentication (US1)")` → `Context/It`
 - [X] T010b Include comment references to spec scenarios in format: `// Scenario X.Y from specs/016-jwt-preauth/spec.md (User Story N)`
 - [X] T010c Use Ginkgo/Gomega BDD framework following patterns in `tests/e2e/README.md`
@@ -110,7 +112,7 @@
 - [X] T014 [P] Create `AuthResult` value object in `internal/domain/jwtauth/auth_result.go` with fields: Principal, DisplayName, Email, PictureURL, Claims
 - [X] T015 [P] Create domain errors in `internal/domain/jwtauth/errors.go`: `ErrInvalidSignature`, `ErrTokenExpired`, `ErrAudienceMismatch`, `ErrIssuerMismatch`, `ErrClaimExtraction`, `ErrMalformedToken`, `ErrMissingExpiry`
 - [X] T016 Create CEL evaluator in `internal/domain/jwtauth/cel_evaluator.go` following pattern from `internal/domain/tokenexchange/cel_evaluator.go` — compile four CEL programs (principal, display_name, email, picture_url) at construction, evaluate at runtime with `claims` variable of type `map(string, any)`
-- [X] T017 Add JWT config validation in `internal/config/validator.go`: mutual exclusivity check (`verification: none` + `jwks_uri` → startup error), required `jwks_uri` when `verification: jwks`, CEL expression compilation validation at startup, JWKS URI HTTPS scheme enforcement per SR-004 (reject `http://` unless `skip_thirdparty_https_validation` is true)
+- [X] T017 Require JWKS verification and a non-empty `jwks_uri` in `internal/config/validator.go` for JWT pre-authentication on both servers; validate CEL expressions and the JWKS URI scheme
 
 **Checkpoint**: Foundation ready — user story implementation can now begin
 
@@ -129,14 +131,14 @@
 - [x] T018 [P] [US1] Unit tests for CEL evaluator in `internal/domain/jwtauth/cel_evaluator_test.go` — compile errors, string extraction, non-string handling, timeout, principal required
 - [x] T019 [P] [US1] Unit tests for PrincipalProfile in `internal/domain/principal/profile_test.go` — construction, defaults (DisplayName falls back to Principal), context storage/retrieval, nil optional fields
 - [x] T020 [P] [US1] Unit tests for jwx authenticator in `internal/adapters/jwtauth/jwx_authenticator_test.go` — valid signed JWT, invalid signature → error, expired JWT → error, wrong audience → error, wrong issuer → error, missing exp → error, malformed token → error
-- [x] T021 [P] [US1] Unit tests for config validation in `internal/config/validator_test.go` — mutual exclusivity, required fields, defaults, CEL expression validation
+- [x] T021 [P] [US1] Unit tests for config validation in `internal/config/validator_test.go` — JWKS-only verification, required URI, defaults, CEL validation
 
 ### Implementation for User Story 1
 
-- [x] T022 [US1] Implement jwx authenticator adapter in `internal/adapters/jwtauth/jwx_authenticator.go` — use `lestrrat-go/jwx/v3` for JWT parsing with `jwt.WithKeySet(keyset)` and `jwt.WithValidate(true)`, audience/issuer validation, Bearer prefix stripping for Authorization header, delegate claim extraction to CEL evaluator
+- [x] T022 [US1] Implement `internal/adapters/jwtauth/jwx_authenticator.go` with JWX v4 JWKS signature verification, explicit expiry/audience/issuer checks, Bearer prefix stripping, and CEL claim extraction
 - [x] T023 [US1] Extend `RequirePrincipalMiddleware` and `OptionalPrincipalMiddleware` in `internal/adapters/http/middleware/principal_middleware.go` — accept `JWTAuthenticator` parameter, check JWT header presence, authenticate via JWTAuthenticator, set both `WithPrincipal` and `WithProfile` in context, reject invalid JWT with 401 (fail-closed, no fallback)
-- [x] T024 [US1] Wire JWT authenticator in `internal/app/builder.go` `Build()` method — conditionally create CEL evaluator, JWKS adapter, and jwx authenticator when `config.Server.Enduser.Authentication.JWT != nil`, pass to enduser route config
-- [x] T025 [US1] Update `EnduserRouteConfig` in `internal/adapters/http/routing/enduser.go` — add optional `JWTAuthenticator` field, pass to middleware during route setup
+- [x] T024 [US1] Wire separate signed JWT authenticators for configured end-user and admin servers in `internal/app/builder.go`
+- [x] T025 [US1] Pass the appropriate pre-wired JWT authenticator through end-user and admin route configuration
 - [x] T026 [US1] Add structured audit logging for JWT validation failures (invalid signature, expired, audience/issuer mismatch) per FR-020/SR-005 in `internal/adapters/jwtauth/jwx_authenticator.go`
 
 **Checkpoint**: Signed JWT pre-authentication fully functional — E2E tests for US1 Scenarios 1-6 should turn GREEN
@@ -149,13 +151,13 @@
 
 **Independent Test**: Deploy with existing config (only `authentication.preauth.principal_header_name`), verify all endpoints work identically to current behavior.
 
-### Tests for User Story 5 [MANDATORY - Principle VIII] ⚠️
+### Tests for User Story 5
 
-- [X] T027 [P] [US5] Unit tests for middleware fallback logic in `internal/adapters/http/middleware/principal_middleware_test.go` — plain-header-only config works unchanged, JWT+header config prefers JWT when present, fallback to plain header when JWT absent, reject when JWT present but invalid (no silent fallback)
+- [X] T027 [P] [US5] Unit tests for middleware in `internal/adapters/http/middleware/principal_middleware_test.go` — plain-header-only mode works and JWT mode rejects missing/invalid JWT without fallback
 
 ### Implementation for User Story 5
 
-- [X] T028 [US5] Verify and test that middleware falls back to plain header when JWT header absent but plain header present in `internal/adapters/http/middleware/principal_middleware.go`
+- [X] T028 [US5] Verify that a configured JWT authenticator does not fall back to a plain header when the JWT header is absent in `internal/adapters/http/middleware/principal_middleware.go`
 - [X] T029 [US5] Verify and test that builder creates no JWT authenticator when `JWT` config is nil in `internal/app/builder.go`
 - [X] T030 [US5] Verify fail-closed behavior: when JWT header present but invalid, reject with 401 even when plain header also present (FR-013) in `internal/adapters/http/middleware/principal_middleware.go`
 
@@ -163,23 +165,23 @@
 
 ---
 
-## Phase 5: User Story 2 — Accept Unsigned (Pre-Authenticated) JWTs (Priority: P2)
+## Phase 5: User Story 2 — Reject Unsigned JWT Pre-Authentication (Priority: P1)
 
-**Goal**: Operators in service mesh environments can use unsigned JWTs (alg: "none") when explicitly configured.
+**Goal**: Both servers reject unsigned JWT pre-authentication. `verification: none` is invalid even when no JWKS URI is configured. The original opt-in goal is superseded by Constitution Principle I; ADR 031 applies only to local-mode impersonation subjects.
 
-**Independent Test**: Configure `authentication.jwt` with `verification: none`, send unsigned JWT, verify principal extraction. Verify unsigned JWTs rejected when verification is `jwks`. Verify startup fails when `verification: none` and `jwks_uri` both present.
+**Independent Test**: Send an unsigned JWT to signed JWKS pre-authentication and expect 401. Configure either server with `verification: none` and expect startup to fail.
 
-### Tests for User Story 2 [MANDATORY - Principle VIII] ⚠️
+### Tests for User Story 2
 
-- [X] T031 [P] [US2] Unit tests for unsigned JWT handling in `internal/adapters/jwtauth/jwx_authenticator_test.go` — unsigned JWT accepted when `verification: none`, unsigned JWT rejected when `verification: jwks`, signed JWT accepted without signature check when `verification: none`, expired JWT rejected regardless of verification mode
-- [X] T032 [P] [US2] Unit tests for config validation in `internal/config/validator_test.go` — startup fails when `verification: none` + `jwks_uri` both present (mutual exclusivity)
+- [X] T031 [P] [US2] Keep unsigned-with-JWKS rejection in `internal/adapters/jwtauth/jwx_authenticator_test.go` and reject `verification: none` in the adapter constructor
+- [X] T032 [P] [US2] Require `internal/config/validator_test.go` to reject `verification: none` with or without `jwks_uri` on both servers
 
 ### Implementation for User Story 2
 
-- [X] T033 [US2] Add unsigned mode to jwx authenticator in `internal/adapters/jwtauth/jwx_authenticator.go` — use `jwt.Parse(rawToken, jwt.WithVerify(false))` + `jwt.WithValidate(true)` when `verification: none`; always enforce expiry regardless of mode
-- [X] T034 [US2] Verify startup-time mutual exclusivity check (implemented in T017) in `internal/config/validator.go` produces clear error: `"authentication.jwt: verification 'none' and jwks_uri are mutually exclusive"` — verification only, no new code expected
+- [X] T033 [US2] Remove unverified parsing and optional-expiry behavior from `internal/adapters/jwtauth/jwx_authenticator.go`; always verify signatures against JWKS
+- [X] T034 [US2] Reject unsigned pre-authentication configuration on either server in `internal/config/validator.go`
 
-**Checkpoint**: Unsigned JWT support fully functional — E2E tests for US2 Scenarios 1-5 should turn GREEN
+**Checkpoint**: Signed JWKS authentication and unsigned rejection are enforced; the original unsigned acceptance tasks are superseded.
 
 ---
 
@@ -239,7 +241,7 @@
 - [X] T048 Verify user/stakeholder confirmed API design (document reference in PR) (Principle X)
 - [X] T049 Verify no database changes documented in PR (Principle IX)
 - [X] T050 Verify design system review completed — Avatar primitive, semantic tokens confirmed (Principle XI)
-- [X] T051 Verify E2E acceptance tests written in `tests/e2e/jwt_preauth_test.go` for all 22 spec scenarios including US4 Playwright frontend tests (Principle XIII)
+- [X] T051 Verify E2E acceptance tests in `tests/e2e/jwt_preauth_test.go` map to active signed JWT, unsigned-rejection, profile, UI, and plain-header scenarios
 - [X] T052 Verify E2E tests verified to FAIL before implementation (red phase) (Principle XIII)
 
 #### Implementation Phase Verification [MANDATORY]
@@ -260,9 +262,9 @@
 - [X] T059 [P] Confirm no migrations needed — profile enrichment is request-scoped
 
 **Security** (Principles I, III):
-- [X] T060 Verify security features enabled by default: `verification` defaults to `jwks`, unsigned requires explicit opt-in, fail-closed on all failures
+- [X] T060 Verify that `verification` permits only `jwks` and that both servers reject unsigned JWT pre-authentication; ADR 031 applies only to impersonation subjects
 - [X] T060a [P] Verify JWKS URI HTTPS scheme enforcement: `http://` JWKS URIs rejected at startup unless `skip_thirdparty_https_validation` is true (SR-004)
-- [X] T061 [P] Verify no custom cryptography — only `lestrrat-go/jwx/v3` and `google/cel-go` used
+- [X] T061 [P] Verify no custom cryptography — use `lestrrat-go/jwx/v4` and `google/cel-go`
 - [X] T062 [P] Verify structured audit logging present for JWT validation failures (SR-005/FR-020)
 
 **Architecture Patterns** (Principle VI):
@@ -275,7 +277,7 @@
 - [X] T067 Verify automated tests included: unit tests for CEL evaluator, jwx authenticator, PrincipalProfile, config validation, middleware, handler
 
 **E2E Acceptance Testing** (Principle XIII):
-- [X] T068 Verify E2E tests exist in `tests/e2e/jwt_preauth_test.go` for all 22 acceptance scenarios (including US4 Playwright frontend tests)
+- [X] T068 Verify E2E tests cover the active acceptance scenarios in `tests/e2e/jwt_preauth_test.go`
 - [X] T069 Verify each `It()` block maps to exactly ONE acceptance scenario from spec.md
 - [X] T070 Verify E2E tests written BEFORE implementation and failed initially (red phase)
 - [X] T071 Verify E2E tests changed minimally during implementation (fixture adjustments only)
@@ -297,7 +299,7 @@
 ### Additional Polish
 
 - [X] T082 Run `just check` (fmt, vet, lint) and `just verify` — all checks must pass
-- [ ] T083 Run quickstart.md validation: manually verify signed JWT, unsigned JWT, and backward-compatible configurations per `specs/016-jwt-preauth/quickstart.md`
+- [ ] T083 Run quickstart.md validation: manually verify signed JWT and backward-compatible plain-header configurations
 - [X] T084 Code cleanup: ensure consistent error messages, remove any TODOs or placeholder code
 
 ---
@@ -318,7 +320,7 @@
 - **Foundational Infrastructure (Phase 2.5)**: Depends on ALL of Phase 2 — BLOCKS all user stories
 - **User Story 1 (Phase 3, P1)**: Depends on Phase 2.5 — core signed JWT authentication
 - **User Story 5 (Phase 4, P1)**: Depends on Phase 3 (US1) — verifies backward compatibility with US1 changes
-- **User Story 2 (Phase 5, P2)**: Depends on Phase 3 (US1) — extends jwx authenticator with unsigned mode
+- **User Story 2 (Phase 5, P1)**: Depends on Phase 3 (US1) — rejects unsigned JWTs in the authenticator and both server configurations
 - **User Story 3 (Phase 6, P2)**: Depends on Phase 3 (US1) — profile extraction via `/api/me`
 - **User Story 4 (Phase 7, P3)**: Depends on Phase 6 (US3) — frontend display of enriched profile
 - **Polish (Phase 8)**: Depends on all user stories being complete
@@ -327,7 +329,7 @@
 
 - **User Story 1 (P1)**: First — establishes JWT authentication infrastructure
 - **User Story 5 (P1)**: After US1 — validates backward compatibility with JWT changes
-- **User Story 2 (P2)**: After US1 — extends authenticator with unsigned mode
+- **User Story 2 (P1)**: After US1 — rejects unsigned JWT pre-authentication
 - **User Story 3 (P2)**: After US1 — enriches `/api/me` endpoint with profile attributes
 - **User Story 4 (P3)**: After US3 — displays enriched profile in consent UI
 
@@ -406,7 +408,7 @@ Task T026: "Add audit logging" (depends on T022 authenticator)
 1. Setup → Design Preconditions → Foundation → **Foundation ready**
 2. Add User Story 1 (signed JWT) → Test independently → **MVP signed auth**
 3. Add User Story 5 (backward compat) → Test independently → **MVP validated**
-4. Add User Story 2 (unsigned JWT) → Test independently → **Service mesh support**
+4. Add User Story 2 (unsigned JWT rejection) → Verify JWKS-only pre-authentication
 5. Add User Story 3 (profile extraction) → Test independently → **Enriched /api/me**
 6. Add User Story 4 (consent UI) → Test independently → **Full feature complete**
 7. Each story adds value without breaking previous stories

@@ -48,6 +48,21 @@ third_party_oauth2:
   # Higher values provide more entropy but no practical security benefit beyond 32.
   pkce_verifier_length: 32
 
+# Proactive refresh of third-party access tokens (spec 029).
+# Tokens are refreshed in the background when token exchange serves a token that
+# expires within lookahead_duration, and by POST /api/sessions/sweep on the admin server.
+token_refresh:
+  # Refresh access tokens this long before they expire. Must be shorter than the access-token
+  # lifetime your providers issue; otherwise every exchange triggers a refresh.
+  lookahead_duration: 5m
+  # Concurrent background refreshes per broker replica (1-20). Each refresh holds a
+  # database connection; the cap reserves 5 of the 25 pooled connections for other work.
+  # Requests beyond this limit are dropped; the caller still receives its valid token.
+  background_workers: 10
+  sweep:
+    # Sessions read per page by the admin sweep when the request omits page_size (1-1000).
+    default_page_size: 100
+
 # Environment-Specific Overrides
 #
 # You can override these settings using environment variables:

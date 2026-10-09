@@ -73,7 +73,7 @@ jobs:
         run: just web-ci
 
       - name: Build release artifacts
-        run: just build-linux-amd64 build-linux-arm64 extproc-build-linux-amd64 extproc-build-linux-arm64 web-build
+        run: just build-linux-amd64 build-linux-arm64 migration-guard-build-linux-amd64 migration-guard-build-linux-arm64 extproc-build-linux-amd64 extproc-build-linux-arm64 web-build
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0

@@ -17,6 +17,7 @@ This guide explains how to configure the Agentic Identity Broker for different d
 - [Command-Line Flags](#command-line-flags)
 - [Configuration Reference](#configuration-reference)
 - [Available Settings](#available-settings)
+- [Token Refresh](#token-refresh)
 - [Security Best Practices](#security-best-practices)
 - [Troubleshooting](#troubleshooting)
 
@@ -35,7 +36,7 @@ The Identity Broker supports multiple configuration sources with clear precedenc
 
 ## Configuration Sources
 
-The Identity Broker loads configuration from four sources (in order of precedence):
+The Identity Broker loads configuration from four types of sources:
 
 ### 1. Built-in Defaults
 
@@ -97,11 +98,10 @@ agentic-identity-broker --log-level debug --log-format json
 
 ## Precedence Rules
 
-When the same configuration key is provided by multiple sources, the value from the highest-precedence source wins:
+When the same configuration key appears in multiple sources, the highest-precedence value wins:
 
 ```
-CLI Flags > YAML > .env Files > Defaults
-   (3)       (2)      (1)        (0)
+CLI Flags > Environment Variables (including .env files) > YAML File > Defaults
 ```
 
 **Example**:
@@ -245,6 +245,15 @@ This section lists all configuration options. See [Available Settings](#availabl
 | `log.format` | enum | `text` | `text`, `json` | No | `IDENTITY_BROKER_LOG_FORMAT` | `--log-format` | Sets log output format. Use `json` for production and log aggregation systems. |
 
 Each successful confidential-provider secret decryption emits `service_secret_decrypted` at Info with the provider's `service_id`, including when listing services. The event does not include the secret.
+
+#### Token Refresh Configuration
+
+| Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
+|--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
+| `token_refresh.lookahead_duration` | Go duration string | `5m` | Positive Go duration | No | `IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION` | `--token_refresh.lookahead_duration` | Window before access-token expiry for background refresh. Set it shorter than the provider's access-token lifetime. |
+| `token_refresh.background_workers` | integer | `10` | 1–20 | No | `IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS` | `--token_refresh.background_workers` | Maximum concurrent background refreshes per replica. Each holds a database connection. The 20-worker cap leaves at least five of the 25 pooled connections for other work. |
+| `token_refresh.sweep.default_page_size` | integer | `100` | 1–1000 | No | `IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE` | `--token_refresh.sweep.default_page_size` | Number of candidates per admin sweep page when the request omits `page_size`. |
+
 
 #### Encryption Configuration
 
@@ -517,7 +526,7 @@ request_context:
 
 - All configuration options have built-in defaults and are optional unless marked "Required"
 - Environment variables follow the pattern: `IDENTITY_BROKER_{SECTION}_{KEY}` (uppercased)
-- CLI flags follow the pattern: `--{section}-{key}` (lowercase with hyphens)
+- CLI flag names vary by setting. Use the exact flag shown in the reference table.
 - See [Precedence Rules](#precedence-rules) for how values from different sources are resolved
 - For YAML configuration syntax, see [YAML Configuration](#yaml-configuration)
 
@@ -559,8 +568,8 @@ The configuration system follows consistent naming patterns across all sources:
 
 1. **YAML Paths**: Use dot notation with lowercase keys (e.g., `log.level`, `server.tls.enabled`)
 2. **Environment Variables**: Prefix + uppercase + underscores (e.g., `IDENTITY_BROKER_LOG_LEVEL`, `IDENTITY_BROKER_SERVER_TLS_ENABLED`)
-3. **CLI Flags**: Lowercase with hyphens (e.g., `--log-level`, `--server-tls-enabled`)
-4. **Nested Config**: Each level adds a separator (`.` in YAML, `_` in env vars, `-` in flags)
+3. **CLI Flags**: Use the exact name shown in the reference table (for example, `--log-level` or `--token_refresh.background_workers`).
+4. **Nested Config**: Use `.` in YAML paths and CLI flags for `token_refresh`, and `_` in its environment variable names.
 
 ### Configuration by Use Case
 
@@ -646,6 +655,26 @@ log:
 ```
 
 **Recommendation**: Use `json` format in production for structured logging and log aggregation.
+
+### Token Refresh
+
+Set these optional values for proactive refresh of third-party OAuth2 access tokens:
+
+```yaml
+token_refresh:
+  lookahead_duration: 5m
+  background_workers: 10
+  sweep:
+    default_page_size: 100
+```
+
+The source order is CLI flags > environment variables > YAML file > defaults. The three flags use the exact names in the [reference table](#token-refresh-configuration).
+
+Set `lookahead_duration` to less than the shortest access-token lifetime that your providers issue. Otherwise, every token exchange can submit a refresh while the token remains valid.
+
+Keep `background_workers` between 1 and 20 per replica. A locked refresh holds one database connection during the provider call. The broker's pool has 25 connections. If all slots are busy, the broker drops new background refresh submissions for other sessions and still returns the valid token.
+
+The admin sweep is not scheduled by the broker. Schedule `POST /api/sessions/sweep` externally through the authenticated admin proxy. See the [session sweep runbook](operations/session-sweep.md) for the request and scheduling instructions.
 
 ### Encryption Backend Configuration
 

@@ -465,6 +465,7 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 		}
 		serverCfg.Name = "admin"
 		serverCfg.Authentication = app.Config.Server.Admin.Authentication
+		serverCfg.JWTAuthenticator = app.AdminJWTAuthenticator
 	}
 
 	// Build router using the production NewHandler (same middleware stack as production).
