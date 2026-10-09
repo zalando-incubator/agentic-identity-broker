@@ -1,10 +1,8 @@
 package consent
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,11 +10,9 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,13 +42,11 @@ func TestGetAgentDelegations_Success(t *testing.T) {
 	}
 
 	// Create mock service
-	mockSvc := &mockAgentsService{
-		delegations: mockDelegations,
-		err:         nil,
-	}
+	mockSvc := newMockAgentsService(t)
+	mockSvc.On("GetAgentDelegations", mock.Anything, id.Principal(principalValue)).Return(mockDelegations, nil).Once()
 
 	// Create handler
-	handler := NewAgentsHandler(mockSvc.asService(), nil)
+	handler := NewAgentsHandler(mockSvc, nil)
 
 	// Create request with principal in context
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
@@ -100,12 +94,10 @@ func TestGetAgentDelegations_Success(t *testing.T) {
 func TestGetAgentDelegations_EmptyList(t *testing.T) {
 	principalValue := "user@example.com"
 
-	mockSvc := &mockAgentsService{
-		delegations: []consent.AgentDelegation{},
-		err:         nil,
-	}
+	mockSvc := newMockAgentsService(t)
+	mockSvc.On("GetAgentDelegations", mock.Anything, id.Principal(principalValue)).Return([]consent.AgentDelegation{}, nil).Once()
 
-	handler := NewAgentsHandler(mockSvc.asService(), nil)
+	handler := NewAgentsHandler(mockSvc, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
 	ctx := principal.WithPrincipal(req.Context(), principalValue)
@@ -125,8 +117,8 @@ func TestGetAgentDelegations_EmptyList(t *testing.T) {
 
 // TestGetAgentDelegations_MissingPrincipal tests error when principal is not in context.
 func TestGetAgentDelegations_MissingPrincipal(t *testing.T) {
-	mockSvc := &mockAgentsService{}
-	handler := NewAgentsHandler(mockSvc.asService(), nil)
+	mockSvc := newMockAgentsService(t)
+	handler := NewAgentsHandler(mockSvc, nil)
 
 	// Request without principal in context
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
@@ -146,12 +138,10 @@ func TestGetAgentDelegations_MissingPrincipal(t *testing.T) {
 func TestGetAgentDelegations_ServiceError(t *testing.T) {
 	principalValue := "user@example.com"
 
-	mockSvc := &mockAgentsService{
-		delegations: nil,
-		err:         errors.New("database connection failed"),
-	}
+	mockSvc := newMockAgentsService(t)
+	mockSvc.On("GetAgentDelegations", mock.Anything, id.Principal(principalValue)).Return([]consent.AgentDelegation(nil), errors.New("database connection failed")).Once()
 
-	handler := NewAgentsHandler(mockSvc.asService(), nil)
+	handler := NewAgentsHandler(mockSvc, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
 	ctx := principal.WithPrincipal(req.Context(), principalValue)
@@ -172,12 +162,10 @@ func TestGetAgentDelegations_ServiceError(t *testing.T) {
 func TestGetAgentDelegations_ContentType(t *testing.T) {
 	principalValue := "user@example.com"
 
-	mockSvc := &mockAgentsService{
-		delegations: []consent.AgentDelegation{},
-		err:         nil,
-	}
+	mockSvc := newMockAgentsService(t)
+	mockSvc.On("GetAgentDelegations", mock.Anything, id.Principal(principalValue)).Return([]consent.AgentDelegation{}, nil).Once()
 
-	handler := NewAgentsHandler(mockSvc.asService(), nil)
+	handler := NewAgentsHandler(mockSvc, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents", nil)
 	ctx := principal.WithPrincipal(req.Context(), principalValue)
@@ -187,225 +175,4 @@ func TestGetAgentDelegations_ContentType(t *testing.T) {
 	handler.GetAgentDelegations(rec, req)
 
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-}
-
-// mockAgentsService wraps mock data to implement consent.Service behavior for agent delegations.
-type mockAgentsService struct {
-	delegations []consent.AgentDelegation
-	err         error
-}
-
-// asService returns a consent.Service that uses the mock data.
-func (m *mockAgentsService) asService() *consent.Service {
-	// Create mock agent repo that returns agents with proper display names
-	agentMap := make(map[string]*storage.Agent)
-	for _, delegation := range m.delegations {
-		agentMap[delegation.AgentID.String()] = &storage.Agent{
-			ID:          delegation.AgentID,
-			DisplayName: delegation.DisplayName,
-		}
-	}
-
-	mockAgentRepo := &mockAgentRepoForAgents{
-		agents: agentMap,
-	}
-	mockServiceRepo := &mockServiceRepoForAgents{}
-	mockGrantRepo := &mockGrantRepoForAgents{
-		delegations: m.delegations,
-		err:         m.err,
-	}
-
-	return consent.NewService(mockAgentRepo, newTestProviderService(mockServiceRepo), mockGrantRepo, nil, nil, slog.Default())
-}
-
-// Mock repository implementations for agents handler tests
-type mockAgentRepoForAgents struct {
-	agents map[string]*storage.Agent
-}
-
-func (m *mockAgentRepoForAgents) Create(ctx context.Context, agent *storage.Agent) error {
-	return nil
-}
-
-func (m *mockAgentRepoForAgents) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
-	// Return agent from map if exists, otherwise return a dummy
-	if agent, ok := m.agents[agentID.String()]; ok {
-		return agent, nil
-	}
-	return &storage.Agent{
-		ID:          agentID,
-		DisplayName: "Agent " + agentID.String(),
-	}, nil
-}
-
-func (m *mockAgentRepoForAgents) GetByIDs(ctx context.Context, ids []id.AgentID) ([]*storage.Agent, error) {
-	agents := make([]*storage.Agent, 0, len(ids))
-	seen := make(map[id.AgentID]bool)
-	for _, agentID := range ids {
-		if seen[agentID] {
-			continue
-		}
-		agent, err := m.Get(ctx, agentID)
-		if err != nil {
-			return nil, err
-		}
-		agents = append(agents, agent)
-		seen[agentID] = true
-	}
-	return agents, nil
-}
-
-func (m *mockAgentRepoForAgents) Update(ctx context.Context, agent *storage.Agent) error {
-	return nil
-}
-
-func (m *mockAgentRepoForAgents) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
-	_, existed := m.agents[agentID.String()]
-	delete(m.agents, agentID.String())
-	return existed, nil
-}
-
-func (m *mockAgentRepoForAgents) List(ctx context.Context) ([]*storage.Agent, error) {
-	return nil, nil
-}
-
-func (m *mockAgentRepoForAgents) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
-	for _, agent := range m.agents {
-		if agent.ClientID != nil && *agent.ClientID == clientID {
-			return agent, nil
-		}
-	}
-	return nil, nil
-}
-
-func (m *mockAgentRepoForAgents) GetByClientURI(_ context.Context, _ string) (*storage.Agent, error) {
-	return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindNotFound, nil, "not found")
-}
-
-func (m *mockAgentRepoForAgents) ExistsOtherWithClientID(_ context.Context, _ id.ClientID, _ *id.AgentID) (bool, error) {
-	return false, nil
-}
-
-type mockServiceRepoForAgents struct {
-	ports.ThirdpartyOAuth2ProviderRepository
-}
-
-func (m *mockServiceRepoForAgents) Create(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) error {
-	return nil
-}
-
-func (m *mockServiceRepoForAgents) Get(ctx context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
-	return nil, nil
-}
-
-func (m *mockServiceRepoForAgents) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
-	return nil
-}
-
-func (m *mockServiceRepoForAgents) Delete(ctx context.Context, serviceID id.ServiceID) error {
-	return nil
-}
-
-func (m *mockServiceRepoForAgents) List(ctx context.Context) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
-	return nil, nil
-}
-
-func (m *mockServiceRepoForAgents) FindByProtectedResource(ctx context.Context, resourceURI string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
-	return nil, nil
-}
-
-func (m *mockServiceRepoForAgents) AddProtectedResource(_ context.Context, _ id.ServiceID, _ string) (ports.ProtectedResourceMutationResult, error) {
-	return ports.ProtectedResourceMutationResult{}, nil
-}
-
-func (m *mockServiceRepoForAgents) RemoveProtectedResource(_ context.Context, _ id.ServiceID, _ string) (ports.ProtectedResourceMutationResult, error) {
-	return ports.ProtectedResourceMutationResult{}, nil
-}
-
-func (m *mockServiceRepoForAgents) RenameProtectedResource(_ context.Context, _ id.ServiceID, _, _ string) (ports.ProtectedResourceMutationResult, error) {
-	return ports.ProtectedResourceMutationResult{}, nil
-}
-
-func (m *mockServiceRepoForAgents) ListProtectedResources(_ context.Context, _ id.ServiceID) ([]string, int64, error) {
-	return nil, 0, nil
-}
-
-type mockGrantRepoForAgents struct {
-	delegations []consent.AgentDelegation
-	err         error
-}
-
-func (m *mockGrantRepoForAgents) Create(ctx context.Context, grant *storage.UserGrant) error {
-	return nil
-}
-
-func (m *mockGrantRepoForAgents) Get(ctx context.Context, grantID id.GrantID) (*storage.UserGrant, error) {
-	return nil, nil
-}
-
-func (m *mockGrantRepoForAgents) Update(ctx context.Context, grant *storage.UserGrant) error {
-	return nil
-}
-
-func (m *mockGrantRepoForAgents) Delete(ctx context.Context, grantID id.GrantID) error {
-	return nil
-}
-
-func (m *mockGrantRepoForAgents) ListByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.UserGrant, error) {
-	return nil, nil
-}
-
-func (m *mockGrantRepoForAgents) FindByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
-	return nil, nil
-}
-
-func (m *mockGrantRepoForAgents) DeleteByAgent(ctx context.Context, agentID id.AgentID) error {
-	return nil
-}
-
-func (m *mockGrantRepoForAgents) ListByPrincipal(ctx context.Context, principal id.Principal) ([]storage.UserGrant, error) {
-	// This is the method that GetAgentDelegations calls
-	// We need to return grants that will result in the expected delegations
-	if m.err != nil {
-		return nil, m.err
-	}
-
-	// Convert delegations back to grants for the mock
-	// In a real implementation, the service would aggregate these
-	var grants []storage.UserGrant
-	for _, delegation := range m.delegations {
-		grant := storage.UserGrant{
-			ID:                    id.NewGrantID(),
-			Principal:             principal,
-			AgentID:               delegation.AgentID,
-			ValidUntil:            delegation.ExpiresAt,
-			UpdatedAt:             delegation.LastModifiedAt,
-			GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
-		}
-		// Add multiple grants if ActiveGrantCount > 1 to simulate aggregation
-		for i := 0; i < delegation.ActiveGrantCount; i++ {
-			grants = append(grants, grant)
-		}
-	}
-
-	return grants, nil
-}
-
-func (m *mockGrantRepoForAgents) CountAgentsByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) (int, error) {
-	return 0, nil
-}
-
-func (m *mockGrantRepoForAgents) ListByPrincipalAndServiceID(_ context.Context, _ id.Principal, _ id.ServiceID) ([]id.AgentID, error) {
-	return []id.AgentID{}, nil
-}
-
-func (m *mockGrantRepoForAgents) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return nil, storage.NewStorageError("DeleteByPrincipalAndAgentID", storage.ErrorKindNotFound, ports.ErrNotFound, "grant not found")
-}
-
-func (m *mockGrantRepoForAgents) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {
-	return 0, nil
 }
