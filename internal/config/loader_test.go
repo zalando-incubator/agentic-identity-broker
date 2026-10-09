@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -499,4 +500,49 @@ func TestRequestContextConfigurationCLIOverridesEnvironment(t *testing.T) {
 	}
 
 	t.Fatal("CLI source not found")
+}
+
+func TestConfigLoader_CIMDSSRFValidationEnvironment(t *testing.T) {
+	tests := []struct {
+		name        string
+		environment string
+		skip        bool
+		cimdEnabled bool
+		wantErr     bool
+	}{
+		{name: "production rejects bypass", environment: "production", skip: true, cimdEnabled: true, wantErr: true},
+		{name: "production rejects dormant bypass", environment: "production", skip: true, wantErr: true},
+		{name: "production retains protection", environment: "production", cimdEnabled: true},
+		{name: "development permits local mocks", environment: "development", skip: true, cimdEnabled: true},
+		{name: "test rejects bypass", environment: "test", skip: true, cimdEnabled: true, wantErr: true},
+		{name: "staging rejects bypass", environment: "staging", skip: true, cimdEnabled: true, wantErr: true},
+		{name: "empty environment rejects bypass", skip: true, cimdEnabled: true, wantErr: true},
+		{name: "misspelled development rejects bypass", environment: "developement", skip: true, cimdEnabled: true, wantErr: true},
+		{name: "uppercase development rejects bypass", environment: "DEVELOPMENT", skip: true, cimdEnabled: true, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			setMinimalConfigEnv(t)
+			t.Setenv("GO_ENV", tt.environment)
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(configPath, []byte(fmt.Sprintf(`security:
+  skip_cimd_ssrf_validation: %t
+oauth2_authorization_server:
+  cimd:
+    enabled: %t
+`, tt.skip, tt.cimdEnabled)), 0o600))
+			t.Setenv("IDENTITY_BROKER_CONFIG_PATH", configPath)
+
+			cfg, err := NewLoader().GetConfig(context.Background())
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, cfg)
+				assert.Contains(t, err.Error(), "security.skip_cimd_ssrf_validation")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.skip, cfg.Security.SkipCIMDSSRFValidation)
+		})
+	}
 }
