@@ -1,7 +1,10 @@
 package agents
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -23,7 +26,7 @@ type mockAgentRepo struct {
 	createFn         func(ctx context.Context, agent *storage.Agent) error
 	getFn            func(ctx context.Context, id id.AgentID) (*storage.Agent, error)
 	updateFn         func(ctx context.Context, agent *storage.Agent) error
-	deleteFn         func(ctx context.Context, id id.AgentID) error
+	deleteFn         func(ctx context.Context, id id.AgentID) (bool, error)
 	listFn           func(ctx context.Context) ([]*storage.Agent, error)
 	getByClientIDFn  func(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
 	existsOtherFn    func(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
@@ -61,12 +64,13 @@ func (m *mockAgentRepo) Update(ctx context.Context, agent *storage.Agent) error 
 	return nil
 }
 
-func (m *mockAgentRepo) Delete(ctx context.Context, agentID id.AgentID) error {
+func (m *mockAgentRepo) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
 	if m.deleteFn != nil {
 		return m.deleteFn(ctx, agentID)
 	}
+	_, exists := m.agents[agentID]
 	delete(m.agents, agentID)
-	return nil
+	return exists, nil
 }
 
 func (m *mockAgentRepo) List(ctx context.Context) ([]*storage.Agent, error) {
@@ -397,4 +401,246 @@ func TestResolveIDAcceptsUUIDCanonicalAndRejectsUnknown(t *testing.T) {
 	}
 	_, err := service.ResolveID(context.Background(), "unknown-agent")
 	require.Error(t, err)
+}
+
+func TestDeleteLogsOnlyActualDeletion(t *testing.T) {
+	t.Parallel()
+	deleteCause := errors.New("agent delete failed")
+	for _, tc := range []struct {
+		name    string
+		present bool
+		err     error
+	}{
+		{name: "existing then absent", present: true},
+		{name: "absent"},
+		{name: "repository failure", present: true, err: deleteCause},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			agentID := id.NewAgentID()
+			repo := newMockAgentRepo()
+			if tc.present {
+				repo.agents[agentID] = &storage.Agent{ID: agentID}
+			}
+			if tc.err != nil {
+				repo.deleteFn = func(context.Context, id.AgentID) (bool, error) { return false, tc.err }
+			}
+			var logs bytes.Buffer
+			svc := NewService(repo, nil, slog.New(slog.NewJSONHandler(&logs, nil)), false)
+			err := svc.Delete(context.Background(), agentID)
+			if tc.err != nil {
+				require.ErrorIs(t, err, tc.err)
+				assert.Contains(t, repo.agents, agentID)
+			} else {
+				require.NoError(t, err)
+				require.NoError(t, svc.Delete(context.Background(), agentID))
+				assert.NotContains(t, repo.agents, agentID)
+			}
+			wantRecords := 0
+			if tc.present && tc.err == nil {
+				wantRecords = 1
+			}
+			assert.Equal(t, wantRecords, bytes.Count(logs.Bytes(), []byte(`"msg":"agent deleted"`)))
+		})
+	}
+}
+
+type agentAuditContextKey struct{}
+
+type agentAuditCapture struct {
+	records  []slog.Record
+	contexts []context.Context
+}
+
+func (h *agentAuditCapture) Enabled(context.Context, slog.Level) bool { return true }
+func (h *agentAuditCapture) Handle(ctx context.Context, record slog.Record) error {
+	h.records = append(h.records, record.Clone())
+	h.contexts = append(h.contexts, ctx)
+	return nil
+}
+func (h *agentAuditCapture) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *agentAuditCapture) WithGroup(string) slog.Handler      { return h }
+
+func agentAuditFields(t *testing.T, record slog.Record) map[string]any {
+	t.Helper()
+	fields := make(map[string]any)
+	record.Attrs(func(attr slog.Attr) bool {
+		fields[attr.Key] = attr.Value.Any()
+		return true
+	})
+	assert.NotContains(t, fields, "actor", "direct domain calls must not invent an actor")
+	assert.NotContains(t, fields, "trace_id", "direct domain calls must not invent a trace")
+	encoded, err := json.Marshal(fields)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "PRIVATE_AGENT_METADATA")
+	return fields
+}
+
+func TestCreateAuditContainsOnlyDefensiveTypedDefinitions(t *testing.T) {
+	repo := newMockAgentRepo()
+	capture := &agentAuditCapture{}
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true)
+	ctx := context.WithValue(context.Background(), agentAuditContextKey{}, "operation-context")
+	agent := &storage.Agent{
+		ID: id.NewAgentID(), ClientID: ptr.To(id.ClientID("PRIVATE_AGENT_METADATA")),
+		DisplayName: "PRIVATE_AGENT_METADATA", Description: "PRIVATE_AGENT_METADATA",
+		GovernanceURL: ptr.To("https://PRIVATE_AGENT_METADATA.invalid/governance"),
+		PermissionSets: []storage.AgentPermissionSetEntry{
+			{PermissionSetID: id.NewPermissionSetID(), RequirementType: storage.RequirementTypeOptional},
+			{PermissionSetID: id.NewPermissionSetID(), RequirementType: storage.RequirementTypeMandatory},
+		},
+		ServiceRequirements: []storage.ServiceRequirement{
+			{ServiceID: id.NewServiceID(), RequirementType: storage.RequirementTypeOptional, RequiredScopes: []string{"write", "read"}},
+			{ServiceID: id.NewServiceID(), RequirementType: storage.RequirementTypeMandatory, RequireAllScopes: true},
+		},
+	}
+	want := agent.Copy()
+	require.NoError(t, svc.Create(ctx, agent))
+	require.Len(t, capture.records, 1)
+	assert.Equal(t, "agent created", capture.records[0].Message)
+	assert.Equal(t, "operation-context", capture.contexts[0].Value(agentAuditContextKey{}))
+	// A handler may retain the record after the caller mutates its input.
+	agent.PermissionSets[0].PermissionSetID = id.NewPermissionSetID()
+	agent.ServiceRequirements[0].RequiredScopes[0] = "mutated"
+	agent.ServiceRequirements[1].RequireAllScopes = false
+	fields := agentAuditFields(t, capture.records[0])
+	require.Len(t, fields, 4)
+	assert.Equal(t, "agent_created", fields["action"])
+	assert.Equal(t, want.ID, fields["agent_id"])
+	assert.Equal(t, want.PermissionSets, fields["permission_sets"])
+	assert.Equal(t, want.ServiceRequirements, fields["service_requirements"])
+}
+
+func TestUpdateAuditPreservesObservedBeforeAndNewDefinitions(t *testing.T) {
+	previous := &storage.Agent{
+		ID: id.NewAgentID(), DisplayName: "PRIVATE_AGENT_METADATA", Description: "PRIVATE_AGENT_METADATA",
+		PermissionSets: testPermissionSets(),
+		ServiceRequirements: []storage.ServiceRequirement{
+			{ServiceID: id.NewServiceID(), RequirementType: storage.RequirementTypeMandatory, RequiredScopes: []string{"read", "write"}},
+		},
+		UpdatedAt: time.Date(2026, 10, 8, 12, 3, 4, 123456789, time.FixedZone("offset", 2*60*60)),
+	}
+	wantPrevious := previous.Copy()
+	agent := &storage.Agent{
+		DisplayName: "PRIVATE_AGENT_METADATA", Description: "PRIVATE_AGENT_METADATA",
+		PermissionSets: testPermissionSets(),
+		ServiceRequirements: []storage.ServiceRequirement{
+			{ServiceID: id.NewServiceID(), RequirementType: storage.RequirementTypeOptional, RequiredScopes: []string{"write"}},
+			{ServiceID: id.NewServiceID(), RequirementType: storage.RequirementTypeMandatory, RequireAllScopes: true},
+		},
+	}
+	wantNew := agent.Copy()
+	writes := 0
+	repo := newMockAgentRepo()
+	repo.getFn = func(context.Context, id.AgentID) (*storage.Agent, error) { return previous, nil }
+	repo.updateFn = func(context.Context, *storage.Agent) error {
+		writes++
+		// A shared repository object can change during persistence.
+		previous.PermissionSets[0].RequirementType = storage.RequirementTypeMandatory
+		previous.ServiceRequirements[0].RequiredScopes[0] = "overwritten"
+		previous.UpdatedAt = time.Now()
+		return nil
+	}
+	capture := &agentAuditCapture{}
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true)
+	ctx := context.WithValue(context.Background(), agentAuditContextKey{}, "operation-context")
+	require.NoError(t, svc.Update(ctx, previous.ID, agent, false))
+	assert.Equal(t, 1, writes)
+	require.Len(t, capture.records, 1)
+	assert.Equal(t, "agent updated", capture.records[0].Message)
+	assert.Equal(t, "operation-context", capture.contexts[0].Value(agentAuditContextKey{}))
+	agent.PermissionSets[0].PermissionSetID = id.NewPermissionSetID()
+	agent.ServiceRequirements[0].RequiredScopes[0] = "mutated"
+	fields := agentAuditFields(t, capture.records[0])
+	require.Len(t, fields, 7)
+	assert.Equal(t, "agent_updated", fields["action"])
+	assert.Equal(t, previous.ID, fields["agent_id"])
+	assert.Equal(t, wantNew.PermissionSets, fields["permission_sets"])
+	assert.Equal(t, wantNew.ServiceRequirements, fields["service_requirements"])
+	assert.Equal(t, wantPrevious.PermissionSets, fields["previous_observed_permission_sets"])
+	assert.Equal(t, wantPrevious.ServiceRequirements, fields["previous_observed_service_requirements"])
+	assert.Equal(t, wantPrevious.UpdatedAt.UTC().Format(time.RFC3339Nano), fields["previous_observed_updated_at"])
+}
+
+func TestUpdateAuditsSuccessfulUnchangedDefinition(t *testing.T) {
+	repo := newMockAgentRepo()
+	agent := &storage.Agent{ID: id.NewAgentID(), DisplayName: "Agent", Description: "Definition", PermissionSets: testPermissionSets()}
+	repo.agents[agent.ID] = agent.Copy()
+	writes := 0
+	repo.updateFn = func(context.Context, *storage.Agent) error { writes++; return nil }
+	capture := &agentAuditCapture{}
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true)
+	require.NoError(t, svc.Update(context.Background(), agent.ID, agent, false))
+	assert.Equal(t, 1, writes)
+	require.Len(t, capture.records, 1)
+	assert.Equal(t, "agent_updated", agentAuditFields(t, capture.records[0])["action"])
+}
+
+func TestFailedAgentMutationsEmitNoSuccessfulAudit(t *testing.T) {
+	cause := errors.New("PRIVATE_AGENT_METADATA")
+	for _, tc := range []struct {
+		name, operation                          string
+		lookupErr, persistenceErr, validationErr error
+		invalid                                  bool
+	}{
+		{name: "create validation", operation: "create", invalid: true},
+		{name: "create requirements", operation: "create", validationErr: cause},
+		{name: "create persistence", operation: "create", persistenceErr: cause},
+		{name: "update lookup", operation: "update", lookupErr: cause},
+		{name: "update validation", operation: "update", invalid: true},
+		{name: "update requirements", operation: "update", validationErr: cause},
+		{name: "update persistence", operation: "update", persistenceErr: cause},
+		{name: "delete persistence", operation: "delete", persistenceErr: cause},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := &storage.Agent{ID: id.NewAgentID(), DisplayName: "Agent", Description: "Definition", PermissionSets: testPermissionSets()}
+			repo := newMockAgentRepo()
+			repo.agents[agent.ID] = agent.Copy()
+			repo.getFn = func(context.Context, id.AgentID) (*storage.Agent, error) {
+				return repo.agents[agent.ID], tc.lookupErr
+			}
+			writes := 0
+			repo.createFn = func(context.Context, *storage.Agent) error { writes++; return tc.persistenceErr }
+			repo.updateFn = func(context.Context, *storage.Agent) error { writes++; return tc.persistenceErr }
+			repo.deleteFn = func(context.Context, id.AgentID) (bool, error) { writes++; return false, tc.persistenceErr }
+			if tc.invalid {
+				agent.DisplayName = ""
+			}
+			capture := &agentAuditCapture{}
+			svc := NewService(repo, &mockServiceReqValidator{err: tc.validationErr}, slog.New(capture), true)
+			var err error
+			switch tc.operation {
+			case "create":
+				err = svc.Create(context.Background(), agent)
+			case "update":
+				err = svc.Update(context.Background(), agent.ID, agent, false)
+			case "delete":
+				err = svc.Delete(context.Background(), agent.ID)
+			}
+			require.Error(t, err)
+			if tc.persistenceErr != nil {
+				assert.Equal(t, 1, writes)
+			} else {
+				assert.Zero(t, writes)
+			}
+			assert.Empty(t, capture.records)
+		})
+	}
+}
+
+func TestDeleteAuditCarriesContextAndNoInventedIdentity(t *testing.T) {
+	repo := newMockAgentRepo()
+	agentID := id.NewAgentID()
+	repo.agents[agentID] = &storage.Agent{ID: agentID}
+	capture := &agentAuditCapture{}
+	svc := NewService(repo, nil, slog.New(capture), true)
+	ctx := context.WithValue(context.Background(), agentAuditContextKey{}, "operation-context")
+	require.NoError(t, svc.Delete(ctx, agentID))
+	require.NoError(t, svc.Delete(ctx, agentID))
+	require.Len(t, capture.records, 1)
+	assert.Equal(t, "operation-context", capture.contexts[0].Value(agentAuditContextKey{}))
+	fields := agentAuditFields(t, capture.records[0])
+	require.Len(t, fields, 2)
+	assert.Equal(t, "agent_deleted", fields["action"])
+	assert.Equal(t, agentID, fields["agent_id"])
 }

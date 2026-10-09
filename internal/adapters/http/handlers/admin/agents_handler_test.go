@@ -58,9 +58,9 @@ func (m *MockAgentRepository) Update(ctx context.Context, agent *storage.Agent) 
 	return args.Error(0)
 }
 
-func (m *MockAgentRepository) Delete(ctx context.Context, agentID id.AgentID) error {
+func (m *MockAgentRepository) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
 	args := m.Called(ctx, agentID)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockAgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
@@ -756,28 +756,36 @@ func TestAgentsHandler_UpdateAgent(t *testing.T) {
 func TestAgentsHandler_DeleteAgent(t *testing.T) {
 	logger := slog.Default()
 
-	t.Run("successful deletion", func(t *testing.T) {
-		mockRepo := new(MockAgentRepository)
-		mockServiceRepo := new(MockProviderRepository)
-		handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger)
+	for _, tc := range []struct {
+		name    string
+		deleted bool
+	}{
+		{name: "successful deletion", deleted: true},
+		{name: "absent agent remains idempotent", deleted: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mockRepo := new(MockAgentRepository)
+			mockServiceRepo := new(MockProviderRepository)
+			handler := newAgentsHandlerForTest(mockRepo, mockServiceRepo, logger)
 
-		agentID := id.NewAgentID()
-		mockRepo.On("Delete", mock.Anything, agentID).Return(nil)
+			agentID := id.NewAgentID()
+			mockRepo.On("Delete", mock.Anything, agentID).Return(tc.deleted, nil)
 
-		req := httptest.NewRequest(http.MethodDelete, "/api/agents/"+agentID.String(), nil)
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("agent-id", agentID.String())
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req := httptest.NewRequest(http.MethodDelete, "/api/agents/"+agentID.String(), nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("agent-id", agentID.String())
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-		w := httptest.NewRecorder()
+			w := httptest.NewRecorder()
 
-		handler.DeleteAgent(w, req)
+			handler.DeleteAgent(w, req)
 
-		assert.Equal(t, http.StatusNoContent, w.Code)
-		assert.Empty(t, w.Body.String())
+			assert.Equal(t, http.StatusNoContent, w.Code)
+			assert.Empty(t, w.Body.String())
 
-		mockRepo.AssertExpectations(t)
-	})
+			mockRepo.AssertExpectations(t)
+		})
+	}
 
 	t.Run("empty agent ID", func(t *testing.T) {
 		mockRepo := new(MockAgentRepository)

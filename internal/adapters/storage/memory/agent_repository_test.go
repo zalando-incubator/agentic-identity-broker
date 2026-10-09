@@ -317,8 +317,12 @@ func TestAgentRepository_Delete(t *testing.T) {
 		err := repo.Create(ctx, agent)
 		require.NoError(t, err)
 
-		err = repo.Delete(ctx, testAgentID)
+		deleted, err := repo.Delete(ctx, testAgentID)
 		require.NoError(t, err)
+		assert.True(t, deleted)
+		deleted, err = repo.Delete(ctx, testAgentID)
+		require.NoError(t, err)
+		assert.False(t, deleted)
 
 		// Verify deletion
 		_, err = repo.Get(ctx, testAgentID)
@@ -328,8 +332,9 @@ func TestAgentRepository_Delete(t *testing.T) {
 	t.Run("idempotent - nonexistent agent", func(t *testing.T) {
 		repo := NewAgentRepository()
 
-		err := repo.Delete(ctx, id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a99"))
+		deleted, err := repo.Delete(ctx, id.MustParseAgentID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a99"))
 		require.NoError(t, err) // Should not error
+		assert.False(t, deleted)
 	})
 
 	t.Run("cleans up client_id index", func(t *testing.T) {
@@ -346,8 +351,9 @@ func TestAgentRepository_Delete(t *testing.T) {
 		err := repo.Create(ctx, agent)
 		require.NoError(t, err)
 
-		err = repo.Delete(ctx, testAgentID)
+		deleted, err := repo.Delete(ctx, testAgentID)
 		require.NoError(t, err)
+		assert.True(t, deleted)
 
 		// Should be able to reuse client_id
 		newAgent := &storage.Agent{
@@ -359,6 +365,79 @@ func TestAgentRepository_Delete(t *testing.T) {
 		err = repo.Create(ctx, newAgent)
 		require.NoError(t, err)
 	})
+
+	t.Run("cleans up client_uri index", func(t *testing.T) {
+		repo := NewAgentRepository()
+		agent := &storage.Agent{
+			ClientURIs:     []string{"https://agent.example.com/client.json"},
+			DisplayName:    "Test Agent",
+			Description:    "A test agent",
+			PermissionSets: testPermissionSets(),
+		}
+		require.NoError(t, repo.Create(ctx, agent))
+		deleted, err := repo.Delete(ctx, agent.ID)
+		require.NoError(t, err)
+		assert.True(t, deleted)
+		assert.NotContains(t, repo.byClientURI, agent.ClientURIs[0])
+		replacement := agent.Copy()
+		replacement.ID = id.NewAgentID()
+		require.NoError(t, repo.Create(ctx, replacement))
+		found, err := repo.GetByClientURI(ctx, agent.ClientURIs[0])
+		require.NoError(t, err)
+		assert.Equal(t, replacement.ID, found.ID)
+	})
+}
+
+func TestAgentRepository_Delete_Concurrent(t *testing.T) {
+	repo := NewAgentRepository()
+	ctx := context.Background()
+	canonicalID := "deleted-agent"
+	agent := &storage.Agent{
+		ID:             id.NewAgentID(),
+		CanonicalID:    &canonicalID,
+		ClientID:       ptr.To(id.ClientID("shared-client")),
+		DisplayName:    "Test Agent",
+		Description:    "A test agent",
+		PermissionSets: testPermissionSets(),
+	}
+	survivor := agent.Copy()
+	survivor.ID = id.NewAgentID()
+	survivor.CanonicalID = ptr.To("surviving-agent")
+	require.NoError(t, repo.Create(ctx, agent))
+	require.NoError(t, repo.Create(ctx, survivor))
+	type deleteResult struct {
+		deleted bool
+		err     error
+	}
+	const count = 10
+	start := make(chan struct{})
+	done := make(chan deleteResult, count)
+	for range count {
+		go func() {
+			<-start
+			deleted, err := repo.Delete(ctx, agent.ID)
+			done <- deleteResult{deleted: deleted, err: err}
+		}()
+	}
+	close(start)
+	deletedCount := 0
+	for range count {
+		result := <-done
+		require.NoError(t, result.err)
+		if result.deleted {
+			deletedCount++
+		}
+	}
+	assert.Equal(t, 1, deletedCount)
+	assert.NotContains(t, repo.agents, agent.ID)
+	assert.NotContains(t, repo.byCanonicalID, canonicalID)
+	assert.Equal(t, []id.AgentID{survivor.ID}, repo.byClientID[*agent.ClientID])
+	found, err := repo.GetByClientID(ctx, *agent.ClientID)
+	require.NoError(t, err)
+	assert.Equal(t, survivor, found)
+	found, err = repo.GetByCanonicalID(ctx, *survivor.CanonicalID)
+	require.NoError(t, err)
+	assert.Equal(t, survivor, found)
 }
 
 func TestAgentRepository_MultipleAgentsShareClientID(t *testing.T) {

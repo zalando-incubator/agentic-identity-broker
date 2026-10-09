@@ -116,7 +116,8 @@ func TestPermissionSetRepositoryTransactions(t *testing.T) {
 		before, err := permissionSets.Get(ctx, ps.ID)
 		require.NoError(t, err)
 
-		err = permissionSets.Delete(ctx, ps.ID)
+		deleted, err := permissionSets.Delete(ctx, ps.ID)
+		require.False(t, deleted)
 		var storageErr *storage.StorageError
 		require.ErrorAs(t, err, &storageErr)
 		require.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
@@ -144,7 +145,8 @@ func TestPermissionSetRepositoryTransactions(t *testing.T) {
 		before, err := permissionSets.Get(ctx, ps.ID)
 		require.NoError(t, err)
 
-		err = permissionSets.Delete(ctx, ps.ID)
+		deleted, err := permissionSets.Delete(ctx, ps.ID)
+		require.False(t, deleted)
 		var storageErr *storage.StorageError
 		require.ErrorAs(t, err, &storageErr)
 		require.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
@@ -184,7 +186,12 @@ func TestPermissionSetRepositoryTransactions(t *testing.T) {
 		require.True(t, expired.ValidUntil.Before(time.Now()))
 		require.Equal(t, []storage.GrantedPermissionSetEntry{entry}, expired.GrantedPermissionSets)
 
-		require.NoError(t, permissionSets.Delete(ctx, ps.ID))
+		deleted, err := permissionSets.Delete(ctx, ps.ID)
+		require.NoError(t, err)
+		require.True(t, deleted)
+		deleted, err = permissionSets.Delete(ctx, ps.ID)
+		require.NoError(t, err)
+		require.False(t, deleted)
 		_, err = permissionSets.Get(ctx, ps.ID)
 		var storageErr *storage.StorageError
 		require.ErrorAs(t, err, &storageErr)
@@ -202,5 +209,68 @@ func TestPermissionSetRepositoryTransactions(t *testing.T) {
 		stillExpired, err := grants.Get(ctx, grant.ID)
 		require.NoError(t, err)
 		require.Equal(t, expired, stillExpired, "deletion must not remove the expired grant")
+	})
+
+	t.Run("concurrent delete reports one committed primary deletion", func(t *testing.T) {
+		ps := newSet("concurrent-delete")
+		unrelated := newSet("concurrent-delete-unrelated")
+		require.NoError(t, permissionSets.Create(ctx, ps))
+		require.NoError(t, permissionSets.Create(ctx, unrelated))
+		type result struct {
+			deleted bool
+			err     error
+		}
+		start := make(chan struct{})
+		results := make(chan result, 2)
+		for range 2 {
+			go func() {
+				<-start
+				deleted, err := permissionSets.Delete(ctx, ps.ID)
+				results <- result{deleted: deleted, err: err}
+			}()
+		}
+		close(start)
+		deletedCount := 0
+		for range 2 {
+			outcome := <-results
+			require.NoError(t, outcome.err)
+			if outcome.deleted {
+				deletedCount++
+			}
+		}
+		require.Equal(t, 1, deletedCount)
+		_, err := permissionSets.Get(ctx, unrelated.ID)
+		require.NoError(t, err)
+	})
+
+	t.Run("commit failure reports false and restores parent and scopes", func(t *testing.T) {
+		ps := newSet("commit-failed-delete")
+		require.NoError(t, permissionSets.Create(ctx, ps))
+		before, err := permissionSets.Get(ctx, ps.ID)
+		require.NoError(t, err)
+		_, err = adapter.db.ExecContext(ctx, `
+			CREATE FUNCTION reject_permission_set_delete_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN
+				RAISE EXCEPTION 'injected permission set delete commit failure' USING ERRCODE = '23514';
+			END;
+			$$;
+			CREATE CONSTRAINT TRIGGER reject_permission_set_delete_commit
+			AFTER DELETE ON permission_sets DEFERRABLE INITIALLY DEFERRED
+			FOR EACH ROW EXECUTE FUNCTION reject_permission_set_delete_commit();
+		`)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, err := adapter.db.ExecContext(ctx, `
+				DROP TRIGGER reject_permission_set_delete_commit ON permission_sets;
+				DROP FUNCTION reject_permission_set_delete_commit();
+			`)
+			require.NoError(t, err)
+		})
+		deleted, err := permissionSets.Delete(ctx, ps.ID)
+		require.Error(t, err)
+		require.False(t, deleted)
+		after, err := permissionSets.Get(ctx, ps.ID)
+		require.NoError(t, err)
+		require.Equal(t, before, after)
 	})
 }

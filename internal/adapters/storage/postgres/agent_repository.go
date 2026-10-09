@@ -506,11 +506,11 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 }
 
 // Delete deletes an agent entity by ID from PostgreSQL.
-// Idempotent: returns nil if agent doesn't exist.
+// Idempotent: returns false if agent doesn't exist.
 // Associated grants and client URIs are CASCADE deleted per FR-021.
-func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error {
+func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
 	if r.adapter.db == nil {
-		return storage.NewStorageError(
+		return false, storage.NewStorageError(
 			"DeleteAgent",
 			storage.ErrorKindConnection,
 			nil,
@@ -519,7 +519,7 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error 
 	}
 
 	if agentID.IsZero() {
-		return storage.NewStorageError(
+		return false, storage.NewStorageError(
 			"DeleteAgent",
 			storage.ErrorKindValidation,
 			nil,
@@ -530,15 +530,19 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error 
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.db.ExecContext(execCtx, `DELETE FROM agents WHERE id = $1`, agentID)
+	result, err := r.adapter.db.ExecContext(execCtx, `DELETE FROM agents WHERE id = $1`, agentID)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
-			return storage.NewStorageError("DeleteAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
+			return false, storage.NewStorageError("DeleteAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
-		return storage.NewStorageError("DeleteAgent", storage.ErrorKindConnection, err, "failed to delete agent")
+		return false, storage.NewStorageError("DeleteAgent", storage.ErrorKindConnection, err, "failed to delete agent")
 	}
 
-	return nil
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, storage.NewStorageError("DeleteAgent", storage.ErrorKindUnknown, err, "failed to get rows affected")
+	}
+	return rowsAffected > 0, nil
 }
 
 // List retrieves all agent entities from PostgreSQL.

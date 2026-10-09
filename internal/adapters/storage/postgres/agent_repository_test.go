@@ -424,8 +424,12 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 			}
 			require.NoError(t, createAgent(t, agent))
 
-			err := repo.Delete(ctx, agent.ID)
+			deleted, err := repo.Delete(ctx, agent.ID)
 			require.NoError(t, err)
+			assert.True(t, deleted)
+			deleted, err = repo.Delete(ctx, agent.ID)
+			require.NoError(t, err)
+			assert.False(t, deleted)
 
 			_, err = repo.Get(ctx, agent.ID)
 			require.Error(t, err)
@@ -435,13 +439,15 @@ func TestAgentRepository_BasicCRUD(t *testing.T) {
 		})
 
 		t.Run("idempotent deletion", func(t *testing.T) {
-			err := repo.Delete(ctx, id.MustParseAgentID("00000000-0000-0000-0000-000000000003"))
+			deleted, err := repo.Delete(ctx, id.MustParseAgentID("00000000-0000-0000-0000-000000000003"))
 			require.NoError(t, err)
+			assert.False(t, deleted)
 		})
 
 		t.Run("empty ID validation", func(t *testing.T) {
-			err := repo.Delete(ctx, id.AgentID{})
+			deleted, err := repo.Delete(ctx, id.AgentID{})
 			require.Error(t, err)
+			assert.False(t, deleted)
 			storageErr, ok := err.(*storage.StorageError)
 			require.True(t, ok)
 			assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
@@ -1112,4 +1118,38 @@ func TestAgentRepository_GetByClientURIPattern(t *testing.T) {
 		require.ErrorAs(t, err, &storageErr)
 		assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
 	})
+}
+
+func TestAgentRepositoryConcurrentDeleteOutcome(t *testing.T) {
+	adapter, cleanup := setupAgentTestDB(t)
+	defer cleanup()
+	repo := NewAgentRepository(adapter)
+	ctx := context.Background()
+	agent := createUserGrantTestAgent(t, repo, "concurrent-delete")
+	unrelated := createUserGrantTestAgent(t, repo, "unrelated-delete")
+	type result struct {
+		deleted bool
+		err     error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			<-start
+			deleted, err := repo.Delete(ctx, agent.ID)
+			results <- result{deleted: deleted, err: err}
+		}()
+	}
+	close(start)
+	deletedCount := 0
+	for range 2 {
+		outcome := <-results
+		require.NoError(t, outcome.err)
+		if outcome.deleted {
+			deletedCount++
+		}
+	}
+	assert.Equal(t, 1, deletedCount)
+	_, err := repo.Get(ctx, unrelated.ID)
+	require.NoError(t, err)
 }
