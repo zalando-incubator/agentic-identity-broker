@@ -354,11 +354,18 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 	}
 
 	var grant *storage.UserGrant
+	var previousFields []any
+	action, message := "grant_created", "grant created"
 	if existingGrant != nil {
 		if grantMatchesRequest(existingGrant, req) {
 			return existingGrant.Copy(), nil
 		}
 
+		previousFields = []any{
+			"previous_observed_valid_until", grantAuditValidUntil(existingGrant.ValidUntil),
+			"previous_observed_updated_at", existingGrant.UpdatedAt.UTC().Format(time.RFC3339Nano),
+			"previous_observed_granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: existingGrant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+		}
 		// Update existing grant (FR-013)
 		existingGrant.ValidUntil = req.ValidUntil
 		existingGrant.GrantedPermissionSets = req.GrantedPermissionSets
@@ -372,6 +379,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			return nil, fmt.Errorf("failed to update grant: %w", err)
 		}
 		grant = existingGrant
+		action, message = "grant_updated", "grant updated"
 	} else {
 		// Create new grant (FR-011)
 		grant = &storage.UserGrant{
@@ -388,12 +396,36 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			return nil, fmt.Errorf("%w: %w", ErrGrantValidation, err)
 		}
 
+		candidateID := grant.ID
 		if err := s.grantRepo.Create(ctx, grant); err != nil {
 			return nil, fmt.Errorf("failed to create grant: %w", err)
 		}
+		if grant.ID != candidateID {
+			action, message = "grant_updated", "grant updated"
+		}
 	}
 
+	fields := []any{
+		"action", action,
+		"principal", grant.Principal,
+		"agent_id", grant.AgentID,
+		"grant_id", grant.ID,
+		"valid_until", grantAuditValidUntil(grant.ValidUntil),
+		"created_at", grant.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at", grant.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: grant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+	}
+	fields = append(fields, previousFields...)
+	s.logger.InfoContext(ctx, message, fields...)
+
 	return grant.Copy(), nil
+}
+
+func grantAuditValidUntil(validUntil *time.Time) any {
+	if validUntil == nil {
+		return nil
+	}
+	return validUntil.UTC().Format(time.RFC3339Nano)
 }
 
 // ValidateSubmission validates that every service in the grant's included_service_ids
@@ -587,7 +619,7 @@ func (s *Service) RevokeConsent(ctx context.Context, principal id.Principal, age
 //
 // Revocation behavior:
 // - Is NOT idempotent: absence of grant returns ErrGrantNotFound (handler maps to 404)
-// - Emits a structured audit log on success with action, principal, agent_id, and grant_id
+// - Emits a structured audit log on success from the atomically deleted grant snapshot
 func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
 	grant, err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID)
 	if err != nil {
@@ -597,11 +629,15 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 		return fmt.Errorf("failed to revoke consent: %w", err)
 	}
 
-	s.logger.Info("grant revoked",
+	s.logger.InfoContext(ctx, "grant revoked",
 		"action", "grant_revoked",
 		"principal", grant.Principal,
 		"agent_id", grant.AgentID,
-		"grant_id", grant.ID)
+		"grant_id", grant.ID,
+		"valid_until", grantAuditValidUntil(grant.ValidUntil),
+		"updated_at", grant.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: grant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+		"revoked_at", time.Now().UTC().Format(time.RFC3339Nano))
 
 	return nil
 }

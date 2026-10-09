@@ -126,11 +126,11 @@ func (s *Service) Create(ctx context.Context, ps *storage.PermissionSet) error {
 		return err
 	}
 
-	// Log audit event
-	s.logger.Info("PermissionSetCreated",
+	definition := (&storage.PermissionSet{ServiceScopes: ps.ServiceScopes}).Copy()
+	s.logger.InfoContext(ctx, "PermissionSetCreated",
 		"action", "permission_set_created",
 		"permission_set_id", ps.ID,
-		"name", ps.Name)
+		"service_scopes", definition.ServiceScopes)
 
 	// Invalidate cache for this permission set
 	s.mu.Lock()
@@ -217,15 +217,25 @@ func (s *Service) Update(ctx context.Context, ps *storage.PermissionSet) error {
 		return err
 	}
 
+	existing, err := s.repo.Get(ctx, ps.ID)
+	if err != nil {
+		return err
+	}
+	previous := (&storage.PermissionSet{
+		ServiceScopes: existing.ServiceScopes, UpdatedAt: existing.UpdatedAt,
+	}).Copy()
+
 	if err := s.repo.Update(ctx, ps); err != nil {
 		return err
 	}
 
-	// Log audit event
-	s.logger.Info("PermissionSetUpdated",
+	definition := (&storage.PermissionSet{ServiceScopes: ps.ServiceScopes}).Copy()
+	s.logger.InfoContext(ctx, "PermissionSetUpdated",
 		"action", "permission_set_updated",
 		"permission_set_id", ps.ID,
-		"name", ps.Name)
+		"service_scopes", definition.ServiceScopes,
+		"previous_observed_service_scopes", previous.ServiceScopes,
+		"previous_observed_updated_at", previous.UpdatedAt.UTC().Format(time.RFC3339Nano))
 
 	// Invalidate cache for this permission set
 	s.mu.Lock()
@@ -280,7 +290,7 @@ func (s *Service) Delete(ctx context.Context, psID id.PermissionSetID) error {
 	}
 
 	if deleted {
-		s.logger.Info("PermissionSetDeleted",
+		s.logger.InfoContext(ctx, "PermissionSetDeleted",
 			"action", "permission_set_deleted",
 			"permission_set_id", psID)
 	}
