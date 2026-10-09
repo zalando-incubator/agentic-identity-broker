@@ -1,6 +1,7 @@
 package permissionset
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -21,7 +22,7 @@ type mockPermissionSetRepository struct {
 	getByCanonicalIDFunc              func(ctx context.Context, canonicalID string) (*storage.PermissionSet, error)
 	getByIDsFunc                      func(ctx context.Context, ids []id.PermissionSetID) ([]*storage.PermissionSet, error)
 	updateFunc                        func(ctx context.Context, ps *storage.PermissionSet) error
-	deleteFunc                        func(ctx context.Context, id id.PermissionSetID) error
+	deleteFunc                        func(ctx context.Context, id id.PermissionSetID) (bool, error)
 	listFunc                          func(ctx context.Context, serviceID id.ServiceID) ([]*storage.PermissionSet, error)
 	countAgentsReferencingFunc        func(ctx context.Context, id id.PermissionSetID) (int, error)
 	countPermissionSetsForServiceFunc func(ctx context.Context, serviceID id.ServiceID) (int, error)
@@ -66,11 +67,11 @@ func (m *mockPermissionSetRepository) Update(ctx context.Context, ps *storage.Pe
 	return nil
 }
 
-func (m *mockPermissionSetRepository) Delete(ctx context.Context, id id.PermissionSetID) error {
+func (m *mockPermissionSetRepository) Delete(ctx context.Context, id id.PermissionSetID) (bool, error) {
 	if m.deleteFunc != nil {
 		return m.deleteFunc(ctx, id)
 	}
-	return nil
+	return false, nil
 }
 
 func (m *mockPermissionSetRepository) List(ctx context.Context, serviceID id.ServiceID) ([]*storage.PermissionSet, error) {
@@ -115,8 +116,8 @@ func (s *stubGrantRepository) FindByPrincipalAndAgent(_ context.Context, _ id.Pr
 	return nil, nil
 }
 func (s *stubGrantRepository) DeleteByAgent(_ context.Context, _ id.AgentID) error { return nil }
-func (s *stubGrantRepository) DeleteByPrincipalAndAgentID(_ context.Context, _ id.Principal, _ id.AgentID) error {
-	return nil
+func (s *stubGrantRepository) DeleteByPrincipalAndAgentID(_ context.Context, _ id.Principal, _ id.AgentID) (*storage.UserGrant, error) {
+	return nil, ports.ErrNotFound
 }
 func (s *stubGrantRepository) ListByPrincipal(_ context.Context, _ id.Principal) ([]storage.UserGrant, error) {
 	return nil, nil
@@ -316,11 +317,12 @@ func TestDeleteWithGrantReferenceReturnsConflict(t *testing.T) {
 // CountGrantsReferencingPermissionSet returns a configurable count.
 type countingGrantRepository struct {
 	stubGrantRepository
+	err   error
 	count int
 }
 
 func (r *countingGrantRepository) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {
-	return r.count, nil
+	return r.count, r.err
 }
 
 // TestCreateEmitsAuditLog tests that Create emits structured audit logs.
@@ -390,17 +392,22 @@ func TestDeleteEmitsAuditLog(t *testing.T) {
 		countAgentsReferencingFunc: func(ctx context.Context, id id.PermissionSetID) (int, error) {
 			return 0, nil // No agents reference it
 		},
-		deleteFunc: func(ctx context.Context, id id.PermissionSetID) error {
+		deleteFunc: func(ctx context.Context, id id.PermissionSetID) (bool, error) {
 			callCount++
-			return nil
+			return true, nil
 		},
 	}
 
-	service := NewPermissionSetService(repo, &stubGrantRepository{}, slog.Default())
+	var logs bytes.Buffer
+	service := NewPermissionSetService(repo, &stubGrantRepository{}, slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer service.Close()
 	err := service.Delete(context.Background(), psID)
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, callCount)
+	assert.Equal(t, 1, bytes.Count(logs.Bytes(), []byte(`"msg":"PermissionSetDeleted"`)))
+	assert.Contains(t, logs.String(), `"action":"permission_set_deleted"`)
+	assert.Contains(t, logs.String(), psID.String())
 }
 
 func TestResolveIDAcceptsUUIDCanonicalAndRejectsUnknown(t *testing.T) {
@@ -421,4 +428,88 @@ func TestResolveIDAcceptsUUIDCanonicalAndRejectsUnknown(t *testing.T) {
 	}
 	_, err := service.ResolveID(context.Background(), "unknown-permission-set")
 	require.Error(t, err)
+}
+
+func TestDeleteLogsOnlyActualDeletionAndInvalidatesCache(t *testing.T) {
+	t.Parallel()
+	deleteCause := errors.New("permission set delete failed")
+	referenceCause := errors.New("reference lookup failed")
+	for _, tc := range []struct {
+		name        string
+		present     bool
+		deleteErr   error
+		agentCount  int
+		grantCount  int
+		agentErr    error
+		grantErr    error
+		wantRecords int
+		wantCache   bool
+	}{
+		{name: "existing then absent", present: true, wantRecords: 1},
+		{name: "absent"},
+		{name: "repository failure", present: true, deleteErr: deleteCause, wantCache: true},
+		{name: "agent reference conflict", present: true, agentCount: 1, wantCache: true},
+		{name: "grant reference conflict", present: true, grantCount: 1, wantCache: true},
+		{name: "agent reference lookup failure", present: true, agentErr: referenceCause, wantCache: true},
+		{name: "grant reference lookup failure", present: true, grantErr: referenceCause, wantCache: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			psID := id.NewPermissionSetID()
+			deleteCalls := 0
+			present := tc.present
+			repo := &mockPermissionSetRepository{
+				countAgentsReferencingFunc: func(context.Context, id.PermissionSetID) (int, error) {
+					return tc.agentCount, tc.agentErr
+				},
+				deleteFunc: func(_ context.Context, actualID id.PermissionSetID) (bool, error) {
+					assert.Equal(t, psID, actualID)
+					deleteCalls++
+					if tc.deleteErr != nil {
+						return false, tc.deleteErr
+					}
+					deleted := present
+					present = false
+					return deleted, nil
+				},
+			}
+			var logs bytes.Buffer
+			svc := NewPermissionSetService(repo, &countingGrantRepository{count: tc.grantCount, err: tc.grantErr}, slog.New(slog.NewJSONHandler(&logs, nil)))
+			defer svc.Close()
+			svc.mu.Lock()
+			svc.cache[psID] = psCacheEntry{ps: &storage.PermissionSet{ID: psID}, expiresAt: time.Now().Add(time.Hour)}
+			svc.mu.Unlock()
+			err := svc.Delete(context.Background(), psID)
+			if tc.wantCache {
+				require.Error(t, err)
+				if tc.deleteErr != nil {
+					assert.ErrorIs(t, err, tc.deleteErr)
+				} else if tc.agentErr != nil || tc.grantErr != nil {
+					assert.ErrorIs(t, err, referenceCause)
+				} else {
+					var storageErr *storage.StorageError
+					require.ErrorAs(t, err, &storageErr)
+					assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+				}
+				assert.Equal(t, tc.present, present)
+			} else {
+				require.NoError(t, err)
+				require.NoError(t, svc.Delete(context.Background(), psID))
+				assert.False(t, present)
+			}
+			wantDeleteCalls := 0
+			if tc.agentCount == 0 && tc.grantCount == 0 && tc.agentErr == nil && tc.grantErr == nil {
+				wantDeleteCalls = 1
+				if tc.deleteErr == nil {
+					wantDeleteCalls = 2
+				}
+			}
+			assert.Equal(t, wantDeleteCalls, deleteCalls)
+			svc.mu.RLock()
+			_, cached := svc.cache[psID]
+			svc.mu.RUnlock()
+			assert.Equal(t, tc.wantCache, cached)
+			assert.Equal(t, tc.wantRecords, bytes.Count(logs.Bytes(), []byte(`"msg":"PermissionSetDeleted"`)))
+		})
+	}
 }

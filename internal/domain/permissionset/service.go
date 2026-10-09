@@ -274,14 +274,16 @@ func (s *Service) Delete(ctx context.Context, psID id.PermissionSetID) error {
 		)
 	}
 
-	if err := s.repo.Delete(ctx, psID); err != nil {
+	deleted, err := s.repo.Delete(ctx, psID)
+	if err != nil {
 		return err
 	}
 
-	// Log audit event
-	s.logger.Info("PermissionSetDeleted",
-		"action", "permission_set_deleted",
-		"permission_set_id", psID)
+	if deleted {
+		s.logger.Info("PermissionSetDeleted",
+			"action", "permission_set_deleted",
+			"permission_set_id", psID)
+	}
 
 	// Invalidate cache for this permission set
 	s.mu.Lock()

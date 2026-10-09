@@ -242,8 +242,10 @@ func (m *mockAgentRepoForAgents) Update(ctx context.Context, agent *storage.Agen
 	return nil
 }
 
-func (m *mockAgentRepoForAgents) Delete(ctx context.Context, agentID id.AgentID) error {
-	return nil
+func (m *mockAgentRepoForAgents) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
+	_, existed := m.agents[agentID.String()]
+	delete(m.agents, agentID.String())
+	return existed, nil
 }
 
 func (m *mockAgentRepoForAgents) List(ctx context.Context) ([]*storage.Agent, error) {
@@ -378,8 +380,11 @@ func (m *mockGrantRepoForAgents) ListByPrincipalAndServiceID(_ context.Context, 
 	return []id.AgentID{}, nil
 }
 
-func (m *mockGrantRepoForAgents) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	return m.err
+func (m *mockGrantRepoForAgents) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return nil, storage.NewStorageError("DeleteByPrincipalAndAgentID", storage.ErrorKindNotFound, ports.ErrNotFound, "grant not found")
 }
 
 func (m *mockGrantRepoForAgents) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {

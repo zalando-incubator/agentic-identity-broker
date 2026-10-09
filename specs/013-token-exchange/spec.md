@@ -116,6 +116,23 @@ Both JSON logs and spans use `token_exchange.agent.id`, `token_exchange.grant.id
 Authorization observation context is excluded from the HTTP JSON schema and metric labels. Existing OAuth status, fixed denial description, configured-public-URL recovery links, and authorization decisions stay unchanged.
 Observations preserve authenticated actor and calling-peer correlation and exclude credentials, raw JWTs, unprojected claims, raw errors, sensitive URIs, and provider response material.
 
+### Grant Deletion Outcomes
+
+**GD-D1**: Each scenario uses fresh production memory storage and real HTTP requests through the end-user and admin servers.
+
+- DELETE `/api/consent/agents/{agent-id}/grants` returns HTTP 204, then HTTP 404 for the same user-agent pair. Only the first request records `grant revoked`.
+- DELETE `/api/agents/{agent-id}` returns HTTP 204 for both an existing agent and its absent ID. Only the first request records the domain message `agent deleted`.
+- DELETE `/api/permission-sets/{id}` returns HTTP 204 for both an existing unused permission set and its absent ID. Only the first request records `PermissionSetDeleted`.
+
+Successful deletes retain an empty HTTP 204 response. A repeated grant DELETE retains the existing HTTP 404 error schema and description.
+
+The grant revoke record retains `action=grant_revoked`, the owner `principal`, `agent_id`, and the ID of the deleted grant in `grant_id`.
+The agent record retains `agent_id`. The permission-set record retains `action=permission_set_deleted` and `permission_set_id`.
+HTTP handlers emit no duplicate successful deletion records. Absent deletes emit no successful deletion records.
+Scenarios revoke grants and remove agent references before deleting a permission set. They do not change storage cascade behavior.
+Only these deletion messages enter the log-count and privacy assertions. Bootstrap and access logs do not enter those assertions.
+Deletion records exclude credentials, raw JWTs, unprojected claims, raw errors, sensitive URIs, and provider response material.
+
 ---
 
 ### User Story 4 - Privileged Client Authorization via CEL (Priority: P2)

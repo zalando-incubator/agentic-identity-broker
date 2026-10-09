@@ -208,8 +208,8 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 }
 
 // Delete deletes an agent entity by ID.
-// Idempotent: returns nil if agent doesn't exist.
-func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error {
+// Idempotent: returns false if the agent doesn't exist.
+func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -225,9 +225,10 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) error 
 		if agent.CanonicalID != nil {
 			delete(r.byCanonicalID, *agent.CanonicalID)
 		}
+		return true, nil
 	}
 
-	return nil
+	return false, nil
 }
 
 // List retrieves all agent entities.

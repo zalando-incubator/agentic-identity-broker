@@ -165,10 +165,13 @@ func (s *Service) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, 
 
 // Delete removes an agent by ID.
 func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
-	if err := s.repo.Delete(ctx, agentID); err != nil {
+	deleted, err := s.repo.Delete(ctx, agentID)
+	if err != nil {
 		return err
 	}
-	s.logger.Info("agent deleted", "agent_id", agentID)
+	if deleted {
+		s.logger.Info("agent deleted", "agent_id", agentID)
+	}
 	return nil
 }
 

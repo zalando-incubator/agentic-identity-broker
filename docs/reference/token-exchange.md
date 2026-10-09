@@ -310,6 +310,10 @@ Broker exchange logs and spans also carry scalar resolved authorization context;
 
 The same available context survives authorization and session denials, cancellation, and response-write failures. Missing grants have no invented grant metadata; parsed but unregistered agent candidates are not exported. Impersonation does not acquire third-party grant context. The existing authenticated actor, calling peer, and trace ID remain the request identity.
 
+Successful grant writes return persisted identity and timestamps to the domain through the supplied grant value. Atomic upserts preserve the winning grant ID and creation time; PostgreSQL metadata is published only after commit and reflects stored timestamp precision. Expiry pointers are defensive copies.
+
+Grant revocation uses the atomically deleted row as its observation snapshot, not a preceding lookup. Agent and permission-set deletion records are emitted only when the primary entity was actually deleted; repeated absent deletes retain their existing HTTP responses without another successful deletion record. These outcomes do not change adapter cascade behavior.
+
 Session failures also carry bounded `token_exchange.session.*` metadata.
 Telemetry excludes descriptions, causes, unvalidated JWT claims, JOSE headers, provider bodies/headers, endpoint URLs, resource paths, and recovery URIs.
 Established authenticated actor and calling-peer audit fields remain unchanged.
