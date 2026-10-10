@@ -94,22 +94,23 @@ const (
 type ErrorDetail string
 
 const (
-	DetailSessionMissing          ErrorDetail = "session_missing"
-	DetailAccessTokenExpired      ErrorDetail = "access_token_expired"
-	DetailRefreshTokenExpired     ErrorDetail = "refresh_token_expired"
-	DetailRefreshUnavailable      ErrorDetail = "refresh_unavailable"
-	DetailRefreshRejected         ErrorDetail = "refresh_rejected"
-	DetailProviderClientRejected  ErrorDetail = "provider_client_rejected"
-	DetailProviderRejected        ErrorDetail = "provider_rejected"
-	DetailProviderUnavailable     ErrorDetail = "provider_unavailable"
-	DetailProviderResponseInvalid ErrorDetail = "provider_response_invalid"
-	DetailRepositoryUnavailable   ErrorDetail = "repository_unavailable"
-	DetailDecryptionFailed        ErrorDetail = "decryption_failed"
-	DetailEncryptionFailed        ErrorDetail = "encryption_failed"
-	DetailPersistenceFailed       ErrorDetail = "persistence_failed"
-	DetailConfiguration           ErrorDetail = "configuration"
-	DetailCallerCanceled          ErrorDetail = "caller_canceled"
-	DetailInternalUnclassified    ErrorDetail = "internal_unclassified"
+	DetailSessionMissing              ErrorDetail = "session_missing"
+	DetailAccessTokenExpired          ErrorDetail = "access_token_expired"
+	DetailRefreshTokenExpired         ErrorDetail = "refresh_token_expired"
+	DetailRefreshUnavailable          ErrorDetail = "refresh_unavailable"
+	DetailRefreshRejected             ErrorDetail = "refresh_rejected"
+	DetailProviderClientRejected      ErrorDetail = "provider_client_rejected"
+	DetailProviderRejected            ErrorDetail = "provider_rejected"
+	DetailProviderUnavailable         ErrorDetail = "provider_unavailable"
+	DetailProviderResponseInvalid     ErrorDetail = "provider_response_invalid"
+	DetailCredentialSourceUnavailable ErrorDetail = "credential_source_unavailable"
+	DetailRepositoryUnavailable       ErrorDetail = "repository_unavailable"
+	DetailDecryptionFailed            ErrorDetail = "decryption_failed"
+	DetailEncryptionFailed            ErrorDetail = "encryption_failed"
+	DetailPersistenceFailed           ErrorDetail = "persistence_failed"
+	DetailConfiguration               ErrorDetail = "configuration"
+	DetailCallerCanceled              ErrorDetail = "caller_canceled"
+	DetailInternalUnclassified        ErrorDetail = "internal_unclassified"
 )
 
 type ErrorKind string
@@ -131,6 +132,7 @@ const (
 	DependencyProviderRepository Dependency = "provider_repository"
 	DependencyProvider           Dependency = "provider"
 	DependencyEncryption         Dependency = "encryption"
+	DependencyCredentialSource   Dependency = "credential_source"
 	DependencySigning            Dependency = "signing"
 )
 
@@ -161,6 +163,8 @@ func NewErrorMetadata(operation Operation, detail ErrorDetail) ErrorMetadata {
 		metadata.kind, metadata.dependency = KindConfiguration, DependencyProvider
 	case DetailProviderUnavailable:
 		metadata.kind, metadata.dependency = KindInfrastructure, DependencyProvider
+	case DetailCredentialSourceUnavailable:
+		metadata.kind, metadata.dependency = KindInfrastructure, DependencyCredentialSource
 	case DetailRepositoryUnavailable, DetailPersistenceFailed:
 		metadata.kind, metadata.dependency = KindInfrastructure, DependencySessionRepository
 	case DetailDecryptionFailed, DetailEncryptionFailed:
@@ -219,7 +223,7 @@ func (m ErrorMetadata) LogValue() slog.Value {
 
 func (m ErrorMetadata) WithDependency(dependency Dependency) ErrorMetadata {
 	switch dependency {
-	case DependencyNone, DependencySessionRepository, DependencyProviderRepository, DependencyProvider, DependencyEncryption, DependencySigning:
+	case DependencyNone, DependencySessionRepository, DependencyProviderRepository, DependencyProvider, DependencyEncryption, DependencyCredentialSource, DependencySigning:
 		m.dependency = dependency
 	default:
 		m.dependency = DependencyNone

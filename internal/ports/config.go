@@ -308,7 +308,13 @@ type ThirdPartyOAuth2Config struct {
 	// PKCEVerifierLength is the length of PKCE code verifier in bytes.
 	// Must be 32-128 bytes per RFC 7636.
 	// Default: 32 bytes (256 bits of entropy)
-	PKCEVerifierLength int `mapstructure:"pkce_verifier_length"`
+	PKCEVerifierLength int                              `mapstructure:"pkce_verifier_length"`
+	CredentialFiles    map[string]CredentialFileBinding `mapstructure:"-"`
+}
+
+type CredentialFileBinding struct {
+	ClientIDFile     string `mapstructure:"client_id_file" json:"client_id_file" yaml:"client_id_file"`
+	ClientSecretFile string `mapstructure:"client_secret_file" json:"client_secret_file" yaml:"client_secret_file"`
 }
 
 // MultiAgentClientConfig holds configuration for multi-agent OAuth2 client sharing.

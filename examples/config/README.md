@@ -126,6 +126,10 @@ Third-party OAuth2 session management configuration. Demonstrates:
 - Security-focused comments explaining each setting
 - Environment variable substitution for sensitive keys
 - A stable public HTTPS `server.enduser.public_url` for CIMD confidential services
+- Explicit empty and single-pair `third_party_oauth2.credential_files` examples, with multiple pairs documented here
+- Exact canonical-ID spelling, including case and dots
+- JSON environment/CLI examples documented here, including a winning `{}`
+- Explicit filesystem registration without inline credentials or stored placeholders
 
 
 This configuration is required when enabling OAuth2 session management with third-party
@@ -145,6 +149,35 @@ export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"
 
 **Security Note:** The JWE signing key MUST be kept secret. It protects OAuth2 state
 tokens during the authorization flow. Compromise allows state token forgery and CSRF attacks.
+
+For paired credentials, use the examples in [`third-party-oauth2.yaml`](third-party-oauth2.yaml). Register the eligible service with `credential_source: filesystem` and neither inline credential. Its exact canonical-ID binding supplies both absolute paths. A missing binding or unusable required file stops authentication without stored fallback. Stored services ignore bindings.
+
+The winning source replaces the whole mapping: CLI, environment, configuration file, then default. An explicit `{}` removes all bindings but preserves service source selection. Startup validates mapping syntax and paths, not file availability. Authorization initiation reads only the client ID. Code exchange and refresh acquire both values.
+
+Multiple independent pairs preserve exact canonical-ID case and dots:
+
+```yaml
+third_party_oauth2:
+  credential_files:
+    zalando-platform:
+      client_id_file: /meta/credentials/employee-client-id
+      client_secret_file: /meta/credentials/employee-client-secret
+    GitHub-Prod:
+      client_id_file: /run/broker-secrets/github-client-id
+      client_secret_file: /run/broker-secrets/github-client-secret
+    com.example.service:
+      client_id_file: /run/broker-secrets/example-client-id
+      client_secret_file: /run/broker-secrets/example-client-secret
+```
+
+Environment and CLI sources accept a JSON object string:
+
+```bash
+export IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CREDENTIAL_FILES='{"zalando-platform":{"client_id_file":"/meta/credentials/employee-client-id","client_secret_file":"/meta/credentials/employee-client-secret"}}'
+./bin/agentic-identity-broker --config examples/config/third-party-oauth2.yaml \
+  --third_party_oauth2.credential_files='{"GitHub-Prod":{"client_id_file":"/run/broker-secrets/github-client-id","client_secret_file":"/run/broker-secrets/github-client-secret"},"com.example.service":{"client_id_file":"/run/broker-secrets/example-client-id","client_secret_file":"/run/broker-secrets/example-client-secret"}}'
+./bin/agentic-identity-broker --third_party_oauth2.credential_files='{}'
+```
 
 ### `jwt-preauth.yaml`
 

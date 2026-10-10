@@ -124,3 +124,93 @@ func TestWithLockedSessionDoesNotResurrectDeletedSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, found)
 }
+
+func TestUserSessionIdentityPersistsThroughUpsertAndLockedRefresh(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInMemoryUserSessionRepository()
+	principal := id.Principal("session-identity@example.com")
+	serviceID := id.NewServiceID()
+	initialIdentity := id.ClientID("client-A")
+	initial := refreshTestSession(principal, serviceID)
+	initial.UpstreamClientID = &initialIdentity
+	require.NoError(t, repo.Create(ctx, initial))
+	establishedIdentity := id.ClientID("client-B")
+	reconnected := refreshTestSession(principal, serviceID)
+	reconnected.UpstreamClientID = &establishedIdentity
+	reconnected.EncryptedAccessToken = []byte("reconnected-access")
+	require.NoError(t, repo.Create(ctx, reconnected))
+	assert.Equal(t, initial.ID, reconnected.ID)
+	refreshed, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		require.NotNil(t, current.UpstreamClientID)
+		assert.Equal(t, establishedIdentity, *current.UpstreamClientID)
+		current.EncryptedAccessToken = []byte("refreshed-access")
+		current.EncryptedRefreshToken = []byte("rotated-refresh")
+		return true, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, &establishedIdentity, refreshed.UpstreamClientID)
+	persisted, err := repo.Get(ctx, initial.ID)
+	require.NoError(t, err)
+	assert.Equal(t, &establishedIdentity, persisted.UpstreamClientID)
+	assert.Equal(t, []byte("refreshed-access"), persisted.EncryptedAccessToken)
+	assert.Equal(t, []byte("rotated-refresh"), persisted.EncryptedRefreshToken)
+	found, err := repo.FindByPrincipalAndService(ctx, principal, serviceID)
+	require.NoError(t, err)
+	assert.Equal(t, &establishedIdentity, found.UpstreamClientID)
+	listed, err := repo.ListByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, &establishedIdentity, listed[0].UpstreamClientID)
+}
+
+func TestUserSessionLockedIdentityMutationDoesNotLeakWithoutCommit(t *testing.T) {
+	for _, rejected := range []bool{false, true} {
+		t.Run(map[bool]string{false: "no update", true: "rejected refresh"}[rejected], func(t *testing.T) {
+			ctx := context.Background()
+			repo := NewInMemoryUserSessionRepository()
+			principal := id.Principal("identity-rollback@example.com")
+			serviceID := id.NewServiceID()
+			established := id.ClientID("established-client")
+			session := refreshTestSession(principal, serviceID)
+			session.UpstreamClientID = &established
+			require.NoError(t, repo.Create(ctx, session))
+			rejectedError := errors.New("provider refresh rejected")
+			_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+				require.NotNil(t, current.UpstreamClientID)
+				*current.UpstreamClientID = "uncommitted-client"
+				if rejected {
+					return true, rejectedError
+				}
+				return false, nil
+			})
+			if rejected {
+				assert.ErrorIs(t, err, rejectedError)
+			} else {
+				require.NoError(t, err)
+			}
+			persisted, err := repo.Get(ctx, session.ID)
+			require.NoError(t, err)
+			require.NotNil(t, persisted.UpstreamClientID)
+			assert.Equal(t, id.ClientID("established-client"), *persisted.UpstreamClientID)
+		})
+	}
+}
+
+func TestUserSessionLegacyMissingIdentityRemainsMissingThroughRefresh(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInMemoryUserSessionRepository()
+	principal := id.Principal("legacy-session@example.com")
+	serviceID := id.NewServiceID()
+	session := refreshTestSession(principal, serviceID)
+	require.NoError(t, repo.Create(ctx, session))
+	_, err := repo.WithLockedSession(ctx, principal, serviceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+		assert.Nil(t, current.UpstreamClientID)
+		current.EncryptedAccessToken = []byte("legacy-refreshed-access")
+		return true, nil
+	})
+	require.NoError(t, err)
+	persisted, err := repo.Get(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Nil(t, persisted.UpstreamClientID)
+	assert.Equal(t, []byte("legacy-refreshed-access"), persisted.EncryptedAccessToken)
+}

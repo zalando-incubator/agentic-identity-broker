@@ -13,9 +13,10 @@ import (
 // This is an aggregate root - it owns the encrypted tokens and manages session lifecycle.
 // One session per (principal, service_id) pair, enforced by database unique constraint.
 type UserSession struct {
-	ID        id.SessionID `json:"id" db:"id"`
-	Principal id.Principal `json:"principal" db:"principal"`
-	ServiceID id.ServiceID `json:"service_id" db:"service_id"`
+	ID               id.SessionID `json:"id" db:"id"`
+	Principal        id.Principal `json:"principal" db:"principal"`
+	ServiceID        id.ServiceID `json:"service_id" db:"service_id"`
+	UpstreamClientID *id.ClientID `json:"-" db:"upstream_client_id"`
 
 	// EncryptedAccessToken contains the OAuth2 access token ENCRYPTED by OAuth2SessionService
 	// using envelope encryption with service_id as Additional Authenticated Data (AAD).
@@ -82,6 +83,9 @@ func (s *UserSession) Validate() error {
 	}
 	if s.ServiceID.IsZero() {
 		return errors.New("service_id is required")
+	}
+	if s.UpstreamClientID != nil && s.UpstreamClientID.IsZero() {
+		return errors.New("upstream client ID cannot be empty")
 	}
 	if len(s.EncryptedAccessToken) == 0 {
 		return errors.New("encrypted access token is required")

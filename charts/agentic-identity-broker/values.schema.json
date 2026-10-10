@@ -626,6 +626,32 @@
                   "description": "Key within the secret"
                 }
               }
+            },
+            "credentialFiles": {
+              "type": "object",
+              "default": {},
+              "description": "Exact canonical-ID bindings to paired credential paths; never selects a registered service source",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]{1,128}$"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["client_id_file", "client_secret_file"],
+                "properties": {
+                  "client_id_file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Absolute client-ID file path, validated by the broker at startup"
+                  },
+                  "client_secret_file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Absolute client-secret file path, validated by the broker at startup"
+                  }
+                }
+              }
             }
           }
         },
@@ -1293,6 +1319,35 @@
             "$ref": "#/definitions/envVar"
           },
           "description": "Additional broker environment variables"
+        },
+        "extraVolumes": {
+          "type": "array",
+          "description": "Additional Kubernetes volumes for the broker pod",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": ["name"]
+          }
+        },
+        "extraVolumeMounts": {
+          "type": "array",
+          "description": "Additional Kubernetes volume mounts for the broker container",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "mountPath": {
+                "type": "string"
+              }
+            },
+            "required": ["name", "mountPath"]
+          }
         },
         "extraConfig": {
           "type": "object",

@@ -77,6 +77,10 @@ data:
     # Third-party OAuth2 configuration
     third_party_oauth2:
       jwe_signing_key: ${IDENTITY_BROKER_JWE_SIGNING_KEY}
+      {{- with .Values.broker.thirdPartyOauth2.credentialFiles }}
+      credential_files:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 
     {{- if or .Values.broker.encryption.memory.rawKey .Values.broker.encryption.awsKms.keyArn }}
     # Encryption configuration

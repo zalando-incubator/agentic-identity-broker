@@ -3,6 +3,7 @@ package fixtures
 import (
 	"encoding/base64"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -549,4 +550,57 @@ func OAuth2ConfigWithCIMD(_ string) *ports.Config {
 		},
 	}
 	return config
+}
+
+func CredentialConfigurationDocument(providerURL string, credentialFiles any, endUserPort, adminPort int) map[string]any {
+	server := func(port int) map[string]any {
+		return map[string]any{
+			"port":       port,
+			"bind":       "127.0.0.1",
+			"public_url": "http://127.0.0.1:" + strconv.Itoa(port),
+			"authentication": map[string]any{
+				"preauth": map[string]any{"principal_header_name": "X-Remote-User"},
+			},
+		}
+	}
+	return map[string]any{
+		"log": map[string]any{"level": "info", "format": "json"},
+		"server": map[string]any{
+			"enduser":  server(endUserPort),
+			"admin":    server(adminPort),
+			"shutdown": map[string]any{"timeout": "2s"},
+		},
+		"storage": map[string]any{
+			"backend":  "memory",
+			"timeouts": map[string]any{"read": "2s", "write": "2s"},
+		},
+		"third_party_oauth2": map[string]any{
+			"jwe_signing_key":      TestKEKMaterialDeterministic(),
+			"state_token_ttl":      "10m",
+			"pkce_verifier_length": 32,
+			"credential_files":     credentialFiles,
+		},
+		"encryption": map[string]any{"memory": map[string]any{"raw_key": TestKEKMaterialDeterministic()}},
+		"oauth2_authorization_server": map[string]any{
+			"mode": "proxy",
+			"proxy": map[string]any{
+				"upstream_issuer_uri":         providerURL,
+				"upstream_authorize_endpoint": providerURL + "/oauth/authorize",
+				"upstream_token_endpoint":     providerURL + "/oauth/token",
+				"upstream_timeout":            "2s",
+			},
+		},
+		"token_exchange": map[string]any{
+			"claim_extraction": map[string]any{
+				"principal_expression": "subject_token.sub",
+				"agent_id_expression":  "subject_token.azp",
+			},
+			"authorization": map[string]any{
+				"type": "cel",
+				"cel":  map[string]any{"expression": "true", "evaluation_timeout": "2s"},
+			},
+		},
+		"security":  map[string]any{"skip_thirdparty_https_validation": true},
+		"telemetry": map[string]any{"enabled": false},
+	}
 }

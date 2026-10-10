@@ -331,6 +331,11 @@ broker:
   # True requires explicit GO_ENV=development; all other environments reject it.
   extraEnv: []
 
+  # -- Additional Kubernetes volumes for the broker pod
+  extraVolumes: []
+  # -- Additional Kubernetes volume mounts for the broker container
+  extraVolumeMounts: []
+
   # Logging
   log:
     # -- Log level (debug, info, warn, error)
@@ -413,6 +418,8 @@ broker:
     jweSigningKeySecret:
       name: ""
       key: signing-key
+    # -- Exact canonical-ID bindings to client_id_file and client_secret_file absolute paths; service source selection is separate
+    credentialFiles: {}
 
   # -- Encryption configuration
   encryption:

@@ -1,8 +1,10 @@
 package oauth2session_test
 
 import (
+	"encoding/base64"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -516,4 +518,29 @@ func TestStateTokenSecurityValidation_ServiceIDMismatchError(t *testing.T) {
 	_, err = service.ValidateStateToken(token, id.Principal("user@example.com"), wrongServiceID)
 	assert.Error(t, err, "should reject token with mismatched service ID")
 	assert.Contains(t, err.Error(), "service_id", "error should indicate service ID mismatch")
+}
+
+func TestStateTokenSecurity_EstablishedClientIdentityIsAuthenticatedWithPrincipalAndService(t *testing.T) {
+	service, serviceID := setupTestService(t)
+	principal := id.Principal("sealed-identity@example.com")
+	established := id.ClientID("sealed-client-A")
+	state := credentialState(t, service, principal, serviceID, &established)
+	established = "mutated-client-B"
+	claims, err := service.ValidateStateToken(state, principal, serviceID)
+	require.NoError(t, err)
+	require.NotNil(t, claims.UpstreamClientID)
+	assert.Equal(t, id.ClientID("sealed-client-A"), *claims.UpstreamClientID)
+	_, err = service.ValidateStateToken(state, "another-principal@example.com", serviceID)
+	assert.ErrorIs(t, err, oauth2session.ErrPrincipalMismatch)
+	_, err = service.ValidateStateToken(state, principal, id.NewServiceID())
+	require.Error(t, err)
+	parts := strings.Split(state, ".")
+	require.Len(t, parts, 5)
+	ciphertext, err := base64.RawURLEncoding.DecodeString(parts[3])
+	require.NoError(t, err)
+	require.NotEmpty(t, ciphertext)
+	ciphertext[len(ciphertext)/2] ^= 1
+	parts[3] = base64.RawURLEncoding.EncodeToString(ciphertext)
+	_, err = service.ValidateStateToken(strings.Join(parts, "."), principal, serviceID)
+	require.Error(t, err, "the established upstream identity cannot be altered without invalidating state authentication")
 }

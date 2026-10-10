@@ -1510,8 +1510,13 @@ func (readyCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error { 
 func setupServiceWithConfig(
 	t *testing.T,
 	configure func(*oauth2session.Config),
+	loggers ...*slog.Logger,
 ) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
+	logger := slog.Default()
+	if len(loggers) > 0 {
+		logger = loggers[0]
+	}
 
 	// Create test JWE key
 	key, err := jwk.Import[jwk.Key]([]byte("test-secret-key-must-be-32-bytes"))
@@ -1544,7 +1549,7 @@ func setupServiceWithConfig(
 		newNoopBranchKeyManager(),
 		nil,
 		false,
-		slog.Default(),
+		logger,
 	).WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
 
 	svc := oauth2session.NewOAuth2SessionService(
@@ -1557,7 +1562,7 @@ func setupServiceWithConfig(
 		&http.Client{},
 		domjwe.New(key),
 		config,
-		slog.Default(),
+		logger,
 	)
 
 	return svc, serviceRepo, sessionRepo, grantRepo, agentRepo, providerService

@@ -62,7 +62,9 @@ func TestEntityToRecord_Success(t *testing.T) {
 
 	assert.Equal(t, entity.ID.String(), record.ID)
 	assert.Equal(t, entity.DisplayName, record.DisplayName)
-	assert.Equal(t, string(entity.ClientID), record.ClientID)
+	require.NotNil(t, record.ClientID)
+	assert.Equal(t, string(entity.ClientID), *record.ClientID)
+	assert.Equal(t, string(model.CredentialSourceStored), record.CredentialSource)
 	assert.Equal(t, testCiphertext, record.SecretCiphertext)
 	assert.Equal(t, entity.IssuerURI, record.IssuerURI)
 	assert.Equal(t, entity.Discovery.EnableDiscovery, record.EnableDiscovery)
@@ -162,11 +164,13 @@ func TestRecordToEntity_NilRecord(t *testing.T) {
 }
 
 func TestRecordToEntity_SecretIsEncryptedState(t *testing.T) {
+	clientID := "client-1"
 	record := &ThirdpartyOAuth2ProviderRecord{
 		ID:               "550e8400-e29b-41d4-a716-446655440099",
 		DisplayName:      "Provider",
-		ClientID:         "client-1",
+		ClientID:         &clientID,
 		SecretCiphertext: []byte("ciphertext"),
+		CredentialSource: string(model.CredentialSourceStored),
 		IssuerURI:        "https://issuer.example.com",
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
@@ -182,6 +186,7 @@ func TestRecordToEntity_SecretIsEncryptedState(t *testing.T) {
 func TestRecordToEntity_RejectsInvalidClientAuthenticationStates(t *testing.T) {
 	none := "none"
 	empty := ""
+	clientID := "client-1"
 	unknown := "client_secret_post"
 	tests := []struct {
 		name   string
@@ -227,10 +232,92 @@ func TestRecordToEntity_RejectsInvalidClientAuthenticationStates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.record.CredentialSource = string(model.CredentialSourceStored)
+			tt.record.ClientID = &clientID
 			entity, err := recordToEntity(tt.record)
 			require.Error(t, err)
 			assert.Nil(t, entity)
 
+			var storageErr *storage.StorageError
+			require.ErrorAs(t, err, &storageErr)
+			assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+		})
+	}
+}
+
+func TestProviderRecord_FilesystemCredentialsRoundTrip(t *testing.T) {
+	for _, flavor := range []model.OAuth2Flavor{model.OAuth2FlavorStandard, model.OAuth2FlavorGitHub} {
+		t.Run(string(flavor), func(t *testing.T) {
+			entity := newTestEntity()
+			canonicalID := "filesystem-provider"
+			entity.CanonicalID = &canonicalID
+			entity.CredentialSource = model.CredentialSourceFilesystem
+			entity.CredentialSourceProvided = true
+			entity.CredentialSourceTransitioned = true
+			entity.Flavor = flavor
+			entity.ClientID, entity.Secret = "", model.NewAbsentSecret()
+
+			record, err := entityToRecord(entity)
+			require.NoError(t, err)
+			assert.Equal(t, string(model.CredentialSourceFilesystem), record.CredentialSource)
+			assert.True(t, record.CredentialSourceTransitioned)
+			assert.Nil(t, record.ClientID)
+			assert.Nil(t, record.SecretCiphertext)
+			assert.Nil(t, record.TokenEndpointAuthMethod)
+
+			roundTripped, err := recordToEntity(record)
+			require.NoError(t, err)
+			assert.Equal(t, model.CredentialSourceFilesystem, roundTripped.CredentialSource)
+			assert.True(t, roundTripped.CredentialSourceTransitioned)
+			assert.Equal(t, &canonicalID, roundTripped.CanonicalID)
+			assert.True(t, roundTripped.ClientID.IsZero())
+			assert.True(t, roundTripped.Secret.IsAbsent())
+			assert.False(t, roundTripped.CredentialSourceProvided)
+			assert.False(t, roundTripped.ClientIDProvided)
+			assert.False(t, roundTripped.ClientSecretProvided)
+		})
+	}
+}
+
+func TestRecordToEntity_RejectsCorruptCredentialSources(t *testing.T) {
+	empty, inline, unknown, google, none := "", "inline-client", "other", "google", "none"
+	invalidCanonical := "not canonical"
+	uuidCanonical := "550e8400-e29b-41d4-a716-446655440099"
+	tests := []struct {
+		name   string
+		mutate func(*ThirdpartyOAuth2ProviderRecord)
+	}{
+		{"unknown source", func(r *ThirdpartyOAuth2ProviderRecord) { r.CredentialSource = unknown }},
+		{"empty source", func(r *ThirdpartyOAuth2ProviderRecord) { r.CredentialSource = empty }},
+		{"filesystem inline client ID", func(r *ThirdpartyOAuth2ProviderRecord) { r.ClientID = &inline }},
+		{"filesystem empty client ID", func(r *ThirdpartyOAuth2ProviderRecord) { r.ClientID = &empty }},
+		{"filesystem ciphertext", func(r *ThirdpartyOAuth2ProviderRecord) { r.SecretCiphertext = testCiphertext }},
+		{"filesystem empty ciphertext", func(r *ThirdpartyOAuth2ProviderRecord) { r.SecretCiphertext = []byte{} }},
+		{"filesystem public authentication", func(r *ThirdpartyOAuth2ProviderRecord) { r.TokenEndpointAuthMethod = &none }},
+		{"filesystem empty authentication", func(r *ThirdpartyOAuth2ProviderRecord) { r.TokenEndpointAuthMethod = &empty }},
+		{"filesystem Google", func(r *ThirdpartyOAuth2ProviderRecord) { r.Flavor = google }},
+		{"filesystem unknown flavor", func(r *ThirdpartyOAuth2ProviderRecord) { r.Flavor = unknown }},
+		{"filesystem missing canonical ID", func(r *ThirdpartyOAuth2ProviderRecord) { r.CanonicalID = nil }},
+		{"filesystem invalid canonical ID", func(r *ThirdpartyOAuth2ProviderRecord) { r.CanonicalID = &invalidCanonical }},
+		{"filesystem UUID canonical ID", func(r *ThirdpartyOAuth2ProviderRecord) { r.CanonicalID = &uuidCanonical }},
+		{"stored missing client ID", func(r *ThirdpartyOAuth2ProviderRecord) {
+			r.CredentialSource, r.SecretCiphertext = string(model.CredentialSourceStored), testCiphertext
+		}},
+		{"stored empty client ID", func(r *ThirdpartyOAuth2ProviderRecord) {
+			r.CredentialSource, r.ClientID, r.SecretCiphertext = string(model.CredentialSourceStored), &empty, testCiphertext
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			canonicalID := "filesystem-provider"
+			record := &ThirdpartyOAuth2ProviderRecord{
+				ID: "550e8400-e29b-41d4-a716-446655440099", CanonicalID: &canonicalID,
+				CredentialSource: string(model.CredentialSourceFilesystem), Flavor: string(model.OAuth2FlavorStandard),
+			}
+			tt.mutate(record)
+			entity, err := recordToEntity(record)
+			require.Error(t, err)
+			assert.Nil(t, entity)
 			var storageErr *storage.StorageError
 			require.ErrorAs(t, err, &storageErr)
 			assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)

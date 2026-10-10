@@ -49,6 +49,8 @@ func sessionDiagnostic(err error) Diagnostic {
 		detail = DetailSessionPersistenceFailed
 	case oauth2session.DetailConfiguration:
 		detail = DetailSessionConfiguration
+	case oauth2session.DetailCredentialSourceUnavailable:
+		detail = DetailCredentialSourceUnavailable
 	case oauth2session.DetailCallerCanceled:
 		detail = DetailCallerCanceled
 	default:

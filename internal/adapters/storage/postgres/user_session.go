@@ -19,6 +19,7 @@ type userSessionRecord struct {
 	ID                    id.SessionID              `db:"id"`
 	Principal             id.Principal              `db:"principal"`
 	ServiceID             id.ServiceID              `db:"service_id"`
+	UpstreamClientID      *string                   `db:"upstream_client_id"`
 	EncryptedAccessToken  []byte                    `db:"encrypted_access_token"`
 	EncryptedRefreshToken []byte                    `db:"encrypted_refresh_token"`
 	TokenType             string                    `db:"token_type"`
@@ -46,6 +47,10 @@ func recordToSession(r *userSessionRecord) *storage.UserSession {
 		InitiatedAt:           r.InitiatedAt,
 		CreatedAt:             r.CreatedAt,
 		UpdatedAt:             r.UpdatedAt,
+	}
+	if r.UpstreamClientID != nil {
+		clientID := id.ClientID(*r.UpstreamClientID)
+		s.UpstreamClientID = &clientID
 	}
 	if s.Scope == nil {
 		s.Scope = []string{}
@@ -75,16 +80,22 @@ func (r *PostgresUserSessionRepository) Create(ctx context.Context, session *sto
 	if session.ID.IsZero() {
 		session.ID = id.NewSessionID()
 	}
+	var upstreamClientID *string
+	if session.UpstreamClientID != nil {
+		clientID := session.UpstreamClientID.String()
+		upstreamClientID = &clientID
+	}
 
 	query := `
 		INSERT INTO user_sessions (
 			id, principal, service_id, encrypted_access_token, encrypted_refresh_token,
 			token_type, access_token_expires_at, refresh_token_expires_at, scope,
-			encryption_context, initiated_at, created_at, updated_at
+			encryption_context, initiated_at, created_at, updated_at, upstream_client_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)
 		ON CONFLICT (principal, service_id) DO UPDATE SET
+			upstream_client_id = EXCLUDED.upstream_client_id,
 			encrypted_access_token = EXCLUDED.encrypted_access_token,
 			encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
 			token_type = EXCLUDED.token_type,
@@ -100,7 +111,7 @@ func (r *PostgresUserSessionRepository) Create(ctx context.Context, session *sto
 		session.EncryptedAccessToken, session.EncryptedRefreshToken,
 		session.TokenType, session.AccessTokenExpiresAt, session.RefreshTokenExpiresAt,
 		pq.Array(session.Scope), session.EncryptionContext,
-		session.InitiatedAt, session.CreatedAt, session.UpdatedAt,
+		session.InitiatedAt, session.CreatedAt, session.UpdatedAt, upstreamClientID,
 	)
 
 	if err != nil {
@@ -181,9 +192,14 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 		return nil, r.wrapError(err, "WithLockedSession")
 	}
 	session := recordToSession(&rec)
+	upstreamClientID := session.UpstreamClientID
 	updated, err := refresh(ctx, session)
 	if err != nil {
 		return nil, err
+	}
+	session.UpstreamClientID = upstreamClientID
+	if upstreamClientID != nil {
+		*upstreamClientID = id.ClientID(*rec.UpstreamClientID)
 	}
 	if updated {
 		if err := session.Validate(); err != nil {

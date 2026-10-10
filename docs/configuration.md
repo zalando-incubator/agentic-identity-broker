@@ -12,6 +12,7 @@ This guide explains how to configure the Agentic Identity Broker for different d
 - [Overview](#overview)
 - [Configuration Sources](#configuration-sources)
 - [Precedence Rules](#precedence-rules)
+- [Third-party OAuth2 Credential Files](#third-party-oauth2-credential-files)
 - [Environment-Specific Configuration](#environment-specific-configuration)
 - [YAML Configuration](#yaml-configuration)
 - [Command-Line Flags](#command-line-flags)
@@ -112,6 +113,59 @@ CLI Flags > YAML > .env Files > Defaults
 - CLI flag `--log-level=debug` is provided
 
 **Result**: `log.level=debug` (from CLI flag)
+
+## Third-party OAuth2 credential files
+
+`third_party_oauth2.credential_files` maps exact, case-sensitive service canonical IDs to credential file pairs. Its default is `{}`.
+Every binding requires `client_id_file` and `client_secret_file`, each with a non-blank absolute path.
+Canonical IDs follow the existing canonical-ID grammar. UUIDs, paths, and whitespace are not canonical IDs.
+
+```yaml
+third_party_oauth2:
+  credential_files:
+    corporate-api:
+      client_id_file: /meta/credentials/client-id
+      client_secret_file: /meta/credentials/client-secret
+    GitHub.Team:
+      client_id_file: /meta/github/client-id
+      client_secret_file: /meta/github/client-secret
+```
+
+The loader accepts this mapping from YAML, environment variables, `.env` files, or the JSON CLI flag.
+For this mapping, precedence is CLI, environment, configuration file, then default. The winning source replaces the whole map, without merging bindings.
+A winning `{}` removes all bindings. It does not change service records or restore stored credentials.
+
+```bash
+export IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CREDENTIAL_FILES='{"corporate-api":{"client_id_file":"/meta/credentials/client-id","client_secret_file":"/meta/credentials/client-secret"}}'
+./bin/agentic-identity-broker
+
+./bin/agentic-identity-broker \
+  --third_party_oauth2.credential_files='{"corporate-api":{"client_id_file":"/meta/credentials/client-id","client_secret_file":"/meta/credentials/client-secret"}}'
+
+./bin/agentic-identity-broker --third_party_oauth2.credential_files='{}'
+```
+
+Configuration validates types, canonical IDs, and paths without opening files. Unavailable files do not prevent startup or metadata operations.
+Unknown-ID bindings create no services. Each filesystem service uses only its own exact canonical-ID binding.
+The broker infers no binding from a service UUID, display name, client ID, or filename.
+
+Register the service with `credential_source: "filesystem"`, a canonical ID, and neither inline credential field.
+See [source-specific administration](/docs/guides/manage-agents-and-services#register-and-update-a-filesystem-service) for complete create and PUT examples.
+Stored services ignore bindings, including unusable bindings. Filesystem services fail closed when their required binding or file is unavailable.
+Public, CIMD confidential, and Google services cannot select filesystem mode.
+
+Initiation reads only the current client-ID file. Each exchange attempt and actual refresh reads a fresh, coherent pair.
+Each file must be regular, readable by the broker UID, non-empty after whitespace removal, and at most 65,536 bytes before trimming.
+The broker removes surrounding whitespace and preserves internal characters. It caches no descriptor or credential value and reads no files for metadata.
+Configuration has no hot reload. Binding changes require a restart, but file publication takes effect on the next applicable operation.
+
+For rotation, publish fresh immutable targets and switch the complete pair atomically. Do not modify a published target or reuse a retired target during acquisition.
+The reader revalidates both targets after acquisition. A detected replacement returns a safe `generation_changed` error and sends no provider authentication request.
+A pair validated before later publication can finish its in-flight operation. Provider validity overlap must cover that operation.
+
+Secret rotation can retain sessions when the client ID stays the same. A changed client ID requires new connections for old codes and sessions.
+Source transitions never rewrite established identities. Removing a binding preserves filesystem mode and makes affected authentication fail with `missing_binding`.
+Administrative responses expose source metadata, not paths, file values, or transition history. Source errors retain generic HTTP responses and closed, credential-free event reasons.
 
 ## ExtProc approval configuration
 

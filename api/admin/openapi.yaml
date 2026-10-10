@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Agentic Identity Broker - Admin Server API
-  version: 1.0.0
+  version: 2.0.0
   description: |
     Administrative REST APIs for the Agentic Identity Broker running on Port 14000.
 
@@ -50,10 +50,21 @@ info:
     ### Client Secret Protection (SR-003)
 
     - Client secrets are **NEVER** transmitted in plaintext to the frontend
-    - Static confidential-service responses redact `client_secret` as `"REDACTED"`
+    - Stored confidential-service responses redact `client_secret` as `"REDACTED"`
     - Public (`none`) and CIMD (`private_key_jwt`) service responses omit `client_secret` because they store no shared secret
-    - Static confidential-service secrets are encrypted at rest using AES-256-GCM
-    - Update operations support static confidential-service secret rotation
+    - Filesystem-service responses omit both `client_id` and `client_secret`, including redaction placeholders
+    - Stored confidential-service secrets retain existing encryption at rest and secret rotation
+
+    ### Credential Source Contract (Admin API 2.0.0)
+
+    - Every service response reports `credential_source: stored | filesystem`
+    - Creation omission selects stored. Update omission preserves the existing source. Explicit null and unknown values are invalid
+    - Filesystem mode requires a valid canonical ID and rejects either inline credential field, including null or empty input
+    - Public, CIMD confidential, and Google-flavor services reject filesystem mode
+    - Administrative requests and responses contain no credential-file paths, file values, or internal source-transition marker
+    - Administrative metadata operations never read credential files or require their availability
+    - This approved breaking contract replaces released Admin API 1.0.0 on the existing `/api/services` routes
+    - ADR 038 and the major contract bump were explicitly approved on 2026-10-08. Schema approval does not establish runtime implementation
 
     ### URL Validation
 
@@ -481,7 +492,9 @@ paths:
 
         Returns a direct array of service objects (no envelope).
 
-        **Security**: Static confidential-service `client_secret` fields are redacted as `"REDACTED"`. The property is omitted for public (`none`) and CIMD (`private_key_jwt`) services because neither stores a shared secret.
+        Every object reports `credential_source`. Stored confidential services return their client ID
+        and `"REDACTED"` secret. Public and CIMD services omit the secret. Filesystem services omit both
+        inline credential fields. Listing never reads files or returns paths or file values.
       operationId: listServices
       tags:
         - Services
@@ -507,6 +520,8 @@ paths:
                   value:
                     - id: 770e8400-e29b-41d4-a716-446655440002
                       display_name: GitHub Production
+                      credential_source: stored
+                      oauth2_flavor: github
                       client_id: Iv1.1234567890abcdef
                       client_secret: REDACTED
                       token_endpoint_auth_method: null
@@ -525,6 +540,8 @@ paths:
                       updated_at: '2025-12-15T14:30:00Z'
                     - id: 880e8400-e29b-41d4-a716-446655440003
                       display_name: Google Cloud
+                      credential_source: stored
+                      oauth2_flavor: google
                       client_id: 123456789-abcdef.apps.googleusercontent.com
                       client_secret: REDACTED
                       token_endpoint_auth_method: null
@@ -539,6 +556,20 @@ paths:
                           description: View and download Google Drive files
                       created_at: '2025-12-05T11:20:00Z'
                       updated_at: '2025-12-05T11:20:00Z'
+                    - id: 990e8400-e29b-41d4-a716-446655440004
+                      canonical_id: zalando-platform
+                      display_name: Zalando Platform
+                      credential_source: filesystem
+                      oauth2_flavor: standard
+                      token_endpoint_auth_method: null
+                      issuer_uri: https://oauth.example.com
+                      discovery:
+                        enable_discovery: false
+                      endpoints:
+                        token_endpoint: https://oauth.example.com/token
+                        authorize_endpoint: https://oauth.example.com/authorize
+                      created_at: '2026-10-08T09:00:00Z'
+                      updated_at: '2026-10-08T09:00:00Z'
                 empty_list:
                   summary: No services configured
                   value: []
@@ -552,10 +583,17 @@ paths:
 
         **Validation Rules**:
         - `display_name`: Required, max 255 characters
-        - `client_id`: Required and unique across services for static confidential and public services, except Google derives it from its credential document
-        - `client_secret`: Required for static confidential services (encrypted at rest, never returned); public services accept only omitted, null, or empty values
+        - `credential_source`: `stored` or `filesystem`; omission selects `stored`; explicit null and unknown values are invalid
+        - Stored `client_id`: Required and unique under existing validation, except Google derives it and CIMD generates it
+        - Stored `client_secret`: Required for static confidential services. Public/CIMD retain omitted, null, or empty secret input
+        - Filesystem: Requires a valid canonical ID, shared-secret authentication, and standard/GitHub flavor
+        - Filesystem: Rejects either inline field whenever present, including null or empty input
         - `issuer_uri`: Required, must be HTTPS URL
         - `scopes`: Optional. Omit it or provide an empty array when the provider does not use OAuth2 scopes.
+
+        **Filesystem registration** never reads files or requires an available binding.
+        Paths belong only to operator configuration and cannot be supplied through this API.
+        Every successful response reports the selected source. Filesystem responses omit both inline fields.
 
         **CIMD confidential mode**: `token_endpoint_auth_method: private_key_jwt` requires
         `client_id` to be omitted or null and `client_secret` to be omitted, null, or empty.
@@ -618,6 +656,19 @@ paths:
                       description: Access user profile information
                     - scope_value: corporate_data
                       description: Access corporate data systems
+              filesystem:
+                summary: Filesystem registration without inline credentials or paths
+                value:
+                  canonical_id: zalando-platform
+                  display_name: Zalando Platform
+                  credential_source: filesystem
+                  oauth2_flavor: standard
+                  issuer_uri: https://oauth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://oauth.example.com/token
+                    authorize_endpoint: https://oauth.example.com/authorize
       responses:
         '201':
           description: Service created successfully
@@ -628,6 +679,8 @@ paths:
               example:
                 id: 770e8400-e29b-41d4-a716-446655440002
                 display_name: GitHub Production
+                credential_source: stored
+                oauth2_flavor: github
                 client_id: Iv1.1234567890abcdef
                 client_secret: REDACTED
                 token_endpoint_auth_method: null
@@ -664,7 +717,9 @@ paths:
       description: |
         Retrieve detailed configuration for a specific OAuth2 service.
 
-        **Security**: Static confidential-service `client_secret` fields are redacted as `"REDACTED"`. The property is omitted for public (`none`) and CIMD (`private_key_jwt`) services because neither stores a shared secret.
+        Every response reports `credential_source` without reading files. Stored responses always include
+        `client_id`. Stored confidential secrets return only `"REDACTED"`; public and CIMD omit the secret.
+        Filesystem responses omit both inline credential fields, file paths, and file values.
       operationId: getService
       tags:
         - Services
@@ -690,6 +745,8 @@ paths:
               example:
                 id: 770e8400-e29b-41d4-a716-446655440002
                 display_name: GitHub Production
+                credential_source: stored
+                oauth2_flavor: github
                 client_id: Iv1.1234567890abcdef
                 client_secret: REDACTED
                 token_endpoint_auth_method: null
@@ -723,17 +780,28 @@ paths:
         Update configuration for an existing OAuth2 service.
 
         **Update Semantics**:
-        - All fields in the request body will update the service
-        - Omitted optional fields are preserved from existing configuration
-        - `token_endpoint_auth_method` is evaluated from the complete replacement request. Omit it or set it to `null` for static confidential authentication, which requires a new non-empty `client_secret` in that request.
+        - PUT remains a full replacement, not PATCH. Existing documented omission exceptions remain unchanged
+        - `credential_source` omission preserves the current source. Explicit null and unknown selectors are invalid
+        - `token_endpoint_auth_method` is evaluated from the complete replacement request. Omitted or null means shared-secret authentication: stored requires an explicit non-empty secret, while filesystem forbids inline credentials
         - `token_endpoint_auth_method: private_key_jwt` requires `client_id` to be omitted or null and `client_secret` to be omitted, null, or empty. A valid replacement removes any prior static secret and assigns the stable broker-generated HTTPS Client ID Metadata Document URL.
         - A private-to-static replacement requires a new non-empty `client_secret`. A private-to-public replacement removes any secret state and stops client assertion use.
         - Updating a service to `token_endpoint_auth_method: none` removes the stored credential.
         - `created_at` timestamp is preserved
         - `updated_at` timestamp is set to current time
 
+        **Source Transitions**:
+        - Stored to filesystem requires explicit `filesystem`, a valid resulting canonical ID, and neither inline field
+        - The source change, removal of both stored credentials, and irreversible internal transition evidence commit atomically
+        - Filesystem to stored requires explicit `stored` and explicitly supplied non-empty `client_id` and `client_secret`
+        - Returning to stored encrypts the supplied secret before the atomic update. Files never supply reverse-transition credentials
+        - No-op source selections preserve transition evidence. A source round trip never resets it or rewrites established identities
+        - Omitted canonical ID preserves the existing ID. Null cannot clear a filesystem canonical ID
+        - Filesystem rejects public, CIMD confidential, and Google-flavor replacements and either inline field, including null or empty input
+        - Validation failures and version conflicts leave the previous source, credentials, and transition evidence unchanged
+        - Updates never read files or require available bindings. File paths and transition evidence are not administrative inputs
+
         **Secret Rotation**:
-        - Provide new `client_secret` to rotate static confidential-service credentials
+        - Provide a new `client_secret` to rotate stored static confidential-service credentials
         - New secret is encrypted before storage
         - Old secret is securely discarded
 
@@ -741,7 +809,8 @@ paths:
         - If `enable_discovery: true`, endpoints are re-fetched
         - Useful for services that change endpoint URLs
 
-        **Security**: Static confidential-service `client_secret` values are redacted in responses. Public and CIMD service responses omit the property.
+        **Security**: All responses report the source. Stored confidential secrets remain redacted.
+        Public/CIMD omit the secret. Filesystem responses omit both inline fields, paths, and file values.
         - `protected_resources` omitted or `null`: preserves the current protected-resource set
         - `protected_resources` present (including `[]`): replaces the entire set and requires `If-Match`
 
@@ -789,6 +858,45 @@ paths:
                       description: Read organization membership
                     - scope_value: workflow
                       description: Update GitHub Actions workflows
+              stored_to_filesystem:
+                summary: Remove stored credentials atomically without reading files
+                value:
+                  canonical_id: zalando-platform
+                  display_name: Zalando Platform
+                  credential_source: filesystem
+                  oauth2_flavor: standard
+                  issuer_uri: https://oauth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://oauth.example.com/token
+                    authorize_endpoint: https://oauth.example.com/authorize
+              filesystem_to_stored:
+                summary: Supply both explicit credentials for the reverse transition
+                value:
+                  canonical_id: zalando-platform
+                  display_name: Zalando Platform
+                  credential_source: stored
+                  oauth2_flavor: standard
+                  client_id: platform-client
+                  client_secret: replacement-secret
+                  issuer_uri: https://oauth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://oauth.example.com/token
+                    authorize_endpoint: https://oauth.example.com/authorize
+              preserve_filesystem_source:
+                summary: Full filesystem replacement with omitted source and preserved canonical ID
+                value:
+                  display_name: Renamed Zalando Platform
+                  oauth2_flavor: standard
+                  issuer_uri: https://oauth.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    token_endpoint: https://oauth.example.com/token
+                    authorize_endpoint: https://oauth.example.com/authorize
       responses:
         '200':
           description: Service updated successfully
@@ -805,6 +913,8 @@ paths:
               example:
                 id: 770e8400-e29b-41d4-a716-446655440002
                 display_name: GitHub Production
+                credential_source: stored
+                oauth2_flavor: github
                 client_id: Iv1.1234567890abcdef
                 client_secret: REDACTED
                 token_endpoint_auth_method: null
@@ -2353,12 +2463,165 @@ components:
             provide for this service; required_scopes must be empty. When false (default),
             required_scopes is the per-agent scope ceiling.
 
+    ServiceCredentialMetadataBoundary:
+      type: object
+      description: File paths belong only to operator configuration. The source-transition marker is internal, not administrative input or output.
+      not:
+        anyOf:
+          - required: [client_id_file]
+          - required: [client_secret_file]
+          - required: [credential_files]
+          - required: [credential_source_transitioned]
+
+    FilesystemServiceFields:
+      type: object
+      description: |
+        Eligible filesystem credentials require neither inline field. Presence alone is invalid,
+        including null or empty input. Only standard/GitHub shared-secret authentication is eligible.
+        Creation and responses require canonical_id. An update can omit it to preserve the current ID,
+        but the resulting filesystem service must retain a valid canonical ID.
+      properties:
+        canonical_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+          not:
+            anyOf:
+              - pattern: '^[0-9A-Fa-f]{32}$'
+              - pattern: '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+              - pattern: '^[A-Za-z0-9._-][0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}[A-Za-z0-9._-]$'
+        token_endpoint_auth_method:
+          type: string
+          nullable: true
+          enum: [null]
+        oauth2_flavor:
+          type: string
+          enum: [standard, github]
+      not:
+        anyOf:
+          - required: [client_id]
+          - required: [client_secret]
+
+    StoredServiceCredentialsRequest:
+      type: object
+      description: Existing stored confidential, public, and CIMD credential validation remains unchanged.
+      oneOf:
+        - title: Stored shared-secret authentication
+          type: object
+          required: [client_secret]
+          properties:
+            token_endpoint_auth_method:
+              type: string
+              nullable: true
+              enum: [null]
+            client_secret:
+              type: string
+              minLength: 1
+          oneOf:
+            - title: Standard or GitHub credentials
+              type: object
+              required: [client_id]
+              properties:
+                oauth2_flavor:
+                  type: string
+                  enum: [standard, github]
+                client_id:
+                  type: string
+                  minLength: 1
+            - title: Google service account credentials
+              type: object
+              required: [oauth2_flavor]
+              properties:
+                oauth2_flavor:
+                  type: string
+                  enum: [google]
+        - title: Stored public authentication
+          type: object
+          required: [token_endpoint_auth_method, client_id]
+          properties:
+            token_endpoint_auth_method:
+              type: string
+              enum: [none]
+            oauth2_flavor:
+              type: string
+              enum: [standard, github]
+            client_id:
+              type: string
+              minLength: 1
+            client_secret:
+              type: string
+              nullable: true
+              enum: ['', null]
+        - title: Stored CIMD confidential authentication
+          type: object
+          required: [token_endpoint_auth_method]
+          properties:
+            token_endpoint_auth_method:
+              type: string
+              enum: [private_key_jwt]
+            oauth2_flavor:
+              type: string
+              enum: [standard, github]
+            client_id:
+              type: string
+              nullable: true
+              enum: [null]
+            client_secret:
+              type: string
+              nullable: true
+              enum: ['', null]
+
     Service:
       type: object
+      description: |
+        Source-aware representation for list, get, create, and update responses.
+        Stored services always include client_id. Shared-secret responses include only REDACTED,
+        while public/CIMD responses omit client_secret. Filesystem responses omit both inline fields.
+        This representation never resolves files or returns file paths, values, or transition evidence.
+      allOf:
+        - $ref: '#/components/schemas/ServiceCredentialMetadataBoundary'
+      oneOf:
+        - title: Stored service response
+          type: object
+          required: [client_id]
+          properties:
+            credential_source:
+              type: string
+              enum: [stored]
+          oneOf:
+            - title: Stored confidential redaction
+              type: object
+              required: [client_secret]
+              properties:
+                token_endpoint_auth_method:
+                  type: string
+                  nullable: true
+                  enum: [null]
+                client_secret:
+                  type: string
+                  enum: [REDACTED]
+            - title: Stored public or CIMD service
+              type: object
+              properties:
+                token_endpoint_auth_method:
+                  type: string
+                  enum: [none, private_key_jwt]
+              not:
+                required: [client_secret]
+        - title: Filesystem service response
+          type: object
+          required: [canonical_id]
+          properties:
+            credential_source:
+              type: string
+              enum: [filesystem]
+          allOf:
+            - $ref: '#/components/schemas/FilesystemServiceFields'
       required:
         - id
         - display_name
-        - client_id
+        - credential_source
         - token_endpoint_auth_method
         - oauth2_flavor
         - issuer_uri
@@ -2367,6 +2630,11 @@ components:
         - created_at
         - updated_at
       properties:
+        credential_source:
+          type: string
+          enum: [stored, filesystem]
+          description: Registered credential source. Reported without resolving files.
+          readOnly: true
         id:
           type: string
           format: uuid
@@ -2388,9 +2656,9 @@ components:
         client_id:
           type: string
           description: |
-            OAuth2 client_id for this service.
+            Stored OAuth2 client_id for this service. Always present in stored mode and omitted in filesystem mode.
 
-            For `oauth2_flavor: standard`: an operator supplies the value for static confidential
+            For stored `oauth2_flavor: standard`: an operator supplies the value for static confidential
             and public services. For `oauth2_flavor: google`: it is extracted from the `client_id`
             field in the service account JSON credential. For `private_key_jwt`: the broker generates
             the immutable HTTPS Client ID Metadata Document URL
@@ -2405,11 +2673,10 @@ components:
             - **standard**: Plain OAuth2 client secret string
             - **google**: Serialized Google service account JSON key document
 
-            **SECURITY**: For a static confidential service this always returns `"REDACTED"`; the
-            stored secret is never transmitted. For public (`token_endpoint_auth_method: none`) and
-            CIMD (`token_endpoint_auth_method: private_key_jwt`) services this property is omitted
-            entirely because no shared credential exists. Client secrets are encrypted at rest using
-            AES-256-GCM.
+            **SECURITY**: Stored static confidential services return only `"REDACTED"`.
+            Public (`token_endpoint_auth_method: none`), CIMD (`private_key_jwt`), and filesystem
+            services omit this property entirely. Filesystem services also omit `client_id`.
+            Stored secret encryption remains unchanged.
           example: REDACTED
           readOnly: true
         token_endpoint_auth_method:
@@ -2427,8 +2694,8 @@ components:
               its stable HTTPS Client ID Metadata Document URL, stores no shared secret, and
               authenticates upstream with an ES256 client assertion from the dedicated CIMD
               client-authentication key set.
-            - `null` — the service is a **static confidential client**. It declares no method and
-              authenticates upstream with its stored client secret.
+            - `null` — the service is a **shared-secret confidential client**. Stored mode uses its
+              stored client secret. Filesystem mode uses its configured file pair at authentication.
           example: none
         oauth2_flavor:
           type: string
@@ -2506,10 +2773,39 @@ components:
 
     ServiceCreateRequest:
       type: object
+      description: |
+        Omitted credential_source selects stored. Explicit null and unknown selectors are invalid.
+        Filesystem creation requires a valid canonical_id and neither inline credential field.
+        Registration never reads files. Missing bindings or files do not prevent registration.
+      allOf:
+        - $ref: '#/components/schemas/ServiceCredentialMetadataBoundary'
+      oneOf:
+        - title: Stored creation (default)
+          type: object
+          properties:
+            credential_source:
+              type: string
+              enum: [stored]
+          allOf:
+            - $ref: '#/components/schemas/StoredServiceCredentialsRequest'
+        - title: Filesystem creation
+          type: object
+          required: [credential_source, canonical_id]
+          properties:
+            credential_source:
+              type: string
+              enum: [filesystem]
+          allOf:
+            - $ref: '#/components/schemas/FilesystemServiceFields'
       required:
         - display_name
         - discovery
       properties:
+        credential_source:
+          type: string
+          enum: [stored, filesystem]
+          default: stored
+          description: Omission selects stored. Null is invalid. Filesystem rejects inline fields and excluded authentication modes.
         canonical_id:
           type: string
           nullable: true
@@ -2549,9 +2845,9 @@ components:
           description: |
             OAuth2 client_id for this service.
 
-            Required when `oauth2_flavor` is `standard` or `github`, except when
-            `token_endpoint_auth_method` is `private_key_jwt`. Optional when `oauth2_flavor` is
-            `google` because it is extracted from the service account JSON.
+            In stored mode, required for `standard` or `github`, except `private_key_jwt`.
+            Optional for stored `google` because it is extracted from the service account JSON.
+            In filesystem mode this property must be absent, including null or empty input.
 
             When `token_endpoint_auth_method` is `private_key_jwt`, this property must be omitted or
             null. After the broker allocates the service ID, it generates the immutable HTTPS Client
@@ -2574,10 +2870,10 @@ components:
             **SECURITY**: Static confidential-service secrets are encrypted at rest using AES-256-GCM
             and return only as `"REDACTED"` on read responses.
 
-            If `token_endpoint_auth_method` is omitted or `null`, this property is REQUIRED and must
-            contain a non-empty value. If the method is `none` or `private_key_jwt`, it can be
-            omitted, null, or `""`; a non-empty value returns the existing `400` error representation.
-            The broker never stores a secret for public or CIMD services.
+            In stored mode with omitted or null `token_endpoint_auth_method`, this property is REQUIRED
+            and non-empty. With `none` or `private_key_jwt`, it can be omitted, null, or `""`.
+            A non-empty value retains the existing `400` error representation for those modes.
+            Filesystem mode requires this property to be absent, including null or empty input.
           example: ghp_secretkey1234567890abcdef
           writeOnly: true
         token_endpoint_auth_method:
@@ -2585,8 +2881,8 @@ components:
           nullable: true
           enum: [none, private_key_jwt, null]
           description: |
-            Client authentication method for the upstream token endpoint. Omit this property, or send
-            `null`, for a static confidential client; this requires a non-empty `client_secret`.
+            Client authentication method for the upstream token endpoint. Omit it or send `null` for
+            shared-secret authentication. Stored mode requires client_secret. Filesystem mode forbids inline credentials.
 
             When `none`, the service is a public client: `client_secret` can be omitted, null, or
             `""`, `client_id` remains required, and `oauth2_flavor: google` is rejected.
@@ -2645,17 +2941,60 @@ components:
 
     ServiceUpdateRequest:
       type: object
+      description: |
+        PUT remains a full replacement with existing documented omission exceptions.
+        Omitted credential_source preserves the current source, not a stored default.
+        Explicit null and unknown selectors are invalid. The omission branch models both possible
+        request shapes; the domain validates the body against the existing source and canonical ID.
+        A resulting filesystem service rejects either inline field and requires a valid canonical ID.
+        An explicit stored-to-filesystem transition atomically removes both credentials and records
+        irreversible internal transition evidence. The reverse requires explicitly supplied non-empty
+        client_id and client_secret, with encryption before the atomic update. Files never supply them.
+        Invalid input or a version conflict preserves the entire previous state. No administrative
+        operation reads files. Existing If-Match requirements remain unchanged.
+      allOf:
+        - $ref: '#/components/schemas/ServiceCredentialMetadataBoundary'
+      oneOf:
+        - title: Explicit stored update
+          type: object
+          required: [credential_source]
+          properties:
+            credential_source:
+              type: string
+              enum: [stored]
+          allOf:
+            - $ref: '#/components/schemas/StoredServiceCredentialsRequest'
+        - title: Explicit filesystem update
+          type: object
+          required: [credential_source]
+          properties:
+            credential_source:
+              type: string
+              enum: [filesystem]
+          allOf:
+            - $ref: '#/components/schemas/FilesystemServiceFields'
+        - title: Preserve existing source
+          type: object
+          not:
+            required: [credential_source]
+          oneOf:
+            - $ref: '#/components/schemas/StoredServiceCredentialsRequest'
+            - $ref: '#/components/schemas/FilesystemServiceFields'
       required:
         - display_name
         - discovery
       properties:
+        credential_source:
+          type: string
+          enum: [stored, filesystem]
+          description: Omission preserves the existing source. Explicit null is invalid. No creation default applies to PUT.
         canonical_id:
           type: string
           nullable: true
           minLength: 1
           maxLength: 128
           pattern: '^[A-Za-z0-9._-]+$'
-          description: Omitted preserves the current canonical ID; null removes it; a string replaces it.
+          description: Omission preserves the current ID. Null clears it only in stored mode. Filesystem mode requires a valid resulting ID.
           example: github-prod
         display_name:
           type: string
@@ -2689,9 +3028,9 @@ components:
           description: |
             OAuth2 client_id for this service.
 
-            Required when `oauth2_flavor` is `standard` or `github`, except when
-            `token_endpoint_auth_method` is `private_key_jwt`. Optional when `oauth2_flavor` is
-            `google` because it is extracted from the service account JSON.
+            In stored mode, required for `standard` or `github`, except `private_key_jwt`.
+            Optional for stored `google` because it is extracted from the service account JSON.
+            Filesystem mode requires omission. A filesystem-to-stored transition requires an explicit non-empty value.
 
             When `token_endpoint_auth_method` is `private_key_jwt`, this property must be omitted or
             null. The broker assigns the immutable HTTPS Client ID Metadata Document URL
@@ -2711,10 +3050,10 @@ components:
             **SECURITY**: Static confidential-service secrets are encrypted at rest and never returned
             in responses.
 
-            If `token_endpoint_auth_method` is omitted or `null`, this property is REQUIRED and must
-            contain a non-empty value. If the method is `none` or `private_key_jwt`, it can be
-            omitted, null, or `""`; a non-empty value returns the existing `400` error representation.
-            The broker never stores a secret for public or CIMD services.
+            In stored mode with omitted or null `token_endpoint_auth_method`, this property is REQUIRED
+            and non-empty. With `none` or `private_key_jwt`, it can be omitted, null, or `""`.
+            A non-empty value retains the existing `400` error representation for those modes.
+            Filesystem mode forbids this property, including null or empty input. Returning to stored requires an explicit non-empty secret.
           example: ghp_newsecretkey9876543210zyxwvu
           writeOnly: true
         token_endpoint_auth_method:
@@ -2724,8 +3063,8 @@ components:
           description: |
             Client authentication method for the upstream token endpoint. This request retains the
             existing full-replacement semantics: the method is evaluated from the complete replacement
-            request. Omit this property, or send `null`, for a static confidential client; this
-            requires a non-empty `client_secret` in the request.
+            request. Omit this property, or send `null`, for shared-secret authentication.
+            Stored mode requires a non-empty client_secret. Filesystem mode forbids inline credentials.
 
             When `none`, the service is a public client: `client_secret` can be omitted, null, or
             `""`, `client_id` remains required, and `oauth2_flavor: google` is rejected. The update

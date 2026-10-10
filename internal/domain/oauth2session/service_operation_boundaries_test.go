@@ -58,6 +58,37 @@ func TestRefreshBodyFailureClassifiesDeadlineAndCallerCancellation(t *testing.T)
 	}
 }
 
+func TestRefreshProviderRejectionKeepsCallerCancellationPrecedence(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct caller canceled", true: "shared operation canceled"}[shared], func(t *testing.T) {
+			service, provider, _ := newOperationTestService(t, io.Discard)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if shared {
+				ctx = context.WithValue(ctx, sharedRefreshContextKey{}, true)
+			}
+			service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+				cancel()
+				return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
+			})
+			_, err := service.refreshAccessToken(ctx, provider, "refresh", nil)
+			detail, kind := DetailCallerCanceled, KindCanceled
+			if shared {
+				detail, kind = DetailRefreshRejected, KindProvider
+			} else {
+				assert.ErrorIs(t, err, context.Canceled)
+			}
+			metadata := requireOperationError(t, err, OperationRefresh, detail)
+			assert.Equal(t, kind, metadata.Kind())
+			assert.Equal(t, DependencyProvider, metadata.Dependency())
+			assert.Equal(t, http.StatusBadRequest, metadata.StatusCode())
+			assert.Equal(t, "invalid_grant", metadata.OAuthCode())
+			assert.ErrorIs(t, err, ErrRefreshRejected)
+			assert.NotErrorIs(t, err, ErrRefreshTokenExpired)
+		})
+	}
+}
+
 func TestRefreshProviderLookupKeepsConfigurationCauses(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
