@@ -423,6 +423,7 @@ ginkgo -v --focus="Authorization Endpoint" ./tests/e2e/
 **Domain Model**:
 - **ToolApproval**: Aggregate root representing an approval record with lifecycle status (pending → approved/denied), persistence scope (once/session/permanent), consumption tracking, and an exact server-derived tool matcher with editable parameter constraints.
 - **ApprovalService**: Core business logic (`internal/domain/approval/service.go`) — create, get, approve, deny, consume, list permanent, revoke, sync state. Enforces principal-matching, expiry checks, rate limiting, idempotency, and server-owned exact tool coverage.
+- **Permanent denial**: Blocks the exact tool for one principal-agent pair until revocation, independent of arguments and session. Both storage adapters clear parameter constraints. ExtProc enforces existing denials with constrained parameters as tool-wide blocks, ahead of approved records.
 
 **API Endpoints** (8 routes on end-user server):
 ```
@@ -452,6 +453,7 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 - **ApprovalSyncBroadcaster**: In-process fan-out with configurable coalesce window (default 1s). Subscribers register buffered channels; broadcast wakes all subscribers after coalesce delay.
 - **ApprovalSyncSubscriber**: One goroutine per broker instance holds a dedicated `pgx.Conn` for `LISTEN approval_sync`. On notification receipt, triggers broadcaster.
 - **Cross-Instance**: PostgreSQL `NOTIFY approval_sync` issued in the same transaction as `approval_sync_state.version` increment. All broker instances receive the notification and wake their local long-poll connections.
+- **ExtProc snapshot ordering**: The cache retains the highest version from global and principal-filtered reads, including empty snapshots. Older responses cannot replace decisions or extend global freshness. Principal-filtered reads leave the global polling ETag unchanged.
 
 **Components**:
 ```

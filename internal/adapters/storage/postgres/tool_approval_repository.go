@@ -535,7 +535,8 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 
 	query := `
 		UPDATE tool_approvals
-		SET status = 'denied', persistence = $2, denied_at = $3
+		SET status = 'denied', persistence = $2, denied_at = $3,
+		    params_pattern = CASE WHEN $2::varchar = 'permanent' THEN '{}'::jsonb ELSE params_pattern END
 		WHERE id = $1 AND status = 'pending' AND expires_at > NOW()
 		RETURNING id, principal, agent_id, gateway_client_id, tool_name,
 		          arguments, arguments_hash, description, risk_level,
