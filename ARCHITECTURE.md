@@ -816,7 +816,7 @@ Service Layer (OAuth2SessionService):
 
 **New Port**: `internal/ports/cimd.go` defines `CIMDFetcher` (outbound, infrastructure-side) and `ClientResolver` (strategy interface injected into `OAuth2AuthorizationService`).
 
-**New Domain Packages**: `internal/domain/oauth2/cimd/` contains the document, SSRF blocklist, cache, and CIMD service. `internal/domain/urivalidation/` validates CIMD client URLs and matches registered URI patterns.
+**New Domain Packages**: `internal/domain/oauth2/cimd/` contains the document, cache, and CIMD service. `internal/domain/netpolicy/` contains the blocked-address policy shared by outbound security clients. `internal/domain/urivalidation/` validates CIMD client URLs and matches registered URI patterns.
 
 **Authorization Flow with URL-based `client_id`**:
 
@@ -1628,13 +1628,13 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **ClientIDMetadataDocumentURL**: A validated HTTPS URL used as a concrete `client_id`. Invalid URLs cannot enter client resolution. The validator requires HTTPS, a non-empty path, no `.` or `..` path segments, no fragment, no userinfo, port 443 or absent, no wildcard, and no percent-encoded `/` or `\` in the path. Located in `internal/domain/urivalidation/`.
 
-**SSRFBlocklist**: Immutable value object holding the set of CIDR ranges blocked for CIMD HTTP fetches. Initialized at startup from RFC 6890 Special-Purpose Address Registry defaults plus operator `extra_blocked_cidrs`. Consulted by the SSRF-hardened fetcher adapter's custom `net.Dialer.Control` callback to reject resolved IP addresses before TCP connect. Located in `internal/domain/oauth2/cimd/`.
+**SSRFBlocklist**: Immutable value object holding CIDR ranges blocked for outbound HTTPS fetches. The policy includes RFC 6890 special-purpose ranges and operator `extra_blocked_cidrs`. The outbound adapter checks resolved IP addresses through `net.Dialer.Control` before TCP connect. Located in `internal/domain/netpolicy/`.
 
 **BrandPinMismatchDetected**: Domain audit event emitted as a structured log entry when a CIMD document's `client_name` differs from the registered Agent's `DisplayName`. Non-blocking — authorization proceeds, but the mismatch is recorded. Fields: AgentID, Agent.DisplayName, CIMD client_name.
 
 **ClientResolver**: Strategy interface injected into `OAuth2AuthorizationService` that resolves a `client_id` from an authorization request to an Agent and optional CIMD metadata. One implementation — `AgentClientResolver` — serves both modes, selected by `cimdService` presence: when nil (CIMD disabled), URL-format client IDs are rejected with `invalid_client`; when set (CIMD enabled), URL-format client IDs are routed through CIMD fetch/validate/cache, non-URL IDs fall through to UUID lookup. Located in `internal/ports/cimd.go` (interface) and `internal/domain/oauth2/client_resolver.go`.
 
-**CIMDFetcher**: Hexagonal port interface (outbound, infrastructure-side) for fetching Client ID Metadata Documents from remote HTTPS endpoints with SSRF protection, configurable timeout, and response size limits. Analogous to `JWKSPort`. Implemented by the SSRF-hardened HTTP fetcher adapter in `internal/adapters/cimd/fetcher.go` which uses a custom `net.Dialer.Control` callback for TOCTOU-safe IP address validation before TCP connect.
+**CIMDFetcher**: Outbound `CIMDFetcher` port for Client ID Metadata Documents. The SSRF-hardened implementation lives in `internal/adapters/outboundhttp/fetcher.go`. It uses the shared `netpolicy.SSRFBlocklist` at dial time. It keeps the existing CIMD timeout, size limit, no-redirect rule, and cache behavior.
 
 **ClientResolution**: DTO returned by `ClientResolver.ResolveClient()`. Contains the resolved `*storage.Agent` and an optional `*cimd.ClientIDMetadataDocument` (nil for opaque UUID client IDs). Used by `OAuth2AuthorizationService` to carry CIMD metadata into the consent session.
 

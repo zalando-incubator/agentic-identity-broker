@@ -1,11 +1,11 @@
-package cimd
+package netpolicy
 
 import (
 	"fmt"
 	"net"
 )
 
-// SSRFBlocklist is an immutable set of CIDR ranges blocked for CIMD fetches.
+// SSRFBlocklist is an immutable set of CIDR ranges blocked for outbound HTTP requests.
 // Built at startup from special-purpose and transition ranges plus operator-configured extras.
 type SSRFBlocklist struct {
 	blocked []*net.IPNet
