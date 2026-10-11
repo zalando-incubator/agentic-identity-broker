@@ -55,13 +55,14 @@ const reAuthCooldownTTL = 5 * time.Second
 // set the entry acts as a short-lived rate-limit, not a long-lived cache.
 //
 // Success entries are served from cache until expiresAt with no intermediate
-// broker probe. grantedPermissionSets is cached alongside the access token as the
+// broker probe; expiresAt keeps a safety margin before the reported token expiry
+// (see computeTTL). grantedPermissionSets is cached alongside the access token as the
 // same token-bound snapshot, so it inherits the same TTL and stale-window bounds.
 // staleUntil is an immutable upper bound set at population time
-// (min(expiresAt + reAuthCooldownTTL, issueTime + cache.max_ttl)) allowing the
-// stale token to be served for a brief outage window. When ttl == cache.max_ttl
-// (the common case where expires_in exceeds the cap), staleUntil == expiresAt
-// and the token is never served past the configured maximum. Because it is fixed
+// (min(issueTime + lifetime + reAuthCooldownTTL, issueTime + cache.max_ttl)) allowing
+// the token to be served during a brief outage, including the safety margin. When
+// the lifetime reaches cache.max_ttl (the common case where expires_in exceeds the
+// cap), the token is never served past the configured maximum. Because it is fixed
 // at token creation it cannot be extended by repeated transient failures.
 type cachedToken struct {
 	accessToken           string
@@ -265,7 +266,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 		// correctly. The stale-token fallback for transient failures is applied by the
 		// caller AFTER Execute() returns, keeping failure accounting accurate.
 		doExchangeAndCache := func() (ExchangeResult, error) {
-			result, ttl, err := te.doExchange(exchangeCtx, subjectToken, resourceURI)
+			result, window, err := te.doExchange(exchangeCtx, subjectToken, resourceURI)
 			if err != nil {
 				var brokerErr *BrokerExchangeError
 				if errors.As(err, &brokerErr) && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
@@ -282,7 +283,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 			cachedPermSets := cloneGrantedPermissionSets(result.GrantedPermissionSets)
 			te.cacheMu.Lock()
 			now := time.Now()
-			staleUntil := now.Add(ttl + reAuthCooldownTTL)
+			staleUntil := now.Add(window.lifetime + reAuthCooldownTTL)
 			if maxAbs := now.Add(te.cfg.Cache.MaxTTL); maxAbs.Before(staleUntil) {
 				staleUntil = maxAbs
 			}
@@ -291,7 +292,7 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 				grantedPermissionSets: cachedPermSets,
 				principal:             result.Principal,
 				agentID:               result.AgentID,
-				expiresAt:             now.Add(ttl),
+				expiresAt:             now.Add(window.fresh),
 				staleUntil:            staleUntil,
 			}
 			te.cacheMu.Unlock()
@@ -416,11 +417,11 @@ func (te *TokenExchanger) ClientAssertion() (string, error) {
 	return assertion.value, nil
 }
 
-func (te *TokenExchanger) doExchange(ctx context.Context, subjectToken, resourceURI string) (ExchangeResult, time.Duration, error) {
+func (te *TokenExchanger) doExchange(ctx context.Context, subjectToken, resourceURI string) (ExchangeResult, tokenLifetimes, error) {
 	logger := loggerFromContext(ctx, te.logger)
 	assertion, err := te.ClientAssertion()
 	if err != nil {
-		return ExchangeResult{}, 0, err
+		return ExchangeResult{}, tokenLifetimes{}, err
 	}
 	exchangeCtx, cancel := context.WithTimeout(ctx, te.cfg.OAuth2.ExchangeTimeout)
 	defer cancel()
@@ -434,12 +435,12 @@ func (te *TokenExchanger) doExchange(ctx context.Context, subjectToken, resource
 	}
 	req, err := http.NewRequestWithContext(exchangeCtx, http.MethodPost, te.cfg.OAuth2.TokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return ExchangeResult{}, 0, NewOperationError(NewErrorMetadata(OperationExchange, KindConfiguration, DependencyLocal, 0, ""), err)
+		return ExchangeResult{}, tokenLifetimes{}, NewOperationError(NewErrorMetadata(OperationExchange, KindConfiguration, DependencyLocal, 0, ""), err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := te.client.Do(req)
 	if err != nil {
-		return ExchangeResult{}, 0, NewOperationError(NewErrorMetadata(OperationExchange, KindUnavailable, DependencyBroker, 0, ""), err)
+		return ExchangeResult{}, tokenLifetimes{}, NewOperationError(NewErrorMetadata(OperationExchange, KindUnavailable, DependencyBroker, 0, ""), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
@@ -448,38 +449,53 @@ func (te *TokenExchanger) doExchange(ctx context.Context, subjectToken, resource
 		if resp.StatusCode != http.StatusOK {
 			kind = responseErrorKind(resp.StatusCode)
 		}
-		return ExchangeResult{}, 0, NewOperationError(NewErrorMetadata(OperationExchange, kind, DependencyBroker, resp.StatusCode, ""), err)
+		return ExchangeResult{}, tokenLifetimes{}, NewOperationError(NewErrorMetadata(OperationExchange, kind, DependencyBroker, resp.StatusCode, ""), err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		var errBody brokerErrorBody
 		_ = json.Unmarshal(body, &errBody)
 		brokerErr := &BrokerExchangeError{StatusCode: resp.StatusCode, Code: errBody.Code, Description: errBody.Description, ErrorURI: errBody.ErrorURI}
 		logOperationError(ctx, logger, slog.LevelWarn, "token exchange returned broker error", brokerErr.Metadata(), brokerErr.Diagnostic())
-		return ExchangeResult{}, 0, NewOperationError(brokerErr.Metadata(), brokerErr)
+		return ExchangeResult{}, tokenLifetimes{}, NewOperationError(brokerErr.Metadata(), brokerErr)
 	}
 	var response tokenExchangeResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return ExchangeResult{}, 0, NewOperationError(NewErrorMetadata(OperationExchange, KindInvalidResponse, DependencyBroker, resp.StatusCode, ""), err)
+		return ExchangeResult{}, tokenLifetimes{}, NewOperationError(NewErrorMetadata(OperationExchange, KindInvalidResponse, DependencyBroker, resp.StatusCode, ""), err)
 	}
 	if response.AccessToken == "" {
-		return ExchangeResult{}, 0, NewOperationError(NewErrorMetadata(OperationExchange, KindInvalidResponse, DependencyBroker, resp.StatusCode, ""), errors.New("token exchange response missing access_token"))
+		return ExchangeResult{}, tokenLifetimes{}, NewOperationError(NewErrorMetadata(OperationExchange, KindInvalidResponse, DependencyBroker, resp.StatusCode, ""), errors.New("token exchange response missing access_token"))
 	}
 	return ExchangeResult{Token: response.AccessToken, GrantedPermissionSets: cloneGrantedPermissionSets(response.GrantedPermissionSets), Principal: response.Principal, AgentID: response.AgentID}, te.computeTTL(response.ExpiresIn), nil
 }
 
-// computeTTL returns the cache TTL for an exchanged token.
-// Uses expires_in if present, falls back to default_ttl, capped at max_ttl.
-func (te *TokenExchanger) computeTTL(expiresIn *int) time.Duration {
-	var ttl time.Duration
-	if expiresIn != nil && *expiresIn > 0 {
-		ttl = time.Duration(*expiresIn) * time.Second
-	} else {
-		ttl = te.cfg.Cache.DefaultTTL
+// minExpiryMargin is the smallest safety margin kept between serving a cached token and the
+// expiry the broker reported for it.
+const minExpiryMargin = 10 * time.Second
+
+// tokenLifetimes is the cache window of an exchanged token.
+// fresh is how long the token is served from cache without asking the broker again. lifetime
+// is how long the token is known to stay valid and bounds the stale fallback window.
+type tokenLifetimes struct {
+	fresh    time.Duration
+	lifetime time.Duration
+}
+
+// computeTTL derives the cache window from expires_in, falling back to default_ttl, with both
+// values capped at max_ttl. A token with a broker-reported expiry stops being served
+// max(10s, 10% of expires_in) before it, but never sooner than half its lifetime or one second,
+// so requests started just before expiry do not reach the upstream with a dead token.
+func (te *TokenExchanger) computeTTL(expiresIn *int) tokenLifetimes {
+	if expiresIn == nil || *expiresIn <= 0 {
+		ttl := min(te.cfg.Cache.DefaultTTL, te.cfg.Cache.MaxTTL)
+		return tokenLifetimes{fresh: ttl, lifetime: ttl}
 	}
-	if ttl > te.cfg.Cache.MaxTTL {
-		ttl = te.cfg.Cache.MaxTTL
+	lifetime := time.Duration(*expiresIn) * time.Second
+	fresh := lifetime - max(minExpiryMargin, lifetime/10)
+	fresh = max(fresh, lifetime/2, time.Second)
+	return tokenLifetimes{
+		fresh:    min(fresh, te.cfg.Cache.MaxTTL),
+		lifetime: min(lifetime, te.cfg.Cache.MaxTTL),
 	}
-	return ttl
 }
 
 // refreshClientAssertion obtains a new client assertion (id_token or access_token based on config)

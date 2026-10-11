@@ -1512,6 +1512,15 @@ func setupServiceWithConfig(
 	configure func(*oauth2session.Config),
 ) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
 	t.Helper()
+	return setupServiceWithHTTPClient(t, configure, &http.Client{})
+}
+
+func setupServiceWithHTTPClient(
+	t *testing.T,
+	configure func(*oauth2session.Config),
+	httpClient *http.Client,
+) (*oauth2session.OAuth2SessionService, *memory.InMemoryThirdpartyOAuth2ProviderRepository, ports.UserSessionRepository, *memory.UserGrantRepository, *memory.AgentRepository, *thirdparty.ThirdpartyOAuth2ProviderService) {
+	t.Helper()
 
 	// Create test JWE key
 	key, err := jwk.Import[jwk.Key]([]byte("test-secret-key-must-be-32-bytes"))
@@ -1530,6 +1539,7 @@ func setupServiceWithConfig(
 	// Create service
 	config := oauth2session.DefaultConfig()
 	config.CallbackBaseURL = "https://broker.example.com"
+	config.RetryBaseDelay = time.Millisecond
 	if configure != nil {
 		configure(&config)
 	}
@@ -1554,7 +1564,7 @@ func setupServiceWithConfig(
 		grantRepo,
 		agentRepo,
 		encryption,
-		&http.Client{},
+		httpClient,
 		domjwe.New(key),
 		config,
 		slog.Default(),

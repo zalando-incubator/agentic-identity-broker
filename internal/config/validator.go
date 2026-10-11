@@ -391,6 +391,15 @@ func validateThirdPartyOAuth2Config(cfg *ports.ThirdPartyOAuth2Config) error {
 		}
 	}
 
+	if cfg.RefreshLeeway < 0 || cfg.RefreshLeeway > 0 && (cfg.RefreshLeeway < time.Second || cfg.RefreshLeeway > 5*time.Minute) {
+		return formatValidationError(
+			"third_party_oauth2.refresh_leeway",
+			cfg.RefreshLeeway.String(),
+			"duration between 1s and 5m",
+			nil,
+		)
+	}
+
 	// Validate PKCEVerifierLength if provided (should be within RFC 7636 limits)
 	if cfg.PKCEVerifierLength > 0 {
 		if cfg.PKCEVerifierLength < 32 || cfg.PKCEVerifierLength > 128 {

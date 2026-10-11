@@ -166,6 +166,7 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv("third_party_oauth2.jwe_signing_key", "IDENTITY_BROKER_JWE_SIGNING_KEY")
 	_ = l.v.BindEnv("third_party_oauth2.state_token_ttl", "IDENTITY_BROKER_STATE_TOKEN_TTL")
 	_ = l.v.BindEnv("third_party_oauth2.pkce_verifier_length", "IDENTITY_BROKER_PKCE_VERIFIER_LENGTH")
+	_ = l.v.BindEnv("third_party_oauth2.refresh_leeway", "IDENTITY_BROKER_THIRD_PARTY_OAUTH2_REFRESH_LEEWAY")
 	// Bind encryption configuration to environment variables
 	// AWS KMS backend - KMS key and DynamoDB cache configuration
 	_ = l.v.BindEnv("encryption.aws_kms.key_arn", "IDENTITY_BROKER_ENCRYPTION_AWS_KMS_KEY_ARN")
@@ -188,6 +189,7 @@ func (l *Loader) setDefaults() {
 	// Set OAuth2 configuration defaults
 	l.v.SetDefault("third_party_oauth2.state_token_ttl", "10m")
 	l.v.SetDefault("third_party_oauth2.pkce_verifier_length", 32)
+	l.v.SetDefault("third_party_oauth2.refresh_leeway", "30s")
 
 	// Note: No encryption configuration defaults set here to avoid creating
 	// both backend structs. Defaults are handled in the adapter factory functions.
@@ -291,6 +293,7 @@ func (l *Loader) setDefaults() {
 			"request_context.trusted_proxy.forwarded_header",
 			"request_context.trace.response_enabled",
 			"third_party_oauth2.state_token_ttl", "third_party_oauth2.pkce_verifier_length",
+			"third_party_oauth2.refresh_leeway",
 			"security.skip_thirdparty_https_validation",
 			"telemetry.enabled", "telemetry.service_name",
 			"telemetry.traces.enabled", "telemetry.traces.sampling_rate", "telemetry.traces.propagators",

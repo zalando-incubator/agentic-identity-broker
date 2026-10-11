@@ -514,6 +514,24 @@ request_context:
     response_enabled: true
 ```
 
+#### Third-Party OAuth2 Session Configuration
+
+These options control the authorization-code flow and token refresh for third-party service connections.
+
+| Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
+|--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
+| `third_party_oauth2.jwe_signing_key` | string | — | Base64, 32 bytes decoded | Yes | `IDENTITY_BROKER_JWE_SIGNING_KEY` | — | Key that encrypts OAuth2 state tokens. |
+| `third_party_oauth2.state_token_ttl` | duration | `10m` | Up to `15m` | No | `IDENTITY_BROKER_STATE_TOKEN_TTL` | — | Lifetime of the OAuth2 state token between authorize and callback. |
+| `third_party_oauth2.pkce_verifier_length` | integer | `32` | `32`–`128` | No | `IDENTITY_BROKER_PKCE_VERIFIER_LENGTH` | — | PKCE verifier length in bytes (RFC 7636). |
+| `third_party_oauth2.refresh_leeway` | duration | `30s` | `1s`–`5m` | No | `IDENTITY_BROKER_THIRD_PARTY_OAUTH2_REFRESH_LEEWAY` | — | Refreshes a stored access token this long before its recorded expiry so a token handed to an agent does not expire in flight. |
+
+**Refresh notes:**
+
+- Inside the leeway window a failed refresh returns the still-unexpired stored token instead of an error.
+- Refresh retries HTTP 5xx, 429 and connection failures up to three attempts with exponential backoff (1s, 2s). It honours a `Retry-After` of at most 10 seconds and does not retry timeouts or 4xx rejections.
+- A re-connect keeps the stored refresh token when the provider omits `refresh_token`, which Google, Microsoft and Okta do on repeat consent.
+- `refresh_expires_in` and `refresh_token_expires_in` in provider responses set the refresh-token expiry shown on the sessions page.
+
 **Notes:**
 
 - All configuration options have built-in defaults and are optional unless marked "Required"

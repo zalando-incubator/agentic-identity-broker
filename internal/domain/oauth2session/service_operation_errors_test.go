@@ -102,7 +102,7 @@ func newOperationTestService(t *testing.T, logs io.Writer) (*OAuth2SessionServic
 	}}, operationEncryption{}, operationBranchKeyManager{}, nil, false, logger)
 	service := &OAuth2SessionService{
 		providerService: providerService, sessionRepo: repository, encryption: operationEncryption{},
-		logger: logger, config: DefaultConfig(),
+		logger: logger, config: Config{MaxRetries: 3, RetryBaseDelay: time.Nanosecond, RefreshLeeway: DefaultRefreshLeeway, StateTokenTTL: 10 * time.Minute, PKCEVerifierLength: 32},
 		httpClient: &http.Client{Transport: operationTransport(func(*http.Request) (*http.Response, error) {
 			return operationTokenResponse(200, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}`), nil
 		})},

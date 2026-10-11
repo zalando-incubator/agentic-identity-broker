@@ -104,10 +104,16 @@ func (s *UserSession) IsExpired() bool {
 
 // HasValidAccessToken returns true if access token has not expired.
 func (s *UserSession) HasValidAccessToken() bool {
+	return s.HasAccessTokenValidFor(0)
+}
+
+// HasAccessTokenValidFor reports whether the access token remains valid for at least d.
+// A session without a recorded access-token expiry is treated as non-expiring.
+func (s *UserSession) HasAccessTokenValidFor(d time.Duration) bool {
 	if s.AccessTokenExpiresAt == nil {
-		return true // No expiration set
+		return true
 	}
-	return time.Now().Before(*s.AccessTokenExpiresAt)
+	return time.Now().Add(d).Before(*s.AccessTokenExpiresAt)
 }
 
 // CanRefresh returns true if session has a refresh token that hasn't expired.

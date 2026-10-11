@@ -117,7 +117,7 @@ An operator configures the ExtProc service with gRPC settings and OAuth2 authori
 - **FR-009**: Superseded. Feature 043 rejects missing metadata and forbids no-Bearer pass-through.
 - **FR-010**: The system MUST return the generic 500 ExtProc response for ordinary exchange failures. Feature 043 defines `error_uri`, expired-assertion, and circuit-open exceptions.
 
-- **FR-011**: System MUST cache exchanged tokens keyed by subject token and resource until the exchanged token’s expiration time
+- **FR-011**: System MUST cache exchanged tokens keyed by subject token and resource until a safety margin of `max(10s, 10% of expires_in)` before the exchanged token’s expiration time, but for at least half the token lifetime and at least one second, so that requests started just before expiry never carry an expired token
 - **FR-012**: System MUST use extproc.cache.default_ttl when the exchanged token response lacks an expiration time
 - **FR-013**: Superseded. Feature 043 defines metadata validation and fixed 503 rejection responses.
 

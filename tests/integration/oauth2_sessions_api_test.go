@@ -1438,13 +1438,15 @@ func TestRefreshSession_ReturnsBadGatewayWhenProviderRefreshFails(t *testing.T) 
 	}
 	require.NoError(t, sessionRepo.Create(ctx, session))
 
+	cfg := oauth2session.DefaultConfig()
+	cfg.RetryBaseDelay = time.Millisecond
 	service := createOAuth2SessionService(t,
 		serviceRepo,
 		sessionRepo,
 		grantRepo,
 		nil,
 		createTestJWEKey(t),
-		oauth2session.DefaultConfig(),
+		cfg,
 	)
 
 	handler := oauth2_sessions.NewHandler(service)

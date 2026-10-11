@@ -75,6 +75,8 @@ type MockUpstreamOAuth2Server struct {
 	tokenType               string
 	expiresIn               int
 	strictPublicClientMode  bool
+	transientFailureStatus  int
+	transientFailuresLeft   int
 	codeChallengesByCode    map[string]pkceChallenge
 
 	// RSA key pair for JWT signing (generated on init)
@@ -215,6 +217,18 @@ func (m *MockUpstreamOAuth2Server) WithExpiresIn(seconds int) *MockUpstreamOAuth
 	defer m.requestMutex.Unlock()
 
 	m.expiresIn = seconds
+	return m
+}
+
+// WithTransientTokenFailures makes the next count token requests fail with the given HTTP
+// status and a JSON error body before the configured response is served again. It simulates a
+// provider outage that recovers while the broker is refreshing or exchanging tokens.
+func (m *MockUpstreamOAuth2Server) WithTransientTokenFailures(status int, count int) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+
+	m.transientFailureStatus = status
+	m.transientFailuresLeft = count
 	return m
 }
 
@@ -417,6 +431,18 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": errorCode})
 		return
 	}
+
+	m.requestMutex.Lock()
+	if m.transientFailuresLeft > 0 {
+		m.transientFailuresLeft--
+		status := m.transientFailureStatus
+		m.requestMutex.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporarily_unavailable"})
+		return
+	}
+	m.requestMutex.Unlock()
 
 	m.requestMutex.RLock()
 	blockTokenUntilCanceled := m.blockTokenUntilCanceled

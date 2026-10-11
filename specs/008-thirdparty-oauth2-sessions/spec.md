@@ -54,6 +54,8 @@ A user needs to authenticate with a third-party service by initiating an OAuth2 
 7. **Given** state token validation fails at callback, **When** system detects mismatch, **Then** system rejects the callback with error and does not store any tokens
 8. **Given** third-party returns OAuth2 error in callback (e.g., access_denied, invalid_scope), **When** system processes callback, **Then** system parses error and error_description parameters, redirects user to sessions page with user-friendly error message, and Login button remains available for retry
 9. **Given** token exchange request fails due to network error, **When** system attempts token exchange, **Then** system retries up to 3 times with exponential backoff (1s, 2s, 4s), and if all retries fail, displays error message allowing user to restart OAuth2 flow
+10. **Given** a session with a stored refresh token exists, **When** the user re-connects the same service and the provider's token response omits `refresh_token` (Google without `prompt=consent`, Microsoft, Okta), **Then** system replaces the access token, keeps the previously stored refresh token and its recorded expiry, and the session remains refreshable
+11. **Given** the provider's token response advertises the refresh-token lifetime (`refresh_expires_in` or `refresh_token_expires_in`, as a number or numeric string; `0` means no expiry), **When** system stores or refreshes the session, **Then** system records `refresh_token_expires_at` from that value so the sessions page can warn before the refresh token dies
 
 ---
 

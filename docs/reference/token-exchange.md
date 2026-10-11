@@ -140,7 +140,7 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
 | `granted_permission_sets` | Optional | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. |
 
-When a stored access token expires, the broker refreshes it using the stored refresh token. Concurrent exchanges for the same principal and service share a refresh in one process; across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens.
+When a stored access token expires, the broker refreshes it using the stored refresh token. Concurrent exchanges for the same principal and service share a refresh in one process; across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens. Refresh starts 30 seconds before the recorded expiry (`third_party_oauth2.refresh_leeway`), so a returned token never expires in flight; if that early refresh fails, the broker returns the still-valid stored token. Transient provider failures (HTTP 5xx, 429, connection errors) are retried up to three times with backoff before the exchange fails.
 
 ### Success example
 

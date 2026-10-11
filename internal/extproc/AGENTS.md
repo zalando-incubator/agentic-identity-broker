@@ -203,7 +203,8 @@ Call `LoadWithCommand()` in `cmd/extproc-token-exchange/root.go`. Do not read co
 
 - Cache entries use `tokenCacheKey{subjectToken, resourceURI}` with `sync.RWMutex` and `singleflight`.
 - The TTL comes from `expires_in` or `cache.default_ttl`. It does not exceed `cache.max_ttl`.
-- Expired entries stay until their fixed `staleUntil` deadline. During transient broker errors, the exchanger can return this bounded stale token.
+- A token with `expires_in` stops being served `max(10s, 10% of expires_in)` before that expiry, but never sooner than half its lifetime or 1 second. `cache.default_ttl` entries have no margin.
+- Expired entries stay until their fixed `staleUntil` deadline, derived from the reported lifetime plus 5 seconds. During transient broker errors, the exchanger can return this bounded stale token.
 - `granted_permission_sets` uses the same cache window as the access token.
 
 ### 6. Client assertion refresh

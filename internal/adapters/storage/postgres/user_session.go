@@ -147,7 +147,8 @@ func (r *PostgresUserSessionRepository) FindByPrincipalAndService(ctx context.Co
 	return recordToSession(&rec), nil
 }
 
-// WithLockedSession re-reads and updates one session in a row-locked transaction.
+// WithLockedSession re-reads one session under a row lock and, when the callback reports a change,
+// commits its tokens, expiries, token type, scope and encryption context in the same transaction.
 func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
 	if principal.IsZero() || serviceID.IsZero() {
 		return nil, errors.New("principal and serviceID required")
@@ -191,8 +192,11 @@ func (r *PostgresUserSessionRepository) WithLockedSession(ctx context.Context, p
 		}
 		writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 		_, err = tx.ExecContext(writeCtx, `UPDATE user_sessions SET encrypted_access_token = $1, encrypted_refresh_token = $2,
-			access_token_expires_at = $3, updated_at = $4 WHERE id = $5`,
-			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt, session.UpdatedAt, session.ID)
+			access_token_expires_at = $3, refresh_token_expires_at = $4, token_type = $5, scope = $6,
+			encryption_context = $7, updated_at = $8 WHERE id = $9`,
+			session.EncryptedAccessToken, session.EncryptedRefreshToken, session.AccessTokenExpiresAt,
+			session.RefreshTokenExpiresAt, session.TokenType, pq.Array(session.Scope), session.EncryptionContext,
+			session.UpdatedAt, session.ID)
 		cancel()
 		if err != nil {
 			return nil, r.wrapError(err, "WithLockedSession")

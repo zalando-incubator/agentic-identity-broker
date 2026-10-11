@@ -309,6 +309,11 @@ type ThirdPartyOAuth2Config struct {
 	// Must be 32-128 bytes per RFC 7636.
 	// Default: 32 bytes (256 bits of entropy)
 	PKCEVerifierLength int `mapstructure:"pkce_verifier_length"`
+
+	// RefreshLeeway refreshes a stored third-party access token this long before its recorded
+	// expiry, so tokens handed to agents do not expire in flight.
+	// Range: 1 second to 5 minutes. Default: 30 seconds.
+	RefreshLeeway time.Duration `mapstructure:"refresh_leeway"`
 }
 
 // MultiAgentClientConfig holds configuration for multi-agent OAuth2 client sharing.

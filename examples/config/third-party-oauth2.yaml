@@ -48,12 +48,19 @@ third_party_oauth2:
   # Higher values provide more entropy but no practical security benefit beyond 32.
   pkce_verifier_length: 32
 
+  # Proactive refresh window before a stored access token expires (1s-5m)
+  #
+  # Tokens handed to agents keep at least this much remaining lifetime. If the
+  # early refresh fails, the broker returns the still-valid stored token.
+  refresh_leeway: "30s"
+
 # Environment-Specific Overrides
 #
 # You can override these settings using environment variables:
 # - IDENTITY_BROKER_JWE_SIGNING_KEY (required, no default)
 # - IDENTITY_BROKER_STATE_TOKEN_TTL (optional, default: 10m)
 # - IDENTITY_BROKER_PKCE_VERIFIER_LENGTH (optional, default: 32)
+# - IDENTITY_BROKER_THIRD_PARTY_OAUTH2_REFRESH_LEEWAY (optional, default: 30s)
 #
 # Example:
 #   export IDENTITY_BROKER_JWE_SIGNING_KEY="$(openssl rand -base64 32)"
