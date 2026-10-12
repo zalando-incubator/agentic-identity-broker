@@ -531,6 +531,128 @@ func TestOnDemandRefresh_RechecksExpiryAfterDelayedLock(t *testing.T) {
 	})
 }
 
+func TestBackgroundRefresh_AdmittedRequestJoinsOnDemandNoOpAndRenews(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		reader := backgroundMetrics(t)
+		session := backgroundSession(id.NewServiceID(), "shared-noop-user")
+		service, store, _ := newBackgroundFixture(t, session)
+		var requests atomic.Int32
+		service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			return operationTokenResponse(http.StatusOK, `{"access_token":"renewed-access","refresh_token":"renewed-refresh","expires_in":3600}`), nil
+		})
+		var reads atomic.Int32
+		service.sessionRepo = operationSessionRepository{find: func(ctx context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+			if reads.Add(1) == 1 {
+				stale := *session
+				expired := time.Now().Add(-time.Minute)
+				stale.AccessTokenExpiresAt = &expired
+				return &stale, nil
+			}
+			return store.find(ctx, principal, serviceID)
+		}}
+		holdOnDemand := make(chan struct{})
+		var lockCalls atomic.Int32
+		service.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+			if lockCalls.Add(1) == 1 {
+				<-holdOnDemand
+			}
+			return store.withLocked(ctx, principal, serviceID, refresh)
+		})
+		pool := newBackgroundRefresher(service, 1)
+		service.background = pool
+		type result struct {
+			token string
+			err   error
+		}
+		done := make(chan result, 1)
+		go func() {
+			_, token, err := service.GetValidAccessToken(context.Background(), session.Principal, session.ServiceID)
+			done <- result{token, err}
+		}()
+		synctest.Wait()
+
+		_, token, err := service.GetValidAccessToken(context.Background(), session.Principal, session.ServiceID)
+		require.NoError(t, err)
+		assert.Equal(t, "old-"+session.Principal.String(), token)
+		synctest.Wait()
+		close(holdOnDemand)
+		got := <-done
+		require.NoError(t, got.err)
+		assert.Equal(t, "old-"+session.Principal.String(), got.token)
+		require.NoError(t, pool.Close(context.Background()))
+		assert.EqualValues(t, 1, requests.Load())
+		stored, err := store.find(context.Background(), session.Principal, session.ServiceID)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("sealed:renewed-access"), stored.EncryptedAccessToken)
+		assertBackgroundMetrics(t, reader, map[string]int64{
+			"proactive_refresh_triggered_total": 1,
+			"proactive_refresh_dropped_total":   0,
+			"proactive_refresh_failed_total":    0,
+		})
+	})
+}
+
+func TestBackgroundRefresh_OpenPoolAdmitsWorkAfterEachCompletion(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		providerError bool
+		wantFailed    int64
+	}{
+		{name: "after success"},
+		{name: "after provider error", providerError: true, wantFailed: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				reader := backgroundMetrics(t)
+				serviceID := id.NewServiceID()
+				first := backgroundSession(serviceID, "reuse-first")
+				second := backgroundSession(serviceID, "reuse-second")
+				service, store, _ := newBackgroundFixture(t, first, second)
+				var calls atomic.Int32
+				service.httpClient.Transport = operationTransport(func(r *http.Request) (*http.Response, error) {
+					if err := r.ParseForm(); err != nil {
+						return nil, err
+					}
+					principal := strings.TrimPrefix(r.Form.Get("refresh_token"), "refresh-")
+					call := calls.Add(1)
+					if tc.providerError && call == 1 {
+						return operationTokenResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
+					}
+					return operationTokenResponse(http.StatusOK, fmt.Sprintf(`{"access_token":"new-%s-%d","refresh_token":"refresh-%s","expires_in":3600}`, principal, call, principal)), nil
+				})
+				pool := newBackgroundRefresher(service, 1)
+				defer func() { require.NoError(t, pool.Close(context.Background())) }()
+				submitBackground(t, pool, context.Background(), first)
+				synctest.Wait()
+				submitBackground(t, pool, context.Background(), second)
+				synctest.Wait()
+				if !tc.providerError {
+					record := store.record(first.Principal, first.ServiceID)
+					record.mu.Lock()
+					soon := time.Now().Add(2 * time.Minute)
+					record.session.AccessTokenExpiresAt = &soon
+					record.mu.Unlock()
+				}
+				submitBackground(t, pool, context.Background(), first)
+				synctest.Wait()
+				assert.EqualValues(t, 3, calls.Load())
+				storedFirst, err := store.find(context.Background(), first.Principal, first.ServiceID)
+				require.NoError(t, err)
+				assert.Equal(t, []byte("sealed:new-reuse-first-3"), storedFirst.EncryptedAccessToken)
+				storedSecond, err := store.find(context.Background(), second.Principal, second.ServiceID)
+				require.NoError(t, err)
+				assert.Equal(t, []byte("sealed:new-reuse-second-2"), storedSecond.EncryptedAccessToken)
+				assertBackgroundMetrics(t, reader, map[string]int64{
+					"proactive_refresh_triggered_total": 3,
+					"proactive_refresh_dropped_total":   0,
+					"proactive_refresh_failed_total":    tc.wantFailed,
+				})
+			})
+		})
+	}
+}
+
 // Done is first consulted after DoChan registers the on-demand caller with singleflight.
 type joinedFlightContext struct {
 	context.Context

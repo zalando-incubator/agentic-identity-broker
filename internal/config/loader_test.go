@@ -977,6 +977,18 @@ func setConfigYAML(t *testing.T, contents string) {
 	t.Setenv("IDENTITY_BROKER_CONFIG_PATH", configPath)
 }
 
+const tokenRefreshFile = "token_refresh:\n  lookahead_duration: 7m\n  background_workers: 3\n  sweep:\n    default_page_size: 125\n"
+
+func tokenRefreshCommand(t *testing.T, args ...string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().Duration("token_refresh.lookahead_duration", 0, "")
+	cmd.Flags().Int("token_refresh.background_workers", 0, "")
+	cmd.Flags().Int("token_refresh.sweep.default_page_size", 0, "")
+	require.NoError(t, cmd.ParseFlags(args))
+	return cmd
+}
+
 func TestTokenRefreshConfigurationPrecedence(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -988,9 +1000,9 @@ func TestTokenRefreshConfigurationPrecedence(t *testing.T) {
 		pageSize  int
 	}{
 		{name: "defaults", lookahead: 5 * time.Minute, workers: 10, pageSize: 100},
-		{name: "file overrides defaults", file: "token_refresh:\n  lookahead_duration: 7m\n  background_workers: 3\n  sweep:\n    default_page_size: 125\n", lookahead: 7 * time.Minute, workers: 3, pageSize: 125},
-		{name: "environment overrides file", file: "token_refresh:\n  lookahead_duration: 7m\n  background_workers: 3\n  sweep:\n    default_page_size: 125\n", env: true, lookahead: 8 * time.Minute, workers: 4, pageSize: 250},
-		{name: "CLI overrides environment and file", file: "token_refresh:\n  lookahead_duration: 7m\n  background_workers: 3\n  sweep:\n    default_page_size: 125\n", env: true, cli: true, lookahead: 9 * time.Minute, workers: 5, pageSize: 375},
+		{name: "file overrides defaults", file: tokenRefreshFile, lookahead: 7 * time.Minute, workers: 3, pageSize: 125},
+		{name: "environment overrides file", file: tokenRefreshFile, env: true, lookahead: 8 * time.Minute, workers: 4, pageSize: 250},
+		{name: "CLI overrides environment and file", file: tokenRefreshFile, env: true, cli: true, lookahead: 9 * time.Minute, workers: 5, pageSize: 375},
 	}
 
 	for _, tt := range tests {
@@ -1012,16 +1024,11 @@ func TestTokenRefreshConfigurationPrecedence(t *testing.T) {
 
 			loader := NewLoader()
 			if tt.cli {
-				cmd := &cobra.Command{Use: "test"}
-				cmd.Flags().Duration("token_refresh.lookahead_duration", 0, "")
-				cmd.Flags().Int("token_refresh.background_workers", 0, "")
-				cmd.Flags().Int("token_refresh.sweep.default_page_size", 0, "")
-				require.NoError(t, cmd.ParseFlags([]string{
+				loader.SetCommand(tokenRefreshCommand(t,
 					"--token_refresh.lookahead_duration=9m",
 					"--token_refresh.background_workers=5",
 					"--token_refresh.sweep.default_page_size=375",
-				}))
-				loader.SetCommand(cmd)
+				))
 			}
 
 			cfg, err := loader.GetConfig(context.Background())
@@ -1062,6 +1069,29 @@ func TestTokenRefreshConfigurationRejectsInvalidSettings(t *testing.T) {
 				assert.Contains(t, err.Error(), "25")
 				assert.Contains(t, err.Error(), "connection")
 			}
+		})
+	}
+}
+
+func TestTokenRefreshConfigurationRejectsExplicitZeroCLIOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		flag  string
+		field string
+	}{
+		{"--token_refresh.lookahead_duration=0s", "token_refresh.lookahead_duration"},
+		{"--token_refresh.background_workers=0", "token_refresh.background_workers"},
+		{"--token_refresh.sweep.default_page_size=0", "token_refresh.sweep.default_page_size"},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			setMinimalConfigEnv(t)
+			setConfigYAML(t, tokenRefreshFile)
+			t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION", "8m")
+			t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS", "4")
+			t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE", "250")
+			loader := NewLoader()
+			loader.SetCommand(tokenRefreshCommand(t, tc.flag))
+			_, err := loader.GetConfig(context.Background())
+			require.ErrorContains(t, err, tc.field)
 		})
 	}
 }

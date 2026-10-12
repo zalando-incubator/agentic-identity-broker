@@ -207,6 +207,12 @@ func TestSessionSweepHandlerRejectsInvalidPayloads(t *testing.T) {
 		{name: "ISO month is not a fixed duration", body: `{"lookahead_duration":"P1M"}`, message: "lookahead_duration"},
 		{name: "explicit zero duration", body: `{"lookahead_duration":"PT0S"}`, message: "lookahead_duration"},
 		{name: "explicit zero page size", body: `{"page_size":0}`, message: "page_size"},
+		{name: "top-level null", body: `null`, message: "JSON object"},
+		{name: "null dry run", body: `{"dry_run":null}`, message: "dry_run"},
+		{name: "null lookahead duration", body: `{"lookahead_duration":null}`, message: "lookahead_duration"},
+		{name: "null page size", body: `{"page_size":null}`, message: "page_size"},
+		{name: "string dry run", body: `{"dry_run":"true"}`, message: "dry_run"},
+		{name: "fractional page size", body: `{"page_size":1.5}`, message: "page_size"},
 	}
 
 	for _, tt := range tests {

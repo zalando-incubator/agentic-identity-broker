@@ -119,7 +119,7 @@ func TestHelmTemplate_AdminPortRequiresTrustedProxy(t *testing.T) {
 	require.Equal(t, map[string]string{"app": "admin-proxy"}, trustedPolicy.Spec.Ingress[1].From[0].PodSelector.MatchLabels)
 }
 
-func TestHelmTemplate_AdminPolicyRejectsListenerPortMismatch(t *testing.T) {
+func TestHelmTemplate_NetworkPolicyRejectsUnsafeSettings(t *testing.T) {
 	for _, tc := range []struct {
 		name, expectedError string
 		settings            []string
@@ -128,6 +128,10 @@ func TestHelmTemplate_AdminPolicyRejectsListenerPortMismatch(t *testing.T) {
 		{name: "admin listener differs from Service port", settings: []string{"broker.server.admin.port=14001"}, expectedError: "admin port must match"},
 		{name: "disabled policy does not permit mismatched ports", settings: []string{"networkPolicy.enabled=false", "service.ports.enduser=14000"}, expectedError: "enduser port must match"},
 		{name: "identical listener ports are rejected", settings: []string{"service.ports.enduser=14000", "broker.server.enduser.port=14000"}, expectedError: "enduser and admin ports must differ"},
+		{name: "namespace selector without pod selector", settings: []string{"networkPolicy.enabled=true", "networkPolicy.adminProxy.namespaceLabels.team=platform"}, expectedError: "networkPolicy.adminProxy requires both namespaceLabels and podLabels"},
+		{name: "pod selector without namespace selector", settings: []string{"networkPolicy.enabled=true", "networkPolicy.adminProxy.podLabels.app=admin-proxy"}, expectedError: "networkPolicy.adminProxy requires both namespaceLabels and podLabels"},
+		{name: "NodePort bypasses ingress policy", settings: []string{"networkPolicy.enabled=true", "service.type=NodePort"}, expectedError: "networkPolicy.enabled requires service.type=ClusterIP"},
+		{name: "LoadBalancer bypasses ingress policy", settings: []string{"networkPolicy.enabled=true", "service.type=LoadBalancer"}, expectedError: "networkPolicy.enabled requires service.type=ClusterIP"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := make([]string, 0, 2*len(tc.settings))
@@ -135,7 +139,7 @@ func TestHelmTemplate_AdminPolicyRejectsListenerPortMismatch(t *testing.T) {
 				args = append(args, "--set", setting)
 			}
 			_, stderr, err := runHelmTemplate(t, args...)
-			require.Error(t, err, "a mismatched listener must not produce an ingress policy")
+			require.Error(t, err, "an unsafe chart configuration must not render an ingress policy")
 			require.Contains(t, stderr, tc.expectedError)
 		})
 	}
