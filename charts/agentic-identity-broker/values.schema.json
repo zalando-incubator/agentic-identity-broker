@@ -1566,7 +1566,6 @@
             "jwt": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["jwks_uri"],
               "description": "JWT pre-authentication configuration",
               "properties": {
                 "header_name": {
@@ -1575,13 +1574,11 @@
                 },
                 "verification": {
                   "type": "string",
-                  "enum": ["jwks"],
-                  "description": "Signed JWT verification with JWKS (the only supported mode)"
+                  "description": "Verification method (jwks, none)"
                 },
                 "jwks_uri": {
                   "type": "string",
-                  "minLength": 1,
-                  "description": "JWKS URI required for signed JWT pre-authentication"
+                  "description": "JWKS URI (required when verification is jwks)"
                 },
                 "expected_audience": {
                   "type": "string",

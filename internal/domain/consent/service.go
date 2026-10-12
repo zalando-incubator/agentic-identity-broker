@@ -57,6 +57,8 @@ type Service struct {
 	grantRepo       ports.UserGrantRepository
 	psService       PermissionSetQuerier
 	sessionRepo     ports.UserSessionRepository
+	refreshRepo     ports.RefreshTokenSessionRepository
+	now             func() time.Time
 	logger          *slog.Logger
 }
 
@@ -66,6 +68,7 @@ func NewService(
 	providerService *thirdparty.ThirdpartyOAuth2ProviderService,
 	grantRepo ports.UserGrantRepository,
 	sessionRepo ports.UserSessionRepository,
+	refreshRepo ports.RefreshTokenSessionRepository,
 	psService PermissionSetQuerier,
 	logger *slog.Logger,
 ) *Service {
@@ -74,8 +77,10 @@ func NewService(
 		providerService: providerService,
 		grantRepo:       grantRepo,
 		sessionRepo:     sessionRepo,
+		refreshRepo:     refreshRepo,
 		psService:       psService,
 		logger:          logger,
+		now:             time.Now,
 	}
 }
 
@@ -138,20 +143,13 @@ func (s *Service) GetAgentConsentDetail(ctx context.Context, agentID id.AgentID,
 		return nil, err
 	}
 
-	// Enrich service requirements with connection status and disclosed scopes.
-	requirements, err := s.resolveServiceRequirements(ctx, agent, principal, resolvedPermissionSets)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get active session service IDs
-	sessions, err := s.sessionRepo.ListActiveByPrincipal(ctx, principal)
+	activeSessionServiceIDs, err := s.sessionRepo.ListActiveServiceIDsByPrincipal(ctx, principal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions for principal: %w", err)
 	}
-	activeSessionServiceIDs := make([]id.ServiceID, len(sessions))
-	for i, session := range sessions {
-		activeSessionServiceIDs[i] = session.ServiceID
+	requirements, err := s.resolveServiceRequirements(ctx, agent, resolvedPermissionSets, activeSessionServiceIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	return &AgentConsentDetail{
@@ -162,7 +160,7 @@ func (s *Service) GetAgentConsentDetail(ctx context.Context, agentID id.AgentID,
 	}, nil
 }
 
-func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage.Agent, principal id.Principal, resolvedPermissionSets []ResolvedPermissionSetEntry) ([]ServiceRequirementStatus, error) {
+func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage.Agent, resolvedPermissionSets []ResolvedPermissionSetEntry, activeSessionServiceIDs []id.ServiceID) ([]ServiceRequirementStatus, error) {
 	if len(agent.ServiceRequirements) == 0 {
 		return []ServiceRequirementStatus{}, nil
 	}
@@ -171,20 +169,26 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 	for _, req := range agent.ServiceRequirements {
 		serviceIDs[req.ServiceID] = true
 	}
-
-	serviceMap := make(map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity, len(serviceIDs))
+	ids := make([]id.ServiceID, 0, len(serviceIDs))
 	for serviceID := range serviceIDs {
-		svc, err := s.providerService.Get(ctx, serviceID)
-		if err != nil {
-			if errors.Is(err, ports.ErrNotFound) {
-				s.logger.Warn("service not found for agent requirement",
-					"service_id", serviceID,
-					"agent_id", agent.ID)
-				continue
-			}
-			return nil, fmt.Errorf("loading service %s: %w", serviceID, err)
+		ids = append(ids, serviceID)
+	}
+	services, err := s.providerService.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("loading services: %w", err)
+	}
+	serviceMap := make(map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity, len(services))
+	for _, service := range services {
+		serviceMap[service.ID] = service
+	}
+	for serviceID := range serviceIDs {
+		if serviceMap[serviceID] == nil {
+			s.logger.Warn("service not found for agent requirement", "service_id", serviceID, "agent_id", agent.ID)
 		}
-		serviceMap[serviceID] = svc
+	}
+	connected := make(map[id.ServiceID]bool, len(activeSessionServiceIDs))
+	for _, serviceID := range activeSessionServiceIDs {
+		connected[serviceID] = true
 	}
 
 	requirements := make([]ServiceRequirementStatus, 0, len(agent.ServiceRequirements))
@@ -192,11 +196,6 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 		svc, ok := serviceMap[req.ServiceID]
 		if !ok {
 			continue
-		}
-
-		session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, req.ServiceID)
-		if err != nil {
-			return nil, fmt.Errorf("checking session status for service %s: %w", req.ServiceID, err)
 		}
 
 		scopeDesc := make(map[string]string, len(svc.Scopes))
@@ -234,7 +233,7 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 			DisplayName:     svc.DisplayName,
 			RequirementType: req.RequirementType,
 			RequiredScopes:  scopes,
-			IsConnected:     session != nil && !session.IsExpired(),
+			IsConnected:     connected[req.ServiceID],
 		})
 	}
 
@@ -360,6 +359,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 		if grantMatchesRequest(existingGrant, req) {
 			return existingGrant.Copy(), nil
 		}
+		expired := existingGrant.ValidUntil != nil && !existingGrant.ValidUntil.UTC().After(s.now().UTC())
 
 		previousFields = []any{
 			"previous_observed_valid_until", grantAuditValidUntil(existingGrant.ValidUntil),
@@ -373,6 +373,11 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 
 		if err := existingGrant.Validate(); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrGrantValidation, err)
+		}
+		if expired {
+			if err := s.revokeRefreshSessions(ctx, req.Principal, req.AgentID, "expired_grant_renewed"); err != nil {
+				return nil, err
+			}
 		}
 
 		if err := s.grantRepo.Update(ctx, existingGrant); err != nil {
@@ -609,9 +614,18 @@ func permissionSetsMatch(left, right []storage.GrantedPermissionSetEntry) bool {
 func (s *Service) RevokeConsent(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
 	err := s.RevokeConsentForPrincipal(ctx, principal, agentID)
 	if errors.Is(err, ErrGrantNotFound) {
-		return nil
+		return s.revokeRefreshSessions(ctx, principal, agentID, "consent_revoked")
 	}
 	return err
+}
+
+func (s *Service) revokeRefreshSessions(ctx context.Context, principal id.Principal, agentID id.AgentID, trigger string) error {
+	count, err := s.refreshRepo.RevokeByPrincipalAndAgent(ctx, principal, agentID)
+	if err != nil {
+		return fmt.Errorf("failed to revoke refresh sessions: %w", err)
+	}
+	s.logger.InfoContext(ctx, "refresh sessions revoked", "trigger", trigger, "principal", principal, "agent_id", agentID, "row_count", count)
+	return nil
 }
 
 // RevokeConsentForPrincipal revokes the authenticated user's grant for the given agent (FR-014).
@@ -627,6 +641,15 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 			return fmt.Errorf("%w", ErrGrantNotFound)
 		}
 		return fmt.Errorf("failed to revoke consent: %w", err)
+	}
+	if err := s.revokeRefreshSessions(ctx, principal, agentID, "consent_revoked"); err != nil {
+		s.logger.InfoContext(ctx, "grant deleted but refresh cleanup failed",
+			"action", "grant_deleted",
+			"principal", grant.Principal,
+			"agent_id", grant.AgentID,
+			"grant_id", grant.ID,
+			"refresh_cleanup", "failed")
+		return err
 	}
 
 	s.logger.InfoContext(ctx, "grant revoked",
@@ -693,7 +716,7 @@ func (s *Service) VerifyAgentAccess(ctx context.Context, principal id.Principal,
 	}
 
 	// Check grant is active (not expired)
-	if !grant.IsActive() {
+	if grant.ValidUntil != nil && !grant.ValidUntil.UTC().After(s.now().UTC()) {
 		return grant.Copy(), fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
 			ErrGrantExpired, grant.ValidUntil.Format(time.RFC3339), principal, agentID)
 	}
@@ -805,22 +828,29 @@ func (s *Service) GetAgentDelegations(ctx context.Context, principal id.Principa
 		return nil, fmt.Errorf("failed to list grants: %w", err)
 	}
 
+	agentIDs := make([]id.AgentID, len(grants))
+	for i, grant := range grants {
+		agentIDs[i] = grant.AgentID
+	}
+	agents, err := s.agentRepo.GetByIDs(ctx, agentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get agents: %w", err)
+	}
+	agentsByID := make(map[id.AgentID]*storage.Agent, len(agents))
+	for _, agent := range agents {
+		agentsByID[agent.ID] = agent
+	}
+
 	// Group grants by agent_id
 	agentMap := make(map[id.AgentID]*AgentDelegation)
 
 	for _, grant := range grants {
 		delegation, exists := agentMap[grant.AgentID]
 		if !exists {
-			// Fetch agent information
-			agent, err := s.agentRepo.Get(ctx, grant.AgentID)
-			if err != nil {
-				// If agent not found, skip this grant (defensive: should not happen)
-				if errors.Is(err, ports.ErrNotFound) {
-					continue
-				}
-				return nil, fmt.Errorf("failed to get agent %s: %w", grant.AgentID, err)
+			agent, ok := agentsByID[grant.AgentID]
+			if !ok {
+				continue
 			}
-
 			delegation = &AgentDelegation{
 				AgentID:          grant.AgentID,
 				DisplayName:      agent.DisplayName,

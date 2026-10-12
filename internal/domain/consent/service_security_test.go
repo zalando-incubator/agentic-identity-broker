@@ -156,6 +156,7 @@ func TestGrantConsent_RejectsUndeclaredPermissionSets(t *testing.T) {
 				nil,
 				grantRepo,
 				sessionRepo,
+				&mockConsentRefreshRepo{},
 				psService,
 				slog.Default(),
 			)

@@ -50,8 +50,8 @@ when the lock callback switches predicates.
 ### New index
 
 `idx_user_sessions_access_token_expires_at` is a plain B-tree index on
-`user_sessions (access_token_expires_at, id)`. Migration `036` builds it concurrently for expiry-then-UUID keyset reads (DB-001, DB-003, SC-006).
-ADR 039 retains the migration `036` non-atomic exception after its same-PR amendment removed the guard. Both SQL files retain an informational no-transaction comment. Direct Go runners passed PostgreSQL 15 lifecycle and interrupted-build recovery tests. The separate direct CLI image applied, rolled back, and reapplied the two-key index (research R4).
+`user_sessions (access_token_expires_at, id)`. Migration `037` builds it concurrently for expiry-then-UUID keyset reads (DB-001, DB-003, SC-006).
+ADR 039 retains the migration `037` non-atomic exception after its same-PR amendment removed the guard. Both SQL files retain an informational no-transaction comment. Before renumbering, direct Go runners passed PostgreSQL 15 lifecycle and interrupted-build recovery tests. The separate direct CLI image applied, rolled back, and reapplied the two-key index (as migration `036`, before the `main` merge renumbered it to `037`). See research R4.
 
 ### New value object: `SessionExpiryCursor`
 

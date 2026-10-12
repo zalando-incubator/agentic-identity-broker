@@ -458,6 +458,18 @@ func (r *inMemoryAgentRepo) Get(ctx context.Context, agentID id.AgentID) (*stora
 	return agent, nil
 }
 
+func (r *inMemoryAgentRepo) GetByIDs(_ context.Context, ids []id.AgentID) ([]*storage.Agent, error) {
+	agents := make([]*storage.Agent, 0, len(ids))
+	seen := make(map[id.AgentID]bool, len(ids))
+	for _, agentID := range ids {
+		if agent := r.agents[agentID]; agent != nil && !seen[agentID] {
+			agents = append(agents, agent.Copy())
+			seen[agentID] = true
+		}
+	}
+	return agents, nil
+}
+
 func (r *inMemoryAgentRepo) Update(ctx context.Context, agent *storage.Agent) error {
 	if _, ok := r.agents[agent.ID]; !ok {
 		return ports.ErrNotFound

@@ -117,9 +117,10 @@ type AuthenticationConfig struct {
 	// Preauth holds configuration for pre-authentication (reverse proxy) mode
 	Preauth PreauthConfig `mapstructure:"preauth"`
 
-	// JWT holds optional signed JWT pre-authentication settings. The JWT signature
-	// is verified against JWKS before claims can supply a principal or profile.
-	// Nil leaves plain-header pre-authentication in place.
+	// JWT holds optional configuration for JWT-based pre-authentication.
+	// When configured, JWTs are validated (signed or unsigned) and claims
+	// are extracted to derive the principal and optional profile attributes.
+	// Nil means JWT pre-auth is not enabled (backward-compatible).
 	JWT *JWTConfig `mapstructure:"jwt"`
 }
 
@@ -134,12 +135,17 @@ type JWTConfig struct {
 	// Default: "Authorization"
 	HeaderName string `mapstructure:"header_name"`
 
-	// Verification permits "jwks" only (also the default when omitted).
-	// Every JWT signature is verified against the configured JWKS endpoint.
+	// Verification controls JWT signature verification behavior.
+	// "jwks" (default): Signature verified against JWKS endpoint (requires JWKSURI).
+	// "none": Unsigned JWTs accepted (for trusted upstream/service mesh environments).
+	// Mutually exclusive with JWKSURI when set to "none".
+	// Default: "jwks"
 	Verification string `mapstructure:"verification"`
 
-	// JWKSURI is required for JWT pre-authentication. It must use HTTPS unless
+	// JWKSURI is the URL of the JWKS endpoint for signature verification.
+	// Required when Verification is "jwks" (or omitted). Must be HTTPS unless
 	// Security.SkipThirdpartyHTTPSValidation is true.
+	// MUST NOT be set when Verification is "none".
 	JWKSURI string `mapstructure:"jwks_uri"`
 
 	// ExpectedAudience is the expected value in the JWT aud claim.
@@ -892,8 +898,7 @@ type SecurityConfig struct {
 
 	// SkipCIMDSSRFValidation disables the SSRF IP blocklist and TLS certificate verification
 	// for CIMD document fetches.
-	// WARNING: This is ONLY for development/test environments with a local mock CIMD server!
-	// NEVER enable this in production.
+	// Requires GO_ENV=development for local mock servers. Never enable in production.
 	SkipCIMDSSRFValidation bool `mapstructure:"skip_cimd_ssrf_validation"`
 }
 
@@ -991,8 +996,8 @@ type AWSKMSConfig struct {
 	AssumeRoleARN string `mapstructure:"assume_role_arn"`
 
 	// DisableSSL disables SSL verification for AWS API calls.
-	// WARNING: Only use for development/testing with a LocalStack-compatible AWS emulator.
-	// NEVER enable this in production environments.
+	// Development-only: startup requires GO_ENV=development when this is true.
+	// Never enable in production; unset or other environments reject it.
 	DisableSSL bool `mapstructure:"disable_ssl"`
 }
 

@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-10-08
-**Scope**: Phase 2d of proactive token refresh, migration `036` only
+**Scope**: Phase 2d of proactive token refresh, migration `037` only
 
 ## Context
 
@@ -14,15 +14,17 @@ The migration image in `build/docker/Dockerfile.migrate` runs the `golang-migrat
 
 The PostgreSQL driver sends migration SQL without an explicit migration-wide transaction. Its separate version updates do not make the index build atomic. A directive comment without a reader has no effect.
 
-Migration `030_cimd_client_uri_pattern_index.up.sql` already contains a concurrent build without a recognized directive. That historical file does not grant this exception or make migration `036` safe.
+Migration `030_cimd_client_uri_pattern_index.up.sql` already contains a concurrent build without a recognized directive. That historical file does not grant this exception or make migration `037` safe.
 
 ## Decision and named exception
 
 On 2026-10-09, the user explicitly accepted this ADR and the named Principle IX non-atomic exception in the feature discussion for PR #196. This same-PR approval applies only to feature 029, despite the general new-ADR proposal rule in `AGENTS.md`.
 
-Migration `036_user_sessions_access_token_expiry_index.{up,down}.sql` is the **only** permitted non-atomic migration under this decision. On 2026-10-09, the stakeholder approved amending this same migration-036-only exception from a single-column index to a plain B-tree index named `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at, id)`. The UP statement is exactly `CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at, id);`. The index keys follow the sweep's expiry-then-UUID keyset order. This amendment does not change the atomicity requirement for other migrations or permit ad-hoc schema changes.
+Migration `037_user_sessions_access_token_expiry_index.{up,down}.sql` is the **only** permitted non-atomic migration under this decision. On 2026-10-09, the stakeholder approved amending this single-migration exception from a single-column index to a plain B-tree index named `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at, id)`. The UP statement is exactly `CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at, id);`. The index keys follow the sweep's expiry-then-UUID keyset order. This amendment does not change the atomicity requirement for other migrations or permit ad-hoc schema changes.
 
 On 2026-10-12, before this feature PR merged, the stakeholder amended this decision in place. Remove the guard, but keep the separate migration image and Helm migration/grants Job. Accept the loss of pre-execution validation. This is the final accepted feature-branch decision.
+
+On 2026-10-12, merging `main` into this unmerged PR renumbered the migration from `036` to `037`. `main` already uses version 36 for `036_add_refresh_token_grant_id.{up,down}.sql`, and `golang-migrate` rejects two migrations with one version. The SQL, index, and named exception are unchanged.
 
 The UP and DOWN files each retain the first-line `-- migrate:no-transaction` comment required by `AGENTS.md`. The comment is informational because neither `golang-migrate` runner interprets it. UP contains one `CREATE INDEX CONCURRENTLY` statement, and DOWN contains one `DROP INDEX CONCURRENTLY` statement. Neither file contains `BEGIN`, `COMMIT`, or additional SQL statements. UP does not use `IF NOT EXISTS`, which can conceal an invalid index. Both files use the existing `NNN_description.{up,down}.sql` naming scheme.
 
@@ -34,7 +36,7 @@ The separate image in `build/docker/Dockerfile.migrate` invokes `/usr/local/bin/
 
 Go test runners use their existing migration directories and invoke `golang-migrate` directly. Neither image nor Go runner performs a shared SQL preflight. The PostgreSQL drivers execute migration SQL without a migration-wide transaction. Their separate version updates do not make concurrent DDL atomic.
 
-No preflight checks the SQL pair, statement text, URL options, or alternate image migration paths. A missing DOWN can remain unnoticed until after UP succeeds, leaving rollback unavailable. Incorrect SQL can execute before the runner reports an error. The informational comment does not prevent either outcome. If a driver starts wrapping migration `036` in a transaction, the concurrent SQL will fail. Review this decision before changing either runner.
+No preflight checks the SQL pair, statement text, URL options, or alternate image migration paths. A missing DOWN can remain unnoticed until after UP succeeds, leaving rollback unavailable. Incorrect SQL can execute before the runner reports an error. The informational comment does not prevent either outcome. If a driver starts wrapping migration `037` in a transaction, the concurrent SQL will fail. Review this decision before changing either runner.
 
 ### Failure detection and recovery
 
@@ -51,18 +53,18 @@ WHERE i.indexrelid = to_regclass('idx_user_sessions_access_token_expires_at');
 
 Match the table and the ordered B-tree keys `(access_token_expires_at, id)` to this ADR. A `pg_index.indisvalid` value of `false` means that the index is invalid. No row with a non-NULL `relation` means that another relation owns the name. Investigate that collision. Do not delete that relation. A NULL `relation` means that the index is absent.
 
-For an interrupted or failed UP at **dirty version 36**:
+For an interrupted or failed UP at **dirty version 37**:
 
-- If the named index is invalid, stop competing migration Jobs. Drop **only that inspected index** with `DROP INDEX CONCURRENTLY` outside a transaction. Confirm that it is absent. Then use `migrate force 35` and retry UP through the migration image.
-- If the index is absent, investigate the original error. When the schema matches version 35, use `migrate force 35` and retry UP through the migration image.
-- If the index is valid and has the expected table and definition, the build can have finished before version recording failed. After review, use `migrate force 36`. Do not drop a valid index or rerun UP to repair version metadata.
+- If the named index is invalid, stop competing migration Jobs. Drop **only that inspected index** with `DROP INDEX CONCURRENTLY` outside a transaction. Confirm that it is absent. Then use `migrate force 36` and retry UP through the migration image.
+- If the index is absent, investigate the original error. When the schema matches version 36, use `migrate force 36` and retry UP through the migration image.
+- If the index is valid and has the expected table and definition, the build can have finished before version recording failed. After review, use `migrate force 37`. Do not drop a valid index or rerun UP to repair version metadata.
 
-For an interrupted or failed DOWN at **dirty version 35**:
+For an interrupted or failed DOWN at **dirty version 36**:
 
-- If the named index is still present, inspect it. After review, use `migrate force 36` and retry DOWN through the migration image.
-- If the named index is absent, review the failure and use `migrate force 35` only after confirming that DOWN finished.
+- If the named index is still present, inspect it. After review, use `migrate force 37` and retry DOWN through the migration image.
+- If the named index is absent, review the failure and use `migrate force 36` only after confirming that DOWN finished.
 
-`force` edits migration metadata only. It does not create, remove, or validate an index. If version, index identity, and schema state disagree, stop the release and get a database review. A clean version 36 with a missing or invalid index also needs investigation: the version number is not proof that the index is usable. Make sure that successful UP ends at clean version 36 with the expected valid index. Make sure that successful DOWN ends at clean version 35 with that index absent.
+`force` edits migration metadata only. It does not create, remove, or validate an index. If version, index identity, and schema state disagree, stop the release and get a database review. A clean version 37 with a missing or invalid index also needs investigation: the version number is not proof that the index is usable. Make sure that successful UP ends at clean version 37 with the expected valid index. Make sure that successful DOWN ends at clean version 36 with that index absent.
 
 ### Required implementation evidence
 
@@ -76,7 +78,9 @@ A blocking `CREATE INDEX` inside a transaction can meet Principle IX, but it can
 
 ## Implementation gate
 
-On 2026-10-12, PostgreSQL 15 integration tests passed UP, DOWN, reapply, invalid-index interruption, and dirty-version recovery through direct Go runners. They confirmed both ordered index keys. The direct ARM64 migration image applied, dropped, and reapplied `036` on disposable PostgreSQL. UP ended at clean version `36` with a valid two-key index. DOWN ended at clean version `35` without that index. Both Helm grants modes retained their migration arguments and grants order. The image, the runbook, and the tests do not make concurrent DDL atomic.
+On 2026-10-12, PostgreSQL 15 integration tests passed UP, DOWN, reapply, invalid-index interruption, and dirty-version recovery through direct Go runners. They confirmed both ordered index keys. The direct ARM64 migration image applied, dropped, and reapplied `036` on disposable PostgreSQL (as migration `036`, before the `main` merge renumbered it to `037`). UP ended at clean version `36` with a valid two-key index. DOWN ended at clean version `35` without that index. Both Helm grants modes retained their migration arguments and grants order. The image, the runbook, and the tests do not make concurrent DDL atomic.
+
+After the renumbering, direct Go-runner PostgreSQL tests passed UP, DOWN, reapply, invalid-index interruption, and dirty-version recovery at versions `36`/`37` on 2026-10-12.
 
 ## References
 

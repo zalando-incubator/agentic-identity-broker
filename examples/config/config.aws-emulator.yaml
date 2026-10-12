@@ -65,9 +65,9 @@ encryption:
     access_key_id: "${AWS_ACCESS_KEY_ID}"
     secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
 
-    # Disable SSL verification for local emulator HTTP endpoints
-    # WARNING: Only use for development/testing!
-    disable_ssl: true
+    # HTTP emulator endpoints do not require disabling TLS certificate verification.
+    # Setting this to true requires explicit GO_ENV=development; never use in production.
+    disable_ssl: false
 
     # Alternative configurations (commented out):
 
@@ -89,11 +89,11 @@ encryption:
 # IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_ENDPOINT=http://localhost:4566
 # IDENTITY_BROKER_ENCRYPTION_AWS_KMS_ACCESS_KEY_ID=test
 # IDENTITY_BROKER_ENCRYPTION_AWS_KMS_SECRET_ACCESS_KEY=test
-# IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL=true
+# IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL=false
 
 # Additional use cases demonstrated by this configuration:
 #
-# 1. AWS Emulator Testing: Custom endpoints + static credentials + SSL disable
+# 1. AWS Emulator Testing: Custom endpoints + static credentials
 # 2. Production Flexibility: Region overrides, IAM role assumption
 # 3. Multi-Region Deployment: Separate regions for KMS and DynamoDB
 # 4. Credential Management: Static keys, profiles, or role assumption

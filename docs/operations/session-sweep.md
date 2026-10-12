@@ -6,7 +6,7 @@
 
 CAUTION: Send sweep requests only through the authenticated admin proxy. The endpoint can refresh sessions across all users.
 
-The proxy must authenticate and authorize the operator. With plain-header pre-authentication, it must remove caller-supplied principal headers and set the configured admin header (usually `X-Remote-User`). With JWT pre-authentication, it must forward a signed operator JWT that the configured JWKS validates; the broker ignores the plain header. Unsigned JWT pre-authentication fails at startup. Do not expose the admin server directly. The broker audits each invocation with the operator principal. A missing principal returns `500 server_misconfiguration`; no sweep starts.
+The proxy must authenticate and authorize the operator. With plain-header pre-authentication, it must remove caller-supplied principal headers and set the configured admin header (usually `X-Remote-User`). With JWT pre-authentication, it must remove caller-supplied copies of the configured JWT header and forward the operator JWT. The broker verifies it against the JWKS for `verification: jwks` and trusts the gateway-supplied claims for `verification: none`. In both JWT modes the broker ignores the plain header. Do not expose the admin server directly. The broker audits each invocation with the operator principal. A missing principal returns `500 server_misconfiguration`; no sweep starts.
 
 The Helm chart denies ingress to port `14000` by default. Set `networkPolicy.adminProxy.namespaceLabels` and `networkPolicy.adminProxy.podLabels` to the trusted proxy labels. Keep `service.type: ClusterIP`. The CNI must enforce ingress NetworkPolicy. If you disable the chart policy, install an equivalent restriction before you run a sweep. Do not allow the CronJob to connect to the broker Service directly.
 
@@ -125,9 +125,9 @@ For sustained failures, ask the affected user to reauthorize through `GET /api/t
 
 Do not auto-delete another user's session. Do not silently filter it from future sweeps. The admin response contains counts, not user identities. Use the approved user-support process to arrange reauthentication. The sweep does not add retry state or new admin request or response fields.
 
-## Recover migration `036` (ADR 039)
+## Recover migration `037` (ADR 039)
 
-CAUTION: Migration `036` uses concurrent PostgreSQL index DDL outside a transaction. Invalid-index cleanup is **not** atomic rollback.
+CAUTION: Migration `037` uses concurrent PostgreSQL index DDL outside a transaction. Invalid-index cleanup is **not** atomic rollback.
 
 The migration image runs `golang-migrate` directly. The `-- migrate:no-transaction` comment is informational and does not validate SQL. A missing DOWN can go unnoticed until after UP succeeds. Before a release, review the packaged migration pair. A missing DOWN can leave rollback unavailable.
 
@@ -145,25 +145,25 @@ LEFT JOIN pg_index AS i ON i.indexrelid = c.oid
 WHERE c.relname = 'idx_user_sessions_access_token_expires_at';
 ```
 
-Confirm that the expected index is a plain B-tree on `user_sessions(access_token_expires_at, id)` in the migration schema. Confirm that its two key columns have this order. `pg_index.indisvalid = false` means the index is invalid; it can still add write overhead. If there is no row, the index is absent. If another relation owns the name, stop and investigate. Do not delete that relation. A clean version `36` with a missing or invalid index also requires database review.
+Confirm that the expected index is a plain B-tree on `user_sessions(access_token_expires_at, id)` in the migration schema. Confirm that its two key columns have this order. `pg_index.indisvalid = false` means the index is invalid; it can still add write overhead. If there is no row, the index is absent. If another relation owns the name, stop and investigate. Do not delete that relation. A clean version `37` with a missing or invalid index also requires database review.
 
-If UP stopped at **dirty version 36** and the inspected index is invalid, drop only that index. Substitute its *verified* schema for `confirmed_schema` in this example. Run the statement with an autocommit SQL client. Do not use `BEGIN`, `COMMIT`, or `psql -1`:
+If UP stopped at **dirty version 37** and the inspected index is invalid, drop only that index. Substitute its *verified* schema for `confirmed_schema` in this example. Run the statement with an autocommit SQL client. Do not use `BEGIN`, `COMMIT`, or `psql -1`:
 
 ```sql
 DROP INDEX CONCURRENTLY confirmed_schema.idx_user_sessions_access_token_expires_at;
 ```
 
-If UP stopped at dirty version `36` and the index is absent, investigate the original error. When the entire schema matches version `35`, use `force 35` to clear dirty metadata. Then retry UP through the migration image. If UP stopped at dirty version `36` and the index is **valid** with the expected definition, review the entire schema. Then use `force 36`. Do not drop the valid index or rerun UP.
+If UP stopped at dirty version `37` and the index is absent, investigate the original error. When the entire schema matches version `36`, use `force 36` to clear dirty metadata. Then retry UP through the migration image. If UP stopped at dirty version `37` and the index is **valid** with the expected definition, review the entire schema. Then use `force 37`. Do not drop the valid index or rerun UP.
 
-If DOWN stopped at **dirty version 35** and the index is still present, inspect its identity and validity. After schema review, use `force 36` and retry DOWN through the migration image. If DOWN stopped at dirty version `35` and the index is absent, review the failure and confirm that DOWN completed. Then use `force 35` without rerunning DOWN.
+If DOWN stopped at **dirty version 36** and the index is still present, inspect its identity and validity. After schema review, use `force 37` and retry DOWN through the migration image. If DOWN stopped at dirty version `36` and the index is absent, review the failure and confirm that DOWN completed. Then use `force 36` without rerunning DOWN.
 
 Run only the command for the branch that the database review selected. Use a restricted maintenance container built from the chart's separate `migration.image`. It contains `/app/migrations` and runs `/usr/local/bin/migrate` directly. Use the packaged migration path and the migration role. Supply the connection URL through approved secret handling, not a literal URL in a Job manifest or shell history. A password in a command-line URL can appear in process arguments. Restrict maintenance-shell access and prefer a short-lived credential.
 
 ```sh
 # Choose exactly one metadata repair after schema review:
-/usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" force 35
-# OR
 /usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" force 36
+# OR
+/usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" force 37
 
 # Run only the matching direction when the reviewed branch calls for a retry:
 /usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" up 1
@@ -171,4 +171,4 @@ Run only the command for the branch that the database review selected. Use a res
 /usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" down 1
 ```
 
-`force` edits migration metadata only. It does not create, remove, or validate an index. After UP, confirm clean version `36` and a valid index with the expected definition. After DOWN, confirm clean version `35` and absence of the index. If the version, index identity, and schema disagree, stop the release and get a database review. Do not auto-clear `dirty`, use `IF NOT EXISTS`, or automatically retry the DDL.
+`force` edits migration metadata only. It does not create, remove, or validate an index. After UP, confirm clean version `37` and a valid index with the expected definition. After DOWN, confirm clean version `36` and absence of the index. If the version, index identity, and schema disagree, stop the release and get a database review. Do not auto-clear `dirty`, use `IF NOT EXISTS`, or automatically retry the DDL.

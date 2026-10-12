@@ -275,21 +275,20 @@ type ToolApprovalRepository interface {
 }
 ```
 
-### ToolApprovalQueryRepository — list operations for sync + consent UI
+### ToolApprovalQueryRepository — sync, creation, and consent reads
 
 ```go
-// ToolApprovalQueryRepository defines read-side list queries for tool approvals.
-// Used by the long-poll sync endpoint and the consent management UI.
+// ToolApprovalQueryRepository defines read-side queries for tool approvals.
+// Used by sync, pending-creation deduplication, and consent management.
 // Max 3 methods — ISP-compliant.
 type ToolApprovalQueryRepository interface {
-    // ListAllActive lists all active approvals, optionally filtered by principal.
+    // ListAllActive lists all active approvals, optionally filtered by principal and active agent sessions.
     // "Active" means non-expired pending records plus approved/denied records relevant for sync.
     // All adapter errors MUST be wrapped in domain StorageError.
-    ListAllActive(ctx context.Context, principalFilter *id.Principal) ([]*storage.ToolApproval, error)
+    ListAllActive(ctx context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) ([]*storage.ToolApproval, error)
 
-    // ListActiveByPrincipalAndAgent lists all active (non-expired, non-consumed) approvals
-    // for a given principal and agent pair.
-    ListActiveByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error)
+    // FindPendingByKey returns an active pending approval for its exact deduplication key, or nil.
+    FindPendingByKey(ctx context.Context, principal id.Principal, agentID id.AgentID, toolName, argumentsHash string) (*storage.ToolApproval, error)
 
     // ListPermanentByPrincipal lists all permanent approvals/denials for a principal.
     // Used by the consent management UI.

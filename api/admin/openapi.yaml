@@ -30,13 +30,16 @@ info:
     - **Plain-header mode**: Set `server.admin.authentication.preauth.principal_header_name`
       explicitly. The broker reads the principal from that proxy-supplied header.
       There is no global default principal header.
-    - **Signed JWT mode**: Set `server.admin.authentication.jwt.jwks_uri` to a JWKS
-      endpoint. The broker verifies the JWT signature and requires an `exp` claim.
-      It reads the token from `Authorization` by default and removes the `Bearer ` prefix.
-      A configured `header_name` can select another header. `verification: none` is rejected
-      at startup. A missing or invalid JWT supplies no broker principal; the broker ignores
-      the plain principal header. The sweep returns `500 server_misconfiguration` without an
-      operator principal. The proxy must reject unauthorized admin requests before forwarding.
+    - **JWT mode**: Configure `server.admin.authentication.jwt`. With `verification: jwks`
+      (default), set `jwks_uri`. The broker verifies the signature and requires `exp`.
+      With `verification: none`, a trusted gateway sets an unsigned JWT after it
+      authenticates the operator and removes client-supplied copies. Do not set
+      `jwks_uri` in this mode. The default header is `Authorization` with `Bearer `
+      stripped. `header_name` can select another header, such as `X-Userinfo`.
+      A missing or invalid JWT supplies no broker principal. The broker ignores
+      the plain principal header. The sweep returns `500 server_misconfiguration`
+      without an operator principal. The proxy must reject unauthorized admin
+      requests before forwarding.
 
     The proxy enforces administrator privilege in both modes. The health endpoint is
     public and does not require authentication.
@@ -3609,20 +3612,23 @@ components:
         the principal from this header only when JWT pre-authentication is not configured.
         The proxy must remove client-supplied copies of the header, authenticate the
         caller, and enforce administrator privilege before forwarding the request.
-    SignedJWT:
+    JWTPreAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Signed JWT pre-authentication through a trusted proxy. Set
-        `server.admin.authentication.jwt.jwks_uri` to a JWKS endpoint. The broker
-        verifies the signature and requires an `exp` claim. The default token header
-        is `Authorization` with a `Bearer ` prefix; `header_name` can select another
-        header. When JWT mode is configured, a missing or invalid JWT supplies no broker
-        principal; the plain principal header is ignored. The sweep returns 500 without an
-        operator principal. The proxy must authenticate and authorize callers before
-        forwarding any admin request.
+        JWT pre-authentication through a trusted proxy. Configure
+        `server.admin.authentication.jwt`. With `verification: jwks` (default),
+        set `jwks_uri`. The broker verifies the signature and requires `exp`.
+        With `verification: none`, a trusted gateway sets an unsigned JWT after
+        it authenticates the operator and removes client-supplied copies. Do not
+        set `jwks_uri` in this mode. The default header is `Authorization` with
+        `Bearer ` stripped. `header_name` can select another header, such as
+        `X-Userinfo`. A missing or invalid JWT supplies no broker principal.
+        The broker ignores the plain principal header. The sweep returns
+        `500 server_misconfiguration` without an operator principal. The proxy
+        must authenticate and authorize callers before forwarding admin requests.
 
 security:
   - PreAuthProxy: []
-  - SignedJWT: []
+  - JWTPreAuth: []

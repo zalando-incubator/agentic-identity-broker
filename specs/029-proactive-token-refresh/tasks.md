@@ -70,9 +70,9 @@ description: "Task list for proactive token refresh"
 **Constitution**: Principle IX. The table has no new columns.
 
 - [X] T019 Obtain maintainer acceptance of the named Principle IX exception in ADR 039. Record its 2026-10-12 in-place amendment after the stakeholder chose direct migration execution in this unmerged PR. Retain the separate migration image and Helm migration/grants Job. Document the loss of pre-execution validation in `research.md` and `plan.md`.
-- [X] T020 Add migration `036_user_sessions_access_token_expiry_index.{up,down}.sql` with the informational `-- migrate:no-transaction` first line. Test UP, DOWN, reapply, invalid-index interruption, dirty-version recovery, and the two ordered index keys against PostgreSQL 15. Review the intentional `Migrate(35)` pin in `tests/integration/storage/infra/thirdparty_service_test.go`. Never claim that operator recovery is atomic rollback.
+- [X] T020 Add migration `037_user_sessions_access_token_expiry_index.{up,down}.sql` with the informational `-- migrate:no-transaction` first line. Test UP, DOWN, reapply, invalid-index interruption, dirty-version recovery, and the two ordered index keys against PostgreSQL 15. Review the intentional `Migrate(35)` pin in `tests/integration/storage/infra/thirdparty_service_test.go`. Never claim that operator recovery is atomic rollback.
 
-**Checkpoint**: Amended ADR 039 defines migration `036` without a guard. Both runners execute concurrent SQL outside explicit transactions. PostgreSQL lifecycle, invalid-index recovery, and normal-planner index tests passed after the cutover.
+**Checkpoint**: Amended ADR 039 defines migration `037` without a guard. Both runners execute concurrent SQL outside explicit transactions. Before renumbering, PostgreSQL lifecycle, invalid-index recovery, and normal-planner index tests passed after the cutover.
 
 ### Phase 2e: Frontend/Design System Review
 
@@ -182,7 +182,7 @@ description: "Task list for proactive token refresh"
 - [X] T057 Verify Principles II/V in `specs/029-proactive-token-refresh/data-model.md`, `adrs/038-proactive-token-refresh.md`, and the `ARCHITECTURE.md` glossary. Confirm the aggregate invariant and all seven terms, including SweepRequest and SessionTokensRefreshed.
 - [X] T058 [P] Verify Principle VII in `examples/config/third-party-oauth2.yaml`, `examples/config/README.md`, and `charts/agentic-identity-broker/values.yaml`. Confirm example and Helm defaults agree.
 - [X] T059 [P] Verify Principles IV/X in `api/admin/openapi.yaml` and `specs/029-proactive-token-refresh/plan.md`. Check written stakeholder approval of the restricted ISO 8601 grammar and every documented request, response, example, and authentication rule. No end-user API changes apply.
-- [X] T060 Verify Principles IX/XIII in amended ADR 039, `specs/029-proactive-token-refresh/research.md`, migration `036`, the direct image and Go runners, `tests/integration/migrations/migrations_test.go`, and all ten red E2E scenarios. Confirm the named non-atomic exception, manual recovery, and semantic red evidence.
+- [X] T060 Verify Principles IX/XIII in amended ADR 039, `specs/029-proactive-token-refresh/research.md`, migration `037`, the direct image and Go runners, `tests/integration/migrations/migrations_test.go`, and all ten red E2E scenarios. Confirm the named non-atomic exception, manual recovery, and semantic red evidence.
 
 ### Constitution Compliance Verification: Implementation Phase
 
@@ -193,7 +193,7 @@ description: "Task list for proactive token refresh"
 - [X] T065 Verify Principles VI/XII in `internal/ports/storage.go`, `internal/app/builder.go`, and `internal/adapters/http/routing/admin.go`. Confirm focused ports, builder-only construction, and route-only registration.
 - [X] T066 Verify Principles VIII/XIII in `tests/e2e/proactive_token_refresh_test.go`, `internal/domain/oauth2session/background_refresh_test.go`, and `internal/domain/oauth2session/sweep_test.go`. Confirm recorded semantic red results for all ten acceptance scenarios, one `It()` per scenario, meaningful assertions, minimal fixture edits, and no skip markers.
 - [X] T067 Run `just check` and `just test` from `justfile`. Resolve failures in the changed Go, config, and HTTP packages.
-- [X] T068 Run `just test-integration-infra` from `justfile`. Confirm migration 036, E1–E7, and index-planner assertions against PostgreSQL.
+- [X] T068 Run `just test-integration-infra` from `justfile`. Confirm migration 037, E1–E7, and index-planner assertions against PostgreSQL.
 - [X] T069 Run `just test-e2e-backend` from `justfile`. Confirm all ten scenarios in `tests/e2e/proactive_token_refresh_test.go` pass alongside existing exchange journeys.
 - [X] T070 Follow the API, observability, and Helm smoke steps in `specs/029-proactive-token-refresh/quickstart.md`. Confirm the default dry-run summary, error codes, linked background span, fixed-cardinality counters, and chart output.
 

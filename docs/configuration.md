@@ -267,6 +267,7 @@ Configure exactly one of `encryption.aws_kms` or `encryption.memory`.
 | `encryption.aws_kms.branch_key_ttl` | duration string | `1h` | Go duration string | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_BRANCH_KEY_TTL` | N/A | Lifetime of cached branch keys in DynamoDB. |
 | `encryption.aws_kms.dynamodb_region` | string | AWS SDK default region | AWS region | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_REGION` | N/A | Optional region override for DynamoDB branch-key storage. |
 | `encryption.aws_kms.dynamodb_timeout` | duration string | - | Positive Go duration string | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_TIMEOUT` | N/A | Optional timeout applied to AWS-backed encryption operations. |
+| `encryption.aws_kms.disable_ssl` | boolean | `false` | `true` only with explicit `GO_ENV=development` | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL` | N/A | Disable AWS TLS certificate verification for development emulator testing only. Startup rejects this in every other environment. |
 | `encryption.memory.raw_key` | string | - | Base64-encoded 32-byte AES-256 key | Yes when `encryption.memory` is set | `IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY` | N/A | Raw AES key for the in-memory backend. Sensitive - redacted in logs. |
 
 **Encryption Configuration Notes:**
@@ -419,6 +420,27 @@ Pre-authentication mode allows the Identity Broker to trust authenticated princi
 - Empty/missing headers result in 401 Unauthorized on protected routes
 - Optional authentication routes allow missing principals
 
+**JWT pre-authentication (both servers):** Configure `server.enduser.authentication.jwt` and
+`server.admin.authentication.jwt` independently. For Helm, set the corresponding
+`broker.server.enduser.authentication.jwt` and `broker.server.admin.authentication.jwt`
+values with the same snake_case keys. When `jwt` is configured, the plain principal header
+is not a fallback. The broker accepts the configured JWT header only from a trusted proxy
+or mesh; it must remove client-supplied copies and restrict direct access to both ports.
+
+| Option under `server.<enduser or admin>.authentication.jwt` | Default | Description |
+|---|---|---|
+| `header_name` | `Authorization` | JWT header; only `Authorization` strips a `Bearer ` prefix. A gateway-supplied `X-Userinfo` contains the raw JWT. |
+| `verification` | `jwks` | `jwks` verifies a signature; `none` trusts a gateway-supplied JWT without signature verification. |
+| `jwks_uri` | none | Required with `jwks`, forbidden with `none`. Must use HTTPS except when the development-only HTTPS skip is enabled. |
+| `expected_audience`, `expected_issuer` | unset | Reject JWTs with other audience/issuer when set. |
+| `claim_extraction.principal_expression` | `claims.sub` | CEL expression returning a non-empty principal; for gateway userinfo containing `principal`, use `claims.principal`. |
+| `claim_extraction.display_name_expression`, `email_expression`, `picture_url_expression` | unset | Optional CEL expressions for profile attributes. |
+
+The admin gateway must authorize callers and set the configured JWT header after discarding
+client copies. A bearer token used to authenticate at the gateway is not the broker's
+operator principal. With an absent or invalid JWT, admin CIMD key mutations do not create
+a key and report `server_misconfiguration` because the operator principal is missing.
+
 **Example YAML configurations:**
 
 Development (custom header):
@@ -566,10 +588,11 @@ The following configuration sections are planned for future releases. This table
 
 The configuration system follows consistent naming patterns across all sources:
 
-1. **YAML Paths**: Use dot notation with lowercase keys (e.g., `log.level`, `server.tls.enabled`)
+1. **YAML Paths**: Use nested mappings with lowercase structural keys. This guide uses dotted paths, such as `log.level`, as shorthand.
 2. **Environment Variables**: Prefix + uppercase + underscores (e.g., `IDENTITY_BROKER_LOG_LEVEL`, `IDENTITY_BROKER_SERVER_TLS_ENABLED`)
 3. **CLI Flags**: Use the exact name shown in the reference table (for example, `--log-level` or `--token_refresh.background_workers`).
-4. **Nested Config**: Use `.` in YAML paths and CLI flags for `token_refresh`, and `_` in its environment variable names.
+4. **Nested Configuration**: YAML nesting defines the structure. Flat keys such as `telemetry.exporter.endpoint` are literal keys, not structural paths.
+5. **Token Refresh**: Use nested YAML mappings for `token_refresh`. Its CLI flags use `.`, and its environment variables use `_`.
 
 ### Configuration by Use Case
 
@@ -721,6 +744,13 @@ IDENTITY_BROKER_ENCRYPTION_AWS_KMS_BRANCH_KEY_TTL=1h
 ```
 
 `key_arn` accepts both KMS key ARNs and alias ARNs.
+
+TLS certificate verification is enabled by default. Never enable `disable_ssl` in production.
+Setting it to `true` requires explicit `GO_ENV=development`; production, staging, unset,
+and unknown environments abort startup before AWS clients are created. The default
+development environment used for `.env` file selection does not authorize this bypass.
+HTTP emulator endpoints do not require `disable_ssl`; leave it `false` in
+[`config.aws-emulator.yaml`](../examples/config/config.aws-emulator.yaml).
 
 #### encryption.memory.raw_key
 
@@ -886,6 +916,22 @@ request_context:
 See [`examples/config/request-context.yaml`](../examples/config/request-context.yaml) for a documented overlay example.
 
 ## Security Best Practices
+
+### CIMD SSRF protection
+
+Never enable `security.skip_cimd_ssrf_validation` in production. The default is `false`.
+This flag disables both the IP blocklist and TLS certificate verification for CIMD document fetches.
+Use it only for local mock servers in development or tests.
+
+Set `GO_ENV=development` explicitly only for local CIMD mock testing.
+Otherwise, the configuration loader rejects `security.skip_cimd_ssrf_validation: true` before storage or network initialization, even when CIMD is disabled.
+This includes unset, empty, staging, test, production, and unrecognized environment values.
+The default development environment for `.env` file selection does not permit this bypass.
+
+Audit the effective flag value and its source in the startup configuration summary.
+Alert on `security.skip_cimd_ssrf_validation: true` outside local development or tests.
+The `configuration_loaded` JSON audit event identifies the configuration source and key, but does not include the effective value.
+When the builder creates an insecure CIMD fetcher, it also emits a warning.
 
 ### Sensitive Values
 
@@ -1206,6 +1252,24 @@ oauth2_authorization_server:
 
 See [OAuth2 server modes](/docs/concepts/oauth2-server-modes) for how the broker issues or proxies tokens.
 
+#### Continuing consent for local refresh
+
+Local refresh requires an active grant for the token's principal and agent. This also applies to locally issued tokens in hybrid mode.
+Grant deletion, expiration, or replacement ends refresh authority. Renewal of expired consent revokes previous sessions. Credential deletion revokes all agent sessions. Agent deletion removes them.
+Consent denial returns the existing `invalid_grant` response without tokens. Verifier or storage errors return `server_error` without rotating the token.
+Grant and credential deletion precede session revocation because these repositories do not share the refresh transaction. A revocation error does not undo deletion.
+
+If deletion commits but refresh cleanup fails, the audit event uses `action=grant_deleted` and `refresh_cleanup=failed`. The request still returns an error. Retrying DELETE returns 404 because the grant is already absent. The event does not report successful session cleanup.
+
+Memory storage rejects a late successor after lifecycle revocation, including renewal that retains the grant ID. Revocation also marks consumed predecessors. Successor insertion and its predecessor check share one lock. PostgreSQL retains the rotation transaction and agent lock through insertion. Neither backend retracts access tokens from a refresh that completed before revocation.
+
+**Accepted limits:**
+
+- A row without `grant_id` gets one rotation on the strength of an older active grant. Its successor stores the grant ID.
+- Old pods do not check consent or lock the agent first. Revocation can still deadlock while old binaries serve traffic during deployment.
+- Existing access tokens remain valid until `token_ttl` expires.
+
+
 ### OAuth2 User Impersonation Configuration
 
 #### oauth2_authorization_server.impersonation
@@ -1421,7 +1485,7 @@ For HTTP/HTTPS, configure the collector URL without a signal path. AIB sends tra
 
 ### Environment Variable Mapping
 
-All OTel settings can be overridden via environment variables using the `IDENTITY_BROKER_TELEMETRY_` prefix, following the same Viper binding rules as other settings. For example:
+Scalar OTel settings with environment bindings accept the `IDENTITY_BROKER_TELEMETRY_` prefix. Resource attributes and exporter headers use YAML maps, not whole-map environment strings. For example:
 
 ```bash
 IDENTITY_BROKER_TELEMETRY_ENABLED=true
@@ -1429,6 +1493,32 @@ IDENTITY_BROKER_TELEMETRY_EXPORTER_ENDPOINT=otel-collector:4317
 IDENTITY_BROKER_TELEMETRY_EXPORTER_INSECURE=true
 IDENTITY_BROKER_TELEMETRY_SERVICE_NAME=my-broker-instance
 ```
+
+### Literal Map Keys
+
+Both the broker and ExtProc preserve literal dots in resource attribute names and exporter header names:
+
+```yaml
+telemetry:
+  resource_attributes:
+    service: broker
+    service.namespace: production
+    service.version: release
+  exporter:
+    headers:
+      x.vendor.token: ${OTLP_TOKEN}
+      x.vendor.region: eu
+```
+
+`service` and `service.namespace` remain separate string keys. Nested maps where string values are expected cause a decoding error. Missing maps and explicit `{}` maps decode to nil, which consumers treat as empty.
+
+The broker expands `${VAR}` in both maps. ExtProc expands exporter header values but leaves resource attribute values unchanged.
+
+The shared `internal/configutil` utility reserves `::` for structural Viper paths. It does not own service defaults or loading policy. For caller-created ExtProc instances, call `configutil.NewViper()` before populating the instance for `LoadFromViper`. Address a literal leaf with `configutil.Key("telemetry", "resource_attributes", "service.namespace")`.
+
+Nested YAML and public CLI names remain unchanged. For example, ExtProc keeps `--telemetry.exporter.endpoint` and `EXTPROC_TELEMETRY_EXPORTER_ENDPOINT`. The broker keeps `IDENTITY_BROKER_TELEMETRY_EXPORTER_ENDPOINT`. Source metadata continues to show readable dotted paths.
+
+ExtProc replaces both `::` and literal dots with underscores for environment lookup. Known YAML leaf keys retain their existing environment overrides. This conversion is not unambiguous for arbitrary map keys. Keys containing `::` are outside this contract. Viper remains case-insensitive and does not preserve attribute-name case.
 
 ### What is Instrumented
 

@@ -80,7 +80,7 @@ The tests are deterministic. The background tests synchronize on the gated fake 
 
 ## 4. PostgreSQL: migration, repository, index (SC-006)
 
-ADR 039 keeps the migration `036` non-atomic exception and removes the guard. The `-- migrate:no-transaction` comment is informational. Direct image and Go-runner lifecycle and recovery checks passed on PostgreSQL 15. Run the full infrastructure suite:
+ADR 039 keeps the migration `037` non-atomic exception and removes the guard. The `-- migrate:no-transaction` comment is informational. Before renumbering, direct image and Go-runner lifecycle and recovery checks passed on PostgreSQL 15 (as migration `036`, before the `main` merge renumbered it to `037`). Run the full infrastructure suite:
 
 ```bash
 just test-integration-infra
@@ -88,7 +88,7 @@ just test-integration-infra
 
 | Check | Location | Pass condition |
 |---|---|---|
-| Migration 036 applies, recovers from an invalid index, rolls back, and reapplies | `tests/integration/migrations/` | Clean version `36` after UP, a valid B-tree with exactly two ordered keys `(access_token_expires_at, id)`, no index after DOWN, and successful dirty-version recovery. Recovery is not atomic rollback. |
+| Migration 037 applies, recovers from an invalid index, rolls back, and reapplies | `tests/integration/migrations/` | Clean version `37` after UP, a valid B-tree with exactly two ordered keys `(access_token_expires_at, id)`, no index after DOWN, and successful dirty-version recovery. Recovery is not atomic rollback. |
 | `ListExpiringSessions` contract E1–E7 | `internal/adapters/storage/postgres/user_session_test.go` | The same expiry-then-UUID and ciphertext behavior as the memory adapter. |
 | Index used under normal planning | same file | With sparse due rows and `ANALYZE`, `EXPLAIN (FORMAT JSON)` references the named valid two-key index for first, middle, and late small-limit pages. Keep `enable_seqscan` unchanged. |
 

@@ -122,7 +122,7 @@ Research R1–R13 resolve the design questions. R4 records the named non-atomic 
   unknown-field rejection with `400`, and missing operator principal with `500`. ADR 038 records
   those choices. This is user approval in this conversation, not a claim of a PR review comment.
   T018 records this approval before endpoint implementation.
-- [x] **Database Design and Migration — VERIFIED**: Amended ADR 039 keeps the non-atomic exception for migration `036` without a guard. Direct Go-runner PostgreSQL 15 tests passed UP, DOWN, reapply, interrupted invalid-index recovery, and dirty-version repair. The direct image passed the same lifecycle on disposable PostgreSQL. First, middle, and late sparse-due pages used the valid two-key index under normal planner settings.
+- [x] **Database Design and Migration — VERIFIED**: Amended ADR 039 keeps the non-atomic exception for migration `037` without a guard. Before renumbering, direct Go-runner PostgreSQL 15 tests passed UP, DOWN, reapply, interrupted invalid-index recovery, and dirty-version repair. The direct image passed the same lifecycle on disposable PostgreSQL (as migration `036`, before the `main` merge renumbered it to `037`). First, middle, and late sparse-due pages used the valid two-key index under normal planner settings.
 - [x] **E2E Acceptance Tests**: All 10 acceptance scenarios get E2E tests in
   `tests/e2e/proactive_token_refresh_test.go` before implementation (Testing Strategy).
 - [x] **E2E Test Mapping**: 1:1 scenario-to-`It()` mapping, tabulated below.
@@ -155,7 +155,7 @@ Research R1–R13 resolve the design questions. R4 records the named non-atomic 
 - [x] **End-User Docs**: N/A for `docs/api/` (admin API). Operator docs:
   `docs/operations/session-sweep.md` (runbook and reference CronJob) and the `docs/configuration.md`
   Token Refresh section.
-- [x] **Migration Testing — VERIFIED**: The direct v4.17.0 image applied, rolled back, and reapplied migration `036`, reaching clean versions `36`, `35`, and `36`. Direct Go runners passed migration lifecycle and invalid-index recovery tests. Both Helm grants modes retained their migration args, and `helm lint` passed. The informational directive does not make concurrent DDL atomic (research R4, ADR 039).
+- [x] **Migration Testing — VERIFIED**: The direct v4.17.0 image applied, rolled back, and reapplied migration `036`, reaching clean versions `36`, `35`, and `36` (as migration `036`, before the `main` merge renumbered it to `037`). Before renumbering, direct Go runners passed migration lifecycle and invalid-index recovery tests. Both Helm grants modes retained their migration args, and `helm lint` passed. The informational directive does not make concurrent DDL atomic (research R4, ADR 039).
 - [x] **Hexagonal Architecture**: The domain (`oauth2session`) depends on the
   `UserSessionExpiryRepository` and `UserSessionRefreshRepository` ports. The admin handler parses
   input only, and defaulting, bounds, and classification live in `SessionSweepService`. No adapter
@@ -210,8 +210,8 @@ adrs/
 api/admin/openapi.yaml                                   # MODIFIED — Sessions tag, /api/sessions/sweep, 2 schemas
 
 migrations/
-├── 036_user_sessions_access_token_expiry_index.up.sql   # concurrent two-key index; informational directive
-└── 036_user_sessions_access_token_expiry_index.down.sql # concurrent drop; informational directive
+├── 037_user_sessions_access_token_expiry_index.up.sql   # concurrent two-key index; informational directive
+└── 037_user_sessions_access_token_expiry_index.down.sql # concurrent drop; informational directive
 
 internal/ports/
 ├── config.go                                            # MODIFIED — TokenRefreshConfig, Config.TokenRefresh
@@ -341,7 +341,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
    The user approved them in writing on 2026-10-09 for PR #196, before endpoint implementation.
 
 **2d — Database (DIRECT RUNNERS VERIFIED)**
-8. ADR 039 keeps the named non-atomic exception for migration `036` and removes the guard. The separate image and both Helm Job modes remain under ADR 009. Direct Go v4.20.1 runners passed PostgreSQL 15 lifecycle and invalid-index/dirty-version recovery tests. The direct v4.17.0 CLI applied, dropped, and reapplied migration `036` on a disposable database. The `-- migrate:no-transaction` comment is informational.
+8. ADR 039 keeps the named non-atomic exception for migration `037` and removes the guard. The separate image and both Helm Job modes remain under ADR 009. Before renumbering, direct Go v4.20.1 runners passed PostgreSQL 15 lifecycle and invalid-index/dirty-version recovery tests. The direct v4.17.0 CLI applied, dropped, and reapplied migration `036` on a disposable database (as migration `036`, before the `main` merge renumbered it to `037`). The `-- migrate:no-transaction` comment is informational.
 
 **2e — Frontend**: N/A.
 
@@ -525,15 +525,15 @@ fixture-only changes during implementation.
   and the SC-006 normal-planner `EXPLAIN (FORMAT JSON)` assertion for first, middle, and late pages
   against the named valid two-key index. Inspect `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` for
   actual rows and buffers without turning off sequential scans.
-- `tests/integration/migrations/`: Verify direct migration `036` UP, DOWN, reapply, invalid-index failure, dirty-version recovery, and exactly two ordered B-tree keys, `(access_token_expires_at, id)`.
+- `tests/integration/migrations/`: Verify direct migration `037` UP, DOWN, reapply, invalid-index failure, dirty-version recovery, and exactly two ordered B-tree keys, `(access_token_expires_at, id)`.
 
 **Test Coverage Goals**:
 - Unit: every branch of `backgroundRefresher.submit` and `Close`, every R11 classification row,
   every parser rule.
-- Integration: the full repository contract on both adapters, plus migration 036.
+- Integration: the full repository contract on both adapters, plus migration 037.
 - E2E: 100% of the 10 acceptance scenarios.
 - Frontend E2E: N/A.
 
 ## Complexity Tracking
 
-No TDD exception is planned. Every feature E2E case must compile and fail semantically before implementation. ADR 039 permits only migration `036` to be non-atomic. Direct runners passed lifecycle and recovery checks after guard removal.
+No TDD exception is planned. Every feature E2E case must compile and fail semantically before implementation. ADR 039 permits only migration `037` to be non-atomic. Before renumbering, direct runners passed lifecycle and recovery checks after guard removal.

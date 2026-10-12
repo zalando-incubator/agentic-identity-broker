@@ -185,7 +185,10 @@ func TestValidate(t *testing.T) {
 				cfg := validTestConfig()
 				cfg.Server.EndUser.Authentication.Preauth.PrincipalHeaderName = ""
 				cfg.Server.EndUser.Authentication.JWT = &ports.JWTConfig{
-					JWKSURI: "https://auth.example.com/.well-known/jwks.json",
+					Verification: "none",
+					ClaimExtraction: ports.JWTClaimExtractionConfig{
+						PrincipalExpression: "claims.sub",
+					},
 				}
 				return cfg
 			}(),
@@ -303,7 +306,8 @@ func TestValidateTokenExchangeConfig(t *testing.T) {
 }
 
 // TestValidateJWTConfig tests JWT pre-authentication configuration validation.
-// Covers signed JWKS requirements, defaults, and CEL validation.
+// Covers mutual exclusivity checks, required fields, defaults application,
+// and CEL expression validation per FR-003a and SR-004.
 func TestValidateJWTConfig(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -326,7 +330,7 @@ func TestValidateJWTConfig(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name: "reject unsigned JWT config without JWKS URI",
+			name: "valid unsigned JWT config",
 			jwt: &ports.JWTConfig{
 				HeaderName:   "X-JWT-Claims",
 				Verification: "none",
@@ -335,8 +339,7 @@ func TestValidateJWTConfig(t *testing.T) {
 				},
 			},
 			security: nil,
-			wantErr:  true,
-			errMsg:   "'jwks' signature verification",
+			wantErr:  false,
 		},
 		{
 			name: "defaults applied when fields are empty",
@@ -347,14 +350,14 @@ func TestValidateJWTConfig(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name: "reject unsigned JWT config with JWKS URI",
+			name: "mutual exclusivity: verification none + jwks_uri",
 			jwt: &ports.JWTConfig{
 				Verification: "none",
 				JWKSURI:      "https://auth.example.com/.well-known/jwks.json",
 			},
 			security: nil,
 			wantErr:  true,
-			errMsg:   "'jwks' signature verification",
+			errMsg:   "mutually exclusive",
 		},
 		{
 			name: "missing jwks_uri when verification is jwks",
@@ -373,7 +376,7 @@ func TestValidateJWTConfig(t *testing.T) {
 			},
 			security: nil,
 			wantErr:  true,
-			errMsg:   "'jwks' signature verification",
+			errMsg:   "'jwks' or 'none'",
 		},
 		{
 			name: "HTTPS required for JWKS URI by default",
@@ -446,6 +449,24 @@ func TestValidateJWTConfig_DefaultsApplied(t *testing.T) {
 	if jwt.ClaimExtraction.PrincipalExpression != "claims.sub" {
 		t.Errorf("expected PrincipalExpression default 'claims.sub', got %q",
 			jwt.ClaimExtraction.PrincipalExpression)
+	}
+}
+
+// TestValidate_WithJWTConfig tests that full config validation includes JWT
+// validation when JWT config is present.
+func TestValidate_WithJWTConfig(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.Server.EndUser.Authentication.JWT = &ports.JWTConfig{
+		Verification: "none",
+		JWKSURI:      "https://should-not-be-set.example.com",
+	}
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for mutual exclusivity, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("expected 'mutually exclusive' in error, got: %v", err)
 	}
 }
 
@@ -1001,43 +1022,5 @@ func TestValidateTokenRefreshConfig(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestValidate_AdminJWTRequiresSignatureVerification(t *testing.T) {
-	cfg := validTestConfig()
-	cfg.Server.Admin.Authentication.JWT = &ports.JWTConfig{
-		Verification:    "none",
-		ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
-	}
-	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("unsigned admin JWT configuration must fail validation")
-	}
-	var configErr *config.ConfigError
-	if !errors.As(err, &configErr) {
-		t.Fatalf("validation error = %T, want *config.ConfigError: %v", err, err)
-	}
-	if configErr.Field != "server.admin.authentication.jwt.verification" {
-		t.Errorf("validation field = %q, want admin JWT verification", configErr.Field)
-	}
-}
-
-func TestValidate_EnduserJWTRequiresSignatureVerification(t *testing.T) {
-	cfg := validTestConfig()
-	cfg.Server.EndUser.Authentication.JWT = &ports.JWTConfig{
-		Verification:    "none",
-		ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
-	}
-	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("unsigned end-user JWT configuration must fail validation")
-	}
-	var configErr *config.ConfigError
-	if !errors.As(err, &configErr) {
-		t.Fatalf("validation error = %T, want *config.ConfigError: %v", err, err)
-	}
-	if configErr.Field != "server.enduser.authentication.jwt.verification" {
-		t.Errorf("validation field = %q, want end-user JWT verification", configErr.Field)
 	}
 }

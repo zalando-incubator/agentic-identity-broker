@@ -572,8 +572,10 @@ func validateMemoryConfig(cfg *ports.MemoryConfig) error {
 	return nil
 }
 
-// validateJWTConfig applies defaults and requires signed JWKS verification.
-// It enforces HTTPS for the JWKS URI per SR-004.
+// validateJWTConfig validates JWT pre-authentication configuration.
+// Applies defaults for HeaderName, Verification, and PrincipalExpression when not set.
+// Enforces mutual exclusivity between verification: none and jwks_uri.
+// Enforces HTTPS for JWKS URI per SR-004.
 func validateJWTConfig(jwt *ports.JWTConfig, prefix string, security *ports.SecurityConfig) error {
 	// Apply defaults for fields that have default values
 	if jwt.HeaderName == "" {
@@ -587,17 +589,27 @@ func validateJWTConfig(jwt *ports.JWTConfig, prefix string, security *ports.Secu
 	}
 
 	// Validate verification mode
-	if jwt.Verification != "jwks" {
+	if jwt.Verification != "jwks" && jwt.Verification != "none" {
 		return formatValidationError(
 			prefix+".verification",
 			jwt.Verification,
-			"'jwks' signature verification",
+			"'jwks' or 'none'",
 			nil,
 		)
 	}
 
-	// Signed JWTs require a JWKS endpoint.
-	if jwt.JWKSURI == "" {
+	// Mutual exclusivity: verification: none + jwks_uri → startup error (FR-003a)
+	if jwt.Verification == "none" && jwt.JWKSURI != "" {
+		return formatValidationError(
+			prefix,
+			"verification: none with jwks_uri: "+jwt.JWKSURI,
+			"verification 'none' and jwks_uri are mutually exclusive",
+			nil,
+		)
+	}
+
+	// Required jwks_uri when verification is jwks
+	if jwt.Verification == "jwks" && jwt.JWKSURI == "" {
 		return formatValidationError(
 			prefix+".jwks_uri",
 			"",

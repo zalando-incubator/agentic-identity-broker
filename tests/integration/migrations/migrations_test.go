@@ -841,45 +841,45 @@ func requireSessionExpiryIndex(t *testing.T, f *MigrationTestFramework, valid bo
 	require.Equal(t, "id", secondKey, "index definition: %s", definition)
 }
 
-func TestMigration036SessionExpiryIndexLifecycle(t *testing.T) {
+func TestMigration037SessionExpiryIndexLifecycle(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 35))
+	require.NoError(t, f.Up(t, 36))
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(35), version)
+	require.Equal(t, uint(36), version)
 	require.False(t, dirty)
 	requireSessionExpiryIndexAbsent(t, f)
 	seedSessionExpiryMigration(t, f)
 
-	require.NoError(t, f.Up(t, 36))
+	require.NoError(t, f.Up(t, 37))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(36), version)
+	require.Equal(t, uint(37), version)
 	require.False(t, dirty)
 	requireSessionExpiryIndex(t, f, true)
 
-	require.NoError(t, f.Down(t, 35))
+	require.NoError(t, f.Down(t, 36))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(35), version)
+	require.Equal(t, uint(36), version)
 	require.False(t, dirty)
 	requireSessionExpiryIndexAbsent(t, f)
 	requireSessionExpiryMigrationData(t, f)
 
-	require.NoError(t, f.Up(t, 36))
+	require.NoError(t, f.Up(t, 37))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(36), version)
+	require.Equal(t, uint(37), version)
 	require.False(t, dirty)
 	requireSessionExpiryIndex(t, f, true)
 	requireSessionExpiryMigrationData(t, f)
 }
 
-func TestMigration036InterruptedBuildRecovery(t *testing.T) {
+func TestMigration037InterruptedBuildRecovery(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 35))
+	require.NoError(t, f.Up(t, 36))
 	seedSessionExpiryMigration(t, f)
 	requireSessionExpiryIndexAbsent(t, f)
 
@@ -896,7 +896,7 @@ func TestMigration036InterruptedBuildRecovery(t *testing.T) {
 	m, err := f.newMigrationRunner(t)
 	require.NoError(t, err)
 	result := make(chan error, 1)
-	go func() { result <- m.Migrate(36) }()
+	go func() { result <- m.Migrate(37) }()
 	var buildErr error
 	buildStopped := false
 	var buildPID int
@@ -929,7 +929,7 @@ func TestMigration036InterruptedBuildRecovery(t *testing.T) {
 			SELECT a.pid
 			FROM pg_stat_activity AS a
 			JOIN pg_index AS i ON i.indexrelid = to_regclass('idx_user_sessions_access_token_expires_at')
-			JOIN schema_migrations AS sm ON sm.version = 36 AND sm.dirty
+			JOIN schema_migrations AS sm ON sm.version = 37 AND sm.dirty
 			WHERE a.datname = current_database() AND a.pid <> pg_backend_pid()
 			  AND a.state = 'active' AND NOT i.indisvalid
 			  AND position('CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at' IN a.query) > 0
@@ -952,31 +952,31 @@ func TestMigration036InterruptedBuildRecovery(t *testing.T) {
 
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(36), version)
+	require.Equal(t, uint(37), version)
 	require.True(t, dirty, "failure is not an atomic rollback")
 	requireSessionExpiryIndex(t, f, false)
 	requireSessionExpiryMigrationData(t, f)
 
 	// A dirty version cannot be retried; inspect and remove only the matching invalid index first.
-	require.Error(t, f.Up(t, 36))
+	require.Error(t, f.Up(t, 37))
 	requireSessionExpiryIndex(t, f, false)
 	require.NoError(t, f.ExecuteSQL(t, `DROP INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at`))
 	requireSessionExpiryIndexAbsent(t, f)
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
-	require.Equal(t, uint(36), version)
+	require.Equal(t, uint(37), version)
 	require.True(t, dirty)
 
-	require.NoError(t, f.Force(t, 35))
-	version, dirty, err = f.Version(t)
-	require.NoError(t, err)
-	require.Equal(t, uint(35), version)
-	require.False(t, dirty)
-	requireSessionExpiryIndexAbsent(t, f)
-	require.NoError(t, f.Up(t, 36))
+	require.NoError(t, f.Force(t, 36))
 	version, dirty, err = f.Version(t)
 	require.NoError(t, err)
 	require.Equal(t, uint(36), version)
+	require.False(t, dirty)
+	requireSessionExpiryIndexAbsent(t, f)
+	require.NoError(t, f.Up(t, 37))
+	version, dirty, err = f.Version(t)
+	require.NoError(t, err)
+	require.Equal(t, uint(37), version)
 	require.False(t, dirty)
 	requireSessionExpiryIndex(t, f, true)
 	requireSessionExpiryMigrationData(t, f)

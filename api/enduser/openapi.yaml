@@ -3239,6 +3239,8 @@ components:
           description: |
             Optional refresh token for obtaining new access tokens.
             Used when access token expires.
+            Locally issued refresh tokens require continuing consent for the principal and agent.
+            Ended or replaced consent returns invalid_grant without tokens. Proxy refresh is unchanged.
           example: refreshtoken123
 
         scope:

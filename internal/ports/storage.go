@@ -102,6 +102,8 @@ type UserRepository interface {
 type AgentRepository interface {
 	Create(ctx context.Context, agent *storage.Agent) error
 	Get(ctx context.Context, id id.AgentID) (*storage.Agent, error)
+	// GetByIDs retrieves existing agents once per ID, in requested order; missing IDs are omitted.
+	GetByIDs(ctx context.Context, ids []id.AgentID) ([]*storage.Agent, error)
 	Update(ctx context.Context, agent *storage.Agent) error
 	// Delete reports whether the primary agent row was actually deleted; absence is false, nil.
 	Delete(ctx context.Context, id id.AgentID) (bool, error)
@@ -236,6 +238,12 @@ type UserSessionRepository interface {
 	// Returns empty slice if no sessions exist (not an error).
 	ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error)
 
+	// ListSummariesByPrincipal returns session listing metadata, including expired sessions, without encrypted token blobs.
+	ListSummariesByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSessionSummary, error)
+
+	// ListActiveServiceIDsByPrincipal returns service IDs of sessions whose refresh token has not expired.
+	ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error)
+
 	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
 	// Used for FR-020 consent submission validation and anyDelegatedSessionExpired checks.
 	// Returns empty slice if no active sessions exist (not an error).
@@ -322,14 +330,13 @@ type ToolApprovalRepository interface {
 	Consume(ctx context.Context, id id.ApprovalID, consumedAt time.Time) (*storage.ToolApproval, error)
 }
 
-// ToolApprovalQueryRepository defines read-side list queries for tool approvals.
-// Used by the long-poll sync endpoint and the consent management UI.
+// ToolApprovalQueryRepository defines read-side queries for sync, consent, and creation.
 type ToolApprovalQueryRepository interface {
 	// ListAllActive lists all active approvals, optionally filtered by principal and active agent sessions.
 	ListAllActive(ctx context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) ([]*storage.ToolApproval, error)
 
-	// ListActiveByPrincipalAndAgent lists active approvals for a principal-agent pair.
-	ListActiveByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error)
+	// FindPendingByKey returns the active pending approval for its deduplication key, or nil when absent.
+	FindPendingByKey(ctx context.Context, principal id.Principal, agentID id.AgentID, toolName, argumentsHash string) (*storage.ToolApproval, error)
 
 	// ListPermanentByPrincipal lists permanent approvals/denials for a principal.
 	ListPermanentByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.ToolApproval, error)
@@ -434,6 +441,11 @@ type RefreshTokenSessionRepository interface {
 	// Create stores a refresh token session keyed by token signature.
 	Create(ctx context.Context, session *storage.RefreshTokenSession) error
 
+	// CreateSuccessor stores a replacement after MarkUsed consumes its predecessor.
+	// Transactional backends require the same rotation transaction for both calls.
+	// Nontransactional backends atomically reject a missing or revoked predecessor.
+	CreateSuccessor(ctx context.Context, session *storage.RefreshTokenSession, previousSignature string) error
+
 	// FindBySignature retrieves a refresh token session by its signature.
 	FindBySignature(ctx context.Context, signature string) (*storage.RefreshTokenSession, error)
 
@@ -442,6 +454,12 @@ type RefreshTokenSessionRepository interface {
 
 	// RevokeByRequestID revokes all refresh token sessions for a fosite request ID.
 	RevokeByRequestID(ctx context.Context, requestID string) error
+
+	// RevokeByPrincipalAndAgent consumes unused sessions for one principal-agent pair.
+	RevokeByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (int, error)
+
+	// RevokeByAgent consumes all unused sessions for an agent.
+	RevokeByAgent(ctx context.Context, agentID id.AgentID) (int, error)
 
 	// DeleteExpired removes expired refresh token sessions.
 	DeleteExpired(ctx context.Context) (int, error)

@@ -86,8 +86,8 @@ type App struct {
 	CIMDAssertionSigner  ports.CIMDClientAssertionSigner
 	CIMDMetadataProvider ports.CIMDClientMetadataProvider
 
-	// JWT pre-authentication (optional, nil when not configured)
-	JWTAuthenticator             domjwtauth.JWTAuthenticator
+	// JWT pre-authentication is independent for each server (nil when not configured).
+	EnduserJWTAuthenticator      domjwtauth.JWTAuthenticator
 	AdminJWTAuthenticator        domjwtauth.JWTAuthenticator
 	ApprovalRequestAuthenticator *httpmiddleware.ApprovalRequestAuthenticator
 
@@ -299,12 +299,6 @@ func (b *Builder) Build() (*App, error) {
 	if b.logger == nil {
 		return nil, fmt.Errorf("logger is required")
 	}
-	if jwt := b.config.Server.EndUser.Authentication.JWT; jwt != nil && jwt.Verification == "none" {
-		return nil, fmt.Errorf("end-user JWT authentication requires JWKS signature verification")
-	}
-	if jwt := b.config.Server.Admin.Authentication.JWT; jwt != nil && jwt.Verification == "none" {
-		return nil, fmt.Errorf("admin JWT authentication requires JWKS signature verification")
-	}
 
 	oauthCfg, err := b.config.OAuth2AuthServer.Resolve()
 	if err != nil {
@@ -485,6 +479,7 @@ func (b *Builder) Build() (*App, error) {
 			app.ProviderService,
 			b.storage.UserGrants(),
 			b.storage.UserSessions(),
+			b.storage.RefreshTokenSessions(),
 			app.PermissionSetService,
 			b.logger,
 		)
@@ -742,14 +737,44 @@ func (b *Builder) Build() (*App, error) {
 		clientAssertionJWKS = adapter
 	}
 
-	// Create JWT pre-authentication adapter if configured
-	// Per Constitution Principle VII: Configuration-Driven Design — only create when JWT block present
-	if jwtCfg := b.config.Server.EndUser.Authentication.JWT; jwtCfg != nil {
-		jwtAuthenticator, err := b.newJWTAuthenticator(jwtCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create end-user JWT authenticator: %w", err)
+	for _, server := range [...]struct {
+		name          string
+		config        *ports.JWTConfig
+		authenticator *domjwtauth.JWTAuthenticator
+	}{
+		{"enduser", b.config.Server.EndUser.Authentication.JWT, &app.EnduserJWTAuthenticator},
+		{"admin", b.config.Server.Admin.Authentication.JWT, &app.AdminJWTAuthenticator},
+	} {
+		jwtCfg := server.config
+		if jwtCfg == nil {
+			continue
 		}
-		app.JWTAuthenticator = jwtAuthenticator
+		if jwtCfg.Verification == "none" && jwtCfg.JWKSURI != "" {
+			err := fmt.Errorf("server.%s.authentication.jwt: verification 'none' and jwks_uri are mutually exclusive", server.name)
+			return nil, errors.Join(err, app.Shutdown(context.Background()))
+		}
+
+		celEval, err := domjwtauth.NewCELEvaluator(domjwtauth.CELEvaluatorConfig{
+			PrincipalExpression:   jwtCfg.ClaimExtraction.PrincipalExpression,
+			DisplayNameExpression: jwtCfg.ClaimExtraction.DisplayNameExpression,
+			EmailExpression:       jwtCfg.ClaimExtraction.EmailExpression,
+			PictureURLExpression:  jwtCfg.ClaimExtraction.PictureURLExpression,
+		}, b.logger)
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create CEL evaluator: %w", server.name, err), app.Shutdown(context.Background()))
+		}
+
+		jwtAuthenticator, err := jwtauthadapter.NewJWXAuthenticator(jwtauthadapter.JWXAuthenticatorConfig{
+			JWTConfig:    jwtCfg,
+			CELEvaluator: celEval,
+			HTTPClient:   &http.Client{Timeout: 10 * time.Second},
+			Logger:       b.logger,
+		})
+		if err != nil {
+			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create JWT authenticator: %w", server.name, err), app.Shutdown(context.Background()))
+		}
+
+		*server.authenticator = jwtAuthenticator
 		prevShutdown := app.Shutdown
 		app.Shutdown = func(ctx context.Context) error {
 			var prevErr error
@@ -759,28 +784,7 @@ func (b *Builder) Build() (*App, error) {
 			return errors.Join(jwtAuthenticator.Shutdown(ctx), prevErr)
 		}
 		b.logger.Info("JWT pre-authentication enabled",
-			"header_name", jwtCfg.HeaderName,
-			"verification", jwtCfg.Verification,
-			"has_audience", jwtCfg.ExpectedAudience != "",
-			"has_issuer", jwtCfg.ExpectedIssuer != "",
-		)
-	}
-
-	if jwtCfg := b.config.Server.Admin.Authentication.JWT; jwtCfg != nil {
-		jwtAuthenticator, err := b.newJWTAuthenticator(jwtCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create admin JWT authenticator: %w", err)
-		}
-		app.AdminJWTAuthenticator = jwtAuthenticator
-		prevShutdown := app.Shutdown
-		app.Shutdown = func(ctx context.Context) error {
-			var prevErr error
-			if prevShutdown != nil {
-				prevErr = prevShutdown(ctx)
-			}
-			return errors.Join(jwtAuthenticator.Shutdown(ctx), prevErr)
-		}
-		b.logger.Info("admin JWT pre-authentication enabled",
+			"server", server.name,
 			"header_name", jwtCfg.HeaderName,
 			"verification", jwtCfg.Verification,
 			"has_audience", jwtCfg.ExpectedAudience != "",
@@ -879,6 +883,7 @@ func (b *Builder) Build() (*App, error) {
 			tokenTTL,
 			ov.localRefreshTokenTTL,
 			claimsExpr,
+			app.ConsentService,
 			b.logger,
 			b.storage,
 		)
@@ -915,7 +920,7 @@ func (b *Builder) Build() (*App, error) {
 	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
 		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
 		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
-		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), clientAuthService, b.logger)
+		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), b.storage.RefreshTokenSessions(), clientAuthService, b.logger)
 		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
 		return signingKeyService
@@ -1222,29 +1227,6 @@ func (b *Builder) Build() (*App, error) {
 	}
 
 	return app, nil
-}
-
-func (b *Builder) newJWTAuthenticator(jwtCfg *ports.JWTConfig) (*jwtauthadapter.JWXAuthenticator, error) {
-	celEval, err := domjwtauth.NewCELEvaluator(domjwtauth.CELEvaluatorConfig{
-		PrincipalExpression:   jwtCfg.ClaimExtraction.PrincipalExpression,
-		DisplayNameExpression: jwtCfg.ClaimExtraction.DisplayNameExpression,
-		EmailExpression:       jwtCfg.ClaimExtraction.EmailExpression,
-		PictureURLExpression:  jwtCfg.ClaimExtraction.PictureURLExpression,
-	}, b.logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CEL evaluator for JWT pre-auth: %w", err)
-	}
-
-	jwtAuthenticator, err := jwtauthadapter.NewJWXAuthenticator(jwtauthadapter.JWXAuthenticatorConfig{
-		JWTConfig:    jwtCfg,
-		CELEvaluator: celEval,
-		HTTPClient:   &http.Client{Timeout: 10 * time.Second},
-		Logger:       b.logger,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create JWT authenticator: %w", err)
-	}
-	return jwtAuthenticator, nil
 }
 
 func normalizedIssuerURI(raw string) string {

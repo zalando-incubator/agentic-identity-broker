@@ -39,6 +39,15 @@ Forwarded Host headers are not trusted. `/health` probes remain unrestricted.
 
 The chart installs an ingress NetworkPolicy by default. It permits the end-user port but denies the admin port until you select trusted proxy pods. The cluster CNI must enforce ingress NetworkPolicy. See [Admin proxy access](#admin-proxy-access) before you enable the admin API.
 
+`broker.server.enduser.authentication.jwt` and `broker.server.admin.authentication.jwt`
+are optional, independent JWT pre-authentication blocks (default: unset). Each supports
+`header_name`, `verification` (`jwks` or `none`), `jwks_uri`, audience/issuer constraints,
+and CEL `claim_extraction` keys in broker snake_case. The chart passes both blocks to
+their respective servers. If admin uses `verification: none` with `X-Userinfo`, the
+gateway must authenticate and authorize the caller, strip client-supplied `X-Userinfo`,
+set its own header with an operator `principal` claim, and prevent direct access to
+port 14000. An `Authorization` bearer token alone does not supply the operator principal.
+
 ### Install with External PostgreSQL
 
 For production deployments with an existing PostgreSQL database:
@@ -115,6 +124,11 @@ The ServiceAccount will be automatically annotated with `iam.amazonaws.com/role`
 
 See [values.yaml](values.yaml) for the complete list of configuration options.
 
+Keep AWS TLS certificate verification enabled in production. If
+`broker.extraEnv` sets `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL=true`,
+startup requires explicit `GO_ENV=development`. Production, staging, unset,
+and unknown environments reject that development-only bypass.
+
 ### Key Configuration Parameters
 
 | Parameter | Description | Default |
@@ -133,6 +147,8 @@ See [values.yaml](values.yaml) for the complete list of configuration options.
 | `networkPolicy.enabled` | Apply a broker ingress policy. A supported CNI must enforce it. | `true` |
 | `networkPolicy.adminProxy.namespaceLabels` | Select the trusted admin proxy namespace. Empty denies admin ingress. | `{}` |
 | `networkPolicy.adminProxy.podLabels` | Select trusted admin proxy pods in that namespace. Empty denies admin ingress. | `{}` |
+| `broker.server.enduser.authentication.jwt` | End-user JWT pre-auth configuration, independent of admin | unset |
+| `broker.server.admin.authentication.jwt` | Admin JWT pre-auth configuration, independent of end-user | unset |
 | `resources.requests.cpu` | CPU request | `100m` |
 | `resources.requests.memory` | Memory request | `128Mi` |
 | `commonLabels` | Labels applied to all chart resources | `{}` |
@@ -302,13 +318,11 @@ networkPolicy:
       app.kubernetes.io/name: ingress-nginx
 ```
 
-Replace the example labels with labels from your proxy deployment. The chart requires both label maps when you permit admin ingress. The proxy must authorize operators. In plain-header mode, it must remove caller-supplied principal headers and set the configured admin header. In JWT mode, it must forward a signed operator JWT that the configured JWKS validates. Route the sweep CronJob through that proxy.
+Replace the example labels with labels from your proxy deployment. The chart requires both label maps when you permit admin ingress. The proxy must authorize operators. In plain-header mode, it must remove caller-supplied principal headers and set the configured admin header. In JWT mode, it must remove caller-supplied copies of the JWT header and forward its own operator JWT, signed for `verification: jwks` or gateway-issued for `verification: none`. Route the sweep CronJob through that proxy.
 
 The chart requires `service.type: ClusterIP` while this policy is enabled. A `NodePort` or `LoadBalancer` can bypass pod ingress policy on some networks. If you disable `networkPolicy.enabled`, install an equivalent ingress restriction before you serve admin requests. Make sure that your CNI enforces the policy and that no other NetworkPolicy permits port `14000`.
 
 Set `service.ports.enduser` equal to `broker.server.enduser.port` and `service.ports.admin` equal to `broker.server.admin.port`. The two listener ports must differ. The chart rejects mismatches even when its policy is disabled.
-
-If you configure JWT pre-authentication on either server, set `verification: jwks` and a JWKS URI. The broker rejects unsigned pre-authentication JWT configuration at startup.
 
 ## Database Migration
 

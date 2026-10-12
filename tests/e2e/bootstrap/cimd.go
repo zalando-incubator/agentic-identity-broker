@@ -157,12 +157,12 @@ func newCIMDEndUserHandler(appInstance *brokerapp.App) http.Handler {
 		Telemetry:        appInstance.Config.Telemetry,
 		RequestContext:   &appInstance.Config.RequestContext,
 		Authentication:   appInstance.Config.Server.EndUser.Authentication,
-		JWTAuthenticator: appInstance.JWTAuthenticator,
+		JWTAuthenticator: appInstance.EnduserJWTAuthenticator,
 	}
 	routeSetup := func(r chi.Router) {
 		routing.SetupEnduserRoutes(r, appInstance.EnduserHandlers, routing.EnduserRouteConfig{
 			Authentication:               appInstance.Config.Server.EndUser.Authentication,
-			JWTAuthenticator:             appInstance.JWTAuthenticator,
+			JWTAuthenticator:             appInstance.EnduserJWTAuthenticator,
 			ApprovalRequestAuthenticator: appInstance.ApprovalRequestAuthenticator,
 			Logger:                       appInstance.Logger,
 			CORS:                         appInstance.Config.Server.EndUser.CORS,

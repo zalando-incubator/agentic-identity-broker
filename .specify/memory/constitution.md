@@ -1,32 +1,3 @@
-<!--
-Sync Impact Report
-==================
-Version Change: 2.0.0 → 2.1.0
-Rationale: MINOR — Principle XI adds centralized semantic tokens, light/dark accessibility
-  checks, brand-asset self-hosting, and ADR review of visual-direction changes while removing
-  the prescribed aesthetic. The principle and its design-system process remain in place.
-
-Modified Principles:
-  - XI. Design System Compliance & Consistency → XI. Design System Compliance & Consistency:
-    replaced aesthetic mandates with process requirements.
-
-Added Sections: None
-Removed Sections: None
-
-Version History:
-- 2.0.0 → 2.1.0: Replaced Principle XI aesthetic mandates with token, theme, asset, accessibility, and ADR requirements (MINOR)
-- 1.9.1 → 2.0.0: Scoped Helm changes to workloads deployed by the broker chart (MAJOR)
-- 1.9.0 → 1.9.1: Clarified the bounded ADR 031 exception in Principle I (PATCH)
-- 1.8.0 → 1.8.1: Clarified red phase rules in Principles VIII and XIII (PATCH)
-- 1.7.1 → 1.8.0: Added Helm chart requirement (Principle VII) + frontend Playwright E2E (MINOR)
-- 1.7.0 → 1.7.1: Clarified red phase requirements in Principle VIII (PATCH)
-- 1.6.0 → 1.7.0: Added Principle XIII (E2E Acceptance Testing) + expanded Principle VIII (MINOR)
-- 1.5.1 → 1.6.0: Added Principle XII (Dependency Injection & Component Wiring) (MINOR)
-- 1.5.0 → 1.5.1: Clarified testing requirements in tasks-template.md (PATCH)
-
-Follow-up TODOs: Review dependent references in `specs/047-redesign-consent-console/plan.md`.
--->
-
 # Agentic Identity Broker Constitution
 
 ## Core Principles
@@ -63,12 +34,22 @@ Architecture and major decisions MUST be documented, and Architecture Decision R
 - Major architectural decisions MUST be recorded in [adrs/](adrs/) directory as Architecture Decision Records
 - ADR files MUST follow the format `NNN-decision-title.md` (e.g., `001-hexagonal-architecture.md`)
 - ADRs MUST include: Context, Decision, Consequences, Status (Proposed/Accepted/Deprecated/Superseded)
-- **ADRs with status "Accepted" are BINDING**: all code MUST follow patterns and decisions documented in accepted ADRs
-- Deviation from accepted ADRs is NOT permitted without creating a new superseding ADR
+- An ADR introduced on the current branch MAY have status "Accepted" and be approved in
+  that same PR; a separate PR or prior merge is not required
+- Before its introducing branch merges into main, an ADR introduced on that branch MAY be
+  revised in that same branch/PR, even if Accepted, without a superseding ADR; the final
+  accepted decision and implementation MUST agree before merge
+- Once an Accepted ADR's introducing branch has merged into main, the ADR is BINDING: code
+  MUST follow its decisions, and the ADR MUST NOT be amended in place or deviated from
+  without a new accepted superseding ADR
+- A superseding ADR MAY be introduced and accepted in the same PR as the authorized change
 - When an ADR establishes a pattern (e.g., interface design, library choice, architectural pattern), that pattern MUST be followed consistently across the codebase
 - ADRs supersede ad-hoc implementation choices: if an ADR exists for a domain (e.g., ADR 004 for storage), implementers MUST follow it
 
-**Rationale**: Agents and developers require rapid, accurate understanding of architectural constraints to contribute effectively and maintain consistency across the system. Making ADRs binding (not merely advisory) prevents architectural drift, ensures pattern consistency, and makes architectural governance explicit and enforceable.
+**Rationale**: Agents and developers require rapid, accurate understanding of architectural
+constraints to maintain consistency. Protecting Accepted ADRs already merged into main prevents
+architectural drift, while allowing revisions before an ADR's first merge keeps its reviewed
+decision aligned with the implementation without needless supersession records.
 
 **Example**: ADR 004 (Storage Layer Architecture) establishes interface segregation, sqlx for PostgreSQL, and specific error handling patterns. Any new storage-backed entity must follow these decisions, not introduce alternative approaches.
 
@@ -493,7 +474,8 @@ documentation of UI states, making regressions immediately visible during review
 - [ ] Security controls are enabled by default and fail closed
 - [ ] [ARCHITECTURE.md](../../ARCHITECTURE.md) reflects architectural changes (if any)
 - [ ] Major decisions recorded in [adrs/](adrs/) with correct numbering
-- [ ] Code follows patterns established in accepted ADRs (especially ADR 004 for persistence)
+- [ ] Code follows accepted ADRs already merged into main and final accepted ADRs introduced
+      in this PR (especially ADR 004 for persistence)
 - [ ] APIs implemented exactly as documented in OpenAPI specification
 - [ ] End-user API documentation in [docs/api/](docs/api/) with examples (if applicable)
 - [ ] Configuration implementation uses the configuration system owned by its deployable application; a standalone configuration path requires an accepted ADR
@@ -526,13 +508,15 @@ documentation of UI states, making regressions immediately visible during review
 
 ### When Constraints Cannot Be Met
 
-If Principle II (Binding ADRs) requires deviation:
+If Principle II requires deviation from an Accepted ADR whose introducing branch has already
+merged into main:
 
 1. STOP implementation immediately
 2. Document why the accepted ADR pattern cannot be followed
 3. Draft a new ADR proposing an alternative approach with rationale
-4. Mark the new ADR as superseding the previous ADR
-5. Do NOT implement the deviation without an accepted superseding ADR
+4. Mark the new ADR as superseding the previous ADR; do NOT amend the main-merged ADR in place
+5. Do NOT implement the deviation without an accepted superseding ADR, which MAY be accepted
+   in the same PR as the authorized change
 
 If Principle III (Library-First Security) cannot be satisfied:
 
@@ -621,7 +605,9 @@ If Principle XIII (End-to-End Acceptance Testing & Spec Traceability) cannot be 
 
 - All PRs MUST verify compliance with this constitution
 - Reviewers MUST challenge complexity and request justification when principles are violated
-- Reviewers MUST verify adherence to accepted ADRs (Principle II)
+- Reviewers MUST verify that code follows Accepted ADRs already merged into main and the
+  final versions of Accepted ADRs introduced in the PR; deviations from main-merged ADRs
+  MUST have an accepted superseding ADR (Principle II)
 - Reviewers MUST verify persistence implementations follow quickstart.md patterns (Principle IX)
 - Reviewers MUST verify database migrations use go-migrate naming and are tested (Principle IX)
 - Reviewers MUST verify API changes have user confirmation (Principle X)
@@ -676,4 +662,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - The tasks-template.md uses 🔒 emoji and [MANDATORY] markers to clearly distinguish mandatory from customizable sections
 - Omitting mandatory sections violates this constitution and blocks feature completion
 
-**Version**: 2.1.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-09-25
+**Version**: 3.0.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-10-12

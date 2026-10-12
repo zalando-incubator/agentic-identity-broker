@@ -81,6 +81,13 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 		assert.Equal(t, approval.Principal, got.Principal)
 		assert.Equal(t, "critical", got.RiskLevel)
 		assert.Equal(t, &traceparent, got.OpenTelemetryTraceparent)
+
+		pending, err := repo.FindPendingByKey(ctx, approval.Principal, agentID, approval.ToolName, approval.ArgumentsHash)
+		require.NoError(t, err)
+		require.Equal(t, approval.ID, pending.ID)
+		missing, err := repo.FindPendingByKey(ctx, approval.Principal, agentID, approval.ToolName, "other-hash")
+		require.NoError(t, err)
+		require.Nil(t, missing)
 	})
 
 	t.Run("Create idempotent", func(t *testing.T) {
@@ -150,6 +157,9 @@ func TestToolApprovalRepository_CRUD(t *testing.T) {
 		old, err := repo.Get(ctx, first.ID)
 		require.NoError(t, err)
 		assert.True(t, old.Consumed)
+		missing, err := repo.FindPendingByKey(ctx, first.Principal, agentID, first.ToolName, first.ArgumentsHash)
+		require.NoError(t, err)
+		require.Equal(t, second.ID, missing.ID)
 	})
 
 	t.Run("Approve", func(t *testing.T) {
@@ -544,9 +554,17 @@ func TestToolApprovalRepository_ActiveQueriesExcludeExpiredAndConsumed(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, 2, count)
 
-	byPair, err := repo.ListActiveByPrincipalAndAgent(ctx, principal, agentID)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []id.ApprovalID{live.ID, replacement.ID, permanent.ID}, approvalIDs(byPair))
+	for _, approval := range []*storage.ToolApproval{live, replacement} {
+		pending, err := repo.FindPendingByKey(ctx, principal, agentID, approval.ToolName, approval.ArgumentsHash)
+		require.NoError(t, err)
+		require.NotNil(t, pending)
+		assert.Equal(t, approval.ID, pending.ID)
+	}
+	for _, approval := range []*storage.ToolApproval{expired, once, permanent, otherAgent, otherPrincipal} {
+		pending, err := repo.FindPendingByKey(ctx, principal, agentID, approval.ToolName, approval.ArgumentsHash)
+		require.NoError(t, err)
+		assert.Nil(t, pending)
+	}
 
 	byPrincipal, err := repo.ListAllActive(ctx, &principal, nil)
 	require.NoError(t, err)

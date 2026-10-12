@@ -51,6 +51,7 @@ func NewProvider(
 	tokenTTL time.Duration,
 	refreshTokenTTL time.Duration,
 	tokenClaimsExpression string,
+	verifier grantVerifier,
 	logger *slog.Logger,
 	transactions ...ports.StorageTransactionManager,
 ) (*Provider, error) {
@@ -72,7 +73,7 @@ func NewProvider(
 	refreshStrategy := &RandomRefreshTokenStrategy{}
 
 	// Storage adapters
-	storage := NewFositeStorage(codeRepo, refreshRepo, pkceRepo, credRepo, clientResolver, logger, transactions...)
+	storage := NewFositeStorage(codeRepo, refreshRepo, pkceRepo, credRepo, clientResolver, verifier, logger, transactions...)
 
 	config := &fosite.Config{
 		AuthorizeCodeLifespan:          60 * time.Second,
@@ -309,41 +310,23 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 		return nil, fosite.ErrServerError.WithDebugf("client lookup failed: %v", err)
 	}
 
-	// Domain-level credential pre-check: peek at stored code to enforce binding.
-	authCode, err := p.fositeStorage.codeRepo.FindByCodeHash(ctx, p.authCodeHandler.AuthorizeCodeStrategy.AuthorizeCodeSignature(ctx, code))
-	if err != nil {
-		if isStorageNotFound(err) {
-			return nil, fosite.ErrInvalidGrant.WithHintf("authorization code not found")
-		}
-		return nil, fosite.ErrServerError.WithDebugf("failed to look up authorization code: %v", err)
-	}
-
 	switch bc := fositeClient.(type) {
 	case *confidentialClient:
 		authedClient, err := p.clientAuth.Authenticate(ctx, bc.agent.ID, secret)
 		if err != nil {
 			return nil, err
 		}
-		if authedClient.Credential.AgentID != authCode.AgentID {
-			return nil, fosite.ErrInvalidGrant.WithHintf("authorization code was issued to a different client credential")
-		}
-		// Rebuild client with authenticated credential
 		fositeClient = &confidentialClient{clientID: clientID, agent: authedClient.Agent, credential: authedClient.Credential}
 	case *publicClient:
-		if bc.agent.ID != authCode.AgentID {
-			return nil, fosite.ErrInvalidGrant.WithHintf("authorization code was issued to a different client")
-		}
 	default:
 		return nil, fosite.ErrServerError.WithDebugf("unexpected client type %T", fositeClient)
 	}
 
 	session := &fosite.DefaultSession{
-		Subject: authCode.Principal.String(),
 		ExpiresAt: map[fosite.TokenType]time.Time{
 			fosite.AccessToken: time.Now().Add(p.config.AccessTokenLifespan),
 		},
 	}
-	setSessionProfile(session, authCode.Email, authCode.DisplayName)
 	req := fosite.NewAccessRequest(session)
 	req.Client = fositeClient
 	req.GrantTypes = fosite.Arguments{"authorization_code"}
@@ -353,6 +336,7 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 		"code_verifier": {codeVerifier},
 		"grant_type":    {"authorization_code"},
 	}
+	ctx = context.WithValue(ctx, exchangeClientContextKey{}, fositeClient)
 
 	// redirect_uri binding: fosite's AuthorizeExplicitGrantHandler.HandleTokenEndpointRequest
 	// compares this redirect_uri against the one stored in the authorization code session,
@@ -442,6 +426,11 @@ func (p *Provider) HandleRefreshToken(
 
 	fositeResp := fosite.NewAccessResponse()
 	if err := p.refreshHandler.PopulateTokenEndpointResponse(ctx, req, fositeResp); err != nil {
+		// Fosite has rolled back, but reports an inactive rotation as invalid_request.
+		if errors.Is(err, fosite.ErrInvalidRequest) && !errors.Is(err, fosite.ErrServerError) &&
+			(errors.Is(err, fosite.ErrNotFound) || errors.Is(err, fosite.ErrInactiveToken)) {
+			return nil, fosite.ErrInvalidGrant
+		}
 		return nil, err
 	}
 
