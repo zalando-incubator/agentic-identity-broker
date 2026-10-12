@@ -147,8 +147,8 @@ All three triggers evaluate it under the row lock with a trigger-specific thresh
 
 | Trigger | Threshold | Effect when `false` |
 |---|---|---|
-| on-demand (expired token) | `time.Now()` | Another caller already refreshed. Return the current session. |
-| background | `time.Now() + lookahead` | Another replica already refreshed. Make no upstream call. |
+| on-demand (expired token) | `time.Now()` read after the lock is acquired | Another caller already refreshed. Return the current session. |
+| background | `time.Now() + lookahead` read after the lock is acquired | Another replica already refreshed. Make no upstream call. |
 | sweep | `sweepStart + lookahead` (fixed per sweep) | Counted as `skipped`. |
 
 On the read path, `GetValidAccessToken` evaluates `AccessTokenExpiresBy(now + lookahead) && CanRefresh()`

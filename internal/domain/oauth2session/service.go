@@ -1355,7 +1355,7 @@ func (s *OAuth2SessionService) GetValidAccessToken(
 	resultCh := s.refreshGroup.DoChan(key, func() (any, error) {
 		refreshCtx, cancel := s.refreshOperationContext(context.WithoutCancel(ctx))
 		defer cancel()
-		current, refreshed, provider, err := s.refreshDueSession(refreshCtx, principal, serviceID, time.Now(), RefreshTriggerOnDemand)
+		current, refreshed, provider, err := s.refreshDueSession(refreshCtx, principal, serviceID, time.Now, RefreshTriggerOnDemand)
 		flight := refreshFlightResult{session: current, refreshed: refreshed, trigger: RefreshTriggerOnDemand, client: clientInfoFromProvider(provider)}
 		if err != nil {
 			if !errors.Is(err, ErrSessionNotFound) {
@@ -1400,20 +1400,26 @@ func clientInfoFromProvider(provider *model.ThirdpartyOAuth2ProviderEntity) refr
 	return refreshClientInfo{known: true, public: provider.IsPublicClient()}
 }
 
-func (s *OAuth2SessionService) refreshDueSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, threshold time.Time, trigger RefreshTrigger) (*storage.UserSession, bool, *model.ThirdpartyOAuth2ProviderEntity, error) {
-	return s.refreshLockedSession(ctx, principal, serviceID, &threshold, trigger)
+func (s *OAuth2SessionService) refreshDueSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, dueBy func() time.Time, trigger RefreshTrigger) (*storage.UserSession, bool, *model.ThirdpartyOAuth2ProviderEntity, error) {
+	return s.refreshLockedSession(ctx, principal, serviceID, dueBy, trigger)
 }
 
-// A nil threshold forces renewal; otherwise the latest locked row must still be due.
-func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, threshold *time.Time, trigger RefreshTrigger) (*storage.UserSession, bool, *model.ThirdpartyOAuth2ProviderEntity, error) {
+// A nil dueBy forces renewal. Otherwise dueBy runs after the session lock is acquired,
+// and the latest row must expire at or before its result.
+func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, dueBy func() time.Time, trigger RefreshTrigger) (*storage.UserSession, bool, *model.ThirdpartyOAuth2ProviderEntity, error) {
 	provider, providerErr := s.getRefreshProvider(ctx, serviceID)
 	refreshed := false
 	current, err := s.refreshRepo.WithLockedSession(ctx, principal, serviceID, func(ctx context.Context, current *storage.UserSession) (bool, error) {
 		if current == nil {
 			return false, sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
 		}
-		if threshold != nil && !current.AccessTokenExpiresBy(*threshold) {
-			return false, nil
+		var threshold *time.Time
+		if dueBy != nil {
+			due := dueBy()
+			if !current.AccessTokenExpiresBy(due) {
+				return false, nil
+			}
+			threshold = &due
 		}
 		if !current.CanRefresh() {
 			return false, refreshUnavailableError(ctx, current, threshold)

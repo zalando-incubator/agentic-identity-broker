@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -466,7 +467,7 @@ func TestBackgroundRefresh_OnDemandNoOpStillRefreshesInsideLookahead(t *testing.
 		requests.Add(1)
 		return operationTokenResponse(http.StatusOK, `{"access_token":"renewed-access","refresh_token":"renewed-refresh","expires_in":3600}`), nil
 	})
-	current, changed, _, err := service.refreshDueSession(context.Background(), session.Principal, session.ServiceID, time.Now(), RefreshTriggerOnDemand)
+	current, changed, _, err := service.refreshDueSession(context.Background(), session.Principal, session.ServiceID, time.Now, RefreshTriggerOnDemand)
 	require.NoError(t, err)
 	require.False(t, changed)
 	require.EqualValues(t, 0, requests.Load())
@@ -480,6 +481,54 @@ func TestBackgroundRefresh_OnDemandNoOpStillRefreshesInsideLookahead(t *testing.
 	stored, err := store.find(context.Background(), session.Principal, session.ServiceID)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("sealed:renewed-access"), stored.EncryptedAccessToken)
+}
+
+func TestOnDemandRefresh_RechecksExpiryAfterDelayedLock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		session := backgroundSession(id.NewServiceID(), "delayed-lock-user")
+		expired := time.Now().Add(-time.Minute)
+		session.AccessTokenExpiresAt = &expired
+		service, store, _ := newBackgroundFixture(t, session)
+		var requests atomic.Int32
+		service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
+			requests.Add(1)
+			return operationTokenResponse(http.StatusOK, `{"access_token":"upstream-access","refresh_token":"upstream-refresh","expires_in":3600}`), nil
+		})
+		lockGate := make(chan struct{})
+		service.refreshRepo = operationRefreshRepository(func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+			<-lockGate
+			return store.withLocked(ctx, principal, serviceID, refresh)
+		})
+		type result struct {
+			token string
+			err   error
+		}
+		done := make(chan result, 1)
+		go func() {
+			_, token, err := service.GetValidAccessToken(context.Background(), session.Principal, session.ServiceID)
+			done <- result{token, err}
+		}()
+		synctest.Wait()
+
+		record := store.record(session.Principal, session.ServiceID)
+		record.mu.Lock()
+		renewed := *record.session
+		renewed.EncryptedAccessToken = []byte("sealed:short-lived-access")
+		shortLived := time.Now().Add(time.Second)
+		renewed.AccessTokenExpiresAt = &shortLived
+		record.session = &renewed
+		record.mu.Unlock()
+		time.Sleep(2 * time.Second)
+		close(lockGate)
+
+		got := <-done
+		require.NoError(t, got.err)
+		assert.Equal(t, "upstream-access", got.token, "an expired token must not be returned after the lock wait")
+		assert.EqualValues(t, 1, requests.Load())
+		stored, err := store.find(context.Background(), session.Principal, session.ServiceID)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("sealed:upstream-access"), stored.EncryptedAccessToken)
+	})
 }
 
 // Done is first consulted after DoChan registers the on-demand caller with singleflight.

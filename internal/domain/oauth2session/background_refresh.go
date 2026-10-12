@@ -103,7 +103,7 @@ func (p *backgroundRefresher) refresh(key string, principal id.Principal, servic
 	defer cancel()
 
 	value, err, _ := p.service.refreshGroup.Do(key, func() (any, error) {
-		current, changed, provider, err := p.service.refreshDueSession(refreshCtx, principal, serviceID, time.Now().Add(lookahead), RefreshTriggerBackground)
+		current, changed, provider, err := p.service.refreshDueSession(refreshCtx, principal, serviceID, func() time.Time { return time.Now().Add(lookahead) }, RefreshTriggerBackground)
 		return refreshFlightResult{session: current, refreshed: changed, trigger: RefreshTriggerBackground, client: clientInfoFromProvider(provider)}, err
 	})
 	flight := value.(refreshFlightResult)
@@ -150,7 +150,7 @@ func (p *backgroundRefresher) refresh(key string, principal id.Principal, servic
 
 func (p *backgroundRefresher) continueSharedRefresh(ctx context.Context, principal id.Principal, serviceID id.ServiceID, lookahead time.Duration, flight refreshFlightResult) (refreshFlightResult, error) {
 	if flight.trigger == RefreshTriggerOnDemand && !flight.refreshed && flight.session != nil && flight.session.AccessTokenExpiresBy(time.Now().Add(lookahead)) {
-		current, refreshed, provider, err := p.service.refreshDueSession(ctx, principal, serviceID, time.Now().Add(lookahead), RefreshTriggerBackground)
+		current, refreshed, provider, err := p.service.refreshDueSession(ctx, principal, serviceID, func() time.Time { return time.Now().Add(lookahead) }, RefreshTriggerBackground)
 		return refreshFlightResult{session: current, refreshed: refreshed, trigger: RefreshTriggerBackground, client: clientInfoFromProvider(provider)}, err
 	}
 	return flight, nil

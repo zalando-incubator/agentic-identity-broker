@@ -26,8 +26,9 @@ path (US2) is implemented, with a `singleflight` group and a row-locked, update-
 resurrection" semantics that DB-002 asks for. It also deduplicates **across replicas**: a refresh
 waiting on the lock re-checks the row and skips the upstream call if another replica has already
 refreshed it. All three triggers therefore share one locked-refresh function,
-`refreshDueSession(threshold, trigger)`. Only the threshold differs: `now` for on-demand,
-`now + lookahead` for background, and a fixed `sweepStart + lookahead` for the sweep (research R1, R5).
+`refreshDueSession(dueBy, trigger)`. The `dueBy` function runs under the row lock: on-demand
+uses the current time, background uses current time plus lookahead, and the sweep keeps a fixed
+`sweepStart + lookahead` threshold (research R1, R5).
 
 Two codebase facts shape the design:
 - **Admin `WriteTimeout` is 15 s.** A realistic sweep (hundreds of upstream calls) would be cut off.

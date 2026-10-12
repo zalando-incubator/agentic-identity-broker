@@ -87,6 +87,7 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 	}
 
 	threshold := time.Now().Add(req.Lookahead)
+	sweepDue := func() time.Time { return threshold }
 	var cursor storage.SessionExpiryCursor
 	seen := make(map[id.SessionID]struct{})
 	for {
@@ -135,10 +136,10 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 					var needsRefresh bool
 					needsRefresh, refreshErr = s.sessions.checkUnrefreshableSweepCandidate(refreshCtx, candidate.Principal, candidate.ServiceID, threshold)
 					if refreshErr == nil && needsRefresh {
-						_, refreshed, provider, refreshErr = s.sessions.refreshDueSession(refreshCtx, candidate.Principal, candidate.ServiceID, threshold, RefreshTriggerSweep)
+						_, refreshed, provider, refreshErr = s.sessions.refreshDueSession(refreshCtx, candidate.Principal, candidate.ServiceID, sweepDue, RefreshTriggerSweep)
 					}
 				} else {
-					_, refreshed, provider, refreshErr = s.sessions.refreshDueSession(refreshCtx, candidate.Principal, candidate.ServiceID, threshold, RefreshTriggerSweep)
+					_, refreshed, provider, refreshErr = s.sessions.refreshDueSession(refreshCtx, candidate.Principal, candidate.ServiceID, sweepDue, RefreshTriggerSweep)
 				}
 				cancel()
 				if refreshErr != nil {
