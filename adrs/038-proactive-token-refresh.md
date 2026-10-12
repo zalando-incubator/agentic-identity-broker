@@ -35,7 +35,7 @@ The stakeholder approved all four choices in writing in this conversation on 202
 - The row lock protects updates and prevents duplicate provider calls when another replica has already moved the token beyond the refresh threshold. The sweep re-checks under the lock and counts a no-longer-due candidate as skipped.
 - Each locked refresh holds a database connection during the upstream call. The background worker cap protects capacity for request traffic. Synchronous sweeps limit provider and database load, but their duration depends on the number of candidates and provider latency.
 - The external caller must set a suitable timeout. A shutdown deadline that expires during a provider call can still interrupt the update of a rotated refresh token.
-- The separate expiry-index migration remains blocked until every migration runner enforces the directive and tests prove this guard. ADR 039 accepts a named non-atomic exception for migration `036`. This ADR does not authorize its creation.
+- [ADR 039](039-concurrent-session-expiry-index.md) defines the non-atomic migration `036` exception and its direct CLI path. The stakeholder removed this ADR's earlier guard gate in the same unmerged PR. This ADR governs refresh behavior, not index DDL.
 
 ## Alternatives Considered
 

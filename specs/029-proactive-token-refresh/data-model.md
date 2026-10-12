@@ -51,7 +51,7 @@ when the lock callback switches predicates.
 
 `idx_user_sessions_access_token_expires_at` is a plain B-tree index on
 `user_sessions (access_token_expires_at, id)`. Migration `036` builds it concurrently for expiry-then-UUID keyset reads (DB-001, DB-003, SC-006).
-ADR 039 accepts the named non-atomic exception for this migration only. The directive guard remains required. PostgreSQL 15 lifecycle and interrupted-build recovery tests passed with the two-key index. Operators still use the manual invalid-index and dirty-version recovery procedure (research R4).
+ADR 039 retains the migration `036` non-atomic exception after its same-PR amendment removed the guard. Both SQL files retain an informational no-transaction comment. Direct Go runners passed PostgreSQL 15 lifecycle and interrupted-build recovery tests. The separate direct CLI image applied, rolled back, and reapplied the two-key index (research R4).
 
 ### New value object: `SessionExpiryCursor`
 

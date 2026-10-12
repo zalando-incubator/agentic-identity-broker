@@ -47,7 +47,7 @@ Two codebase facts shape the design:
 ADR 011), Viper/Cobra (config). **No new module dependency**; the ISO 8601 parser uses the Go standard library (R10).
 
 **Storage**: PostgreSQL (production) and in-memory (dev/test). There is no table or column change.
-Accepted ADR 039 permits a concurrent, two-key B-tree index on `(access_token_expires_at, id)` under a narrow, non-atomic Principle IX exception. The guard, migration lifecycle and recovery, packaged v4.17.0 CLI, and normal-planner pagination checks passed on PostgreSQL 15 (research R4).
+Accepted ADR 039 keeps the two-key concurrent index on `(access_token_expires_at, id)` and the narrow non-atomic exception. Its same-PR amendment removes the guard. The image and Go runners execute migrations directly (research R4).
 
 **Testing**: stdlib `testing` + testify (unit, table-driven). Ginkgo/Gomega E2E in `tests/e2e/`.
 testcontainers `postgres:15-alpine` for repository, migration, and `EXPLAIN` integration tests (`-tags=integration`).
@@ -80,14 +80,11 @@ testcontainers `postgres:15-alpine` for repository, migration, and `EXPLAIN` int
 - The per-route write-deadline lift applies to `POST /api/sessions/sweep` only. The caller owns the
   sweep timeout (R8).
 
-**Scale/Scope**: Two separately accepted ADRs (038 for refresh, 039 for the index exception), one
-gated migration pair, one new port method (two adapters), three new domain files
+**Scale/Scope**: ADR 038 governs refresh. Amended ADR 039 governs direct migration execution. One concurrent migration pair, one new port method (two adapters), three new domain files
 (`refresh_trigger.go`, `background_refresh.go`, `sweep.go`), one admin handler and parser, config,
 Helm, docs, one E2E file (10 scenarios), and about 250 lines changed in `oauth2session/service.go`.
 
-Research R1–R13 resolve the design questions. R4 records the accepted non-atomic exception, the
-implemented runner guard, and the migration recovery proof. The design gates passed before feature
-implementation.
+Research R1–R13 resolve the design questions. R4 records the named non-atomic exception, the informational directive, direct runners, and manual recovery. The direct migration paths require fresh verification after guard removal.
 
 ## Constitution Check
 
@@ -125,7 +122,7 @@ implementation.
   unknown-field rejection with `400`, and missing operator principal with `500`. ADR 038 records
   those choices. This is user approval in this conversation, not a claim of a PR review comment.
   T018 records this approval before endpoint implementation.
-- [x] **Database Design and Migration — VERIFIED**: ADR 039 accepts the named non-atomic exception for the two-key migration `036`. The shared validator guards every runner. PostgreSQL 15 tests covered UP, DOWN, reapply, an invalid interrupted build, and dirty-version recovery. First, middle, and late sparse-due pages used the valid composite index under normal planner settings. Recovery remains non-atomic.
+- [x] **Database Design and Migration — VERIFIED**: Amended ADR 039 keeps the non-atomic exception for migration `036` without a guard. Direct Go-runner PostgreSQL 15 tests passed UP, DOWN, reapply, interrupted invalid-index recovery, and dirty-version repair. The direct image passed the same lifecycle on disposable PostgreSQL. First, middle, and late sparse-due pages used the valid two-key index under normal planner settings.
 - [x] **E2E Acceptance Tests**: All 10 acceptance scenarios get E2E tests in
   `tests/e2e/proactive_token_refresh_test.go` before implementation (Testing Strategy).
 - [x] **E2E Test Mapping**: 1:1 scenario-to-`It()` mapping, tabulated below.
@@ -146,10 +143,7 @@ implementation.
 - [x] **Architecture Docs**: `ARCHITECTURE.md` is updated in the same PR: the admin route tree
   (`:463-533`), worker shutdown (`:538-556`), session refresh and concurrency (`:664-726`, including
   the existing singleflight description at `:721-723`), and the glossary.
-- [x] **ADRs — ACCEPTED FOR FEATURE 029**: On 2026-10-09, the user separately accepted
-  `adrs/038-proactive-token-refresh.md` and `adrs/039-concurrent-session-expiry-index.md` in
-  writing for PR #196. The same-PR approval is scoped to feature 029 despite the general
-  proposal rule in `AGENTS.md`. ADR 009 still governs the dedicated migration image.
+- [x] **ADRs — ACCEPTED FOR FEATURE 029**: On 2026-10-09, the user separately accepted ADRs 038 and 039 in writing for PR #196. On 2026-10-12, the user amended ADR 039 in this unmerged PR to remove its guard requirement. This same-PR approval applies only to feature 029. ADR 009 still governs the dedicated migration image.
 - [x] **Library-First Security**: No cryptography is introduced. Encryption stays behind
   `ports.EncryptionPort` (AWS Encryption SDK / memory). The ISO 8601 parser is not a security
   primitive.
@@ -161,7 +155,7 @@ implementation.
 - [x] **End-User Docs**: N/A for `docs/api/` (admin API). Operator docs:
   `docs/operations/session-sweep.md` (runbook and reference CronJob) and the `docs/configuration.md`
   Token Refresh section.
-- [x] **Migration Testing — VERIFIED**: The two-key index passed PostgreSQL lifecycle, invalid-index recovery, directive rejection, and normal-planner first/middle/late `EXPLAIN` checks. The packaged v4.17.0 guard applied, rolled back, and reapplied valid migration `036` on a disposable database. An alternate image path failed before validation or exec. The manual recovery procedure does not make concurrent DDL atomic (research R4, ADR 039).
+- [x] **Migration Testing — VERIFIED**: The direct v4.17.0 image applied, rolled back, and reapplied migration `036`, reaching clean versions `36`, `35`, and `36`. Direct Go runners passed migration lifecycle and invalid-index recovery tests. Both Helm grants modes retained their migration args, and `helm lint` passed. The informational directive does not make concurrent DDL atomic (research R4, ADR 039).
 - [x] **Hexagonal Architecture**: The domain (`oauth2session`) depends on the
   `UserSessionExpiryRepository` and `UserSessionRefreshRepository` ports. The admin handler parses
   input only, and defaulting, bounds, and classification live in `SessionSweepService`. No adapter
@@ -171,13 +165,13 @@ implementation.
   both adapters. PostgreSQL uses first-page and later-page composite-keyset queries with sqlx
   `SelectContext`, the adapter read timeout, and `StorageError` wrapping (R2, contracts/ports.md §1).
 
-**Gate status**: ADR 039 and the admin API have written approval. Both migration runners, both Helm modes, the packaged image, and the two-key PostgreSQL lifecycle and planner checks have execution proof. Migration recovery remains non-atomic.
+**Gate status**: Amended ADR 039 and the admin API have written approval. The direct migration image, both Helm modes, and PostgreSQL lifecycle, recovery, and planner checks passed. Recovery remains non-atomic.
 
 **Post-Design Re-check**: DB-002 names the existing locked, update-only refresh. DB-003 uses the
 focused expiry port with `SessionExpiryCursor{AccessTokenExpiresAt, ID}` and expiry-then-UUID order.
 The domain model names `SessionSweepService` and the logged `SessionTokensRefreshed` event.
 `ForceRefreshSession` uses `triggered_by=on-demand`. The admin write timeout requires the Phase 0
-deadline-lift refactor. R4 records the non-atomic exception and the verified two-key migration, guard, and query plans.
+deadline-lift refactor. R4 records the non-atomic exception, informational directive, direct runners, and manual recovery.
 
 ## Spec Alignment
 
@@ -185,8 +179,7 @@ The specification and design agree on DB-002, DB-003, the `SessionSweepService` 
 `SessionTokensRefreshed` log semantics, and the on-demand trigger. DB-003 uses a composite cursor
 in `(access_token_expires_at, id)` order. The clarification and FR-003, FR-009 name the locked
 re-check instead of idempotent refresh upserts. API-002 names the restricted ISO 8601 grammar.
-DB-001 names the accepted non-atomic exception in ADR 039. The concurrent path requires an enforced
-directive and cannot provide atomic rollback (research R4).
+DB-001 names the accepted non-atomic exception in ADR 039. The concurrent path retains an informational directive and cannot provide atomic rollback (research R4).
 
 ## Project Structure
 
@@ -217,8 +210,8 @@ adrs/
 api/admin/openapi.yaml                                   # MODIFIED — Sessions tag, /api/sessions/sweep, 2 schemas
 
 migrations/
-├── 036_user_sessions_access_token_expiry_index.up.sql   # VERIFIED — guarded two-key concurrent index
-└── 036_user_sessions_access_token_expiry_index.down.sql # VERIFIED — guarded concurrent drop
+├── 036_user_sessions_access_token_expiry_index.up.sql   # concurrent two-key index; informational directive
+└── 036_user_sessions_access_token_expiry_index.down.sql # concurrent drop; informational directive
 
 internal/ports/
 ├── config.go                                            # MODIFIED — TokenRefreshConfig, Config.TokenRefresh
@@ -296,7 +289,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 |-------|---------|-----------|
 | **Phase 0** | Pre-implementation refactoring: `Unwrap` on response wrappers; extract `refreshDueSession` | Included |
 | **Phase 1** | Setup: confirm no dependency change | Required (no-op) |
-| **Phase 2** | Design Preconditions: accepted ADRs and API, glossary, config + Helm, guarded index migration, E2E red | **MANDATORY; gates passed** |
+| **Phase 2** | Design Preconditions: accepted ADRs and API, glossary, config + Helm, concurrent index migration, E2E red | **MANDATORY; gates passed** |
 | **Phase 2.7** | Entity Boilerplate | Skipped |
 | **Phase 2.5** | Foundational: expiry port + adapters + contract and `EXPLAIN` tests; `RefreshTrigger`; predicate | Required |
 | **Phase 3** | US1 (P1): background refresher, lookahead submission, shutdown drain, metrics and logs | Required |
@@ -347,8 +340,8 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 7. Merge the fragment into `api/admin/openapi.yaml`. ADR 038 records the four admin API choices.
    The user approved them in writing on 2026-10-09 for PR #196, before endpoint implementation.
 
-**2d — Database (TWO-KEY MIGRATION VERIFIED)**
-8. ADR 039 accepts the named non-atomic exception for migration `036`. The shared guard protects the image, both Helm Job modes, and every Go runner listed in ADR 039. PostgreSQL 15 tests proved the two-key index lifecycle and invalid-index/dirty-version recovery without changing sessions. The packaged v4.17.0 CLI applied, dropped, and reapplied migration `036` on a disposable database. The Go driver completed the same lifecycle and recovery tests.
+**2d — Database (DIRECT RUNNERS VERIFIED)**
+8. ADR 039 keeps the named non-atomic exception for migration `036` and removes the guard. The separate image and both Helm Job modes remain under ADR 009. Direct Go v4.20.1 runners passed PostgreSQL 15 lifecycle and invalid-index/dirty-version recovery tests. The direct v4.17.0 CLI applied, dropped, and reapplied migration `036` on a disposable database. The `-- migrate:no-transaction` comment is informational.
 
 **2e — Frontend**: N/A.
 
@@ -365,9 +358,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
     the memory and PostgreSQL `ListExpiringSessions`, and the factory `SessionExpiry()`. Zero/zero
     starts a scan; reject a cursor with only one populated field. Both adapters order by expiry and
     then UUID bytes. Test E1–E7 with mutations and ciphertext snapshots (contracts/ports.md §1).
-12. After the migration guard passes, test the named valid two-key index with normal-planner
-    `EXPLAIN (FORMAT JSON)` for first, middle, and late small-limit pages. Seed sparse due rows and
-    run `ANALYZE`; do not disable sequential scans (R4, SC-006).
+12. Test the named valid two-key index with normal-planner `EXPLAIN (FORMAT JSON)` for first, middle, and late small-limit pages. Seed sparse due rows and run `ANALYZE`. Do not disable sequential scans (R4, SC-006).
 13. `RefreshTrigger` and the five counters. Instruments are created once in constructors.
 
 ### Phase 3: US1 — Zero-latency exchange for active users (P1)
@@ -419,9 +410,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 
 28. Run `just check`, `just test`, `just test-integration-infra`, and `just test-e2e-backend`.
 29. Walk the constitution Implementation-Phase checklist against the diff. Cite the written
-    2026-10-09 approval of the four admin API choices and separate ADR 038 and ADR 039 acceptance
-    for PR #196. Confirm that the directive runner, migration image, PostgreSQL recovery tests,
-    and Helm paths meet ADR 039.
+    2026-10-09 approval of the admin API and ADRs 038/039, and the 2026-10-12 amendment of ADR 039 for PR #196. Confirm that the direct migration image, PostgreSQL recovery tests, and both Helm paths meet ADR 039.
     Check that session logs and metrics omit principals and that builder-only wiring remains intact.
 
 ## Testing Strategy
@@ -536,9 +525,7 @@ fixture-only changes during implementation.
   and the SC-006 normal-planner `EXPLAIN (FORMAT JSON)` assertion for first, middle, and late pages
   against the named valid two-key index. Inspect `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` for
   actual rows and buffers without turning off sequential scans.
-- `tests/integration/migrations/`: Verify guarded migration `036` UP, DOWN, reapply, directive
-  rejection, invalid-index failure, dirty-version recovery, and exactly two ordered B-tree key
-  columns, `(access_token_expires_at, id)`.
+- `tests/integration/migrations/`: Verify direct migration `036` UP, DOWN, reapply, invalid-index failure, dirty-version recovery, and exactly two ordered B-tree keys, `(access_token_expires_at, id)`.
 
 **Test Coverage Goals**:
 - Unit: every branch of `backgroundRefresher.submit` and `Close`, every R11 classification row,
@@ -549,6 +536,4 @@ fixture-only changes during implementation.
 
 ## Complexity Tracking
 
-No TDD exception is planned. Every feature E2E case must compile and fail semantically before
-implementation. ADR 039 permits only migration `036` to be non-atomic. The original guard and
-migration passed their checks. The amended two-key migration and planner still need verification.
+No TDD exception is planned. Every feature E2E case must compile and fail semantically before implementation. ADR 039 permits only migration `036` to be non-atomic. Direct runners passed lifecycle and recovery checks after guard removal.

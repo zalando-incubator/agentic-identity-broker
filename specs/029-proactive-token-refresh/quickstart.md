@@ -80,7 +80,7 @@ The tests are deterministic. The background tests synchronize on the gated fake 
 
 ## 4. PostgreSQL: migration, repository, index (SC-006)
 
-ADR 039 accepts the named non-atomic exception for migration `036`. The two-key PostgreSQL lifecycle, interrupted-index recovery, guarded image, and normal-planner pagination checks passed. Run the full infrastructure suite:
+ADR 039 keeps the migration `036` non-atomic exception and removes the guard. The `-- migrate:no-transaction` comment is informational. Direct image and Go-runner lifecycle and recovery checks passed on PostgreSQL 15. Run the full infrastructure suite:
 
 ```bash
 just test-integration-infra
@@ -133,7 +133,7 @@ Each normal-planner result must reference the valid `idx_user_sessions_access_to
 index. Inspect actual rows and buffers for all three pages. The later pages must not rescan the
 full due set. Do not disable sequential scans or set a wall-clock performance limit.
 
-ADR 039 requires inspection of `pg_index.indisvalid` and the migration version before manual recovery. This procedure handles the accepted non-atomic failure mode; it does not make the concurrent build atomic.
+ADR 039 requires inspection of `pg_index.indisvalid` and the migration version before manual recovery. This procedure handles the accepted non-atomic failure mode. It does not make the concurrent build atomic.
 
 ## 5. Manual sweep against a running broker
 

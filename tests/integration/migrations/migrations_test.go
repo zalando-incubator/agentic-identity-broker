@@ -13,9 +13,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"log/slog"
-	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -877,47 +874,6 @@ func TestMigration036SessionExpiryIndexLifecycle(t *testing.T) {
 	require.False(t, dirty)
 	requireSessionExpiryIndex(t, f, true)
 	requireSessionExpiryMigrationData(t, f)
-}
-
-func TestMigration036RejectsMalformedDirectiveBeforeSQL(t *testing.T) {
-	f := NewMigrationTestFramework(t)
-	defer f.Cleanup(t)
-
-	f.migrationsDir = t.TempDir()
-	for name, contents := range map[string]string{
-		"035_preflight_sentinel.up.sql":   "CREATE TABLE migration_036_preflight_sentinel (id integer);\n",
-		"035_preflight_sentinel.down.sql": "DROP TABLE migration_036_preflight_sentinel;\n",
-		"036_user_sessions_access_token_expiry_index.up.sql": "-- migrate:no-transaction \n" +
-			"CREATE INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at ON user_sessions (access_token_expires_at, id);\n",
-		"036_user_sessions_access_token_expiry_index.down.sql": "-- migrate:no-transaction\n" +
-			"DROP INDEX CONCURRENTLY idx_user_sessions_access_token_expires_at;\n",
-	} {
-		require.NoError(t, os.WriteFile(filepath.Join(f.migrationsDir, name), []byte(contents), 0600))
-	}
-
-	beforeVersion, beforeDirty, err := f.Version(t)
-	require.NoError(t, err)
-	require.Zero(t, beforeVersion)
-	require.False(t, beforeDirty)
-
-	err = f.Up(t, 36)
-	require.ErrorContains(t, err, "036_user_sessions_access_token_expiry_index.up.sql")
-	require.ErrorContains(t, err, "first-line directive")
-	parsedURL, parseErr := url.Parse(f.connStr)
-	require.NoError(t, parseErr)
-	require.NotNil(t, parsedURL.User)
-	password, hasPassword := parsedURL.User.Password()
-	require.True(t, hasPassword)
-	require.NotEmpty(t, password)
-	require.NotContains(t, err.Error(), password, "migration errors must not expose database credentials")
-
-	exists, err := f.TableExists(t, "migration_036_preflight_sentinel")
-	require.NoError(t, err)
-	require.False(t, exists, "version 35 SQL must not execute before rejecting malformed version 36")
-	version, dirty, err := f.Version(t)
-	require.NoError(t, err)
-	require.Equal(t, beforeVersion, version, "preflight must reject before any version update")
-	require.Equal(t, beforeDirty, dirty, "preflight must not leave a dirty version")
 }
 
 func TestMigration036InterruptedBuildRecovery(t *testing.T) {

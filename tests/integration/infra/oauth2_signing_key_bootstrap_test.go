@@ -31,7 +31,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	domstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/migrationguard"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
 	e2ebootstrap "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
@@ -237,7 +236,6 @@ func setupMigratedPostgresDatabase(t *testing.T) (string, func()) {
 		require.NoError(t, err)
 
 		migrationConnStr := postgres.ConnectionString(dbName)
-		require.NoError(t, migrationguard.Validate(migrationsDir, migrationConnStr), "migration preflight failed")
 		migrationRunner, err := migrate.New("file://"+migrationsDir, migrationConnStr)
 		require.NoError(t, err)
 		defer func() { _, _ = migrationRunner.Close() }()

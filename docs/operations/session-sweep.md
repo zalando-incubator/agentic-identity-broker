@@ -129,6 +129,8 @@ Do not auto-delete another user's session. Do not silently filter it from future
 
 CAUTION: Migration `036` uses concurrent PostgreSQL index DDL outside a transaction. Invalid-index cleanup is **not** atomic rollback.
 
+The migration image runs `golang-migrate` directly. The `-- migrate:no-transaction` comment is informational and does not validate SQL. A missing DOWN can go unnoticed until after UP succeeds. Before a release, review the packaged migration pair. A missing DOWN can leave rollback unavailable.
+
 If a migration UP or DOWN fails, stop competing migration Jobs before you touch metadata or retry. The Helm migration Job can retry pods, but `golang-migrate` refuses a dirty version. Suspend competing releases. Arrange a database review. Use the same migration role and schema search path as the failed Job. Inspect its error and the `schema_migrations` row. Then inspect **all** relations with the target name:
 
 ```sql
@@ -151,22 +153,22 @@ If UP stopped at **dirty version 36** and the inspected index is invalid, drop o
 DROP INDEX CONCURRENTLY confirmed_schema.idx_user_sessions_access_token_expires_at;
 ```
 
-If UP stopped at dirty version `36` and the index is absent, investigate the original error. When the entire schema matches version `35`, use `force 35` to clear dirty metadata. Then retry UP through the guarded migration image. If UP stopped at dirty version `36` and the index is **valid** with the expected definition, review the entire schema. Then use `force 36`. Do not drop the valid index or rerun UP.
+If UP stopped at dirty version `36` and the index is absent, investigate the original error. When the entire schema matches version `35`, use `force 35` to clear dirty metadata. Then retry UP through the migration image. If UP stopped at dirty version `36` and the index is **valid** with the expected definition, review the entire schema. Then use `force 36`. Do not drop the valid index or rerun UP.
 
-If DOWN stopped at **dirty version 35** and the index is still present, inspect its identity and validity. After schema review, use `force 36` and retry DOWN through the guarded migration image. If DOWN stopped at dirty version `35` and the index is absent, review the failure and confirm that DOWN completed. Then use `force 35` without rerunning DOWN.
+If DOWN stopped at **dirty version 35** and the index is still present, inspect its identity and validity. After schema review, use `force 36` and retry DOWN through the migration image. If DOWN stopped at dirty version `35` and the index is absent, review the failure and confirm that DOWN completed. Then use `force 35` without rerunning DOWN.
 
-Run only the command for the branch that the database review selected. Use a restricted maintenance container built from the chart's separate `migration.image`. It contains `/app/migrations`; connect with the migration role. The chart uses `/usr/local/bin/migration-guard` as the entrypoint. Do not invoke the unguarded `/usr/local/bin/migrate`. Supply the connection URL through approved secret handling, not a literal URL in a Job manifest or shell history. A password in a command-line URL can appear in process arguments. Restrict maintenance-shell access and prefer a short-lived credential.
+Run only the command for the branch that the database review selected. Use a restricted maintenance container built from the chart's separate `migration.image`. It contains `/app/migrations` and runs `/usr/local/bin/migrate` directly. Use the packaged migration path and the migration role. Supply the connection URL through approved secret handling, not a literal URL in a Job manifest or shell history. A password in a command-line URL can appear in process arguments. Restrict maintenance-shell access and prefer a short-lived credential.
 
 ```sh
 # Choose exactly one metadata repair after schema review:
-/usr/local/bin/migration-guard -path /app/migrations -database "$MIGRATION_DATABASE_URL" force 35
+/usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" force 35
 # OR
-/usr/local/bin/migration-guard -path /app/migrations -database "$MIGRATION_DATABASE_URL" force 36
+/usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" force 36
 
 # Run only the matching direction when the reviewed branch calls for a retry:
-/usr/local/bin/migration-guard -path /app/migrations -database "$MIGRATION_DATABASE_URL" up 1
+/usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" up 1
 # OR
-/usr/local/bin/migration-guard -path /app/migrations -database "$MIGRATION_DATABASE_URL" down 1
+/usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" down 1
 ```
 
 `force` edits migration metadata only. It does not create, remove, or validate an index. After UP, confirm clean version `36` and a valid index with the expected definition. After DOWN, confirm clean version `35` and absence of the index. If the version, index identity, and schema disagree, stop the release and get a database review. Do not auto-clear `dirty`, use `IF NOT EXISTS`, or automatically retry the DDL.

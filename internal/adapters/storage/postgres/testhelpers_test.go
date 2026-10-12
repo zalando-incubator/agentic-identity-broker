@@ -28,7 +28,6 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/migrationguard"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -286,7 +285,6 @@ func newTestMigrationRunner(t *testing.T, dbName string) *migrate.Migrate {
 	require.NoError(t, err)
 	migrationsDir := filepath.Join(projectRoot, "migrations")
 	connStr := buildConnString(dbName)
-	require.NoError(t, migrationguard.Validate(migrationsDir, connStr), "migration preflight failed")
 	m, err := migrate.New("file://"+migrationsDir, connStr)
 	require.NoError(t, err)
 	return m

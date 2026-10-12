@@ -17,7 +17,6 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/migrationguard"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 )
 
@@ -73,9 +72,6 @@ func (f *MigrationTestFramework) Cleanup(t *testing.T) {
 
 func (f *MigrationTestFramework) newMigrationRunner(t *testing.T) (*migrate.Migrate, error) {
 	t.Helper()
-	if err := migrationguard.Validate(f.migrationsDir, f.connStr); err != nil {
-		return nil, fmt.Errorf("migration preflight failed: %w", err)
-	}
 	m, err := migrate.New("file://"+f.migrationsDir, f.connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create migrate instance: %w", err)

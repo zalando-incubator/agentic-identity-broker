@@ -23,7 +23,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/migrationguard"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 	"github.com/google/uuid"
@@ -123,8 +122,6 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 		migrationsDir, err := filepath.Abs(filepath.Join(projectRoot, "migrations"))
 		require.NoError(t, err)
 		migrationConnStr := sharedPostgres.ConnectionString(dbName)
-		require.NoError(t, migrationguard.Validate(migrationsDir, migrationConnStr), "migration preflight failed")
-
 		migrationRunner, err := migrate.New("file://"+migrationsDir, migrationConnStr)
 		require.NoError(t, err)
 		defer func() { _, _ = migrationRunner.Close() }()

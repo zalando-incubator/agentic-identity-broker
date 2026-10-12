@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/migrationguard"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -173,7 +172,7 @@ func (pg *SharedPostgres) ConnectionString(dbName string) string {
 func (pg *SharedPostgres) ApplyMigrationsUpTo(t *testing.T, dbName string, migrations []SQLMigration, upTo int) {
 	t.Helper()
 
-	migrationsDir := pg.validatedMigrationsDir(t, dbName)
+	migrationsDir := projectMigrationsDir(t)
 	pg.CreateSchemaMigrationsTable(t, dbName)
 	for _, migration := range migrations {
 		if int(migration.Version) > upTo {
@@ -197,16 +196,14 @@ func (pg *SharedPostgres) CreateSchemaMigrationsTable(t *testing.T, dbName strin
 func (pg *SharedPostgres) ApplyMigration(t *testing.T, dbName, filename string) {
 	t.Helper()
 
-	pg.applyMigration(t, dbName, pg.validatedMigrationsDir(t, dbName), filename)
+	pg.applyMigration(t, dbName, projectMigrationsDir(t), filename)
 }
 
-func (pg *SharedPostgres) validatedMigrationsDir(t *testing.T, dbName string) string {
+func projectMigrationsDir(t *testing.T) string {
 	t.Helper()
 	projectRoot, err := FindProjectRoot()
 	require.NoError(t, err, "Failed to find project root")
-	migrationsDir := filepath.Join(projectRoot, "migrations")
-	require.NoError(t, migrationguard.Validate(migrationsDir, pg.ConnectionString(dbName)), "migration preflight failed")
-	return migrationsDir
+	return filepath.Join(projectRoot, "migrations")
 }
 
 func (pg *SharedPostgres) applyMigration(t *testing.T, dbName, migrationsDir, filename string) {

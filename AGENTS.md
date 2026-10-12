@@ -35,8 +35,6 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 
 `cmd/agentic-identity-broker/` | Broker CLI, configuration, and dual-server startup
 `cmd/extproc-token-exchange/` | ExtProc CLI, telemetry bridge, and gRPC startup
-`cmd/migration-guard/` | Migration-image entrypoint; enforces the index-036 directive before SQL
-`internal/migrationguard/` | Shared preflight for the image and PostgreSQL test runners
 
 ### API Contracts
 
@@ -114,7 +112,7 @@ It can use routing middleware and configuration. Do not let adapters import each
 
 Read relevant ADRs before implementation. Treat accepted ADRs as authoritative. Treat a new ADR in the same PR only as a proposal.
 
-For feature 029 only, the stakeholder accepted ADRs 038 and 039 in writing in this conversation on 2026-10-09. This same-PR exception does not apply to other ADRs. It does not clear the migration `036` directive-guard gate.
+For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. On 2026-10-12, the stakeholder amended ADR 039 in this unmerged PR to remove its guard requirement. These same-PR approvals do not apply to other ADRs.
 
 | ADR | File | Decision |
 |---|---|---|
@@ -151,7 +149,7 @@ For feature 029 only, the stakeholder accepted ADRs 038 and 039 in writing in th
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
 | 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
 | 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
-| 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic exception for concurrent session-expiry index migration `036` |
+| 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic migration `036` exception with direct CLI and manual recovery |
 
 ## Domain Glossary
 

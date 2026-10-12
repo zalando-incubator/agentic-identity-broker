@@ -69,10 +69,10 @@ description: "Task list for proactive token refresh"
 
 **Constitution**: Principle IX. The table has no new columns.
 
-- [X] T019 Obtain maintainer acceptance of the named Principle IX exception in `adrs/039-concurrent-session-expiry-index.md` under the feature-029 scoped same-PR approval. Implement and prove the enforced `-- migrate:no-transaction` guard for both migration image and every Go runner that can apply migration 036. Record the accepted decision and proof in `research.md` and `plan.md`. Do not create migration 036 or start Phase 2.5 before the guard is proven.
-- [X] T020 After T019, add migration `036_user_sessions_access_token_expiry_index.{up,down}.sql` in `migrations/`. Test apply, rollback, reapply, invalid-index failure, dirty-version recovery, and real-runner malformed-directive rejection before SQL in `tests/integration/migrations/migrations_test.go`. Review the intentional `Migrate(35)` pin in `tests/integration/storage/infra/thirdparty_service_test.go`. Never claim operator recovery is atomic rollback.
+- [X] T019 Obtain maintainer acceptance of the named Principle IX exception in ADR 039. Record its 2026-10-12 in-place amendment after the stakeholder chose direct migration execution in this unmerged PR. Retain the separate migration image and Helm migration/grants Job. Document the loss of pre-execution validation in `research.md` and `plan.md`.
+- [X] T020 Add migration `036_user_sessions_access_token_expiry_index.{up,down}.sql` with the informational `-- migrate:no-transaction` first line. Test UP, DOWN, reapply, invalid-index interruption, dirty-version recovery, and the two ordered index keys against PostgreSQL 15. Review the intentional `Migrate(35)` pin in `tests/integration/storage/infra/thirdparty_service_test.go`. Never claim that operator recovery is atomic rollback.
 
-**Checkpoint**: ADR 039 is accepted. Both runner versions enforce the directive and migrate index 036 outside explicit transactions. PostgreSQL lifecycle and invalid-index recovery tests pass. Phase 2.5 may begin; the normal-planner index test remains T032.
+**Checkpoint**: Amended ADR 039 defines migration `036` without a guard. Both runners execute concurrent SQL outside explicit transactions. PostgreSQL lifecycle, invalid-index recovery, and normal-planner index tests passed after the cutover.
 
 ### Phase 2e: Frontend/Design System Review
 
@@ -175,21 +175,21 @@ description: "Task list for proactive token refresh"
 
 - [X] T054 Update route, shutdown, session-refresh concurrency, row-lock, and operator-sweep sections in `ARCHITECTURE.md`. Add the seven glossary entries from T011.
 - [X] T055 Add the three settings, defaults, environment names, CLI flags, provider-lifetime warning, worker limit, and runbook link to `docs/configuration.md`.
-- [X] T056 Write `docs/operations/session-sweep.md` with an operator-managed CronJob example, `concurrencyPolicy: Forbid`, admin-proxy authentication, caller timeout, count/metric interpretation, and the accepted ADR 039 failure procedure after T019. State that invalid-index cleanup is not atomic rollback. Do not ship a broker-chart CronJob.
+- [X] T056 Write `docs/operations/session-sweep.md` with an operator-managed CronJob example, `concurrencyPolicy: Forbid`, admin-proxy authentication, caller timeout, count/metric interpretation, and the amended ADR 039 manual recovery procedure. State that invalid-index cleanup is not atomic rollback. Do not ship a broker-chart CronJob.
 
 ### Constitution Compliance Verification: Design Phase
 
 - [X] T057 Verify Principles II/V in `specs/029-proactive-token-refresh/data-model.md`, `adrs/038-proactive-token-refresh.md`, and the `ARCHITECTURE.md` glossary. Confirm the aggregate invariant and all seven terms, including SweepRequest and SessionTokensRefreshed.
 - [X] T058 [P] Verify Principle VII in `examples/config/third-party-oauth2.yaml`, `examples/config/README.md`, and `charts/agentic-identity-broker/values.yaml`. Confirm example and Helm defaults agree.
 - [X] T059 [P] Verify Principles IV/X in `api/admin/openapi.yaml` and `specs/029-proactive-token-refresh/plan.md`. Check written stakeholder approval of the restricted ISO 8601 grammar and every documented request, response, example, and authentication rule. No end-user API changes apply.
-- [X] T060 Verify Principles IX/XIII in ADR 039, `specs/029-proactive-token-refresh/research.md`, migration 036, the guarded migration paths, `tests/integration/migrations/migrations_test.go`, and all ten red E2E scenarios. Confirm the accepted exception, non-atomic recovery evidence, and semantic red results before implementation.
+- [X] T060 Verify Principles IX/XIII in amended ADR 039, `specs/029-proactive-token-refresh/research.md`, migration `036`, the direct image and Go runners, `tests/integration/migrations/migrations_test.go`, and all ten red E2E scenarios. Confirm the named non-atomic exception, manual recovery, and semantic red evidence.
 
 ### Constitution Compliance Verification: Implementation Phase
 
 - [X] T061 Verify Principles IV/X in `api/admin/openapi.yaml` and `internal/adapters/http/handlers/admin/session_sweep_handler.go`. Check exact response fields, dry-run semantics, 200 per-session failures, 500 infrastructure errors, and admin-only proxy identity.
 - [X] T062 [P] Verify Principles I/III in `internal/domain/oauth2session/service.go`, `internal/domain/oauth2session/background_refresh.go`, and `internal/domain/oauth2session/sweep.go`. Check encrypted writes, per-call client-secret decryption, no bypass, no token/principal leakage, counter labels, and drain-before-cancel.
 - [X] T063 [P] Verify Principle VII in `internal/ports/config.go`, `internal/config/loader.go`, `internal/config/validator.go`, `cmd/agentic-identity-broker/root.go`, `charts/agentic-identity-broker/values.schema.json`, and `charts/agentic-identity-broker/templates/configmap.yaml`. Assert CLI precedence for all three keys. Render a custom lookahead and reject worker count 50 through schema validation.
-- [X] T064 Verify the accepted Principle IX exception in ADR 039 and the storage and migration integration tests. Run guarded migration apply/rollback/reapply, invalid-index and dirty-version recovery, directive rejection, and the normal-planner `EXPLAIN` assertion for the production query.
+- [X] T064 Verify the accepted Principle IX exception in amended ADR 039 and the storage and migration integration tests. Run direct migration UP, DOWN, reapply, invalid-index and dirty-version recovery, and normal-planner `EXPLAIN` assertions for the production query.
 - [X] T065 Verify Principles VI/XII in `internal/ports/storage.go`, `internal/app/builder.go`, and `internal/adapters/http/routing/admin.go`. Confirm focused ports, builder-only construction, and route-only registration.
 - [X] T066 Verify Principles VIII/XIII in `tests/e2e/proactive_token_refresh_test.go`, `internal/domain/oauth2session/background_refresh_test.go`, and `internal/domain/oauth2session/sweep_test.go`. Confirm recorded semantic red results for all ten acceptance scenarios, one `It()` per scenario, meaningful assertions, minimal fixture edits, and no skip markers.
 - [X] T067 Run `just check` and `just test` from `justfile`. Resolve failures in the changed Go, config, and HTTP packages.
@@ -206,7 +206,7 @@ description: "Task list for proactive token refresh"
 - Phase 0 is a behavior-preserving refactor in this branch. A separate PR is not required by stakeholder decision. Phase 1 checks existing dependencies.
 - Phase 2a, 2b, 2c, and 2d can proceed in parallel after Phase 0. Phase 2e records the backend-only scope. Phase 2f needs the test helper before its scenario tests.
 - The design preconditions block all feature implementation. The admin endpoint also needs T018 written stakeholder sign-off.
-- Phase 2.5 follows all Phase 2 gates. T019 requires accepted ADR 039 and enforced directive coverage for the migration image and every Go migration path; T020 follows it. T026 precedes T027–T029. T030 precedes T031/T032. Adapter tests precede T033/T034, and both implementations precede T035.
+- Phase 2.5 follows all Phase 2 gates. T019 records ADR 039's in-place amendment for direct execution; T020 keeps the concurrent migration pair and informational directive. T026 precedes T027–T029. T030 precedes T031/T032. Adapter tests precede T033/T034, and both implementations precede T035.
 - US1, US2, and US3 tests can start after Phase 2.5. US1 is the MVP. US2's baseline behavior is independent, while its new log helper integration follows T039. US3 uses the locked-refresh seam, not the US1 background pool.
 - T043 follows T039 in `internal/domain/oauth2session/service.go` to reuse the trigger-aware log helper. T052 and T040 both edit `internal/app/builder.go`. Finish one builder change before the other.
 - Phase N follows the desired story increments. Finish its documentation before the matching compliance checks. Run the full checks once after all code changes.
