@@ -31,7 +31,6 @@ type backgroundRefresher struct {
 	tracer   trace.Tracer
 
 	mu      sync.Mutex
-	active  int
 	closed  bool
 	drained chan struct{}
 
@@ -73,7 +72,6 @@ func (p *backgroundRefresher) submit(ctx context.Context, session *storage.UserS
 	}
 	select {
 	case p.slots <- struct{}{}:
-		p.active++
 	default:
 		p.inflight.Delete(key)
 		p.mu.Unlock()
@@ -160,8 +158,7 @@ func (p *backgroundRefresher) finish(key string) {
 	p.mu.Lock()
 	p.inflight.Delete(key)
 	<-p.slots
-	p.active--
-	if p.closed && p.active == 0 {
+	if p.closed && len(p.slots) == 0 {
 		close(p.drained)
 	}
 	p.mu.Unlock()
@@ -171,7 +168,7 @@ func (p *backgroundRefresher) Close(ctx context.Context) error {
 	p.mu.Lock()
 	if !p.closed {
 		p.closed = true
-		if p.active == 0 {
+		if len(p.slots) == 0 {
 			close(p.drained)
 		}
 	}

@@ -208,17 +208,14 @@ func (m *MockUpstreamOAuth2Server) WithTokenResponseGate() (release func()) {
 	m.tokenResponseGate = gate
 	m.requestMutex.Unlock()
 
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			m.requestMutex.Lock()
-			defer m.requestMutex.Unlock()
-			close(gate)
-			if m.tokenResponseGate == gate {
-				m.tokenResponseGate = nil
-			}
-		})
-	}
+	return sync.OnceFunc(func() {
+		m.requestMutex.Lock()
+		defer m.requestMutex.Unlock()
+		close(gate)
+		if m.tokenResponseGate == gate {
+			m.tokenResponseGate = nil
+		}
+	})
 }
 
 // WithStrictPublicClientMode makes the token endpoint reject client credentials

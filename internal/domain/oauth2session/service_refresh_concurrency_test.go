@@ -64,8 +64,7 @@ func TestGetValidAccessToken_ConcurrentJoinersDecryptRotatingRefresh(t *testing.
 		_, _ = fmt.Fprint(w, `{"access_token":"rotated-access","token_type":"Bearer","expires_in":3600,"refresh_token":"rotated-refresh"}`)
 	}))
 	defer provider.Close()
-	var releaseOnce sync.Once
-	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	release := sync.OnceFunc(func() { close(releaseFirst) })
 	defer release()
 
 	upstream := createTestService(serviceID)
