@@ -71,17 +71,19 @@ targeted read synchronous and the bootstrap non-blocking.
 
 | Status | ExtProc action |
 |---|---|
-| `200` | Body is a **full snapshot of the requested scope**, never a delta. Replace the state of every returned pair; store the `ETag`; reset backoff. |
-| `304` | No body, no ETag. Re-poll immediately with the same ETag. Long-poll only. |
+| `200` | Replace the full requested scope, including removal of omitted records and pairs. Background snapshots store the ETag. Targeted reads preserve the background ETag. |
+| `304` | No body or ETag. Retain records and the ETag, refresh confirmation time, and re-poll. Long-poll only. |
 | `401` | `StatusError`. Log at warn and back off. Never retry without authentication. |
 | `3xx` | `StatusError`. Do not follow the redirect. Back off for long-poll calls. Deny request-path calls. |
 | any other status / transport error | A status response returns `StatusError`. The syncer backs off. The cache retains its last good state. |
 
+These actions follow [accepted ADR 036](../../../adrs/036-extproc-approval-cache-and-gate.md), [the cache](../../../internal/extproc/approval/cache.go), and [the syncer](../../../internal/extproc/approval/syncer.go).
+An empty snapshot clears its scope. Principal-filtered replacement preserves other principals and global confirmation time, and refreshes only returned pairs.
+
 **Critical**: there is no delta protocol and no stale-ETag retention window. The broker parses
 `If-None-Match` as an optionally quoted, optionally `v`-prefixed `int64`; any value that is not exactly
 the current version — older, newer, or unparseable — returns an immediate `200` with complete current
-state (`sync_handler.go:105-118, 130-195`). Merging responses instead of replacing them would resurrect
-revoked approvals.
+state. See [the broker handler](../../../internal/adapters/http/handlers/approval/sync_handler.go). Replacement removes revoked approvals that the snapshot omits.
 
 **Targeted-read ETag ordering**: A targeted `200` response must include an ETag. ExtProc compares its version with the cache's known ETag. If the targeted version is older, ExtProc rejects the response, does not replace cache state, and returns a hard deny. It must not create an approval from that response (FR-019).
 

@@ -4,28 +4,47 @@ Thank you for contributing! This document provides guidelines for maintaining ou
 
 ## Quick Start
 
-1. **Fork and clone**:
+Install Go for [go.mod](go.mod), Node.js for [web/package.json](web/package.json), npm, and `just`.
+The [justfile](justfile) defines the recipes in this guide and installs the test tools.
+Infrastructure-backed verification also needs Docker or Podman, as described in the [storage integration guide](tests/integration/storage/README.md).
+
+1. Clone the repository:
    ```bash
    git clone https://github.com/zalando-incubator/agentic-identity-broker.git
    cd agentic-identity-broker
    ```
-
-2. **Setup**:
+2. Install dependencies and tools:
    ```bash
    just deps
    just install-tools
+   just web-install
+   ```
+3. Select the feature specification before implementation. Use the workflow in [Specification-Driven Development](#specification-driven-development).
+4. Start the broker from the repository root:
+   ```bash
+   just run
+   ```
+5. Start Vite in another terminal:
+   ```bash
+   just web-dev
    ```
 
-3. **Create a branch**:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
+The [run recipe](justfile) builds the broker and supplies temporary JWE and memory-encryption keys.
+The root [config.yaml](config.yaml) selects local development configuration and an upstream OAuth2 server on port 9001.
+Vite requests port 3000 and proxies backend namespaces to port 8000 through [vite.config.ts](web/vite.config.ts).
+OAuth2 journeys also need the configured providers. The [Compose guide](docs/docker-compose-setup.md) describes the multi-service environment.
+This configuration trusts a proxy header and permits local HTTP providers. It is not a production deployment.
 
-4. **Develop**:
-   ```bash
-   just dev              # Backend with hot-reload
-   just web-dev          # Frontend (optional, separate terminal)
-   ```
+For hot reload, supply both keys to the Air process:
+
+```bash
+export IDENTITY_BROKER_JWE_SIGNING_KEY="$(./scripts/generate-jwe-key.sh)"
+export IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(./scripts/generate-jwe-key.sh)"
+just dev
+```
+
+The [Air configuration](.air.toml) runs [start-broker.sh](scripts/start-broker.sh), which also attempts to seed development data.
+Do not run `just run` and `just dev` on the same ports.
 
 ## Governance Principles
 
@@ -38,11 +57,13 @@ All contributions must comply with our specification-driven development approach
 - **Design System**: Frontend components use `/web/src/design-system/`
 - **Database**: Schema changes use go-migrate naming conventions
 
-See [Constitution v1.4.0](.specify/memory/constitution.md) for details.
+Read the current [constitution](.specify/memory/constitution.md) for binding rules and its version history.
+The [ADR index](ARCHITECTURE.md#10-architecture-decision-records-adrs) identifies decisions by full filename, status, and partial supersession.
+Proposed ADRs do not become accepted because their implementation exists.
 
 ## Before Committing
 
-Run static checks and the full verification gate:
+Run the gates defined in the [justfile](justfile):
 ```bash
 just check    # Non-mutating format, vet, and lint checks
 just verify   # Security scanning plus test, integration, and E2E checks
@@ -50,7 +71,7 @@ just verify   # Security scanning plus test, integration, and E2E checks
 
 `just check` does not change source files. Use `just fmt` to apply Go formatting fixes.
 `just security` runs the focused gosec, govulncheck, and OSV-Scanner scans.
-`just verify` runs security scanning before the existing test, integration, and E2E gate.
+`just verify` includes static checks, security scans, Go and frontend tests, CDK and mock tests, both integration layers, and all E2E suites.
 
 The frontend and documentation-site manifests use npm overrides for transitive security fixes.
 Commit the corresponding lockfile when changing an override. Verify both site builds and the
@@ -72,50 +93,58 @@ Root contains only files that a tool requires there or that GitHub/Zalando OSS r
 
 ### Specification-Driven Development
 
-For new features, follow this workflow using [Speckit](https://speckit.org/):
+For new features, use the [Spec Kit templates](.specify/templates/) and the [constitution](.specify/memory/constitution.md).
+These paths are naming patterns, not literal directories to copy:
 
-1. Create `specs/NNN-feature-name/spec.md` with requirements
-2. Create `specs/NNN-feature-name/plan.md` with design
-3. Create `specs/NNN-feature-name/tasks.md` with tasks
-4. Implement according to the plan
-5. Update [ARCHITECTURE.md](ARCHITECTURE.md) if needed
+1. Create `specs/NNN-feature-name/spec.md` with requirements.
+2. Create `specs/NNN-feature-name/plan.md` with the design.
+3. Create `specs/NNN-feature-name/tasks.md` with ordered tasks.
+4. Obtain the required API and architecture approvals before implementation.
+5. Implement the plan with red-green-refactor tests and acceptance-scenario traceability.
+6. Update [ARCHITECTURE.md](ARCHITECTURE.md) when the design changes.
+
+The [selection script](.specify/scripts/bash/common.sh) checks `SPECIFY_FEATURE_DIRECTORY` before [.specify/feature.json](.specify/feature.json).
+Verify that the selected feature matches the task. Do not infer it only from the branch name.
 
 ### Backend
 
-Follow hexagonal architecture:
-- **Domain** (`internal/domain/`): Pure business logic
-- **Ports** (`internal/ports/`): Interface boundaries
-- **Adapters** (`internal/adapters/`): HTTP, storage, config
+Use the boundaries defined by [Constitution VI](.specify/memory/constitution.md#vi-hexagonal-architecture--clean-boundaries):
+
+- **Domain:** [internal/domain/](internal/domain/) owns business invariants.
+- **Ports:** [internal/ports/](internal/ports/) defines infrastructure contracts.
+- **Adapters:** [internal/adapters/](internal/adapters/) implements HTTP, storage, and external-service boundaries.
+- **Configuration:** [internal/config/](internal/config/) implements the broker loader.
+- **Composition:** [internal/app/builder.go](internal/app/builder.go) wires broker dependencies under Constitution XII.
 
 ### Frontend
 
-All components must use the design system at `/web/src/design-system/`:
-
-```typescript
-import { Button, Card } from '@/components/design-system';
-
-export function MyComponent() {
-  return (
-    <Card>
-      <Button variant="primary">Submit</Button>
-    </Card>
-  );
-}
-```
+Use the [design system](web/src/design-system/docs/INDEX.md), as required by [Constitution XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency).
+Read its component guidance before choosing an import or variant.
+The [Vite aliases](web/vite.config.ts) and [existing pages](web/src/pages/) show current import paths.
+The constitution requires semantic tokens, self-hosted brand assets, and accessibility evidence in light and dark themes.
 
 ### Tests
 
-- Tests live next to source files (`*_test.go` or `*.test.tsx`)
+The [justfile](justfile) defines the following suite boundaries.
+Go package tests generally live next to their sources. Frontend test locations follow [vitest.config.ts](web/vitest.config.ts).
+
 - Fast Go/package tests: `just test`
 - ExtProc unit tests with race detection: `just extproc-test`. These include checks that
   disabled local tracing neither creates child spans nor modifies inherited spans.
-- Integration suites: `just test-integration`
+- Self-contained integration suites: `just test-integration`
+- Infrastructure-backed integration suites: `just test-integration-infra`
+- Both integration layers: `just test-integration-all`
 - All E2E suites: `just test-e2e`
 - Dedicated E2E performance measurement: `just test-e2e-performance` (manual; normal E2E commands exclude performance-labelled specs)
 - Full verification gate, including security scanning: `just verify`
 - Coverage for the fast Go/package suite: `just test-coverage`
 - Coverage summary for fast Go/package tests: `just test-coverage-summary`
 - Frontend coverage report: `just web-test-coverage`
+
+Read the [E2E guide](tests/e2e/README.md) and [storage integration guide](tests/integration/storage/README.md) for prerequisites and cleanup limits.
+Browser tests are implemented, not future work. `just test-e2e-frontend` builds and tests the production frontend bundle.
+The [development-mode conflict](specs/agentic-engineering-improvements.md#4-make-frontend-development-tests-safe-by-default) remains open.
+Use the guide's serial-worker override for development mode, not the current recipe default.
 
 The [Coverage workflow](https://github.com/zalando-incubator/agentic-identity-broker/actions/workflows/scheduled-coverage.yml) runs manually from the GitHub Actions UI and weekly on `main`. It sends coverage from the Go unit, integration, and functional backend, ExtProc, and frontend E2E suites, plus Vitest and instrumented Playwright browser runs, to [Coveralls](https://coveralls.io/github/zalando-incubator/agentic-identity-broker?branch=main). Go coverage measures `cmd/` and `internal/`; browser coverage measures `web/src/`. The separate performance measurement is excluded. The README badge shows the latest main-branch result.
 
@@ -193,7 +222,7 @@ Disclose responsibly:
 
 - [README](README.md) - Overview and quick start
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System design
-- [Constitution v1.4.0](.specify/memory/constitution.md) - Governance
+- [Constitution](.specify/memory/constitution.md) - Binding governance and version history
 - [MAINTAINERS](MAINTAINERS) - Maintainer information
 - [Speckit](https://speckit.org/) - Specification-driven development
 

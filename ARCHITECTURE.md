@@ -1,308 +1,145 @@
 # Architecture Overview
 
-This document serves as a critical, living template designed to equip agents with a rapid and comprehensive understanding of the codebase's architecture, enabling efficient navigation and effective contribution from day one. Update this document as the codebase evolves.
+This document describes the broker, its standalone ExtProc service, and their trust boundaries.
+The [constitution](.specify/memory/constitution.md) and accepted decisions in [the ADR index](#10-architecture-decision-records-adrs) govern changes.
+Source links identify the implementation or contract behind each overview.
 
 ## 1. Project Structure
 
-This section provides a high-level overview of the project's directory and file structure, categorised by architectural layer or major functional area. It is essential for quickly navigating the codebase, locating relevant files, and understanding the overall organization and separation of concerns.
+| Path | Responsibility |
+|---|---|
+| [cmd/](cmd/) | Broker and ExtProc executable entry points |
+| [internal/domain/](internal/domain/) | Broker domain models and services |
+| [internal/ports/](internal/ports/) | Configuration and infrastructure contracts |
+| [internal/adapters/](internal/adapters/) | HTTP, storage, encryption, and external-service adapters |
+| [internal/app/](internal/app/) | Broker dependency construction |
+| [internal/config/](internal/config/) | Broker configuration loading and validation |
+| [internal/extproc/](internal/extproc/) | Standalone ExtProc configuration and request processing |
+| [web/src/](web/src/) | React pages, hooks, API clients, and shared design system |
+| [api/](api/) | End-user and administrative OpenAPI contracts |
+| [migrations/](migrations/) | PostgreSQL up and down migrations |
+| [tests/](tests/) | Backend, ExtProc, browser, and integration suites |
+| [configs/](configs/) and [examples/config/](examples/config/) | Environment configuration and operator examples |
+| [build/docker/](build/docker/) | Broker, ExtProc, migration, and development container definitions |
+| [charts/agentic-identity-broker/](charts/agentic-identity-broker/) | Broker Helm deployment |
+| [infra/cdk/](infra/cdk/) | AWS encryption infrastructure |
+| [mocks/](mocks/) | Local OAuth2, CIMD, gateway, and MCP services |
+| [scripts/](scripts/) and [justfile](justfile) | Development and verification commands |
+| [docs/](docs/) and [assets/docusaurus/](assets/docusaurus/) | Operator documentation and documentation-site tooling |
+| [specs/](specs/) and [adrs/](adrs/) | Feature artifacts and architecture decisions |
+| [.github/workflows/](.github/workflows/) | CI, security, coverage, and release workflows |
 
-```
-[Project Root]/
-
-├── cmd/                  # Main source code for backend services
-├── internal/             # Code that is internal
-├── pkg/                  # Code that is ok to be used when this is
-├── config/               # Backend configuration files
-├── test/                 # Backend unit and integration tests
-├── build/Dockerfile      # Dockerfile for backend deployment
-├── web/                  # Single Page Application (Consent Frontend)
-│   ├── src/              # Main source code for React application
-│   │   ├── components/   # Reusable UI components
-│   │   │   ├── consent/  # Consent-specific components (DelegationCard, ServiceCard, etc.)
-│   │   │   ├── layout/   # Layout components (AppLayout)
-│   │   │   └── ui/       # Generic UI components (Button, Switch, DatePicker, etc.)
-│   │   ├── pages/        # Application pages/views (ConsentOverviewPage, AgentGrantDetailPage)
-│   │   ├── hooks/        # Custom React hooks (useConsent, useAgentGrants, useToggleGrant)
-│   │   ├── services/     # Frontend services
-│   │   │   ├── api/      # API client and service layer (axios-based)
-│   │   │   └── storage/  # Client-side storage utilities
-│   │   ├── types/        # TypeScript type definitions
-│   │   ├── utils/        # Utility functions (validation, formatting)
-│   │   ├── assets/       # Images, fonts, and other static assets
-│   │   └── styles/       # Global styles (Tailwind CSS)
-│   ├── public/           # Publicly accessible assets (favicon, etc.)
-│   ├── dist/             # Build output directory (served by Go backend)
-│   ├── tests/            # Frontend unit and integration tests (Vitest)
-│   ├── package.json      # Frontend dependencies and scripts
-│   ├── vite.config.ts    # Vite build configuration
-│   ├── tsconfig.json     # TypeScript solution references
-│   ├── tsconfig.app.json # App TypeScript configuration
-│   ├── tsconfig.test.json # Test TypeScript configuration
-│   ├── tsconfig.build.json # Build TypeScript configuration
-│   └── tailwind.config.ts # Tailwind CSS v4.0 configuration
-├── docs/                 # Project documentation (e.g., API docs, setup guides)
-├── ARCHITECTURE.md       # Internal system design and domain glossary
-├── infra/                # Infrastructure as Code
-│   └── cdk/              # AWS CDK (Go) – encryption infrastructure (KMS, DynamoDB, IAM)
-├── scripts/              # Automation scripts (e.g., deployment, data seeding)
-├── .github/              # GitHub Actions or other CI/CD configurations
-├── .gitignore            # Specifies intentionally untracked files to ignore
-├── README.md             # Project overview and quick start guide
-└── ARCHITECTURE.md       # This document
-```
+Generated outputs are not source packages. The [build recipes](justfile) produce binaries in `bin/` and the [Vite build](web/vite.config.ts) produces `web/dist/`.
+Dependency versions belong to [go.mod](go.mod), [web/package.json](web/package.json), [web/package-lock.json](web/package-lock.json), and [infra/cdk/go.mod](infra/cdk/go.mod).
 
 ## 2. High-Level System Diagram
 
-Provide a simple block diagram (e.g., a C4 Model Level 1: System Context diagram, or a basic component diagram) or a clear text-based description of the major components and their interactions. Focus on how data flows, services communicate, and key architectural boundaries.
+```mermaid
+flowchart LR
+    Browser[User browser] --> Proxy[Trusted authentication proxy]
+    Proxy --> EndUser[Broker end-user server]
+    Admin[Administrative client] --> AdminServer[Broker admin server]
+    EndUser --> Domain[Broker domain services]
+    AdminServer --> Domain
+    Domain --> Ports[Ports and adapters]
+    Ports --> Postgres[(PostgreSQL)]
+    Ports --> Encryption[AWS KMS and DynamoDB]
+    Ports --> OAuth[Third-party OAuth2 providers]
+    Agent[Agent client] --> Gateway[Gateway]
+    Gateway <-->|ExtProc gRPC| ExtProc[Standalone ExtProc]
+    ExtProc -->|Token exchange and approval API| EndUser
+    Gateway --> Target[Protected service]
+```
 
-```
-[User] <--> [Frontend Application] <--> [Backend Service 1] <--> [Database 1]
-                                    |
-                                    +--> [Backend Service 2] <--> [External API]
-```
+The diagram shows the trusted-header deployment model, not a universal authentication configuration.
+The end-user and administrative listeners have separate routing and authentication configuration.
+The deployment must restrict administrative access and prevent clients from forging trusted proxy headers.
+Sources: [004-dual-server-isolation.md](adrs/004-dual-server-isolation.md), [end-user routing](internal/adapters/http/routing/enduser.go), [admin routing](internal/adapters/http/routing/admin.go), and [security assurance case](docs/resources/assurance-case.md).
+
+The [builder](internal/app/builder.go) connects broker domain services to their ports and adapters.
+Production persistence uses the [PostgreSQL adapter](internal/adapters/storage/postgres/).
+The [memory adapter](internal/adapters/storage/memory/) provides process-local development and test storage.
+ExtProc has its own process and configuration under accepted [011-extproc-standalone-binary.md](adrs/011-extproc-standalone-binary.md).
+Its metadata trust boundary is defined by accepted [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md).
 
 ## 3. Core Components
 
-(List and briefly describe the main components of the system. For each, include its primary responsibility and key technologies used.)
-
 ### 3.1. Identity Broker Service
 
-Name: Agentic Identity Broker
-
-Description: Core service providing secure identity management, authentication, and authorization for AI agents and autonomous systems. Implements hexagonal architecture with clear separation of domain logic, ports, and adapters.
-
-Technologies: Go 1.27.1+, Viper (configuration), Cobra (CLI)
-
-Deployment: Containerized service (Docker), deployable to Kubernetes, AWS ECS, or standalone
+The broker manages agent delegation, third-party OAuth2 sessions, token exchange, and tool approvals.
+The [end-user contract](api/enduser/openapi.yaml) and [admin contract](api/admin/openapi.yaml) define its HTTP surfaces.
+Its Go dependencies and toolchain are declared in [go.mod](go.mod), rather than copied into this overview.
 
 #### 3.1.1. Configuration Subsystem
 
-**Purpose**: Flexible multi-source configuration management with environment-specific support, security-first design, and clear precedence rules.
+The [configuration port](internal/ports/config.go) defines broker configuration.
+The [loader](internal/config/loader.go) applies defaults, loads environment files and YAML, expands environment references, binds CLI flags, and validates the result.
+Explicit environment bindings override YAML. Bound CLI flags have higher precedence.
+The loader rejects invalid configuration instead of starting with an unvalidated result.
+The [configuration reference](docs/configuration.md) documents supported inputs and environment variables.
 
-**Architecture**: Hexagonal (ports and adapters pattern)
-
-**Components**:
-
-- **Port** (internal/ports/config.go): ConfigPort interface defining domain boundary
-- **Adapter** (internal/config/loader.go): Viper-based implementation loading from multiple sources
-- **Domain Types** (internal/domain/config/): LogLevel, LogFormat enums with validation
-- **Domain Errors** (internal/domain/config/errors.go): ConfigError with error wrapping support
-
-**Configuration Sources** (in precedence order, lowest to highest):
-
-1. **Defaults**: Built-in default values (log.level=info, log.format=text)
-2. **.env Files**: Environment-specific files (.env → .env.local → .env.{GO_ENV} → .env.{GO_ENV}.local)
-3. **YAML File**: config.yaml with ${VAR} environment variable substitution
-4. **CLI Flags**: Command-line flags (--log-level, --log-format, --config)
-
-**Security Features**:
-
-- Sensitive value redaction (IDENTITY_BROKER_* prefix and keywords: password, secret, token, key)
-- Command injection prevention (rejects $(cmd), backticks, shell metacharacters)
-- Circular reference detection (max depth: 10)
-- Fail-closed on errors (graceful termination with clear messages)
-- AWS TLS certificate verification bypass (`encryption.aws_kms.disable_ssl`) requires explicit `GO_ENV=development`; every other environment, including unset, rejects it before AWS clients are initialized.
-- File permission validation
-- Structured audit logging (JSON to stdout)
-
-**Flow**:
-
-```
-Application Startup
-  → Load Defaults
-  → Load .env Files (godotenv)
-  → Load YAML (Viper)
-  → Expand ${VAR} References (with security validation)
-  → Bind CLI Flags (Cobra)
-  → Unmarshal to Config struct
-  → Validate (custom validators)
-  → Emit Audit Log
-  → Display Startup Summary
-  → Return Config to Application
-```
-
-**Performance**: Configuration loading completes in <250ms (within 5s startup budget)
-
-**Technologies**:
-
-- Viper v1.19.0+ (unified configuration management)
-- Cobra v1.8.1+ (CLI framework)
-- godotenv v1.5.1+ (.env file support)
-- Custom validators (fast, zero-allocation validation)
-
-**Future Extensions**: Hot-reloading (Reload method defined but not implemented), additional config categories (server, database, auth)
+Runtime reload is not available: `Loader.Reload` returns an error.
+Server, storage, authentication, encryption, and telemetry configuration already exist in the [configuration schema](internal/ports/config.go).
+The separate [ExtProc loader](internal/extproc/config/loader.go) owns `EXTPROC_*` configuration, as required by accepted [011-extproc-standalone-binary.md](adrs/011-extproc-standalone-binary.md).
 
 #### 3.1.2. Single Page Application (Consent Frontend)
 
-**Purpose**: User-facing web interface for managing OAuth2 consent delegations to AI agents.
+The frontend manages delegations, third-party sessions, and tool approvals.
+It uses React, TypeScript, React Router, Axios, and Tailwind CSS.
+Exact dependencies and scripts belong to [web/package.json](web/package.json) and [its lockfile](web/package-lock.json).
 
-**Architecture**: React 18 Single Page Application with TypeScript, served from Go backend
+**Source map**:
 
-**Technology Stack**:
+| Source | Responsibility |
+|---|---|
+| [App.tsx](web/src/App.tsx) | Root router, lazy page imports, error boundary, and toast provider |
+| [pages/](web/src/pages/) | Delegation, session, and approval views |
+| [components/](web/src/components/) | Application components |
+| [design-system/](web/src/design-system/) | Shared components, semantic tokens, and design guidance |
+| [hooks/](web/src/hooks/) | Page data and interaction hooks |
+| [services/api/](web/src/services/api/) | Typed API calls and response handling |
+| [vite.config.ts](web/vite.config.ts) | Development proxy, aliases, and production build |
+| [vitest.config.ts](web/vitest.config.ts) | Frontend unit-test configuration |
+| [tests/e2e/frontend/](tests/e2e/frontend/) | Ginkgo browser journeys through Playwright |
 
-- **Frontend Framework**: React 18.2+ with TypeScript 5.3+
-- **Build Tool**: Vite 5.0+ (fast ESM-based bundler)
-- **Styling**: Tailwind CSS v4.0 (utility-first CSS framework)
-- **UI Components**: Headless UI 1.7+ (accessible, unstyled components)
-- **HTTP Client**: Axios 1.6+ (promise-based HTTP client)
-- **Router**: React Router DOM 6.20+ (client-side routing)
-- **Testing**: Vitest 1.0+ (fast unit test framework)
-- **State Management**: React hooks + Context API (no external state library)
+**Routing and serving**:
 
-**Directory Structure**:
+The [root-mounted SPA decision](adrs/035-root-mounted-spa.md) replaces the mount and build-path portions of [005-spa-serving-pattern.md](adrs/005-spa-serving-pattern.md).
+The broker serves `web/dist` from its working directory.
+The [end-user router](internal/adapters/http/routing/enduser.go) reserves `/api`, `/oauth2`, `/.well-known`, and `/health` before the SPA fallback.
+It mounts the SPA for browser `GET` and `HEAD` requests.
 
-```
-web/
-├── src/
-│   ├── components/       # React components
-│   │   ├── consent/      # Consent-specific components
-│   │   │   ├── DelegationCard.tsx        # Agent delegation card
-│   │   │   ├── DelegationList.tsx        # List of delegations
-│   │   │   ├── ServiceCard.tsx           # OAuth2 service card
-│   │   │   ├── ServiceGrantList.tsx      # List of service grants
-│   │   │   ├── ScopeList.tsx             # Scope selection UI
-│   │   │   ├── GrantStatusBadge.tsx      # Grant status indicator
-│   │   │   └── GrantValidityControl.tsx  # Expiration date control
-│   │   ├── layout/       # Layout components
-│   │   │   └── AppLayout.tsx             # Main app layout
-│   │   └── ui/           # Reusable UI components
-│   │       ├── Button.tsx                # Button component
-│   │       ├── Switch.tsx                # Toggle switch
-│   │       ├── DatePicker.tsx            # Date picker
-│   │       ├── ErrorBoundary.tsx         # Error boundary
-│   │       ├── InlineError.tsx           # Error display
-│   │       ├── EmptyState.tsx            # Empty state UI
-│   │       └── Skeleton.tsx              # Loading skeleton
-│   ├── pages/            # Application pages
-│   │   ├── ConsentOverviewPage.tsx       # List of all agent delegations
-│   │   ├── AgentGrantDetailPage.tsx      # Agent-specific grant management
-│   │   └── ErrorPage.tsx                 # Error page
-│   ├── hooks/            # Custom React hooks
-│   │   ├── useConsent.ts                 # Fetch agent delegations
-│   │   ├── useAgentGrants.ts             # Fetch agent grants
-│   │   ├── useToggleGrant.ts             # Toggle grant scopes
-│   │   ├── useUpdateValidity.ts          # Update grant expiration
-│   │   └── useRetry.ts                   # Retry with exponential backoff
-│   ├── services/         # Service layer
-│   │   ├── api/          # API clients
-│   │   │   ├── client.ts                 # Axios client configuration
-│   │   │   ├── consent.ts                # Consent API methods
-│   │   │   └── index.ts                  # API exports
-│   │   └── storage/      # Client-side storage
-│   │       └── session.ts                # Session storage utilities
-│   ├── types/            # TypeScript types
-│   │   ├── consent.ts                    # Consent domain types
-│   │   └── index.ts                      # Type exports
-│   ├── utils/            # Utility functions
-│   │   └── validation.ts                 # Input validation
-│   ├── App.tsx           # Root component
-│   └── main.tsx          # Application entry point
-├── dist/                 # Build output (served by Go)
-├── vite.config.ts        # Vite configuration
-├── tsconfig.json         # TypeScript solution references
-├── tsconfig.app.json     # App TypeScript configuration
-├── tsconfig.test.json    # Test TypeScript configuration
-├── tsconfig.build.json   # Build TypeScript configuration
-├── tailwind.config.ts    # Tailwind CSS configuration
-└── package.json          # Dependencies and scripts
-```
+The [React router](web/src/App.tsx) redirects `/` to `/delegations` with history replacement.
+It also serves `/agents/:agentId`, `/sessions`, `/approvals`, and `/approvals/:id`.
+The [API client](web/src/services/api/client.ts) uses the relative base URL `/api` and normalizes error responses.
 
-**Build Pipeline**:
+**Development and build**:
 
-1. **Development**: `npm run dev` runs Vite dev server (<http://localhost:3000>)
-2. **Build**: `npm run build` compiles TypeScript and bundles with Vite
-3. **Output**: Static files written to `dist/` directory
-4. **Deployment**: Go backend serves files from `dist/` at `/`
+The [Vite configuration](web/vite.config.ts) uses base `/`, output directory `dist`, and Terser minification.
+Its development server requests port 3000 but permits a fallback port.
+It proxies backend namespaces to `VITE_API_URL`, or `http://localhost:8000` by default, and injects the development principal `dev@example.com`.
+This proxy identity is development behavior, not a production authentication control.
+The [justfile](justfile) provides `just web-dev`, `just web-build`, `just web-test`, and `just test-e2e-frontend`.
 
-**SPA Serving Pattern**:
+**Security and accessibility**:
 
-```
-User Request: /agents/123
-  ↓
-Go HTTP Server (Port 8080)
-  ↓
-Static File Handler (/*)
-  ↓ (404 fallback for client-side routes)
-Serve index.html
-  ↓
-Browser loads React app
-  ↓
-React Router handles /agents/:agentId route
-  ↓
-Component fetches data from /api/consent/agents
-  ↓
-Go API Handler returns JSON
-```
+The [end-user routing](internal/adapters/http/routing/enduser.go) applies `http.CrossOriginProtection` to consent mutations and browser approval decisions.
+These protections do not use the previously documented CSRF cookie and request-token scheme.
+Authentication belongs to the configured server middleware, not the React client.
 
-**Key Features**:
+The [constitution, Principle XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency) requires semantic tokens and WCAG 2.1 AA checks in both themes.
+Component-library selection alone does not prove accessibility compliance.
+The [design-system index](web/src/design-system/docs/INDEX.md) routes contributors to component and accessibility guidance.
 
-- **Client-Side Routing**: React Router handles root-mounted view routes without page reloads
-- **History API Fallback**: Go backend serves `index.html` for all non-API view paths (SPA fallback)
-- **API Integration**: Frontend makes requests to `/api/consent/*` endpoints on same domain
-- **CSRF Protection**: All mutating requests include CSRF token from cookie
-- **Session Management**: Principal extracted from `X-Principal` header (set by reverse proxy)
-- **Type Safety**: Full TypeScript coverage with strict mode enabled
-- **Responsive Design**: Tailwind CSS utilities for mobile-first responsive UI
-- **Accessibility**: Headless UI components ensure WCAG 2.1 compliance
-- **Error Handling**: Error boundaries and retry logic for resilient UX
+**Verification**:
 
-**Component Hierarchy**:
+Vitest runs through [web/package.json](web/package.json).
+Browser acceptance tests already exist in the [frontend suite](tests/e2e/frontend/frontend_suite_test.go).
+The [E2E guide](tests/e2e/README.md) distinguishes built-bundle tests from development-server tests.
+The [improvement plan](specs/agentic-engineering-improvements.md#4-make-frontend-development-tests-safe-by-default) records the unresolved development-worker and fixture-identity conflicts.
 
-```
-App
-├── ErrorBoundary
-│   └── AppLayout
-│       ├── ConsentOverviewPage
-│       │   └── DelegationList
-│       │       └── DelegationCard (per agent)
-│       │           └── GrantStatusBadge
-│       └── AgentGrantDetailPage
-│           ├── ServiceGrantList
-│           │   └── ServiceCard (per OAuth2 service)
-│           │       ├── Switch (toggle grant)
-│           │       └── ScopeList (scope checkboxes)
-│           └── GrantValidityControl
-│               └── DatePicker (expiration date)
-```
-
-**State Management**:
-
-- **Local State**: React `useState` for component-level state
-- **Server State**: Custom hooks with axios for API data fetching
-- **Context**: React Context API for global UI state (theme, error messages)
-- **OAuth Redirect Selections**: `AgentGrantDetailPage` stores current-tab `ConsentSelections` and the original return URL (including `session_token`, if present) under an opaque UUID in `sessionStorage`. It sends the UUID in a same-origin form POST with a clean return path; the provider-facing JWE state seals only the UUID and that path, not nested return-page query data. A successful callback appends the verified `consent_state_id`; the page restores only the matching tab, service, and path, then replaces the URL without the ID so reloads do not replay selections. Records expire after 15 minutes, covering the maximum configurable state TTL (10 minutes by default). All provider-facing state tokens must be shorter than 6,000 bytes or initiation fails. See [ADR 037](adrs/037-consent-selection-oauth-redirect-state.md) and [Feature 008](specs/008-thirdparty-oauth2-sessions/spec.md).
-- **No Redux/MobX**: Hooks + Context sufficient for current requirements
-
-**API Communication**:
-
-- **Base URL**: `/api` (relative, same origin)
-- **Authentication**: Session-based (X-Principal header from proxy)
-- **CSRF**: X-CSRF-Token header required for POST/PUT/DELETE
-- **Error Handling**: Axios interceptors for global error handling
-- **Retry Logic**: Exponential backoff for transient failures
-
-**Testing Strategy**:
-
-- **Unit Tests**: Vitest for component and hook testing
-- **Integration Tests**: Test component + API interactions with mocked backend
-- **E2E Tests**: (Future) Playwright for full user flows
-- **Coverage Target**: >80% for critical paths
-
-**Performance Optimizations**:
-
-- **Code Splitting**: Lazy loading of routes with React.lazy()
-- **Tree Shaking**: Vite removes unused code automatically
-- **Minification**: Terser minification in production builds
-- **Caching**: Immutable asset URLs with content hashing
-- **Bundle Size**: Target <200KB gzipped for initial load
-
-**Security Considerations**:
-
-- **XSS Prevention**: React escapes all user input by default
-- **CSRF Protection**: Go 1.25 `http.CrossOriginProtection` rejects cross-origin mutating requests via `Sec-Fetch-Site` / `Origin` header validation (zero config, no cookies or tokens)
-- **Content Security Policy**: (Future) CSP headers from Go backend
-- **Dependency Scanning**: Regular npm audit for vulnerabilities
-- **TypeScript**: Compile-time type checking prevents runtime errors
+Consent selections across OAuth redirects have implementation and specification evidence, but their ADR remains proposed.
+Sources: [AgentGrantDetailPage.tsx](web/src/pages/AgentGrantDetailPage.tsx), [Feature 008](specs/008-thirdparty-oauth2-sessions/spec.md), and proposed [037-consent-selection-oauth-redirect-state.md](adrs/037-consent-selection-oauth-redirect-state.md).
 
 #### 3.1.3. Builder Pattern and Dependency Injection
 
@@ -345,76 +182,31 @@ Domain errors expose immutable, typed, credential-free diagnostics. Telemetry ex
 
 #### 3.1.4. End-to-End Testing Architecture
 
-**Purpose**: Comprehensive E2E acceptance tests that validate the complete OAuth2 Authorization Server functionality through real HTTP requests and production code paths.
+The E2E suites exercise backend HTTP contracts, ExtProc processing, and browser journeys.
+Accepted [007-e2e-testing-with-ginkgo.md](adrs/007-e2e-testing-with-ginkgo.md) defines the Ginkgo acceptance-test pattern.
+The [constitution, Principle XIII](.specify/memory/constitution.md#xiii-end-to-end-acceptance-testing--spec-traceability) requires traceability from acceptance scenarios to complete journeys.
 
-**Architecture**: Ginkgo BDD-style tests with separation of stable test scenarios (HTTP contract) and volatile setup code (production bootstrap wrappers).
+The [bootstrap](tests/e2e/bootstrap/) wraps production construction and server routing.
+The [test server](tests/e2e/bootstrap/test_server.go) exposes separate end-user and admin URLs.
+The [frontend suite](tests/e2e/frontend/frontend_suite_test.go) adds Playwright browser setup.
+Fixtures and helpers belong to [tests/e2e/fixtures/](tests/e2e/fixtures/) and [tests/e2e/helpers/](tests/e2e/helpers/).
 
-**Key Design Principles** (see [ADR 007](adrs/007-e2e-testing-with-ginkgo.md)):
+The [justfile](justfile) defines the maintained commands:
 
-1. **Use Production Bootstrap**: Tests use production `app.Builder`, `httpAdapter.Server`, and `storage.Adapter` - no custom test implementations
-2. **Stability Through Separation**: Test scenarios focus on HTTP contracts (stable), setup code wraps production bootstrap (volatile)
-3. **Real HTTP Testing**: Tests use `httptest.Server` with full routing, middleware, and handler stack
-4. **Test Isolation**: Each test gets fresh storage and server via `BeforeEach` - no shared state
-5. **BDD Organization**: `Describe`/`Context`/`It` blocks map to acceptance scenarios (Given/When/Then)
+| Command | Scope |
+|---|---|
+| `just test` | Fast Go/package tests, excluding E2E and integration suites |
+| `just test-e2e-backend` | Backend functional E2E, after a frontend build |
+| `just test-e2e-extproc` | ExtProc E2E |
+| `just test-e2e-frontend` | Browser E2E against the built frontend |
+| `just test-e2e` | All three E2E suites |
+| `just test-e2e-performance` | Separate performance-labelled measurement |
+| `just test-integration` | Default self-contained integration suites |
+| `just test-integration-infra` | Tagged infrastructure-backed suites |
+| `just test-integration-all` | Both integration layers |
 
-**Test Structure**:
-
-```
-tests/e2e/
-├── e2e_suite_test.go              # Ginkgo test suite entry point
-├── bootstrap/                      # VOLATILE - Wraps production bootstrap
-│   ├── server_factory.go          # Uses app.Builder from production
-│   ├── test_server.go             # Wraps production HTTP server
-│   └── storage.go                 # Uses production storage.Adapter
-├── fixtures/                       # STABLE - Test data (domain model)
-│   ├── agents.go, grants.go, principals.go, config.go
-├── helpers/                        # STABLE - Test utilities
-│   ├── http_helpers.go, mock_upstream.go
-├── matchers/                       # STABLE - Custom Gomega matchers
-│   └── oauth2_matchers.go
-└── Test scenarios (62 scenarios total)
-    ├── oauth2_authorize_test.go   # Authorization endpoint (23 scenarios)
-    ├── oauth2_token_test.go       # Token endpoint (12 scenarios)
-    ├── oauth2_metadata_test.go    # Metadata endpoint (8 scenarios)
-    ├── oauth2_security_test.go    # Security tests (12 scenarios)
-    └── oauth2_edge_cases_test.go  # Edge cases (7 scenarios)
-```
-
-**Running E2E Tests**:
-
-```bash
-# Run the backend E2E suite
-just test-e2e-backend
-
-# Run the backend suite with coverage report
-just test-e2e-backend-coverage
-
-# Watch the backend suite (auto-rerun on changes)
-just test-e2e-backend-watch
-
-# Run all backend, ExtProc, and frontend E2E suites
-just test-e2e
-
-# Run specific scenarios
-ginkgo -v --focus="Authorization Endpoint" ./tests/e2e/
-```
-
-**Key Benefits**:
-
-- **Refactoring-Resistant**: Tests survive routing/DI changes because they use production bootstrap
-- **Fast Execution**: In-memory storage, no database containers (< 60 seconds for full suite)
-- **Clear Mapping**: Each `It()` block maps to one acceptance scenario in spec.md
-- **Readable Output**: Ginkgo output is hierarchical and understandable by non-developers
-- **Production Parity**: Tests exercise the same code path as production (DI, routing, middleware)
-
-**Documentation**: Comprehensive E2E testing guide with examples, patterns, and anti-patterns in [tests/e2e/README.md](tests/e2e/README.md)
-
-**Technologies**:
-
-- Ginkgo v2 (BDD test framework)
-- Gomega (assertion library)
-- `net/http/httptest` (HTTP test server)
-- Production `app.Builder` and `httpAdapter.Server` (no custom test implementations)
+Current test totals and timings come from each run, not a historical scenario count.
+The [E2E guide](tests/e2e/README.md) and [storage integration guide](tests/integration/storage/README.md) document harness boundaries and prerequisites.
 
 #### 3.1.5. Tool Approval Domain
 
@@ -471,14 +263,14 @@ internal/adapters/storage/postgres/
 
 **API Specifications**:
 
-- **[/api/enduser/openapi.yaml](/api/enduser/openapi.yaml)** - End-user server (Port 8000)
+- **[api/enduser/openapi.yaml](api/enduser/openapi.yaml)** - End-user server (Port 8000)
   - Canonical OpenAPI documentation for all end-user facing APIs
   - Endpoints: Health check, user info, consent management (agent delegations, service grants)
   - Authentication: Pre-authentication via reverse proxy (X-Remote-User header) + session-based
   - Response envelope: Consistent `{"data": ...}` structure for resource endpoints
   - Error handling: Standardized error response format with code and message
 
-- **[/api/admin/openapi.yaml](/api/admin/openapi.yaml)** - Admin server (Port 14000)
+- **[api/admin/openapi.yaml](api/admin/openapi.yaml)** - Admin server (Port 14000)
   - Canonical OpenAPI documentation for all administrative APIs
   - Endpoints: Health check, agent management (CRUD), service management (CRUD)
   - Authentication: Pre-authentication via reverse proxy (admin-level access controlled upstream)
@@ -942,7 +734,7 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **Name**: extproc-token-exchange
 
-**Purpose**: Standalone gRPC microservice that implements the Envoy External Processor protocol for transparent OAuth2 token exchange. When deployed alongside agentgateway, the service intercepts incoming HTTP requests via Envoy's ExtProc filter, extracts Bearer tokens from request headers, performs RFC 8693 token exchange against the identity broker, and replaces the Authorization header with the exchanged token. Exchanged tokens are cached in-memory with singleflight deduplication to optimize performance.
+**Purpose**: A standalone gRPC service performs RFC 8693 token exchange for gateway requests. The gateway supplies validated exchange inputs through metadata, not raw bearer-header extraction. Accepted [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md) governs this boundary. The [exchanger](internal/extproc/server/exchanger.go) caches results and deduplicates concurrent refreshes.
 
 **Architecture**: Hexagonal (ports and adapters)
 
@@ -961,11 +753,7 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **Broker HTTP Transport**: ExtProc clones Go's default transport, preserving proxy and keep-alive behavior while enabling HTTP/2 with its configured TLS trust. Each client allows up to 100 idle and 100 total connections per host. New connections have a 1s TCP dial timeout and, for HTTPS, a 2s TLS handshake timeout. These are failure ceilings, not the <200ms typical cache-miss target. The separately configured `oauth2.exchange_timeout` defaults to 5s as an overall failure bound for token exchange and client-credentials grants.
 
-**CachedToken**: Value object representing a cached token with:
-
-- `accessToken`: The exchanged token value
-- `expiresAt`: Absolute expiration timestamp
-- Computed from `expires_in` response field (capped at `cache.max_ttl`, defaulting to `cache.default_ttl`)
+**CachedToken**: The [cache entry](internal/extproc/server/exchanger.go) holds the token, broker-issued identity and permission metadata, expiry, and a separate stale deadline. It can instead hold a short-lived re-authentication error. [012-extproc-in-memory-token-cache.md](adrs/012-extproc-in-memory-token-cache.md#implementation-clarification) separates the implemented lifecycle from unresolved policy conflicts.
 
 **TokenCacheKey**: Struct used as Go map key: `{subjectToken, resourceURI}`. Using struct keys prevents separator-injection attacks compared to string concatenation.
 
@@ -1067,7 +855,7 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 
 #### 3.2.5. Security Features
 
-**Fail-Closed**: Exchange failures return 500 ImmediateResponse; original bearer token is never forwarded.
+**Exchange outcomes**: Accepted [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md) defines rejection, re-authentication, and forwarding outcomes. The [exchanger](internal/extproc/server/exchanger.go) can return a cached token after a transient refresh failure. The [token-cache policy conflict](adrs/012-extproc-in-memory-token-cache.md#unresolved-policy-conflict) remains unresolved.
 
 **SSRF Mitigation**: `validateResourceURI()` enforces absolute URIs with http/https schemes only.
 
@@ -1075,20 +863,20 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 
 **Client Secret Protection**: client_secret stored in memory only (config), never logged (logged as `[REDACTED]`), redacted from error responses.
 
-**Client Assertion Refresh**: Background goroutine acquires ID token from client_credentials grant at startup (fail-fast), refreshes proactively within 30s of expiry, retries on failure.
+**Client Assertion Refresh**: The [background loop](internal/extproc/server/exchanger.go#L559-L618) refreshes assertions when remaining lifetime falls below the larger of 20% of total lifetime and 30 seconds.
 
-**Cache Expiry**: Tokens automatically expired and evicted; background goroutine sweeps every `cache.default_ttl / 2`.
+**Cache Expiry**: The [sweep](internal/extproc/server/exchanger.go#L559-L596) runs every `max(cache.default_ttl / 2, 1s)`. Success entries remain through their stale deadline. Expiry does not guarantee immediate deletion, and no capacity eviction exists. See [012-extproc-in-memory-token-cache.md](adrs/012-extproc-in-memory-token-cache.md#retention-capacity-and-cleanup).
 
 **TLS Enforcement**: Token endpoint and issuer must use https:// unless `oauth2.tls.allow_http: true` (development only).
 
 #### 3.2.6. Performance
 
-- **RequestHeaders processing**: <10ms typical (cache hit)
-- **Token exchange**: <200ms typical (cache miss, includes HTTP RPC)
-- **Singleflight deduplication**: Concurrent requests for same key trigger exactly one exchange
-- **Cache eviction**: Background goroutine runs non-blocking
-
-**Throughput**: Handles 1000s of requests/sec at typical latencies.
+The [exchanger](internal/extproc/server/exchanger.go) avoids broker calls for fresh cache hits and deduplicates concurrent refreshes through singleflight.
+Its background sweep takes the cache write lock, so eviction can delay concurrent cache access.
+This design does not establish a universal latency or throughput guarantee.
+The [ExtProc specification](specs/015-extproc-token-exchange/spec.md#success-criteria-mandatory) defines startup criteria.
+The [approval-sync specification](specs/026-extproc-approval-sync/spec.md#measurable-outcomes) defines gate latency and propagation targets.
+Reported performance requires measurement under the relevant workload.
 
 #### 3.2.7. Deployment
 
@@ -1214,23 +1002,42 @@ Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker 
 
 ## 5. External Integrations / APIs
 
-(List any third-party services or external APIs the system interacts with.)
+The broker's external integrations have distinct owners:
 
-Service Name 1: [e.g., Stripe, SendGrid, Google Maps API]
+| Integration | Contract and source |
+|---|---|
+| Third-party OAuth2 providers | Session authorization and token exchange in the [end-user API](api/enduser/openapi.yaml) |
+| Upstream OAuth2 authorization server | Proxy and hybrid modes under [014-oauth2-server-mode.md](adrs/014-oauth2-server-mode.md) |
+| JWKS endpoints | Key retrieval and caching under [008-token-exchange-jwks-adapter-pattern.md](adrs/008-token-exchange-jwks-adapter-pattern.md) |
+| Client ID Metadata Documents | Metadata retrieval under [015-cimd-fetcher-architecture.md](adrs/015-cimd-fetcher-architecture.md) |
+| AWS KMS and DynamoDB | Encryption resources under [010-cdk-encryption-infrastructure.md](adrs/010-cdk-encryption-infrastructure.md) |
+| Gateway ExtProc protocol | Standalone gRPC processing under [011-extproc-standalone-binary.md](adrs/011-extproc-standalone-binary.md) |
+| Open Policy Agent | Embedded ExtProc authorization under [028-opa-extproc-authorization.md](adrs/028-opa-extproc-authorization.md) |
+| OpenTelemetry collector | Configurable export under [011-opentelemetry-provider-pattern.md](adrs/011-opentelemetry-provider-pattern.md) |
 
-Purpose: [Briefly describe its function, e.g., "Payment processing."]
-
-Integration Method: [e.g., REST API, SDK]
+The [end-user](api/enduser/openapi.yaml) and [admin](api/admin/openapi.yaml) OpenAPI files define public HTTP contracts.
+The [constitution, Principles IV and X](.specify/memory/constitution.md) requires stakeholder approval before API changes.
+Released breaking changes require a major version bump or a new endpoint, not an undocumented route change.
 
 ## 6. Deployment & Infrastructure
 
-Cloud Provider: [e.g., AWS, GCP, Azure, On-premise]
+The [broker Helm chart](charts/agentic-identity-broker/templates/deployment.yaml) deploys the broker, not ExtProc.
+Its [migration job](charts/agentic-identity-broker/templates/job-migrate.yaml) uses a separate image when PostgreSQL migrations are enabled.
+Accepted [009-separate-migration-docker-image.md](adrs/009-separate-migration-docker-image.md) defines this separation.
 
-Key Services Used: [e.g., EC2, Lambda, S3, RDS, Kubernetes, Cloud Functions, App Engine]
+The container definitions are [Dockerfile](build/docker/Dockerfile), [Dockerfile.migrate](build/docker/Dockerfile.migrate), and [Dockerfile.extproc](build/docker/Dockerfile.extproc).
+The [justfile](justfile) owns build recipes.
+The [Compose configuration](docker-compose.yml) provides the local multi-service environment.
+The [CDK stack](infra/cdk/stack.go) defines encryption resources, not a complete broker hosting platform.
+Accepted [030-vendor-neutral-oidc-trust.md](adrs/030-vendor-neutral-oidc-trust.md) governs its OIDC trust configuration.
 
-CI/CD Pipeline: [e.g., GitHub Actions, GitLab CI, Jenkins, CircleCI]
+The [CI workflow](.github/workflows/ci.yml), [release workflow](.github/workflows/release.yml), and [delivery configuration](delivery.yaml) define automation.
+The [telemetry configuration reference](docs/configuration.md) and [011-opentelemetry-provider-pattern.md](adrs/011-opentelemetry-provider-pattern.md) describe optional OpenTelemetry export.
+The repository does not prescribe a universal monitoring backend.
 
-Monitoring & Logging: [e.g., Prometheus, Grafana, CloudWatch, Stackdriver, ELK Stack]
+The workload-identity annotation contract still needs deployment evidence.
+The conflicting guide and chart claims are recorded in [workpackage 5](specs/agentic-engineering-improvements.md#5-prove-the-deployment-identity-contract).
+This documentation repair does not select a webhook or claim that a pod can assume the intended role.
 
 ## 7. Security Considerations
 
@@ -1243,77 +1050,82 @@ The [security assurance case](docs/resources/assurance-case.md) records the asse
 
 ## 8. Development & Testing Environment
 
-Local Setup Instructions: [Link to CONTRIBUTING.md or brief steps]
+The [contributor guide](CONTRIBUTING.md) documents local startup and prerequisites.
+The [justfile](justfile) defines commands and their dependencies, including the full `just verify` gate.
+The [Go manifest](go.mod) and [frontend manifest](web/package.json) define test and quality-tool dependencies.
+The [E2E guide](tests/e2e/README.md) explains acceptance suites.
+The [storage integration guide](tests/integration/storage/README.md) distinguishes self-contained tests from container-backed tests.
 
-Testing Frameworks: [e.g., Jest, Pytest, JUnit]
+## 9. Open Architecture Questions
 
-Code Quality Tools: [e.g., ESLint, Black, SonarQube]
+These items require review or evidence, not approval by documentation cleanup:
 
-## 9. Future Considerations / Roadmap
-
-(Briefly note any known architectural debts, planned major changes, or significant future features that might impact the architecture.)
-
-[e.g., "Migrate from monolith to microservices."]
-
-[e.g., "Implement event-driven architecture for real-time updates."]
+- **JWT pre-authentication policy:** [Workpackage 0](specs/agentic-engineering-improvements.md#0-resolve-the-jwt-security-policy-conflict) records a source/policy conflict. The unsigned-subject exception does not authorize unsigned end-user pre-authentication.
+- **Workload identity:** [Workpackage 5](specs/agentic-engineering-improvements.md#5-prove-the-deployment-identity-contract) requires one verified CDK-to-pod identity contract.
+- **Frontend verification:** [Workpackages 4 and 6](specs/agentic-engineering-improvements.md) record development-test and theme-evidence gaps.
+- **Pending decisions:** The proposed ADRs in the index remain proposals, even where implementation exists. Maintainers must resolve their status through review under [Constitution II](.specify/memory/constitution.md#ii-architecture-documentation--decision-records).
 
 ## 10. Architecture Decision Records (ADRs)
 
-This section lists all architectural decisions made for this project. ADRs document important technical choices, their rationale, alternatives considered, and consequences.
+Full filenames identify decisions because ADR numbers are not unique.
+The status column reflects each linked file's decision status, not its implementation progress.
+Only accepted decisions are binding under [Constitution II](.specify/memory/constitution.md#ii-architecture-documentation--decision-records).
+Partial supersessions and amendments apply only to the subjects named in those decisions.
 
-### Core Infrastructure
-
-- [ADR 002: Configuration Libraries](adrs/002-configuration-libraries.md) - Multi-source configuration with Viper, Cobra, and godotenv
-- [ADR 003: Chi Framework Selection](adrs/003-chi-framework.md) - HTTP routing framework choice
-- [ADR 004: Dual-Server Isolation](adrs/004-dual-server-isolation.md) - Separate end-user and admin servers
-- [ADR 004: Storage Layer Architecture](adrs/004-storage-layer-architecture.md) - Hexagonal architecture for persistence
-
-### Frontend & User Interface
-
-- [ADR 005: SPA Serving Pattern](adrs/005-spa-serving-pattern.md) - Serving React SPA from Go backend
-- [ADR 006: Frontend Stack](adrs/006-frontend-stack.md) - React 18 + Vite + Tailwind CSS v4
-
-### Testing & Quality
-
-- [ADR 007: E2E Testing with Ginkgo](adrs/007-e2e-testing-with-ginkgo.md) - BDD-style E2E tests using production bootstrap
-
-### RFC 8693 Token Exchange
-
-- [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
-
-### Security & Encryption
-
-- [ADR 008: Encryption Context Optimization](adrs/008-encryption-context-optimization.md) - Service-ID-only context binding performance optimization
-- [ADR 009: Envelope Encryption Design](adrs/009-envelope-encryption-design.md) - DEK-per-session with AWS KMS and context binding
-- [ADR 010: CDK Encryption Infrastructure](adrs/010-cdk-encryption-infrastructure.md) - AWS CDK (Go) for KMS, DynamoDB, and IAM provisioning
-- [ADR 012: Encryption Layer Separation](adrs/012-encryption-layer-separation.md) - Domain service encryption pattern for hexagonal architecture
-
-### Observability
-
-- [ADR 011: OpenTelemetry Provider Pattern](adrs/011-opentelemetry-provider-pattern.md) - App-layer OTel provider, otelchi middleware choice, context-based span propagation
-- [ADR 033: Request Security Context Propagation](adrs/033-request-security-context-propagation.md) - Perimeter security-context capture, additive `traceresponse` response header, and delegated `calling_peer` semantics
-
-### Client ID Metadata Document (CIMD)
-
-- [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) - SSRF-hardened HTTP client, in-process caching, hexagonal port, strategy pattern for opaque vs URL-based client IDs
-- [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) - Separate broker key domains and public JWK trust surfaces for outbound CIMD client authentication
-
-### Tool Approval
-- [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
+| Decision file | Status | Scope or later decision |
+|---|---|---|
+| [002-configuration-libraries.md](adrs/002-configuration-libraries.md) | Accepted | Viper, Cobra, and godotenv |
+| [003-chi-framework.md](adrs/003-chi-framework.md) | Accepted | HTTP routing |
+| [004-dual-server-isolation.md](adrs/004-dual-server-isolation.md) | Accepted | Separate end-user and admin listeners |
+| [004-storage-layer-architecture.md](adrs/004-storage-layer-architecture.md) | Accepted | Segregated storage ports and sqlx adapters |
+| [005-spa-serving-pattern.md](adrs/005-spa-serving-pattern.md) | Accepted, partly superseded | Mount, build paths, and SPA configuration replaced by [035-root-mounted-spa.md](adrs/035-root-mounted-spa.md) |
+| [006-frontend-stack.md](adrs/006-frontend-stack.md) | Accepted | Frontend stack decision. Current versions are in [web/package.json](web/package.json) |
+| [007-e2e-testing-with-ginkgo.md](adrs/007-e2e-testing-with-ginkgo.md) | Accepted | Ginkgo acceptance tests |
+| [008-encryption-context-optimization.md](adrs/008-encryption-context-optimization.md) | Accepted, amended | Single-subject context. Amendment adds `kid` for non-session assets |
+| [008-token-exchange-jwks-adapter-pattern.md](adrs/008-token-exchange-jwks-adapter-pattern.md) | Accepted | JWKS retrieval and caching |
+| [009-cel-for-authorization-policies.md](adrs/009-cel-for-authorization-policies.md) | Accepted | CEL authorization and claim extraction |
+| [009-envelope-encryption-design.md](adrs/009-envelope-encryption-design.md) | Accepted, configuration clarified | Original configuration is historical. See its implementation note and the amendment in [008-encryption-context-optimization.md](adrs/008-encryption-context-optimization.md) |
+| [009-separate-migration-docker-image.md](adrs/009-separate-migration-docker-image.md) | Accepted | Separate migration image |
+| [010-cdk-encryption-infrastructure.md](adrs/010-cdk-encryption-infrastructure.md) | Accepted | Encryption infrastructure. OIDC trust clarified by [030-vendor-neutral-oidc-trust.md](adrs/030-vendor-neutral-oidc-trust.md) |
+| [011-extproc-standalone-binary.md](adrs/011-extproc-standalone-binary.md) | Accepted | Separate ExtProc process and configuration |
+| [011-opentelemetry-provider-pattern.md](adrs/011-opentelemetry-provider-pattern.md) | Accepted | Broker telemetry lifecycle |
+| [012-encryption-layer-separation.md](adrs/012-encryption-layer-separation.md) | Accepted, partly superseded | Two-state `Secret` description replaced by [036-public-client-token-endpoint-auth.md](adrs/036-public-client-token-endpoint-auth.md) |
+| [012-extproc-in-memory-token-cache.md](adrs/012-extproc-in-memory-token-cache.md) | Accepted | Token freshness, stale retention, and eviction |
+| [013-strongly-typed-entity-ids.md](adrs/013-strongly-typed-entity-ids.md) | Accepted | Typed entity identifiers |
+| [014-long-poll-listen-notify.md](adrs/014-long-poll-listen-notify.md) | Accepted | Broker approval long polling and PostgreSQL notifications |
+| [014-oauth2-server-mode.md](adrs/014-oauth2-server-mode.md) | Accepted | Proxy, local, and hybrid OAuth2 modes |
+| [015-cimd-fetcher-architecture.md](adrs/015-cimd-fetcher-architecture.md) | Accepted | CIMD fetch boundary |
+| [016-authorization-session-anti-spoofing.md](adrs/016-authorization-session-anti-spoofing.md) | Accepted, amended | Amendment extends sealed authorization sessions to all modes |
+| [017-optional-agent-client-id.md](adrs/017-optional-agent-client-id.md) | Accepted | Optional agent client ID |
+| [018-approval-endpoint-auth-boundaries.md](adrs/018-approval-endpoint-auth-boundaries.md) | Accepted | Browser and machine approval authentication |
+| [027-extproc-telemetry-shared-dependency.md](adrs/027-extproc-telemetry-shared-dependency.md) | Accepted | ExtProc telemetry dependencies |
+| [028-opa-extproc-authorization.md](adrs/028-opa-extproc-authorization.md) | Accepted, amended | Amendment requires MCP `target_server_name` |
+| [029-token-exchange-client-assertion-trust-anchor.md](adrs/029-token-exchange-client-assertion-trust-anchor.md) | Proposed | Dedicated client-assertion trust anchor |
+| [030-normalize-protected-resources.md](adrs/030-normalize-protected-resources.md) | Accepted | Normalized protected-resource children |
+| [030-vendor-neutral-oidc-trust.md](adrs/030-vendor-neutral-oidc-trust.md) | Accepted | Parameterized OIDC trust |
+| [031-unverified-subject-unsigned-jwt.md](adrs/031-unverified-subject-unsigned-jwt.md) | Accepted | Bounded local-impersonation subject exception under Constitution I |
+| [032-impersonation-requires-user-delegation.md](adrs/032-impersonation-requires-user-delegation.md) | Accepted | Delegation required for impersonation |
+| [033-request-security-context-propagation.md](adrs/033-request-security-context-propagation.md) | Proposed | Request security context and audit identity |
+| [034-audience-absent-impersonation-credentials.md](adrs/034-audience-absent-impersonation-credentials.md) | Accepted | Explicit absent-audience policy |
+| [035-root-mounted-spa.md](adrs/035-root-mounted-spa.md) | Accepted | Partly supersedes [005-spa-serving-pattern.md](adrs/005-spa-serving-pattern.md) |
+| [035-shared-tool-pattern-matching.md](adrs/035-shared-tool-pattern-matching.md) | Accepted | Shared matcher in [internal/domain/approval/toolpattern/](internal/domain/approval/toolpattern/) |
+| [036-extproc-approval-cache-and-gate.md](adrs/036-extproc-approval-cache-and-gate.md) | Accepted | Approval snapshots, cache, and request gate |
+| [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md) | Accepted | Supersedes Feature 015 raw-input descriptions, not its standalone or cache decisions |
+| [036-public-client-token-endpoint-auth.md](adrs/036-public-client-token-endpoint-auth.md) | Accepted | Explicit public clients and absent secrets. CIMD key domain extended by [037-cimd-client-authentication-key-domain.md](adrs/037-cimd-client-authentication-key-domain.md) |
+| [037-cimd-client-authentication-key-domain.md](adrs/037-cimd-client-authentication-key-domain.md) | Accepted | Separate CIMD authentication keys |
+| [037-consent-selection-oauth-redirect-state.md](adrs/037-consent-selection-oauth-redirect-state.md) | Proposed | Claims a replacement for Feature 008 selection transport. Acceptance remains unresolved |
 
 ## 11. Project Identification
 
 Project Name: Agentic Identity Broker
 
-Repository URL: [Insert Repository URL]
+Repository: [zalando-incubator/agentic-identity-broker](https://github.com/zalando-incubator/agentic-identity-broker), also linked from [README.md](README.md).
 
-Primary Contact/Team: [Insert Lead Developer/Team Name]
-
-Date of Last Update: 2026-06-02
+Maintainer contacts: [MAINTAINERS](MAINTAINERS).
 
 ## 12. Glossary / Acronyms
 
-Define any project-specific terms or acronyms.)
+The terms that follow describe domain models and their relationships.
 
 ### Configuration Domain
 
@@ -1323,7 +1135,7 @@ Define any project-specific terms or acronyms.)
 
 **Environment Variable Reference**: A placeholder in configuration (using ${VAR_NAME} syntax) that references an environment variable for runtime substitution. Supports nested expansion with circular reference detection.
 
-**Source Precedence**: The priority order determining which configuration value wins when multiple sources provide the same key. Order (lowest to highest): Defaults < .env Files < YAML < CLI Flags.
+**Source Precedence**: The [configuration loader](internal/config/loader.go) applies defaults, YAML, explicit environment bindings, and bound CLI flags in increasing priority. Environment files populate environment values before YAML loading.
 
 **Sensitive Value**: Configuration value that should be redacted in logs and output. Identified by IDENTITY_BROKER_ prefix or keywords (password, secret, token, key, credential, auth).
 
@@ -1561,7 +1373,7 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 ### OAuth2 Server Mode
 
-**BrokerClientCredential**: OAuth2 client credentials generated by the broker and bound to exactly one Agent. Contains hashed client secret (Argon2id, PHC format). `client_id` equals the agent's UUID string — no separate field needed. One credential per agent enforced by UNIQUE on `client_credentials.client_id`. Lifecycle: generated on demand via Admin API, replaced atomically on rotation, cascade-deleted with agent. Located in `internal/domain/storage/broker_client_credential.go`.
+**BrokerClientCredential**: OAuth2 client credentials generated by the broker and bound to exactly one Agent. Contains hashed client secret (Argon2id, PHC format). `client_id` equals the agent's UUID string — no separate field needed. One credential per agent enforced by UNIQUE on `client_credentials.client_id`. Lifecycle: generated on demand via Admin API, replaced atomically on rotation, cascade-deleted with agent. Source: [client_credential.go](internal/domain/storage/client_credential.go).
 
 **CredentialService**: Domain service in `internal/domain/oauth2server/credential_service.go` that owns broker credential creation, rotation, and revocation. It checks agent existence and selects creation or replacement through repository ports. The builder injects it into the admin handler through `ClientCredentialManager`. The handler retains HTTP response formatting and existing success logs.
 
@@ -1701,7 +1513,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **Approval pattern authority**: `arguments_hash` is the exact identity used to de-duplicate pending approvals. `ToolPattern` is server-owned exact coverage, and `ParamsPattern` defines editable coverage consumed by ExtProc's approval matcher. `ComputeArgumentsHash` and `toolpattern.Canonical` intentionally serve different purposes and must not be unified.
 
-**ApprovalSyncState**: Single-row entity tracking a monotonically increasing version counter. Incremented on every approval mutation. Used as the ETag source for the long-poll sync endpoint. Located in `migrations/009_create_approval_sync_state.up.sql`.
+**ApprovalSyncState**: Single-row entity tracking a monotonically increasing version counter. Incremented on every approval mutation. Used as the ETag source for the long-poll sync endpoint. Source: [025_create_approval_sync_state.up.sql](migrations/025_create_approval_sync_state.up.sql).
 
 **ApprovalCreated**: Domain event emitted when ExtProc creates a new pending approval. Carries approval_id, principal, agent_id, tool_name, and captured W3C traceparent request context for span linking.
 

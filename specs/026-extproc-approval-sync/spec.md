@@ -4,7 +4,22 @@
 **Created**: 2026-04-10
 **Status**: Draft
 **Input**: User description: "I want the extproc application to actually use the approvals granted by the identity broker in the Open Policy Agent instance and keep the approvals current so that users of MCP Servers can continue in their agentic sessions. The changes to the broker have already been done on branch 024-approval-api-ui."
-**Related**: [Design: Permission Sets & Tool Authorization](../.../design-tool-authorization/specs/design-permission-sets-tool-authorization.md), [Feature 020: OPA-Based Authorization in ExtProc](../020-extproc-opa-authorization/spec.md), [Feature 024: Tool Approval API & UI](../024-approval-api-ui/spec.md)
+**Related**: [Design: Permission Sets & Tool Authorization](../design-permission-sets-tool-authorization.md), [Feature 020: OPA-Based Authorization in ExtProc](../020-extproc-opa-authorization/spec.md), [Feature 024: Tool Approval API & UI](../024-approval-api-ui/spec.md)
+
+## Current synchronization contract
+
+The accepted [ADR 036: ExtProc Approval Cache and Gate](../../adrs/036-extproc-approval-cache-and-gate.md) governs synchronization and supersedes the original delta wording.
+Every `200 OK` contains a full snapshot for the requested scope, not changes since an ETag.
+An unfiltered snapshot replaces all cached pairs. A principal-filtered snapshot replaces only that principal's pairs.
+Replacement removes omitted records and pairs, including revoked approvals. An empty snapshot clears its scope.
+See [the broker handler](../../internal/adapters/http/handlers/approval/sync_handler.go) and [the cache replacement methods](../../internal/extproc/approval/cache.go).
+
+The ETag is a version token, not a delta cursor. The broker emits `"v{version}"`.
+A matching version permits `304 Not Modified`. A missing, different, or unparseable version returns the current snapshot.
+There is no delta retention window. See [the broker handler](../../internal/adapters/http/handlers/approval/sync_handler.go).
+Background `200` responses replace the cache and store the ETag. A `304` retains records and the ETag, and refreshes confirmation time.
+Targeted reads leave the background ETag and global confirmation time unchanged. They reject a parsed version older than the cached background version.
+See [the syncer](../../internal/extproc/approval/syncer.go) and [the cache](../../internal/extproc/approval/cache.go).
 
 ## Clarifications
 
@@ -52,7 +67,7 @@ Today, the OPA pipeline in ExtProc already receives `context.granted_permission_
 
 1. **Populates OPA's input with granted permission sets** from the RFC 8693 token-exchange response snapshot (feature 020's existing `granted_permission_sets`). Approval records are **not** passed into OPA — the local approval cache (synced from `GET /api/approvals`) is matched by ExtProc *outside* the policy (glob `tool_pattern`/`params_pattern`, per the OPA Decision Flow and design §4.7–4.8), so policies stay approval-agnostic and only decide the *requirement* (`allow` / `deny` / `approval_required`).
 2. **Activates the `approval_required` decision** in the OPA model (`allow` / `deny` / `approval_required`), teaching ExtProc to act on each: forward the exchanged token on `allow`, create a pending approval and return a `URLElicitationRequiredError` on `approval_required`, or hard-deny. `ciba_required` (Tier 3) is recognized but treated as `deny` in this feature and deferred (see Clarifications).
-3. **Keeps the approval cache current** via a background long-poll goroutine with ETag-based incremental updates. ExtProc authorizes cached approvals only while their state is fresh (FR-019).
+3. **Keeps the approval cache current** through ETag-based full-snapshot replacement, not incremental updates. Cached authorization requires freshness under FR-019. See [Current synchronization contract](#current-synchronization-contract).
 
 Together, these changes mean that MCP server users can: (a) have tool calls evaluated against their actual consent-granted permission sets, (b) be prompted via a URL when a tool requires explicit approval, and (c) resume their agentic session immediately after granting approval — without restarting the session or manually re-issuing the tool call.
 
@@ -91,6 +106,8 @@ flowchart TD
 
 ### Approval Cache Lifecycle
 
+This diagram follows the [current synchronization contract](#current-synchronization-contract), including removal of omitted records and pairs.
+
 ```mermaid
 flowchart TD
     A([ExtProc starts]) --> B["Bootstrap:\nGET /api/approvals\nno If-None-Match, client assertion"]
@@ -100,17 +117,17 @@ flowchart TD
     C2 --> SYNC
 
     subgraph SYNC ["Background long-poll goroutine (runs indefinitely)"]
-        S1["GET /api/approvals\nIf-None-Match: etag-vN\nX-Long-Poll-Timeout: 30s"] --> S2{Response}
-        S2 -->|"200 OK + changes + new ETag"| S3[Atomically update changed pairs]
+        S1["GET /api/approvals\nIf-None-Match: vN\nX-Long-Poll-Timeout: 30s"] --> S2{Response}
+        S2 -->|"200 OK + full snapshot + ETag"| S3[Atomically replace all pairs<br/>Remove omitted records and pairs]
         S3 --> S1
-        S2 -->|"304 Not Modified"| S1
+        S2 -->|"304: refresh confirmation time, retain ETag"| S1
         S2 -->|"Error"| S4["Exponential back-off (1s to 60s)"]
         S4 --> S1
     end
 
     M([Cache miss: new principal]) --> N["Targeted:\nGET /api/approvals?principal=:principal"]
-    N -->|"200 OK + principal's pairs"| O[Augment cache for this principal]
-    O --> P([Proceed to OPA evaluation])
+    N -->|"200 OK + principal snapshot"| O[Replace this principal's pairs<br/>Remove omitted records and pairs]
+    O --> P([Re-evaluate approval match after OPA])
 ```
 
 ### Agent Retry After User Approval
@@ -137,9 +154,9 @@ sequenceDiagram
     User->>Broker: POST /api/approvals/abc123/approve persistence=session
     Broker-->>User: status=approved
 
-    Note over Cache,Broker: Background long-poll detects change,<br/>updates cache within ~1s
-    Broker-->>EP: 200 OK with updated pair (abc123 = approved, session)
-    EP->>Cache: Update: abc123 approved, session scope
+    Note over Cache,Broker: Background long-poll returns a full snapshot<br/>(see Current synchronization contract)
+    Broker-->>EP: 200 OK with full snapshot and ETag
+    EP->>Cache: Replace all pairs, including removals
 
     Agent->>EP: tools/call: create_pull_request(repo, title) [retry]
     EP->>EP: OPA: approval_required
@@ -196,7 +213,9 @@ When OPA denies a tool call — for example because the user never granted the p
 
 ### User Story 3 — Approval Cache Bootstraps on ExtProc Startup (Priority: P1)
 
-When ExtProc starts, it performs a non-conditional `GET /api/approvals` using its client assertion. The broker determines what data to return — the response may be empty, partial, or full depending on the broker's implementation; ExtProc accepts whatever is provided and populates its local approval cache accordingly. The cache is therefore **pre-warmed**, never guaranteed complete: subsequent requests are served from it where a matching entry exists, and cache misses are augmented on demand (FR-005). The long-poll background goroutine keeps the cache current for the lifetime of the process.
+At startup, ExtProc requests `GET /api/approvals` without `If-None-Match`, using its client assertion. The response is a full snapshot for that request's scope.
+Bootstrap supplies no active session IDs, so it does not preload session approvals. Later targeted reads and polls include active sessions.
+See [the syncer](../../internal/extproc/approval/syncer.go) and [the client contract](contracts/broker-approval-client.md).
 
 **Why this priority**: Bootstrap *pre-warms* the cache with whatever the broker returns up front, then long-poll and cache-miss augmentation keep it current. Without any bootstrap, the first tool call for a tool the user has already permanently approved would still miss the cache and generate a spurious approval request; pre-warming avoids that for the pre-approved records the broker delivers at startup.
 
@@ -208,7 +227,7 @@ When ExtProc starts, it performs a non-conditional `GET /api/approvals` using it
 
 2. **Given** the broker is unreachable at ExtProc startup, **When** the bootstrap request fails, **Then** ExtProc starts successfully with an empty approval cache and logs a startup warning. For each subsequent approval-required tool call, ExtProc attempts the targeted `GET /api/approvals?principal={principal}` required by FR-005; if that read fails, ExtProc returns a hard deny and creates no approval. When the broker recovers, a successful targeted read may establish a confirmed miss and allow approval creation.
 
-3. **Given** the broker returns a valid ETag in the bootstrap response, **When** the background long-poll goroutine begins, **Then** it uses the bootstrap ETag in the `If-None-Match` header and only receives incremental updates going forward.
+3. **Given** bootstrap returns an ETag, **When** background polling begins, **Then** ExtProc sends that ETag in `If-None-Match`. Each later `200` replaces the full scope. A `304` retains the snapshot and refreshes confirmation time. See [Current synchronization contract](#current-synchronization-contract).
 
 4. **Given** a new `(principal, agent)` pair not present in the initial bootstrap arrives, **When** ExtProc receives the first tool call for that pair, **Then** ExtProc makes a targeted `GET /api/approvals?principal={principal}` to augment the cache for that principal before evaluating the OPA approval check.
 
@@ -216,7 +235,8 @@ When ExtProc starts, it performs a non-conditional `GET /api/approvals` using it
 
 ### User Story 4 — Long-Poll Goroutine Keeps Cache Current (Priority: P2)
 
-The background long-poll goroutine maintains a single persistent `GET /api/approvals` connection per ExtProc instance. When any approval state changes in the broker (user approves, denies, or revokes), the broker wakes the waiting connection and delivers the updated state. ExtProc atomically updates only the affected `(principal, agent)` pairs. The "within 2 seconds" propagation SLA is a broker-side implementation requirement — the broker is responsible for notifying waiting long-poll connections promptly. This is not enforced by ExtProc but is validated end-to-end by SC-002.
+The background goroutine maintains one long-poll connection per ExtProc instance. Each `200` replaces all cached pairs, including removals, rather than updating only changed pairs.
+See [Current synchronization contract](#current-synchronization-contract). The two-second propagation target remains an end-to-end acceptance requirement under SC-002, not an ExtProc timer guarantee.
 
 **Why this priority**: Cache staleness determines the maximum delay between user approval and agent continuation. Without long-polling, agents would always wait for a full polling interval, degrading the user experience.
 
@@ -224,13 +244,13 @@ The background long-poll goroutine maintains a single persistent `GET /api/appro
 
 **Acceptance Scenarios**:
 
-1. **Given** the long-poll goroutine holds a connection with `If-None-Match: "etag-v1"` and `X-Long-Poll-Timeout: 30`, **When** no state changes occur within 30 seconds, **Then** the broker returns `304 Not Modified` and the goroutine immediately re-polls with the same ETag.
+1. **Given** the broker version is `"v1"` and ExtProc polls with `If-None-Match: "v1"` and `X-Long-Poll-Timeout: 30`, **When** no change occurs within 30 seconds, **Then** the broker returns `304`. ExtProc refreshes confirmation time and re-polls with the same ETag. See [Current synchronization contract](#current-synchronization-contract).
 
-2. **Given** the long-poll goroutine is waiting, **When** a user approves an approval in the broker UI, **Then** the broker wakes the goroutine within 2 seconds, returns `200 OK` with the updated pair state and a new ETag, and the goroutine atomically updates the affected cache entries.
+2. **Given** a long poll is waiting, **When** a user approves a record, **Then** the broker returns a full snapshot and ETag. ExtProc replaces all pairs, including omissions. SC-002 sets the two-second propagation target. See [Current synchronization contract](#current-synchronization-contract).
 
-3. **Given** the long-poll connection drops due to network interruption, **When** the goroutine reconnects, **Then** it replays the last-known ETag and the broker returns all changes since that ETag (or the full state if the ETag is stale beyond a server-side retention window).
+3. **Given** a connection drops, **When** the goroutine reconnects, **Then** it sends the last background ETag. A differing version returns the full current snapshot, not retained changes. A matching version permits `304`. See [Current synchronization contract](#current-synchronization-contract).
 
-4. **Given** the broker restarts and loses in-memory ETag state, **When** ExtProc reconnects with a stale ETag, **Then** the broker returns the full current state (treating the ETag as unknown) and ExtProc refreshes the full cache.
+4. **Given** the client sends an ETag that differs from the broker version, **When** the broker responds, **Then** it returns the full current snapshot. ExtProc replaces all pairs and removes omitted records. This does not depend on a broker restart or retention window. See [Current synchronization contract](#current-synchronization-contract).
 
 5. **Given** a permanent approval authorized a matching call and the last successful cache synchronization occurred at time `T`, **When** the broker revokes that approval and ExtProc receives no newer accepted snapshot, **Then** a call after `T + tool_approvals.max_staleness` does not authorize from cache. ExtProc performs FR-005. A confirmed miss elicits approval. A failed read or an older targeted ETag returns a hard deny.
 
@@ -296,13 +316,16 @@ ExtProc MUST initiate a non-conditional `GET /api/approvals` with the configured
 ExtProc MUST run exactly one background goroutine that continuously polls `GET /api/approvals` using the client assertion. It MUST:
 - Use the last-known ETag in `If-None-Match` on each poll.
 - Pass `X-Long-Poll-Timeout: {tool_approvals.long_poll_timeout_seconds}` (default: 30) to enable server-side hold.
-- On `200 OK`: atomically replace the complete response scope, store the new ETag, and record the synchronization time for each returned pair.
-- On `304 Not Modified`: refresh `lastSync`. Then immediately re-poll with the same ETag.
+- On `200 OK`: atomically replace all cached pairs, remove omitted records and pairs, store the ETag, and refresh confirmation time.
+- On `304 Not Modified`: retain the snapshot and ETag, refresh `lastSync`, and immediately re-poll. See [Current synchronization contract](#current-synchronization-contract).
 - On error: apply exponential back-off (initial 1s, max 60s) before retrying.
 - Include the currently-active `agent_session_id` query parameter(s) so the broker re-delivers session-persistence approvals for live sessions; permanent approvals are returned unconditionally (feature 024 returns session-scoped approvals only when their `agent_session_id` is supplied).
 
 ### FR-005: Authoritative Broker Read on an Approval Match-Miss
 When OPA returns `approval_required` and no fresh cached approval matches the invocation — because the `(principal, agent)` pair is absent, no record matches the concrete `(tool_name, arguments)`, or its state is stale under FR-019 — ExtProc MUST perform a synchronous, client-assertion `GET /api/approvals?principal={principal}`. It includes active `agent_session_id` query parameters and re-runs FR-015 before creation. A failed, malformed, or older-ETag read is a hard deny. ExtProc MUST NOT create an approval from an unconfirmed miss. Only a successful current read without a match proceeds to FR-006.
+
+The targeted snapshot replaces that principal's scope, including removal of absent pairs and records. It preserves other principals, the background ETag, and global `lastSync`.
+Returned pairs receive a new confirmation time. See [the cache replacement methods](../../internal/extproc/approval/cache.go) and [Current synchronization contract](#current-synchronization-contract).
 
 ### FR-006: Approval Creation on a Confirmed Miss
 When OPA returns `approval_required` and, after the FR-005 authoritative broker read, still no matching approval exists, ExtProc MUST:
@@ -396,7 +419,7 @@ For every gate outcome, ExtProc MUST increment `extproc.approval.gate.decisions`
 
 ## Assumptions
 
-- The broker's `GET /api/approvals`, `POST /api/approvals`, and `POST /api/approvals/{id}/consume` endpoints are implemented as specified in feature 024 (`024-approval-api-ui`). `POST /api/approvals` requires dual auth (subject token in `Authorization: Bearer` + client assertion in `X-Client-Assertion`); `GET /api/approvals` (optionally `?principal={p}`, with repeatable `agent_session_id`) provides ETag long-poll and immediate reads with client-assertion (CEL) authentication and exposes each approval's `tool_pattern` + `params_pattern`; `POST /api/approvals/{id}/consume` is subject-token-only, takes no body, and returns idempotent `200 OK` (and `422` for non-`once`). `GET /api/approvals/{id}` is browser-only (`X-Remote-User` principal) and is NOT consumed by ExtProc. The approval **pattern** fields, shared matcher, and migration are provided by the `approval-glob-patterns` broker work (ADR 035, `specs/024-approval-api-ui/glob-approval-matching.md`, migration `030_add_approval_patterns`, `internal/toolpattern`) and are treated as a prerequisite, not implemented here.
+- The broker's approval endpoints come from [Feature 024](../024-approval-api-ui/spec.md). Creation requires a subject token and client assertion. Sync requires a client assertion. Consumption requires a subject token and no body, with idempotent `200 OK` and `422` for non-`once` records. The single-record browser endpoint is not an ExtProc input. Sources: [018-approval-endpoint-auth-boundaries.md](../../adrs/018-approval-endpoint-auth-boundaries.md) and [the API contract](../../api/enduser/openapi.yaml). Pattern fields and matching are prerequisites from [035-shared-tool-pattern-matching.md](../../adrs/035-shared-tool-pattern-matching.md), [032_add_approval_patterns.up.sql](../../migrations/032_add_approval_patterns.up.sql), and [internal/domain/approval/toolpattern/](../../internal/domain/approval/toolpattern/).
 - **This feature makes exactly two broker-side changes**, both additive, optional-valued, and specified in FR-017 and FR-018: `principal` + `agent_id` on the RFC 8693 token-exchange response, and `approved_at` on the `GET /api/approvals` summary. Both project values the broker has already computed — the CEL-extracted principal and resolved agent UUID, and `ToolApproval.ApprovedAt` — so neither adds extraction logic, configuration, storage, or a migration. No other broker behavior changes: the create, consume, and single-get endpoints, their authentication boundaries, and the sync long-poll protocol are all untouched (no `409` on consume, no consume-body session field, no delta protocol).
 - The OPA policy used in this feature emits `allow` / `deny` / `approval_required`; `ciba_required` MAY appear but is treated as `deny` (deferred). The OPA evaluation pipeline from feature 020 is present and operational.
 - The source of granted permission sets for OPA evaluation is feature 020's `input.context.granted_permission_sets` (populated from the RFC 8693 token-exchange response, with `granted_permission_sets_available`). The approval cache is consulted by ExtProc **outside** OPA (after an `approval_required` decision — FR-002/FR-015); approval records are **not** placed in the OPA input. The `granted_permission_sets` placeholder returned by `GET /api/approvals` is not consumed by OPA.
