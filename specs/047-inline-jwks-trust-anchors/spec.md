@@ -23,6 +23,12 @@ Issue #185 says this assumption fails when infrastructure holds the signing key 
 
 This feature changes only **where** a trust anchor's public keys come from. It does not change which issuer is trusted. It does not change how credentials are validated. It does not change which credentials are accepted. It extends ADR 029's trust-anchor configuration. It does not supersede it.
 
+## Clarifications
+
+### Session 2026-10-12
+
+- Q: How does the broker handle changes to a key-set file after startup? → A: It re-reads the file within the trust anchor's refresh bounds. When a re-read fails, the broker keeps the last valid key set and reports degraded health. This matches the behaviour of remote key sets, so a key rotation that updates a mounted file takes effect without a restart.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Trust a locally signing gateway for token exchange with an inline key set (Priority: P1)
@@ -55,8 +61,9 @@ An operator does not embed the JWK Set in the broker configuration. The operator
 
 1. **Given** a client-assertion trust anchor that references a readable file with a valid JWK Set, **When** the broker starts, **Then** startup succeeds and client assertions signed by a key in the file verify successfully.
 2. **Given** a trust anchor that references a file path that does not exist, is not readable, or is not a regular file, **When** the broker starts, **Then** startup fails with an error that names the configuration setting and the path.
-3. **Given** a running broker with a file-based key set, **When** an operator replaces the file's contents with a different valid key set, **Then** the broker applies the new key set as defined by FR-011.
-4. **Given** the supported deployment package, **When** an operator references an existing cluster secret or configuration object that contains a JWK Set, **Then** the broker receives the key set as a file at the configured path without a custom image.
+3. **Given** a running broker with a file-based key set, **When** an operator replaces the file's contents with a different valid key set, **Then** the broker verifies with the new key set within the trust anchor's refresh bounds without a restart, and rejects credentials signed only by keys that the replacement removed.
+4. **Given** a running broker with a file-based key set, **When** the file becomes unreadable or its new contents fail validation, **Then** the broker keeps verifying with the last valid key set under the staleness rules for remote key sets, reports degraded key-set health, and logs the failure without file contents. **When** a valid file returns, **Then** the broker applies it and reports healthy again.
+5. **Given** the supported deployment package, **When** an operator references an existing cluster secret or configuration object that contains a JWK Set, **Then** the broker receives the key set as a file at the configured path without a custom image.
 
 ---
 
@@ -122,7 +129,9 @@ An operator runs the broker behind infrastructure such as a reverse proxy or ser
 - **Mixed algorithms in one set**: A set can contain keys for different approved asymmetric algorithms. Existing algorithm restrictions, including each impersonation issuer's permitted-algorithm list, still apply.
 - **Symlinked file**: Cluster platforms commonly mount secret and configuration files through symbolic links. The broker resolves a symbolic link to a regular file. A path that resolves to a directory fails startup.
 - **One file for several trust anchors**: Two or more trust anchors can reference the same file. Each trust anchor validates the file and uses it on its own terms.
-- **File becomes unavailable after startup**: The behavior follows FR-011.
+- **File becomes unavailable after startup**: The broker keeps the last valid key set and reports degraded health (FR-011). After the staleness window for remote key sets expires, verification for that trust anchor fails closed until a valid file returns.
+- **Partial or in-progress file write**: A re-read that sees incomplete content fails validation. The broker treats it as a failed refresh and never applies a partially valid key set.
+- **Removing keys from a file**: Removing a compromised key from a file that still has other keys is a valid change. The broker applies it within the refresh bounds. Emptying the file entirely is invalid (FR-007). It does not disable the trust anchor. To disable the trust anchor, the operator changes the configuration.
 - **Inline set that contains a broker public key**: The broker still never accepts broker-minted tokens as client assertions. The issuer check and the startup rejection of the broker's own issuer apply to every key source.
 - **Public key-set publication**: Keys from inline or file sources are verification inputs only. The broker never publishes them through its own public key-set endpoint.
 
@@ -150,15 +159,18 @@ An operator runs the broker behind infrastructure such as a reverse proxy or ser
 - **FR-008**: Errors, logs, audit records, and health output MUST NOT include inline key-set content, file contents, or any part of the key material.
 - **FR-009**: When one trust anchor declares more than one explicit key source, startup MUST fail with an error that names the trust anchor and the conflicting settings.
 - **FR-010**: A key-set file path MUST be absolute. If the path does not exist, cannot be read, or does not resolve to a regular file after the broker follows symbolic links, startup MUST fail with an error that names the setting and the path.
-- **FR-011**: After startup, the broker MUST handle changes to a key-set file this way: [NEEDS CLARIFICATION: Does the broker read the file only at startup, so that rotation needs a restart? Does it re-read the file within the trust anchor's refresh bounds and keep the last valid key set when the file becomes unreadable or invalid? Or does it apply changes immediately when the file changes?]
-- **FR-012**: When a trust anchor declares an inline key set and explicit refresh bounds, startup MUST fail. FR-011 determines whether refresh bounds are valid with a key-set file.
+- **FR-011**: After startup, the broker MUST re-read a key-set file at least once per maximum refresh interval of the trust anchor, and no more often than its minimum refresh interval. The bounds are the trust anchor's configured `jwks_min_refresh`/`jwks_max_refresh` or their existing defaults. JWT pre-authentication uses the default refresh cadence that it applies to its remote key set. Every re-read MUST pass the full validation in FR-007.
+  - A valid re-read MUST replace the key set completely.
+  - A failed re-read MUST keep the last valid key set. A failed re-read is one where the file is unreadable or its contents are invalid. The broker MUST apply the staleness rules for remotely fetched key sets: after the staleness window expires, verification for that trust anchor fails closed until a valid re-read succeeds.
+  - The broker MUST NOT apply a partially valid key set.
+- **FR-012**: When a trust anchor declares an inline key set and explicit refresh bounds, startup MUST fail. Refresh bounds remain valid with `jwks_uri`, discovery, and `jwks_file`.
 - **FR-013**: For JWT pre-authentication, disabling signature verification MUST be mutually exclusive with every explicit key source: URI, inline, and file.
 - **FR-014**: ADR 029's self-trust protection MUST apply for every key source. In local and hybrid modes, a client-assertion trust anchor or impersonation client-assertion issuer equal to the broker's own issuer MUST fail startup. The broker MUST never accept broker-minted tokens as client assertions.
 - **FR-015**: In proxy and hybrid modes, a client-assertion trust anchor can declare an inline or file key set and no issuer. In that case, the expected issuer MUST stay the upstream issuer. The trust anchor MUST verify client assertions against its declared keys only. Subject-token validation MUST keep using the upstream issuer's keys.
 - **FR-016**: The broker MUST use keys from an inline or file source only for the trust anchor that declares them. It MUST NOT publish those keys through its public key-set endpoint. It MUST NOT use them for other trust anchors or for subject-token validation.
 - **FR-017**: When trusted issuers share an issuer identifier but declare different key sources, each trusted issuer MUST verify credentials against only its own declared keys.
-- **FR-018**: At startup, the broker MUST log one entry for each trust anchor that uses an inline or file key set. The entry MUST include the key source kind, the file path when there is one, the number of keys, and their key identifiers.
-- **FR-019**: An inline key set has no external dependency. It MUST NOT make the broker report degraded key-set health. FR-011 defines health reporting for key-set files.
+- **FR-018**: At startup, the broker MUST log one entry for each trust anchor that uses an inline or file key set. The entry MUST include the key source kind, the file path when there is one, the number of keys, and their key identifiers. When a re-read changes a file-based key set, the broker MUST log the added and removed key identifiers. When a re-read fails, the broker MUST log the failure. These logs MUST NOT include file contents.
+- **FR-019**: An inline key set has no external dependency. It MUST NOT make the broker report degraded key-set health. A file-based key set MUST report degraded health after a failed re-read, through the same health reporting that remote key sets use. It MUST return to healthy after the next valid re-read.
 - **FR-020**: The supported deployment package MUST let operators provide a key-set file from an existing cluster-managed secret or configuration object without a custom image.
 - **FR-021**: The configuration reference and example configurations MUST document the following for each in-scope trust anchor:
   - All three key sources.
@@ -186,6 +198,18 @@ flowchart TD
     H -->|"Yes"| I["Verify credentials for this anchor only"]
 ```
 
+**State Diagram** (file-based key set after startup, FR-011 and FR-019):
+
+```mermaid
+stateDiagram-v2
+    [*] --> Current: valid at startup
+    Current --> Current: re-read valid, replace set
+    Current --> Degraded: re-read fails, keep last valid set
+    Degraded --> Current: re-read valid, replace set
+    Degraded --> FailedClosed: staleness window expires
+    FailedClosed --> Current: re-read valid, replace set
+```
+
 **Entities** (things with unique identity):
 
 - **Trust Anchor**: An operator-configured authority whose signed credentials the broker verifies. It is identified by its configuration location: the client-assertion trust anchor, an impersonation rule's trusted issuer, or JWT pre-authentication. It owns exactly one resolved key-set source.
@@ -195,7 +219,7 @@ flowchart TD
 - **Key Set Source**: The origin of a trust anchor's public verification keys. It is exactly one of:
   - **Remote**: An explicit or discovered key-set URI with refresh bounds.
   - **Inline**: A JWK Set in configuration. It never changes during the process lifetime.
-  - **File**: A JWK Set at an absolute path. FR-011 governs its refresh behavior.
+  - **File**: A JWK Set at an absolute path. The broker re-reads it within the trust anchor's refresh bounds (FR-011).
 
   It is immutable once resolved at startup and is never shared with another trust anchor's verification.
 - **Local Key Set**: A validated JWK Set from an inline or file source. Its invariants are that it contains at least one key, it contains public asymmetric keys only, its key identifiers are unique, and it stays within the size bound.
@@ -208,7 +232,7 @@ flowchart TD
 
 - **`jwks`** (string, optional, no default): An inline JWK Set as JSON text. It is available on the client-assertion trust anchor (`token_exchange.client_assertion`), on each impersonation trusted issuer (`oauth2_authorization_server.impersonation.rules[].trusted_issuers[]`), and on JWT pre-authentication (`server.enduser.authentication.jwt`). It is mutually exclusive with `jwks_uri` and `jwks_file`. The name matches the established OAuth2 convention that pairs an inline `jwks` value with a `jwks_uri` reference. Example environment-variable override: `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS`.
 - **`jwks_file`** (string, optional, no default): The absolute path of a file that contains a JWK Set. It is available in the same locations as `jwks`. It is mutually exclusive with `jwks_uri` and `jwks`.
-- **`jwks_min_refresh` / `jwks_max_refresh`** (existing): These remain valid with `jwks_uri` and discovery. They are rejected with `jwks`. FR-011 determines whether they apply to `jwks_file`.
+- **`jwks_min_refresh` / `jwks_max_refresh`** (existing): These remain valid with `jwks_uri` and discovery. With `jwks_file`, they bound how often the broker re-reads the file. Their defaults stay the same: 15 minutes and `max(jwks_min_refresh, 1 hour)`. They are rejected with `jwks`. JWT pre-authentication still has no configurable refresh bounds.
 
 **Example YAML Configuration**:
 
@@ -266,6 +290,7 @@ server:
 - **SC-004**: 100% of the invalid key-source configurations listed in FR-007, FR-009, FR-010, FR-012, and FR-013 must prevent startup with an error that names the offending setting. 0% of those errors and of the startup logs may contain key material.
 - **SC-005**: Existing deployments that adopt no new setting must start and behave identically. This means 100% of existing token-exchange, impersonation, and JWT pre-authentication acceptance tests pass unchanged.
 - **SC-006**: An operator can move a trust anchor from a remote key-set URI to an inline or file key set by changing one configuration setting.
+- **SC-007**: A valid replacement of a key-set file takes effect without a restart within the trust anchor's maximum refresh interval. With default settings, this is within 1 hour for client-assertion and impersonation trust anchors. 100% of failed re-reads leave the previous valid key set in effect and are visible as degraded health.
 
 ## Assumptions
 
