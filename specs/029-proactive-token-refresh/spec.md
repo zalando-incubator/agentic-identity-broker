@@ -223,7 +223,7 @@ token_refresh:
 - **SR-001**: Background refresh operations MUST encrypt newly issued tokens using the same encryption context (`{"service_id": "..."}`) before persisting. Plaintext tokens MUST never be written to storage.
 - **SR-002**: The sweep endpoint MUST NOT expose token plaintext in its response. The response MUST contain only counts and status summaries.
 - **SR-003**: Background goroutines performing token refresh MUST respect context cancellation (server shutdown) and MUST NOT hold references to decrypted tokens beyond the scope of a single refresh operation.
-- **SR-004**: Upstream refresh calls MUST use the service's encrypted client secret, decrypted only at call time and not cached in memory.
+- **SR-004**: For static confidential clients, which store an encrypted client secret, upstream refresh calls MUST decrypt that secret only at call time and MUST NOT cache it in memory. Public clients (`token_endpoint_auth_method: none`) send no client credential. CIMD confidential clients (`private_key_jwt`) have no shared secret and sign a fresh client assertion for each refresh request.
 
 ### Key Entities
 

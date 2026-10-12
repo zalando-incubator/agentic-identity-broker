@@ -75,8 +75,8 @@ testcontainers `postgres:15-alpine` for repository, migration, and `EXPLAIN` int
   counts only (SR-002).
 - Shutdown drains in-flight refreshes within `server.shutdown.timeout`, then cancels (SR-003).
   Cancelling mid-refresh can lose a rotated refresh token (R7).
-- The client secret is decrypted per refresh and never cached (SR-004). This uses the existing
-  `GetForTokenAcquisition`.
+- For static confidential clients, the client secret is decrypted per refresh and never cached (SR-004).
+  This uses the existing `GetForTokenAcquisition`. Public and CIMD confidential clients have no shared secret.
 - `background_workers ≤ 20` of the 25 pooled database connections (R9).
 - The per-route write-deadline lift applies to `POST /api/sessions/sweep` only. The caller owns the
   sweep timeout (R8).
