@@ -537,7 +537,7 @@ func TestUserSessionListExpiringSessions(t *testing.T) {
 		assert.Equal(t, []id.SessionID{expiryTestID(5)}, expirySessionIDs(second))
 	})
 
-	t.Run("E5 invalid page sizes and partial cursors fail before database access", func(t *testing.T) {
+	t.Run("E5 invalid page sizes and expiry-only cursors fail before database access", func(t *testing.T) {
 		repo := NewUserSessionRepository(&Adapter{})
 		for _, limit := range []int{-1, 0, 1001} {
 			t.Run(fmt.Sprintf("limit_%d", limit), func(t *testing.T) {
@@ -551,18 +551,11 @@ func TestUserSessionListExpiringSessions(t *testing.T) {
 		adapter, cleanup := setupUserSessionTestDB(t)
 		defer cleanup()
 		partialRepo := NewUserSessionRepository(adapter)
-		for name, cursor := range map[string]storage.SessionExpiryCursor{
-			"missing_id":     {AccessTokenExpiresAt: due},
-			"missing_expiry": {ID: expiryTestID(1)},
-		} {
-			t.Run(name, func(t *testing.T) {
-				_, err := partialRepo.ListExpiringSessions(ctx, threshold, cursor, 1)
-				require.Error(t, err, "partial cursor must be rejected")
-				var validation *storage.StorageError
-				require.ErrorAs(t, err, &validation)
-				assert.Equal(t, storage.ErrorKindValidation, validation.Kind)
-			})
-		}
+		_, err := partialRepo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{AccessTokenExpiresAt: due}, 1)
+		require.Error(t, err, "expiry without a session ID must be rejected")
+		var validation *storage.StorageError
+		require.ErrorAs(t, err, &validation)
+		assert.Equal(t, storage.ErrorKindValidation, validation.Kind)
 	})
 
 	t.Run("E6 returned sessions preserve full ciphertext snapshots", func(t *testing.T) {
@@ -611,6 +604,28 @@ func TestUserSessionListExpiringSessions(t *testing.T) {
 		page, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, len(ids))
 		require.NoError(t, err)
 		assert.Equal(t, ids, expirySessionIDs(page))
+	})
+
+	t.Run("E8 zero expiry is a due tuple that later pages continue past", func(t *testing.T) {
+		adapter, cleanup := setupUserSessionTestDB(t)
+		defer cleanup()
+		serviceID := id.NewServiceID()
+		insertTestService(t, adapter, serviceID)
+		repo := NewUserSessionRepository(adapter)
+		zero := time.Time{}
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(2), &zero)
+		seedExpiryTestSession(t, adapter, serviceID, expiryTestID(1), &due)
+		first, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1)
+		require.NoError(t, err)
+		require.Equal(t, []id.SessionID{expiryTestID(2)}, expirySessionIDs(first))
+		require.NotNil(t, first[0].AccessTokenExpiresAt)
+		assert.True(t, first[0].AccessTokenExpiresAt.IsZero())
+		second, err := repo.ListExpiringSessions(ctx, threshold, expiryCursor(first[0]), 1)
+		require.NoError(t, err)
+		assert.Equal(t, []id.SessionID{expiryTestID(1)}, expirySessionIDs(second))
+		last, err := repo.ListExpiringSessions(ctx, threshold, expiryCursor(second[0]), 1)
+		require.NoError(t, err)
+		assert.Empty(t, last)
 	})
 }
 

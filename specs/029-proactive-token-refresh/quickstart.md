@@ -73,7 +73,7 @@ Key assertions to look for in `-v` output:
 | `parseISO8601Duration` table | Accepts `PT5M`, `P1D`, `PT1.5S`; rejects `P1Y`, `P1W`, `PT`, `P`, `5m`, overflow, and zero |
 | Admin `responseWriter.Unwrap` + real `http.Server{WriteTimeout: 200ms}` | A sweep handler that sleeps 500 ms still delivers `200` through the full `NewHandler` chain |
 | Config loader and validator | Rejects lookahead ≤ 0, workers outside 1–20, and page sizes outside 1–1000. CLI flags override environment variables, file values, and defaults for all three keys. |
-| `ListExpiringSessions` (memory) | Contract E1–E7: expiry then UUID-byte order, zero/partial cursor handling, small-page mutations, and full ciphertext snapshots ([contracts/ports.md](contracts/ports.md)) |
+| `ListExpiringSessions` (memory) | Contract E1–E8: expiry then UUID-byte order, zero-ID and zero-expiry cursor handling, small-page mutations, and full ciphertext snapshots ([contracts/ports.md](contracts/ports.md)) |
 
 The tests are deterministic. The background tests synchronize on the gated fake provider and
 `Close`, not on sleeps.

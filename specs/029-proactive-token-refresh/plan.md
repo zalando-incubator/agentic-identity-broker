@@ -356,9 +356,10 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 ### Phase 2.5: Foundational
 
 11. `ports.UserSessionExpiryRepository`, `storage.SessionExpiryCursor{AccessTokenExpiresAt time.Time, ID id.SessionID}`,
-    the memory and PostgreSQL `ListExpiringSessions`, and the factory `SessionExpiry()`. Zero/zero
-    starts a scan; reject a cursor with only one populated field. Both adapters order by expiry and
-    then UUID bytes. Test E1–E7 with mutations and ciphertext snapshots (contracts/ports.md §1).
+    the memory and PostgreSQL `ListExpiringSessions`, and the factory `SessionExpiry()`. A zero ID
+    and zero expiry start a scan. An expiry without an ID is invalid. A cursor with an ID can have
+    a zero expiry. Both adapters order by expiry and then UUID bytes. Test E1–E8 with mutations
+    and ciphertext snapshots (contracts/ports.md §1).
 12. Test the named valid two-key index with normal-planner `EXPLAIN (FORMAT JSON)` for first, middle, and late small-limit pages. Seed sparse due rows and run `ANALYZE`. Do not disable sequential scans (R4, SC-006).
 13. `RefreshTrigger` and the five counters. Instruments are created once in constructors.
 

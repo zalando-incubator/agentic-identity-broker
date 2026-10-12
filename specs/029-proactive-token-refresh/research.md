@@ -100,7 +100,7 @@ ORDER BY access_token_expires_at, id
 LIMIT $4
 ```
 
-Exactly one zero cursor field is invalid. A zero-time, zero-ID cursor starts the scan. The memory adapter compares expiries first and uses `bytes.Compare` on the 16 UUID bytes for equal expiries. PostgreSQL `uuid` uses the same tie order.
+A zero ID and zero expiry start the scan. An expiry without an ID is invalid. A cursor with an ID can have a zero expiry. The memory adapter compares expiries first and uses `bytes.Compare` on the 16 UUID bytes for equal expiries. PostgreSQL `uuid` uses the same tie order.
 
 The sweep advances its cursor from the last raw row of every full page, even if it already evaluated every row in that page. It stops after a short page. A nil expiry or non-increasing tuple from the read port aborts through the repository-failure path instead of causing a panic or loop.
 

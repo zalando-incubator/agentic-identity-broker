@@ -368,25 +368,35 @@ func TestListExpiringSessionsLimitValidation(t *testing.T) {
 	}
 }
 
-func TestListExpiringSessionsRejectsPartialCursor(t *testing.T) {
+func TestListExpiringSessionsRejectsExpiryWithoutID(t *testing.T) {
 	repo := NewInMemoryUserSessionRepository()
 	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	createExpiringTestSession(t, repo, 0x20, &threshold)
-	for _, tc := range []struct {
-		name   string
-		cursor storage.SessionExpiryCursor
-	}{
-		{"expiry_without_ID", storage.SessionExpiryCursor{AccessTokenExpiresAt: threshold}},
-		{"ID_without_expiry", storage.SessionExpiryCursor{ID: expiryTestID(0x10)}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := repo.ListExpiringSessions(context.Background(), threshold, tc.cursor, 1)
-			assert.Empty(t, got)
-			var storageErr *storage.StorageError
-			require.ErrorAs(t, err, &storageErr)
-			assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
-		})
-	}
+	got, err := repo.ListExpiringSessions(context.Background(), threshold, storage.SessionExpiryCursor{AccessTokenExpiresAt: threshold}, 1)
+	assert.Empty(t, got)
+	var storageErr *storage.StorageError
+	require.ErrorAs(t, err, &storageErr)
+	assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+}
+
+func TestListExpiringSessionsContinuesAfterZeroExpiry(t *testing.T) {
+	repo := NewInMemoryUserSessionRepository()
+	ctx := context.Background()
+	threshold := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+	zero := time.Time{}
+	createExpiringTestSession(t, repo, 0x20, &zero)
+	createExpiringTestSession(t, repo, 0x10, &threshold)
+	first, err := repo.ListExpiringSessions(ctx, threshold, storage.SessionExpiryCursor{}, 1)
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+	assert.Equal(t, expiryTestID(0x20), first[0].ID)
+	second, err := repo.ListExpiringSessions(ctx, threshold, expiryTestCursor(first[0]), 1)
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	assert.Equal(t, expiryTestID(0x10), second[0].ID)
+	last, err := repo.ListExpiringSessions(ctx, threshold, expiryTestCursor(second[0]), 1)
+	require.NoError(t, err)
+	assert.Empty(t, last)
 }
 
 func TestListExpiringSessionsOrdersUUIDBytes(t *testing.T) {

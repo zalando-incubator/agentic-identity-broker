@@ -10,6 +10,7 @@ import (
 )
 
 // SessionExpiryCursor locates the last (expiry, ID) pair returned by a sweep page.
+// A zero ID starts the scan; the expiry may be the zero time.
 type SessionExpiryCursor struct {
 	AccessTokenExpiresAt time.Time
 	ID                   id.SessionID

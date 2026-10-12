@@ -334,8 +334,8 @@ func (r *PostgresUserSessionRepository) ListExpiringSessions(ctx context.Context
 	if limit < 1 || limit > 1000 {
 		return nil, storage.NewStorageError("ListExpiringSessions", storage.ErrorKindValidation, nil, "limit must be between 1 and 1000")
 	}
-	if cursor.AccessTokenExpiresAt.IsZero() != cursor.ID.IsZero() {
-		return nil, storage.NewStorageError("ListExpiringSessions", storage.ErrorKindValidation, nil, "cursor must include both expiry and session ID")
+	if cursor.ID.IsZero() && !cursor.AccessTokenExpiresAt.IsZero() {
+		return nil, storage.NewStorageError("ListExpiringSessions", storage.ErrorKindValidation, nil, "cursor expiry requires a session ID")
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)

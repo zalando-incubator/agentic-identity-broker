@@ -64,7 +64,7 @@ type SessionExpiryCursor struct {
 }
 ```
 
-Both fields zero start the scan. Exactly one zero field is a validation error. A later page contains only rows with `(access_token_expires_at, id) > (cursor.AccessTokenExpiresAt, cursor.ID)`. The order compares expiry first and UUID bytes second. Rows without an expiry never enter the scan.
+A zero ID and zero expiry start the scan. An expiry without an ID is a validation error. A cursor with an ID continues strictly after its `(access_token_expires_at, id)` tuple, including a zero expiry. The order compares expiry first and UUID bytes second. Rows without an expiry never enter the scan. A stored zero expiry is due.
 
 ## New enumeration: `RefreshTrigger`
 
@@ -246,7 +246,7 @@ parameter, and every caller must be updated, confirmed with `lsp references` dur
 | **Refresh Lookahead Window** | The interval before access-token expiry, `token_refresh.lookahead_duration`, in which a token is still served but is refreshed proactively. | Evaluated on `UserSession.AccessTokenExpiresAt`; drives Proactive Refresh and the default Session Sweep window. |
 | **Proactive Refresh** | A non-blocking background refresh of a `UserSession`, triggered when token exchange serves a token inside the Refresh Lookahead Window. It is bounded per replica and dropped on saturation. | Shares per-replica deduplication with on-demand refresh; persists through the locked session update. |
 | **Session Sweep** | An admin-triggered, externally scheduled pass that refreshes every `UserSession` whose access token expires within a lookahead window, in keyset pages. | Produces a `SweepResult`; scheduled by an operator CronJob. |
-| **SessionExpiryCursor** | The internal `(AccessTokenExpiresAt, ID)` keyset value for Session Sweep, ordered by expiry then UUID bytes. | A zero-time/zero-ID value starts `ListExpiringSessions`; partial cursors are invalid. |
+| **SessionExpiryCursor** | The internal `(AccessTokenExpiresAt, ID)` keyset value for Session Sweep, ordered by expiry then UUID bytes. | A zero ID and zero expiry start `ListExpiringSessions`; an expiry without an ID is invalid. A nonzero ID can pair with a zero expiry. |
 | **SweepRequest** | The input value object for a Session Sweep: lookahead, dry-run flag, and page size. | Applies the configured defaults and validation before the sweep evaluates a `UserSession`. |
 | **SweepResult** | The value object summarizing a Session Sweep: `refreshed`, `skipped`, `failed`, `total_evaluated`, `dry_run`. | `refreshed + skipped + failed = total_evaluated`. |
 | **RefreshTrigger** | The origin of a token refresh: `on-demand`, `background`, or `sweep`. Recorded as `triggered_by`. | Attribute of `SessionTokensRefreshed` and the refresh counters. |

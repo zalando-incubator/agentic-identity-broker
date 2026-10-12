@@ -318,6 +318,33 @@ func TestSessionSweepFixedThresholdAndCompositeCursorAcrossChangingPages(t *test
 	}
 }
 
+func TestSessionSweepContinuesAfterZeroExpiryCandidate(t *testing.T) {
+	for _, dryRun := range []bool{true, false} {
+		t.Run(fmt.Sprintf("dry_run=%t", dryRun), func(t *testing.T) {
+			f := newSweepFixture(t)
+			var upstreamCalls atomic.Int32
+			f.provider(func(w http.ResponseWriter, _ *http.Request) {
+				upstreamCalls.Add(1)
+				sweepSuccess(w)
+			})
+			due := time.Now().Add(time.Minute)
+			f.seed(1, &time.Time{}, nil, true)
+			f.seed(2, &due, nil, true)
+			result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{DryRun: dryRun, PageSize: 1})
+			require.NoError(t, err)
+			assertSweepCounts(t, result, 2, 0, 0, dryRun)
+			require.Len(t, f.expiry.calls, 3)
+			assert.Equal(t, storage.SessionExpiryCursor{ID: sweepSessionID(1)}, f.expiry.calls[1].cursor)
+			assert.Equal(t, storage.SessionExpiryCursor{AccessTokenExpiresAt: due, ID: sweepSessionID(2)}, f.expiry.calls[2].cursor)
+			if dryRun {
+				assert.Zero(t, upstreamCalls.Load())
+			} else {
+				assert.EqualValues(t, 2, upstreamCalls.Load())
+			}
+		})
+	}
+}
+
 func TestSessionSweepEvaluatesMovedSessionOnce(t *testing.T) {
 	f := newSweepFixture(t)
 	var calls atomic.Int32

@@ -277,7 +277,9 @@ type UserSessionRefreshRepository interface {
 type UserSessionExpiryRepository interface {
 	// ListExpiringSessions returns at most limit ciphertext-only sessions with
 	// access_token_expires_at <= threshold, ordered by (expiry, ID).
-	// A zero cursor starts at the first row; partial cursors are invalid; limit must be in [1, 1000].
+	// A cursor with a zero ID starts at the first row and must have a zero expiry.
+	// A cursor with an ID continues strictly after its (expiry, ID) tuple,
+	// including a zero expiry. limit must be in [1, 1000].
 	// No matches return an empty slice and no error. Failures return domain
 	// storage.StorageError values.
 	ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error)

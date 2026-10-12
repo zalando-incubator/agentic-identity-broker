@@ -1502,7 +1502,7 @@ Define any project-specific terms or acronyms.)
 
 **Session Sweep**: A synchronous admin-triggered pass across due `UserSession` records, scheduled by an external operator. It reads bounded expiry-then-UUID keyset pages through `UserSessionExpiryRepository`, tracks evaluated IDs to avoid a second outcome when expiry changes, re-checks each row under the refresh lock, and returns a `SweepResult`. The broker has no sweep scheduler or distributed lock.
 
-**SessionExpiryCursor**: The keyset position of a Session Sweep, containing an access-token expiry and a `UserSession` ID. A zero expiry and zero ID start the scan; exactly one nonzero field is invalid. The read port returns rows in expiry-then-UUID order. The sweep advances this cursor from the last raw row of each page and separately tracks evaluated IDs.
+**SessionExpiryCursor**: The keyset position of a Session Sweep, containing an access-token expiry and a `UserSession` ID. A zero ID and zero expiry start the scan. An expiry without an ID is invalid. A cursor with an ID continues after its expiry-then-ID tuple, including a zero expiry. The read port returns rows in expiry-then-UUID order. The sweep advances this cursor from the last raw row of each page and separately tracks evaluated IDs.
 
 **SweepRequest**: The input value object for a Session Sweep. It holds a lookahead duration, `dry_run`, and page size. Omitted lookahead and page size use the configured defaults. Validation occurs before the sweep evaluates sessions.
 

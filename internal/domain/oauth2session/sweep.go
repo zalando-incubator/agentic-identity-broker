@@ -192,7 +192,7 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 
 func nextSweepCursor(page []*storage.UserSession, previous storage.SessionExpiryCursor) (storage.SessionExpiryCursor, error) {
 	for _, candidate := range page {
-		if candidate == nil || candidate.AccessTokenExpiresAt == nil || candidate.AccessTokenExpiresAt.IsZero() || candidate.ID.IsZero() {
+		if candidate == nil || candidate.AccessTokenExpiresAt == nil || candidate.ID.IsZero() {
 			return previous, errors.New("session expiry repository returned an invalid cursor tuple")
 		}
 		next := storage.SessionExpiryCursor{AccessTokenExpiresAt: *candidate.AccessTokenExpiresAt, ID: candidate.ID}

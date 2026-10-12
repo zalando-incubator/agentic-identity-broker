@@ -142,8 +142,8 @@ func (r *InMemoryUserSessionRepository) ListExpiringSessions(ctx context.Context
 	if limit < 1 || limit > 1000 {
 		return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "limit must be between 1 and 1000")
 	}
-	if cursor.AccessTokenExpiresAt.IsZero() != cursor.ID.IsZero() {
-		return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "cursor expiry and ID must both be set or both be zero")
+	if cursor.ID.IsZero() && !cursor.AccessTokenExpiresAt.IsZero() {
+		return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "cursor expiry requires a session ID")
 	}
 	hasCursor := !cursor.ID.IsZero()
 	if err := ctx.Err(); err != nil {
