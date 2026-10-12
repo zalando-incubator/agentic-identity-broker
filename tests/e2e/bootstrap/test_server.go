@@ -450,7 +450,7 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 		routeSetup = func(r chi.Router) {
 			routing.SetupEnduserRoutes(r, app.EnduserHandlers, routing.EnduserRouteConfig{
 				Authentication:               app.Config.Server.EndUser.Authentication,
-				JWTAuthenticator:             app.JWTAuthenticator,
+				JWTAuthenticator:             app.EnduserJWTAuthenticator,
 				ApprovalRequestAuthenticator: app.ApprovalRequestAuthenticator,
 				Logger:                       app.Logger,
 				CORS:                         app.Config.Server.EndUser.CORS,
@@ -459,7 +459,7 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 		}
 		serverCfg.Name = "enduser"
 		serverCfg.Authentication = app.Config.Server.EndUser.Authentication
-		serverCfg.JWTAuthenticator = app.JWTAuthenticator
+		serverCfg.JWTAuthenticator = app.EnduserJWTAuthenticator
 
 	case ServerTypeAdmin:
 		routeSetup = func(r chi.Router) {
@@ -470,6 +470,7 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 		}
 		serverCfg.Name = "admin"
 		serverCfg.Authentication = app.Config.Server.Admin.Authentication
+		serverCfg.JWTAuthenticator = app.AdminJWTAuthenticator
 	}
 
 	// Build router using the production NewHandler (same middleware stack as production).
@@ -907,7 +908,7 @@ func (b *TestServerBuilderImpl) Build() (*TestServer, error) {
 	routeSetup := func(r chi.Router) {
 		routing.SetupEnduserRoutes(r, appInstance.EnduserHandlers, routing.EnduserRouteConfig{
 			Authentication:               appInstance.Config.Server.EndUser.Authentication,
-			JWTAuthenticator:             appInstance.JWTAuthenticator,
+			JWTAuthenticator:             appInstance.EnduserJWTAuthenticator,
 			ApprovalRequestAuthenticator: appInstance.ApprovalRequestAuthenticator,
 			Logger:                       appInstance.Logger,
 			CORS:                         appInstance.Config.Server.EndUser.CORS,
@@ -920,7 +921,7 @@ func (b *TestServerBuilderImpl) Build() (*TestServer, error) {
 		Telemetry:        appInstance.Config.Telemetry,
 		RequestContext:   &appInstance.Config.RequestContext,
 		Authentication:   appInstance.Config.Server.EndUser.Authentication,
-		JWTAuthenticator: appInstance.JWTAuthenticator,
+		JWTAuthenticator: appInstance.EnduserJWTAuthenticator,
 	}
 	router := httpAdapter.NewHandler(serverCfg, routeSetup, appInstance.Logger)
 	router.Get("/health", httpAdapter.NewHealthHandler(

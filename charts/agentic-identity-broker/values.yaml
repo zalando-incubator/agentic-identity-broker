@@ -382,6 +382,14 @@ broker:
         preauth:
           # -- Header name containing authenticated principal (omit to disable plain-header pre-auth)
           principalHeaderName: ""
+        # -- Admin JWT pre-authentication configuration (optional, independent of enduser)
+        # The admin gateway must authorize the caller, strip client-supplied copies
+        # of this header, then inject its own JWT. Restrict direct access to port 14000.
+        # jwt:
+        #   header_name: X-Userinfo
+        #   verification: none
+        #   claim_extraction:
+        #     principal_expression: "claims.principal"
 
     # Graceful shutdown
     shutdown:
