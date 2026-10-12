@@ -86,7 +86,7 @@ func TestRefreshTokenSessionRepoRevocationRotation(t *testing.T) {
 						completed <- result{count, err}
 					}()
 					waitRefreshBlock(t, adapter, ctx, rotationPID)
-					require.NoError(t, repo.Create(rotationCtx, &successor))
+					require.NoError(t, repo.CreateSuccessor(rotationCtx, &successor, root.Signature))
 					require.NoError(t, adapter.Commit(rotationCtx))
 				} else {
 					blocker, err := adapter.db.BeginTxx(ctx, nil)
@@ -105,7 +105,7 @@ func TestRefreshTokenSessionRepoRevocationRotation(t *testing.T) {
 					go func() {
 						err := repo.MarkUsed(rotationCtx, root.Signature)
 						if err == nil {
-							err = repo.Create(rotationCtx, &successor)
+							err = repo.CreateSuccessor(rotationCtx, &successor, root.Signature)
 						}
 						rotated <- err
 					}()

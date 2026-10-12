@@ -47,6 +47,13 @@ func (r *RefreshTokenSessionRepo) Create(ctx context.Context, session *storage.R
 	return nil
 }
 
+func (r *RefreshTokenSessionRepo) CreateSuccessor(ctx context.Context, session *storage.RefreshTokenSession, _ string) error {
+	if _, ok := storageTransaction(ctx); !ok {
+		return storage.NewStorageError("RefreshTokenSessionRepo.CreateSuccessor", storage.ErrorKindValidation, nil, "rotation transaction required")
+	}
+	return r.Create(ctx, session)
+}
+
 func (r *RefreshTokenSessionRepo) FindBySignature(ctx context.Context, signature string) (*storage.RefreshTokenSession, error) {
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError("RefreshTokenSessionRepo.FindBySignature", storage.ErrorKindConnection, nil, "database not initialized")

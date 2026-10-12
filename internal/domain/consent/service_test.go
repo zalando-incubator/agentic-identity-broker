@@ -2367,6 +2367,50 @@ func TestService_RevokeConsentFailureEmitsNoSuccess(t *testing.T) {
 	}
 }
 
+func TestService_RevokeConsentAuditsDeletionWhenRefreshCleanupFails(t *testing.T) {
+	ctx := t.Context()
+	principal, agentID, grantID := id.Principal("owner@example.com"), id.NewAgentID(), id.NewGrantID()
+	repo := &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{
+		grantID: {ID: grantID, Principal: principal, AgentID: agentID},
+	}}
+	cleanupErr := errors.New("refresh cleanup unavailable")
+	capture := &grantAuditLogHandler{Handler: slog.NewJSONHandler(&bytes.Buffer{}, nil)}
+	svc := NewService(nil, nil, repo, nil, &mockConsentRefreshRepo{err: cleanupErr}, nil, slog.New(capture))
+
+	require.ErrorIs(t, svc.RevokeConsentForPrincipal(ctx, principal, agentID), cleanupErr)
+	assert.NotContains(t, repo.grants, grantID)
+	records := capture.JSONRecords(t)
+	require.Len(t, records, 1)
+	assert.Same(t, ctx, capture.contexts[0])
+	assert.Equal(t, "grant_deleted", records[0]["action"])
+	assert.Equal(t, principal.String(), records[0]["principal"])
+	assert.Equal(t, agentID.String(), records[0]["agent_id"])
+	assert.Equal(t, grantID.String(), records[0]["grant_id"])
+	assert.Equal(t, "failed", records[0]["refresh_cleanup"])
+	assert.NotContains(t, records[0], "row_count")
+	require.ErrorIs(t, svc.RevokeConsentForPrincipal(ctx, principal, agentID), ErrGrantNotFound)
+	assert.Len(t, capture.records, 1)
+}
+
+func TestService_RefreshRevocationAuditPreservesRequestContext(t *testing.T) {
+	ctx := t.Context()
+	principal, agentID, grantID := id.Principal("owner@example.com"), id.NewAgentID(), id.NewGrantID()
+	repo := &mockGrantRepo{grants: map[id.GrantID]*storage.UserGrant{
+		grantID: {ID: grantID, Principal: principal, AgentID: agentID},
+	}}
+	capture := &grantAuditLogHandler{Handler: slog.NewJSONHandler(&bytes.Buffer{}, nil)}
+	svc := NewService(nil, nil, repo, nil, &mockConsentRefreshRepo{}, nil, slog.New(capture))
+
+	require.NoError(t, svc.RevokeConsentForPrincipal(ctx, principal, agentID))
+	records := capture.JSONRecords(t)
+	require.Len(t, records, 2)
+	assert.Same(t, ctx, capture.contexts[0])
+	assert.Equal(t, "consent_revoked", records[0]["trigger"])
+	assert.Equal(t, principal.String(), records[0]["principal"])
+	assert.Equal(t, agentID.String(), records[0]["agent_id"])
+	assert.Equal(t, float64(0), records[0]["row_count"])
+}
+
 func TestService_GrantConsentReturnsWinningUpsertMetadata(t *testing.T) {
 	t.Parallel()
 	principal := id.Principal("owner@example.com")
@@ -2750,8 +2794,9 @@ func TestService_VerifyAgentAccessUsesInjectedClock(t *testing.T) {
 
 type mockConsentRefreshRepo struct {
 	ports.RefreshTokenSessionRepository
+	err error
 }
 
-func (*mockConsentRefreshRepo) RevokeByPrincipalAndAgent(context.Context, id.Principal, id.AgentID) (int, error) {
-	return 0, nil
+func (r *mockConsentRefreshRepo) RevokeByPrincipalAndAgent(context.Context, id.Principal, id.AgentID) (int, error) {
+	return 0, r.err
 }

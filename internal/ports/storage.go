@@ -430,6 +430,11 @@ type RefreshTokenSessionRepository interface {
 	// Create stores a refresh token session keyed by token signature.
 	Create(ctx context.Context, session *storage.RefreshTokenSession) error
 
+	// CreateSuccessor stores a replacement after MarkUsed consumes its predecessor.
+	// Transactional backends require the same rotation transaction for both calls.
+	// Nontransactional backends atomically reject a missing or revoked predecessor.
+	CreateSuccessor(ctx context.Context, session *storage.RefreshTokenSession, previousSignature string) error
+
 	// FindBySignature retrieves a refresh token session by its signature.
 	FindBySignature(ctx context.Context, signature string) (*storage.RefreshTokenSession, error)
 

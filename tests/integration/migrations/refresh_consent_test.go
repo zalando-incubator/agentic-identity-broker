@@ -3,8 +3,12 @@
 package migrations_test
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,4 +60,30 @@ func TestMigration036RefreshTokenGrantIdentity(t *testing.T) {
 	after, err = f.QuerySQL(t, snapshotSQL)
 	require.NoError(t, err)
 	assert.Equal(t, before, after)
+}
+
+func TestMigration036RestoresConnectionLockTimeout(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+	ctx := t.Context()
+	conn, err := f.db.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, conn.Close()) }()
+	_, err = conn.ExecContext(ctx, `CREATE TEMP TABLE refresh_token_sessions (signature text)`)
+	require.NoError(t, err)
+	driver, err := postgres.WithConnection(ctx, conn, &postgres.Config{})
+	require.NoError(t, err)
+	var baseline string
+	require.NoError(t, conn.QueryRowContext(ctx, `SHOW lock_timeout`).Scan(&baseline))
+
+	for _, direction := range []string{"up", "down"} {
+		t.Run(direction, func(t *testing.T) {
+			migration, err := os.ReadFile(filepath.Join(f.migrationsDir, "036_add_refresh_token_grant_id."+direction+".sql"))
+			require.NoError(t, err)
+			require.NoError(t, driver.Run(bytes.NewReader(migration)))
+			var timeout string
+			require.NoError(t, conn.QueryRowContext(ctx, `SHOW lock_timeout`).Scan(&timeout))
+			assert.Equal(t, baseline, timeout, "later migrations must not inherit migration 036's lock timeout")
+		})
+	}
 }

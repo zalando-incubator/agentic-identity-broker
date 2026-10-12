@@ -6,17 +6,19 @@ Local refresh authority ends with user consent. Hybrid mode applies this rule on
 
 ## Requirements
 
-- Add nullable `grant_id UUID` to `refresh_token_sessions` in migration 036. Use `lock_timeout`, no foreign key, no backfill, and reversible rollback.
+- Add nullable `grant_id UUID` to `refresh_token_sessions` in migration 036. Use `lock_timeout`, no foreign key, no backfill, and reversible rollback. Reset `lock_timeout` after both schema changes.
 - At authorization-code exchange, bind each new refresh token to the active grant for its principal and agent. Missing or expired consent returns `invalid_grant`.
 - Before rotation, call `consent.Service.VerifyAgentAccess`. Reject missing or expired grants and different grant IDs.
 - For a null grant ID, accept only when the active grant's `created_at` is no later than the refresh row's `created_at`. Compare UTC instants in Go. Bind the successor to this grant ID.
 - Consent denial returns the normal `invalid_grant` body, creates no tokens, and revokes the chain with `RevokeByRequestID`.
 - Verifier or storage errors return `server_error`, without rotating or revoking the token.
 - Grant deletion revokes unused refresh rows for that principal and agent. Renewal of expired consent does the same. Credential deletion revokes unused rows for the entire agent.
+- Memory successor creation atomically rejects a missing or revoked predecessor. Lifecycle revocation also marks consumed ancestors, including when expired-grant renewal retains the grant ID. Expiry cleanup removes their revocation state with the rows.
 - Agent deletion retains its existing database cascade. Rotation remains strict single use.
 - PostgreSQL lock order is agent first, refresh rows second. The first rotation-transaction statement locks the agent `FOR KEY SHARE`. Revocation locks it `FOR UPDATE` before one matching-row update.
 - Grant and credential deletes on main do not honor transaction context. Delete first, then revoke, and propagate revocation errors. Deletion cannot roll back after a revocation error.
 - Log each consent denial with `grant_missing`, `grant_expired`, or `grant_mismatch`. Log each lifecycle revocation with its trigger and affected-row count. Never log tokens or signatures.
+- If grant deletion commits but refresh cleanup fails, log a deletion-only event with the deleted grant identity and failed cleanup outcome. Preserve the cleanup error. Successful cleanup logs retain the request context.
 
 ## Acceptance scenarios
 

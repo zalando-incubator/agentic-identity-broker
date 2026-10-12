@@ -564,7 +564,11 @@ rejections return 403; media-type rejections return 415. `/health` is excluded.
 
 If targeted revocation wins after the consent lookup, the provider returns canonical `invalid_grant` after Fosite rolls back rotation. A rollback error remains `server_error`.
 
+Successor persistence uses `RefreshTokenSessionRepository.CreateSuccessor`. Memory revocation marks consumed ancestors as revoked without changing their consumption timestamps. Successor creation checks the predecessor and stores the replacement under the same mutex. A missing, revoked, or unrelated predecessor cannot create a successor. Expiry cleanup removes the predecessor and its revocation state together. PostgreSQL requires the existing rotation transaction and retains its agent lock through successor insertion.
+
 PostgreSQL rotation locks the agent `FOR KEY SHARE` before refresh rows. Targeted revocation locks the agent `FOR UPDATE` before one update of unused rows. Grant deletion, expired renewal, and credential deletion invoke targeted revocation. Grant and credential repositories do not join this transaction, so a revocation error cannot undo deletion. Old binaries retain their consent-check and lock-order deployment limits. Existing access tokens remain valid until `token_ttl` expires.
+
+If grant deletion commits but refresh cleanup fails, the consent service emits `grant_deleted` with `refresh_cleanup=failed` from the deleted snapshot. It returns the cleanup error without reporting successful refresh revocation. Successful refresh cleanup logs retain the request context. Migration 036 resets `lock_timeout` after both schema changes so later migrations do not inherit its five-second limit.
 
 **Type Containment**: All [fosite](https://github.com/ory/fosite) OAuth2 server types are contained in `internal/domain/oauth2server/`. This package encapsulates the OAuth2 authorization server domain logic (authorization code storage, client authentication, token signing) and **never leaks fosite types** into ports, adapters/http, or app packages.
 

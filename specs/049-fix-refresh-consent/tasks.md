@@ -42,6 +42,10 @@
 - [x] Log consent-denial reasons and revocation trigger/count without secrets.
 - [x] Cover matching-unused storage behavior, both rotation/revocation orders, and agent-deletion races.
 - [x] Cover issuance and refresh in Europe/Berlin and populated migration up/down/up.
+- [x] Audit committed grant deletion separately when refresh cleanup fails. Preserve the request context and original error.
+- [x] Reset migration 036's session timeout in both directions and verify restoration on the migration connection.
+- [x] Fence memory successors against revoked or removed consumed predecessors without retaining unbounded tombstones.
+- [x] Cover revocation between consumption and successor creation for consent deletion, credential deletion, and same-ID expired-grant renewal.
 
 ## Phase N: Constitution Compliance Verification
 

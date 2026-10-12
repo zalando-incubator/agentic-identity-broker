@@ -1229,6 +1229,10 @@ Grant deletion, expiration, or replacement ends refresh authority. Renewal of ex
 Consent denial returns the existing `invalid_grant` response without tokens. Verifier or storage errors return `server_error` without rotating the token.
 Grant and credential deletion precede session revocation because these repositories do not share the refresh transaction. A revocation error does not undo deletion.
 
+If deletion commits but refresh cleanup fails, the audit event uses `action=grant_deleted` and `refresh_cleanup=failed`. The request still returns an error. Retrying DELETE returns 404 because the grant is already absent. The event does not report successful session cleanup.
+
+Memory storage rejects a late successor after lifecycle revocation, including renewal that retains the grant ID. Revocation also marks consumed predecessors. Successor insertion and its predecessor check share one lock. PostgreSQL retains the rotation transaction and agent lock through insertion. Neither backend retracts access tokens from a refresh that completed before revocation.
+
 **Accepted limits:**
 
 - A row without `grant_id` gets one rotation on the strength of an older active grant. Its successor stores the grant ID.

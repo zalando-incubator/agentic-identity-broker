@@ -246,8 +246,10 @@ func (s *FositeStorage) CreateRefreshTokenSession(ctx context.Context, signature
 	}
 
 	var grantID id.GrantID
+	var previousSignature string
 	if extra, ok := req.GetSession().(fosite.ExtraClaimsSession); ok {
 		grantID, _ = extra.GetExtraClaims()["consent_grant_id"].(id.GrantID)
+		previousSignature, _ = extra.GetExtraClaims()["refresh_parent_signature"].(string)
 	}
 	if grantID.IsZero() {
 		grant, err := s.verifier.VerifyAgentAccess(ctx, id.Principal(req.GetSession().GetSubject()), agentID)
@@ -276,6 +278,12 @@ func (s *FositeStorage) CreateRefreshTokenSession(ctx context.Context, signature
 	}
 	if err := session.Validate(); err != nil {
 		return err
+	}
+	if previousSignature != "" {
+		if err := s.refreshRepo.CreateSuccessor(ctx, session, previousSignature); err != nil {
+			return s.mapStorageError(ctx, err)
+		}
+		return nil
 	}
 	return s.refreshRepo.Create(ctx, session)
 }
@@ -335,6 +343,7 @@ func (s *FositeStorage) GetRefreshTokenSession(ctx context.Context, signature st
 		return nil, fosite.ErrNotFound
 	}
 	sess.GetExtraClaims()["consent_grant_id"] = grant.ID
+	sess.GetExtraClaims()["refresh_parent_signature"] = signature
 
 	return req, nil
 }

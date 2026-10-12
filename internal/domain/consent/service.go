@@ -624,7 +624,7 @@ func (s *Service) revokeRefreshSessions(ctx context.Context, principal id.Princi
 	if err != nil {
 		return fmt.Errorf("failed to revoke refresh sessions: %w", err)
 	}
-	s.logger.Info("refresh sessions revoked", "trigger", trigger, "principal", principal, "agent_id", agentID, "row_count", count)
+	s.logger.InfoContext(ctx, "refresh sessions revoked", "trigger", trigger, "principal", principal, "agent_id", agentID, "row_count", count)
 	return nil
 }
 
@@ -643,6 +643,12 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 		return fmt.Errorf("failed to revoke consent: %w", err)
 	}
 	if err := s.revokeRefreshSessions(ctx, principal, agentID, "consent_revoked"); err != nil {
+		s.logger.InfoContext(ctx, "grant deleted but refresh cleanup failed",
+			"action", "grant_deleted",
+			"principal", grant.Principal,
+			"agent_id", grant.AgentID,
+			"grant_id", grant.ID,
+			"refresh_cleanup", "failed")
 		return err
 	}
 

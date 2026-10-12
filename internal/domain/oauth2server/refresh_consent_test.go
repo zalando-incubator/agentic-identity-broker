@@ -13,6 +13,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
@@ -60,6 +61,16 @@ type failingRefreshRevocation struct {
 
 func (f failingRefreshRevocation) RevokeByRequestID(context.Context, string) error {
 	return storage.NewStorageError("refresh revocation", storage.ErrorKindConnection, nil, "database unavailable")
+}
+
+type failingRefreshSuccessor struct {
+	ports.RefreshTokenSessionRepository
+	called bool
+}
+
+func (r *failingRefreshSuccessor) CreateSuccessor(context.Context, *storage.RefreshTokenSession, string) error {
+	r.called = true
+	return storage.NewStorageError("refresh successor", storage.ErrorKindConnection, nil, "database unavailable")
 }
 
 type refreshRotationHook struct {
@@ -308,6 +319,107 @@ func TestProvider_RefreshConsentRevokedBeforeRotation(t *testing.T) {
 	}
 }
 
+type refreshAfterConsumptionHook struct {
+	ports.RefreshTokenSessionRepository
+	afterConsumption func() error
+}
+
+func (r refreshAfterConsumptionHook) MarkUsed(ctx context.Context, signature string) error {
+	if err := r.RefreshTokenSessionRepository.MarkUsed(ctx, signature); err != nil {
+		return err
+	}
+	return r.afterConsumption()
+}
+
+func TestProvider_RefreshRevokedAfterConsumption(t *testing.T) {
+	for _, action := range []string{"consent deletion", "credential deletion", "expired grant renewal"} {
+		t.Run(action, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			provider, agents, _ := newTestProvider(t)
+			agent, _, secret := setupTestCredentials(t, provider, agents)
+			serviceID, psID := id.NewServiceID(), id.NewPermissionSetID()
+			agent.RedirectURIs = []string{"https://client.example.com/callback"}
+			agent.PermissionSets = []storage.AgentPermissionSetEntry{{PermissionSetID: psID, RequirementType: storage.RequirementTypeOptional}}
+			agent.ServiceRequirements = []storage.ServiceRequirement{{ServiceID: serviceID, RequirementType: storage.RequirementTypeOptional}}
+			require.NoError(t, agents.Update(ctx, agent))
+			principal := id.Principal("user@example.com")
+			repo := provider.fositeStorage.refreshRepo
+			grants := provider.fositeStorage.verifier.(*testConsentVerifier).grants
+			grant, err := grants.FindByPrincipalAndAgent(ctx, principal, agent.ID)
+			require.NoError(t, err)
+			entries := []storage.GrantedPermissionSetEntry{{PermissionSetID: psID, IncludedServiceIDs: []id.ServiceID{serviceID}}}
+			grant.GrantedPermissionSets = entries
+			require.NoError(t, grants.Update(ctx, grant))
+			sessions := memory.NewInMemoryUserSessionRepository()
+			future := time.Now().Add(time.Hour)
+			require.NoError(t, sessions.Create(ctx, &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID, EncryptedAccessToken: []byte("opaque"), TokenType: "Bearer", RefreshTokenExpiresAt: &future}))
+			psRepo := memory.NewPermissionSetRepository()
+			require.NoError(t, psRepo.Create(ctx, &storage.PermissionSet{ID: psID, Name: "Access", Description: "Lifecycle test", ServiceScopes: []storage.ServiceScope{{ServiceID: serviceID, RequirementType: storage.RequirementTypeOptional}}}))
+			psService := permissionset.NewPermissionSetService(psRepo, grants, testSlogger())
+			t.Cleanup(psService.Close)
+			consentService := consent.NewService(agents, nil, grants, sessions, repo, psService, testSlogger())
+			provider.fositeStorage.verifier = consentService
+			verifier := "refresh-consent-verifier-12345678901234567890"
+			code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access read", "state", generateS256Challenge(verifier), "S256", principal)
+			require.NoError(t, err)
+			issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+			require.NoError(t, err)
+
+			consumed, resume := make(chan struct{}), make(chan struct{})
+			provider.fositeStorage.refreshRepo = refreshAfterConsumptionHook{repo, func() error {
+				close(consumed)
+				select {
+				case <-resume:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}}
+			type result struct {
+				response *ports.TokenResponse
+				err      error
+			}
+			completed := make(chan result, 1)
+			go func() {
+				response, err := provider.HandleRefreshToken(ctx, agent.ID.String(), secret, issued.RefreshToken, "")
+				completed <- result{response, err}
+			}()
+			select {
+			case <-consumed:
+			case <-ctx.Done():
+				t.Fatal("refresh did not consume its predecessor")
+			}
+			switch action {
+			case "consent deletion":
+				require.NoError(t, consentService.RevokeConsentForPrincipal(ctx, principal, agent.ID))
+			case "credential deletion":
+				credentials := NewCredentialService(agents, provider.fositeStorage.credRepo, repo, provider.clientAuth, testSlogger())
+				require.NoError(t, credentials.Revoke(ctx, agent.ID))
+			case "expired grant renewal":
+				past := time.Now().Add(-time.Hour)
+				grant.ValidUntil = &past
+				require.NoError(t, grants.Update(ctx, grant))
+				renewed, err := consentService.GrantConsent(ctx, &consent.GrantRequest{Principal: principal, AgentID: agent.ID, GrantedPermissionSets: entries})
+				require.NoError(t, err)
+				require.Equal(t, grant.ID, renewed.ID)
+			}
+			close(resume)
+			select {
+			case got := <-completed:
+				assert.Nil(t, got.response)
+				require.ErrorIs(t, got.err, ErrInvalidGrant)
+				var protocolErr *RFC6749Error
+				require.ErrorAs(t, got.err, &protocolErr)
+				assert.Equal(t, "invalid_grant", protocolErr.Code())
+				assert.Equal(t, http.StatusBadRequest, protocolErr.HTTPStatus())
+			case <-ctx.Done():
+				t.Fatal("refresh did not complete after lifecycle revocation")
+			}
+		})
+	}
+}
+
 func TestProvider_RefreshIssuanceRequiresConsent(t *testing.T) {
 	for _, name := range []string{"missing", "expired", "verifier failure"} {
 		t.Run(name, func(t *testing.T) {
@@ -342,4 +454,28 @@ func TestProvider_RefreshIssuanceRequiresConsent(t *testing.T) {
 			assert.Nil(t, issued)
 		})
 	}
+}
+
+func TestProvider_RefreshSuccessorStorageFailure(t *testing.T) {
+	ctx := t.Context()
+	provider, agents, _ := newTestProvider(t)
+	agent, _, secret := setupTestCredentials(t, provider, agents)
+	agent.RedirectURIs = []string{"https://client.example.com/callback"}
+	require.NoError(t, agents.Update(ctx, agent))
+	verifier := "refresh-consent-verifier-12345678901234567890"
+	code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access", "state", generateS256Challenge(verifier), "S256", id.Principal("user@example.com"))
+	require.NoError(t, err)
+	issued, err := provider.HandleAuthorizationCodeExchange(ctx, agent.ID.String(), secret, code, agent.RedirectURIs[0], verifier)
+	require.NoError(t, err)
+	repo := &failingRefreshSuccessor{RefreshTokenSessionRepository: provider.fositeStorage.refreshRepo}
+	provider.fositeStorage.refreshRepo = repo
+
+	response, err := provider.HandleRefreshToken(ctx, agent.ID.String(), secret, issued.RefreshToken, "")
+	assert.True(t, repo.called, "failure must occur during successor creation")
+	assert.Nil(t, response)
+	require.ErrorIs(t, err, ErrServerError)
+	var protocolErr *RFC6749Error
+	require.ErrorAs(t, err, &protocolErr)
+	assert.Equal(t, "server_error", protocolErr.Code())
+	assert.Equal(t, http.StatusInternalServerError, protocolErr.HTTPStatus())
 }
