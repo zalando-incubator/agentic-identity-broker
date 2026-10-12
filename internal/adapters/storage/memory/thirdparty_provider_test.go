@@ -65,6 +65,25 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_CreateMaterializesResourceSe
 	assert.Equal(t, provider.ID, resolved.ID)
 }
 
+func TestInMemoryThirdpartyOAuth2ProviderRepository_GetByIDs(t *testing.T) {
+	ctx := context.Background()
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()
+	first := testProvider(id.NewServiceID(), "https://api.example.com/one")
+	second := testProvider(id.NewServiceID())
+	require.NoError(t, repo.Create(ctx, first))
+	require.NoError(t, repo.Create(ctx, second))
+
+	providers, err := repo.GetByIDs(ctx, []id.ServiceID{first.ID, id.NewServiceID(), second.ID, first.ID})
+	require.NoError(t, err)
+	require.Len(t, providers, 2)
+	assert.Equal(t, []id.ServiceID{first.ID, second.ID}, []id.ServiceID{providers[0].ID, providers[1].ID})
+	assert.Equal(t, []string{"https://api.example.com/one"}, providers[0].ProtectedResources)
+	providers[0].DisplayName = "Changed"
+	stored, err := repo.Get(ctx, first.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Provider", stored.DisplayName)
+}
+
 func TestInMemoryThirdpartyOAuth2ProviderRepository_ProtectedResourceMutations(t *testing.T) {
 	ctx := context.Background()
 	repo := NewInMemoryThirdpartyOAuth2ProviderRepository()

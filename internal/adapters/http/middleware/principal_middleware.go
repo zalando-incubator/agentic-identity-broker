@@ -190,6 +190,9 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 // - Continues to next handler: In all cases (principal may or may not be in context)
 func OptionalPrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth domjwtauth.JWTAuthenticator, logger *slog.Logger) func(next http.Handler) http.Handler {
 	headerName := authConfig.Preauth.PrincipalHeaderName
+	if authConfig.JWT != nil && jwtAuth == nil {
+		panic("JWT authentication is configured but no JWTAuthenticator was injected: check server/app wiring")
+	}
 
 	authenticator := jwtAuth
 

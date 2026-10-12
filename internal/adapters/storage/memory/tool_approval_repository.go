@@ -186,25 +186,17 @@ func (r *ToolApprovalRepository) ListAllActive(_ context.Context, principalFilte
 	return result, nil
 }
 
-func (r *ToolApprovalRepository) ListActiveByPrincipalAndAgent(_ context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error) {
+func (r *ToolApprovalRepository) FindPendingByKey(_ context.Context, principal id.Principal, agentID id.AgentID, toolName, argumentsHash string) (*storage.ToolApproval, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-
-	var result []*storage.ToolApproval
-	now := time.Now()
-	for _, a := range r.approvals {
-		if a.Principal != principal || a.AgentID != agentID {
-			continue
+	for _, approval := range r.approvals {
+		if approval.Principal == principal && approval.AgentID == agentID && approval.ToolName == toolName &&
+			approval.ArgumentsHash == argumentsHash && approval.Status == storage.ApprovalStatusPending &&
+			!approval.Consumed && !approval.IsExpired(time.Now()) {
+			return copyApproval(approval), nil
 		}
-		if a.Status == storage.ApprovalStatusPending && a.IsExpired(now) {
-			continue
-		}
-		if a.Consumed {
-			continue
-		}
-		result = append(result, copyApproval(a))
 	}
-	return result, nil
+	return nil, nil
 }
 
 func (r *ToolApprovalRepository) ListPermanentByPrincipal(_ context.Context, principal id.Principal) ([]*storage.ToolApproval, error) {

@@ -22,6 +22,33 @@ func refreshTestSession(principal id.Principal, serviceID id.ServiceID) *storage
 	}
 }
 
+func TestUserSessionRepository_ListingExcludesTokenBlobs(t *testing.T) {
+	repo := NewInMemoryUserSessionRepository()
+	ctx := context.Background()
+	principal := id.Principal("user@example.com")
+	active := refreshTestSession(principal, id.NewServiceID())
+	expired := refreshTestSession(principal, id.NewServiceID())
+	past := time.Now().Add(-time.Minute)
+	expired.RefreshTokenExpiresAt = &past
+	require.NoError(t, repo.Create(ctx, active))
+	require.NoError(t, repo.Create(ctx, expired))
+	require.NoError(t, repo.Create(ctx, refreshTestSession(id.Principal("other@example.com"), id.NewServiceID())))
+
+	activeIDs, err := repo.ListActiveServiceIDsByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	assert.Equal(t, []id.ServiceID{active.ServiceID}, activeIDs)
+	summaries, err := repo.ListSummariesByPrincipal(ctx, principal)
+	require.NoError(t, err)
+	require.Len(t, summaries, 2)
+	byService := map[id.ServiceID]*storage.UserSessionSummary{}
+	for _, summary := range summaries {
+		byService[summary.ServiceID] = summary
+	}
+	assert.True(t, byService[active.ServiceID].HasRefreshToken)
+	assert.False(t, byService[active.ServiceID].IsExpired)
+	assert.True(t, byService[expired.ServiceID].IsExpired)
+}
+
 func TestWithLockedSessionDoesNotBlockOtherSessions(t *testing.T) {
 	repo := NewInMemoryUserSessionRepository()
 	ctx := context.Background()

@@ -86,8 +86,9 @@ type App struct {
 	CIMDAssertionSigner  ports.CIMDClientAssertionSigner
 	CIMDMetadataProvider ports.CIMDClientMetadataProvider
 
-	// JWT pre-authentication (optional, nil when not configured)
-	JWTAuthenticator             domjwtauth.JWTAuthenticator
+	// JWT pre-authentication is independent for each server (nil when not configured).
+	EnduserJWTAuthenticator      domjwtauth.JWTAuthenticator
+	AdminJWTAuthenticator        domjwtauth.JWTAuthenticator
 	ApprovalRequestAuthenticator *httpmiddleware.ApprovalRequestAuthenticator
 
 	// Handler groups for routing
@@ -735,29 +736,33 @@ func (b *Builder) Build() (*App, error) {
 		clientAssertionJWKS = adapter
 	}
 
-	// Create JWT pre-authentication adapter if configured
-	// Per Constitution Principle VII: Configuration-Driven Design — only create when JWT block present
-	if b.config.Server.EndUser.Authentication.JWT != nil {
-		jwtCfg := b.config.Server.EndUser.Authentication.JWT
-
-		// Validate JWT config mutual exclusivity (defense-in-depth, also checked by config validator)
+	for _, server := range [...]struct {
+		name          string
+		config        *ports.JWTConfig
+		authenticator *domjwtauth.JWTAuthenticator
+	}{
+		{"enduser", b.config.Server.EndUser.Authentication.JWT, &app.EnduserJWTAuthenticator},
+		{"admin", b.config.Server.Admin.Authentication.JWT, &app.AdminJWTAuthenticator},
+	} {
+		jwtCfg := server.config
+		if jwtCfg == nil {
+			continue
+		}
 		if jwtCfg.Verification == "none" && jwtCfg.JWKSURI != "" {
-			return nil, fmt.Errorf("authentication.jwt: verification 'none' and jwks_uri are mutually exclusive")
+			err := fmt.Errorf("server.%s.authentication.jwt: verification 'none' and jwks_uri are mutually exclusive", server.name)
+			return nil, errors.Join(err, app.Shutdown(context.Background()))
 		}
 
-		// Create CEL evaluator for JWT claim extraction (domain layer)
-		celConfig := domjwtauth.CELEvaluatorConfig{
+		celEval, err := domjwtauth.NewCELEvaluator(domjwtauth.CELEvaluatorConfig{
 			PrincipalExpression:   jwtCfg.ClaimExtraction.PrincipalExpression,
 			DisplayNameExpression: jwtCfg.ClaimExtraction.DisplayNameExpression,
 			EmailExpression:       jwtCfg.ClaimExtraction.EmailExpression,
 			PictureURLExpression:  jwtCfg.ClaimExtraction.PictureURLExpression,
-		}
-		celEval, err := domjwtauth.NewCELEvaluator(celConfig, b.logger)
+		}, b.logger)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create CEL evaluator for JWT pre-auth: %w", err)
+			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create CEL evaluator: %w", server.name, err), app.Shutdown(context.Background()))
 		}
 
-		// Create JWT authenticator adapter (uses lestrrat-go/jwx v4)
 		jwtAuthenticator, err := jwtauthadapter.NewJWXAuthenticator(jwtauthadapter.JWXAuthenticatorConfig{
 			JWTConfig:    jwtCfg,
 			CELEvaluator: celEval,
@@ -765,10 +770,10 @@ func (b *Builder) Build() (*App, error) {
 			Logger:       b.logger,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create JWT authenticator: %w", err)
+			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create JWT authenticator: %w", server.name, err), app.Shutdown(context.Background()))
 		}
 
-		app.JWTAuthenticator = jwtAuthenticator
+		*server.authenticator = jwtAuthenticator
 		prevShutdown := app.Shutdown
 		app.Shutdown = func(ctx context.Context) error {
 			var prevErr error
@@ -778,6 +783,7 @@ func (b *Builder) Build() (*App, error) {
 			return errors.Join(jwtAuthenticator.Shutdown(ctx), prevErr)
 		}
 		b.logger.Info("JWT pre-authentication enabled",
+			"server", server.name,
 			"header_name", jwtCfg.HeaderName,
 			"verification", jwtCfg.Verification,
 			"has_audience", jwtCfg.ExpectedAudience != "",

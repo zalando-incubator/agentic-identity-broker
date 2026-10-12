@@ -104,7 +104,7 @@ func run(cmd *cobra.Command, args []string) error {
 	enduserRouteSetup := func(r chi.Router) {
 		routing.SetupEnduserRoutes(r, application.EnduserHandlers, routing.EnduserRouteConfig{
 			Authentication:               cfg.Server.EndUser.Authentication,
-			JWTAuthenticator:             application.JWTAuthenticator,
+			JWTAuthenticator:             application.EnduserJWTAuthenticator,
 			ApprovalRequestAuthenticator: application.ApprovalRequestAuthenticator,
 			Logger:                       application.Logger,
 			CORS:                         cfg.Server.EndUser.CORS,
@@ -115,13 +115,14 @@ func run(cmd *cobra.Command, args []string) error {
 	// Create server instances with route setup functions
 	adminServer := httpAdapter.NewServer(
 		httpAdapter.ServerConfig{
-			Port:           cfg.Server.Admin.Port,
-			Bind:           cfg.Server.Admin.Bind,
-			PublicURL:      cfg.Server.Admin.PublicURL,
-			Name:           "admin",
-			Telemetry:      cfg.Telemetry,
-			RequestContext: &cfg.RequestContext,
-			Authentication: cfg.Server.Admin.Authentication,
+			Port:             cfg.Server.Admin.Port,
+			Bind:             cfg.Server.Admin.Bind,
+			PublicURL:        cfg.Server.Admin.PublicURL,
+			Name:             "admin",
+			Telemetry:        cfg.Telemetry,
+			RequestContext:   &cfg.RequestContext,
+			Authentication:   cfg.Server.Admin.Authentication,
+			JWTAuthenticator: application.AdminJWTAuthenticator,
 		},
 		adminRouteSetup,
 		application.Logger,
@@ -136,7 +137,7 @@ func run(cmd *cobra.Command, args []string) error {
 			Telemetry:        cfg.Telemetry,
 			RequestContext:   &cfg.RequestContext,
 			Authentication:   cfg.Server.EndUser.Authentication,
-			JWTAuthenticator: application.JWTAuthenticator,
+			JWTAuthenticator: application.EnduserJWTAuthenticator,
 			HealthComponents: application.EnduserHealthComponents,
 		},
 		enduserRouteSetup,

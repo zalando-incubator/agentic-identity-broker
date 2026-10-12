@@ -151,6 +151,36 @@ func (r *InMemoryUserSessionRepository) ListByPrincipal(ctx context.Context, pri
 	return sessions, nil
 }
 
+func (r *InMemoryUserSessionRepository) ListSummariesByPrincipal(_ context.Context, principal id.Principal) ([]*storage.UserSessionSummary, error) {
+	if principal.IsZero() {
+		return nil, errors.New("principal required")
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	summaries := make([]*storage.UserSessionSummary, 0)
+	for _, session := range r.sessions {
+		if session.Principal == principal {
+			summaries = append(summaries, storage.NewUserSessionSummary(session, "", 0))
+		}
+	}
+	return summaries, nil
+}
+
+func (r *InMemoryUserSessionRepository) ListActiveServiceIDsByPrincipal(_ context.Context, principal id.Principal) ([]id.ServiceID, error) {
+	if principal.IsZero() {
+		return nil, errors.New("principal required")
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]id.ServiceID, 0)
+	for _, session := range r.sessions {
+		if session.Principal == principal && !session.IsExpired() {
+			ids = append(ids, session.ServiceID)
+		}
+	}
+	return ids, nil
+}
+
 // ListActiveByPrincipal retrieves only non-expired sessions for a principal.
 func (r *InMemoryUserSessionRepository) ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error) {
 	if principal.IsZero() {
