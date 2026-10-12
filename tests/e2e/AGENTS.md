@@ -13,7 +13,6 @@ Read these sources before you change E2E tests:
 | `adrs/007-e2e-testing-with-ginkgo.md` | Accepted E2E architecture |
 | `tests/e2e/README.md` | Structure, commands, and anti-patterns |
 | `tests/e2e/fixtures/README.md` | Fixture rules and categories |
-| `.github/instructions/e2e-tests-code-review.instructions.md` | Test review checklist |
 | `api/enduser/openapi.yaml`, `api/admin/openapi.yaml` | HTTP operation contracts |
 
 The guides contain historical inventories and examples. Read current source for helper signatures and feature coverage.
@@ -30,6 +29,8 @@ Read the governing feature's `spec.md`, `plan.md`, and `tasks.md` under `specs/`
 5. Keep setup in `BeforeEach` and cleanup in `AfterEach`. Use `Context` for variants with shared setup.
 6. Create fresh mutable fixtures, storage, and servers for each test.
 7. Close response bodies after each request.
+8. Use reusable factories from `tests/e2e/fixtures/` instead of repeated hardcoded test data.
+9. Declare shared scenario variables at `Describe` or `Context` scope. Initialize them in `BeforeEach`.
 
 ## Directory Layout
 

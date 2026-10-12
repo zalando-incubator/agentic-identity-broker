@@ -7,6 +7,10 @@
 Paths in this file are relative to the repository root. Read the nearest child `AGENTS.md` before you change an area.
 Use the indexes to select relevant sources, not as a requirement to read every document.
 
+Maintain shared instructions in the root or nearest child `AGENTS.md`.
+Keep tool-specific instruction files limited to scope metadata and routes to those owners.
+Read routed files before implementation or review. A route is not a substitute for its instructions.
+
 ## Docs Index (Retrieval Targets)
 
 Read the source that governs the change. The summaries here do not replace the constitution, accepted ADRs, or API contracts.
@@ -224,6 +228,21 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 - **Extend, do not duplicate** — Use an existing mechanism (for example, JWE for ephemeral state). Do not introduce a competing one.
 
 - **No test-only production APIs** — Put test helpers in `_test.go` or `tests/`. Assert through production APIs.
+
+## Code Review Rules
+
+Use the governing references and feature-selection process in this file before review.
+Read the nearest child `AGENTS.md` for each changed area.
+
+- Prioritize security faults and performance problems that can affect users.
+- Check for exposed secrets, injection, unsafe input handling, and authentication or authorization errors.
+- Check for N+1 queries, inefficient loops, resource leaks, and expensive repeated operations.
+- Identify incomplete implementations and violations of the Code Style rules.
+- Suggest concrete improvements to unclear names, oversized functions, and error handling.
+- Verify changes against `ARCHITECTURE.md`, accepted ADRs, and the constitution.
+- Read the governing feature's full `tasks.md`. Verify that each checked task has a production-quality implementation.
+- Report specific findings with source locations, impact, and actionable corrections.
+- Explain useful patterns as well as problems. Ask for clarification when the source does not establish intent.
 
 ## Database Migrations
 
