@@ -478,6 +478,7 @@ func (b *Builder) Build() (*App, error) {
 			app.ProviderService,
 			b.storage.UserGrants(),
 			b.storage.UserSessions(),
+			b.storage.RefreshTokenSessions(),
 			app.PermissionSetService,
 			b.logger,
 		)
@@ -874,6 +875,7 @@ func (b *Builder) Build() (*App, error) {
 			tokenTTL,
 			ov.localRefreshTokenTTL,
 			claimsExpr,
+			app.ConsentService,
 			b.logger,
 			b.storage,
 		)
@@ -910,7 +912,7 @@ func (b *Builder) Build() (*App, error) {
 	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
 		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
 		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
-		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), clientAuthService, b.logger)
+		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), b.storage.RefreshTokenSessions(), clientAuthService, b.logger)
 		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
 		return signingKeyService

@@ -148,6 +148,7 @@ func newMockConsentService() *consent.Service {
 		},
 		nil,
 		nil,
+		nil,
 		slog.Default(),
 	)
 }
@@ -1478,6 +1479,7 @@ func newServiceForStep9TestWithAuthz(t *testing.T, keySet jwk.Set, agentRepo por
 		&MockGrantRepository{err: ports.ErrNotFound},
 		nil,
 		nil,
+		nil,
 		slog.Default(),
 	)
 
@@ -1687,6 +1689,7 @@ func TestExchange_PSAgentNoSRs_EmptyGrantGuard(t *testing.T) {
 		agentRepo,
 		newTestProviderService(&MockServiceRepository{}),
 		grantRepo,
+		nil,
 		nil,
 		nil,
 		slog.Default(),
@@ -2241,7 +2244,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 	psRepo := &MockPermissionSetRepository{psMap: psMap}
 	psService := permissionset.NewPermissionSetService(psRepo, grantRepo, slog.Default())
 	t.Cleanup(psService.Close)
-	consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, slog.Default())
+	consentSvc := consent.NewService(agentRepo, newTestProviderService(&MockServiceRepository{}), grantRepo, nil, nil, nil, slog.Default())
 
 	provider := &model.ThirdpartyOAuth2ProviderEntity{
 		ID:                 requestedServiceID,

@@ -14,6 +14,7 @@ type RefreshTokenSession struct {
 	AgentID     id.AgentID   `db:"agent_id"`
 	ClientID    id.ClientID  `db:"client_id"`
 	Principal   id.Principal `db:"principal"`
+	GrantID     *id.GrantID  `db:"grant_id"`
 	Email       *string      `db:"email"`
 	DisplayName string       `db:"display_name"`
 	Scope       string       `db:"scope"`

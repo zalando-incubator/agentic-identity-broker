@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -36,6 +37,10 @@ func (s *RefreshTokenSessionStore) Create(_ context.Context, session *storage.Re
 	}
 
 	copy := *session
+	if session.GrantID != nil {
+		grantID := *session.GrantID
+		copy.GrantID = &grantID
+	}
 	s.bySignature[copy.Signature] = &copy
 	return nil
 }
@@ -51,6 +56,10 @@ func (s *RefreshTokenSessionStore) FindBySignature(_ context.Context, signature 
 	}
 
 	copy := *session
+	if session.GrantID != nil {
+		grantID := *session.GrantID
+		copy.GrantID = &grantID
+	}
 	return &copy, nil
 }
 
@@ -85,6 +94,29 @@ func (s *RefreshTokenSessionStore) RevokeByRequestID(_ context.Context, requestI
 		}
 	}
 	return nil
+}
+
+func (s *RefreshTokenSessionStore) RevokeByPrincipalAndAgent(_ context.Context, principal id.Principal, agentID id.AgentID) (int, error) {
+	return s.revokeByAgent(agentID, &principal), nil
+}
+
+func (s *RefreshTokenSessionStore) RevokeByAgent(_ context.Context, agentID id.AgentID) (int, error) {
+	return s.revokeByAgent(agentID, nil), nil
+}
+
+func (s *RefreshTokenSessionStore) revokeByAgent(agentID id.AgentID, principal *id.Principal) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	count := 0
+	for _, session := range s.bySignature {
+		if session.AgentID == agentID && (principal == nil || session.Principal == *principal) && session.UsedAt == nil {
+			session.UsedAt = &now
+			count++
+		}
+	}
+	return count
 }
 
 func (s *RefreshTokenSessionStore) DeleteExpired(_ context.Context) (int, error) {
