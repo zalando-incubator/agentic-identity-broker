@@ -34,7 +34,11 @@ func TestCanonicalIndexesInMemoryRepositories(t *testing.T) {
 		require.NoError(t, repo.Update(ctx, agent))
 		_, err = repo.GetByCanonicalID(ctx, canonicalID)
 		require.Error(t, err)
-		require.NoError(t, repo.Delete(ctx, agent.ID))
+		deleted, err := repo.Delete(ctx, agent.ID)
+		require.NoError(t, err)
+		assert.True(t, deleted)
+		_, err = repo.GetByCanonicalID(ctx, replacement)
+		require.Error(t, err)
 		require.NoError(t, repo.Create(ctx, duplicate))
 	})
 
@@ -49,6 +53,14 @@ func TestCanonicalIndexesInMemoryRepositories(t *testing.T) {
 		canonicalIDs, err := repo.GetCanonicalIDs(ctx, []id.PermissionSetID{permissionSet.ID})
 		require.NoError(t, err)
 		assert.Equal(t, canonicalID, canonicalIDs[permissionSet.ID])
+		deleted, err := repo.Delete(ctx, permissionSet.ID)
+		require.NoError(t, err)
+		assert.True(t, deleted)
+		_, err = repo.GetByCanonicalID(ctx, canonicalID)
+		require.Error(t, err)
+		replacement := permissionSet.Copy()
+		replacement.ID = id.NewPermissionSetID()
+		require.NoError(t, repo.Create(ctx, replacement))
 	})
 
 	t.Run("services release canonical IDs after deletion", func(t *testing.T) {

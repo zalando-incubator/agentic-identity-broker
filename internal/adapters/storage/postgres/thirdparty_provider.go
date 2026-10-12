@@ -89,6 +89,45 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Get(ctx context.Context, se
 	return recordToEntity(record)
 }
 
+func (r *PostgresThirdpartyOAuth2ProviderRepository) GetByIDs(ctx context.Context, ids []id.ServiceID) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
+	if err := r.requireDB("GetThirdpartyOAuth2ProvidersByIDs"); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []*model.ThirdpartyOAuth2ProviderEntity{}, nil
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+	rows, err := r.adapter.db.QueryContext(queryCtx, `SELECT `+providerColumns+` FROM thirdparty_oauth2_services s WHERE s.id = ANY($1::uuid[])`, pq.Array(ids))
+	if err != nil {
+		return nil, providerStorageError("GetThirdpartyOAuth2ProvidersByIDs", err, "failed to get providers")
+	}
+	defer func() { _ = rows.Close() }()
+	byID := make(map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity, len(ids))
+	for rows.Next() {
+		record, err := scanProvider(rows)
+		if err != nil {
+			return nil, providerStorageError("GetThirdpartyOAuth2ProvidersByIDs", err, "failed to scan provider")
+		}
+		entity, err := recordToEntity(record)
+		if err != nil {
+			return nil, err
+		}
+		byID[entity.ID] = entity
+	}
+	if err := rows.Err(); err != nil {
+		return nil, providerStorageError("GetThirdpartyOAuth2ProvidersByIDs", err, "failed to iterate providers")
+	}
+	result := make([]*model.ThirdpartyOAuth2ProviderEntity, 0, len(byID))
+	for _, serviceID := range ids {
+		if entity := byID[serviceID]; entity != nil {
+			result = append(result, entity)
+			delete(byID, serviceID)
+		}
+	}
+	return result, nil
+}
+
 func (r *PostgresThirdpartyOAuth2ProviderRepository) GetByCanonicalID(ctx context.Context, canonicalID string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	if err := r.requireDB("GetThirdpartyOAuth2ProviderByCanonicalID"); err != nil {
 		return nil, err

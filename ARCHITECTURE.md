@@ -101,6 +101,7 @@ Deployment: Containerized service (Docker), deployable to Kubernetes, AWS ECS, o
 - Command injection prevention (rejects $(cmd), backticks, shell metacharacters)
 - Circular reference detection (max depth: 10)
 - Fail-closed on errors (graceful termination with clear messages)
+- AWS TLS certificate verification bypass (`encryption.aws_kms.disable_ssl`) requires explicit `GO_ENV=development`; every other environment, including unset, rejects it before AWS clients are initialized.
 - File permission validation
 - Structured audit logging (JSON to stdout)
 
@@ -439,6 +440,8 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 
 **Rate Limiting**: Per (principal, agent) pair using `golang.org/x/time/rate` token bucket. Configured via `approvals.rate_limit.max_pending_per_pair` and `approvals.rate_limit.max_requests_per_minute`.
 
+**Approval creation reads**: A narrow lookup by `(principal, agent_id, tool_name, arguments_hash)` lets existing pending approvals bypass rate limits before insertion. The service rechecks expiry after retrieval so an approval that expires during the lookup is not reused. The partial unique index and repository upsert remain the final concurrent deduplication guard. The separate pair-wide pending count enforces `max_pending_per_pair`; the index cannot replace it.
+
 **Trace Context**: `POST /api/approvals` accepts an optional W3C `traceparent` header. The broker persists the validated remote context so later browser lifecycle spans can link to the originating tool call.
 
 #### 3.1.6. Long-Poll Sync with PostgreSQL LISTEN/NOTIFY
@@ -552,6 +555,8 @@ rejections return 403; media-type rejections return 415. `/health` is excluded.
 - When local issuance is part of the active mode (`local` or `hybrid`), the local strategies are backed by `internal/domain/oauth2server.Provider`, which contains all fosite-specific authorization-server logic.
 
 **Authorization code expiry**: Locally issued codes expire after 60 seconds. Repository lookups exclude expired records in PostgreSQL and memory storage. `FositeStorage` checks the stored expiry before replay handling and hydrates the caller's session for `RandomCodeStrategy` to check again. Expired codes return `invalid_grant` without replay revocation. Unexpired, previously used codes retain replay protection.
+
+**Authorization-code exchange reads**: The provider authenticates the client once and passes it through the request context to fosite's storage handler. Each code-session hydration still reads the code and checks its original client ID and agent ID; invalidation retains its atomic single-use update. No authorization-code record is cached across validation steps, so replay and expiry checks observe current state.
 
 **OAuth2 record retention**: In local and hybrid modes, the builder starts `SessionCleanup` after successful application construction. It deletes expired authorization codes, PKCE sessions, and refresh-token sessions at startup and every minute. A repository error does not stop the remaining deletions or future sweeps. Application shutdown cancels the worker and waits for its current operation to finish. Expiry enforcement does not depend on cleanup success.
 
@@ -718,6 +723,7 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 
 - **OAuth2SessionService**: Transparently encrypts tokens on CreateSession, decrypts on retrieval
 - **UserSessionRepository**: Stores EncryptedAccessToken and EncryptedRefreshToken as BYTEA columns
+- **Listing reads**: Consent delegations and session/consent requirements batch-load existing agents and providers by ID; missing records are omitted. Batch provider reads decrypt static confidential secrets and leave public and CIMD confidential providers unchanged. Consent connection status uses a narrow active-service-ID query instead of loading encrypted tokens per requirement. User-visible session summaries include expired sessions and derive refresh-token presence in PostgreSQL without selecting token ciphertext. PostgreSQL session repository reads and writes use configured read/write timeouts; refresh's row-lock transaction retains separate bounded acquisition and query phases.
 - **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with an in-process singleflight. Provider metadata is loaded before the session lock, then automatic and explicit refresh re-read the latest session under that lock. PostgreSQL holds a row lock through the provider exchange and commits rotated encrypted tokens before releasing it; database acquisition, reads, and writes have separate configured timeouts. The in-memory adapter serializes refresh, upsert, and deletion per session while holding its map mutex only for lookup and commit. Replicas therefore use the latest refresh token without racing on a stale one.
 - **Refresh cancellation and audit**: Automatic refresh has an operation deadline covering the configured upstream HTTP timeout and storage work. Caller cancellation stops that caller's wait without aborting a shared refresh that may already have rotated the provider token. Success audit events are emitted only after session persistence succeeds.
 - **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.
@@ -842,6 +848,8 @@ OAuth2 /authorize request
 **CIMD Client URI Resolution**: `AgentRepository.GetByClientURI` looks for an exact URI before it evaluates patterns. A pattern uses `*` as a complete path segment. It matches one non-empty segment. The broker rejects literal `\`, encoded `/`, and encoded `\` in paths before matching. If patterns on different Agents match, the resolver logs the event. It then returns `invalid_client`.
 
 **Security Properties**: SSRF blocked at TCP-connect time (TOCTOU-safe). The fetcher rejects non-global IP addresses, known private and special-purpose ranges, and IPv6 translation/tunnel prefixes that can reach IPv4 destinations. Authorization context never relays through browser URL as plain params (JWE session_token seals context server-side, SR-013/SR-014). All agent modes (local, proxy, CIMD) use session_token — no redirect_uri fallback.
+
+**CIMD bypass configuration**: The configuration loader rejects `security.skip_cimd_ssrf_validation: true` unless `GO_ENV` is explicitly `development`. This check runs before application initialization, even when CIMD is disabled. The flag disables both the dial-time IP blocklist and TLS certificate verification for local CIMD mock testing. The startup configuration summary reports its effective value and source for configuration audits.
 
 **Redirect URI Matching**: `urivalidation.MatchesRedirectURI` (`internal/domain/urivalidation/redirect.go`) compares a registered URI against the runtime request URI. For loopback hosts (`localhost`, `127.0.0.1`, `::1`) the port component is ignored per RFC 8252 §7.3 and OAuth 2.1 §2.3.1 — any ephemeral port is accepted as long as scheme, host, and path match exactly. For all other hosts all four URI components (scheme, host, port, path) must match exactly. This rule applies to both CIMD clients (redirect_uris from the fetched document) and opaque clients (redirect_uris registered on the Agent entity).
 
@@ -1488,6 +1496,10 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
 
 **ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
+
+**AuthorizationRef**: Scalar observation context for the registered agent and found user-agent grant evaluated by third-party token exchange. It holds IDs, the stored grant update time, and optional expiry by value, including on expired-grant errors. Responses exclude it from JSON; only broker logs and spans project it, never metric labels. It retains no credentials or grant pointer.
+
+**Grant and Definition Lifecycle Audit**: A domain-owned structured operational log emitted after a successful grant, agent, or permission-set mutation. Committed grant metadata and atomic deletion outcomes identify the actual mutation; unchanged consent and absent deletes do not emit success. Typed purpose-limited snapshots exclude credentials and profile text. The request-security logger supplies actor/trace context, distinct from grant ownership. `previous_observed_*` fields represent state read before a write, not a transactionally guaranteed predecessor. These logs are not a durable audit ledger, outbox, protocol field or metric label.
 
 **Diagnostic**: Immutable token-exchange classification: outcome, failure stage/detail, recovery recommendation/target, and exchange kind. It contains no credentials or free-form errors.
 

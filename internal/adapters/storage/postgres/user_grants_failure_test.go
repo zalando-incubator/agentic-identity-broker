@@ -31,11 +31,13 @@ func TestUserGrantRepositoryFailuresAndExpiry(t *testing.T) {
 			},
 		)
 		grant.ID = id.NewGrantID()
+		before := grant.Copy()
 
 		err := grantRepo.Create(ctx, grant)
 		var storageErr *storage.StorageError
 		require.ErrorAs(t, err, &storageErr)
 		require.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+		assert.Equal(t, before, grant, "failed create must not publish metadata")
 
 		var count int
 		require.NoError(t, adapter.db.QueryRowContext(ctx,
@@ -80,11 +82,15 @@ func TestUserGrantRepositoryFailuresAndExpiry(t *testing.T) {
 			newGrantedPermissionSetEntry(t, adapter),
 			{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}},
 		}
+		attempt.CreatedAt = attempt.CreatedAt.Add(-time.Hour)
+		attempt.UpdatedAt = attempt.UpdatedAt.Truncate(time.Second).Add(123456789 * time.Nanosecond)
+		beforeAttempt := attempt.Copy()
 
 		err = grantRepo.Update(ctx, attempt)
 		var storageErr *storage.StorageError
 		require.ErrorAs(t, err, &storageErr)
 		require.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+		assert.Equal(t, beforeAttempt, attempt, "rolled-back update must not publish returned metadata")
 
 		after, err := grantRepo.Get(ctx, grant.ID)
 		require.NoError(t, err)
@@ -132,5 +138,158 @@ func TestUserGrantRepositoryFailuresAndExpiry(t *testing.T) {
 		byPrincipalAndAgent, err := grantRepo.FindByPrincipalAndAgent(ctx, principal, expiredAgent.ID)
 		require.NoError(t, err)
 		assert.Equal(t, expired.ID, byPrincipalAndAgent.ID)
+	})
+}
+
+func installGrantCommitFailure(t *testing.T, adapter *Adapter) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := adapter.db.ExecContext(ctx, `
+		CREATE FUNCTION reject_grant_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected grant commit failure' USING ERRCODE = '23514';
+		END;
+		$$;
+		CREATE CONSTRAINT TRIGGER reject_grant_commit
+		AFTER INSERT OR UPDATE OR DELETE ON user_grants
+		DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_grant_commit();
+	`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := adapter.db.ExecContext(ctx, `
+			DROP TRIGGER reject_grant_commit ON user_grants;
+			DROP FUNCTION reject_grant_commit();
+		`)
+		require.NoError(t, err)
+	})
+}
+
+func TestUserGrantRepositoryCommitFailureDoesNotPublishMetadata(t *testing.T) {
+	adapter, agentRepo, grantRepo, cleanup := setupUserGrantTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	precise := time.Now().UTC().Truncate(time.Second).Add(123456789 * time.Nanosecond)
+
+	t.Run("create", func(t *testing.T) {
+		agent := createUserGrantTestAgent(t, agentRepo, "commit-create")
+		grant := newUserGrant(id.Principal("commit-create@example.com"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+		grant.ID = id.NewGrantID()
+		grant.CreatedAt = precise
+		grant.UpdatedAt = precise
+		grant.ValidUntil = ptr.To(precise.Add(24 * time.Hour))
+		before := grant.Copy()
+		installGrantCommitFailure(t, adapter)
+		require.Error(t, grantRepo.Create(ctx, grant))
+		assert.Equal(t, before, grant)
+		_, err := grantRepo.Get(ctx, grant.ID)
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+	})
+
+	t.Run("generated ID remains unpublished on commit failure", func(t *testing.T) {
+		agent := createUserGrantTestAgent(t, agentRepo, "commit-generated-id")
+		grant := newUserGrant(id.Principal("commit-generated-id@example.com"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+		before := grant.Copy()
+		installGrantCommitFailure(t, adapter)
+		require.Error(t, grantRepo.Create(ctx, grant))
+		assert.Equal(t, before, grant)
+		_, err := grantRepo.FindByPrincipalAndAgent(ctx, grant.Principal, agent.ID)
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+	})
+
+	t.Run("upsert", func(t *testing.T) {
+		agent := createUserGrantTestAgent(t, agentRepo, "commit-upsert")
+		grant := newUserGrant(id.Principal("commit-upsert@example.com"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+		require.NoError(t, grantRepo.Create(ctx, grant))
+		stored, err := grantRepo.Get(ctx, grant.ID)
+		require.NoError(t, err)
+		attempt := stored.Copy()
+		attempt.ID = id.NewGrantID()
+		attempt.CreatedAt = precise.Add(time.Hour)
+		attempt.UpdatedAt = precise.Add(2 * time.Hour)
+		attempt.ValidUntil = ptr.To(precise.Add(24 * time.Hour))
+		before := attempt.Copy()
+		installGrantCommitFailure(t, adapter)
+		require.Error(t, grantRepo.Create(ctx, attempt))
+		assert.Equal(t, before, attempt)
+		after, err := grantRepo.Get(ctx, stored.ID)
+		require.NoError(t, err)
+		assert.Equal(t, stored, after)
+	})
+
+	t.Run("update", func(t *testing.T) {
+		agent := createUserGrantTestAgent(t, agentRepo, "commit-update")
+		grant := newUserGrant(id.Principal("commit-update@example.com"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+		require.NoError(t, grantRepo.Create(ctx, grant))
+		stored, err := grantRepo.Get(ctx, grant.ID)
+		require.NoError(t, err)
+		attempt := stored.Copy()
+		attempt.CreatedAt = precise.Add(-time.Hour)
+		attempt.UpdatedAt = precise.Add(time.Hour)
+		attempt.ValidUntil = ptr.To(precise.Add(24 * time.Hour))
+		before := attempt.Copy()
+		installGrantCommitFailure(t, adapter)
+		require.Error(t, grantRepo.Update(ctx, attempt))
+		assert.Equal(t, before, attempt)
+		after, err := grantRepo.Get(ctx, stored.ID)
+		require.NoError(t, err)
+		assert.Equal(t, stored, after)
+	})
+
+	t.Run("snapshot delete", func(t *testing.T) {
+		agent := createUserGrantTestAgent(t, agentRepo, "commit-delete")
+		grant := newUserGrant(id.Principal("commit-delete@example.com"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+		grant.ValidUntil = ptr.To(precise.Add(24 * time.Hour))
+		require.NoError(t, grantRepo.Create(ctx, grant))
+		stored, err := grantRepo.Get(ctx, grant.ID)
+		require.NoError(t, err)
+		installGrantCommitFailure(t, adapter)
+		deleted, err := grantRepo.DeleteByPrincipalAndAgentID(ctx, grant.Principal, agent.ID)
+		require.Error(t, err)
+		assert.Nil(t, deleted)
+		after, err := grantRepo.Get(ctx, stored.ID)
+		require.NoError(t, err)
+		assert.Equal(t, stored, after)
+	})
+}
+
+func TestUserGrantRepositorySnapshotDeletionFailures(t *testing.T) {
+	adapter, agents, grants, cleanup := setupUserGrantTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	t.Run("invalid stored grant JSON rolls back deletion", func(t *testing.T) {
+		agent := createUserGrantTestAgent(t, agents, "delete-invalid-json")
+		grant := newUserGrant(id.Principal("delete-invalid-json@example.com"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+		require.NoError(t, grants.Create(ctx, grant))
+		_, err := adapter.db.ExecContext(ctx, `UPDATE user_grants SET granted_permission_sets = '{}'::jsonb WHERE id = $1`, grant.ID)
+		require.NoError(t, err)
+		deleted, err := grants.DeleteByPrincipalAndAgentID(ctx, grant.Principal, agent.ID)
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindUnknown, storageErr.Kind)
+		assert.Nil(t, deleted)
+		var storedJSON string
+		require.NoError(t, adapter.db.QueryRowContext(ctx,
+			`SELECT granted_permission_sets::text FROM user_grants WHERE id = $1`, grant.ID,
+		).Scan(&storedJSON))
+		assert.JSONEq(t, `{}`, storedJSON)
+	})
+
+	t.Run("canceled deletion returns no snapshot and retains grant", func(t *testing.T) {
+		agent := createUserGrantTestAgent(t, agents, "delete-canceled")
+		grant := newUserGrant(id.Principal("delete-canceled@example.com"), agent.ID, newGrantedPermissionSetEntry(t, adapter))
+		require.NoError(t, grants.Create(ctx, grant))
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		deleted, err := grants.DeleteByPrincipalAndAgentID(canceled, grant.Principal, agent.ID)
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Nil(t, deleted)
+		stored, err := grants.Get(ctx, grant.ID)
+		require.NoError(t, err)
+		assert.Equal(t, grant, stored)
 	})
 }

@@ -102,8 +102,11 @@ type UserRepository interface {
 type AgentRepository interface {
 	Create(ctx context.Context, agent *storage.Agent) error
 	Get(ctx context.Context, id id.AgentID) (*storage.Agent, error)
+	// GetByIDs retrieves existing agents once per ID, in requested order; missing IDs are omitted.
+	GetByIDs(ctx context.Context, ids []id.AgentID) ([]*storage.Agent, error)
 	Update(ctx context.Context, agent *storage.Agent) error
-	Delete(ctx context.Context, id id.AgentID) error
+	// Delete reports whether the primary agent row was actually deleted; absence is false, nil.
+	Delete(ctx context.Context, id id.AgentID) (bool, error)
 	List(ctx context.Context) ([]*storage.Agent, error)
 	GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
 	ExistsOtherWithClientID(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
@@ -123,6 +126,8 @@ type AgentCanonicalIDRepository interface {
 type UserGrantRepository interface {
 	// Create creates a new user grant or updates existing grant for same principal+agent (upsert).
 	// The grant ID should be generated before calling this method.
+	// On success, copies persisted ID, CreatedAt, UpdatedAt and ValidUntil back to grant.
+	// ValidUntil is a defensive value; failed writes do not publish committed metadata.
 	// Returns error if:
 	// - Agent ID doesn't exist (StorageError with Kind=NotFound)
 	// - Storage connection fails (StorageError with Kind=Connection)
@@ -135,6 +140,8 @@ type UserGrantRepository interface {
 	Get(ctx context.Context, id id.GrantID) (*storage.UserGrant, error)
 
 	// Update updates an existing user grant.
+	// On success, copies persisted ID, CreatedAt, UpdatedAt and defensive ValidUntil back to grant.
+	// Failed writes do not publish committed metadata.
 	// Returns error if:
 	// - Grant ID not found (StorageError with Kind=NotFound)
 	// - Storage connection fails (StorageError with Kind=Connection)
@@ -164,12 +171,11 @@ type UserGrantRepository interface {
 	// It is safe to call with non-existent agent (idempotent).
 	DeleteByAgent(ctx context.Context, agentID id.AgentID) error
 
-	// DeleteByPrincipalAndAgentID deletes the grant owned by principal for the given agent.
-	// Returns StorageError wrapping ports.ErrNotFound when no active grant exists for
-	// the (principal, agent_id) pair — never returns raw sql.ErrNoRows.
-	// This is the revocation operation for FR-014 (user-initiated grant deletion).
-	// Unlike DeleteByAgent, this is NOT idempotent: absence of the grant is an error.
-	DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error
+	// DeleteByPrincipalAndAgentID atomically deletes the owned grant and returns a defensive
+	// snapshot of the row actually deleted, only after successful persistence.
+	// Absence returns StorageError wrapping ports.ErrNotFound, never raw sql.ErrNoRows.
+	// This revocation operation is not idempotent and returns no snapshot on error.
+	DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error)
 
 	// ListByPrincipal retrieves all active grants for a principal across all agents.
 	// Filters expired grants (valid_until < NOW()).
@@ -232,6 +238,12 @@ type UserSessionRepository interface {
 	// Returns empty slice if no sessions exist (not an error).
 	ListByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error)
 
+	// ListSummariesByPrincipal returns session listing metadata, including expired sessions, without encrypted token blobs.
+	ListSummariesByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSessionSummary, error)
+
+	// ListActiveServiceIDsByPrincipal returns service IDs of sessions whose refresh token has not expired.
+	ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error)
+
 	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
 	// Used for FR-020 consent submission validation and anyDelegatedSessionExpired checks.
 	// Returns empty slice if no active sessions exist (not an error).
@@ -268,7 +280,8 @@ type PermissionSetRepository interface {
 	Get(ctx context.Context, id id.PermissionSetID) (*storage.PermissionSet, error)
 	GetByIDs(ctx context.Context, ids []id.PermissionSetID) ([]*storage.PermissionSet, error)
 	Update(ctx context.Context, ps *storage.PermissionSet) error
-	Delete(ctx context.Context, id id.PermissionSetID) error
+	// Delete reports whether the primary permission-set row was actually deleted; absence is false, nil.
+	Delete(ctx context.Context, id id.PermissionSetID) (bool, error)
 	List(ctx context.Context, serviceID id.ServiceID) ([]*storage.PermissionSet, error)
 	CountAgentsReferencingPermissionSet(ctx context.Context, id id.PermissionSetID) (int, error)
 	CountPermissionSetsForService(ctx context.Context, serviceID id.ServiceID) (int, error)
@@ -306,14 +319,13 @@ type ToolApprovalRepository interface {
 	Consume(ctx context.Context, id id.ApprovalID, consumedAt time.Time) (*storage.ToolApproval, error)
 }
 
-// ToolApprovalQueryRepository defines read-side list queries for tool approvals.
-// Used by the long-poll sync endpoint and the consent management UI.
+// ToolApprovalQueryRepository defines read-side queries for sync, consent, and creation.
 type ToolApprovalQueryRepository interface {
 	// ListAllActive lists all active approvals, optionally filtered by principal and active agent sessions.
 	ListAllActive(ctx context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) ([]*storage.ToolApproval, error)
 
-	// ListActiveByPrincipalAndAgent lists active approvals for a principal-agent pair.
-	ListActiveByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.ToolApproval, error)
+	// FindPendingByKey returns the active pending approval for its deduplication key, or nil when absent.
+	FindPendingByKey(ctx context.Context, principal id.Principal, agentID id.AgentID, toolName, argumentsHash string) (*storage.ToolApproval, error)
 
 	// ListPermanentByPrincipal lists permanent approvals/denials for a principal.
 	ListPermanentByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.ToolApproval, error)

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
@@ -181,6 +182,7 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:            now,
 	}
 
+	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	if err := h.agentService.Create(ctx, agent); err != nil {
 		h.handleDomainError(w, r, "CreateAgent", err)
 		return
@@ -331,6 +333,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		agent.CanonicalID = existing.CanonicalID
 	}
 
+	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	if err := h.agentService.Update(ctx, parsedAgentID, agent, clearClientID); err != nil {
 		h.handleDomainError(w, r, "UpdateAgent", err)
 		return
@@ -362,12 +365,12 @@ func (h *AgentsHandler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	if err := h.agentService.Delete(ctx, parsedID); err != nil {
 		h.handleDomainError(w, r, "DeleteAgent", err)
 		return
 	}
 
-	h.logger.Info("agent deleted", "agent_id", agentID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

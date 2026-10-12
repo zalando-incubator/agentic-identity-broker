@@ -27,7 +27,7 @@ var (
 	ErrAgentAccessDenied = errors.New("agent access denied")
 	// ErrGrantExpired is returned when a user grant has expired.
 	ErrGrantExpired = errors.New("grant expired")
-	// ErrGrantNotFound is returned by RevokeConsentForPrincipal when no active grant exists
+	// ErrGrantNotFound is returned by RevokeConsentForPrincipal when no grant exists
 	// for the (principal, agent) pair. The handler maps this to HTTP 404.
 	ErrGrantNotFound = errors.New("grant not found")
 	// ErrUnconnectedServices is returned when the submission includes services without active sessions.
@@ -138,20 +138,13 @@ func (s *Service) GetAgentConsentDetail(ctx context.Context, agentID id.AgentID,
 		return nil, err
 	}
 
-	// Enrich service requirements with connection status and disclosed scopes.
-	requirements, err := s.resolveServiceRequirements(ctx, agent, principal, resolvedPermissionSets)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get active session service IDs
-	sessions, err := s.sessionRepo.ListActiveByPrincipal(ctx, principal)
+	activeSessionServiceIDs, err := s.sessionRepo.ListActiveServiceIDsByPrincipal(ctx, principal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions for principal: %w", err)
 	}
-	activeSessionServiceIDs := make([]id.ServiceID, len(sessions))
-	for i, session := range sessions {
-		activeSessionServiceIDs[i] = session.ServiceID
+	requirements, err := s.resolveServiceRequirements(ctx, agent, resolvedPermissionSets, activeSessionServiceIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	return &AgentConsentDetail{
@@ -162,7 +155,7 @@ func (s *Service) GetAgentConsentDetail(ctx context.Context, agentID id.AgentID,
 	}, nil
 }
 
-func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage.Agent, principal id.Principal, resolvedPermissionSets []ResolvedPermissionSetEntry) ([]ServiceRequirementStatus, error) {
+func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage.Agent, resolvedPermissionSets []ResolvedPermissionSetEntry, activeSessionServiceIDs []id.ServiceID) ([]ServiceRequirementStatus, error) {
 	if len(agent.ServiceRequirements) == 0 {
 		return []ServiceRequirementStatus{}, nil
 	}
@@ -171,20 +164,26 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 	for _, req := range agent.ServiceRequirements {
 		serviceIDs[req.ServiceID] = true
 	}
-
-	serviceMap := make(map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity, len(serviceIDs))
+	ids := make([]id.ServiceID, 0, len(serviceIDs))
 	for serviceID := range serviceIDs {
-		svc, err := s.providerService.Get(ctx, serviceID)
-		if err != nil {
-			if errors.Is(err, ports.ErrNotFound) {
-				s.logger.Warn("service not found for agent requirement",
-					"service_id", serviceID,
-					"agent_id", agent.ID)
-				continue
-			}
-			return nil, fmt.Errorf("loading service %s: %w", serviceID, err)
+		ids = append(ids, serviceID)
+	}
+	services, err := s.providerService.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("loading services: %w", err)
+	}
+	serviceMap := make(map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity, len(services))
+	for _, service := range services {
+		serviceMap[service.ID] = service
+	}
+	for serviceID := range serviceIDs {
+		if serviceMap[serviceID] == nil {
+			s.logger.Warn("service not found for agent requirement", "service_id", serviceID, "agent_id", agent.ID)
 		}
-		serviceMap[serviceID] = svc
+	}
+	connected := make(map[id.ServiceID]bool, len(activeSessionServiceIDs))
+	for _, serviceID := range activeSessionServiceIDs {
+		connected[serviceID] = true
 	}
 
 	requirements := make([]ServiceRequirementStatus, 0, len(agent.ServiceRequirements))
@@ -192,11 +191,6 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 		svc, ok := serviceMap[req.ServiceID]
 		if !ok {
 			continue
-		}
-
-		session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, req.ServiceID)
-		if err != nil {
-			return nil, fmt.Errorf("checking session status for service %s: %w", req.ServiceID, err)
 		}
 
 		scopeDesc := make(map[string]string, len(svc.Scopes))
@@ -234,7 +228,7 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 			DisplayName:     svc.DisplayName,
 			RequirementType: req.RequirementType,
 			RequiredScopes:  scopes,
-			IsConnected:     session != nil && !session.IsExpired(),
+			IsConnected:     connected[req.ServiceID],
 		})
 	}
 
@@ -354,11 +348,18 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 	}
 
 	var grant *storage.UserGrant
+	var previousFields []any
+	action, message := "grant_created", "grant created"
 	if existingGrant != nil {
 		if grantMatchesRequest(existingGrant, req) {
 			return existingGrant.Copy(), nil
 		}
 
+		previousFields = []any{
+			"previous_observed_valid_until", grantAuditValidUntil(existingGrant.ValidUntil),
+			"previous_observed_updated_at", existingGrant.UpdatedAt.UTC().Format(time.RFC3339Nano),
+			"previous_observed_granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: existingGrant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+		}
 		// Update existing grant (FR-013)
 		existingGrant.ValidUntil = req.ValidUntil
 		existingGrant.GrantedPermissionSets = req.GrantedPermissionSets
@@ -372,6 +373,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			return nil, fmt.Errorf("failed to update grant: %w", err)
 		}
 		grant = existingGrant
+		action, message = "grant_updated", "grant updated"
 	} else {
 		// Create new grant (FR-011)
 		grant = &storage.UserGrant{
@@ -388,12 +390,36 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			return nil, fmt.Errorf("%w: %w", ErrGrantValidation, err)
 		}
 
+		candidateID := grant.ID
 		if err := s.grantRepo.Create(ctx, grant); err != nil {
 			return nil, fmt.Errorf("failed to create grant: %w", err)
 		}
+		if grant.ID != candidateID {
+			action, message = "grant_updated", "grant updated"
+		}
 	}
 
+	fields := []any{
+		"action", action,
+		"principal", grant.Principal,
+		"agent_id", grant.AgentID,
+		"grant_id", grant.ID,
+		"valid_until", grantAuditValidUntil(grant.ValidUntil),
+		"created_at", grant.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at", grant.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: grant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+	}
+	fields = append(fields, previousFields...)
+	s.logger.InfoContext(ctx, message, fields...)
+
 	return grant.Copy(), nil
+}
+
+func grantAuditValidUntil(validUntil *time.Time) any {
+	if validUntil == nil {
+		return nil
+	}
+	return validUntil.UTC().Format(time.RFC3339Nano)
 }
 
 // ValidateSubmission validates that every service in the grant's included_service_ids
@@ -574,47 +600,38 @@ func permissionSetsMatch(left, right []storage.GrantedPermissionSetEntry) bool {
 
 // RevokeConsent deletes a user grant (FR-014).
 // Idempotent: returns nil if the grant doesn't exist (absence is not an error).
-// Used by the POST /grants path with empty tokens.
 func (s *Service) RevokeConsent(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	if err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID); err != nil {
-		if errors.Is(err, ports.ErrNotFound) {
-			return nil // idempotent: absence is not an error
-		}
-		return fmt.Errorf("failed to revoke consent: %w", err)
+	err := s.RevokeConsentForPrincipal(ctx, principal, agentID)
+	if errors.Is(err, ErrGrantNotFound) {
+		return nil
 	}
-	return nil
+	return err
 }
 
 // RevokeConsentForPrincipal revokes the authenticated user's grant for the given agent (FR-014).
-// This is the user-facing revocation entry point for DELETE /api/consent/agent/{agent-id}/grants.
+// This is the user-facing revocation entry point for DELETE /api/consent/agents/{agent-id}/grants.
 //
-// Unlike RevokeConsent, this method:
+// Revocation behavior:
 // - Is NOT idempotent: absence of grant returns ErrGrantNotFound (handler maps to 404)
-// - Emits a structured audit log on success with action, principal, agent_id, and grant_id
+// - Emits a structured audit log on success from the atomically deleted grant snapshot
 func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
-	// Phase 1: look up the grant to capture the ID for the audit log.
-	grant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agentID)
+	grant, err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
 			return fmt.Errorf("%w", ErrGrantNotFound)
 		}
-		return fmt.Errorf("failed to find grant: %w", err)
-	}
-
-	// Phase 2: delete the grant.
-	if err := s.grantRepo.DeleteByPrincipalAndAgentID(ctx, principal, agentID); err != nil {
-		if errors.Is(err, ports.ErrNotFound) {
-			// Concurrent revocation raced us — treat as not found.
-			return fmt.Errorf("%w", ErrGrantNotFound)
-		}
 		return fmt.Errorf("failed to revoke consent: %w", err)
 	}
 
-	s.logger.Info("grant revoked",
+	s.logger.InfoContext(ctx, "grant revoked",
 		"action", "grant_revoked",
-		"principal", principal,
-		"agent_id", agentID,
-		"grant_id", grant.ID)
+		"principal", grant.Principal,
+		"agent_id", grant.AgentID,
+		"grant_id", grant.ID,
+		"valid_until", grantAuditValidUntil(grant.ValidUntil),
+		"updated_at", grant.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: grant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+		"revoked_at", time.Now().UTC().Format(time.RFC3339Nano))
 
 	return nil
 }
@@ -641,7 +658,7 @@ func (s *Service) GetActiveGrants(ctx context.Context, principal id.Principal, a
 
 // VerifyAgentAccess verifies that a user has granted an agent access.
 // This method checks for grant existence, expiration, and revocation status.
-// Returns the active grant if valid, or an error if missing, expired, or revoked.
+// Returns a defensive copy of a found active or expired grant; callers must check the error first.
 //
 // Error handling:
 // - ErrAgentAccessDenied: User has not granted the agent any access
@@ -671,7 +688,7 @@ func (s *Service) VerifyAgentAccess(ctx context.Context, principal id.Principal,
 
 	// Check grant is active (not expired)
 	if !grant.IsActive() {
-		return nil, fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
+		return grant.Copy(), fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
 			ErrGrantExpired, grant.ValidUntil.Format(time.RFC3339), principal, agentID)
 	}
 
@@ -782,22 +799,29 @@ func (s *Service) GetAgentDelegations(ctx context.Context, principal id.Principa
 		return nil, fmt.Errorf("failed to list grants: %w", err)
 	}
 
+	agentIDs := make([]id.AgentID, len(grants))
+	for i, grant := range grants {
+		agentIDs[i] = grant.AgentID
+	}
+	agents, err := s.agentRepo.GetByIDs(ctx, agentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get agents: %w", err)
+	}
+	agentsByID := make(map[id.AgentID]*storage.Agent, len(agents))
+	for _, agent := range agents {
+		agentsByID[agent.ID] = agent
+	}
+
 	// Group grants by agent_id
 	agentMap := make(map[id.AgentID]*AgentDelegation)
 
 	for _, grant := range grants {
 		delegation, exists := agentMap[grant.AgentID]
 		if !exists {
-			// Fetch agent information
-			agent, err := s.agentRepo.Get(ctx, grant.AgentID)
-			if err != nil {
-				// If agent not found, skip this grant (defensive: should not happen)
-				if errors.Is(err, ports.ErrNotFound) {
-					continue
-				}
-				return nil, fmt.Errorf("failed to get agent %s: %w", grant.AgentID, err)
+			agent, ok := agentsByID[grant.AgentID]
+			if !ok {
+				continue
 			}
-
 			delegation = &AgentDelegation{
 				AgentID:          grant.AgentID,
 				DisplayName:      agent.DisplayName,

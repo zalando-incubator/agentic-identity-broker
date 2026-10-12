@@ -86,6 +86,107 @@ The system must verify that the user (identified by subject_token 'sub' claim) h
 4. **Given** user's grant exists but has expired, **When** privileged client requests token exchange, **Then** system returns 403 Forbidden with error=access_denied and error_description="User grant has expired"
 5. **Given** user has an active UserGrant for the agent whose permission-set entries do not include the requested service, **When** privileged client requests token exchange, **Then** system denies the request before any token-vault lookup and returns 403 Forbidden with error=access_denied and error_uri set to the agent consent-management page (`<public URL>/agents/{agent-id}`); no token or credential is forwarded
 
+### Grant Denial Classification
+
+**GD-C1**: A registered agent has an active grant and a defined target service, but the user has no stored sessions.
+Signed token-exchange requests exercise these three authorization limits independently:
+
+- The grant omits the target service: `grant_service_omitted`.
+- The grant includes the defined target service, but the agent requirements exclude it: `grant_service_requirement_excluded`.
+- The grant includes the defined target service, but the explicit agent ceiling removes every scope: `grant_scope_intersection_empty`.
+
+Each request returns HTTP 403 with `error=access_denied` and `error_description="User authorization is insufficient. Please re-consent."`.
+The response retains `error_uri=<public URL>/agents/{agent-id}` and contains no token fields.
+JSON observation logs and request spans contain the corresponding detail, `authorization_denied` outcome, and `grant_authorization` stage.
+Recovery remains `reconsent` targeting `consent`.
+No upstream token or refresh request occurs.
+Observations exclude credentials, raw JWTs, unprojected claims, raw errors, sensitive URIs, and provider response material.
+
+### Grant Observation Context
+
+**GD-O1**: Each scenario uses fresh production memory storage, signed token-exchange requests, and real HTTP observation logs and spans. State is seeded directly, without lifecycle audit actions.
+
+- A missing-grant denial records the resolved service and registered agent ID, but no grant metadata.
+- A successful exchange using an encrypted, unexpired session records the registered agent ID, found grant ID, and stored grant timestamps. The established token response identity and granted-permission-set provenance remain unchanged.
+- An expired-grant denial retains the found grant ID and timestamps without permitting access.
+- A missing-session failure retains the previously resolved agent, service, and grant metadata.
+- An unregistered agent candidate records the resolved service, but does not export the candidate ID or any grant metadata.
+
+Both JSON logs and spans use `token_exchange.agent.id`, `token_exchange.grant.id`, `token_exchange.grant.updated_at`, and, for a grant with an expiry, `token_exchange.grant.valid_until`. Timestamps use UTC RFC3339Nano and match the stored grant. An indefinite grant omits `token_exchange.grant.valid_until`.
+Authorization observation context is excluded from the HTTP JSON schema and metric labels. Existing OAuth status, fixed denial description, configured-public-URL recovery links, and authorization decisions stay unchanged.
+Observations preserve authenticated actor and calling-peer correlation and exclude credentials, raw JWTs, unprojected claims, raw errors, sensitive URIs, and provider response material.
+
+### Grant Deletion Outcomes
+
+**GD-D1**: Each scenario uses fresh production memory storage and real HTTP requests through the end-user and admin servers.
+
+- DELETE `/api/consent/agents/{agent-id}/grants` returns HTTP 204, then HTTP 404 for the same user-agent pair. Only the first request records `grant revoked`.
+- DELETE `/api/agents/{agent-id}` returns HTTP 204 for both an existing agent and its absent ID. Only the first request records the domain message `agent deleted`.
+- DELETE `/api/permission-sets/{id}` returns HTTP 204 for both an existing unused permission set and its absent ID. Only the first request records `PermissionSetDeleted`.
+
+Successful deletes retain an empty HTTP 204 response. A repeated grant DELETE retains the existing HTTP 404 error schema and description.
+
+The grant revoke record retains `action=grant_revoked`, the owner `principal`, `agent_id`, and the ID of the deleted grant in `grant_id`.
+The agent record retains `agent_id`. The permission-set record retains `action=permission_set_deleted` and `permission_set_id`.
+HTTP handlers emit no duplicate successful deletion records. Absent deletes emit no successful deletion records.
+Scenarios revoke grants and remove agent references before deleting a permission set. They do not change storage cascade behavior.
+Only these deletion messages enter the log-count and privacy assertions. Bootstrap and access logs do not enter those assertions.
+Deletion records exclude credentials, raw JWTs, unprojected claims, raw errors, sensitive URIs, and provider response material.
+
+### Grant Diagnostic Lifecycle
+
+Each journey uses fresh production memory storage and real end-user and admin HTTP requests.
+S1 and S2 have encrypted, unexpired read sessions. S0 has an encrypted, unexpired session with no scopes.
+The initial permission set defines read for S1/S2 and no scopes for S0.
+The agent has explicit read ceilings for S1/S2 and an empty ceiling for S0.
+
+**GD-S1** covers missing consent, creation, and successful exchange:
+
+- With no grant, a signed exchange returns HTTP 403 and `grant_missing`. Logs and spans include registered agent/service context but no grant fields.
+- POST `/api/consent/agents/{agent-id}/grants` returns HTTP 201 and emits exactly one domain `grant_created` record.
+- A subsequent exchange returns HTTP 200. Logs and spans contain the winning stored grant ID and timestamps.
+- The audit and exchange have the same authenticated user actor. The exchange also retains its authenticated calling peer. Audit trace IDs match the request context.
+
+**GD-S2** distinguishes coverage changes from unchanged and rejected consent:
+
+- A consent POST removes optional S2 and emits exactly one `grant_updated` record. The record contains typed observed-before/new inclusions, expiry, and persisted timestamps.
+- S2 exchange returns HTTP 403 with `grant_service_omitted` and the same grant ID.
+- An identical sequential POST returns HTTP 201 without a mutation record or stored-state change.
+- A rejected empty-map POST returns HTTP 400. The valid grant remains intact and no successful mutation record appears.
+
+**GD-S3** covers definition edits for a grant that includes S1/S2/S0:
+
+- Authenticated operator POSTs creating unused permission-set and agent definitions return 201 and each emit exactly one domain-owned creation record with typed definitions, that operator's actor, and the request trace ID; no handler duplicate is emitted.
+- Authenticated permission-set updates likewise preserve the operator actor and request trace ID. An actual successful update with unchanged definition values is still audited with observed-before/new fields.
+- A real admin agent update excludes S2 and emits one `agent_updated` record with typed observed-before/new definitions. S2 exchange returns `grant_service_requirement_excluded`.
+- An admin update restores the read ceiling. A permission-set update then changes S2 scopes to write and emits one `permission_set_updated` record with typed observed-before/new service scopes.
+- S2 exchange returns `grant_scope_intersection_empty`. S0's originally empty scope union still permits exchange.
+- Definition edits leave the stored user grant ID, inclusions, and metadata unchanged.
+- Admin requests without an authenticated principal record the truthful `anonymous` actor. They never infer the grant owner or an operator from raw identity headers.
+- Invalid agent or permission-set definitions retain HTTP 400 and their existing error messages. Rejected edits emit no successful mutation record.
+
+**GD-S4** distinguishes successful revocation from rejected consent and absent deletes:
+
+- DELETE consent returns HTTP 204 and emits exactly one `grant_revoked` record. The record contains the atomically deleted snapshot and UTC RFC3339Nano revocation time.
+- A later exchange returns `grant_missing` without grant metadata.
+- Repeated DELETE returns HTTP 404 without another revoke record.
+- A rejected empty-map POST cannot revoke a valid grant.
+- Existing and absent agent/unused permission-set deletes retain HTTP 204. Each actual deletion emits one audit. Absent deletes emit none.
+
+The domain mutation service owns lifecycle records. Handlers emit no duplicate successes. Unchanged consent, absent deletes, and rejected requests emit no successful mutation record.
+
+Grant audits contain the owner principal, registered IDs, typed `{permission_set_id,included_service_ids}` entries, and UTC RFC3339Nano operational timestamps.
+An indefinite expiry is JSON null. `previous_observed_*` describes state read before an update, not a guaranteed transactional predecessor.
+
+Definition audits contain only typed permission-set declarations, service requirements, or service scopes. They preserve declaration order and omit names, descriptions, profile text, credentials, and URIs.
+HTTP grant timestamps retain RFC3339 second precision. Comparisons normalize them to UTC and use the corresponding stored timestamp representation.
+Timestamps do not determine creation, update, or no-op outcomes.
+
+The lifecycle privacy oracle inspects only implemented lifecycle action/message records and exchange observations.
+It permits authenticated actor/calling peer, owner principal, registered IDs, operational times, and declared definition metadata.
+It rejects raw tokens/JWTs, unprojected claims, raw errors/causes, sensitive request/recovery/provider URIs, provider response material, and unrelated profile fields.
+No token-bearing HTTP response body is printed. No audit identity or snapshot becomes a metric label.
+
 ---
 
 ### User Story 4 - Privileged Client Authorization via CEL (Priority: P2)

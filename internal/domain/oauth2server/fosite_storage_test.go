@@ -232,6 +232,25 @@ func TestFositeStorage_AuthorizeCodeSessions(t *testing.T) {
 	})
 }
 
+func TestFositeStorage_RejectsMismatchedCredentialOwner(t *testing.T) {
+	store, codes, _, _ := newTestFositeStorage()
+	ctx := context.Background()
+	agent := testAgent()
+	code := &dstorage.AuthorizationCode{
+		ID: id.NewAuthorizationCodeID(), CodeHash: "code-signature", AgentID: agent.ID,
+		ClientID: id.NewClientID(agent.ID.String()), Principal: id.NewPrincipal("user@example.com"),
+		ExpiresAt: time.Now().Add(time.Minute), CreatedAt: time.Now(),
+	}
+	require.NoError(t, codes.Create(ctx, code))
+	client := &confidentialClient{
+		clientID: agent.ID.String(), agent: agent,
+		credential: &dstorage.ClientCredential{AgentID: id.NewAgentID()},
+	}
+	ctx = context.WithValue(ctx, exchangeClientContextKey{}, client)
+	_, err := store.GetAuthorizeCodeSession(ctx, code.CodeHash, &fosite.DefaultSession{})
+	assert.ErrorIs(t, err, fosite.ErrNotFound)
+}
+
 func TestFositeStorage_AuthorizeCodeExpiry(t *testing.T) {
 	for _, tt := range []struct {
 		name      string

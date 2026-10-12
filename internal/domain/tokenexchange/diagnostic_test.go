@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/singleflight"
@@ -45,7 +47,13 @@ func TestDiagnosticClassificationContract(t *testing.T) {
 		{DetailResourceRepositoryUnavailable, StageResourceResolution, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
 		{DetailGrantMissing, StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
 		{DetailGrantExpired, StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
-		{DetailGrantInsufficient, StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
+		{FailureDetail("grant_empty"), StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
+		{FailureDetail("grant_permission_set_undeclared"), StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
+		{FailureDetail("grant_permission_set_missing"), StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
+		{FailureDetail("grant_service_omitted"), StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
+		{FailureDetail("grant_service_definition_missing"), StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
+		{FailureDetail("grant_service_requirement_excluded"), StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
+		{FailureDetail("grant_scope_intersection_empty"), StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent},
 		{DetailGrantRepositoryUnavailable, StageGrantAuthorization, OutcomeInfrastructureError, RecoveryRetry, TargetNone},
 		{DetailSessionMissing, StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
 		{DetailAccessTokenExpired, StageSessionLookup, OutcomeReauthRequired, RecoveryReauthenticate, TargetProviderSession},
@@ -134,7 +142,17 @@ func TestSessionDiagnosticPreservesOriginAndCause(t *testing.T) {
 func TestSharedExchangeErrorEnrichmentIsImmutable(t *testing.T) {
 	const callers = 32
 	cause := errors.New("dependency error")
-	base := NewServerErrorWithCause("exchange failed", cause).WithDiagnostic(NewDiagnostic(StageRefresh, DetailProviderUnavailable))
+	baseService := ServiceRef{ID: id.NewServiceID()}
+	baseAuthorization := AuthorizationRef{
+		AgentID:            id.NewAgentID(),
+		GrantID:            id.NewGrantID(),
+		GrantUpdatedAt:     time.Date(2026, time.January, 2, 3, 4, 5, 123456789, time.UTC),
+		GrantValidUntil:    time.Date(2026, time.January, 3, 3, 4, 5, 987654321, time.UTC),
+		GrantHasValidUntil: true,
+	}
+	base := NewServerErrorWithCause("exchange failed", cause).
+		WithErrorURI("https://broker.example/base").
+		WithObservation(NewDiagnostic(StageRefresh, DetailProviderUnavailable), baseService, baseAuthorization)
 	var group singleflight.Group
 	started, release := make(chan struct{}), make(chan struct{})
 	results := make([]<-chan singleflight.Result, callers)
@@ -152,18 +170,38 @@ func TestSharedExchangeErrorEnrichmentIsImmutable(t *testing.T) {
 			original := shared.Err.(*TokenExchangeError)
 			service := ServiceRef{ID: id.NewServiceID()}
 			uri := fmt.Sprintf("https://broker.example/agents/%d", i)
-			enriched := original.WithService(service).WithErrorURI(uri).WithDiagnostic(NewDiagnostic(StageRefresh, DetailCallerCanceled)).WithCause(context.Canceled)
+			validUntil := time.Date(2026, time.February, i+1, 3, 4, 5, i, time.UTC)
+			grant := &storage.UserGrant{ID: id.NewGrantID(), UpdatedAt: validUntil.Add(-time.Hour), ValidUntil: &validUntil}
+			authorization := authorizationRef(id.NewAgentID(), grant)
+			diagnostic := NewDiagnostic(StageRefresh, DetailCallerCanceled)
+			observed := original.WithObservation(diagnostic, service, authorization)
+			*grant.ValidUntil = grant.ValidUntil.Add(time.Hour)
+			assert.NotEqual(t, *grant.ValidUntil, observed.Authorization().GrantValidUntil)
+			assert.Equal(t, authorization, observed.Authorization(), "input timestamp mutation must not alter observation context")
+			assert.NotSame(t, original, observed)
+			assert.Equal(t, original.Code(), observed.Code())
+			assert.Equal(t, original.Description(), observed.Description())
+			assert.Equal(t, original.HTTPStatus(), observed.HTTPStatus())
+			assert.Equal(t, original.ErrorURI(), observed.ErrorURI())
+			assert.ErrorIs(t, observed, cause)
+			enriched := observed.WithErrorURI(uri).WithCause(context.Canceled)
 			assert.Equal(t, service, enriched.Service())
+			assert.Equal(t, authorization, enriched.Authorization())
 			assert.Equal(t, uri, enriched.ErrorURI())
 			assert.Equal(t, OutcomeCanceled, enriched.Diagnostic().Outcome())
 			assert.ErrorIs(t, enriched, context.Canceled)
+			assert.Equal(t, baseService, original.Service())
+			assert.Equal(t, baseAuthorization, original.Authorization())
+			assert.Equal(t, "https://broker.example/base", original.ErrorURI())
+			assert.Equal(t, OutcomeInfrastructureError, original.Diagnostic().Outcome())
 			assert.ErrorIs(t, original, cause)
 		}()
 	}
 	close(release)
 	workers.Wait()
-	assert.Empty(t, base.ErrorURI())
-	assert.True(t, base.Service().ID.IsZero())
+	assert.Equal(t, "https://broker.example/base", base.ErrorURI())
+	assert.Equal(t, baseService, base.Service())
+	assert.Equal(t, baseAuthorization, base.Authorization())
 	assert.Equal(t, OutcomeInfrastructureError, base.Diagnostic().Outcome())
 	assert.ErrorIs(t, base, cause)
 }

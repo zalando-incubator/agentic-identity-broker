@@ -94,6 +94,20 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Get(_ context.Context, serv
 	return providerRecordToEntity(record, r.resources[serviceID]), nil
 }
 
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetByIDs(_ context.Context, ids []id.ServiceID) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	providers := make([]*model.ThirdpartyOAuth2ProviderEntity, 0, len(ids))
+	seen := make(map[id.ServiceID]bool, len(ids))
+	for _, serviceID := range ids {
+		if record, ok := r.providers[serviceID]; ok && !seen[serviceID] {
+			providers = append(providers, providerRecordToEntity(record, r.resources[serviceID]))
+			seen[serviceID] = true
+		}
+	}
+	return providers, nil
+}
+
 func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetByCanonicalID(_ context.Context, canonicalID string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

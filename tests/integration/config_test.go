@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -21,6 +22,16 @@ var testJWESigningKey = base64.StdEncoding.EncodeToString([]byte("0123456789abcd
 
 // testEncryptionKey is a valid test encryption key (32 bytes base64 encoded)
 var testEncryptionKey = base64.StdEncoding.EncodeToString([]byte("abcdef0123456789abcdef0123456789"))
+
+func repoPath(t *testing.T, relativePath string) string {
+	t.Helper()
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok, "resolve caller path")
+
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+	return filepath.Join(repoRoot, relativePath)
+}
 
 func loadBrokerExampleConfig(t *testing.T, relativePath string, envVars map[string]string) (*ports.Config, []ports.ConfigSource) {
 	t.Helper()

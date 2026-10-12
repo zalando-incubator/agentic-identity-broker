@@ -32,8 +32,9 @@ type TokenExchangeError struct {
 	// May be empty when no re-authentication URL is available.
 	errorURI string
 
-	diagnostic Diagnostic
-	service    ServiceRef
+	diagnostic    Diagnostic
+	service       ServiceRef
+	authorization AuthorizationRef
 }
 
 var (
@@ -50,6 +51,10 @@ func (e *TokenExchangeError) Diagnostic() Diagnostic {
 
 func (e *TokenExchangeError) Service() ServiceRef {
 	return e.service
+}
+
+func (e *TokenExchangeError) Authorization() AuthorizationRef {
+	return e.authorization
 }
 
 // Error implements the error interface, returning a formatted error message.
@@ -252,8 +257,10 @@ func (e *TokenExchangeError) WithDiagnostic(diagnostic Diagnostic) *TokenExchang
 	return &clone
 }
 
-func (e *TokenExchangeError) WithService(service ServiceRef) *TokenExchangeError {
+func (e *TokenExchangeError) WithObservation(diagnostic Diagnostic, service ServiceRef, authorization AuthorizationRef) *TokenExchangeError {
 	clone := *e
+	clone.diagnostic = diagnostic
 	clone.service = service
+	clone.authorization = authorization
 	return &clone
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +43,15 @@ func TestUserGrantRepository_Create(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, grant.Principal, retrieved.Principal)
 	assert.Equal(t, grant.AgentID, retrieved.AgentID)
+	assert.Equal(t, grant, retrieved)
+	expected := retrieved.Copy()
+	validUntil = validUntil.Add(time.Hour)
+	require.NotNil(t, grant.ValidUntil)
+	assert.Equal(t, *expected.ValidUntil, *grant.ValidUntil, "copyback must not retain the input expiry pointer")
+	*grant.ValidUntil = grant.ValidUntil.Add(2 * time.Hour)
+	retrieved, err = repo.Get(ctx, grant.ID)
+	require.NoError(t, err)
+	assert.Equal(t, expected, retrieved)
 }
 
 func TestUserGrantRepository_UpsertSemantics(t *testing.T) {
@@ -92,6 +102,116 @@ func TestUserGrantRepository_UpsertSemantics(t *testing.T) {
 	// Verify the grant was updated with new permission set IDs
 	assert.Len(t, grants[0].GrantedPermissionSets, 1)
 	assert.Equal(t, psID2, grants[0].GrantedPermissionSets[0].PermissionSetID)
+}
+
+func TestUserGrantRepository_Create_CommittedMetadata(t *testing.T) {
+	ctx := context.Background()
+	createdAt := time.Date(2026, time.October, 8, 12, 0, 0, 123456789, time.UTC)
+	for _, indefinite := range []bool{false, true} {
+		name := "finite"
+		if indefinite {
+			name = "indefinite"
+		}
+		t.Run(name, func(t *testing.T) {
+			repo := NewUserGrantRepository()
+			first := &storage.UserGrant{
+				ID:        id.NewGrantID(),
+				Principal: testPrincipal1,
+				AgentID:   testAgentID1,
+				CreatedAt: createdAt,
+				UpdatedAt: createdAt,
+			}
+			require.NoError(t, repo.Create(ctx, first))
+			validUntil := createdAt.Add(24 * time.Hour)
+			upsert := &storage.UserGrant{
+				ID:                    id.NewGrantID(),
+				Principal:             testPrincipal1,
+				AgentID:               testAgentID1,
+				ValidUntil:            &validUntil,
+				GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
+				CreatedAt:             createdAt.Add(time.Hour),
+				UpdatedAt:             createdAt.Add(2 * time.Hour),
+			}
+			if indefinite {
+				upsert.ValidUntil = nil
+			}
+			expected := upsert.Copy()
+			expected.ID = first.ID
+			expected.CreatedAt = first.CreatedAt
+			require.NoError(t, repo.Create(ctx, upsert))
+			assert.Equal(t, expected, upsert)
+			stored, err := repo.Get(ctx, upsert.ID)
+			require.NoError(t, err)
+			assert.Equal(t, upsert, stored)
+
+			validUntil = validUntil.Add(time.Hour)
+			if upsert.ValidUntil != nil {
+				assert.Equal(t, *expected.ValidUntil, *upsert.ValidUntil)
+				*upsert.ValidUntil = upsert.ValidUntil.Add(2 * time.Hour)
+			}
+			upsert.GrantedPermissionSets[0].PermissionSetID = id.NewPermissionSetID()
+			upsert.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
+			stored, err = repo.Get(ctx, expected.ID)
+			require.NoError(t, err)
+			assert.Equal(t, expected, stored, "upsert input must not alias persisted metadata or grants")
+		})
+	}
+}
+
+func TestUserGrantRepository_Create_ConcurrentCommittedMetadata(t *testing.T) {
+	repo := NewUserGrantRepository()
+	ctx := context.Background()
+	const count = 10
+	createdAt := time.Date(2026, time.October, 8, 12, 0, 0, 123456789, time.UTC)
+	grants := make([]*storage.UserGrant, count)
+	candidateIDs := make([]id.GrantID, count)
+	validUntilInputs := make([]time.Time, count)
+	start := make(chan struct{})
+	done := make(chan error, count)
+	for i := range count {
+		candidateIDs[i] = id.NewGrantID()
+		validUntilInputs[i] = createdAt.Add(time.Duration(i+1) * time.Hour)
+		grants[i] = &storage.UserGrant{
+			ID:         candidateIDs[i],
+			Principal:  testPrincipal1,
+			AgentID:    testAgentID1,
+			ValidUntil: &validUntilInputs[i],
+			CreatedAt:  createdAt.Add(time.Duration(i) * time.Minute),
+			UpdatedAt:  createdAt.Add(time.Duration(i) * time.Second),
+		}
+		go func(grant *storage.UserGrant) {
+			<-start
+			done <- repo.Create(ctx, grant)
+		}(grants[i])
+	}
+	close(start)
+	for range count {
+		require.NoError(t, <-done)
+	}
+	stored, err := repo.FindByPrincipalAndAgent(ctx, testPrincipal1, testAgentID1)
+	require.NoError(t, err)
+	winners := 0
+	for i, grant := range grants {
+		assert.Equal(t, stored.ID, grant.ID)
+		assert.Equal(t, stored.CreatedAt, grant.CreatedAt)
+		assert.Equal(t, createdAt.Add(time.Duration(i)*time.Second), grant.UpdatedAt)
+		require.NotNil(t, grant.ValidUntil)
+		assert.Equal(t, validUntilInputs[i], *grant.ValidUntil)
+		if candidateIDs[i] == stored.ID {
+			winners++
+			assert.Equal(t, createdAt.Add(time.Duration(i)*time.Minute), stored.CreatedAt)
+		}
+		validUntilInputs[i] = validUntilInputs[i].Add(time.Hour)
+		assert.Equal(t, createdAt.Add(time.Duration(i+1)*time.Hour), *grant.ValidUntil)
+		*grant.ValidUntil = grant.ValidUntil.Add(2 * time.Hour)
+	}
+	assert.Equal(t, 1, winners)
+	unchanged, err := repo.Get(ctx, stored.ID)
+	require.NoError(t, err)
+	assert.Equal(t, stored, unchanged)
+	listed, err := repo.ListByPrincipalAndAgent(ctx, testPrincipal1, testAgentID1)
+	require.NoError(t, err)
+	assert.Len(t, listed, 1)
 }
 
 func TestUserGrantRepository_Get(t *testing.T) {
@@ -158,6 +278,52 @@ func TestUserGrantRepository_Update(t *testing.T) {
 	assert.Equal(t, psID2, retrieved.GrantedPermissionSets[0].PermissionSetID)
 }
 
+func TestUserGrantRepository_Update_CommittedMetadata(t *testing.T) {
+	ctx := context.Background()
+	createdAt := time.Date(2026, time.October, 8, 12, 0, 0, 123456789, time.UTC)
+	for _, indefinite := range []bool{false, true} {
+		name := "finite"
+		if indefinite {
+			name = "indefinite"
+		}
+		t.Run(name, func(t *testing.T) {
+			repo := NewUserGrantRepository()
+			initialValidUntil := createdAt.Add(48 * time.Hour)
+			grant := &storage.UserGrant{
+				ID:         id.NewGrantID(),
+				Principal:  testPrincipal1,
+				AgentID:    testAgentID1,
+				ValidUntil: &initialValidUntil,
+				CreatedAt:  createdAt,
+				UpdatedAt:  createdAt,
+			}
+			require.NoError(t, repo.Create(ctx, grant))
+			validUntil := createdAt.Add(24 * time.Hour)
+			grant.ValidUntil = &validUntil
+			if indefinite {
+				grant.ValidUntil = nil
+			}
+			grant.CreatedAt = createdAt.Add(time.Hour)
+			grant.UpdatedAt = createdAt.Add(2 * time.Hour)
+			expected := grant.Copy()
+			expected.CreatedAt = createdAt
+			require.NoError(t, repo.Update(ctx, grant))
+			assert.Equal(t, expected, grant)
+			stored, err := repo.Get(ctx, grant.ID)
+			require.NoError(t, err)
+			assert.Equal(t, grant, stored)
+			validUntil = validUntil.Add(time.Hour)
+			if grant.ValidUntil != nil {
+				assert.Equal(t, *expected.ValidUntil, *grant.ValidUntil)
+				*grant.ValidUntil = grant.ValidUntil.Add(2 * time.Hour)
+			}
+			stored, err = repo.Get(ctx, grant.ID)
+			require.NoError(t, err)
+			assert.Equal(t, expected, stored)
+		})
+	}
+}
+
 func TestUserGrantRepository_Update_NotFound(t *testing.T) {
 	repo := NewUserGrantRepository()
 	ctx := context.Background()
@@ -171,11 +337,13 @@ func TestUserGrantRepository_Update_NotFound(t *testing.T) {
 		UpdatedAt:             time.Now(),
 	}
 
+	expected := grant.Copy()
 	err := repo.Update(ctx, grant)
 	require.Error(t, err)
 	storageErr, ok := err.(*storage.StorageError)
 	require.True(t, ok)
 	assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+	assert.Equal(t, expected, grant, "failed update must not publish metadata")
 }
 
 func TestUserGrantRepository_Delete(t *testing.T) {
@@ -396,11 +564,13 @@ func TestUserGrantRepository_ConcurrentAccess(t *testing.T) {
 func TestUserGrantRepository_DeleteByPrincipalAndAgentID(t *testing.T) {
 	repo := NewUserGrantRepository()
 	ctx := context.Background()
+	validUntil := time.Now().Add(24 * time.Hour)
 
 	// Create a grant for testPrincipal1 + testAgentID1
 	grant := &storage.UserGrant{
 		Principal:             testPrincipal1,
 		AgentID:               testAgentID1,
+		ValidUntil:            &validUntil,
 		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
 		CreatedAt:             time.Now(),
 		UpdatedAt:             time.Now(),
@@ -408,10 +578,20 @@ func TestUserGrantRepository_DeleteByPrincipalAndAgentID(t *testing.T) {
 
 	err := repo.Create(ctx, grant)
 	require.NoError(t, err)
+	expected := grant.Copy()
+	persisted := repo.grants[grant.ID]
 
 	// Delete it
-	err = repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal1, testAgentID1)
+	deleted, err := repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal1, testAgentID1)
 	require.NoError(t, err)
+	require.NotNil(t, deleted)
+	assert.Equal(t, expected, deleted)
+	require.NotNil(t, deleted.ValidUntil)
+	*deleted.ValidUntil = deleted.ValidUntil.Add(time.Hour)
+	deleted.GrantedPermissionSets[0].PermissionSetID = id.NewPermissionSetID()
+	deleted.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
+	assert.Equal(t, expected, grant, "deleted snapshot must not alias the input")
+	assert.Equal(t, expected, persisted, "deleted snapshot must not alias the stored row")
 
 	// Verify the grant is gone by ID
 	_, err = repo.Get(ctx, grant.ID)
@@ -426,6 +606,10 @@ func TestUserGrantRepository_DeleteByPrincipalAndAgentID(t *testing.T) {
 	storageErr, ok = err.(*storage.StorageError)
 	require.True(t, ok)
 	assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
+	assert.NotContains(t, repo.grantIDsByAgent, testAgentID1)
+	deleted, err = repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal1, testAgentID1)
+	require.ErrorIs(t, err, ports.ErrNotFound)
+	assert.Nil(t, deleted)
 }
 
 func TestUserGrantRepository_DeleteByPrincipalAndAgentID_NotFound(t *testing.T) {
@@ -433,8 +617,10 @@ func TestUserGrantRepository_DeleteByPrincipalAndAgentID_NotFound(t *testing.T) 
 	ctx := context.Background()
 
 	// Delete when no grant exists — must return NotFound (NOT idempotent, unlike DeleteByAgent)
-	err := repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal1, testAgentID1)
+	deleted, err := repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal1, testAgentID1)
 	require.Error(t, err)
+	require.ErrorIs(t, err, ports.ErrNotFound)
+	assert.Nil(t, deleted)
 	storageErr, ok := err.(*storage.StorageError)
 	require.True(t, ok)
 	assert.Equal(t, storage.ErrorKindNotFound, storageErr.Kind)
@@ -464,10 +650,14 @@ func TestUserGrantRepository_DeleteByPrincipalAndAgentID_CrossPrincipalIsolation
 	require.NoError(t, err)
 	err = repo.Create(ctx, grant2)
 	require.NoError(t, err)
+	deleted, err := repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal3, testAgentID1)
+	require.ErrorIs(t, err, ports.ErrNotFound)
+	assert.Nil(t, deleted)
 
 	// Delete only principal1's grant
-	err = repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal1, testAgentID1)
+	deleted, err = repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal1, testAgentID1)
 	require.NoError(t, err)
+	assert.Equal(t, grant1, deleted)
 
 	// principal1's grant is gone
 	_, err = repo.FindByPrincipalAndAgent(ctx, testPrincipal1, testAgentID1)
@@ -508,8 +698,11 @@ func TestUserGrantRepository_DeleteByPrincipalAndAgentID_AgentIndexCleanup(t *te
 	require.NoError(t, err)
 
 	// Delete agent1's grant
-	err = repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal1, testAgentID1)
+	deleted, err := repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal1, testAgentID1)
 	require.NoError(t, err)
+	assert.Equal(t, grantA1, deleted)
+	assert.NotContains(t, repo.grantIDsByAgent, testAgentID1)
+	assert.Equal(t, []id.GrantID{grantA2.ID}, repo.grantIDsByAgent[testAgentID2])
 
 	// Cascade delete by agent1 should now be a no-op (index cleaned up)
 	err = repo.DeleteByAgent(ctx, testAgentID1)
@@ -519,6 +712,66 @@ func TestUserGrantRepository_DeleteByPrincipalAndAgentID_AgentIndexCleanup(t *te
 	found, err := repo.FindByPrincipalAndAgent(ctx, testPrincipal1, testAgentID2)
 	require.NoError(t, err)
 	assert.Equal(t, grantA2.ID, found.ID)
+}
+
+func TestUserGrantRepository_DeleteByPrincipalAndAgentID_Concurrent(t *testing.T) {
+	repo := NewUserGrantRepository()
+	ctx := context.Background()
+	validUntil := time.Now().Add(24 * time.Hour)
+	grant := &storage.UserGrant{
+		ID:                    id.NewGrantID(),
+		Principal:             testPrincipal1,
+		AgentID:               testAgentID1,
+		ValidUntil:            &validUntil,
+		GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}},
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+	}
+	otherOwner := grant.Copy()
+	otherOwner.ID = id.NewGrantID()
+	otherOwner.Principal = testPrincipal2
+	otherAgent := grant.Copy()
+	otherAgent.ID = id.NewGrantID()
+	otherAgent.AgentID = testAgentID2
+	for _, seed := range []*storage.UserGrant{grant, otherOwner, otherAgent} {
+		require.NoError(t, repo.Create(ctx, seed))
+	}
+	type deleteResult struct {
+		grant *storage.UserGrant
+		err   error
+	}
+	const count = 10
+	start := make(chan struct{})
+	done := make(chan deleteResult, count)
+	for range count {
+		go func() {
+			<-start
+			deleted, err := repo.DeleteByPrincipalAndAgentID(ctx, testPrincipal1, testAgentID1)
+			done <- deleteResult{grant: deleted, err: err}
+		}()
+	}
+	close(start)
+	deletedCount := 0
+	for range count {
+		result := <-done
+		if result.err == nil {
+			deletedCount++
+			assert.Equal(t, grant, result.grant)
+		} else {
+			require.ErrorIs(t, result.err, ports.ErrNotFound)
+			assert.Nil(t, result.grant)
+		}
+	}
+	assert.Equal(t, 1, deletedCount)
+	assert.NotContains(t, repo.grants, grant.ID)
+	assert.NotContains(t, repo.byPrincipalAndAgent, principalAgentKey(testPrincipal1, testAgentID1))
+	assert.Equal(t, []id.GrantID{otherOwner.ID}, repo.grantIDsByAgent[testAgentID1])
+	assert.Equal(t, []id.GrantID{otherAgent.ID}, repo.grantIDsByAgent[testAgentID2])
+	for _, expected := range []*storage.UserGrant{otherOwner, otherAgent} {
+		stored, err := repo.FindByPrincipalAndAgent(ctx, expected.Principal, expected.AgentID)
+		require.NoError(t, err)
+		assert.Equal(t, expected, stored)
+	}
 }
 
 func TestUserGrantRepository_DeepCopy(t *testing.T) {

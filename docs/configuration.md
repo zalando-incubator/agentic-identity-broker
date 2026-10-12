@@ -258,6 +258,7 @@ Configure exactly one of `encryption.aws_kms` or `encryption.memory`.
 | `encryption.aws_kms.branch_key_ttl` | duration string | `1h` | Go duration string | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_BRANCH_KEY_TTL` | N/A | Lifetime of cached branch keys in DynamoDB. |
 | `encryption.aws_kms.dynamodb_region` | string | AWS SDK default region | AWS region | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_REGION` | N/A | Optional region override for DynamoDB branch-key storage. |
 | `encryption.aws_kms.dynamodb_timeout` | duration string | - | Positive Go duration string | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DYNAMODB_TIMEOUT` | N/A | Optional timeout applied to AWS-backed encryption operations. |
+| `encryption.aws_kms.disable_ssl` | boolean | `false` | `true` only with explicit `GO_ENV=development` | No | `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL` | N/A | Disable AWS TLS certificate verification for development emulator testing only. Startup rejects this in every other environment. |
 | `encryption.memory.raw_key` | string | - | Base64-encoded 32-byte AES-256 key | Yes when `encryption.memory` is set | `IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY` | N/A | Raw AES key for the in-memory backend. Sensitive - redacted in logs. |
 
 **Encryption Configuration Notes:**
@@ -714,6 +715,13 @@ IDENTITY_BROKER_ENCRYPTION_AWS_KMS_BRANCH_KEY_TTL=1h
 
 `key_arn` accepts both KMS key ARNs and alias ARNs.
 
+TLS certificate verification is enabled by default. Never enable `disable_ssl` in production.
+Setting it to `true` requires explicit `GO_ENV=development`; production, staging, unset,
+and unknown environments abort startup before AWS clients are created. The default
+development environment used for `.env` file selection does not authorize this bypass.
+HTTP emulator endpoints do not require `disable_ssl`; leave it `false` in
+[`config.aws-emulator.yaml`](../examples/config/config.aws-emulator.yaml).
+
 #### encryption.memory.raw_key
 
 **Description**: Configures the in-memory backend with a base64-encoded 32-byte AES-256 key.
@@ -878,6 +886,22 @@ request_context:
 See [`examples/config/request-context.yaml`](../examples/config/request-context.yaml) for a documented overlay example.
 
 ## Security Best Practices
+
+### CIMD SSRF protection
+
+Never enable `security.skip_cimd_ssrf_validation` in production. The default is `false`.
+This flag disables both the IP blocklist and TLS certificate verification for CIMD document fetches.
+Use it only for local mock servers in development or tests.
+
+Set `GO_ENV=development` explicitly only for local CIMD mock testing.
+Otherwise, the configuration loader rejects `security.skip_cimd_ssrf_validation: true` before storage or network initialization, even when CIMD is disabled.
+This includes unset, empty, staging, test, production, and unrecognized environment values.
+The default development environment for `.env` file selection does not permit this bypass.
+
+Audit the effective flag value and its source in the startup configuration summary.
+Alert on `security.skip_cimd_ssrf_validation: true` outside local development or tests.
+The `configuration_loaded` JSON audit event identifies the configuration source and key, but does not include the effective value.
+When the builder creates an insecure CIMD fetcher, it also emits a warning.
 
 ### Sensitive Values
 

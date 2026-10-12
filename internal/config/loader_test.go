@@ -2,11 +2,13 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	domainconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -195,6 +197,53 @@ func TestAWSKMSConfigurationEnvironmentVariables(t *testing.T) {
 		assert.Equal(t, "10s", cfg.Encryption.AWSKMS.DynamoDBTimeout)
 		assert.Equal(t, "30m", cfg.Encryption.AWSKMS.BranchKeyTTL)
 	})
+}
+
+func TestAWSKMSDisableSSLStartupValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		environment string
+		disableSSL  string
+		yaml        bool
+		wantError   bool
+	}{
+		{name: "production environment variable", environment: "production", disableSSL: "true", wantError: true},
+		{name: "production YAML", environment: "production", disableSSL: "true", yaml: true, wantError: true},
+		{name: "staging", environment: "staging", disableSSL: "true", wantError: true},
+		{name: "unset environment", disableSSL: "true", wantError: true},
+		{name: "unknown environment", environment: "prod", disableSSL: "true", wantError: true},
+		{name: "explicit development", environment: "development", disableSSL: "true"},
+		{name: "production with verification", environment: "production", disableSSL: "false"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			setMinimalConfigEnv(t)
+			t.Setenv("GO_ENV", tt.environment)
+			t.Setenv("IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY", "")
+			t.Setenv("IDENTITY_BROKER_ENCRYPTION_AWS_KMS_KEY_ARN", "arn:aws:kms:us-east-1:123456789012:key/test-key")
+			t.Setenv("IDENTITY_BROKER_CONFIG_PATH", "config.yaml")
+			if tt.yaml {
+				t.Setenv("IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL", "")
+				require.NoError(t, os.WriteFile("config.yaml", []byte("encryption:\n  aws_kms:\n    disable_ssl: "+tt.disableSSL+"\n"), 0o600))
+			} else {
+				t.Setenv("IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL", tt.disableSSL)
+			}
+
+			cfg, err := NewLoader().GetConfig(context.Background())
+			if tt.wantError {
+				require.Error(t, err)
+				assert.Nil(t, cfg)
+				var configErr *domainconfig.ConfigError
+				require.ErrorAs(t, err, &configErr)
+				assert.Equal(t, "encryption.aws_kms.disable_ssl", configErr.Field)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, cfg.Encryption.AWSKMS)
+				assert.Equal(t, tt.disableSSL == "true", cfg.Encryption.AWSKMS.DisableSSL)
+			}
+		})
+	}
 }
 
 // setMinimalConfigEnv configures the minimum set of environment variables required to
@@ -451,4 +500,49 @@ func TestRequestContextConfigurationCLIOverridesEnvironment(t *testing.T) {
 	}
 
 	t.Fatal("CLI source not found")
+}
+
+func TestConfigLoader_CIMDSSRFValidationEnvironment(t *testing.T) {
+	tests := []struct {
+		name        string
+		environment string
+		skip        bool
+		cimdEnabled bool
+		wantErr     bool
+	}{
+		{name: "production rejects bypass", environment: "production", skip: true, cimdEnabled: true, wantErr: true},
+		{name: "production rejects dormant bypass", environment: "production", skip: true, wantErr: true},
+		{name: "production retains protection", environment: "production", cimdEnabled: true},
+		{name: "development permits local mocks", environment: "development", skip: true, cimdEnabled: true},
+		{name: "test rejects bypass", environment: "test", skip: true, cimdEnabled: true, wantErr: true},
+		{name: "staging rejects bypass", environment: "staging", skip: true, cimdEnabled: true, wantErr: true},
+		{name: "empty environment rejects bypass", skip: true, cimdEnabled: true, wantErr: true},
+		{name: "misspelled development rejects bypass", environment: "developement", skip: true, cimdEnabled: true, wantErr: true},
+		{name: "uppercase development rejects bypass", environment: "DEVELOPMENT", skip: true, cimdEnabled: true, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			setMinimalConfigEnv(t)
+			t.Setenv("GO_ENV", tt.environment)
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(configPath, []byte(fmt.Sprintf(`security:
+  skip_cimd_ssrf_validation: %t
+oauth2_authorization_server:
+  cimd:
+    enabled: %t
+`, tt.skip, tt.cimdEnabled)), 0o600))
+			t.Setenv("IDENTITY_BROKER_CONFIG_PATH", configPath)
+
+			cfg, err := NewLoader().GetConfig(context.Background())
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, cfg)
+				assert.Contains(t, err.Error(), "security.skip_cimd_ssrf_validation")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.skip, cfg.Security.SkipCIMDSSRFValidation)
+		})
+	}
 }

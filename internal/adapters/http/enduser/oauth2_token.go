@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -153,13 +154,13 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 
 	if h.TokenExchange == nil {
 		diagnostic := tokenexchange.NewDiagnostic(tokenexchange.StageExchangeRouting, tokenexchange.DetailInternalUnclassified)
-		h.observeTokenExchange(ctx, span, diagnostic, nil, tokenexchange.ServiceRef{})
+		h.observeTokenExchange(ctx, span, diagnostic, nil, tokenexchange.ServiceRef{}, tokenexchange.AuthorizationRef{})
 		writeErr := writeTokenExchangeErrorJSON(w, http.StatusBadRequest, map[string]string{
 			"error":             "unsupported_grant_type",
 			"error_description": "token exchange is not available in this deployment mode",
 		})
 		if writeErr != nil {
-			h.observeTokenExchangeResponseWriteFailure(ctx, span, writeErr, diagnostic.ExchangeKind())
+			h.observeTokenExchangeResponseWriteFailure(ctx, span, writeErr, diagnostic.ExchangeKind(), tokenexchange.ServiceRef{}, tokenexchange.AuthorizationRef{})
 		}
 		return
 	}
@@ -265,22 +266,30 @@ func (h *OAuth2TokenHandler) logImpersonationDecision(ctx context.Context, recor
 func (h *OAuth2TokenHandler) writeTokenExchangeFailure(ctx context.Context, span trace.Span, w http.ResponseWriter, err error, fallback tokenexchange.Diagnostic) {
 	diagnostic := fallback
 	service := tokenexchange.ServiceRef{}
+	authorization := tokenexchange.AuthorizationRef{}
 	var exchangeErr *tokenexchange.TokenExchangeError
 	if errors.As(err, &exchangeErr) {
 		diagnostic = exchangeErr.Diagnostic().WithExchangeKind(fallback.ExchangeKind())
 		service = exchangeErr.Service()
+		if fallback.ExchangeKind() == tokenexchange.ExchangeThirdParty {
+			authorization = exchangeErr.Authorization()
+		}
 	}
-	h.observeTokenExchange(ctx, span, diagnostic, err, service)
+	h.observeTokenExchange(ctx, span, diagnostic, err, service, authorization)
 	if writeErr := h.handleTokenExchangeError(w, err); writeErr != nil {
-		h.observeTokenExchangeResponseWriteFailure(ctx, span, writeErr, diagnostic.ExchangeKind())
+		h.observeTokenExchangeResponseWriteFailure(ctx, span, writeErr, diagnostic.ExchangeKind(), service, authorization)
 	}
 }
 
 func (h *OAuth2TokenHandler) writeTokenExchangeSuccess(ctx context.Context, span trace.Span, w http.ResponseWriter, response *tokenexchange.TokenExchangeResponse, kind tokenexchange.ExchangeKind) {
+	authorization := tokenexchange.AuthorizationRef{}
+	if kind == tokenexchange.ExchangeThirdParty {
+		authorization = response.Authorization
+	}
 	body, err := json.Marshal(response) // #nosec G117 -- OAuth2 token response is serialized for its direct HTTP response, not logging.
 	if err != nil {
 		diagnostic := tokenexchange.NewDiagnostic(tokenexchange.StageResponseWrite, tokenexchange.DetailResponseWriteFailed).WithExchangeKind(kind)
-		h.writeTokenExchangeFailure(ctx, span, w, tokenexchange.NewServerError("token exchange response could not be encoded").WithCause(err).WithDiagnostic(diagnostic), diagnostic)
+		h.writeTokenExchangeFailure(ctx, span, w, tokenexchange.NewServerError("token exchange response could not be encoded").WithCause(err).WithObservation(diagnostic, response.Service, authorization), diagnostic)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -288,21 +297,21 @@ func (h *OAuth2TokenHandler) writeTokenExchangeSuccess(ctx context.Context, span
 	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	if n, writeErr := w.Write(body); writeErr != nil || n != len(body) {
-		h.observeTokenExchangeResponseWriteFailure(ctx, span, writeErr, kind)
+		h.observeTokenExchangeResponseWriteFailure(ctx, span, writeErr, kind, response.Service, authorization)
 		return
 	}
-	h.observeTokenExchange(ctx, span, tokenexchange.SuccessDiagnostic(kind), nil, response.Service)
+	h.observeTokenExchange(ctx, span, tokenexchange.SuccessDiagnostic(kind), nil, response.Service, authorization)
 }
 
-func (h *OAuth2TokenHandler) observeTokenExchangeResponseWriteFailure(ctx context.Context, span trace.Span, cause error, kind tokenexchange.ExchangeKind) {
+func (h *OAuth2TokenHandler) observeTokenExchangeResponseWriteFailure(ctx context.Context, span trace.Span, cause error, kind tokenexchange.ExchangeKind, service tokenexchange.ServiceRef, authorization tokenexchange.AuthorizationRef) {
 	diagnostic := tokenexchange.NewDiagnostic(tokenexchange.StageResponseWrite, tokenexchange.DetailResponseWriteFailed).WithExchangeKind(kind)
 	if ctx.Err() != nil && errors.Is(cause, ctx.Err()) {
 		diagnostic = tokenexchange.NewDiagnostic(tokenexchange.StageResponseWrite, tokenexchange.DetailCallerCanceled).WithExchangeKind(kind)
 	}
-	h.observeTokenExchange(ctx, span, diagnostic, nil, tokenexchange.ServiceRef{})
+	h.observeTokenExchange(ctx, span, diagnostic, nil, service, authorization)
 }
 
-func (h *OAuth2TokenHandler) observeTokenExchange(ctx context.Context, span trace.Span, diagnostic tokenexchange.Diagnostic, err error, service tokenexchange.ServiceRef) {
+func (h *OAuth2TokenHandler) observeTokenExchange(ctx context.Context, span trace.Span, diagnostic tokenexchange.Diagnostic, err error, service tokenexchange.ServiceRef, authorization tokenexchange.AuthorizationRef) {
 	attrs := []attribute.KeyValue{
 		attribute.String("token_exchange.outcome", string(diagnostic.Outcome())),
 		attribute.String("token_exchange.recovery_action", string(diagnostic.RecoveryAction())),
@@ -320,6 +329,18 @@ func (h *OAuth2TokenHandler) observeTokenExchange(ctx context.Context, span trac
 	}
 	if !service.ID.IsZero() {
 		attrs = append(attrs, attribute.String("token_exchange.service.id", service.ID.String()))
+	}
+	if !authorization.AgentID.IsZero() {
+		attrs = append(attrs, attribute.String("token_exchange.agent.id", authorization.AgentID.String()))
+	}
+	if !authorization.GrantID.IsZero() {
+		attrs = append(attrs, attribute.String("token_exchange.grant.id", authorization.GrantID.String()))
+	}
+	if !authorization.GrantUpdatedAt.IsZero() {
+		attrs = append(attrs, attribute.String("token_exchange.grant.updated_at", authorization.GrantUpdatedAt.UTC().Format(time.RFC3339Nano)))
+	}
+	if !authorization.GrantID.IsZero() && authorization.GrantHasValidUntil {
+		attrs = append(attrs, attribute.String("token_exchange.grant.valid_until", authorization.GrantValidUntil.UTC().Format(time.RFC3339Nano)))
 	}
 	var operationErr *oauth2session.OperationError
 	if errors.As(err, &operationErr) {

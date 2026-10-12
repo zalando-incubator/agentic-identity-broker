@@ -886,8 +886,7 @@ type SecurityConfig struct {
 
 	// SkipCIMDSSRFValidation disables the SSRF IP blocklist and TLS certificate verification
 	// for CIMD document fetches.
-	// WARNING: This is ONLY for development/test environments with a local mock CIMD server!
-	// NEVER enable this in production.
+	// Requires GO_ENV=development for local mock servers. Never enable in production.
 	SkipCIMDSSRFValidation bool `mapstructure:"skip_cimd_ssrf_validation"`
 }
 
@@ -985,8 +984,8 @@ type AWSKMSConfig struct {
 	AssumeRoleARN string `mapstructure:"assume_role_arn"`
 
 	// DisableSSL disables SSL verification for AWS API calls.
-	// WARNING: Only use for development/testing with a LocalStack-compatible AWS emulator.
-	// NEVER enable this in production environments.
+	// Development-only: startup requires GO_ENV=development when this is true.
+	// Never enable in production; unset or other environments reject it.
 	DisableSSL bool `mapstructure:"disable_ssl"`
 }
 

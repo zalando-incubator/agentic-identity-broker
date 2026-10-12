@@ -458,6 +458,18 @@ func (r *inMemoryAgentRepo) Get(ctx context.Context, agentID id.AgentID) (*stora
 	return agent, nil
 }
 
+func (r *inMemoryAgentRepo) GetByIDs(_ context.Context, ids []id.AgentID) ([]*storage.Agent, error) {
+	agents := make([]*storage.Agent, 0, len(ids))
+	seen := make(map[id.AgentID]bool, len(ids))
+	for _, agentID := range ids {
+		if agent := r.agents[agentID]; agent != nil && !seen[agentID] {
+			agents = append(agents, agent.Copy())
+			seen[agentID] = true
+		}
+	}
+	return agents, nil
+}
+
 func (r *inMemoryAgentRepo) Update(ctx context.Context, agent *storage.Agent) error {
 	if _, ok := r.agents[agent.ID]; !ok {
 		return ports.ErrNotFound
@@ -466,9 +478,10 @@ func (r *inMemoryAgentRepo) Update(ctx context.Context, agent *storage.Agent) er
 	return nil
 }
 
-func (r *inMemoryAgentRepo) Delete(ctx context.Context, agentID id.AgentID) error {
+func (r *inMemoryAgentRepo) Delete(ctx context.Context, agentID id.AgentID) (bool, error) {
+	_, existed := r.agents[agentID]
 	delete(r.agents, agentID)
-	return nil
+	return existed, nil
 }
 
 func (r *inMemoryAgentRepo) List(ctx context.Context) ([]*storage.Agent, error) {
@@ -517,7 +530,23 @@ func newInMemoryGrantRepo() *inMemoryGrantRepo {
 }
 
 func (r *inMemoryGrantRepo) Create(ctx context.Context, grant *storage.UserGrant) error {
-	r.grants[grant.ID] = grant
+	persisted := grant.Copy()
+	for _, existing := range r.grants {
+		if existing.Principal == grant.Principal && existing.AgentID == grant.AgentID {
+			persisted.ID = existing.ID
+			persisted.CreatedAt = existing.CreatedAt
+			break
+		}
+	}
+	r.grants[persisted.ID] = persisted
+	grant.ID = persisted.ID
+	grant.CreatedAt = persisted.CreatedAt
+	grant.UpdatedAt = persisted.UpdatedAt
+	grant.ValidUntil = nil
+	if persisted.ValidUntil != nil {
+		validUntil := *persisted.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 	return nil
 }
 
@@ -530,10 +559,21 @@ func (r *inMemoryGrantRepo) Get(ctx context.Context, grantID id.GrantID) (*stora
 }
 
 func (r *inMemoryGrantRepo) Update(ctx context.Context, grant *storage.UserGrant) error {
-	if _, ok := r.grants[grant.ID]; !ok {
+	existing, ok := r.grants[grant.ID]
+	if !ok {
 		return ports.ErrNotFound
 	}
-	r.grants[grant.ID] = grant
+	persisted := grant.Copy()
+	persisted.CreatedAt = existing.CreatedAt
+	r.grants[persisted.ID] = persisted
+	grant.ID = persisted.ID
+	grant.CreatedAt = persisted.CreatedAt
+	grant.UpdatedAt = persisted.UpdatedAt
+	grant.ValidUntil = nil
+	if persisted.ValidUntil != nil {
+		validUntil := *persisted.ValidUntil
+		grant.ValidUntil = &validUntil
+	}
 	return nil
 }
 
@@ -620,14 +660,15 @@ func (r *inMemoryGrantRepo) ListByPrincipalAndServiceID(ctx context.Context, pri
 	return agentIDs, nil
 }
 
-func (r *inMemoryGrantRepo) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
+func (r *inMemoryGrantRepo) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
 	for grantID, grant := range r.grants {
 		if grant.Principal == principal && grant.AgentID == agentID {
+			snapshot := grant.Copy()
 			delete(r.grants, grantID)
-			return nil
+			return snapshot, nil
 		}
 	}
-	return ports.ErrNotFound
+	return nil, storage.NewStorageError("DeleteByPrincipalAndAgentID", storage.ErrorKindNotFound, ports.ErrNotFound, "grant not found")
 }
 
 func (r *inMemoryGrantRepo) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {

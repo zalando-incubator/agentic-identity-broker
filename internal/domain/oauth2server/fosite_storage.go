@@ -126,6 +126,8 @@ func (s *FositeStorage) CreateAuthorizeCodeSession(ctx context.Context, code str
 	return s.codeRepo.Create(ctx, authCode)
 }
 
+type exchangeClientContextKey struct{}
+
 // GetAuthorizeCodeSession retrieves an authorization code session by code signature.
 func (s *FositeStorage) GetAuthorizeCodeSession(ctx context.Context, code string, requestSession fosite.Session) (fosite.Requester, error) {
 	authCode, err := s.codeRepo.FindByCodeHash(ctx, code)
@@ -141,16 +143,25 @@ func (s *FositeStorage) GetAuthorizeCodeSession(ctx context.Context, code string
 		requestSession.SetExpiresAt(fosite.AuthorizeCode, authCode.ExpiresAt)
 	}
 
-	// Look up the client using the stored ClientID (the original client_id from the authorize
-	// request). For CIMD clients this is the metadata URL; for opaque clients it's the UUID.
-	// Using AgentID.String() would fail for CIMD clients whose resolver rejects UUID lookups.
+	// Match the original client_id, not AgentID: CIMD stores a metadata URL, not the agent UUID.
+	// During an exchange, reuse the request-resolved client instead of resolving it again.
 	clientLookupID := authCode.ClientID.String()
 	if clientLookupID == "" {
 		clientLookupID = authCode.AgentID.String()
 	}
-	client, err := s.GetClient(ctx, clientLookupID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to look up client: %w", err)
+	client, ok := ctx.Value(exchangeClientContextKey{}).(fosite.Client)
+	if !ok {
+		client, err = s.GetClient(ctx, clientLookupID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to look up client: %w", err)
+		}
+	}
+	agentID, err := extractAgentID(client)
+	if err != nil || agentID != authCode.AgentID || client.GetID() != clientLookupID {
+		return nil, fosite.ErrNotFound
+	}
+	if confidential, ok := client.(*confidentialClient); ok && confidential.credential.AgentID != authCode.AgentID {
+		return nil, fosite.ErrNotFound
 	}
 
 	// Reconstruct the fosite request

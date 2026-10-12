@@ -392,7 +392,7 @@ All AWS KMS configuration can be set via environment variables:
 - `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_ACCESS_KEY_ID` - Static AWS access key ID (for CI/testing)
 - `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_SECRET_ACCESS_KEY` - Static AWS secret access key (for CI/testing)
 - `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_ASSUME_ROLE_ARN` - IAM role ARN to assume for operations (from CDK stack output)
-- `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL` - Disable SSL verification (development only, never in production)
+- `IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL` - Disable TLS certificate verification (development emulator testing only; true requires explicit `GO_ENV=development`, otherwise startup aborts; never enable in production)
 
 ## Success Criteria
 

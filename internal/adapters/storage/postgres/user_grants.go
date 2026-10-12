@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -33,6 +34,7 @@ func NewUserGrantRepository(adapter *Adapter) *UserGrantRepository {
 // Create creates a new user grant or updates existing grant for same principal+agent (upsert).
 // The grant ID should be generated before calling this method.
 // Uses ON CONFLICT to implement upsert semantics (one grant per principal-agent pair).
+// Successful writes copy committed ID, timestamps, and defensive nullable validity back to grant.
 func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGrant) error {
 	ctx, span := otel.Tracer("storage").Start(ctx, "storage.create.user_grant")
 	defer span.End()
@@ -59,9 +61,9 @@ func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGra
 		)
 	}
 
-	// Generate ID if not provided
-	if grant.ID.IsZero() {
-		grant.ID = id.NewGrantID()
+	candidateID := grant.ID
+	if candidateID.IsZero() {
+		candidateID = id.NewGrantID()
 	}
 
 	// Validate before storing
@@ -122,21 +124,23 @@ func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGra
 			valid_until = EXCLUDED.valid_until,
 			granted_permission_sets = EXCLUDED.granted_permission_sets,
 			updated_at = EXCLUDED.updated_at
-		RETURNING id
+		RETURNING id, created_at, updated_at, valid_until
 	`
 
 	var returnedID id.GrantID
+	var returnedCreatedAt, returnedUpdatedAt time.Time
+	var returnedValidUntil *time.Time
 	err = tx.QueryRowContext(
 		ctxTimeout,
 		query,
-		grant.ID,
+		candidateID,
 		grant.Principal,
 		grant.AgentID,
 		grant.ValidUntil,
 		permissionSetsJSON,
 		grant.CreatedAt,
 		grant.UpdatedAt,
-	).Scan(&returnedID)
+	).Scan(&returnedID, &returnedCreatedAt, &returnedUpdatedAt, &returnedValidUntil)
 
 	if err != nil {
 		return r.handlePostgresError("CreateUserGrant", err)
@@ -146,8 +150,10 @@ func (r *UserGrantRepository) Create(ctx context.Context, grant *storage.UserGra
 		return r.handlePostgresError("CreateUserGrant", err)
 	}
 
-	// Update grant ID if it was changed by upsert
 	grant.ID = returnedID
+	grant.CreatedAt = returnedCreatedAt
+	grant.UpdatedAt = returnedUpdatedAt
+	grant.ValidUntil = returnedValidUntil
 
 	return nil
 }
@@ -214,6 +220,7 @@ func (r *UserGrantRepository) Get(ctx context.Context, grantID id.GrantID) (*sto
 
 // Update updates an existing user grant.
 // Returns StorageError with Kind=NotFound if grant not found.
+// Successful writes copy committed creation/update timestamps and defensive nullable validity back to grant.
 func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGrant) error {
 	if r.adapter.db == nil {
 		return storage.NewStorageError(
@@ -263,38 +270,30 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 		    granted_permission_sets = $3,
 		    updated_at = $4
 		WHERE id = $1
+		RETURNING created_at, updated_at, valid_until
 	`
 
-	result, err := tx.ExecContext(
+	var returnedCreatedAt, returnedUpdatedAt time.Time
+	var returnedValidUntil *time.Time
+	err = tx.QueryRowContext(
 		ctxTimeout,
 		query,
 		grant.ID,
 		grant.ValidUntil,
 		permissionSetsJSON,
 		grant.UpdatedAt,
-	)
+	).Scan(&returnedCreatedAt, &returnedUpdatedAt, &returnedValidUntil)
 
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return storage.NewStorageError(
+				"UpdateUserGrant",
+				storage.ErrorKindNotFound,
+				ports.ErrNotFound,
+				"user grant not found",
+			)
+		}
 		return r.handlePostgresError("UpdateUserGrant", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return storage.NewStorageError(
-			"UpdateUserGrant",
-			storage.ErrorKindUnknown,
-			err,
-			"failed to get rows affected",
-		)
-	}
-
-	if rowsAffected == 0 {
-		return storage.NewStorageError(
-			"UpdateUserGrant",
-			storage.ErrorKindNotFound,
-			ports.ErrNotFound,
-			"user grant not found",
-		)
 	}
 
 	// After confirming the grant exists, lock PS rows to prevent concurrent deletes
@@ -310,6 +309,10 @@ func (r *UserGrantRepository) Update(ctx context.Context, grant *storage.UserGra
 	if err := tx.Commit(); err != nil {
 		return storage.NewStorageError("UpdateUserGrant", storage.ErrorKindUnknown, err, "failed to commit transaction")
 	}
+
+	grant.CreatedAt = returnedCreatedAt
+	grant.UpdatedAt = returnedUpdatedAt
+	grant.ValidUntil = returnedValidUntil
 
 	return nil
 }
@@ -711,12 +714,11 @@ func (r *UserGrantRepository) CountGrantsReferencingPermissionSet(ctx context.Co
 	return count, nil
 }
 
-// DeleteByPrincipalAndAgentID deletes the grant owned by principal for the given agent.
-// Returns StorageError wrapping ports.ErrNotFound when no grant exists for the pair.
-// This is NOT idempotent: absence of a grant is an error (revocation semantics FR-014).
-func (r *UserGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) error {
+// DeleteByPrincipalAndAgentID returns the grant atomically deleted for the principal-agent pair.
+// Absence returns StorageError wrapping ports.ErrNotFound (revocation semantics FR-014).
+func (r *UserGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, principal id.Principal, agentID id.AgentID) (*storage.UserGrant, error) {
 	if r.adapter.db == nil {
-		return storage.NewStorageError(
+		return nil, storage.NewStorageError(
 			"DeleteByPrincipalAndAgentID",
 			storage.ErrorKindConnection,
 			nil,
@@ -727,33 +729,51 @@ func (r *UserGrantRepository) DeleteByPrincipalAndAgentID(ctx context.Context, p
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	query := `DELETE FROM user_grants WHERE principal = $1 AND agent_id = $2`
-
-	result, err := r.adapter.db.ExecContext(ctxTimeout, query, principal, agentID)
+	tx, err := r.adapter.db.BeginTx(ctxTimeout, nil)
 	if err != nil {
-		return r.handlePostgresError("DeleteByPrincipalAndAgentID", err)
+		return nil, r.handlePostgresError("DeleteByPrincipalAndAgentID", err)
 	}
+	defer func() { _ = tx.Rollback() }()
 
-	rowsAffected, err := result.RowsAffected()
+	query := `
+		DELETE FROM user_grants WHERE principal = $1 AND agent_id = $2
+		RETURNING id, principal, agent_id, valid_until, granted_permission_sets, created_at, updated_at
+	`
+	var grant storage.UserGrant
+	var permissionSetsJSON []byte
+	err = tx.QueryRowContext(ctxTimeout, query, principal, agentID).Scan(
+		&grant.ID,
+		&grant.Principal,
+		&grant.AgentID,
+		&grant.ValidUntil,
+		&permissionSetsJSON,
+		&grant.CreatedAt,
+		&grant.UpdatedAt,
+	)
 	if err != nil {
-		return storage.NewStorageError(
+		if err == sql.ErrNoRows {
+			return nil, storage.NewStorageError(
+				"DeleteByPrincipalAndAgentID",
+				storage.ErrorKindNotFound,
+				ports.ErrNotFound,
+				"no active grant exists for this principal and agent",
+			)
+		}
+		return nil, r.handlePostgresError("DeleteByPrincipalAndAgentID", err)
+	}
+	if err := json.Unmarshal(permissionSetsJSON, &grant.GrantedPermissionSets); err != nil {
+		return nil, storage.NewStorageError(
 			"DeleteByPrincipalAndAgentID",
 			storage.ErrorKindUnknown,
 			err,
-			"failed to get rows affected",
+			"failed to parse granted permission sets",
 		)
 	}
-
-	if rowsAffected == 0 {
-		return storage.NewStorageError(
-			"DeleteByPrincipalAndAgentID",
-			storage.ErrorKindNotFound,
-			ports.ErrNotFound,
-			"no active grant exists for this principal and agent",
-		)
+	if err := tx.Commit(); err != nil {
+		return nil, r.handlePostgresError("DeleteByPrincipalAndAgentID", err)
 	}
 
-	return nil
+	return grant.Copy(), nil
 }
 
 // handlePostgresError converts PostgreSQL errors to StorageError.

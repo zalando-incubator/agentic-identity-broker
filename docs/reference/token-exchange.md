@@ -273,6 +273,20 @@ Missing agents and ambiguous registered resources are configuration errors. Unav
 
 Missing or unusable consent grants remain authorization denial with `reconsent` targeting `consent`.
 They return `access_denied` and the agent consent-management `error_uri` before token-vault access.
+Grant coverage denials use the first applicable detail below. Scope unions, agent ceilings, HTTP status, and recovery behavior are unchanged.
+
+| Detail | Meaning |
+|---|---|
+| `grant_empty` | The grant has no permission-set entries. |
+| `grant_permission_set_undeclared` | A referenced permission set is no longer declared by the agent. |
+| `grant_permission_set_missing` | A referenced permission-set definition is missing, including unrelated stale references. |
+| `grant_service_omitted` | The grant's effective inclusion entries omit the requested service. |
+| `grant_service_definition_missing` | The included service is absent from applicable granted definitions. |
+| `grant_service_requirement_excluded` | Nonempty agent service requirements exclude the included, defined service. |
+| `grant_scope_intersection_empty` | The explicit agent ceiling removes every scope from a nonempty permission-set union. |
+
+`grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
+
 Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
 Their OAuth response is `invalid_grant` with the sessions landing page as `error_uri`.
 Provider refresh rejection and recorded local expiry are distinct causes.
@@ -285,6 +299,21 @@ ExtProc `OperationError` captures its diagnostic once at construction. Callers c
 Individual caller cancellation is `canceled` at its current stage. Shared-operation and dependency deadlines remain infrastructure failures.
 
 Telemetry identifies registered services with `token_exchange.service.id`, not requested URIs or service display names.
+Broker exchange logs and spans also carry scalar resolved authorization context; these fields are not metric labels or response fields:
+
+| Attribute | Presence |
+|---|---|
+| `token_exchange.agent.id` | Only after the broker resolves a registered agent. |
+| `token_exchange.grant.id` | Only when the user-agent grant was found, including an expired grant. |
+| `token_exchange.grant.updated_at` | Found grant's nonzero stored timestamp, UTC RFC3339Nano. |
+| `token_exchange.grant.valid_until` | Found grant's explicit expiry, UTC RFC3339Nano; omitted for indefinite grants. |
+
+The same available context survives authorization and session denials, cancellation, and response-write failures. Missing grants have no invented grant metadata; parsed but unregistered agent candidates are not exported. Impersonation does not acquire third-party grant context. The existing authenticated actor, calling peer, and trace ID remain the request identity.
+
+Successful grant writes return persisted identity and timestamps to the domain through the supplied grant value. Atomic upserts preserve the winning grant ID and creation time; PostgreSQL metadata is published only after commit and reflects stored timestamp precision. Expiry pointers are defensive copies.
+
+Grant revocation uses the atomically deleted row as its observation snapshot, not a preceding lookup. Agent and permission-set deletion records are emitted only when the primary entity was actually deleted; repeated absent deletes retain their existing HTTP responses without another successful deletion record. These outcomes do not change adapter cascade behavior.
+
 Session failures also carry bounded `token_exchange.session.*` metadata.
 Telemetry excludes descriptions, causes, unvalidated JWT claims, JOSE headers, provider bodies/headers, endpoint URLs, resource paths, and recovery URIs.
 Established authenticated actor and calling-peer audit fields remain unchanged.
@@ -299,6 +328,27 @@ It records only bounded method/status/error kind. Token-endpoint inbound instrum
 HTTP method telemetry uses the standard-method allowlist. Extension methods become `_OTHER` without changing request routing.
 Token-endpoint panic logs use bounded summaries, not panic values or stacks.
 OTel resources exclude process command arguments and command lines, including configured overrides.
+
+## Grant and definition lifecycle audits
+
+The domain mutation service emits one successful operational record after persistence. Request handlers do not emit a second success or infer a mutation from the HTTP status. These synchronous logs are observations, not a durable transactional audit ledger.
+
+| Actions | Purpose-limited fields |
+|---|---|
+| `grant_created`, `grant_updated` | Owner `principal`, `agent_id`, committed `grant_id`, `valid_until`, `created_at`, `updated_at`, and typed `{permission_set_id, included_service_ids}` entries. |
+| `grant_revoked` | Atomically deleted grant's owner, IDs, validity, update time and granted entries, plus `revoked_at`. |
+| `agent_created`, `agent_updated` | Registered `agent_id`, typed `permission_sets`, and `service_requirements` with service ID, requirement type, required scopes and all-scopes flag. |
+| `agent_deleted` | The primary agent ID actually deleted; no inferred grant cascade count or per-grant revocation claim. |
+| `permission_set_created`, `permission_set_updated` | `permission_set_id` and typed `service_scopes`. |
+| `permission_set_deleted` | The permission-set ID actually deleted. |
+
+Audit timestamps use UTC RFC3339Nano. Indefinite grant validity is JSON `null`. Stored definition scopes are authorization metadata, not issued-token scope values; names, profile text, credentials, token/JWT material, arbitrary errors and sensitive URIs are excluded. None of these identity or snapshot fields are metric labels.
+
+Updates include applicable `previous_observed_*` validity, definition/inclusion and update-time fields only when that state was read before writing. They describe that observed state, not a transactionally guaranteed immediate predecessor. A raced initial consent upsert that updates another request's winning grant is `grant_updated`, with no fabricated previous snapshot. A sequential unchanged consent submission returns the existing grant without a mutation record; an actual successful definition Update remains audited.
+
+Validation or persistence failure, absent idempotent deletion, and rejected empty consent POSTs emit no successful mutation event. An empty POST cannot revoke an existing grant. Explicit consent DELETE retains 204 then 404 behavior; repeated absent agent or permission-set DELETEs remain 204 without false audits.
+
+The existing request-security logger decorator supplies authenticated `actor` and `trace_id`; the grant owner is not used to invent an actor. Authorized mutation handlers finalize the existing capture holder immediately before the domain call. An admin request without an authenticated principal remains anonymous, and plain domain calls do not manufacture request identity.
 
 ## User impersonation
 

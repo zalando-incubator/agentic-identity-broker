@@ -86,7 +86,7 @@ encryption:
 
     # Security Configuration
     # SSL should always be enabled in production (disable_ssl: false is default)
-    # Only set to true for development/AWS emulator scenarios
+    # Startup rejects true unless GO_ENV is explicitly set to development.
     # disable_ssl: false
 
     # Applies to all AWS service calls within an encryption operation.

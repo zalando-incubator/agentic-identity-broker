@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -90,7 +91,14 @@ func (s *Service) Create(ctx context.Context, agent *storage.Agent) error {
 		return err
 	}
 
-	s.logger.Info("agent created", "agent_id", agent.ID, "client_id", agent.ClientID)
+	definition := (&storage.Agent{
+		PermissionSets: agent.PermissionSets, ServiceRequirements: agent.ServiceRequirements,
+	}).Copy()
+	s.logger.InfoContext(ctx, "agent created",
+		"action", "agent_created",
+		"agent_id", agent.ID,
+		"permission_sets", definition.PermissionSets,
+		"service_requirements", definition.ServiceRequirements)
 	return nil
 }
 
@@ -103,6 +111,10 @@ func (s *Service) Update(ctx context.Context, agentID id.AgentID, agent *storage
 	if err != nil {
 		return err
 	}
+	previous := (&storage.Agent{
+		PermissionSets: existing.PermissionSets, ServiceRequirements: existing.ServiceRequirements,
+		UpdatedAt: existing.UpdatedAt,
+	}).Copy()
 
 	agent.ID = agentID
 	if agent.ClearCanonicalID {
@@ -134,7 +146,17 @@ func (s *Service) Update(ctx context.Context, agentID id.AgentID, agent *storage
 		return err
 	}
 
-	s.logger.Info("agent updated", "agent_id", agent.ID, "client_id", agent.ClientID)
+	definition := (&storage.Agent{
+		PermissionSets: agent.PermissionSets, ServiceRequirements: agent.ServiceRequirements,
+	}).Copy()
+	s.logger.InfoContext(ctx, "agent updated",
+		"action", "agent_updated",
+		"agent_id", agent.ID,
+		"permission_sets", definition.PermissionSets,
+		"service_requirements", definition.ServiceRequirements,
+		"previous_observed_permission_sets", previous.PermissionSets,
+		"previous_observed_service_requirements", previous.ServiceRequirements,
+		"previous_observed_updated_at", previous.UpdatedAt.UTC().Format(time.RFC3339Nano))
 	return nil
 }
 
@@ -165,10 +187,13 @@ func (s *Service) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, 
 
 // Delete removes an agent by ID.
 func (s *Service) Delete(ctx context.Context, agentID id.AgentID) error {
-	if err := s.repo.Delete(ctx, agentID); err != nil {
+	deleted, err := s.repo.Delete(ctx, agentID)
+	if err != nil {
 		return err
 	}
-	s.logger.Info("agent deleted", "agent_id", agentID)
+	if deleted {
+		s.logger.InfoContext(ctx, "agent deleted", "action", "agent_deleted", "agent_id", agentID)
+	}
 	return nil
 }
 
