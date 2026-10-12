@@ -100,7 +100,9 @@ func TestRunAdminJWTPreauthCreatesCIMDKey(t *testing.T) {
 				select {
 				case <-done:
 				default:
-					require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGTERM))
+					if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+						t.Errorf("signal broker during cleanup: %v", err)
+					}
 					select {
 					case <-done:
 					case <-time.After(5 * time.Second):
