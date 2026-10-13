@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
@@ -316,6 +317,50 @@ func TestSessionSweepFixedThresholdAndCompositeCursorAcrossChangingPages(t *test
 			assert.Equal(t, storage.SessionExpiryCursor{AccessTokenExpiresAt: soon, ID: sweepSessionID(i * 2)}, call.cursor, "the cursor is the previous page's final expiry and ID")
 		}
 	}
+}
+
+func TestSessionSweepLockedRefreshUsesOriginalCutoff(t *testing.T) {
+	var upstreamCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		sweepSuccess(w)
+	}))
+	synctest.Test(t, func(t *testing.T) {
+		defer server.Close()
+		f := newSweepFixture(t)
+		provider := createTestService(f.serviceID)
+		provider.Endpoints.TokenEndpoint = server.URL
+		require.NoError(t, f.providers.Create(context.Background(), provider))
+		const lookahead = 5 * time.Minute
+		soon := time.Now().Add(time.Minute)
+		original := f.seed(1, &soon, nil, true)
+		var renewedExpiry time.Time
+		f.expiry.afterList = func(_ int, _ []*storage.UserSession) {
+			renewedExpiry = f.expiry.calls[0].threshold.Add(15 * time.Second)
+			_, err := f.repo.WithLockedSession(context.Background(), original.Principal, original.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+				current.AccessTokenExpiresAt = &renewedExpiry
+				return true, nil
+			})
+			require.NoError(t, err)
+		}
+		f.refresh.invoke = func(ctx context.Context, principal id.Principal, serviceID id.ServiceID, callback func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
+			time.Sleep(30 * time.Second)
+			require.True(t, renewedExpiry.After(f.expiry.calls[0].threshold))
+			require.True(t, renewedExpiry.Before(time.Now().Add(lookahead)))
+			return f.repo.WithLockedSession(ctx, principal, serviceID, callback)
+		}
+
+		result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{Lookahead: lookahead})
+		require.NoError(t, err)
+		assertSweepCounts(t, result, 0, 1, 0, false)
+		assert.Equal(t, 1, f.refresh.locks)
+		assert.Zero(t, upstreamCalls.Load())
+		persisted, err := f.repo.Get(context.Background(), original.ID)
+		require.NoError(t, err)
+		assert.Equal(t, original.EncryptedAccessToken, persisted.EncryptedAccessToken)
+		assert.Equal(t, original.EncryptedRefreshToken, persisted.EncryptedRefreshToken)
+		assert.Equal(t, renewedExpiry, *persisted.AccessTokenExpiresAt)
+	})
 }
 
 func TestSessionSweepContinuesAfterZeroExpiryCandidate(t *testing.T) {
