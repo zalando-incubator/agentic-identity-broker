@@ -84,16 +84,6 @@ service:
     # -- Admin API port
     admin: 14000
 
-# Ingress policy for the broker pods. The admin port stays closed until the trusted proxy is selected.
-networkPolicy:
-  # -- Protect the admin pod port. Use only with a CNI that enforces ingress NetworkPolicy.
-  enabled: true
-  adminProxy:
-    # -- Labels on the trusted proxy namespace. Set both selectors before using the admin API.
-    namespaceLabels: {}
-    # -- Labels on trusted proxy pods in that namespace.
-    podLabels: {}
-
 # Ingress configuration for end-user API
 ingress:
   # End-user API Ingress

@@ -79,6 +79,7 @@ func (p *backgroundRefresher) submit(ctx context.Context, session *storage.UserS
 		p.service.logger.WarnContext(ctx, "oauth2 proactive refresh dropped",
 			"event", "session.oauth2.proactive_refresh_dropped",
 			"session_id", sessionID.String(), "service_id", serviceID.String(),
+			"principal", principal,
 			"triggered_by", RefreshTriggerBackground, "workers", cap(p.slots))
 		return
 	}
@@ -135,6 +136,7 @@ func (p *backgroundRefresher) refresh(key string, principal id.Principal, servic
 	attrs := []slog.Attr{
 		slog.String("event", "session.oauth2.refresh_failed"),
 		slog.String("session_id", sessionID.String()),
+		slog.String("principal", principal.String()),
 		slog.String("service_id", serviceID.String()),
 		slog.String("triggered_by", string(RefreshTriggerBackground)),
 		slog.Any("oauth2_session", metadata),

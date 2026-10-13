@@ -40,13 +40,14 @@ func parseISO8601Duration(input string) (time.Duration, error) {
 
 		var fraction uint64
 		fractionDigits := 0
+		discardedNonzero := false
 		if i < len(input) && input[i] == '.' {
 			i++
 			for i < len(input) && input[i] >= '0' && input[i] <= '9' {
 				if fractionDigits < 9 {
 					fraction = fraction*10 + uint64(input[i]-'0')
 				} else if input[i] != '0' {
-					return 0, invalid // A sub-nanosecond value cannot be represented exactly.
+					discardedNonzero = true
 				}
 				fractionDigits++
 				i++
@@ -56,6 +57,9 @@ func parseISO8601Duration(input string) (time.Duration, error) {
 			}
 			for padding := fractionDigits; padding < 9; padding++ {
 				fraction *= 10
+			}
+			if discardedNonzero {
+				fraction++
 			}
 		}
 		if i == len(input) {

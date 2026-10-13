@@ -35,23 +35,6 @@ type capturedTokenExchangeRequest struct {
 	err    error
 }
 
-func TestSessionFlowAndStateValidationLogsOmitPrincipals(t *testing.T) {
-	var logs strings.Builder
-	service, providers := newSecurityTestOAuth2SessionService(t, slog.New(slog.NewJSONHandler(&logs, nil)), 1)
-	serviceID := id.NewServiceID()
-	require.NoError(t, providers.Create(context.Background(), createTestService(serviceID)))
-	owner := id.Principal("owner-private@example.test")
-	attacker := id.Principal("attacker-private@example.test")
-	flow, err := service.InitiateOAuth2Flow(context.Background(), owner, serviceID, "https://example.com/sessions")
-	require.NoError(t, err)
-	_, err = service.ValidateStateToken(flow.StateToken, attacker, serviceID)
-	require.ErrorIs(t, err, oauth2session.ErrPrincipalMismatch)
-	_, err = service.ValidateStateToken(flow.StateToken, owner, id.NewServiceID())
-	require.ErrorIs(t, err, oauth2session.ErrServiceIDMismatch)
-	assert.NotContains(t, logs.String(), owner.String())
-	assert.NotContains(t, logs.String(), attacker.String())
-}
-
 // T052: Public clients must use client_id in the POST body without sending a secret or HTTP credentials.
 func TestHandleCallbackSecurity_PublicClientUsesBodyClientIDWithoutCredentialsAcrossRetries(t *testing.T) {
 	logOutput := new(strings.Builder)

@@ -8,7 +8,7 @@ CAUTION: Send sweep requests only through the authenticated admin proxy. The end
 
 The proxy must authenticate and authorize the operator. With plain-header pre-authentication, it must remove caller-supplied principal headers and set the configured admin header (usually `X-Remote-User`). With JWT pre-authentication, it must remove caller-supplied copies of the configured JWT header and forward the operator JWT. The broker verifies it against the JWKS for `verification: jwks` and trusts the gateway-supplied claims for `verification: none`. In both JWT modes the broker ignores the plain header. Do not expose the admin server directly. The broker audits each invocation with the operator principal. A missing principal returns `500 server_misconfiguration`; no sweep starts.
 
-The Helm chart denies ingress to port `14000` by default. Set `networkPolicy.adminProxy.namespaceLabels` and `networkPolicy.adminProxy.podLabels` to the trusted proxy labels. Keep `service.type: ClusterIP`. The CNI must enforce ingress NetworkPolicy. If you disable the chart policy, install an equivalent restriction before you run a sweep. Do not allow the CronJob to connect to the broker Service directly.
+Restrict access to the admin port in your deployment. Only the authenticated admin proxy can reach it. Route the CronJob through that proxy, not directly to the broker Service.
 
 The request must use the Host authority configured by `broker.server.admin.publicUrl` (`server.admin.public_url` in broker configuration). The proxy must preserve that Host. The admin API ignores forwarded Host headers. Set `Content-Type: application/json` even for `{}`. Host and browser-boundary failures return `403`; a missing or invalid JSON content type returns `415`.
 
@@ -113,7 +113,7 @@ The broker emits five OpenTelemetry counters when metrics are enabled. They are 
 | `session_sweep_refreshed_total` | `sweep` | Real sweep committed a refreshed session. |
 | `session_sweep_failed_total` | `sweep` | Real sweep classified a candidate as failed. |
 
-These counters have only the fixed-cardinality `triggered_by` attribute. They do not include session IDs, service IDs, or principals. Dry runs add no sweep counts. The session-service logs identify refresh events without end-user principals or token material. The separate `session sweep` audit event records the operator principal, counts, duration, and outcome. A background refresh creates a root span linked to the request span that triggered it.
+These counters have only the fixed-cardinality `triggered_by` attribute. They do not include session IDs, service IDs, or principals. Dry runs add no sweep counts. Per-session refresh logs identify the session owner as `principal` and exclude token material. The separate `session sweep` audit identifies the operator as `operator_principal`. It records counts, duration, and outcome without a session owner. A background refresh creates a root span linked to the request span that triggered it.
 
 ## Resolve repeated session failures
 

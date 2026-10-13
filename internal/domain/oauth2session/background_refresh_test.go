@@ -312,7 +312,7 @@ func TestBackgroundRefresh_SubmitIsNonblockingDeduplicatedAndDropsOnlyDistinctSa
 	assert.Equal(t, "WARN", drops[0]["level"])
 	assert.Equal(t, third.ID.String(), drops[0]["session_id"])
 	assert.Equal(t, serviceID.String(), drops[0]["service_id"])
-	assert.NotContains(t, logs.text(), first.Principal.String())
+	assert.Equal(t, third.Principal.String(), drops[0]["principal"])
 
 	releaseOnce.Do(func() { close(release) })
 	require.NoError(t, pool.Close(context.Background()))
@@ -717,11 +717,11 @@ func TestBackgroundRefresh_OnDemandJoinReportsSynchronousFailure(t *testing.T) {
 	triggers := make(map[string]string, len(events))
 	for _, event := range events {
 		triggers[event["triggered_by"].(string)] = event["level"].(string)
+		assert.Equal(t, session.Principal.String(), event["principal"])
 		assert.Equal(t, true, event["public_client"], "known provider type must survive the shared flight")
 	}
 	assert.Equal(t, "WARN", triggers[string(RefreshTriggerBackground)])
 	assert.Equal(t, "ERROR", triggers[string(RefreshTriggerOnDemand)])
-	assert.NotContains(t, logs.text(), session.Principal.String())
 }
 
 func TestBackgroundRefresh_CloseDrainsCommittedTokenBeforeCancelingAndRejectsLateWork(t *testing.T) {
@@ -868,10 +868,10 @@ func TestBackgroundRefresh_ClassifiesProviderAndEncryptionErrorsWithFixedCardina
 			assert.Equal(t, tc.level, failures[0]["level"])
 			assert.Equal(t, session.ID.String(), failures[0]["session_id"])
 			assert.Equal(t, "background", failures[0]["triggered_by"])
+			assert.Equal(t, session.Principal.String(), failures[0]["principal"])
 			assert.Equal(t, true, failures[0]["public_client"], "known provider type must reach background failure logs")
 			assert.NotContains(t, logs.text(), "private-provider-body")
 			assert.NotContains(t, logs.text(), "private-encryption-cause")
-			assert.NotContains(t, logs.text(), session.Principal.String())
 			assertBackgroundMetrics(t, reader, map[string]int64{"proactive_refresh_triggered_total": 1, "proactive_refresh_dropped_total": 0, "proactive_refresh_failed_total": 1})
 		})
 	}

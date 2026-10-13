@@ -305,7 +305,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				Expect(events[0]).To(HaveKeyWithValue("level", "INFO"))
 				Expect(events[0]).To(HaveKeyWithValue("session_id", current.ID.String()))
 				Expect(events[0]).To(HaveKeyWithValue("triggered_by", "on-demand"))
-				Expect(fmt.Sprint(events[0])).NotTo(ContainSubstring(principal))
+				Expect(events[0]).To(HaveKeyWithValue("principal", principal))
 			})
 		})
 
@@ -329,7 +329,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				Expect(events[0]).To(HaveKeyWithValue("level", "ERROR"))
 				Expect(events[0]).To(HaveKeyWithValue("session_id", storedSession(principal).ID.String()))
 				Expect(events[0]).To(HaveKeyWithValue("triggered_by", "on-demand"))
-				Expect(fmt.Sprint(events[0])).NotTo(ContainSubstring(principal))
+				Expect(events[0]).To(HaveKeyWithValue("principal", principal))
 			})
 		})
 
@@ -358,16 +358,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				Expect(events[0]).To(HaveKeyWithValue("level", "ERROR"))
 				Expect(events[0]).To(HaveKeyWithValue("session_id", after.ID.String()))
 				Expect(events[0]).To(HaveKeyWithValue("triggered_by", "on-demand"))
-				Expect(fmt.Sprint(events[0])).NotTo(ContainSubstring(principal))
-				records, err := logs.Records()
-				Expect(err).NotTo(HaveOccurred())
-				for _, record := range records {
-					if record["component"] != "oauth2session" {
-						continue
-					}
-					Expect(record).NotTo(HaveKey("actor"))
-					Expect(record).NotTo(HaveKey("calling_peer"))
-				}
+				Expect(events[0]).To(HaveKeyWithValue("principal", principal))
 			})
 		})
 	})
@@ -419,6 +410,25 @@ var _ = Describe("Proactive Token Refresh", func() {
 				Expect(storedSession(healthy).EncryptedAccessToken).To(Equal(oldHealthy))
 				Expect(storedSession(timeless).EncryptedAccessToken).To(Equal(oldTimeless))
 				Expect(storedSession(timeless).AccessTokenExpiresAt).To(BeNil())
+				owners := map[string]string{storedSession(due).ID.String(): due, storedSession(expired).ID.String(): expired}
+				refreshes := proactiveEvents(logs, "session.oauth2.token_refreshed")
+				Expect(refreshes).To(HaveLen(2))
+				for _, event := range refreshes {
+					Expect(event).To(HaveKeyWithValue("principal", owners[event["session_id"].(string)]))
+					Expect(event).To(HaveKeyWithValue("actor", fixtures.AdminPrincipal().String()))
+				}
+				records, err := logs.Records()
+				Expect(err).NotTo(HaveOccurred())
+				auditCount := 0
+				for _, record := range records {
+					if record["msg"] == "session sweep" {
+						auditCount++
+						Expect(record).To(HaveKeyWithValue("actor", fixtures.AdminPrincipal().String()))
+						Expect(record).To(HaveKeyWithValue("operator_principal", fixtures.AdminPrincipal().String()))
+						Expect(record).NotTo(HaveKey("principal"))
+					}
+				}
+				Expect(auditCount).To(Equal(1))
 			})
 		})
 
@@ -454,6 +464,28 @@ var _ = Describe("Proactive Token Refresh", func() {
 				Expect(storedSession(failed).EncryptedRefreshToken).To(Equal(oldFailedRefresh))
 				Expect(*storedSession(failed).AccessTokenExpiresAt).To(Equal(oldFailedExpiry))
 				Expect(storedSession(failed).EncryptedAccessToken).To(Equal(oldFailed))
+				failures := proactiveEvents(logs, "session.oauth2.refresh_failed")
+				Expect(failures).To(HaveLen(2))
+				for _, event := range failures {
+					Expect(event).To(HaveKeyWithValue("principal", failed))
+					Expect(event).To(HaveKeyWithValue("actor", fixtures.AdminPrincipal().String()))
+				}
+				refreshes := proactiveEvents(logs, "session.oauth2.token_refreshed")
+				Expect(refreshes).To(HaveLen(1))
+				Expect(refreshes[0]).To(HaveKeyWithValue("principal", succeeding))
+				Expect(refreshes[0]).To(HaveKeyWithValue("actor", fixtures.AdminPrincipal().String()))
+				records, err := logs.Records()
+				Expect(err).NotTo(HaveOccurred())
+				auditCount := 0
+				for _, record := range records {
+					if record["msg"] == "session sweep" {
+						auditCount++
+						Expect(record).To(HaveKeyWithValue("actor", fixtures.AdminPrincipal().String()))
+						Expect(record).To(HaveKeyWithValue("operator_principal", fixtures.AdminPrincipal().String()))
+						Expect(record).NotTo(HaveKey("principal"))
+					}
+				}
+				Expect(auditCount).To(Equal(2))
 			})
 		})
 

@@ -20,7 +20,7 @@ The fields this feature reads and writes are unchanged (spec "Key Entities"):
 | Field | Type | Read by | Written by |
 |---|---|---|---|
 | `ID` | `id.SessionID` (UUID v4) | expiry/UUID sweep cursor, visited-ID set, logs | — |
-| `Principal` | `id.Principal` | lock key, singleflight key | — (never logged) |
+| `Principal` | `id.Principal` | lock key, singleflight key, per-session refresh logs | — |
 | `ServiceID` | `id.ServiceID` | provider lookup, encryption context, logs | — |
 | `EncryptedAccessToken` | `[]byte` | `DecryptAccessToken` | `setSessionTokens` (all triggers) |
 | `EncryptedRefreshToken` | `[]byte` | `DecryptRefreshToken`, `CanRefresh` | `setSessionTokens` when the provider rotates it |
@@ -210,13 +210,12 @@ There is no event bus. After a locked update commits, the log contains:
 |---|---|
 | `event` | `session.oauth2.token_refreshed` (unchanged) |
 | `session_id` | `UserSession.ID` (new) |
+| `principal` | `UserSession.Principal` (session owner) |
 | `service_id` | unchanged |
 | `triggered_by` | `RefreshTrigger` (new) |
 | `public_client` | unchanged |
 
-The log does not contain `principal` (NFR-001). The existing
-`service_refresh_concurrency_test.go:235-275` test checks that success is logged after commit.
-Extend that test to cover all three triggers.
+The existing `service_refresh_concurrency_test.go` assertions check the owner and prove that success is logged after commit for all three triggers.
 
 ## Configuration entity: `TokenRefreshConfig`
 
@@ -250,4 +249,4 @@ parameter, and every caller must be updated, confirmed with `lsp references` dur
 | **SweepRequest** | The input value object for a Session Sweep: lookahead, dry-run flag, and page size. | Applies the configured defaults and validation before the sweep evaluates a `UserSession`. |
 | **SweepResult** | The value object summarizing a Session Sweep: `refreshed`, `skipped`, `failed`, `total_evaluated`, `dry_run`. | `refreshed + skipped + failed = total_evaluated`. |
 | **RefreshTrigger** | The origin of a token refresh: `on-demand`, `background`, or `sweep`. Recorded as `triggered_by`. | Attribute of `SessionTokensRefreshed` and the refresh counters. |
-| **SessionTokensRefreshed** | The structured event recorded after a token refresh commits. | Records the `UserSession` ID, service ID, and `RefreshTrigger` without a user principal. |
+| **SessionTokensRefreshed** | The structured event recorded after a token refresh commits. | Records the `UserSession` owner, ID, service ID, and `RefreshTrigger` without token material. |

@@ -120,6 +120,21 @@ func TestSessionSweepHandlerRequestAndSummary(t *testing.T) {
 			response: oauth2session.SweepResult{Refreshed: 4, Failed: 1, TotalEvaluated: 5, DryRun: true},
 		},
 		{
+			name:    "fractional second rounds up to the next nanosecond",
+			body:    `{"lookahead_duration":"PT1.0000000001S"}`,
+			request: oauth2session.SweepRequest{Lookahead: time.Second + time.Nanosecond},
+		},
+		{
+			name:    "positive sub-nanosecond lookahead reaches the domain",
+			body:    `{"lookahead_duration":"PT0.0000000001S"}`,
+			request: oauth2session.SweepRequest{Lookahead: time.Nanosecond},
+		},
+		{
+			name:    "ISO day reaches the domain as twenty-four hours",
+			body:    `{"lookahead_duration":"P1D"}`,
+			request: oauth2session.SweepRequest{Lookahead: 24 * time.Hour},
+		},
+		{
 			name:     "every per-session failure is still a completed sweep",
 			body:     `{}`,
 			request:  oauth2session.SweepRequest{},
@@ -206,6 +221,7 @@ func TestSessionSweepHandlerRejectsInvalidPayloads(t *testing.T) {
 		{name: "Go duration is not ISO 8601", body: `{"lookahead_duration":"5m"}`, message: "lookahead_duration"},
 		{name: "ISO month is not a fixed duration", body: `{"lookahead_duration":"P1M"}`, message: "lookahead_duration"},
 		{name: "explicit zero duration", body: `{"lookahead_duration":"PT0S"}`, message: "lookahead_duration"},
+		{name: "fractional rounding overflows duration", body: `{"lookahead_duration":"PT9223372036.8547758071S"}`, message: "lookahead_duration"},
 		{name: "explicit zero page size", body: `{"page_size":0}`, message: "page_size"},
 		{name: "top-level null", body: `null`, message: "JSON object"},
 		{name: "null dry run", body: `{"dry_run":null}`, message: "dry_run"},

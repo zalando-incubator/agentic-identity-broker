@@ -136,11 +136,7 @@ Research R1–R13 resolve the design questions. R4 records the named non-atomic 
 
 **Implementation Considerations**:
 
-- [x] **Security-First**: The feature is always on with no bypass. All persisted tokens go through
-  the existing service-scoped encryption. The sweep requires an operator principal (fail closed:
-  `500 server_misconfiguration`) and is audit-logged. Responses carry counts only. No principal
-  appears in session logs or any metric attribute. Shutdown cannot discard a rotated refresh token
-  in the normal case (R7).
+- [x] **Security-First**: The feature is always on with no bypass. All persisted tokens use service-scoped encryption. The sweep requires an operator principal (`500 server_misconfiguration` if absent) and returns counts only. Per-session refresh events identify the session owner without token material. Metrics have no principal attribute. The sweep audit identifies the operator separately. Shutdown drains admitted refreshes within the shutdown deadline. If that deadline expires first, shutdown cancels the contexts. A rotated token can fail to persist (R7).
 - [x] **Architecture Docs**: `ARCHITECTURE.md` is updated in the same PR: the admin route tree
   (`:463-533`), worker shutdown (`:538-556`), session refresh and concurrency (`:664-726`, including
   the existing singleflight description at `:721-723`), and the glossary.
@@ -413,7 +409,7 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 28. Run `just check`, `just test`, `just test-integration-infra`, and `just test-e2e-backend`.
 29. Walk the constitution Implementation-Phase checklist against the diff. Cite the written
     2026-10-09 approval of the admin API and ADRs 038/039, and the 2026-10-12 amendment of ADR 039 for PR #196. Confirm that the direct migration image, PostgreSQL recovery tests, and both Helm paths meet ADR 039.
-    Check that session logs and metrics omit principals and that builder-only wiring remains intact.
+    Check that per-session logs identify the correct owner without token material, metrics have no principal labels, and builder-only wiring remains intact.
 
 ## Testing Strategy
 
@@ -474,7 +470,7 @@ The result was 0 passed, 10 failed, and 0 pending. The focus filter excluded 646
 | US3-S3 | The absent admin route returned 404; expected a 200 sweep summary. |
 | US3-S4 | The absent admin route returned 404; expected a 200 dry-run summary. |
 
-The existing success and provider-rejection events include the raw `actor` principal. The new tests reject that value after they check trigger fields. This privacy requirement remains open.
+At red-phase capture, the existing success and provider-rejection events included the raw `actor` principal. Those historical results remain unchanged. The final contract retains request `actor` when present and identifies the session owner as `principal` on per-session events.
 
 **Test Data Strategy**:
 - Fixtures: `fixtures.DefaultPrincipal()`, `fixtures.ValidAgent()`, `fixtures.GitHubService()`

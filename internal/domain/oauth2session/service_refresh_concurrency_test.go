@@ -342,7 +342,11 @@ func (s *refreshLogSink) event(t *testing.T, event string, principal id.Principa
 		require.NoError(t, json.Unmarshal(entry.entry, &fields))
 		if fields["event"] == event {
 			found = append(found, entry)
-			assert.NotContains(t, string(entry.entry), principal.String(), "refresh events must not disclose the user principal")
+			if event == "session.oauth2.sweep_aborted" {
+				assert.NotContains(t, fields, "principal", "aggregate abort has no session owner")
+			} else {
+				assert.Equal(t, principal.String(), fields["principal"], "refresh events identify the session owner")
+			}
 		}
 	}
 	require.Len(t, found, 1, "exactly one event per refresh attempt")
@@ -440,7 +444,7 @@ func assertRefreshEvent(t *testing.T, fixture loggedRefreshFixture, event, level
 	assert.Equal(t, fixture.session.ID.String(), fields["session_id"])
 	assert.Equal(t, fixture.serviceID.String(), fields["service_id"])
 	assert.Equal(t, string(trigger), fields["triggered_by"])
-	assert.NotContains(t, fields, "principal")
+	assert.Equal(t, fixture.principal.String(), fields["principal"])
 	return committed
 }
 

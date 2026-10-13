@@ -19,6 +19,9 @@ func TestParseISO8601DurationValid(t *testing.T) {
 		{name: "combined units", input: "P2DT3H4M5.125S", want: 2*24*time.Hour + 3*time.Hour + 4*time.Minute + 5*time.Second + 125*time.Millisecond},
 		{name: "zero component in positive duration", input: "PT0H1M", want: time.Minute},
 		{name: "nanosecond precision", input: "PT0.000000001S", want: time.Nanosecond},
+		{name: "fractional ceiling after one second", input: "PT1.0000000001S", want: time.Second + time.Nanosecond},
+		{name: "positive sub-nanosecond duration", input: "PT0.0000000001S", want: time.Nanosecond},
+		{name: "maximum exact duration", input: "PT9223372036.854775807S", want: time.Duration(1<<63 - 1)},
 	}
 
 	for _, tt := range tests {
@@ -43,6 +46,7 @@ func TestParseISO8601DurationInvalid(t *testing.T) {
 		{name: "negative component", input: "PT-5M"},
 		{name: "overflow in days", input: "P106752D"},
 		{name: "overflow in seconds", input: "PT9223372037S"},
+		{name: "fractional nanosecond overflows maximum duration", input: "PT9223372036.8547758071S"},
 		{name: "date designator alone", input: "P"},
 		{name: "time designator alone", input: "PT"},
 		{name: "time designator without time component", input: "P1DT"},

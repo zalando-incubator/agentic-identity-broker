@@ -346,10 +346,7 @@ and `internal/config/validator.go` validates centrally:
   maps `ErrInvalidSweepRequest` to `400`.
 
 **Rationale**:
-- `go.mod` has no ISO 8601 duration dependency (WiringScout #7). The accepted subset is a
-  15-line parser with table-driven tests, and it carries no security property. Principle III covers
-  cryptography and security primitives, not duration parsing. A third-party dependency for this
-  would add supply-chain surface (`#192` dependency remediation) for no benefit.
+- The implementation keeps its existing strict ISO 8601 parser and table-driven tests. It rounds nonzero fractional seconds up to nanoseconds and rejects overflow. Keeping the parser avoids an unrelated dependency cutover. Principle III covers cryptography and security primitives, not duration parsing. A third-party dependency would add supply-chain surface (`#192` dependency remediation) without benefit.
 - Zalando guidelines require ISO 8601 for durations in APIs, which is why the API and the
   configuration use different syntaxes (Go duration in YAML, ISO 8601 on the wire).
 
@@ -394,8 +391,8 @@ so NFR-003's WARN for per-session sweep failures is met without double-logging.
 
 *Success event* (NFR-001, `SessionTokensRefreshed`): extend the existing
 `event=session.oauth2.token_refreshed` INFO line with `triggered_by` (`background` | `on-demand` |
-`sweep`) and `session_id`. The principal is never logged. `ForceRefreshSession` (the end-user
-`POST /api/third-party/{serviceId}/session/refresh`) reports `triggered_by=on-demand`.
+`sweep`), `session_id`, and the session owner's `principal`. Log it only after commit.
+`ForceRefreshSession` (the end-user `POST /api/third-party/{serviceId}/session/refresh`) reports `triggered_by=on-demand`. No token material appears in the event.
 
 *Metrics* (NFR-004): five monotonic `metric.Int64Counter` instruments are created once in the
 constructors from `otel.Meter("oauth2session")`, following the broker precedent of instruments

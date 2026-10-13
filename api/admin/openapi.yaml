@@ -3297,10 +3297,9 @@ components:
             ISO 8601 duration. Sessions whose access token expires within this duration from the
             start of the sweep are refreshed. Only day, hour, minute, and second components are
             accepted (`P[nD][T[nH][nM][n[.f]S]]`); year, month, and week components are rejected.
-            Fractional seconds must be exact to a nanosecond; further digits can only be zero.
             Must be greater than zero. Defaults to the server-configured
             `token_refresh.lookahead_duration` (default 5 minutes).
-          pattern: '^P(?!$)(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d{1,9}0*)?S)?)?$'
+          pattern: '^P(?!$)(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?)?$'
           example: PT5M
         dry_run:
           type: boolean

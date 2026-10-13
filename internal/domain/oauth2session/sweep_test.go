@@ -369,7 +369,10 @@ func TestSessionSweepEvaluatesMovedSessionOnce(t *testing.T) {
 	assertSweepCounts(t, result, 2, 0, 0, false)
 	assert.EqualValues(t, 2, calls.Load(), "each session gets one upstream refresh")
 	assert.Equal(t, 2, f.refresh.locks, "a moved row must not acquire a second lock")
-	assert.Equal(t, 2, strings.Count(f.logs.String(), `"event":"session.oauth2.token_refreshed"`))
+	assertSweepRefreshOwners(t, f.logs.String(), map[string]string{
+		sweepSessionID(1).String(): "user-1@example.com",
+		sweepSessionID(2).String(): "user-2@example.com",
+	})
 	first, err := f.repo.Get(context.Background(), sweepSessionID(1))
 	require.NoError(t, err)
 	access, err := f.service.DecryptAccessToken(context.Background(), first)
@@ -486,9 +489,7 @@ func TestSessionSweepRealRefreshCommitsBeforeSuccessAndMetrics(t *testing.T) {
 	assert.EqualValues(t, 1, sweepMetrics(t, reader)["session_sweep_refreshed_total"])
 	assert.EqualValues(t, 0, sweepMetrics(t, reader)["session_sweep_failed_total"])
 	assert.Contains(t, f.logs.String(), `"triggered_by":"sweep"`)
-	assert.Contains(t, f.logs.String(), `"event":"session.oauth2.token_refreshed"`)
-	assert.Contains(t, f.logs.String(), `"session_id":"`+sweepSessionID(1).String()+`"`)
-	assert.NotContains(t, f.logs.String(), "user-1@example.com", "the session principal must not be logged")
+	assertSweepRefreshOwners(t, f.logs.String(), map[string]string{sweepSessionID(1).String(): "user-1@example.com"})
 	assert.NotContains(t, f.logs.String(), "new-refresh", "rotated tokens must not be logged")
 }
 
@@ -825,12 +826,35 @@ func TestSessionSweepCancellationWaitsForAdmittedRefreshAndStopsBeforeNext(t *te
 	assert.Equal(t, "new-access", plain, "refresh-token rotation persists despite client disconnect")
 }
 
+func assertSweepRefreshOwners(t *testing.T, logs string, owners map[string]string) {
+	t.Helper()
+	found := make(map[string]string, len(owners))
+	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+		var entry struct {
+			Event     string `json:"event"`
+			SessionID string `json:"session_id"`
+			Principal string `json:"principal"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(line), &entry))
+		if entry.Event != "session.oauth2.token_refreshed" {
+			continue
+		}
+		require.Contains(t, owners, entry.SessionID)
+		assert.Equal(t, owners[entry.SessionID], entry.Principal)
+		_, duplicate := found[entry.SessionID]
+		assert.False(t, duplicate, "only one success event per session")
+		found[entry.SessionID] = entry.Principal
+	}
+	assert.Equal(t, owners, found)
+}
+
 func assertSweepLogMetadata(t *testing.T, logs, event, level string, detail oauth2session.ErrorDetail, kind oauth2session.ErrorKind, dependency oauth2session.Dependency) {
 	t.Helper()
 	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
 		var entry struct {
 			Event        string `json:"event"`
 			Level        string `json:"level"`
+			Principal    string `json:"principal"`
 			PublicClient *bool  `json:"public_client"`
 			Failure      struct {
 				Detail     string `json:"failure_detail"`
@@ -844,6 +868,11 @@ func assertSweepLogMetadata(t *testing.T, logs, event, level string, detail oaut
 		assert.Equal(t, string(detail), entry.Failure.Detail)
 		assert.Equal(t, string(kind), entry.Failure.Kind)
 		assert.Equal(t, string(dependency), entry.Failure.Dependency)
+		if event == "session.oauth2.sweep_aborted" {
+			assert.Empty(t, entry.Principal, "aggregate abort has no session owner")
+		} else {
+			assert.Equal(t, "user-1@example.com", entry.Principal)
+		}
 		if event == "session.oauth2.refresh_failed" {
 			if kind == oauth2session.KindSession {
 				assert.Nil(t, entry.PublicClient, "terminal candidates must not fetch provider credentials")
@@ -852,7 +881,6 @@ func assertSweepLogMetadata(t *testing.T, logs, event, level string, detail oaut
 				assert.False(t, *entry.PublicClient)
 			}
 		}
-		assert.NotContains(t, line, "user-1@example.com", "session logs never contain the user principal")
 		assert.NotContains(t, line, "refresh-1", "session logs never contain refresh tokens")
 		return
 	}

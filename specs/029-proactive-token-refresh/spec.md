@@ -175,7 +175,7 @@ sequenceDiagram
 ```
 
 **Domain Event**:
-- **SessionTokensRefreshed**: A successful, committed session refresh. The broker records this event as the structured `session.oauth2.token_refreshed` log. It contains `session_id`, `service_id`, and `triggered_by` (background, on-demand, sweep). The log does not contain the user principal.
+- **SessionTokensRefreshed**: A successful, committed session refresh. The broker records this event as the structured `session.oauth2.token_refreshed` log. It contains `principal` (the session owner), `session_id`, `service_id`, and `triggered_by` (background, on-demand, sweep). It contains no token material.
 
 ### Configuration Requirements
 
@@ -213,7 +213,7 @@ token_refresh:
 
 ### Non-Functional Requirements
 
-- **NFR-001**: The system MUST emit a structured log line at `INFO` level each time a session's tokens are successfully refreshed, including fields: `triggered_by` (background, on-demand, sweep), `service_id`, and session ID. Principal MUST be omitted or hashed to protect privacy.
+- **NFR-001**: The system MUST emit a structured log line at `INFO` level after each committed session refresh. It MUST include the session owner's `principal`, `session_id`, `service_id`, and `triggered_by` (background, on-demand, sweep). It MUST NOT include token material.
 - **NFR-002**: The system MUST emit a structured log line at `WARN` level when a proactive background refresh is dropped because the worker pool is at capacity, including `service_id` and session ID.
 - **NFR-003**: The system MUST emit a structured log line at `WARN` level for each per-session failure during a sweep (refresh token expired, upstream error), and at `ERROR` level for infrastructure failures (database unreachable).
 - **NFR-004**: The system MUST emit OpenTelemetry `Int64` counters through the existing telemetry pipeline (no Prometheus registry, no `/metrics` endpoint, and no `/health` counter surface): `proactive_refresh_triggered_total`, `proactive_refresh_dropped_total`, `proactive_refresh_failed_total`, `session_sweep_refreshed_total`, `session_sweep_failed_total`. Counters MUST be labeled with `triggered_by` where applicable.

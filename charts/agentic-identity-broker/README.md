@@ -37,7 +37,7 @@ the broker's default `http://localhost:14000`. Admin `/api` requests must match
 this URL's Host authority; ingress and other reverse proxies must preserve it.
 Forwarded Host headers are not trusted. `/health` probes remain unrestricted.
 
-The chart installs an ingress NetworkPolicy by default. It permits the end-user port but denies the admin port until you select trusted proxy pods. The cluster CNI must enforce ingress NetworkPolicy. See [Admin proxy access](#admin-proxy-access) before you enable the admin API.
+The admin port must only be reachable through an authenticated proxy. Restrict access at deployment level and route sweep CronJobs through that proxy.
 
 `broker.server.enduser.authentication.jwt` and `broker.server.admin.authentication.jwt`
 are optional, independent JWT pre-authentication blocks (default: unset). Each supports
@@ -144,9 +144,6 @@ and unknown environments reject that development-only bypass.
 | `serviceAccount.irsa.role` | IAM role ARN for IRSA | `""` |
 | `ingress.enduser.enabled` | Enable Ingress for end-user API | `false` |
 | `ingress.admin.enabled` | Enable Ingress for admin API | `false` |
-| `networkPolicy.enabled` | Apply a broker ingress policy. A supported CNI must enforce it. | `true` |
-| `networkPolicy.adminProxy.namespaceLabels` | Select the trusted admin proxy namespace. Empty denies admin ingress. | `{}` |
-| `networkPolicy.adminProxy.podLabels` | Select trusted admin proxy pods in that namespace. Empty denies admin ingress. | `{}` |
 | `broker.server.enduser.authentication.jwt` | End-user JWT pre-auth configuration, independent of admin | unset |
 | `broker.server.admin.authentication.jwt` | Admin JWT pre-auth configuration, independent of end-user | unset |
 | `resources.requests.cpu` | CPU request | `100m` |
@@ -302,27 +299,6 @@ ingress:
           - path: /
             pathType: ImplementationSpecific
 ```
-
-### Admin proxy access
-
-CAUTION: Do not expose the admin pod port to untrusted workloads. A direct client can forge the plain principal header.
-
-The default policy permits port `8000` from any source and denies port `14000`. Select the namespace and pods of your authenticated admin proxy to permit admin traffic:
-
-```yaml
-networkPolicy:
-  adminProxy:
-    namespaceLabels:
-      kubernetes.io/metadata.name: ingress-nginx
-    podLabels:
-      app.kubernetes.io/name: ingress-nginx
-```
-
-Replace the example labels with labels from your proxy deployment. The chart requires both label maps when you permit admin ingress. The proxy must authorize operators. In plain-header mode, it must remove caller-supplied principal headers and set the configured admin header. In JWT mode, it must remove caller-supplied copies of the JWT header and forward its own operator JWT, signed for `verification: jwks` or gateway-issued for `verification: none`. Route the sweep CronJob through that proxy.
-
-The chart requires `service.type: ClusterIP` while this policy is enabled. A `NodePort` or `LoadBalancer` can bypass pod ingress policy on some networks. If you disable `networkPolicy.enabled`, install an equivalent ingress restriction before you serve admin requests. Make sure that your CNI enforces the policy and that no other NetworkPolicy permits port `14000`.
-
-Set `service.ports.enduser` equal to `broker.server.enduser.port` and `service.ports.admin` equal to `broker.server.admin.port`. The two listener ports must differ. The chart rejects mismatches even when its policy is disabled.
 
 ## Database Migration
 

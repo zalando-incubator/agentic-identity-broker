@@ -165,7 +165,6 @@ func NewOAuth2SessionService(
 	if logger == nil {
 		logger = slog.Default()
 	}
-	logger = logger.With("component", "oauth2session")
 
 	service := &OAuth2SessionService{
 		providerService: providerService,
@@ -291,6 +290,7 @@ func (s *OAuth2SessionService) ValidateStateToken(
 		// Audit log: state token expired
 		s.logger.Warn("oauth2_state_token_expired",
 			"event", "session.oauth2.state_expired",
+			"principal", claims.Principal,
 			"service_id", claims.ServiceID,
 			"expired_at", claims.ExpiresAt.Unix(),
 			"timestamp", time.Now().Unix())
@@ -303,6 +303,8 @@ func (s *OAuth2SessionService) ValidateStateToken(
 		s.logger.Error("oauth2_state_validation_failed",
 			"event", "session.oauth2.state_validation_failed",
 			"reason", "principal_mismatch",
+			"expected_principal", currentPrincipal,
+			"actual_principal", claims.Principal,
 			"service_id", expectedServiceID,
 			"timestamp", time.Now().Unix())
 		return nil, ErrPrincipalMismatch
@@ -315,6 +317,7 @@ func (s *OAuth2SessionService) ValidateStateToken(
 			"reason", "service_id_mismatch",
 			"expected_service_id", expectedServiceID,
 			"actual_service_id", claims.ServiceID,
+			"principal", currentPrincipal,
 			"timestamp", time.Now().Unix())
 		return nil, fmt.Errorf("state token validation failed: %w", ErrServiceIDMismatch)
 	}
@@ -526,7 +529,7 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	redirectURI string,
 	consentStateID string,
 ) (*InitiateFlowResult, error) {
-	s.logger.Info("initiating OAuth2 flow", "service_id", serviceID)
+	s.logger.Info("initiating OAuth2 flow", "principal", principal, "service_id", serviceID)
 	if len(redirectURI) >= maxProviderStateBytes {
 		return nil, ErrStateTokenTooLarge
 	}
@@ -589,6 +592,7 @@ func (s *OAuth2SessionService) initiateOAuth2Flow(
 	// Audit log: OAuth2 flow initiated successfully
 	s.logger.Info("oauth2_flow_initiated",
 		"event", "session.oauth2.flow_initiated",
+		"principal", principal,
 		"service_id", serviceID,
 		"public_client", service.IsPublicClient(),
 		"timestamp", now.Unix())
@@ -703,7 +707,7 @@ func (s *OAuth2SessionService) HandleCallback(
 	principal id.Principal,
 	req *HandleCallbackRequest,
 ) (*HandleCallbackResult, error) {
-	s.logger.Debug("processing OAuth2 callback", "service_id", req.ServiceID)
+	s.logger.Debug("processing OAuth2 callback", "service_id", req.ServiceID, "principal", principal)
 
 	// Check for OAuth2 error response
 	if req.Error != "" {
@@ -1108,7 +1112,7 @@ func (s *OAuth2SessionService) ListUserSessions(
 ) ([]*storage.UserSessionSummary, error) {
 	summaries, err := s.sessionRepo.ListSummariesByPrincipal(ctx, principal)
 	if err != nil {
-		s.logger.Error("failed to list sessions", "err", err)
+		s.logger.Error("failed to list sessions", "principal", principal, "err", err)
 		return nil, err
 	}
 	ids := make([]id.ServiceID, len(summaries))
@@ -1228,12 +1232,13 @@ func (s *OAuth2SessionService) GetSessionWithAgents(
 	serviceID id.ServiceID,
 ) (*SessionWithAgents, error) {
 	s.logger.Debug("retrieving session with agents",
+		"principal", principal,
 		"service_id", serviceID)
 
 	// Step 1: Fetch session to verify it exists and ownership
 	session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, serviceID)
 	if err != nil {
-		s.logger.Error("failed to fetch session", "service_id", serviceID, "err", err)
+		s.logger.Error("failed to fetch session", "principal", principal, "service_id", serviceID, "err", err)
 		return nil, fmt.Errorf("session details retrieval failed: %w", ErrSessionNotFound)
 	}
 
@@ -1244,6 +1249,8 @@ func (s *OAuth2SessionService) GetSessionWithAgents(
 	// Step 2: Verify principal ownership (authorization)
 	if session.Principal != principal {
 		s.logger.Error("principal mismatch in GetSessionWithAgents",
+			"expected_principal", principal,
+			"session_principal", session.Principal,
 			"service_id", serviceID)
 		return nil, fmt.Errorf("session details access denied: %w", ErrUnauthorized)
 	}
@@ -1277,6 +1284,7 @@ func (s *OAuth2SessionService) GetSessionWithAgents(
 	}
 
 	s.logger.Debug("retrieved session with agents",
+		"principal", principal,
 		"service_id", serviceID,
 		"dependent_agent_count", len(dependentAgents))
 
@@ -1359,7 +1367,7 @@ func (s *OAuth2SessionService) GetValidAccessToken(
 		flight := refreshFlightResult{session: current, refreshed: refreshed, trigger: RefreshTriggerOnDemand, client: clientInfoFromProvider(provider)}
 		if err != nil {
 			if !errors.Is(err, ErrSessionNotFound) {
-				s.logRefreshFailure(refreshCtx, session.ID, serviceID, RefreshTriggerOnDemand, flight.client, err)
+				s.logRefreshFailure(refreshCtx, session.Principal, session.ID, serviceID, RefreshTriggerOnDemand, flight.client, err)
 			}
 			return flight, err
 		}
@@ -1375,7 +1383,7 @@ func (s *OAuth2SessionService) GetValidAccessToken(
 		flight := outcome.Val.(refreshFlightResult)
 		if outcome.Err != nil {
 			if flight.trigger == RefreshTriggerBackground && !errors.Is(outcome.Err, ErrSessionNotFound) {
-				s.logRefreshFailure(ctx, session.ID, serviceID, RefreshTriggerOnDemand, flight.client, outcome.Err)
+				s.logRefreshFailure(ctx, session.Principal, session.ID, serviceID, RefreshTriggerOnDemand, flight.client, outcome.Err)
 			}
 			return nil, "", outcome.Err
 		}
@@ -1444,7 +1452,7 @@ func (s *OAuth2SessionService) refreshLockedSession(ctx context.Context, princip
 		return nil, false, provider, sessionOperationError(ctx, OperationSessionLookup, DetailSessionMissing, ErrSessionNotFound)
 	}
 	if refreshed {
-		s.logRefreshSuccess(ctx, current.ID, serviceID, trigger, provider)
+		s.logRefreshSuccess(ctx, current.Principal, current.ID, serviceID, trigger, provider)
 	}
 	return current, refreshed, provider, nil
 }
@@ -1543,10 +1551,11 @@ func (s *OAuth2SessionService) refreshSessionTokens(ctx context.Context, session
 	return nil
 }
 
-func (s *OAuth2SessionService) logRefreshSuccess(ctx context.Context, sessionID id.SessionID, serviceID id.ServiceID, trigger RefreshTrigger, service *model.ThirdpartyOAuth2ProviderEntity) {
+func (s *OAuth2SessionService) logRefreshSuccess(ctx context.Context, principal id.Principal, sessionID id.SessionID, serviceID id.ServiceID, trigger RefreshTrigger, service *model.ThirdpartyOAuth2ProviderEntity) {
 	s.logger.InfoContext(ctx, "oauth2_token_refreshed",
 		"event", "session.oauth2.token_refreshed",
 		"session_id", sessionID.String(),
+		"principal", principal,
 		"service_id", serviceID.String(),
 		"triggered_by", trigger,
 		"public_client", service.IsPublicClient(),
@@ -1554,10 +1563,11 @@ func (s *OAuth2SessionService) logRefreshSuccess(ctx context.Context, sessionID 
 		"timestamp", time.Now().Unix())
 }
 
-func (s *OAuth2SessionService) logRefreshFailure(ctx context.Context, sessionID id.SessionID, serviceID id.ServiceID, trigger RefreshTrigger, client refreshClientInfo, err error) {
+func (s *OAuth2SessionService) logRefreshFailure(ctx context.Context, principal id.Principal, sessionID id.SessionID, serviceID id.ServiceID, trigger RefreshTrigger, client refreshClientInfo, err error) {
 	attrs := []any{
 		"event", "session.oauth2.refresh_failed",
 		"session_id", sessionID.String(),
+		"principal", principal,
 		"service_id", serviceID.String(),
 		"triggered_by", trigger,
 		"oauth2_session", sessionFailureMetadata(err),
@@ -1636,7 +1646,7 @@ func (s *OAuth2SessionService) ForceRefreshSession(
 	session, _, service, err := s.refreshLockedSession(ctx, principal, serviceID, nil, RefreshTriggerOnDemand)
 	if err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
-			s.logRefreshFailure(ctx, existing.ID, serviceID, RefreshTriggerOnDemand, clientInfoFromProvider(service), err)
+			s.logRefreshFailure(ctx, existing.Principal, existing.ID, serviceID, RefreshTriggerOnDemand, clientInfoFromProvider(service), err)
 		}
 		return nil, err
 	}

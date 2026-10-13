@@ -154,34 +154,6 @@
         }
       }
     },
-    "networkPolicy": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Ingress isolation for the broker pods",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "description": "Restrict admin pod ingress to a selected proxy"
-        },
-        "adminProxy": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Trusted proxy selectors; both must be set to permit admin ingress",
-          "properties": {
-            "namespaceLabels": {
-              "type": "object",
-              "additionalProperties": { "type": "string" },
-              "description": "Required namespace labels of the trusted admin proxy"
-            },
-            "podLabels": {
-              "type": "object",
-              "additionalProperties": { "type": "string" },
-              "description": "Required pod labels of the trusted admin proxy"
-            }
-          }
-        }
-      }
-    },
     "ingress": {
       "type": "object",
       "additionalProperties": false,
