@@ -57,7 +57,7 @@ just test-e2e-backend
 ## 3. Domain and adapter tests (fast loop)
 
 ```bash
-go test -race ./internal/domain/storage/... ./internal/domain/oauth2session/... \
+go test -race ./internal/app/... ./internal/domain/storage/... ./internal/domain/oauth2session/... \
   ./internal/adapters/storage/memory/... ./internal/adapters/http/... ./internal/config/...
 ```
 
@@ -67,6 +67,8 @@ Key assertions to look for in `-v` output:
 |---|---|
 | `UserSession.AccessTokenExpiresBy` table | Boundary-inclusive, `nil` → `false`, equivalence with `!HasValidAccessToken()` |
 | `backgroundRefresher` | Saturation drops (`dropped` counter +1, WARN), in-flight dedup consumes no slot, `Close` is idempotent, drains before cancelling, and rejects submissions after close |
+| `App.Shutdown` with a gated token commit | Shutdown waits for an admitted rotated-token update without cancelling it, then rejects background refresh for another near-expiry session. |
+| Valid near-expiry token with an absent or expired refresh token | The stored access token returns unchanged, with zero provider lookups and zero background admissions. |
 | Background refresh: session deleted mid-flight | No error and no row re-created (L2) |
 | Background refresh: upstream 503 | The caller's token is unaffected; `proactive_refresh_failed_total` +1; the row is unchanged |
 | `SessionSweepService` | `refreshed+skipped+failed == total_evaluated` for unique IDs; a refreshed row that moves forward within the fixed threshold is not evaluated twice; nil or non-increasing cursor tuples abort; provider-unavailable → `failed`; repository-unavailable → abort; cancellation is checked between sessions |

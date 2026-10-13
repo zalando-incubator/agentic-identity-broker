@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -229,6 +231,46 @@ func submitBackground(t *testing.T, pool *backgroundRefresher, ctx context.Conte
 	returned := make(chan struct{})
 	go func() { pool.submit(ctx, session, 5*time.Minute); close(returned) }()
 	receiveBackground(t, returned)
+}
+
+func TestGetValidAccessToken_UnusableRefreshTokenDoesNotAdmitBackgroundWork(t *testing.T) {
+	for _, name := range []string{"absent refresh token", "expired refresh token"} {
+		t.Run(name, func(t *testing.T) {
+			reader := backgroundMetrics(t)
+			session := backgroundSession(id.NewServiceID(), "unrefreshable-user")
+			if name == "absent refresh token" {
+				session.EncryptedRefreshToken = nil
+			} else {
+				expired := time.Now().Add(-time.Minute)
+				session.RefreshTokenExpiresAt = &expired
+			}
+			service, store, _ := newBackgroundFixture(t, session)
+			var providerLookups atomic.Int32
+			service.providerService = thirdparty.NewThirdpartyOAuth2ProviderService(
+				operationProviderRepository{get: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+					providerLookups.Add(1)
+					return nil, errors.New("unexpected provider lookup")
+				}}, operationEncryption{}, operationBranchKeyManager{}, nil, false, service.logger,
+			)
+			service.background = newBackgroundRefresher(service, 1)
+			defer func() { assert.NoError(t, service.Close(context.Background())) }()
+
+			got, token, err := service.GetValidAccessToken(context.Background(), session.Principal, session.ServiceID)
+			require.NoError(t, err)
+			assert.Equal(t, session.ID, got.ID)
+			assert.Equal(t, "old-unrefreshable-user", token)
+			require.NoError(t, service.Close(context.Background()))
+			assert.Zero(t, providerLookups.Load())
+			assertBackgroundMetrics(t, reader, map[string]int64{
+				"proactive_refresh_triggered_total": 0,
+				"proactive_refresh_dropped_total":   0,
+				"proactive_refresh_failed_total":    0,
+			})
+			persisted, err := store.find(context.Background(), session.Principal, session.ServiceID)
+			require.NoError(t, err)
+			assert.Equal(t, session, persisted)
+		})
+	}
 }
 
 func TestBackgroundRefresh_CreatesRootSpanLinkedToSubmittingRequest(t *testing.T) {
