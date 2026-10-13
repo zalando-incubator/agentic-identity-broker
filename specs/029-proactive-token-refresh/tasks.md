@@ -175,7 +175,7 @@ description: "Task list for proactive token refresh"
 
 - [X] T054 Update route, shutdown, session-refresh concurrency, row-lock, and operator-sweep sections in `ARCHITECTURE.md`. Add the seven glossary entries from T011.
 - [X] T055 Add the three settings, defaults, environment names, CLI flags, provider-lifetime warning, worker limit, and runbook link to `docs/configuration.md`.
-- [X] T056 Write `docs/operations/session-sweep.md` with an operator-managed CronJob example, `concurrencyPolicy: Forbid`, admin-proxy authentication, caller timeout, count/metric interpretation, and the amended ADR 039 manual recovery procedure. State that invalid-index cleanup is not atomic rollback. Do not ship a broker-chart CronJob.
+- [X] T056 Write `docs/operations/session-sweep.md` for broker administrators with a reference CronJob, `concurrencyPolicy: Forbid`, admin-proxy authentication, caller timeout, and count/metric interpretation. Keep migration recovery in ADR 039. Do not ship a broker-chart CronJob.
 
 ### Constitution Compliance Verification: Design Phase
 

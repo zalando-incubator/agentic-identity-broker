@@ -1,20 +1,26 @@
-# Session sweep operations
+# Refresh third-party sessions
 
-## Purpose and access
+## How refresh works
 
-`POST /api/sessions/sweep` runs synchronously on the admin server (port `14000`). It finds third-party sessions whose access tokens expire within the lookahead window. It processes candidates across all users and services, one at a time in bounded pages. Sessions without a recorded expiry are not candidates. The broker has no internal sweep scheduler or distributed lock.
+If the access token is still valid, the broker returns it without waiting for a provider response. If that token is close to expiry, the broker attempts a background refresh without delaying the exchange.
 
-CAUTION: Send sweep requests only through the authenticated admin proxy. The endpoint can refresh sessions across all users.
+If the access token has expired, the exchange waits for an on-demand refresh before responding. If the refresh succeeds, the broker updates the existing session and returns the new token. An absent or expired refresh token requires the user to reconnect. A provider response with 4xx `invalid_grant` (other than `429`) also requires reconnection. Other provider errors, including `429` and `5xx`, return `server_error` without requiring user reconnection. The broker does not return the expired access token as a fallback.
 
-The proxy must authenticate and authorize the operator. With plain-header pre-authentication, it must remove caller-supplied principal headers and set the configured admin header (usually `X-Remote-User`). With JWT pre-authentication, it must remove caller-supplied copies of the configured JWT header and forward the operator JWT. The broker verifies it against the JWKS for `verification: jwks` and trusts the gateway-supplied claims for `verification: none`. In both JWT modes the broker ignores the plain header. Do not expose the admin server directly. The broker audits each invocation with the operator principal. A missing principal returns `500 server_misconfiguration`; no sweep starts.
+A sweep selects all sessions due within the lookahead window, including sessions with active exchanges. It also reaches inactive sessions that do not trigger background refresh. Sessions without a recorded access-token expiry are not included. The broker does not schedule sweeps. Administrators can run them on demand or schedule them outside the broker.
 
-Restrict access to the admin port in your deployment. Only the authenticated admin proxy can reach it. Route the CronJob through that proxy, not directly to the broker Service.
+## Before you run a sweep
 
-The request must use the Host authority configured by `broker.server.admin.publicUrl` (`server.admin.public_url` in broker configuration). The proxy must preserve that Host. The admin API ignores forwarded Host headers. Set `Content-Type: application/json` even for `{}`. Host and browser-boundary failures return `403`; a missing or invalid JSON content type returns `415`.
+CAUTION: Send requests through your authenticated admin proxy. A sweep can refresh sessions for all users. Do not expose the admin server directly or send identity headers from a client. The proxy must authenticate and authorize the operator.
+
+Use the proxy URL that matches the broker's configured admin public URL. The proxy must preserve its Host header. Send `Content-Type: application/json` with every request, including an empty JSON object.
+
+Set the caller and proxy timeouts to allow for provider responses and the number of sessions due. A sweep waits for each refresh before it proceeds to the next session. If a request times out, earlier refreshes remain saved. Examine the audit event and session state before you start another sweep.
 
 ## Run a sweep
 
-Before the first scheduled request, run a dry run through the admin proxy. These examples use mTLS operator authentication. If your proxy uses another method, configure its approved curl authentication first. Store the certificate and private key in restricted files from your credential manager. Set `OPERATOR_CERT_FILE` and `OPERATOR_KEY_FILE` to those paths. Do not put credentials or principal headers in the commands.
+Run a dry run before you schedule the first sweep. The examples use an operator certificate and key for authentication at the proxy. If your proxy uses a different method, use its approved authentication method instead. Keep credentials in restricted files from your credential manager. Set `OPERATOR_CERT_FILE` and `OPERATOR_KEY_FILE` to those file paths.
+
+CAUTION: If you omit `dry_run`, the broker starts a real sweep. Set `"dry_run":true` to preview without changing sessions.
 
 ```sh
 ADMIN_PROXY_URL=https://broker-admin.internal.example.com
@@ -25,7 +31,7 @@ curl --cert "$OPERATOR_CERT_FILE" --key "$OPERATOR_KEY_FILE" \
   "$ADMIN_PROXY_URL/api/sessions/sweep"
 ```
 
-If the dry-run counts match the expected candidate population, run the real sweep:
+If the dry-run counts match the sessions you expect, run a real sweep:
 
 ```sh
 curl --cert "$OPERATOR_CERT_FILE" --key "$OPERATOR_KEY_FILE" \
@@ -35,23 +41,28 @@ curl --cert "$OPERATOR_CERT_FILE" --key "$OPERATOR_KEY_FILE" \
   "$ADMIN_PROXY_URL/api/sessions/sweep"
 ```
 
-The request accepts an empty JSON object to use configured defaults. `lookahead_duration` accepts a positive ISO 8601 duration of days, hours, minutes, and seconds, such as `PT10M` or `P1D`. It does not accept `10m`, weeks, months, or years. `page_size` is from `1` to `1000`. Invalid input, including unknown fields, returns `400`.
+CAUTION: Sending `{}` starts a real sweep with the configured lookahead and page size. Omitted `dry_run` defaults to `false`. `lookahead_duration` accepts a positive ISO 8601 duration, such as `PT10M` or `P1D`. It does not accept `10m`, weeks, months, or years. `page_size` accepts `1` through `1000`. The broker rejects invalid or unknown request fields with `400`.
 
-The broker clears its write deadline only for this route. Set caller and admin-proxy upstream timeouts long enough for sequential provider calls. A disconnect or timeout stops the scan after the current session. Committed refreshes remain committed. Do not blindly retry a timed-out or `500` sweep. Inspect the audit event and stored state before you decide whether to run another sweep.
-
-A successful response contains counts only, never tokens or end-user principals:
+A completed sweep returns a count-only response:
 
 ```json
 {"refreshed":42,"skipped":3,"failed":1,"total_evaluated":46,"dry_run":false}
 ```
 
-`total_evaluated = refreshed + skipped + failed`. `refreshed` means a stored refresh succeeded. In a dry run, it means a refresh would occur without an upstream call or write. `skipped` means another request renewed the candidate or a user deleted it before evaluation. `failed` means the candidate could not refresh, for example because its refresh token expired or its provider failed. Sessions outside the window appear in no count. A completed sweep returns `200` even if **every** candidate failed. Alert on `failed`, not just HTTP status. A repository failure returns `500` and leaves earlier committed refreshes intact.
+- `refreshed`: Sessions with a saved refresh. In a dry run, sessions eligible for refresh, with no provider call or saved change.
+- `skipped`: Candidates that no longer require a refresh at evaluation time.
+- `failed`: Candidates with no usable refresh token, or a provider error during a real sweep. A dry run cannot detect provider errors.
+- `total_evaluated`: Sum of `refreshed`, `skipped`, and `failed`. Sessions outside the window do not contribute.
 
-## Schedule outside the broker chart
+If every refresh fails but the sweep finishes, the endpoint still returns `200`. Alert on `failed`, not only on HTTP status. If the sweep stops with a server error or a timeout, earlier successful refreshes remain saved. Do not retry without reviewing the audit event and session state.
 
-Choose a lookahead shorter than the shortest access-token lifetime from your providers. Otherwise, every exchange can trigger another refresh. Allow enough lead time and sweep frequency for inactive sessions. For example, run every five minutes with a ten-minute lookahead only if all relevant providers issue longer-lived access tokens. Include provider latency and skipped runs when you choose the caller timeout. The default broker lookahead is `5m`, with `10` background workers and a sweep page size of `100`. The worker cap is `20` per replica because the database pool has `25` connections.
+If you get `403`, check the proxy URL, Host header, and browser origin. If you get `415`, send a JSON content type. If you get `500 server_misconfiguration`, ask the proxy administrator to check operator identity delivery. The broker does not start a sweep without an operator identity.
 
-This reference CronJob is **operator-owned**. The broker Helm chart does not create or manage a sweep CronJob. The example assumes the admin proxy validates short-lived Kubernetes service-account tokens for audience `broker-admin-proxy`. The proxy authorizes the service account as an operator and injects the principal header. If your proxy does not support this trust model, use its approved authentication method instead. Create the dedicated service account and configure the proxy. Do not grant this service account database or broker-pod access.
+## Schedule sweeps
+
+Choose a lookahead shorter than the shortest access-token lifetime that your providers issue. Otherwise, token exchanges can submit another refresh soon after one succeeds. Choose a schedule that reaches inactive sessions before their tokens expire. For example, use a five-minute schedule and ten-minute lookahead only if all relevant providers issue longer-lived access tokens. Allow for provider latency and missed runs when you set timeouts.
+
+The broker Helm chart does not create a sweep CronJob. The following example is for an administrator-managed Kubernetes deployment. The CronJob omits `dry_run`, so each Job performs a real sweep. The example assumes that the admin proxy accepts service-account tokens with audience `broker-admin-proxy` and authorizes the service account as a sweep operator. If your proxy uses another authentication method, adapt the Job before you deploy it.
 
 ```yaml
 apiVersion: batch/v1
@@ -97,78 +108,26 @@ spec:
                       expirationSeconds: 3600
 ```
 
-Replace the example namespace, service account, proxy URL, token audience, and schedule with deployment values. Set the proxy URL Host to match `broker.server.admin.publicUrl`. The proxy must validate the token issuer, signature, audience, expiry, and service-account identity before it sets the principal header. Restrict access to the proxy and broker admin port with network policy. Do not put a reusable credential in the manifest, command arguments, ConfigMap, or logs. The example streams a projected token to curl through standard input. It does not print or store the token in the Job specification.
+Replace the namespace, service account, proxy URL, token audience, and schedule with your deployment values. Configure the proxy to validate the token issuer, signature, audience, expiry, and service-account identity. Restrict network access to the proxy and admin server. Do not put a reusable credential in the Job manifest or logs.
 
-`Forbid` prevents overlap within this CronJob, not requests from other schedules or operators. `backoffLimit: 0` prevents automatic retries after a Job failure. The 900-second curl timeout and 960-second Job deadline are examples. Set both for your workload. A `200` with `failed > 0` still finishes this example Job successfully. Inspect its count-only output or collect the exported metrics. Alert on persistent failures and missed or skipped CronJob runs.
+`Forbid` prevents overlap within this CronJob but not with manual sweeps or other schedules. `backoffLimit: 0` prevents automatic retries after a Job failure. Adjust the 900-second curl timeout and 960-second Job deadline to your workload. If the response is `200`, the example Job succeeds even with `failed` greater than zero. Monitor the response counts and missed or skipped Jobs.
 
-## Observe outcomes
+## Monitor and resolve failures
 
-The broker emits five OpenTelemetry counters when metrics are enabled. They are not exposed on `/metrics` or `/health`:
+If metrics are enabled, use the exported OpenTelemetry counters. The broker does not expose them on `/metrics` or `/health`.
 
-| Counter | `triggered_by` | Meaning |
-|---|---|---|
-| `proactive_refresh_triggered_total` | `background` | Background slot accepted a refresh. |
-| `proactive_refresh_dropped_total` | `background` | All background slots were busy. |
-| `proactive_refresh_failed_total` | `background` | Accepted background refresh ended in an error. |
-| `session_sweep_refreshed_total` | `sweep` | Real sweep committed a refreshed session. |
-| `session_sweep_failed_total` | `sweep` | Real sweep classified a candidate as failed. |
+| Counter | Meaning |
+|---|---|
+| `session_sweep_refreshed_total` | Sessions refreshed by real sweeps. |
+| `session_sweep_failed_total` | Candidates that failed during real sweeps. |
+| `proactive_refresh_triggered_total` | Background refresh attempts accepted during token exchange. |
+| `proactive_refresh_dropped_total` | Background refresh attempts dropped under load. |
+| `proactive_refresh_failed_total` | Accepted background refresh attempts that failed. |
 
-These counters have only the fixed-cardinality `triggered_by` attribute. They do not include session IDs, service IDs, or principals. Dry runs add no sweep counts. Per-session refresh logs identify the session owner as `principal` and exclude token material. The separate `session sweep` audit identifies the operator as `operator_principal`. It records counts, duration, and outcome without a session owner. A background refresh creates a root span linked to the request span that triggered it.
+Dry runs do not increment the sweep counters. The sweep audit event records the operator, counts, duration, and outcome without token values. The response also contains no tokens or user identities.
 
-## Resolve repeated session failures
+If `failed` persists across sweeps, examine the refresh failure logs and provider health. An absent or expired refresh token cannot recover through another sweep. A 4xx provider `invalid_grant` response (other than `429`) also requires user reconnection. Provider rate limits and outages can cause failures without requiring reconnection. Resolve those provider errors before you ask users to reconnect.
 
-An absent or expired refresh token leaves its session due. Each scheduled sweep reports that session in `failed` without contacting its provider. The count remains until the affected user reauthorizes or ends the session. A provider rejection can also recur without a recorded refresh-token expiry. That case still contacts the provider on each sweep.
+Users can reconnect through `GET /api/third-party/{serviceId}/oauth2/authorize`. They can end their own session through `DELETE /api/third-party/{serviceId}/session`. Ending a session removes the stored tokens and can interrupt agents. It does not revoke the tokens at the provider.
 
-Compare `failed` counts across consecutive responses. Inspect `session_sweep_failed_total`. Compare sweep durations with the 900-second caller timeout. A `200` response with persistent failures still requires the existing `failed` alert. If a sweep approaches the caller timeout, review provider latency and the external schedule before another run.
-
-For sustained failures, ask the affected user to reauthorize through `GET /api/third-party/{serviceId}/oauth2/authorize`. The user can instead end their own session through `DELETE /api/third-party/{serviceId}/session`. That request deletes stored tokens and can interrupt dependent agents. It does not revoke tokens at the provider.
-
-Do not auto-delete another user's session. Do not silently filter it from future sweeps. The admin response contains counts, not user identities. Use the approved user-support process to arrange reauthentication. The sweep does not add retry state or new admin request or response fields.
-
-## Recover migration `037` (ADR 039)
-
-CAUTION: Migration `037` uses concurrent PostgreSQL index DDL outside a transaction. Invalid-index cleanup is **not** atomic rollback.
-
-The migration image runs `golang-migrate` directly. The `-- migrate:no-transaction` comment is informational and does not validate SQL. A missing DOWN can go unnoticed until after UP succeeds. Before a release, review the packaged migration pair. A missing DOWN can leave rollback unavailable.
-
-If a migration UP or DOWN fails, stop competing migration Jobs before you touch metadata or retry. The Helm migration Job can retry pods, but `golang-migrate` refuses a dirty version. Suspend competing releases. Arrange a database review. Use the same migration role and schema search path as the failed Job. Inspect its error and the `schema_migrations` row. Then inspect **all** relations with the target name:
-
-```sql
-SELECT version, dirty FROM schema_migrations;
-SELECT current_schema(), current_schemas(true);
-SELECT n.nspname AS schema_name, c.relname, c.relkind,
-       i.indrelid::regclass AS table_name, i.indisvalid,
-       pg_get_indexdef(c.oid) AS definition
-FROM pg_class AS c
-JOIN pg_namespace AS n ON n.oid = c.relnamespace
-LEFT JOIN pg_index AS i ON i.indexrelid = c.oid
-WHERE c.relname = 'idx_user_sessions_access_token_expires_at';
-```
-
-Confirm that the expected index is a plain B-tree on `user_sessions(access_token_expires_at, id)` in the migration schema. Confirm that its two key columns have this order. `pg_index.indisvalid = false` means the index is invalid; it can still add write overhead. If there is no row, the index is absent. If another relation owns the name, stop and investigate. Do not delete that relation. A clean version `37` with a missing or invalid index also requires database review.
-
-If UP stopped at **dirty version 37** and the inspected index is invalid, drop only that index. Substitute its *verified* schema for `confirmed_schema` in this example. Run the statement with an autocommit SQL client. Do not use `BEGIN`, `COMMIT`, or `psql -1`:
-
-```sql
-DROP INDEX CONCURRENTLY confirmed_schema.idx_user_sessions_access_token_expires_at;
-```
-
-If UP stopped at dirty version `37` and the index is absent, investigate the original error. When the entire schema matches version `36`, use `force 36` to clear dirty metadata. Then retry UP through the migration image. If UP stopped at dirty version `37` and the index is **valid** with the expected definition, review the entire schema. Then use `force 37`. Do not drop the valid index or rerun UP.
-
-If DOWN stopped at **dirty version 36** and the index is still present, inspect its identity and validity. After schema review, use `force 37` and retry DOWN through the migration image. If DOWN stopped at dirty version `36` and the index is absent, review the failure and confirm that DOWN completed. Then use `force 36` without rerunning DOWN.
-
-Run only the command for the branch that the database review selected. Use a restricted maintenance container built from the chart's separate `migration.image`. It contains `/app/migrations` and runs `/usr/local/bin/migrate` directly. Use the packaged migration path and the migration role. Supply the connection URL through approved secret handling, not a literal URL in a Job manifest or shell history. A password in a command-line URL can appear in process arguments. Restrict maintenance-shell access and prefer a short-lived credential.
-
-```sh
-# Choose exactly one metadata repair after schema review:
-/usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" force 36
-# OR
-/usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" force 37
-
-# Run only the matching direction when the reviewed branch calls for a retry:
-/usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" up 1
-# OR
-/usr/local/bin/migrate -path /app/migrations -database "$MIGRATION_DATABASE_URL" down 1
-```
-
-`force` edits migration metadata only. It does not create, remove, or validate an index. After UP, confirm clean version `37` and a valid index with the expected definition. After DOWN, confirm clean version `36` and absence of the index. If the version, index identity, and schema disagree, stop the release and get a database review. Do not auto-clear `dirty`, use `IF NOT EXISTS`, or automatically retry the DDL.
+The sweep response contains counts, not the identities of affected users. Use your approved support process to contact users. Do not delete another user's session to clear a failed count.

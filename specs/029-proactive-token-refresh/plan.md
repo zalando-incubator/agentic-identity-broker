@@ -261,7 +261,7 @@ tests/e2e/
 examples/config/third-party-oauth2.yaml                  # MODIFIED — token_refresh block
 examples/config/README.md                                # MODIFIED — mention
 docs/configuration.md                                    # MODIFIED — TOC, reference rows, Token Refresh section
-docs/operations/session-sweep.md                         # NEW — runbook, reference CronJob, approved migration failure procedure
+docs/operations/session-sweep.md                         # NEW — administrator guide and reference CronJob
 charts/agentic-identity-broker/
 ├── values.yaml                                          # MODIFIED — broker.tokenRefresh
 ├── values.schema.json                                   # MODIFIED — strict schema
@@ -401,8 +401,8 @@ to `GetValidAccessToken` is unchanged), and `cmd/` (the shutdown chain is alread
 26. Update the `ARCHITECTURE.md` admin route tree, worker shutdown, refresh concurrency, and
     row-lock sections. Add `SessionExpiryCursor` beside the seven original glossary entries.
 27. `docs/operations/session-sweep.md`: purpose, reference CronJob, schedule and lookahead
-    guidance, `concurrencyPolicy: Forbid`, caller timeout, admin-proxy access, counts and metrics,
-    and the approved migration failure procedure after the Phase 2d gate passes.
+    guidance, `concurrencyPolicy: Forbid`, caller timeout, admin-proxy access, counts and metrics.
+    Keep migration failure recovery in ADR 039, not in the administrator guide.
 
 ### Phase N: Constitution Compliance Verification
 

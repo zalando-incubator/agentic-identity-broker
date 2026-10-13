@@ -68,7 +68,7 @@ For an interrupted or failed DOWN at **dirty version 36**:
 
 ### Required implementation evidence
 
-Tests in `tests/integration/migrations/migrations_test.go` use real PostgreSQL. They cover UP, DOWN, reapply, and interrupted invalid-index recovery with a dirty version. They confirm both ordered index keys and preserved session data. The separate migration image needs a smoke check of its direct CLI entrypoint. The PostgreSQL adapter test checks valid index use for first, middle, and late pages under normal planner settings. The recovery commands remain in `docs/operations/session-sweep.md`.
+Tests in `tests/integration/migrations/migrations_test.go` use real PostgreSQL. They cover UP, DOWN, reapply, and interrupted invalid-index recovery with a dirty version. They confirm both ordered index keys and preserved session data. The separate migration image needs a smoke check of its direct CLI entrypoint. The PostgreSQL adapter test checks valid index use for first, middle, and late pages under normal planner settings. The failure detection and recovery decision is in this ADR.
 
 ## Consequences and alternatives
 
