@@ -32,7 +32,7 @@ jobs:
 
       # Set up Node.js (for web frontend)
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: "24"
           cache: 'npm'
@@ -50,7 +50,7 @@ jobs:
           restore-keys: tools-${{ runner.os }}-
 
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe
         with:
           tool: just
 

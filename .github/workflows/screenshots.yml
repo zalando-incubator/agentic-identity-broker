@@ -69,7 +69,7 @@ jobs:
 
       - name: Set up Node.js
         if: steps.skip-check.outputs.skip != 'true'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: npm
@@ -107,7 +107,7 @@ jobs:
         run: E2E_FRONTEND_MODE=built E2E_CAPTURE_SCREENSHOTS=true ginkgo -v --procs=1 --timeout=20m --poll-progress-after=30s --show-node-events ./tests/e2e/frontend/
       - name: Upload failed-run screenshots for diagnosis
         if: failure() && steps.tests.outcome == 'failure'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: failed-e2e-screenshots-diagnostic
           path: tests/e2e/frontend/coverage/screenshots/*.png
@@ -227,7 +227,7 @@ jobs:
 
       - name: Upload screenshots as artifact
         if: steps.current-head.outputs.current == 'true' && steps.artifact-head.outputs.current == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-screenshots
           path: tests/e2e/frontend/coverage/screenshots/*.png
